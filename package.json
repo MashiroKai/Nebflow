@@ -1,0 +1,31 @@
+{
+  "name": "nebflow",
+  "version": "1.0.0",
+  "description": "命令行 AI 助手",
+  "type": "module",
+  "main": "./dist/cli/nebflow.js",
+  "bin": {
+    "nebflow": "./dist/cli/nebflow.js"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "tsx cli/nebflow.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.89.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
