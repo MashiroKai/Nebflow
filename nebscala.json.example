@@ -1,0 +1,28 @@
+{
+  "llm": {
+    "providers": {
+      "anthropic": {
+        "baseUrl": "https://api.anthropic.com",
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "protocol": "anthropic"
+      },
+      "openai": {
+        "baseUrl": "https://api.openai.com/v1",
+        "apiKey": "${OPENAI_API_KEY}",
+        "protocol": "openai"
+      }
+    },
+    "model": {
+      "primary": "anthropic/claude-sonnet-4-6",
+      "fallbacks": [
+        "openai/gpt-4o"
+      ]
+    }
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users"]
+    }
+  }
+}
