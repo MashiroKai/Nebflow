@@ -2,10 +2,10 @@ import Dependencies._
 
 lazy val root = (project in file("."))
   .settings(
-    name := "nebscala",
+    name := "nebflow",
     version := "1.0.0",
     scalaVersion := "3.5.2",
-    organization := "nebscala",
+    organization := "nebflow",
 
     libraryDependencies ++= Seq(
       // CLI
@@ -58,6 +58,6 @@ lazy val root = (project in file("."))
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     },
-    assembly / mainClass := Some("nebscala.Main"),
+    assembly / mainClass := Some("nebflow.Main"),
   )
   .enablePlugins(AssemblyPlugin)
