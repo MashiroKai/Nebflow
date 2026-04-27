@@ -3,18 +3,17 @@ package nebflow.llm.providers
 import nebflow.llm.{ProviderAdapter, SendMessageParams, AdapterResponse}
 import nebflow.shared.{Message, MessageRole, ContentBlock, ToolCall, ToolDefinition, StreamChunk, TokenUsage}
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import io.circe.parser.parse
 import sttp.client4.*
-import sttp.client4.httpclient.HttpClientSyncBackend
-import fs2.{Stream, Chunk, Pull}
-import java.io.InputStream
-import scala.io.Source
+import sttp.capabilities.fs2.Fs2Streams
+import fs2.Stream
+import scala.concurrent.duration.Duration
 
-class AnthropicAdapter(baseUrl: String, apiKey: String) extends ProviderAdapter[IO]:
-  private val backend = HttpClientSyncBackend()
+class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]]) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
   private def toAnthropicMessages(messages: List[Message]): List[Json] =
@@ -67,7 +66,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String) extends ProviderAdapter[
       )
     })
 
-  def sendMessage(params: SendMessageParams): IO[AdapterResponse] = IO.blocking {
+  def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     val systemMsg = params.messages.find(_.role == MessageRole.System)
     val body = Json.obj(
       "model" -> params.model.asJson,
@@ -88,37 +87,40 @@ class AnthropicAdapter(baseUrl: String, apiKey: String) extends ProviderAdapter[
       .header("content-type", "application/json")
       .body(bodyWithTools.noSpaces)
 
-    val response = request.send(backend)
-    response.body match
-      case Left(error) =>
-        throw new RuntimeException(s"Anthropic API error: $error")
-      case Right(bodyStr) =>
-        parse(bodyStr) match
-          case Left(err) => throw new RuntimeException(s"Failed to parse response: ${err.message}")
-          case Right(json) =>
-            val content = json.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
-            val textBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("text"))
-            val toolUseBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("tool_use"))
+    backend.send(request).flatMap { response =>
+      response.body match
+        case Left(error) =>
+          IO.raiseError(new RuntimeException(s"Anthropic API error: $error"))
+        case Right(bodyStr) =>
+          IO.pure(parseNonStreamingResponse(bodyStr))
+    }
 
-            val reply = textBlocks.flatMap(_.hcursor.downField("text").as[String].toOption).mkString("")
-            val toolCalls = toolUseBlocks.map { b =>
-              val id = b.hcursor.downField("id").as[String].getOrElse("")
-              val name = b.hcursor.downField("name").as[String].getOrElse("")
-              val input = b.hcursor.downField("input").as[JsonObject].getOrElse(JsonObject.empty)
-              ToolCall(id, name, input)
-            }
+  private def parseNonStreamingResponse(bodyStr: String): AdapterResponse =
+    parse(bodyStr) match
+      case Left(err) => throw new RuntimeException(s"Failed to parse response: ${err.message}")
+      case Right(json) =>
+        val content = json.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
+        val textBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("text"))
+        val toolUseBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("tool_use"))
 
-            val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
-              TokenUsage(
-                inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
-                outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0),
-                cacheReadTokens = u.hcursor.downField("cache_read_input_tokens").as[Int].toOption,
-                cacheWriteTokens = u.hcursor.downField("cache_creation_input_tokens").as[Int].toOption
-              )
-            }
+        val reply = textBlocks.flatMap(_.hcursor.downField("text").as[String].toOption).mkString("")
+        val toolCalls = toolUseBlocks.map { b =>
+          val id = b.hcursor.downField("id").as[String].getOrElse("")
+          val name = b.hcursor.downField("name").as[String].getOrElse("")
+          val input = b.hcursor.downField("input").as[JsonObject].getOrElse(JsonObject.empty)
+          ToolCall(id, name, input)
+        }
 
-            AdapterResponse(reply, toolCalls, usage)
-  }
+        val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+          TokenUsage(
+            inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
+            outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0),
+            cacheReadTokens = u.hcursor.downField("cache_read_input_tokens").as[Int].toOption,
+            cacheWriteTokens = u.hcursor.downField("cache_creation_input_tokens").as[Int].toOption
+          )
+        }
+
+        AdapterResponse(reply, toolCalls, usage)
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
     val systemMsg = params.messages.find(_.role == MessageRole.System)
@@ -135,97 +137,97 @@ class AnthropicAdapter(baseUrl: String, apiKey: String) extends ProviderAdapter[
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
 
-    Stream.eval(IO.blocking {
+    Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
       val request = basicRequest
         .post(uri"$base/v1/messages")
         .header("x-api-key", apiKey)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
         .body(bodyWithTools.noSpaces)
+        .response(asStreamUnsafe(Fs2Streams[IO]))
+        .readTimeout(Duration.Inf)
 
-      request.send(backend)
-    }).flatMap { response =>
-      response.body match
-        case Left(error) =>
-          Stream.eval(IO.raiseError(new RuntimeException(s"Anthropic API error: $error")))
-        case Right(bodyStr) =>
-          parseSseStream(bodyStr)
+      Stream.eval(backend.send(request)).flatMap { response =>
+        response.body match
+          case Left(error) =>
+            Stream.eval(IO.raiseError(new RuntimeException(s"Anthropic API error: $error")))
+          case Right(byteStream) =>
+            parseSseIncrementally(byteStream, toolCallState)
+      }
     }
 
-  private def parseSseStream(text: String): Stream[IO, StreamChunk] =
-    val lines = text.split("\n").toList
-    var toolCallInputs = Map.empty[Int, (String, String, StringBuilder)] // index -> (id, name, inputBuilder)
-    var currentIndex = 0
-
-    val chunks = scala.collection.mutable.ListBuffer.empty[StreamChunk]
-    var stopReason: Option[String] = None
-    var usage: Option[TokenUsage] = None
-
-    var i = 0
-    while i < lines.length do
-      val line = lines(i).trim
-      if line.startsWith("event:") then
-        val eventType = line.drop(6).trim
-        // Read next line for data
-        i += 1
-        if i < lines.length && lines(i).trim.startsWith("data:") then
-          val data = lines(i).trim.drop(5).trim
-          if data == "[DONE]" then
-            () // Stream done
-          else
-            parse(data) match
-              case Left(_) => // skip
-              case Right(json) =>
-                eventType match
-                  case "content_block_start" =>
-                    json.hcursor.downField("content_block").downField("type").as[String].toOption match
-                      case Some("tool_use") =>
-                        val id = json.hcursor.downField("content_block").downField("id").as[String].getOrElse("")
-                        val name = json.hcursor.downField("content_block").downField("name").as[String].getOrElse("")
-                        val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
-                        toolCallInputs = toolCallInputs + (idx -> (id, name, new StringBuilder))
-                      case _ =>
-                  case "content_block_delta" =>
-                    val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
-                    json.hcursor.downField("delta").downField("type").as[String].toOption match
-                      case Some("text_delta") =>
-                        json.hcursor.downField("delta").downField("text").as[String].toOption.foreach { text =>
-                          chunks += StreamChunk.TextDelta(text)
-                        }
-                      case Some("input_json_delta") =>
-                        json.hcursor.downField("delta").downField("partial_json").as[String].toOption.foreach { partial =>
-                          toolCallInputs.get(idx).foreach { case (_, _, sb) =>
-                            sb.append(partial)
-                          }
-                        }
-                      case _ =>
-                  case "content_block_stop" =>
-                    val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
-                    toolCallInputs.get(idx).foreach { case (id, name, sb) =>
-                      val inputStr = sb.toString
-                      val input = parse(inputStr).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-                      chunks += StreamChunk.ToolCallChunk(ToolCall(id, name, input))
-                      toolCallInputs = toolCallInputs - idx
-                    }
-                  case "message_stop" =>
-                    stopReason = json.hcursor.downField("message").downField("stop_reason").as[String].toOption
-                    usage = json.hcursor.downField("message").downField("usage").as[Json].toOption.map { u =>
-                      TokenUsage(
-                        inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
-                        outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0)
-                      )
-                    }
-                  case _ =>
-      i += 1
-
-    // Handle incomplete tool calls
-    toolCallInputs.foreach { case (idx, (id, name, sb)) =>
-      val inputStr = sb.toString
-      val input = parse(inputStr).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-      chunks += StreamChunk.ToolCallChunk(ToolCall(id, name, input))
+  private def parseSseIncrementally(
+    byteStream: Stream[IO, Byte],
+    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
+  ): Stream[IO, StreamChunk] =
+    Stream.eval(IO.ref(Option.empty[String])).flatMap { eventTypeRef =>
+      byteStream
+        .through(fs2.text.utf8.decode)
+        .through(fs2.text.lines)
+        .filter(_.nonEmpty)
+        .evalMap { line =>
+          if line.startsWith("event:") then
+            eventTypeRef.set(Some(line.drop(6).trim)).as(List.empty[StreamChunk])
+          else if line.startsWith("data:") then
+            val data = line.drop(5).trim
+            eventTypeRef.getAndSet(None).flatMap {
+              case Some(et) => processAnthropicEvent(et, data, toolCallState)
+              case None => processAnthropicEvent("", data, toolCallState)
+            }
+          else IO.pure(Nil)
+        }
+        .flatMap(cs => if cs.nonEmpty then Stream.emits(cs) else Stream.empty)
     }
 
-    if stopReason.isDefined || chunks.nonEmpty then
-      chunks += StreamChunk.Done(stopReason, usage)
-
-    Stream.emits(chunks.toList)
+  private def processAnthropicEvent(
+    eventType: String,
+    data: String,
+    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
+  ): IO[List[StreamChunk]] =
+    if data == "[DONE]" then IO.pure(Nil)
+    else parse(data) match
+      case Left(_) => IO.pure(Nil)
+      case Right(json) =>
+        eventType match
+          case "content_block_delta" =>
+            json.hcursor.downField("delta").downField("type").as[String].toOption match
+              case Some("text_delta") =>
+                val text = json.hcursor.downField("delta").downField("text").as[String].getOrElse("")
+                IO.pure(if text.nonEmpty then List(StreamChunk.TextDelta(text)) else Nil)
+              case Some("input_json_delta") =>
+                val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
+                val partial = json.hcursor.downField("delta").downField("partial_json").as[String].getOrElse("")
+                toolCallState.modify { m =>
+                  val updated = m.get(idx) match
+                    case Some((id, name, sb)) => m.updated(idx, (id, name, sb.append(partial)))
+                    case None => m
+                  (updated, ())
+                }.as(Nil)
+              case _ => IO.pure(Nil)
+          case "content_block_start" =>
+            json.hcursor.downField("content_block").downField("type").as[String].toOption match
+              case Some("tool_use") =>
+                val id = json.hcursor.downField("content_block").downField("id").as[String].getOrElse("")
+                val name = json.hcursor.downField("content_block").downField("name").as[String].getOrElse("")
+                val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
+                toolCallState.update(_ + (idx -> (id, name, new StringBuilder))).as(Nil)
+              case _ => IO.pure(Nil)
+          case "content_block_stop" =>
+            val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
+            toolCallState.modify { m =>
+              m.get(idx) match
+                case Some((id, name, sb)) =>
+                  val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
+                  (m - idx, List(StreamChunk.ToolCallChunk(ToolCall(id, name, input))))
+                case None => (m, Nil)
+            }
+          case "message_delta" =>
+            val stopReason = json.hcursor.downField("delta").downField("stop_reason").as[String].toOption
+            val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+              TokenUsage(
+                inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
+                outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0)
+              )
+            }
+            IO.pure(List(StreamChunk.Done(stopReason, usage)))
+          case _ => IO.pure(Nil)
