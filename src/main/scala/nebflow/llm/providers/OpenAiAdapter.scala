@@ -3,16 +3,17 @@ package nebflow.llm.providers
 import nebflow.llm.{ProviderAdapter, SendMessageParams, AdapterResponse}
 import nebflow.shared.{Message, MessageRole, ContentBlock, ToolCall, ToolDefinition, StreamChunk, TokenUsage}
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import io.circe.parser.parse
 import sttp.client4.*
-import sttp.client4.httpclient.HttpClientSyncBackend
+import sttp.capabilities.fs2.Fs2Streams
 import fs2.Stream
+import scala.concurrent.duration.Duration
 
-class OpenAiAdapter(baseUrl: String, apiKey: String) extends ProviderAdapter[IO]:
-  private val backend = HttpClientSyncBackend()
+class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]]) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
   private def toOpenAiMessages(messages: List[Message]): List[Json] =
@@ -89,7 +90,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String) extends ProviderAdapter[IO]
       ToolCall(id, name, input)
     }
 
-  def sendMessage(params: SendMessageParams): IO[AdapterResponse] = IO.blocking {
+  def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toOpenAiMessages(params.messages)),
@@ -105,24 +106,26 @@ class OpenAiAdapter(baseUrl: String, apiKey: String) extends ProviderAdapter[IO]
       .header("content-type", "application/json")
       .body(bodyWithTools.noSpaces)
 
-    val response = request.send(backend)
-    response.body match
-      case Left(error) =>
-        throw new RuntimeException(s"OpenAI API error: $error")
-      case Right(bodyStr) =>
-        parse(bodyStr) match
-          case Left(err) => throw new RuntimeException(s"Failed to parse response: ${err.message}")
-          case Right(json) =>
-            val reply = json.hcursor.downField("choices").downN(0).downField("message").downField("content").as[String].getOrElse("")
-            val toolCalls = extractToolCalls(json)
-            val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
-              TokenUsage(
-                inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
-                outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
-              )
-            }
-            AdapterResponse(reply, toolCalls, usage)
-  }
+    backend.send(request).flatMap { response =>
+      response.body match
+        case Left(error) =>
+          IO.raiseError(new RuntimeException(s"OpenAI API error: $error"))
+        case Right(bodyStr) =>
+          IO.pure {
+            parse(bodyStr) match
+              case Left(err) => throw new RuntimeException(s"Failed to parse response: ${err.message}")
+              case Right(json) =>
+                val reply = json.hcursor.downField("choices").downN(0).downField("message").downField("content").as[String].getOrElse("")
+                val toolCalls = extractToolCalls(json)
+                val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+                  TokenUsage(
+                    inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
+                    outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
+                  )
+                }
+                AdapterResponse(reply, toolCalls, usage)
+          }
+    }
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
     val body = Json.obj(
@@ -135,74 +138,89 @@ class OpenAiAdapter(baseUrl: String, apiKey: String) extends ProviderAdapter[IO]
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
       case None => body
 
-    Stream.eval(IO.blocking {
+    Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
       val request = basicRequest
         .post(uri"$base/chat/completions")
         .header("Authorization", s"Bearer $apiKey")
         .header("content-type", "application/json")
         .body(bodyWithTools.noSpaces)
+        .response(asStreamUnsafe(Fs2Streams[IO]))
+        .readTimeout(Duration.Inf)
 
-      request.send(backend)
-    }).flatMap { response =>
-      response.body match
-        case Left(error) =>
-          Stream.eval(IO.raiseError(new RuntimeException(s"OpenAI API error: $error")))
-        case Right(bodyStr) =>
-          parseOpenAiSseStream(bodyStr)
+      Stream.eval(backend.send(request)).flatMap { response =>
+        response.body match
+          case Left(error) =>
+            Stream.eval(IO.raiseError(new RuntimeException(s"OpenAI API error: $error")))
+          case Right(byteStream) =>
+            parseOpenAiSseIncrementally(byteStream, toolCallState)
+      }
     }
 
-  private def parseOpenAiSseStream(text: String): Stream[IO, StreamChunk] =
-    val lines = text.split("\n").toList
-    val chunks = scala.collection.mutable.ListBuffer.empty[StreamChunk]
-    var toolCalls = Map.empty[Int, (String, String, StringBuilder)] // index -> (id, name, argsBuilder)
-    var stopReason: Option[String] = None
+  private def parseOpenAiSseIncrementally(
+    byteStream: Stream[IO, Byte],
+    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
+  ): Stream[IO, StreamChunk] =
+    byteStream
+      .through(fs2.text.utf8.decode)
+      .through(fs2.text.lines)
+      .filter(_.nonEmpty)
+      .evalMap { line =>
+        if line.startsWith("data:") then
+          val data = line.drop(5).trim
+          if data == "[DONE]" then IO.pure(Nil)
+          else processOpenAiData(data, toolCallState)
+        else IO.pure(Nil)
+      }
+      .flatMap(cs => if cs.nonEmpty then Stream.emits(cs) else Stream.empty)
 
-    var i = 0
-    while i < lines.length do
-      val line = lines(i).trim
-      if line.startsWith("data:") then
-        val data = line.drop(5).trim
-        if data != "[DONE]" then
-          parse(data) match
-            case Left(_) => // skip
-            case Right(json) =>
-              val delta = json.hcursor.downField("choices").downN(0).downField("delta").as[Json].toOption
-              val finishReason = json.hcursor.downField("choices").downN(0).downField("finish_reason").as[String].toOption
+  private def processOpenAiData(
+    data: String,
+    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
+  ): IO[List[StreamChunk]] =
+    parse(data) match
+      case Left(_) => IO.pure(Nil)
+      case Right(json) =>
+        val delta = json.hcursor.downField("choices").downN(0).downField("delta").as[Json].toOption
+        val finishReason = json.hcursor.downField("choices").downN(0).downField("finish_reason").as[String].toOption
 
-              delta.foreach { d =>
-                d.hcursor.downField("content").as[String].toOption.foreach { text =>
-                  chunks += StreamChunk.TextDelta(text)
+        delta match
+          case None => IO.pure(Nil)
+          case Some(d) =>
+            val textChunks = d.hcursor.downField("content").as[String].toOption.filter(_.nonEmpty).toList
+            val textDeltas = textChunks.map(StreamChunk.TextDelta.apply)
+
+            d.hcursor.downField("tool_calls").as[List[Json]].toOption match
+              case Some(tcs) =>
+                tcs.foldM(Nil: List[StreamChunk]) { (acc, tc) =>
+                  val index = tc.hcursor.downField("index").as[Int].getOrElse(0)
+                  val id = tc.hcursor.downField("id").as[String].toOption
+                  val name = tc.hcursor.downField("function").downField("name").as[String].toOption
+                  val args = tc.hcursor.downField("function").downField("arguments").as[String].toOption
+
+                  (id, name) match
+                    case (Some(toolId), Some(toolName)) =>
+                      toolCallState.update(_ + (index -> (toolId, toolName, new StringBuilder(args.getOrElse(""))))).as(acc)
+                    case _ =>
+                      toolCallState.modify { m =>
+                        m.get(index) match
+                          case Some((tid, tname, sb)) =>
+                            args.foreach(sb.append)
+                            (m.updated(index, (tid, tname, sb)), ())
+                          case None => (m, ())
+                      }.as(acc)
+                }.flatMap { acc =>
+                  if finishReason.contains("tool_calls") || finishReason.contains("function_call") then
+                    toolCallState.getAndSet(Map.empty).map { m =>
+                      acc ++ m.values.toList.map { case (id, name, sb) =>
+                        val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
+                        StreamChunk.ToolCallChunk(ToolCall(id, name, input))
+                      }
+                    }
+                  else if finishReason.isDefined then
+                    IO.pure(acc :+ StreamChunk.Done(finishReason, None))
+                  else IO.pure(textDeltas ++ acc)
                 }
-                d.hcursor.downField("tool_calls").as[List[Json]].toOption.foreach { tcs =>
-                  tcs.foreach { tc =>
-                    val index = tc.hcursor.downField("index").as[Int].getOrElse(0)
-                    val id = tc.hcursor.downField("id").as[String].toOption
-                    val name = tc.hcursor.downField("function").downField("name").as[String].toOption
-                    val args = tc.hcursor.downField("function").downField("arguments").as[String].toOption
-
-                    (id, name) match
-                      case (Some(toolId), Some(toolName)) =>
-                        toolCalls = toolCalls + (index -> (toolId, toolName, new StringBuilder(args.getOrElse(""))))
-                      case _ =>
-                        toolCalls.get(index).foreach { case (_, _, sb) =>
-                          args.foreach(sb.append)
-                        }
-                  }
-                }
-              }
-
-              if finishReason.contains("tool_calls") || finishReason.contains("function_call") then
-                toolCalls.foreach { case (_, (id, name, sb)) =>
-                  val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-                  chunks += StreamChunk.ToolCallChunk(ToolCall(id, name, input))
-                }
-                toolCalls = Map.empty
-
-              if finishReason.isDefined then
-                stopReason = finishReason
-      i += 1
-
-    if stopReason.isDefined || chunks.nonEmpty then
-      chunks += StreamChunk.Done(stopReason, None)
-
-    Stream.emits(chunks.toList)
+              case None =>
+                if finishReason.isDefined then
+                  IO.pure(textDeltas :+ StreamChunk.Done(finishReason, None))
+                else IO.pure(textDeltas)

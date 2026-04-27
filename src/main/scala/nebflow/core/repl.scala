@@ -136,13 +136,15 @@ object Repl:
                           textStartedRef.get.flatMap { started =>
                             textRef.update(_ + delta) *>
                             store.emitTextDelta(delta) *>
+                            IO.print(delta) *>
+                            IO(Console.out.flush()) *>
                             textStartedRef.set(true)
                           }
                         else IO.unit
                       case StreamChunk.ToolCallChunk(toolCall) =>
                         toolCallsRef.update(_ :+ toolCall) *>
                         textStartedRef.get.flatMap { hasText =>
-                          if hasText then store.emitTextDone() else IO.unit
+                          if hasText then store.emitTextDone() *> IO.println("") else IO.unit
                         } *>
                         IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
                           val execIO = store.emitToolStart(label) *>
@@ -154,10 +156,10 @@ object Repl:
                         }
                       case StreamChunk.Done(stopReason, usage, _) =>
                         stopReason match
-                          case Some("max_tokens") => store.emitMaxTokens()
-                          case Some("timeout") => store.emitTimeout()
+                          case Some("max_tokens") => store.emitMaxTokens() *> IO.println("")
+                          case Some("timeout") => store.emitTimeout() *> IO.println("")
                           case _ => textStartedRef.get.flatMap { hasText =>
-                            if hasText then store.emitTextDone() else IO.unit
+                            if hasText then store.emitTextDone() *> IO.println("") else IO.unit
                           }
                 }
               }.compile.drain
