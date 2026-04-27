@@ -66,57 +66,58 @@ object Main extends IOApp:
 
   private def runWithArgs(args: Args): IO[ExitCode] =
     val config = Config.loadServiceConfig()
-    val llm = LlmInterface.createLlm()
     val modelRef = config.llm.model.primary
 
-    NebflowUI.create.flatMap { ui =>
-      ui.getClass.getDeclaredFields.find(_.getName == "store") match
-        case Some(field) =>
-          IO.delay {
-            field.setAccessible(true)
-            field.get(ui).asInstanceOf[UiStore]
-          }
-        case None =>
-          IO.raiseError(new RuntimeException("Could not access UI store"))
-    }.handleErrorWith { _ =>
-      UiStore.create
-    }.flatMap { store =>
-      // Register AskUser handler
-      AskUser.setHandler(store.askUser)
+    LlmInterface.createLlm().flatMap { case (llm, releaseBackend) =>
+      NebflowUI.create.flatMap { ui =>
+        ui.getClass.getDeclaredFields.find(_.getName == "store") match
+          case Some(field) =>
+            IO.delay {
+              field.setAccessible(true)
+              field.get(ui).asInstanceOf[UiStore]
+            }
+          case None =>
+            IO.raiseError(new RuntimeException("Could not access UI store"))
+      }.handleErrorWith { _ =>
+        UiStore.create
+      }.flatMap { store =>
+        // Register AskUser handler
+        AskUser.setHandler(store.askUser)
 
-      // Initialize MCP servers
-      initMcpServers(config).flatMap { _ =>
-        args.mode match
-          case CliMode.SingleShot =>
-            // Single-shot mode
-            store.addUserInput(args.input) *>
-              Repl.runRepl(args.input, llm, System.getProperty("user.dir"), Nil, store).flatMap { messages =>
-                store.getState.flatMap { s =>
-                  // Print the LLM response
-                  s.completedRounds.lastOption match
-                    case Some(round) if round.kind == "llm" =>
-                      IO.println(round.content)
-                    case _ => IO.unit
-                } *>
-                saveSession(messages) *>
-                IO.pure(ExitCode.Success)
-              }.handleError { e =>
-                println(s"Error: ${e.getMessage}")
-                ExitCode.Error
+        // Initialize MCP servers
+        initMcpServers(config).flatMap { _ =>
+          args.mode match
+            case CliMode.SingleShot =>
+              // Single-shot mode
+              store.addUserInput(args.input) *>
+                Repl.runRepl(args.input, llm, System.getProperty("user.dir"), Nil, store).flatMap { messages =>
+                  store.getState.flatMap { s =>
+                    // Print the LLM response
+                    s.completedRounds.lastOption match
+                      case Some(round) if round.kind == "llm" =>
+                        IO.println(round.content)
+                      case _ => IO.unit
+                  } *>
+                  saveSession(messages) *>
+                  IO.pure(ExitCode.Success)
+                }.handleError { e =>
+                  println(s"Error: ${e.getMessage}")
+                  ExitCode.Error
+                }
+
+            case CliMode.ContinueSession =>
+              loadSession().flatMap { history =>
+                val msg = if history.isEmpty then
+                  IO.println("No previous session found. Starting new session.")
+                else
+                  IO.println(s"Resumed session (${history.length} messages)")
+                msg *> runInteractive(llm, modelRef, store, history)
               }
 
-          case CliMode.ContinueSession =>
-            loadSession().flatMap { history =>
-              val msg = if history.isEmpty then
-                IO.println("No previous session found. Starting new session.")
-              else
-                IO.println(s"Resumed session (${history.length} messages)")
-              msg *> runInteractive(llm, modelRef, store, history)
-            }
-
-          case CliMode.Interactive =>
-            runInteractive(llm, modelRef, store, Nil)
-      }
+            case CliMode.Interactive =>
+              runInteractive(llm, modelRef, store, Nil)
+        }
+      }.guarantee(releaseBackend)
     }
 
   private def runInteractive(llm: nebflow.shared.LlmHandle[IO], modelRef: String, store: UiStore, history: List[Message]): IO[ExitCode] =
@@ -152,8 +153,7 @@ object Main extends IOApp:
                   IO.blocking {
                     s.completedRounds.drop(sessionMessages.length / 2).foreach { round =>
                       round.kind match
-                        case "llm" =>
-                          println(MarkdownRenderer.render(round.content))
+                        case "llm" => () // already printed during streaming
                         case "tool-success" =>
                           println(s"${TerminalUtils.Green}✓${TerminalUtils.Reset} ${round.content}")
                         case "tool-error" =>

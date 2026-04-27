@@ -2,6 +2,8 @@ package nebflow.llm
 
 import nebflow.llm.providers.{AnthropicAdapter, OpenAiAdapter}
 import cats.effect.IO
+import sttp.client4.StreamBackend
+import sttp.capabilities.fs2.Fs2Streams
 
 case class ModelCandidate(
   providerId: String,
@@ -9,13 +11,13 @@ case class ModelCandidate(
   model: String
 )
 
-class ProviderRegistry(config: NebflowServiceConfig):
+class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, Fs2Streams[IO]]):
   private var adapters: Map[String, ProviderAdapter[IO]] = Map.empty
 
   private def createAdapter(provider: ProviderConfig): ProviderAdapter[IO] =
     provider.protocol match
-      case LlmProtocol.OpenAI => OpenAiAdapter(provider.baseUrl, provider.apiKey)
-      case LlmProtocol.Anthropic => AnthropicAdapter(provider.baseUrl, provider.apiKey)
+      case LlmProtocol.OpenAI => OpenAiAdapter(provider.baseUrl, provider.apiKey, backend)
+      case LlmProtocol.Anthropic => AnthropicAdapter(provider.baseUrl, provider.apiKey, backend)
 
   def getAdapter(providerId: String): ProviderAdapter[IO] =
     adapters.get(providerId) match
