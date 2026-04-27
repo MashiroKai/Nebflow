@@ -5,6 +5,7 @@ object Dependencies {
   val CatsEffectVer = "3.6.1"
   val Fs2Ver = "3.11.0"
   val CirceVer = "0.14.12"
+  val Http4sVer = "0.23.30"
   val SttpVer = "4.0.0-M1"
   val JLine3Ver = "3.29.0"
   val ScoptVer = "4.1.0"
@@ -36,6 +37,11 @@ object Dependencies {
 
   // Process / File
   val osLib = "com.lihaoyi" %% "os-lib" % OsLibVer
+
+  // http4s (gateway server)
+  val http4sEmberServer = "org.http4s" %% "http4s-ember-server" % Http4sVer
+  val http4sDsl         = "org.http4s" %% "http4s-dsl"          % Http4sVer
+  val http4sCirce       = "org.http4s" %% "http4s-circe"        % Http4sVer
 
   // Logging (silent backend to avoid warnings)
   val sl4jNop = "org.slf4j" % "slf4j-nop" % "2.0.16"

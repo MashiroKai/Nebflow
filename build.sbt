@@ -13,9 +13,13 @@ lazy val root = (project in file("."))
       // Terminal
       jline3Terminal,
       jline3Reader,
-      // HTTP
+      // HTTP client
       sttpCore,
       sttpFs2Backend,
+      // HTTP server (gateway)
+      http4sEmberServer,
+      http4sDsl,
+      http4sCirce,
       // Streaming
       fs2Core,
       // Effect
