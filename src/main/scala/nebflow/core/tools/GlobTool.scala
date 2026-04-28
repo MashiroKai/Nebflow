@@ -52,15 +52,30 @@ object GlobTool extends Tool:
       case None => Paths.get(ctx.projectRoot)
 
     try
-      val matcher = FileSystems.getDefault.getPathMatcher(s"glob:$pattern")
+      // Normalize pattern: use forward slashes for cross-platform consistency
+      val normalizedPattern = pattern.replace("\\", "/")
+      // Build a glob pattern that matches against the relative path from searchDir
+      // Note: Java's glob:**/*.txt does NOT match root-level files, only nested ones.
+      // Use {pattern,**/pattern} to match both root-level and nested files.
+      val globPattern =
+        if normalizedPattern.startsWith("**/") then s"glob:$normalizedPattern"
+        else if normalizedPattern.contains("/") then s"glob:$normalizedPattern"
+        else s"glob:{$normalizedPattern,**/$normalizedPattern}"
+      val matcher = FileSystems.getDefault.getPathMatcher(globPattern)
       val walkStream = Files.walk(searchDir)
       try
         val results = walkStream
           .toScala(List)
           .filter(p => !p.toString.contains("node_modules") && !p.toString.contains(".git"))
-          .filter(p => Files.isRegularFile(p) && matcher.matches(p.getFileName))
+          .filter(p => Files.isRegularFile(p)) // First check it's a regular file
+          .filter { p =>
+            // Match against the relative path using forward slashes
+            val relPath = searchDir.relativize(p).toString.replace("\\", "/")
+            val pathForMatch = Paths.get(relPath)
+            matcher.matches(pathForMatch)
+          }
           .sortBy(p => -Files.getLastModifiedTime(p).toMillis)
-          .map(p => searchDir.relativize(p).toString)
+          .map(p => searchDir.relativize(p).toString.replace("\\", "/"))
 
         if results.isEmpty then Right("No files found matching the pattern.")
         else
@@ -72,5 +87,6 @@ object GlobTool extends Tool:
           )
       finally walkStream.close()
     catch case e: Exception => Left(ToolError(s"Error: ${e.getMessage}"))
+    end try
   }
 end GlobTool

@@ -28,9 +28,17 @@ class WebReplUi(queue: Queue[IO, WebSocketFrame]) extends ReplUi:
   def emitToolStart(label: String): IO[Unit] =
     sendJson(s"""{"type":"toolStart","label":${label.asJson.noSpaces}}""")
 
-  def emitToolEnd(label: String, summary: String, content: String, isError: Boolean, inputJson: Option[String] = None): IO[Unit] =
+  def emitToolEnd(
+    label: String,
+    summary: String,
+    content: String,
+    isError: Boolean,
+    inputJson: Option[String] = None
+  ): IO[Unit] =
     val inputField = inputJson.filter(_.nonEmpty).map(j => s""","input":$j""").getOrElse("")
-    sendJson(s"""{"type":"toolEnd","label":${label.asJson.noSpaces},"summary":${summary.asJson.noSpaces},"content":${content.asJson.noSpaces},"isError":$isError$inputField}""")
+    sendJson(
+      s"""{"type":"toolEnd","label":${label.asJson.noSpaces},"summary":${summary.asJson.noSpaces},"content":${content.asJson.noSpaces},"isError":$isError$inputField}"""
+    )
 
   def emitMaxTokens(): IO[Unit] =
     sendJson("""{"type":"maxTokens"}""")
@@ -57,12 +65,18 @@ class WebReplUi(queue: Queue[IO, WebSocketFrame]) extends ReplUi:
     sendJson(s"""{"type":"error","message":${message.asJson.noSpaces}}""")
 
   def askUser(items: List[nebflow.core.AskItem]): IO[List[String]] =
-    val itemsJson = items.map { item =>
-      val opts = item.options.map(o =>
-        s"""{"label":${o.label.asJson.noSpaces}${o.description.map(d => s",\"description\":${d.asJson.noSpaces}").getOrElse("")}}"""
-      ).mkString(",")
-      s"""{"question":${item.question.asJson.noSpaces},"options":[$opts]}"""
-    }.mkString(",")
+    val itemsJson = items
+      .map { item =>
+        val opts = item.options
+          .map(o =>
+            s"""{"label":${o.label.asJson.noSpaces}${o.description
+                .map(d => s",\"description\":${d.asJson.noSpaces}")
+                .getOrElse("")}}"""
+          )
+          .mkString(",")
+        s"""{"question":${item.question.asJson.noSpaces},"options":[$opts]}"""
+      }
+      .mkString(",")
     cats.effect.Deferred[IO, List[String]].flatMap { d =>
       askUserDeferred.set(Some(d)) *>
         sendJson(s"""{"type":"askUser","items":[$itemsJson]}""") *>
@@ -74,3 +88,4 @@ class WebReplUi(queue: Queue[IO, WebSocketFrame]) extends ReplUi:
       case Some(d) => askUserDeferred.set(None) *> d.complete(answers).void
       case None => IO.unit
     }
+end WebReplUi

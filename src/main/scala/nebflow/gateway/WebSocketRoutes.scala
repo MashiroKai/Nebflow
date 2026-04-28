@@ -24,14 +24,7 @@ class WebSocketRoutes(
     case GET -> Root / "ws" =>
       for
         outbound <- Queue.unbounded[IO, WebSocketFrame]
-        replUi    = new WebReplUi(outbound)
-
-        // Set AskUser handler for this connection
-        _ <- IO.delay {
-          nebflow.core.AskUser.setHandler { items =>
-            replUi.askUser(items)
-          }
-        }
+        replUi = new WebReplUi(outbound)
 
         receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
           case WebSocketFrame.Text(text, _) => handleMessage(text, replUi)
@@ -39,7 +32,7 @@ class WebSocketRoutes(
         }
 
         sendStream = Stream.fromQueueUnterminated(outbound)
-        ws         <- wsb.build(sendStream, receivePipe)
+        ws <- wsb.build(sendStream, receivePipe)
       yield ws
 
     case req @ GET -> Root =>
@@ -47,10 +40,8 @@ class WebSocketRoutes(
 
     case req @ GET -> Root / fileName =>
       val allowed = Set("style.css", "app.js")
-      if allowed.contains(fileName) then
-        StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
-      else
-        NotFound()
+      if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
+      else NotFound()
   }
 
   private def handleMessage(
@@ -61,7 +52,7 @@ class WebSocketRoutes(
       case "askUserAnswer" =>
         parse(text).flatMap(_.hcursor.downField("answers").as[List[String]]).toOption match
           case Some(answers) => replUi.answerAskUser(answers)
-          case None          => IO.unit
+          case None => IO.unit
 
       case "interrupt" =>
         replUi.triggerEsc()
@@ -77,15 +68,14 @@ class WebSocketRoutes(
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         json.hcursor.downField("thinking").focus match
           case Some(t) => thinkingModeRef.set(Some(t))
-          case None    => thinkingModeRef.set(None)
+          case None => thinkingModeRef.set(None)
 
       case _ =>
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         val content = json.hcursor.downField("content").as[String].getOrElse("")
         val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
 
-        if content.trim == "__interrupt__" then
-          replUi.triggerEsc()
+        if content.trim == "__interrupt__" then replUi.triggerEsc()
         else if content.nonEmpty || attachments.nonEmpty then
           val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
           if content.nonEmpty then blocks += ContentBlock.Text(content)
@@ -94,36 +84,39 @@ class WebSocketRoutes(
             val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
             val data = att.hcursor.downField("data").as[String].getOrElse("")
             val name = att.hcursor.downField("name").as[String].getOrElse("")
-            if mimeType.startsWith("image/") && data.nonEmpty then
-              blocks += ContentBlock.Image(data, mimeType)
-            else if data.nonEmpty then
-              blocks += ContentBlock.Text(s"[file: $name]\n$data")
+            if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
+            else if data.nonEmpty then blocks += ContentBlock.Text(s"[file: $name]\n$data")
           }
 
           val userMessage =
-            if blocks.length == 1 && content.nonEmpty then
-              Message(MessageRole.User, Left(content))
-            else
-              Message(MessageRole.User, Right(blocks.toList))
+            if blocks.length == 1 && content.nonEmpty then Message(MessageRole.User, Left(content))
+            else Message(MessageRole.User, Right(blocks.toList))
 
-          messagesRef.get.flatMap { history =>
-            thinkingModeRef.get.flatMap { thinking =>
-              Repl.runRepl(
-                userMessage = userMessage,
-                llm = llm,
-                projectRoot = System.getProperty("user.dir"),
-                initialMessages = history,
-                store = replUi,
-                onToolRound = Some { (msgs: List[Message]) => messagesRef.set(msgs) *> saveSession(msgs) },
-                silent = true,
-                thinkingMode = thinking
-              )
-            }.flatMap { updated =>
-              messagesRef.set(updated) *> saveSession(updated)
-            }.handleErrorWith { e =>
-              replUi.sendError(e.getMessage)
-            }.flatMap { _ =>
-              replUi.emitDone()
+          messagesRef.get
+            .flatMap { history =>
+              thinkingModeRef.get
+                .flatMap { thinking =>
+                  Repl.runRepl(
+                    userMessage = userMessage,
+                    llm = llm,
+                    projectRoot = System.getProperty("user.dir"),
+                    initialMessages = history,
+                    store = replUi,
+                    onToolRound = Some { (msgs: List[Message]) => messagesRef.set(msgs) *> saveSession(msgs) },
+                    silent = true,
+                    thinkingMode = thinking
+                  )
+                }
+                .flatMap { updated =>
+                  messagesRef.set(updated) *> saveSession(updated)
+                }
+                .handleErrorWith { e =>
+                  replUi.sendError(e.getMessage)
+                }
             }
-          }.start.void
+            .guarantee(replUi.emitDone())
+            .start
+            .void
         else IO.unit
+        end if
+end WebSocketRoutes

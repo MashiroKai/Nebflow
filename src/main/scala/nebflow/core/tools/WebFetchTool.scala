@@ -62,9 +62,12 @@ Usage:
 
   private def writeCache(url: String, value: String): Unit =
     cache.put(url, (value, System.currentTimeMillis() + CACHE_TTL_MS))
-    if cache.size > MAX_CACHE_SIZE then
+    if cache.size() > MAX_CACHE_SIZE then
       val now = System.currentTimeMillis()
-      cache.asScala.foreach { (k, v) => if v._2 <= now then cache.remove(k) }
+      val it = cache.entrySet().iterator()
+      while it.hasNext do
+        val entry = it.next()
+        if entry.getValue._2 <= now then it.remove()
 
   private def extractHtmlText(html: String): (Option[String], String) =
     val title = "<title[^>]*>([^<]*)</title>".r.findFirstMatchIn(html).map(_.group(1).trim)

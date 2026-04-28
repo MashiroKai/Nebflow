@@ -187,7 +187,7 @@ Principles: work until the task is resolved; diagnose failures before trying a n
                     IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
                       val execIO = store.emitToolStart(label) *>
                         withSpinner(label, silent) {
-                          executeTool(toolCall, System.getProperty("user.dir"), Some(llm))
+                          executeTool(toolCall, System.getProperty("user.dir"), Some(llm), Some(store))
                         }.flatMap { result =>
                           val resultSummary = summarizeToolResult(toolCall, result.content)
                           val icon = if result.isError then s"${Red}✗${Reset}" else s"${Green}✓${Reset}"
@@ -213,10 +213,17 @@ Principles: work until the task is resolved; diagnose failures before trying a n
         .compile
         .drain
 
-      _ <- processStream.handleErrorWith {
-        case _: UserAbort => store.emitInterrupted() *> IO.unit
-        case e => IO.raiseError(e)
-      }
+      _ <- processStream
+        .handleErrorWith {
+          case _: UserAbort => store.emitInterrupted() *> IO.unit
+          case e => IO.raiseError(e)
+        }
+        .timeout(300.seconds)
+        .handleErrorWith {
+          case _: java.util.concurrent.TimeoutException =>
+            store.emitTimeout() *> IO.unit
+          case e => IO.raiseError(e)
+        }
       _ <- thinkingFiberRef.get.flatMap {
         case Some(fiber) => fiber.cancel *> (if silent then IO.unit else clearSpinner("Thinking"))
         case None => IO.unit

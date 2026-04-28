@@ -8,6 +8,7 @@ import java.nio.file.{Files, Path, Paths}
 
 object ReadTool extends Tool:
   val MAX_LINE_COUNT = 2000
+  val MAX_FILE_BYTES = 512 * 1024 // 512KB — approx 128k tokens, well within context
 
   val name = "Read"
 
@@ -55,6 +56,15 @@ Usage:
     if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
     else if Files.isDirectory(filePath) then
       Left(ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents."))
+    else if Files.size(filePath) > MAX_FILE_BYTES then
+      val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
+      val shortName = filePath.getFileName.toString
+      Left(
+        ToolError(
+          s"File too large to read safely: $shortName (${f"$sizeMb%.1f"}MB, limit ${MAX_FILE_BYTES / 1024 / 1024}MB). " +
+            s"Use offset/limit to read specific sections, or Bash with head/tail."
+        )
+      )
     else
       try
         val content = Files.readString(filePath)
@@ -76,5 +86,6 @@ Usage:
         val suffix = if showedLines < totalLines then s"\n\n(showing $showedLines of $totalLines lines)" else ""
         Right(result + suffix)
       catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
+    end if
   }
 end ReadTool

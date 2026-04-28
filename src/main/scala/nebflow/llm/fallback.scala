@@ -69,8 +69,10 @@ object Fallback:
           case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
           case _ => ErrorPermanence.Transient
         ErrorClassification(reason, permanence, Some(c), Some(error.getMessage))
+      case _: java.util.concurrent.TimeoutException =>
+        ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some("timeout"))
       case _ =>
-        val msg = error.getMessage.toLowerCase
+        val msg = Option(error.getMessage).map(_.toLowerCase).getOrElse("")
         if msg.contains("connection reset") || msg.contains("econnreset") || msg.contains("econnrefused") || msg
             .contains(
               "epipe"
@@ -101,12 +103,10 @@ object Fallback:
   end classifyError
 
   private def withTimeoutIO[A](ioa: IO[A], ms: Long): IO[A] =
-    ioa.timeout(ms.millis).handleErrorWith { err =>
-      IO.raiseError(new Exception(s"timeout", err))
-    }
+    ioa.timeout(ms.millis)
 
   def sleepWithJitter(minMs: Int, maxMs: Int): IO[Unit] =
-    val delay = minMs + Random.nextInt(maxMs - minMs)
+    val delay = minMs + java.util.concurrent.ThreadLocalRandom.current().nextInt(maxMs - minMs)
     IO.sleep(delay.millis)
 
   def tryProviderWithFallback[T](
@@ -146,33 +146,35 @@ object Fallback:
             val withRetry: IO[FallbackResult[T]] =
               if classification.reason == FailoverReason.RateLimit then
                 sleepWithJitter(JitterMinMs, JitterMaxMs) *>
-                  withTimeoutIO(action(candidate), DefaultTimeoutMs).attempt.flatMap {
-                    case Right(result) =>
-                      val attempt = FallbackAttempt(
-                        candidate.providerId,
-                        candidate.model,
-                        None,
-                        None,
-                        System.currentTimeMillis() - start,
-                        1,
-                        java.time.Instant.now().toString
-                      )
-                      val newAttempts = attempts :+ attempt
-                      onAttempt.traverse_(_.apply(attempt)) *>
-                        IO.pure(FallbackResult(result, newAttempts, candidate))
-                    case Left(_) =>
-                      val failAttempt = FallbackAttempt(
-                        candidate.providerId,
-                        candidate.model,
-                        Some(classification.reason),
-                        Some(classification.permanence),
-                        durationMs,
-                        0,
-                        java.time.Instant.now().toString
-                      )
-                      val newAttempts = attempts :+ failAttempt
-                      onAttempt.traverse_(_.apply(failAttempt)) *>
-                        loop(rest, newAttempts)
+                  IO.delay(System.currentTimeMillis()).flatMap { retryStart =>
+                    withTimeoutIO(action(candidate), DefaultTimeoutMs).attempt.flatMap {
+                      case Right(result) =>
+                        val attempt = FallbackAttempt(
+                          candidate.providerId,
+                          candidate.model,
+                          None,
+                          None,
+                          System.currentTimeMillis() - retryStart,
+                          1,
+                          java.time.Instant.now().toString
+                        )
+                        val newAttempts = attempts :+ attempt
+                        onAttempt.traverse_(_.apply(attempt)) *>
+                          IO.pure(FallbackResult(result, newAttempts, candidate))
+                      case Left(_) =>
+                        val failAttempt = FallbackAttempt(
+                          candidate.providerId,
+                          candidate.model,
+                          Some(classification.reason),
+                          Some(classification.permanence),
+                          durationMs,
+                          0,
+                          java.time.Instant.now().toString
+                        )
+                        val newAttempts = attempts :+ failAttempt
+                        onAttempt.traverse_(_.apply(failAttempt)) *>
+                          loop(rest, newAttempts)
+                    }
                   }
               else
                 val attempt = FallbackAttempt(

@@ -44,12 +44,14 @@ const voiceOverlay = document.getElementById('voice-overlay');
 const voiceText = document.getElementById('voice-text');
 
 const LS_KEY = 'nebflow_v3';
+const LS_THINKING_KEY = 'nebflow_thinking';
 let currentAiBubble = null;
 let aiText = '';
 let busy = false;
 let ws = null;
 let recognition = null;
 let pendingAttachments = [];
+let thinkingMode = JSON.parse(localStorage.getItem(LS_THINKING_KEY) || 'null');
 
 // ---------- Persistence ----------
 function saveMsg(entry) {
@@ -289,7 +291,7 @@ function renderError(msg) {
 
 // ---------- Universal Option Box (AskUser / Permission / SlashCmd) ----------
 // Renders an inline option picker. Used by AskUser tool, /thinking, permission prompts.
-function showOptions(container, questions, onConfirm, doneLabel) {
+function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
   const box = document.createElement('div');
   box.className = 'option-box';
   const answers = new Array(questions.length).fill(null);
@@ -322,14 +324,29 @@ function showOptions(container, questions, onConfirm, doneLabel) {
     box.appendChild(optsDiv);
   });
 
+  const btnRow = document.createElement('div');
+  btnRow.className = 'option-btn-row';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'option-cancel';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.onclick = () => {
+    box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { el.disabled = true; });
+    cancelBtn.disabled = true;
+    confirmBtn.disabled = true;
+    if (onCancel) onCancel();
+  };
+
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'option-confirm';
   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + esc(confirmLabel) + '</span>';
   confirmBtn.disabled = true;
   confirmBtn.onclick = () => {
     box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
+    cancelBtn.disabled = true;
     confirmBtn.disabled = true;
     confirmBtn.style.display = 'none';
+    cancelBtn.style.display = 'none';
 
     const ansDiv = document.createElement('div');
     ansDiv.className = 'option-answer';
@@ -338,7 +355,9 @@ function showOptions(container, questions, onConfirm, doneLabel) {
 
     if (onConfirm) onConfirm(answers);
   };
-  box.appendChild(confirmBtn);
+  btnRow.appendChild(cancelBtn);
+  btnRow.appendChild(confirmBtn);
+  box.appendChild(btnRow);
   container.appendChild(box);
   if (typeof lucide !== 'undefined') lucide.createIcons();
   chat.scrollTop = chat.scrollHeight;
@@ -361,7 +380,11 @@ function renderAskUser(items) {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({type:'askUserAnswer', answers}));
     }
-  }, 'Confirm');
+  }, 'Confirm', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({type:'askUserAnswer', answers: ['__cancelled__']}));
+    }
+  });
   saveMsg({type:'askUser', items});
 }
 
@@ -421,9 +444,10 @@ const slashCommands = {
         ]}
       ], (answers) => {
         const mode = answers[0];
-        const thinking = mode === 'Enable' ? {type: 'enabled', budget_tokens: 16000} : null;
+        thinkingMode = mode === 'Enable' ? {type: 'enabled', budget_tokens: 16000} : null;
+        localStorage.setItem(LS_THINKING_KEY, JSON.stringify(thinkingMode));
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({type: 'setThinking', thinking: thinking}));
+          ws.send(JSON.stringify({type: 'setThinking', thinking: thinkingMode}));
         }
         renderSystemBubble('Thinking: ' + mode.toLowerCase());
       }, 'Confirm');
@@ -714,7 +738,13 @@ voiceBtn.addEventListener('touchend', stopVoice);
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(`${proto}//${location.host}/ws`);
-  ws.onopen = () => { connEl.classList.remove('off'); };
+  ws.onopen = () => {
+    connEl.classList.remove('off');
+    // Restore persisted thinking mode
+    if (thinkingMode) {
+      ws.send(JSON.stringify({type: 'setThinking', thinking: thinkingMode}));
+    }
+  };
   ws.onclose = () => {
     connEl.classList.add('off');
     setTimeout(connect, 2000);
