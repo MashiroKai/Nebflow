@@ -264,18 +264,12 @@ function renderToolPending(label) {
   const card = document.createElement('div');
   card.className = 'tool-card';
   card.style.background = '#e8e8e8';
-  const spinnerId = 'tool-spin-' + Date.now();
-  card.innerHTML = '<span class="icon"><div style="width:14px;height:14px;" id="' + spinnerId + '"></div></span>' +
+  card.innerHTML = '<span class="icon"><span class="spinner"></span></span>' +
     '<div class="content"><div class="label">' + esc(label) + '</div></div>';
   row.appendChild(card);
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
   currentToolCard = row;
-  lottie.loadAnimation({
-    container: document.getElementById(spinnerId),
-    renderer: 'svg', loop: true, autoplay: true,
-    animationData: toolSpinnerJson
-  });
 }
 function renderError(msg) {
   const row = document.createElement('div');
@@ -388,6 +382,43 @@ function renderAskUser(items) {
   saveMsg({type:'askUser', items});
 }
 
+function renderPermissionPrompt(toolName, summary, inputJson) {
+  const row = document.createElement('div');
+  row.className = 'row ai';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ai';
+  row.appendChild(bubble);
+  chat.appendChild(row);
+
+  // Show tool details
+  let detail = '';
+  try {
+    const input = JSON.parse(inputJson || '{}');
+    if (input.command) detail = 'Command: ' + input.command;
+    else if (input.file_path) detail = 'File: ' + input.file_path;
+    else if (input.url) detail = 'URL: ' + input.url;
+  } catch(e) {}
+
+  const items = [{
+    question: 'Allow ' + toolName + '?',
+    options: [
+      {label: 'Allow', desc: summary + (detail ? ' — ' + detail : '')},
+      {label: 'Deny', desc: 'Skip this tool call'}
+    ]
+  }];
+  showOptions(bubble, items, (answers) => {
+    const approved = answers[0] === 'Allow';
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({type:'permissionAnswer', approved}));
+    }
+  }, 'Confirm', () => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({type:'permissionAnswer', approved: false}));
+    }
+  });
+  chat.scrollTop = chat.scrollHeight;
+}
+
 function esc(s) {
   const d = document.createElement('div');
   d.textContent = s;
@@ -451,6 +482,34 @@ const slashCommands = {
         }
         renderSystemBubble('Thinking: ' + mode.toLowerCase());
       }, 'Confirm');
+    }
+  },
+  '/trust': {
+    desc: 'Manage tool approval policy',
+    run: () => {
+      if (!currentAiBubble) {
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        currentAiBubble = document.createElement('div');
+        currentAiBubble.className = 'bubble ai';
+        row.appendChild(currentAiBubble);
+        chat.appendChild(row);
+      }
+      showOptions(currentAiBubble, [
+        {question: 'Tool approval policy', options: [
+          {label: 'Auto-approve all', desc: 'All tools execute without asking'},
+          {label: 'Ask every time', desc: 'Prompt for Bash/Write/Edit/Curl'},
+          {label: 'Block dangerous', desc: 'Block Bash/Write/Edit/Curl entirely'}
+        ]}
+      ], (answers) => {
+        const policy = answers[0] === 'Auto-approve all' ? 'auto'
+                     : answers[0] === 'Block dangerous' ? 'block'
+                     : 'ask';
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({type: 'setPolicy', policy}));
+        }
+        renderSystemBubble('Policy: ' + answers[0]);
+      }, 'Apply');
     }
   }
 };
@@ -737,7 +796,10 @@ voiceBtn.addEventListener('touchend', stopVoice);
 // ---------- WebSocket ----------
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  const urlParams = new URLSearchParams(location.search);
+  const token = urlParams.get('token') || '';
+  const tokenQs = token ? `?token=${encodeURIComponent(token)}` : '';
+  ws = new WebSocket(`${proto}//${location.host}/ws${tokenQs}`);
   ws.onopen = () => {
     connEl.classList.remove('off');
     // Restore persisted thinking mode
@@ -797,6 +859,9 @@ function connect() {
         break;
       case 'askUser':
         renderAskUser(msg.items);
+        break;
+      case 'askPermission':
+        renderPermissionPrompt(msg.toolName, msg.summary, msg.input);
         break;
     }
   };

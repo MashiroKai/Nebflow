@@ -9,6 +9,7 @@ import org.http4s.websocket.WebSocketFrame
 class WebReplUi(queue: Queue[IO, WebSocketFrame]) extends ReplUi:
   private val escAction = Ref.unsafe[IO, Option[IO[Unit]]](None)
   private val askUserDeferred = Ref.unsafe[IO, Option[cats.effect.Deferred[IO, List[String]]]](None)
+  private val permissionDeferred = Ref.unsafe[IO, Option[cats.effect.Deferred[IO, Boolean]]](None)
 
   private def sendJson(json: String): IO[Unit] =
     queue.offer(WebSocketFrame.Text(json))
@@ -86,6 +87,21 @@ class WebReplUi(queue: Queue[IO, WebSocketFrame]) extends ReplUi:
   def answerAskUser(answers: List[String]): IO[Unit] =
     askUserDeferred.get.flatMap {
       case Some(d) => askUserDeferred.set(None) *> d.complete(answers).void
+      case None => IO.unit
+    }
+
+  def askPermission(toolName: String, summary: String, inputJson: String): IO[Boolean] =
+    cats.effect.Deferred[IO, Boolean].flatMap { d =>
+      permissionDeferred.set(Some(d)) *>
+        sendJson(
+          s"""{"type":"askPermission","toolName":${toolName.asJson.noSpaces},"summary":${summary.asJson.noSpaces},"input":$inputJson}"""
+        ) *>
+        d.get
+    }
+
+  def answerPermission(approved: Boolean): IO[Unit] =
+    permissionDeferred.get.flatMap {
+      case Some(d) => permissionDeferred.set(None) *> d.complete(approved).void
       case None => IO.unit
     }
 end WebReplUi

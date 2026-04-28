@@ -3,6 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.core.PathSandbox
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -89,29 +90,38 @@ Usage:
       if filePathStr.startsWith("/") then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
-    try
-      if Files.exists(filePath) && Files.isDirectory(filePath) then
-        Left(ToolError(s"Path is a directory, not a file: $filePath"))
-      else
-        val isNew = !Files.exists(filePath)
-        val dir = filePath.getParent
-        if dir != null then Files.createDirectories(dir)
+    if !PathSandbox.isAllowed(filePath.toString, ctx.projectRoot) then
+      Left(
+        ToolError(
+          s"Path access denied: $filePath is outside the project root (${ctx.projectRoot}). Use Bash if you need to access files outside the project."
+        )
+      )
+    else
 
-        if isNew then
-          Files.writeString(filePath, content)
-          Right(s"OK:CREATED $filePath")
+      try
+        if Files.exists(filePath) && Files.isDirectory(filePath) then
+          Left(ToolError(s"Path is a directory, not a file: $filePath"))
         else
-          val original = Files.readString(filePath)
-          Files.writeString(filePath, content)
+          val isNew = !Files.exists(filePath)
+          val dir = filePath.getParent
+          if dir != null then Files.createDirectories(dir)
 
-          val oldLines = original.split("\\r?\\n").toList
-          val newLines = content.split("\\r?\\n").toList
-          val added = newLines.count(l => !oldLines.contains(l))
-          val removed = oldLines.count(l => !newLines.contains(l))
+          if isNew then
+            Files.writeString(filePath, content)
+            Right(s"OK:CREATED $filePath")
+          else
+            val original = Files.readString(filePath)
+            Files.writeString(filePath, content)
 
-          val short = filePath.getFileName.toString
-          val diff = makeDiff(short, original, content)
-          Right(s"OK:UPDATED $short, $added added, $removed removed\n$diff")
-    catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
+            val oldLines = original.split("\\r?\\n").toList
+            val newLines = content.split("\\r?\\n").toList
+            val added = newLines.count(l => !oldLines.contains(l))
+            val removed = oldLines.count(l => !newLines.contains(l))
+
+            val short = filePath.getFileName.toString
+            val diff = makeDiff(short, original, content)
+            Right(s"OK:UPDATED $short, $added added, $removed removed\n$diff")
+      catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
+    end if
   }
 end WriteTool

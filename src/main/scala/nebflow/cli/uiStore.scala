@@ -100,6 +100,10 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
   def removeEscListener(): IO[Unit] =
     IO.delay { escHandler = None }
 
+  // CLI mode: auto-approve all tool calls
+  def askPermission(toolName: String, summary: String, inputJson: String): IO[Boolean] =
+    IO.pure(true)
+
   // === Public API ===
   def getState: IO[UiState] = stateRef.get
 
