@@ -7,7 +7,8 @@ import nebflow.shared.LlmHandle
 /** 工具执行上下文 */
 case class ToolContext(
   projectRoot: String,
-  llm: Option[LlmHandle[IO]] = None
+  llm: Option[LlmHandle[IO]] = None,
+  replUi: Option[nebflow.core.ReplUi] = None
 )
 
 /** 工具错误 */

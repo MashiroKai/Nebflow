@@ -7,10 +7,15 @@ import nebflow.shared.{LlmHandle, ToolCall}
 
 case class ToolExecResult(content: String, isError: Boolean = false)
 
-def executeTool(call: ToolCall, projectRoot: String, llm: Option[LlmHandle[IO]] = None): IO[ToolExecResult] =
+def executeTool(
+  call: ToolCall,
+  projectRoot: String,
+  llm: Option[LlmHandle[IO]] = None,
+  replUi: Option[nebflow.core.ReplUi] = None
+): IO[ToolExecResult] =
   ToolRegistry.TOOL_MAP.get(call.name) match
     case Some(tool) =>
-      val ctx = ToolContext(projectRoot, llm)
+      val ctx = ToolContext(projectRoot, llm, replUi)
       tool
         .call(call.input, ctx)
         .map {

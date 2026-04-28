@@ -22,3 +22,4 @@ trait ReplUi:
   def emitDone(): IO[Unit]
   def onEscInterrupt(action: IO[Unit]): IO[Unit]
   def removeEscListener(): IO[Unit]
+  def askUser(items: List[AskItem]): IO[List[String]]
