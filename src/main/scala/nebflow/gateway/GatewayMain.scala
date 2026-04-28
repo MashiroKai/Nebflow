@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.core.mcp.*
 import nebflow.core.tools.ToolRegistry
+import nebflow.core.{NebflowLogger, PermissionState}
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
 import nebflow.shared.{Message, given}
 import org.http4s.ember.server.EmberServerBuilder
@@ -13,6 +14,7 @@ import org.http4s.server.Router
 import scala.concurrent.duration.*
 
 object GatewayMain extends IOApp.Simple:
+  private val logger = NebflowLogger.forName("nebflow.gateway")
 
   private val webSessionPath = os.home / ".nebflow" / "sessions" / "web.json"
 
@@ -67,37 +69,53 @@ object GatewayMain extends IOApp.Simple:
     GatewayConfig.load.flatMap { cfg =>
       val config = Config.loadServiceConfig()
 
-      // Global session state shared across all connections
-      loadWebSession().flatMap { initialHistory =>
-        Ref.of[IO, List[Message]](initialHistory).flatMap { globalMessagesRef =>
-          LlmInterface.createLlm().flatMap { case (handle, releaseBackend) =>
-            initMcpServers(config).flatMap { _ =>
-              val chatRoutes = ChatRoutes(handle)
-              val url = s"http://localhost:${cfg.port}"
+      Auth.loadOrCreateToken.flatMap { token =>
+        // Global session state shared across all connections
+        loadWebSession().flatMap { initialHistory =>
+          Ref.of[IO, List[Message]](initialHistory).flatMap { globalMessagesRef =>
+            LlmInterface.createLlm().flatMap { case (handle, releaseBackend) =>
+              initMcpServers(config).flatMap { _ =>
+                val chatRoutes = new ChatRoutes(handle, token)
+                val baseUrl = s"http://localhost:${cfg.port}"
+                val url = s"$baseUrl?token=$token"
 
-              IO.consoleForIO.errorln(s"nebflow v${nebflow.Version.string}") *>
-                IO.consoleForIO.errorln(s"gateway listening on ${cfg.host}:${cfg.port}") *>
-                Ref.of[IO, Option[io.circe.Json]](None).flatMap { thinkingModeRef =>
-                  EmberServerBuilder
-                    .default[IO]
-                    .withHost(cfg.host)
-                    .withPort(cfg.port)
-                    .withHttpWebSocketApp { wsb =>
-                      val wsRoutes =
-                        new WebSocketRoutes(wsb, handle, globalMessagesRef, saveWebSession, thinkingModeRef)
-                      Router(
-                        "/api" -> chatRoutes.routes,
-                        "/" -> wsRoutes.routes
-                      ).orNotFound
+                logger.info(s"nebflow v${nebflow.Version.string}") *>
+                  logger.info(s"gateway listening on ${cfg.host}:${cfg.port}") *>
+                  logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)") *>
+                  Ref.of[IO, Option[io.circe.Json]](None).flatMap { thinkingModeRef =>
+                    PermissionState.create.flatMap { permState =>
+                      RateLimiter.create().flatMap { rateLimiter =>
+                        EmberServerBuilder
+                          .default[IO]
+                          .withHost(cfg.host)
+                          .withPort(cfg.port)
+                          .withIdleTimeout(10.minutes)
+                          .withHttpWebSocketApp { wsb =>
+                            val wsRoutes =
+                              new WebSocketRoutes(
+                                wsb,
+                                handle,
+                                globalMessagesRef,
+                                saveWebSession,
+                                thinkingModeRef,
+                                permState,
+                                rateLimiter,
+                                token
+                              )
+                            Router(
+                              "/api" -> chatRoutes.routes,
+                              "/" -> wsRoutes.routes
+                            ).orNotFound
+                          }
+                          .build
+                          .use { _ =>
+                            openBrowser(url) *> IO.never
+                          }
+                          .guarantee(releaseBackend)
+                      }
                     }
-                    .build
-                    .use { _ =>
-                      IO.consoleForIO.errorln(s"opening $url ...") *>
-                        openBrowser(url) *>
-                        IO.sleep(1.second).foreverM
-                    }
-                    .guarantee(releaseBackend)
-                }
+                  }
+              }
             }
           }
         }

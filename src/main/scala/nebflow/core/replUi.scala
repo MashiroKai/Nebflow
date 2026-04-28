@@ -23,3 +23,4 @@ trait ReplUi:
   def onEscInterrupt(action: IO[Unit]): IO[Unit]
   def removeEscListener(): IO[Unit]
   def askUser(items: List[AskItem]): IO[List[String]]
+  def askPermission(toolName: String, summary: String, inputJson: String): IO[Boolean]
