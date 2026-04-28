@@ -17,7 +17,7 @@ Usage:
 - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd.
 - You may specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). By default, your command will timeout after 120000ms (2 minutes).
 - Use run_in_background for long-running commands. Retrieve results later with the returned job ID.
-- Use dangerouslyDisableSandbox only when explicitly requested by the user for operations that would otherwise be blocked.
+- Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user."""
 
@@ -35,10 +35,6 @@ Usage:
         "run_in_background" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
           "description" -> "If true, run the command in the background and return a job ID immediately".asJson
-        ),
-        "dangerouslyDisableSandbox" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "If true, disables security checks that block destructive commands. Only use when the user explicitly requests it.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("command".asJson)
@@ -92,16 +88,14 @@ Usage:
       .getOrElse(DEFAULT_TIMEOUT)
     val command = input("command").flatMap(_.asString).getOrElse("")
     val background = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
-    val disableSandbox = input("dangerouslyDisableSandbox").flatMap(_.asBoolean).getOrElse(false)
     val desc = input("description").flatMap(_.asString)
 
     if command.isEmpty then IO.pure(Right("[Empty command]"))
-    else if !disableSandbox && isDangerous(command) then
+    else if isDangerous(command) then
       IO.pure(
         Left(
           ToolError(
-            s"""[Blocked by sandbox] This command was blocked for safety. Dangerous operations require user confirmation.
-To proceed, the user must explicitly approve, or set dangerouslyDisableSandbox=true."""
+            "[Blocked by sandbox] This command is permanently blocked for safety and cannot be approved."
           )
         )
       )

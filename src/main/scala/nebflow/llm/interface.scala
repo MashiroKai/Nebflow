@@ -2,10 +2,12 @@ package nebflow.llm
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.NebflowLogger
 import nebflow.shared.*
 import sttp.client4.httpclient.fs2.HttpClientFs2Backend
 
 object LlmInterface:
+  private val logger = NebflowLogger.forName("nebflow.llm")
 
   def createLlm(options: Option[LlmOptions] = None): IO[(LlmHandle[IO], IO[Unit])] =
     HttpClientFs2Backend.resource[IO]().allocated.map { case (backend, release) =>
@@ -29,7 +31,7 @@ object LlmInterface:
                 registry
                   .getAdapter(candidate.providerId)
                   .sendMessage(
-                    SendMessageParams(req.messages, candidate.model, req.tools, req.maxTokens, req.thinking)
+                    SendMessageParams(req.messages, candidate.model, req.tools, Some(candidate.maxTokens), req.thinking)
                   )
             )
             .map { result =>
@@ -98,7 +100,7 @@ object LlmInterface:
                     val stream = registry
                       .getAdapter(candidate.providerId)
                       .sendMessageStream(
-                        SendMessageParams(req.messages, candidate.model, req.tools, req.maxTokens, req.thinking)
+                        SendMessageParams(req.messages, candidate.model, req.tools, Some(candidate.maxTokens), req.thinking)
                       )
                     stream
                       .evalTap { chunk =>
@@ -120,7 +122,14 @@ object LlmInterface:
                               0,
                               java.time.Instant.now().toString
                             )
-                            fs2.Stream.eval(failureRef.update(_ :+ attempt)).flatMap(_ => tryCandidate(rest))
+                            fs2.Stream
+                              .eval(
+                                logger.warn(
+                                  s"Stream fallback: ${candidate.providerId}/${candidate.model} failed, trying next"
+                                )
+                                  *> failureRef.update(_ :+ attempt)
+                              )
+                              .flatMap(_ => tryCandidate(rest))
                         }
                       }
 

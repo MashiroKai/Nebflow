@@ -136,6 +136,15 @@ body {
 .tool-card .icon { flex-shrink: 0; margin-top: 1px; }
 .tool-card .icon.ok { color: #4caf50; }
 .tool-card .icon.err { color: #f44336; }
+.tool-card .spinner {
+  width: 14px; height: 14px;
+  border: 2px solid #ccc;
+  border-top-color: #555;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .tool-card .content { flex: 1; min-width: 0; }
 .tool-card .label { color: #555; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tool-card .body {
