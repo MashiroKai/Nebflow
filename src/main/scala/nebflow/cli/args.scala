@@ -3,7 +3,7 @@ package nebflow.cli
 import scopt.OParser
 
 enum CliMode:
-  case Interactive, ContinueSession, SingleShot
+  case Interactive, ContinueSession, SingleShot, Server
 
 case class Args(
   mode: CliMode = CliMode.Interactive,
@@ -12,7 +12,8 @@ case class Args(
 
 object Args:
   private val builder = OParser.builder[Args]
-  private val parser = {
+
+  private val parser =
     import builder.*
     OParser.sequence(
       programName("nebflow"),
@@ -20,12 +21,14 @@ object Args:
       opt[Unit]('c', "continue")
         .action((_, c) => c.copy(mode = CliMode.ContinueSession))
         .text("Continue last session"),
+      opt[Unit]('s', "server")
+        .action((_, c) => c.copy(mode = CliMode.Server))
+        .text("Start web server"),
       arg[String]("<query>")
         .optional()
         .action((q, c) => c.copy(mode = CliMode.SingleShot, input = q))
         .text("Single-shot query (non-interactive)")
     )
-  }
 
   def parse(args: Array[String]): Option[Args] =
     OParser.parse(parser, args, Args())

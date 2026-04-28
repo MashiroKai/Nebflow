@@ -3,6 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
+
 import java.nio.file.{Files, Path, Paths}
 
 object WriteTool extends Tool:
@@ -18,14 +19,20 @@ Usage:
 - Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked."""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> io.circe.Json.obj(
-      "file_path" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The absolute path to the file to write (must be absolute, not relative)".asJson),
-      "content" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The content to write to the file".asJson)
-    ),
-    "required" -> io.circe.Json.arr("file_path".asJson, "content".asJson)
-  ))
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> io.circe.Json.obj(
+        "file_path" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The absolute path to the file to write (must be absolute, not relative)".asJson
+        ),
+        "content" -> io.circe.Json
+          .obj("type" -> "string".asJson, "description" -> "The content to write to the file".asJson)
+      ),
+      "required" -> io.circe.Json.arr("file_path".asJson, "content".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val path = input("file_path").flatMap(_.asString).getOrElse("")
@@ -44,33 +51,67 @@ Usage:
       if parts.nonEmpty then parts.mkString(", ") else "File updated"
     else result.split("\\n").headOption.getOrElse(result)
 
+  private def makeDiff(fileName: String, oldContent: String, newContent: String): String =
+    val oldLines = oldContent.split("\\r?\\n").toList
+    val newLines = newContent.split("\\r?\\n").toList
+    val sb = new StringBuilder
+    var oldIdx = 0
+    var newIdx = 0
+    while oldIdx < oldLines.length || newIdx < newLines.length do
+      if oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx) then
+        val nn = newIdx + 1
+        sb.append(f"$nn%3d |${oldLines(oldIdx)}\n")
+        oldIdx += 1
+        newIdx += 1
+      else
+        val matchedOld = oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx)
+        if !matchedOld && oldIdx < oldLines.length then
+          val on = oldIdx + 1
+          sb.append(f"$on%3d |-${oldLines(oldIdx)}\n")
+          oldIdx += 1
+        else
+          val matchedNew = oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx)
+          if !matchedNew && newIdx < newLines.length then
+            val nn = newIdx + 1
+            sb.append(f"$nn%3d |+${newLines(newIdx)}\n")
+            newIdx += 1
+          else
+            if oldIdx < oldLines.length then oldIdx += 1
+            if newIdx < newLines.length then newIdx += 1
+    sb.toString().trim
+
+  end makeDiff
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val content = input("content").flatMap(_.asString).getOrElse("")
-    val filePath = if filePathStr.startsWith("/") then Paths.get(filePathStr)
+    val filePath =
+      if filePathStr.startsWith("/") then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
-    val isNew = !Files.exists(filePath)
-
     try
-      val dir = filePath.getParent
-      if dir != null then Files.createDirectories(dir)
-
-      if isNew then
-        Files.writeString(filePath, content)
-        Right(s"OK:CREATED $filePath")
+      if Files.exists(filePath) && Files.isDirectory(filePath) then
+        Left(ToolError(s"Path is a directory, not a file: $filePath"))
       else
-        val original = Files.readString(filePath)
-        Files.writeString(filePath, content)
+        val isNew = !Files.exists(filePath)
+        val dir = filePath.getParent
+        if dir != null then Files.createDirectories(dir)
 
-        // Compute simple diff
-        val oldLines = original.split("\\r?\\n").toList
-        val newLines = content.split("\\r?\\n").toList
-        val added = newLines.count(l => !oldLines.contains(l))
-        val removed = oldLines.count(l => !newLines.contains(l))
+        if isNew then
+          Files.writeString(filePath, content)
+          Right(s"OK:CREATED $filePath")
+        else
+          val original = Files.readString(filePath)
+          Files.writeString(filePath, content)
 
-        val short = filePath.getFileName.toString
-        Right(s"OK:UPDATED $short, $added added, $removed removed")
-    catch
-      case e: Exception => Right(s"Error writing file: ${e.getMessage}")
+          val oldLines = original.split("\\r?\\n").toList
+          val newLines = content.split("\\r?\\n").toList
+          val added = newLines.count(l => !oldLines.contains(l))
+          val removed = oldLines.count(l => !newLines.contains(l))
+
+          val short = filePath.getFileName.toString
+          val diff = makeDiff(short, original, content)
+          Right(s"OK:UPDATED $short, $added added, $removed removed\n$diff")
+    catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
   }
+end WriteTool

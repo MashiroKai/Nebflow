@@ -1,19 +1,21 @@
 package nebflow.llm.providers
 
-import nebflow.llm.{ProviderAdapter, SendMessageParams, AdapterResponse}
-import nebflow.shared.{Message, MessageRole, ContentBlock, ToolCall, ToolDefinition, StreamChunk, TokenUsage}
 import cats.effect.IO
 import cats.effect.kernel.Ref
 import cats.syntax.all.*
-import io.circe.{Json, JsonObject}
-import io.circe.syntax.*
-import io.circe.parser.parse
-import sttp.client4.*
-import sttp.capabilities.fs2.Fs2Streams
 import fs2.Stream
+import io.circe.parser.parse
+import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
+import nebflow.llm.{AdapterResponse, ProviderAdapter, SendMessageParams}
+import nebflow.shared.*
+import sttp.capabilities.fs2.Fs2Streams
+import sttp.client4.*
+
 import scala.concurrent.duration.Duration
 
-class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]]) extends ProviderAdapter[IO]:
+class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]])
+    extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
   private def toAnthropicMessages(messages: List[Message]): List[Json] =
@@ -55,6 +57,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
               if isError.contains(true) then base.deepMerge(Json.obj("is_error" -> true.asJson)) else base
           }
           Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(content))
+      end match
     }
 
   private def toAnthropicTools(tools: List[ToolDefinition]): Json =
@@ -79,13 +82,16 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
+    val bodyWithThinking = params.thinking match
+      case Some(t) => bodyWithTools.deepMerge(Json.obj("thinking" -> t))
+      case None => bodyWithTools
 
     val request = basicRequest
       .post(uri"$base/v1/messages")
       .header("x-api-key", apiKey)
       .header("anthropic-version", "2023-06-01")
       .header("content-type", "application/json")
-      .body(bodyWithTools.noSpaces)
+      .body(bodyWithThinking.noSpaces)
 
     backend.send(request).flatMap { response =>
       response.body match
@@ -94,6 +100,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         case Right(bodyStr) =>
           IO.pure(parseNonStreamingResponse(bodyStr))
     }
+
+  end sendMessage
 
   private def parseNonStreamingResponse(bodyStr: String): AdapterResponse =
     parse(bodyStr) match
@@ -136,6 +144,9 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
+    val bodyWithThinking = params.thinking match
+      case Some(t) => bodyWithTools.deepMerge(Json.obj("thinking" -> t))
+      case None => bodyWithTools
 
     Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
       val request = basicRequest
@@ -143,7 +154,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         .header("x-api-key", apiKey)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
-        .body(bodyWithTools.noSpaces)
+        .body(bodyWithThinking.noSpaces)
         .response(asStreamUnsafe(Fs2Streams[IO]))
         .readTimeout(Duration.Inf)
 
@@ -156,6 +167,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
       }
     }
 
+  end sendMessageStream
+
   private def parseSseIncrementally(
     byteStream: Stream[IO, Byte],
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
@@ -166,8 +179,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         .through(fs2.text.lines)
         .filter(_.nonEmpty)
         .evalMap { line =>
-          if line.startsWith("event:") then
-            eventTypeRef.set(Some(line.drop(6).trim)).as(List.empty[StreamChunk])
+          if line.startsWith("event:") then eventTypeRef.set(Some(line.drop(6).trim)).as(List.empty[StreamChunk])
           else if line.startsWith("data:") then
             val data = line.drop(5).trim
             eventTypeRef.getAndSet(None).flatMap {
@@ -185,49 +197,53 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
   ): IO[List[StreamChunk]] =
     if data == "[DONE]" then IO.pure(Nil)
-    else parse(data) match
-      case Left(_) => IO.pure(Nil)
-      case Right(json) =>
-        eventType match
-          case "content_block_delta" =>
-            json.hcursor.downField("delta").downField("type").as[String].toOption match
-              case Some("text_delta") =>
-                val text = json.hcursor.downField("delta").downField("text").as[String].getOrElse("")
-                IO.pure(if text.nonEmpty then List(StreamChunk.TextDelta(text)) else Nil)
-              case Some("input_json_delta") =>
-                val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
-                val partial = json.hcursor.downField("delta").downField("partial_json").as[String].getOrElse("")
-                toolCallState.modify { m =>
-                  val updated = m.get(idx) match
-                    case Some((id, name, sb)) => m.updated(idx, (id, name, sb.append(partial)))
-                    case None => m
-                  (updated, ())
-                }.as(Nil)
-              case _ => IO.pure(Nil)
-          case "content_block_start" =>
-            json.hcursor.downField("content_block").downField("type").as[String].toOption match
-              case Some("tool_use") =>
-                val id = json.hcursor.downField("content_block").downField("id").as[String].getOrElse("")
-                val name = json.hcursor.downField("content_block").downField("name").as[String].getOrElse("")
-                val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
-                toolCallState.update(_ + (idx -> (id, name, new StringBuilder))).as(Nil)
-              case _ => IO.pure(Nil)
-          case "content_block_stop" =>
-            val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
-            toolCallState.modify { m =>
-              m.get(idx) match
-                case Some((id, name, sb)) =>
-                  val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-                  (m - idx, List(StreamChunk.ToolCallChunk(ToolCall(id, name, input))))
-                case None => (m, Nil)
-            }
-          case "message_delta" =>
-            val stopReason = json.hcursor.downField("delta").downField("stop_reason").as[String].toOption
-            val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
-              TokenUsage(
-                inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
-                outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0)
-              )
-            }
-            IO.pure(List(StreamChunk.Done(stopReason, usage)))
-          case _ => IO.pure(Nil)
+    else
+      parse(data) match
+        case Left(_) => IO.pure(Nil)
+        case Right(json) =>
+          eventType match
+            case "content_block_delta" =>
+              json.hcursor.downField("delta").downField("type").as[String].toOption match
+                case Some("text_delta") =>
+                  val text = json.hcursor.downField("delta").downField("text").as[String].getOrElse("")
+                  IO.pure(if text.nonEmpty then List(StreamChunk.TextDelta(text)) else Nil)
+                case Some("input_json_delta") =>
+                  val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
+                  val partial = json.hcursor.downField("delta").downField("partial_json").as[String].getOrElse("")
+                  toolCallState
+                    .modify { m =>
+                      val updated = m.get(idx) match
+                        case Some((id, name, sb)) => m.updated(idx, (id, name, sb.append(partial)))
+                        case None => m
+                      (updated, ())
+                    }
+                    .as(Nil)
+                case _ => IO.pure(Nil)
+            case "content_block_start" =>
+              json.hcursor.downField("content_block").downField("type").as[String].toOption match
+                case Some("tool_use") =>
+                  val id = json.hcursor.downField("content_block").downField("id").as[String].getOrElse("")
+                  val name = json.hcursor.downField("content_block").downField("name").as[String].getOrElse("")
+                  val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
+                  toolCallState.update(_ + (idx -> (id, name, new StringBuilder))).as(Nil)
+                case _ => IO.pure(Nil)
+            case "content_block_stop" =>
+              val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
+              toolCallState.modify { m =>
+                m.get(idx) match
+                  case Some((id, name, sb)) =>
+                    val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
+                    (m - idx, List(StreamChunk.ToolCallChunk(ToolCall(id, name, input))))
+                  case None => (m, Nil)
+              }
+            case "message_delta" =>
+              val stopReason = json.hcursor.downField("delta").downField("stop_reason").as[String].toOption
+              val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+                TokenUsage(
+                  inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
+                  outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0)
+                )
+              }
+              IO.pure(List(StreamChunk.Done(stopReason, usage)))
+            case _ => IO.pure(Nil)
+end AnthropicAdapter

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>nebflow</title>
+  <script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
+  <script src="https://unpkg.com/lottie-web@5.12.2/build/player/lottie.min.js"></script>
+  <script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="header">
+    <div class="title"><span>nebflow</span></div>
+    <div class="conn off" id="conn"></div>
+  </div>
+  <div id="chat"></div>
+  <div id="status-wrap">
+    <div id="lottie-spinner"></div>
+    <span id="status-text"></span>
+  </div>
+  <div class="voice-overlay" id="voice-overlay">
+    <div class="voice-wave"><i data-lucide="mic"></i></div>
+    <div class="voice-text" id="voice-text">Listening...</div>
+    <div class="voice-hint">Release to send</div>
+  </div>
+  <div id="input-bar" style="position:relative;">
+    <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
+    <div id="input-wrap" style="position:relative;">
+      <div id="attachment-preview"></div>
+      <input id="input" type="text" placeholder="Type a message..." autocomplete="off">
+      <div id="slash-dropdown"></div>
+    </div>
+    <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
+    <button id="send-btn"><i data-lucide="send"></i></button>
+    <button id="stop-btn"><i data-lucide="square"></i></button>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

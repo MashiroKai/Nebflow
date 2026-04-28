@@ -2,6 +2,8 @@ package nebflow.core
 
 import cats.effect.IO
 
+import java.util.concurrent.atomic.AtomicReference
+
 /** 提问项 */
 case class AskItem(
   question: String,
@@ -17,14 +19,17 @@ case class AskOption(
 class UserAbort extends Exception("UserAbort")
 
 object AskUser:
-  @volatile private var handler: Option[List[AskItem] => IO[List[String]]] = None
+  private val handler = new AtomicReference[Option[List[AskItem] => IO[List[String]]]](None)
 
   def setHandler(h: List[AskItem] => IO[List[String]]): Unit =
-    handler = Some(h)
+    handler.set(Some(h))
+
+  def clearHandler(): Unit =
+    handler.set(None)
 
   def ask(items: List[AskItem]): IO[List[String]] =
-    handler match
+    handler.get() match
       case Some(h) => h(items)
       case None => IO.raiseError(new Exception("AskUser not available in non-interactive mode"))
 
-  def isInteractive: Boolean = handler.isDefined
+  def isInteractive: Boolean = handler.get().isDefined

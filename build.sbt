@@ -1,11 +1,15 @@
 import Dependencies._
 
+ThisBuild / scalaVersion := "3.5.2"
+ThisBuild / semanticdbEnabled := true
+ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
+
 lazy val root = (project in file("."))
   .settings(
     name := "nebflow",
     version := "1.0.0",
-    scalaVersion := "3.5.2",
     organization := "nebflow",
+    scalaVersion := "3.5.2",
 
     libraryDependencies ++= Seq(
       // CLI

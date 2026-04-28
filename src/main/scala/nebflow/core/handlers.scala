@@ -1,9 +1,9 @@
 package nebflow.core
 
-import nebflow.shared.{ToolCall, LlmHandle}
-import nebflow.core.tools.{Tool, ToolContext, ToolError, ToolRegistry}
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.tools.*
+import nebflow.shared.{LlmHandle, ToolCall}
 
 case class ToolExecResult(content: String, isError: Boolean = false)
 
@@ -11,15 +11,16 @@ def executeTool(call: ToolCall, projectRoot: String, llm: Option[LlmHandle[IO]] 
   ToolRegistry.TOOL_MAP.get(call.name) match
     case Some(tool) =>
       val ctx = ToolContext(projectRoot, llm)
-      tool.call(call.input, ctx).map {
-        case Left(err) => ToolExecResult(err.message, isError = true)
-        case Right(result) =>
-          if result.startsWith("Error:") then ToolExecResult(result, isError = true)
-          else ToolExecResult(result)
-      }.handleError {
-        case _: UserAbort => throw new UserAbort()
-        case e => ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true)
-      }
+      tool
+        .call(call.input, ctx)
+        .map {
+          case Left(err) => ToolExecResult(err.message, isError = true)
+          case Right(result) => ToolExecResult(result)
+        }
+        .handleError {
+          case _: UserAbort => throw new UserAbort()
+          case e => ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true)
+        }
     case None =>
       IO.pure(ToolExecResult(s"No such tool available: ${call.name}", isError = true))
 

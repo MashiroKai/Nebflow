@@ -1,12 +1,14 @@
 package nebflow.core.mcp
 
 import cats.effect.IO
-import io.circe.{Json, parser}
-import io.circe.syntax.*
 import io.circe.generic.auto.*
-import scala.concurrent.{ExecutionContext, Future, Promise}
+import io.circe.syntax.*
+import io.circe.{Json, parser}
+
 import java.io.{BufferedReader, InputStreamReader, PrintWriter}
 import java.util.concurrent.{ConcurrentHashMap, atomic}
+
+import scala.concurrent.{ExecutionContext, Future, Promise}
 
 /** MCP Transport interface */
 trait McpTransport:
@@ -15,6 +17,7 @@ trait McpTransport:
 
 /** Stdio transport */
 class StdioTransport(command: String, args: List[String], env: Map[String, String]) extends McpTransport:
+
   private val process = new ProcessBuilder((command :: args)*)
     .inheritIO()
     .redirectOutput(ProcessBuilder.Redirect.PIPE)
@@ -29,7 +32,7 @@ class StdioTransport(command: String, args: List[String], env: Map[String, Strin
   private var running = true
 
   // Reader thread
-  private val readerThread = new Thread(() => {
+  private val readerThread = new Thread(() =>
     try
       while running do
         val line = stdout.readLine()
@@ -53,9 +56,8 @@ class StdioTransport(command: String, args: List[String], env: Map[String, Strin
                 pending.remove(idStr)
           }
         else running = false
-    catch
-      case _: Exception => running = false
-  })
+    catch case _: Exception => running = false
+  )
   readerThread.setDaemon(true)
   readerThread.start()
 
@@ -84,8 +86,11 @@ class StdioTransport(command: String, args: List[String], env: Map[String, Strin
     proc.destroy()
   }
 
+end StdioTransport
+
 /** HTTP transport */
 class HttpTransport(url: String, headers: Map[String, String]) extends McpTransport:
+
   import sttp.client4.*
   import sttp.client4.httpclient.HttpClientSyncBackend
 
@@ -118,3 +123,4 @@ class HttpTransport(url: String, headers: Map[String, String]) extends McpTransp
   }
 
   def close(): IO[Unit] = IO.unit
+end HttpTransport
