@@ -12,7 +12,7 @@ import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.*
 
-import scala.concurrent.duration.Duration
+import scala.concurrent.duration.*
 
 class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, Fs2Streams[IO]])
     extends ProviderAdapter[IO]:
@@ -156,7 +156,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         .header("content-type", "application/json")
         .body(bodyWithThinking.noSpaces)
         .response(asStreamUnsafe(Fs2Streams[IO]))
-        .readTimeout(Duration.Inf)
+        .readTimeout(180.seconds)
 
       Stream.eval(backend.send(request)).flatMap { response =>
         response.body match

@@ -219,8 +219,28 @@ body {
   cursor: default;
   pointer-events: none;
 }
+.option-btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.option-cancel {
+  flex: 0 0 auto;
+  padding: 7px 16px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fff;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+}
+.option-cancel:disabled {
+  color: #ccc;
+  border-color: #eee;
+  cursor: default;
+}
 .option-confirm {
-  width: 100%;
+  flex: 1;
   padding: 7px;
   border: none;
   border-radius: 10px;
