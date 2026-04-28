@@ -95,7 +95,7 @@ Usage:
       IO.pure(
         Left(
           ToolError(
-            "[Blocked by sandbox] This command was blocked for safety. Dangerous operations require user approval through the permission system."
+            "[Blocked by sandbox] This command is permanently blocked for safety and cannot be approved."
           )
         )
       )

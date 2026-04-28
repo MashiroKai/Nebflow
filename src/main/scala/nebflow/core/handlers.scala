@@ -7,6 +7,16 @@ import nebflow.shared.{LlmHandle, ToolCall}
 
 case class ToolExecResult(content: String, isError: Boolean = false)
 
+/** Check if a file-editing tool targets a path outside the project root. */
+private def isOutsideProject(call: ToolCall, projectRoot: String): Boolean =
+  if call.name == "Write" || call.name == "Edit" then
+    val filePathStr = call.input("file_path").flatMap(_.asString).getOrElse("")
+    val resolved =
+      if filePathStr.startsWith("/") then filePathStr
+      else s"$projectRoot/$filePathStr"
+    !PathSandbox.isAllowed(resolved, projectRoot)
+  else false
+
 def executeTool(
   call: ToolCall,
   projectRoot: String,
@@ -15,35 +25,37 @@ def executeTool(
   permState: Option[PermissionState] = None
 ): IO[ToolExecResult] =
   val logger = NebflowLogger.forName("nebflow.handlers")
-  val start = System.nanoTime()
 
   ToolRegistry.TOOL_MAP.get(call.name) match
     case Some(tool) =>
       val summary = tool.summarize(call.input)
       val risk = ToolRisk.classify(call.name)
 
-      // Permission check
-      val approvalIO: IO[Boolean] = (risk, permState, replUi) match
-        case (ToolRisk.Safe, _, _) => IO.pure(true)
-        case (ToolRisk.Blocked, _, _) => IO.pure(false)
+      // Permission check: Write/Edit inside project → auto-approve
+      val approvalIO: IO[ApprovalDecision] = (risk, permState, replUi) match
+        case (ToolRisk.Safe, _, _) => IO.pure(ApprovalDecision.Approved)
+        case (ToolRisk.NeedsApproval, _, _) if (call.name == "Write" || call.name == "Edit") && !isOutsideProject(call, projectRoot) =>
+          IO.pure(ApprovalDecision.Approved)
         case (ToolRisk.NeedsApproval, Some(ps), Some(ui)) =>
           ps.shouldApprove(call.name).flatMap {
-            case true => IO.pure(true)
-            case false =>
+            case ApprovalDecision.Approved => IO.pure(ApprovalDecision.Approved)
+            case ApprovalDecision.Blocked(reason) => IO.pure(ApprovalDecision.Blocked(reason))
+            case ApprovalDecision.NeedsUserApproval =>
               val inputJson = io.circe.Json.fromJsonObject(call.input).noSpaces
-              ui.askPermission(call.name, summary, inputJson).flatTap {
-                case true => ps.recordApproval(call.name) *> logger.info(s"User approved: $summary")
-                case false => logger.info(s"User denied: $summary")
+              ui.askPermission(call.name, summary, inputJson).flatMap {
+                case true => ps.recordApproval(call.name) *> logger.info(s"User approved: $summary") *> IO.pure(ApprovalDecision.Approved)
+                case false => logger.info(s"User denied: $summary") *> IO.pure(ApprovalDecision.Blocked("User denied permission"))
               }
           }
-        case _ => IO.pure(true) // no permission system = auto-approve
+        case _ => IO.pure(ApprovalDecision.Approved) // no permission system = auto-approve
 
       approvalIO.flatMap {
-        case false =>
-          val msg = NebflowError.toUserMessage(NebflowError.ToolDenied(call.name, "User denied permission"))
+        case ApprovalDecision.Blocked(reason) =>
+          val msg = NebflowError.toUserMessage(NebflowError.ToolDenied(call.name, reason))
           IO.pure(ToolExecResult(msg, isError = true))
-        case true =>
+        case ApprovalDecision.Approved =>
           val ctx = ToolContext(projectRoot, llm, replUi)
+          IO.delay(System.nanoTime()).flatMap { start =>
           logger.debug(s"Executing tool: $summary") *> {
             tool
               .call(call.input, ctx)
@@ -61,6 +73,10 @@ def executeTool(
                 else logger.info(s"Tool $summary OK (${elapsed}ms)")
               }
           }
+          }
+        case ApprovalDecision.NeedsUserApproval =>
+          // Should not reach here — handled above with ui.askPermission
+          IO.pure(ToolExecResult(s"Unexpected approval state for ${call.name}", isError = true))
       }
     case None =>
       logger.warn(s"Unknown tool requested: ${call.name}") *>

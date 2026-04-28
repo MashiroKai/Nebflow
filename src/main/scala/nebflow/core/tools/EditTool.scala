@@ -3,7 +3,6 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.PathSandbox
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -99,13 +98,7 @@ Usage:
       if filePathStr.startsWith("/") then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
-    if !PathSandbox.isAllowed(filePath.toString, ctx.projectRoot) then
-      Left(
-        ToolError(
-          s"Path access denied: $filePath is outside the project root (${ctx.projectRoot}). Use Bash if you need to access files outside the project."
-        )
-      )
-    else if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
+    if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
     else if oldString == newString then Right("old_string and new_string are exactly the same. No changes to make.")
     else
       try
@@ -144,6 +137,5 @@ Usage:
             Right(s"OK: $short updated, $added added, $removed removed\n$diff")
         end if
       catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
-    end if
   }
 end EditTool

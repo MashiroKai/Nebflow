@@ -81,7 +81,7 @@ object GatewayMain extends IOApp.Simple:
 
                 logger.info(s"nebflow v${nebflow.Version.string}") *>
                   logger.info(s"gateway listening on ${cfg.host}:${cfg.port}") *>
-                  logger.info(s"access URL: $url") *>
+                  logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)") *>
                   Ref.of[IO, Option[io.circe.Json]](None).flatMap { thinkingModeRef =>
                     PermissionState.create.flatMap { permState =>
                       RateLimiter.create().flatMap { rateLimiter =>
@@ -89,6 +89,7 @@ object GatewayMain extends IOApp.Simple:
                           .default[IO]
                           .withHost(cfg.host)
                           .withPort(cfg.port)
+                          .withIdleTimeout(10.minutes)
                           .withHttpWebSocketApp { wsb =>
                             val wsRoutes =
                               new WebSocketRoutes(
@@ -108,9 +109,7 @@ object GatewayMain extends IOApp.Simple:
                           }
                           .build
                           .use { _ =>
-                            logger.info(s"opening $url") *>
-                              openBrowser(url) *>
-                              IO.sleep(1.second).foreverM
+                            openBrowser(url) *> IO.never
                           }
                           .guarantee(releaseBackend)
                       }
