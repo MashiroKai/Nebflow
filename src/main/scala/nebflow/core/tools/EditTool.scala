@@ -3,6 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
+
 import java.nio.file.{Files, Path, Paths}
 
 object EditTool extends Tool:
@@ -17,16 +18,25 @@ Usage:
 - The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.
 - Use replace_all for replacing and renaming strings across the file."""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> io.circe.Json.obj(
-      "file_path" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The absolute path to the file to modify".asJson),
-      "old_string" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The text to replace".asJson),
-      "new_string" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The text to replace it with (must be different from old_string)".asJson),
-      "replace_all" -> io.circe.Json.obj("type" -> "boolean".asJson, "description" -> "Replace all occurences of old_string (default false)".asJson)
-    ),
-    "required" -> io.circe.Json.arr("file_path".asJson, "old_string".asJson, "new_string".asJson)
-  ))
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> io.circe.Json.obj(
+        "file_path" -> io.circe.Json
+          .obj("type" -> "string".asJson, "description" -> "The absolute path to the file to modify".asJson),
+        "old_string" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The text to replace".asJson),
+        "new_string" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The text to replace it with (must be different from old_string)".asJson
+        ),
+        "replace_all" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "Replace all occurences of old_string (default false)".asJson
+        )
+      ),
+      "required" -> io.circe.Json.arr("file_path".asJson, "old_string".asJson, "new_string".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val path = input("file_path").flatMap(_.asString).getOrElse("")
@@ -46,30 +56,75 @@ Usage:
     else if result.contains("matches") then result.split("\\n").headOption.getOrElse(result)
     else result.split("\\n").headOption.getOrElse(result)
 
+  private def makeDiff(fileName: String, oldContent: String, newContent: String): String =
+    val oldLines = oldContent.split("\\r?\\n").toList
+    val newLines = newContent.split("\\r?\\n").toList
+    val sb = new StringBuilder
+    // Unified diff with single line number, no hunk headers
+    // Format: "lineno |line"  (empty lineno for deletions, new lineno for additions)
+    var oldIdx = 0
+    var newIdx = 0
+    while oldIdx < oldLines.length || newIdx < newLines.length do
+      if oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx) then
+        val nn = newIdx + 1
+        sb.append(f"$nn%3d |${oldLines(oldIdx)}\n")
+        oldIdx += 1
+        newIdx += 1
+      else
+        val matchedOld = oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx)
+        if !matchedOld && oldIdx < oldLines.length then
+          val on = oldIdx + 1
+          sb.append(f"$on%3d |-${oldLines(oldIdx)}\n")
+          oldIdx += 1
+        else
+          val matchedNew = oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx)
+          if !matchedNew && newIdx < newLines.length then
+            val nn = newIdx + 1
+            sb.append(f"$nn%3d |+${newLines(newIdx)}\n")
+            newIdx += 1
+          else
+            if oldIdx < oldLines.length then oldIdx += 1
+            if newIdx < newLines.length then newIdx += 1
+    sb.toString().trim
+
+  end makeDiff
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val oldString = input("old_string").flatMap(_.asString).getOrElse("")
     val newString = input("new_string").flatMap(_.asString).getOrElse("")
     val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
-    val filePath = if filePathStr.startsWith("/") then Paths.get(filePathStr)
+    val filePath =
+      if filePathStr.startsWith("/") then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
-    if !Files.exists(filePath) then
-      Right(s"File does not exist: $filePath")
-    else if oldString == newString then
-      Right("old_string and new_string are exactly the same. No changes to make.")
+    if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
+    else if oldString == newString then Right("old_string and new_string are exactly the same. No changes to make.")
     else
       try
         val original = Files.readString(filePath)
         if !original.contains(oldString) then
-          Right("old_string not found in file. Ensure the string matches exactly, including whitespace and indentation.")
+          Left(
+            ToolError(
+              "old_string not found in file. Ensure the string matches exactly, including whitespace and indentation."
+            )
+          )
         else
           val matchCount = original.sliding(oldString.length).count(_ == oldString)
           if matchCount > 1 && !replaceAll then
-            Right(s"Found $matchCount matches of old_string. Either provide more context to make it unique, or set replace_all to true.")
+            Left(
+              ToolError(
+                s"Found $matchCount matches of old_string. Either provide more context to make it unique, or set replace_all to true."
+              )
+            )
           else
-            val updated = if replaceAll then original.replace(oldString, newString)
-              else original.replaceFirst(java.util.regex.Pattern.quote(oldString), java.util.regex.Matcher.quoteReplacement(newString))
+            val updated =
+              if replaceAll then original.replace(oldString, newString)
+              else
+                original.replaceFirst(
+                  java.util.regex.Pattern.quote(oldString),
+                  java.util.regex.Matcher.quoteReplacement(newString)
+                )
             Files.writeString(filePath, updated)
 
             val oldLines = original.split("\\r?\\n").toList
@@ -78,7 +133,10 @@ Usage:
             val removed = oldLines.count(l => !newLines.contains(l))
 
             val short = filePath.getFileName.toString
-            Right(s"OK: $short updated, $added added, $removed removed")
-      catch
-        case e: Exception => Right(s"Error editing file: ${e.getMessage}")
+            val diff = makeDiff(short, original, updated)
+            Right(s"OK: $short updated, $added added, $removed removed\n$diff")
+        end if
+      catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
+    end if
   }
+end EditTool

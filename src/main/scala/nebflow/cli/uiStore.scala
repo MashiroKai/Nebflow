@@ -1,12 +1,10 @@
 package nebflow.cli
 
-import nebflow.core.ReplUi
-import cats.effect.IO
-import cats.effect.Deferred
-import cats.effect.Ref
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.parser
+import io.circe.syntax.*
+import nebflow.core.ReplUi
 
 enum Phase:
   case Prompt, Thinking, Streaming, ToolRunning, AskUser
@@ -55,17 +53,25 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
         s.streamText,
         "llm"
       )
-      stateRef.update(_.copy(
-        phase = Phase.Prompt,
-        streamText = "",
-        completedRounds = s.completedRounds :+ round
-      ))
+      stateRef.update(
+        _.copy(
+          phase = Phase.Prompt,
+          streamText = "",
+          completedRounds = s.completedRounds :+ round
+        )
+      )
     }
 
   def emitToolStart(label: String): IO[Unit] =
     stateRef.update(_.copy(phase = Phase.ToolRunning, toolLabel = label))
 
-  def emitToolEnd(label: String, summary: String, content: String, isError: Boolean): IO[Unit] =
+  def emitToolEnd(
+    label: String,
+    summary: String,
+    content: String,
+    isError: Boolean,
+    inputJson: Option[String] = None
+  ): IO[Unit] =
     stateRef.get.flatMap { s =>
       val round = CompletedRound(
         roundCounter.incrementAndGet(),
@@ -75,15 +81,18 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
         detailType = Some(if content.contains("@@") then "diff" else "text"),
         token = Some(generateToken)
       )
-      stateRef.update(_.copy(
-        phase = Phase.Prompt,
-        toolLabel = "",
-        completedRounds = s.completedRounds :+ round
-      ))
+      stateRef.update(
+        _.copy(
+          phase = Phase.Prompt,
+          toolLabel = "",
+          completedRounds = s.completedRounds :+ round
+        )
+      )
     }
 
   def emitMaxTokens(): IO[Unit] = IO.unit
   def emitTimeout(): IO[Unit] = IO.unit
+  def emitDone(): IO[Unit] = IO.unit
 
   def onEscInterrupt(action: IO[Unit]): IO[Unit] =
     IO.delay { escHandler = Some(action) }
@@ -101,10 +110,12 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
         text,
         "user"
       )
-      stateRef.update(_.copy(
-        completedRounds = s.completedRounds :+ round,
-        inputHistory = s.inputHistory :+ text
-      ))
+      stateRef.update(
+        _.copy(
+          completedRounds = s.completedRounds :+ round,
+          inputHistory = s.inputHistory :+ text
+        )
+      )
     }
 
   def addSystemMessage(text: String): IO[Unit] =
@@ -125,7 +136,8 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
       if s.inputHistory.isEmpty then IO.pure(None)
       else
         val newIndex = if s.historyIndex < 0 then s.inputHistory.length - 1 else Math.max(0, s.historyIndex - 1)
-        stateRef.update(_.copy(historyIndex = newIndex, currentInput = s.inputHistory(newIndex)))
+        stateRef
+          .update(_.copy(historyIndex = newIndex, currentInput = s.inputHistory(newIndex)))
           .as(Some(s.inputHistory(newIndex)))
     }
 
@@ -134,10 +146,10 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
       if s.historyIndex < 0 then IO.pure(None)
       else
         val newIndex = s.historyIndex + 1
-        if newIndex >= s.inputHistory.length then
-          stateRef.update(_.copy(historyIndex = -1, currentInput = "")).as(None)
+        if newIndex >= s.inputHistory.length then stateRef.update(_.copy(historyIndex = -1, currentInput = "")).as(None)
         else
-          stateRef.update(_.copy(historyIndex = newIndex, currentInput = s.inputHistory(newIndex)))
+          stateRef
+            .update(_.copy(historyIndex = newIndex, currentInput = s.inputHistory(newIndex)))
             .as(Some(s.inputHistory(newIndex)))
     }
 
@@ -149,47 +161,57 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
   def askUser(items: List[nebflow.core.AskItem]): IO[List[String]] =
     Deferred[IO, List[String]].flatMap { deferred =>
       IO.delay { askUserPromise = Some(deferred) } *>
-      stateRef.update(_.copy(phase = Phase.AskUser, askUserItems = Some(items))) *>
-      deferred.get
+        stateRef.update(_.copy(phase = Phase.AskUser, askUserItems = Some(items))) *>
+        deferred.get
     }
 
   def answerAskUser(answers: List[String]): IO[Unit] =
-    IO.delay { askUserPromise = None } *>
-    stateRef.update(_.copy(phase = Phase.Prompt, askUserItems = None)) *>
-    askUserPromise.traverse_(_.complete(answers))
+    IO.delay { askUserPromise }.flatMap { promise =>
+      IO.delay { askUserPromise = None } *>
+        stateRef.update(_.copy(phase = Phase.Prompt, askUserItems = None)) *>
+        promise.traverse_(_.complete(answers))
+    }
 
   def reset(): IO[Unit] =
-    stateRef.update(_.copy(
-      phase = Phase.Prompt,
-      streamText = "",
-      toolLabel = "",
-      askUserItems = None
-    ))
+    stateRef.update(
+      _.copy(
+        phase = Phase.Prompt,
+        streamText = "",
+        toolLabel = "",
+        askUserItems = None
+      )
+    )
 
   private def generateToken: String =
     val chars = "abcdefghijklmnopqrstuvwxyz0123456789"
     (1 to 4).map(_ => chars(scala.util.Random.nextInt(chars.length))).mkString
 
+end UiStore
+
 object UiStore:
+
   def create: IO[UiStore] =
-    Ref[IO].of(UiState(
-      phase = Phase.Prompt,
-      streamText = "",
-      toolLabel = "",
-      inputHistory = loadHistory
-    )).map(new UiStore(_))
+    Ref[IO]
+      .of(
+        UiState(
+          phase = Phase.Prompt,
+          streamText = "",
+          toolLabel = "",
+          inputHistory = loadHistory
+        )
+      )
+      .map(new UiStore(_))
 
   private def historyPath: os.Path = os.home / ".nebflow" / "input_history.json"
 
   private def loadHistory: List[String] =
     try
-      if os.exists(historyPath) then
-        io.circe.parser.decode[List[String]](os.read(historyPath)).getOrElse(Nil)
+      if os.exists(historyPath) then io.circe.parser.decode[List[String]](os.read(historyPath)).getOrElse(Nil)
       else Nil
     catch case _: Exception => Nil
 
   def saveHistory(history: List[String]): IO[Unit] = IO.blocking {
-    try
-      os.write.over(historyPath, history.asJson.spaces2, createFolders = true)
+    try os.write.over(historyPath, history.asJson.spaces2, createFolders = true)
     catch case _: Exception => ()
   }
+end UiStore

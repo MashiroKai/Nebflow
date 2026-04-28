@@ -2,6 +2,7 @@ package nebflow.shared
 
 /** HTTP 工具函数 */
 object HttpUtils:
+
   private val BinaryTypes = Set(
     "application/octet-stream",
     "application/pdf",
@@ -40,3 +41,4 @@ object HttpUtils:
       .replace("&nbsp;", " ")
       .replaceAll("\\s+", " ")
       .trim
+end HttpUtils

@@ -2,8 +2,8 @@ package nebflow.core.mcp
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.tools.{Tool, ToolContext, ToolRegistry}
 
 class McpClient(transport: McpTransport):
@@ -15,11 +15,15 @@ class McpClient(transport: McpTransport):
     val request = JsonRpcRequest(
       id = nextId,
       method = "initialize",
-      params = Some(JsonObject.fromIterable(List(
-        "protocolVersion" -> "2025-11-25".asJson,
-        "capabilities" -> Json.obj(),
-        "clientInfo" -> Json.obj("name" -> "nebflow".asJson, "version" -> "1.0.0".asJson)
-      )))
+      params = Some(
+        JsonObject.fromIterable(
+          List(
+            "protocolVersion" -> "2025-11-25".asJson,
+            "capabilities" -> Json.obj(),
+            "clientInfo" -> Json.obj("name" -> "nebflow".asJson, "version" -> "1.0.0".asJson)
+          )
+        )
+      )
     )
     transport.send(request).flatMap { response =>
       response.error match
@@ -49,27 +53,40 @@ class McpClient(transport: McpTransport):
     val request = JsonRpcRequest(
       id = nextId,
       method = "tools/call",
-      params = Some(JsonObject.fromIterable(List(
-        "name" -> name.asJson,
-        "arguments" -> Json.fromJsonObject(arguments)
-      )))
+      params = Some(
+        JsonObject.fromIterable(
+          List(
+            "name" -> name.asJson,
+            "arguments" -> Json.fromJsonObject(arguments)
+          )
+        )
+      )
     )
     transport.send(request).map { response =>
       response.result match
         case Some(result) =>
           val content = result.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
-          content.flatMap { c =>
-            c.hcursor.downField("text").as[String].toOption.orElse(
-              c.hcursor.downField("data").as[String].toOption
-            )
-          }.mkString("\n")
+          content
+            .flatMap { c =>
+              c.hcursor
+                .downField("text")
+                .as[String]
+                .toOption
+                .orElse(
+                  c.hcursor.downField("data").as[String].toOption
+                )
+            }
+            .mkString("\n")
         case None =>
           response.error match
             case Some(err) => s"Error: ${err.message}"
             case None => ""
     }
+  end callTool
 
   def close(): IO[Unit] = transport.close()
+
+end McpClient
 
 def createMcpToolWrapper(serverId: String, tool: McpTool, client: McpClient): Tool =
   val toolName = s"mcp__${serverId}__${tool.name}"
@@ -79,7 +96,7 @@ def createMcpToolWrapper(serverId: String, tool: McpTool, client: McpClient): To
     def inputSchema: JsonObject = tool.inputSchema
     def call(input: JsonObject, ctx: ToolContext): IO[Either[nebflow.core.tools.ToolError, String]] =
       client.callTool(tool.name, input).map(Right(_)).handleError { e =>
-        Right(s"Error: ${e.getMessage}")
+        Left(nebflow.core.tools.ToolError(s"Error: ${e.getMessage}"))
       }
     def summarize(input: JsonObject): String = s"[MCP] ${tool.name}"
     def summarizeResult(input: JsonObject, result: String): String =

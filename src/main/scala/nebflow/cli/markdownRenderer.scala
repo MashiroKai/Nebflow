@@ -3,6 +3,7 @@ package nebflow.cli
 import nebflow.shared.TerminalUtils.*
 
 object MarkdownRenderer:
+
   def render(md: String): String =
     val lines = md.split("\\r?\\n").toList
     val result = scala.collection.mutable.ListBuffer.empty[String]
@@ -27,8 +28,7 @@ object MarkdownRenderer:
           // Start code block
           codeLang = line.drop(3).trim
           inCode = true
-      else if inCode then
-        codeBuffer += line
+      else if inCode then codeBuffer += line
       else
         val rendered = renderLine(line)
         if rendered.nonEmpty then result += rendered
@@ -45,26 +45,20 @@ object MarkdownRenderer:
 
     result.mkString("\n")
 
+  end render
+
   private def renderLine(line: String): String =
-    if line.startsWith("# ") then
-      s"$Bold$White${renderInline(line.drop(2))}$Reset"
-    else if line.startsWith("## ") then
-      s"$Bold${renderInline(line.drop(3))}$Reset"
-    else if line.startsWith("### ") then
-      s"$Bold$Dim${renderInline(line.drop(4))}$Reset"
-    else if line.startsWith("> ") then
-      s"$Dim│$Reset ${renderInline(line.drop(2))}"
-    else if line.startsWith("- ") || line.startsWith("* ") then
-      s"$Cyan•$Reset ${renderInline(line.drop(2))}"
+    if line.startsWith("# ") then s"$Bold$White${renderInline(line.drop(2))}$Reset"
+    else if line.startsWith("## ") then s"$Bold${renderInline(line.drop(3))}$Reset"
+    else if line.startsWith("### ") then s"$Bold$Dim${renderInline(line.drop(4))}$Reset"
+    else if line.startsWith("> ") then s"$Dim│$Reset ${renderInline(line.drop(2))}"
+    else if line.startsWith("- ") || line.startsWith("* ") then s"$Cyan•$Reset ${renderInline(line.drop(2))}"
     else if "^\\d+\\.\\s".r.findPrefixOf(line).isDefined then
       val m = "^(\\d+)\\.\\s".r.findPrefixMatchOf(line).get
       s"$Cyan${m.group(1)}.$Reset ${renderInline(line.drop(m.end))}"
-    else if line.startsWith("---") || line.startsWith("***") then
-      s"$Dim${"─" * 40}$Reset"
-    else if line.trim.nonEmpty then
-      renderInline(line)
-    else
-      ""
+    else if line.startsWith("---") || line.startsWith("***") then s"$Dim${"─" * 40}$Reset"
+    else if line.trim.nonEmpty then renderInline(line)
+    else ""
 
   private def renderInline(text: String): String =
     var result = text
@@ -75,7 +69,10 @@ object MarkdownRenderer:
     // Inline code `text`
     result = "`([^`]+)`".r.replaceAllIn(result, m => s"$Yellow${m.group(1)}$Reset")
     // Links [text](url)
-    result = "\\[([^\\]]+)\\]\\(([^\\)]+)\\)".r.replaceAllIn(result, m => s"$Cyan${m.group(1)}$Reset $Dim(${m.group(2)})$Reset")
+    result = "\\[([^\\]]+)\\]\\(([^\\)]+)\\)".r.replaceAllIn(
+      result,
+      m => s"$Cyan${m.group(1)}$Reset $Dim(${m.group(2)})$Reset"
+    )
     result
 
   private def escapeAnsi(s: String): String =
@@ -85,3 +82,4 @@ object MarkdownRenderer:
     // Strip ANSI codes and count visible chars
     val stripped = s.replaceAll("\\u001b\\[[0-9;]*m", "")
     nebflow.shared.CjkWidth.displayWidth(stripped)
+end MarkdownRenderer

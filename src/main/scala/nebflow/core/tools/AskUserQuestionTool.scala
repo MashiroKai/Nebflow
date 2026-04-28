@@ -3,13 +3,14 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.{AskItem, AskOption, AskUser}
 import nebflow.core.tools.ToolError
+import nebflow.core.{AskItem, AskOption, AskUser}
 
 object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
 
-  val description = """Ask the user one or more questions with predefined options. The user selects via arrow keys in the terminal.
+  val description =
+    """Ask the user one or more questions with predefined options. The user selects via arrow keys in the terminal.
 
 Usage:
 - Each question MUST have at least 2 options
@@ -17,35 +18,39 @@ Usage:
 - Do NOT use this tool for simple questions without options — just ask directly in your text response
 - Supports multiple questions in one call — ask everything you need at once"""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> io.circe.Json.obj(
-      "questions" -> io.circe.Json.obj(
-        "type" -> "array".asJson,
-        "description" -> "Questions to ask the user, each with its own options".asJson,
-        "items" -> io.circe.Json.obj(
-          "type" -> "object".asJson,
-          "properties" -> io.circe.Json.obj(
-            "question" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The question to ask".asJson),
-            "options" -> io.circe.Json.obj(
-              "type" -> "array".asJson,
-              "description" -> "Predefined choices for this question".asJson,
-              "items" -> io.circe.Json.obj(
-                "type" -> "object".asJson,
-                "properties" -> io.circe.Json.obj(
-                  "label" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "Short option label".asJson),
-                  "description" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "Optional explanation".asJson)
-                ),
-                "required" -> io.circe.Json.arr("label".asJson)
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> io.circe.Json.obj(
+        "questions" -> io.circe.Json.obj(
+          "type" -> "array".asJson,
+          "description" -> "Questions to ask the user, each with its own options".asJson,
+          "items" -> io.circe.Json.obj(
+            "type" -> "object".asJson,
+            "properties" -> io.circe.Json.obj(
+              "question" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The question to ask".asJson),
+              "options" -> io.circe.Json.obj(
+                "type" -> "array".asJson,
+                "description" -> "Predefined choices for this question".asJson,
+                "items" -> io.circe.Json.obj(
+                  "type" -> "object".asJson,
+                  "properties" -> io.circe.Json.obj(
+                    "label" -> io.circe.Json
+                      .obj("type" -> "string".asJson, "description" -> "Short option label".asJson),
+                    "description" -> io.circe.Json
+                      .obj("type" -> "string".asJson, "description" -> "Optional explanation".asJson)
+                  ),
+                  "required" -> io.circe.Json.arr("label".asJson)
+                )
               )
-            )
-          ),
-          "required" -> io.circe.Json.arr("question".asJson, "options".asJson)
+            ),
+            "required" -> io.circe.Json.arr("question".asJson, "options".asJson)
+          )
         )
-      )
-    ),
-    "required" -> io.circe.Json.arr("questions".asJson)
-  ))
+      ),
+      "required" -> io.circe.Json.arr("questions".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val questions = input("questions").flatMap(_.asArray).getOrElse(Nil)
@@ -63,7 +68,13 @@ Usage:
     val questionsJson = input("questions").flatMap(_.asArray).getOrElse(Nil)
 
     if questionsJson.isEmpty then
-      IO.pure(Left(ToolError("At least one question is required. For simple questions without options, ask directly in your text response.")))
+      IO.pure(
+        Left(
+          ToolError(
+            "At least one question is required. For simple questions without options, ask directly in your text response."
+          )
+        )
+      )
     else
       val items = questionsJson.flatMap { q =>
         val question = q.hcursor.downField("question").as[String].getOrElse("")
@@ -76,13 +87,17 @@ Usage:
         Some(AskItem(question, opts))
       }.toList
 
-      if items.exists(_.options.isEmpty) then
-        IO.pure(Left(ToolError("All questions must have at least one option.")))
-      else if !AskUser.isInteractive then
-        IO.pure(Left(ToolError("Cannot ask user questions in non-interactive mode.")))
+      if items.exists(_.options.isEmpty) then IO.pure(Left(ToolError("All questions must have at least one option.")))
       else
         AskUser.ask(items).map { answers =>
-          Right(answers.zipWithIndex.map { case (a, i) =>
-            s"${i + 1}. ${items(i).question} -> $a"
-          }.mkString("\n"))
+          Right(
+            answers.zipWithIndex
+              .map { case (a, i) =>
+                s"${i + 1}. ${items(i).question} -> $a"
+              }
+              .mkString("\n")
+          )
         }
+    end if
+  end call
+end AskUserQuestionTool

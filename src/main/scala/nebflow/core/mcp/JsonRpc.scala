@@ -1,7 +1,7 @@
 package nebflow.core.mcp
 
-import io.circe.{Json, JsonObject}
 import io.circe.generic.auto.*
+import io.circe.{Json, JsonObject}
 
 /** JSON-RPC 2.0 types */
 case class JsonRpcRequest(

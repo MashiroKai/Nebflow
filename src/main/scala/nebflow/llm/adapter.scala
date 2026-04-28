@@ -1,12 +1,13 @@
 package nebflow.llm
 
-import nebflow.shared.{Message, ToolDefinition, ToolCall, StreamChunk, TokenUsage}
+import nebflow.shared.*
 
 case class SendMessageParams(
   messages: List[Message],
   model: String,
   tools: Option[List[ToolDefinition]] = None,
-  maxTokens: Option[Int] = None
+  maxTokens: Option[Int] = None,
+  thinking: Option[io.circe.Json] = None
 )
 
 case class AdapterResponse(

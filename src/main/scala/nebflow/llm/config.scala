@@ -1,8 +1,8 @@
 package nebflow.llm
 
-import io.circe.{Decoder, Json}
 import io.circe.generic.semiauto.deriveDecoder
 import io.circe.parser.parse
+import io.circe.{Decoder, Json}
 
 enum LlmProtocol:
   case Anthropic, OpenAI
@@ -12,6 +12,7 @@ enum LlmProtocol:
     case OpenAI => "openai"
 
 object LlmProtocol:
+
   given Decoder[LlmProtocol] = Decoder.decodeString.emap {
     case "anthropic" => Right(Anthropic)
     case "openai" => Right(OpenAI)
@@ -78,14 +79,11 @@ object Config:
   val DefaultConfigPath: os.Path = NebflowHome / "nebflow.json"
 
   def resolveEnvVars(str: String): String =
-    """\$\{([^}]+)\}""".r.replaceAllIn(str, m =>
-      sys.env.getOrElse(m.group(1), m.matched)
-    )
+    """\$\{([^}]+)\}""".r.replaceAllIn(str, m => sys.env.getOrElse(m.group(1), m.matched))
 
   def parseModelRef(ref: String): (String, String) =
     val idx = ref.indexOf('/')
-    if idx == -1 then
-      throw new IllegalArgumentException(s"Invalid model ref \"$ref\", expected \"providerId/modelId\"")
+    if idx == -1 then throw new IllegalArgumentException(s"Invalid model ref \"$ref\", expected \"providerId/modelId\"")
     (ref.take(idx), ref.drop(idx + 1))
 
   def loadServiceConfig(configPath: Option[String] = None): NebflowServiceConfig =
@@ -93,8 +91,7 @@ object Config:
       case Some(p) => os.Path(p, os.pwd)
       case None => DefaultConfigPath
 
-    if !os.exists(path) then
-      throw new RuntimeException(s"Config file not found: $path")
+    if !os.exists(path) then throw new RuntimeException(s"Config file not found: $path")
 
     val raw = os.read(path)
     val json = parse(raw) match
@@ -115,9 +112,11 @@ object Config:
       jsonNumber = n => Json.fromJsonNumber(n),
       jsonString = s => Json.fromString(resolveEnvVars(s)),
       jsonArray = arr => Json.fromValues(arr.map(resolveEnvVarsInJson)),
-      jsonObject = obj => Json.fromJsonObject(
-        io.circe.JsonObject.fromIterable(
-          obj.toList.map { case (k, v) => (k, resolveEnvVarsInJson(v)) }
+      jsonObject = obj =>
+        Json.fromJsonObject(
+          io.circe.JsonObject.fromIterable(
+            obj.toList.map { case (k, v) => (k, resolveEnvVarsInJson(v)) }
+          )
         )
-      )
     )
+end Config

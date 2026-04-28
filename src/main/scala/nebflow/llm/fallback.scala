@@ -2,11 +2,14 @@ package nebflow.llm
 
 import cats.effect.{IO, Temporal}
 import cats.syntax.all.*
+
 import scala.concurrent.duration.*
 import scala.util.Random
 
 enum FailoverReason:
-  case Auth, RateLimit, Overloaded, ServerError, ModelNotFound, ProviderError, Format, ConnectionReset, Timeout, EmptyStream, Unknown
+
+  case Auth, RateLimit, Overloaded, ServerError, ModelNotFound, ProviderError, Format, ConnectionReset, Timeout,
+    EmptyStream, Unknown
 
 enum ErrorPermanence:
   case Transient, Permanent
@@ -35,10 +38,13 @@ case class FallbackResult[T](
 )
 
 class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Exception:
+
   override def getMessage: String =
-    val summary = attempts.map { a =>
-      s"  ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
-    }.mkString("\n")
+    val summary = attempts
+      .map { a =>
+        s"  ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
+      }
+      .mkString("\n")
     s"All providers failed:\n$summary"
 
 object Fallback:
@@ -47,26 +53,52 @@ object Fallback:
   private val DefaultTimeoutMs = 120_000
 
   def classifyError(error: Throwable): ErrorClassification =
-    val msg = error.getMessage.toLowerCase
+    // Check for structured sttp4 HttpError first
+    error match
+      case e: sttp.client4.HttpError[?] =>
+        val c = e.statusCode.code
+        val reason = c match
+          case 401 | 403 => FailoverReason.Auth
+          case 404 => FailoverReason.ModelNotFound
+          case 429 => FailoverReason.RateLimit
+          case 500 | 502 | 503 => FailoverReason.ServerError
+          case 529 => FailoverReason.Overloaded
+          case 400 => FailoverReason.Format
+          case _ => FailoverReason.ProviderError
+        val permanence = c match
+          case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
+          case _ => ErrorPermanence.Transient
+        ErrorClassification(reason, permanence, Some(c), Some(error.getMessage))
+      case _ =>
+        val msg = error.getMessage.toLowerCase
+        if msg.contains("connection reset") || msg.contains("econnreset") || msg.contains("econnrefused") || msg
+            .contains(
+              "epipe"
+            ) || msg.contains("broken pipe")
+        then
+          ErrorClassification(
+            FailoverReason.ConnectionReset,
+            ErrorPermanence.Transient,
+            message = Some(error.getMessage)
+          )
+        else if msg.contains("timeout") || msg.contains("timed out") then
+          ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(error.getMessage))
+        else if msg.contains("auth") || msg.contains("unauthorized") || msg.contains("403") || msg.contains("401") then
+          ErrorClassification(FailoverReason.Auth, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else if msg.contains("rate limit") || msg.contains("429") then
+          ErrorClassification(FailoverReason.RateLimit, ErrorPermanence.Transient, message = Some(error.getMessage))
+        else if msg.contains("overloaded") || msg.contains("529") then
+          ErrorClassification(FailoverReason.Overloaded, ErrorPermanence.Transient, message = Some(error.getMessage))
+        else if msg.contains("server error") || msg.contains("500") || msg.contains("502") || msg.contains("503") then
+          ErrorClassification(FailoverReason.ServerError, ErrorPermanence.Transient, message = Some(error.getMessage))
+        else if msg.contains("model not found") || msg.contains("404") then
+          ErrorClassification(FailoverReason.ModelNotFound, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else if msg.contains("invalid request") || msg.contains("bad request") || msg.contains("400") then
+          ErrorClassification(FailoverReason.Format, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Transient, message = Some(error.getMessage))
+        end if
 
-    if msg.contains("connection reset") || msg.contains("econnreset") || msg.contains("econnrefused") || msg.contains("epipe") || msg.contains("broken pipe") then
-      ErrorClassification(FailoverReason.ConnectionReset, ErrorPermanence.Transient, message = Some(error.getMessage))
-    else if msg.contains("timeout") || msg.contains("timed out") then
-      ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Transient, message = Some(error.getMessage))
-    else if msg.contains("auth") || msg.contains("unauthorized") || msg.contains("403") || msg.contains("401") then
-      ErrorClassification(FailoverReason.Auth, ErrorPermanence.Permanent, message = Some(error.getMessage))
-    else if msg.contains("rate limit") || msg.contains("429") then
-      ErrorClassification(FailoverReason.RateLimit, ErrorPermanence.Transient, message = Some(error.getMessage))
-    else if msg.contains("overloaded") || msg.contains("529") then
-      ErrorClassification(FailoverReason.Overloaded, ErrorPermanence.Transient, message = Some(error.getMessage))
-    else if msg.contains("server error") || msg.contains("500") || msg.contains("502") || msg.contains("503") then
-      ErrorClassification(FailoverReason.ServerError, ErrorPermanence.Transient, message = Some(error.getMessage))
-    else if msg.contains("model not found") || msg.contains("404") then
-      ErrorClassification(FailoverReason.ModelNotFound, ErrorPermanence.Permanent, message = Some(error.getMessage))
-    else if msg.contains("invalid request") || msg.contains("bad request") || msg.contains("400") then
-      ErrorClassification(FailoverReason.Format, ErrorPermanence.Permanent, message = Some(error.getMessage))
-    else
-      ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Transient, message = Some(error.getMessage))
+  end classifyError
 
   private def withTimeoutIO[A](ioa: IO[A], ms: Long): IO[A] =
     ioa.timeout(ms.millis).handleErrorWith { err =>
@@ -95,8 +127,12 @@ object Fallback:
         attemptIO.attempt.flatMap {
           case Right(result) =>
             val attempt = FallbackAttempt(
-              candidate.providerId, candidate.model, None, None,
-              System.currentTimeMillis() - start, 0,
+              candidate.providerId,
+              candidate.model,
+              None,
+              None,
+              System.currentTimeMillis() - start,
+              0,
               java.time.Instant.now().toString
             )
             val newAttempts = attempts :+ attempt
@@ -113,8 +149,12 @@ object Fallback:
                   withTimeoutIO(action(candidate), DefaultTimeoutMs).attempt.flatMap {
                     case Right(result) =>
                       val attempt = FallbackAttempt(
-                        candidate.providerId, candidate.model, None, None,
-                        System.currentTimeMillis() - start, 1,
+                        candidate.providerId,
+                        candidate.model,
+                        None,
+                        None,
+                        System.currentTimeMillis() - start,
+                        1,
                         java.time.Instant.now().toString
                       )
                       val newAttempts = attempts :+ attempt
@@ -122,31 +162,35 @@ object Fallback:
                         IO.pure(FallbackResult(result, newAttempts, candidate))
                     case Left(_) =>
                       val failAttempt = FallbackAttempt(
-                        candidate.providerId, candidate.model,
-                        Some(classification.reason), Some(classification.permanence),
-                        durationMs, 0, java.time.Instant.now().toString
+                        candidate.providerId,
+                        candidate.model,
+                        Some(classification.reason),
+                        Some(classification.permanence),
+                        durationMs,
+                        0,
+                        java.time.Instant.now().toString
                       )
                       val newAttempts = attempts :+ failAttempt
                       onAttempt.traverse_(_.apply(failAttempt)) *>
-                        (if classification.permanence == ErrorPermanence.Permanent then
-                          IO.raiseError(new FallbackExhaustedError(newAttempts))
-                        else
-                          loop(rest, newAttempts))
+                        loop(rest, newAttempts)
                   }
               else
                 val attempt = FallbackAttempt(
-                  candidate.providerId, candidate.model,
-                  Some(classification.reason), Some(classification.permanence),
-                  durationMs, 0, java.time.Instant.now().toString
+                  candidate.providerId,
+                  candidate.model,
+                  Some(classification.reason),
+                  Some(classification.permanence),
+                  durationMs,
+                  0,
+                  java.time.Instant.now().toString
                 )
                 val newAttempts = attempts :+ attempt
                 onAttempt.traverse_(_.apply(attempt)) *>
-                  (if classification.permanence == ErrorPermanence.Permanent then
-                    IO.raiseError(new FallbackExhaustedError(newAttempts))
-                  else
-                    loop(rest, newAttempts))
+                  loop(rest, newAttempts)
 
             withRetry
         }
 
     loop(candidates, Nil)
+  end tryProviderWithFallback
+end Fallback

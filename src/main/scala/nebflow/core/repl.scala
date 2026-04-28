@@ -1,24 +1,40 @@
 package nebflow.core
 
-import nebflow.shared.{Message, MessageRole, ContentBlock, LlmHandle, LlmRequest, StreamChunk, ToolCall, ToolDefinition}
-import nebflow.core.tools.{ToolRegistry, ToolError}
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.tools.{ToolError, ToolRegistry}
+import nebflow.shared.*
+import nebflow.shared.TerminalUtils.*
+
 import java.nio.file.{Files, Paths}
+
+import scala.concurrent.duration.*
 import scala.io.Source
 
 object Repl:
   private val IMAGE_EXTENSIONS = List(".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
   private val VIDEO_EXTENSIONS = List(".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv", ".m4v")
   private val MEDIA_EXTENSIONS = IMAGE_EXTENSIONS ++ VIDEO_EXTENSIONS
-  private val MEDIA_REGEX = s"(?:^|\\s)((?:/[^\\s]+|[~.][^\\s]+)\\.(?:${MEDIA_EXTENSIONS.map(_.drop(1)).mkString("|")}))".r
+
+  private val MEDIA_REGEX =
+    s"(?:^|\\s)((?:/[^\\s]+|[~.][^\\s]+)\\.(?:${MEDIA_EXTENSIONS.map(_.drop(1)).mkString("|")}))".r
 
   private val MIME_MAP = Map(
-    "png" -> "image/png", "jpg" -> "image/jpeg", "jpeg" -> "image/jpeg",
-    "gif" -> "image/gif", "webp" -> "image/webp", "bmp" -> "image/bmp",
-    "svg" -> "image/svg+xml", "mp4" -> "video/mp4", "mov" -> "video/quicktime",
-    "avi" -> "video/x-msvideo", "mkv" -> "video/x-matroska", "webm" -> "video/webm",
-    "flv" -> "video/x-flv", "wmv" -> "video/x-ms-wmv", "m4v" -> "video/x-m4v"
+    "png" -> "image/png",
+    "jpg" -> "image/jpeg",
+    "jpeg" -> "image/jpeg",
+    "gif" -> "image/gif",
+    "webp" -> "image/webp",
+    "bmp" -> "image/bmp",
+    "svg" -> "image/svg+xml",
+    "mp4" -> "video/mp4",
+    "mov" -> "video/quicktime",
+    "avi" -> "video/x-msvideo",
+    "mkv" -> "video/x-matroska",
+    "webm" -> "video/webm",
+    "flv" -> "video/x-flv",
+    "wmv" -> "video/x-ms-wmv",
+    "m4v" -> "video/x-m4v"
   )
 
   private val MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5MB
@@ -42,8 +58,7 @@ object Repl:
 
   private def buildUserMessage(input: String): IO[Message] = IO.blocking {
     val matches = MEDIA_REGEX.findAllMatchIn(input).toList
-    if matches.isEmpty then
-      Message(MessageRole.User, Left(input))
+    if matches.isEmpty then Message(MessageRole.User, Left(input))
     else
       val imageBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock.Image]
       val mediaItems = scala.collection.mutable.ListBuffer.empty[String]
@@ -53,8 +68,7 @@ object Repl:
         val ext = filePathStr.split("\\.").lastOption.map(_.toLowerCase).getOrElse("")
         val filePath = Paths.get(filePathStr)
 
-        if !Files.exists(filePath) || !Files.isRegularFile(filePath) then
-          mediaItems += s"Not a file: $filePathStr"
+        if !Files.exists(filePath) || !Files.isRegularFile(filePath) then mediaItems += s"Not a file: $filePathStr"
         else if VIDEO_EXTENSIONS.exists(filePathStr.toLowerCase.endsWith) then
           val sizeKb = (Files.size(filePath) / 1024).toInt
           mediaItems += s"Video: $filePathStr (${sizeKb}KB)"
@@ -73,37 +87,23 @@ object Repl:
       val displayInput = replaceMediaPaths(input)
       val blocks = ContentBlock.Text(displayInput) :: imageBlocks.toList
       Message(MessageRole.User, Right(blocks))
+    end if
   }
 
   def loadSystemPrompt(): String =
-    // Try to load from resources first, then fallback
-    val resource = Option(getClass.getResourceAsStream("/host.md"))
+    val resource = Option(getClass.getResourceAsStream("/prompts/system.md"))
     resource match
       case Some(is) =>
         try Source.fromInputStream(is).mkString
-        catch case _: Exception => defaultPrompt
-      case None => defaultPrompt
+        catch case _: Exception => ""
+      case None => ""
 
-  private val defaultPrompt = """你是 Nebflow 的命令行助手。用户通过终端与你对话，你可以读写项目文件、执行命令来帮用户完成工作。
+  private val fallbackPrompt = """You are the Nebflow assistant. Your duties:
+1. Understand the user's intent and break it into executable subtasks
+2. Use tools to execute those subtasks
+3. Summarize and deliver results to the user
 
-你是用户与代码之间的接口。你的职责：
-1. 理解用户意图
-2. 将意图拆解为可执行的子任务
-3. 使用工具执行任务
-4. 汇总结果交付给用户
-
-做事原则：
-- 持续工作直到任务完全解决，然后才结束。
-- 方法失败时先诊断原因，再换策略。
-- 保持最小复杂度。
-- 对你没读过的代码不提修改建议。
-- 除非绝对必要，不创建新文件。
-
-交互风格：
-- 简洁、直接，直奔主题。
-- 文件路径用反引号标记。
-- 不使用 emoji。
-- 不重复工具执行的细节。"""
+Principles: work until the task is resolved; diagnose failures before trying a new strategy; never suggest changes to code you haven't read; don't create files unless absolutely necessary. Be concise and direct, mark file paths with backticks, and do not use emoji."""
 
   private case class ConsumeResult(
     text: String,
@@ -112,75 +112,120 @@ object Repl:
     stopReason: Option[String]
   )
 
+  private val SpinnerFrames = List("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+  private def spinLoop(label: String, i: Int): IO[Unit] =
+    IO.print(s"\r${Dim}${SpinnerFrames(i % SpinnerFrames.length)} $label...${Reset}") *>
+      IO(Console.out.flush()) *>
+      IO.sleep(80.millis) >> spinLoop(label, i + 1)
+
+  private def clearSpinner(label: String): IO[Unit] =
+    val padLen = label.length + 20
+    IO.print(s"\r${" " * padLen}\r") *> IO(Console.out.flush())
+
+  private def withSpinner[A](label: String, silent: Boolean)(io: IO[A]): IO[A] =
+    if silent then io
+    else
+      for
+        fiber <- spinLoop(label, 0).start
+        result <- io.onError { _ => fiber.cancel *> clearSpinner(label) }
+        _ <- fiber.cancel
+        _ <- clearSpinner(label)
+      yield result
+
   private def consumeStream(
     stream: fs2.Stream[IO, StreamChunk],
     store: ReplUi,
-    llm: LlmHandle[IO]
+    llm: LlmHandle[IO],
+    silent: Boolean = false
   ): IO[ConsumeResult] =
-    IO.ref(false).flatMap { interruptedRef =>
-      IO.ref("").flatMap { textRef =>
-        IO.ref(false).flatMap { textStartedRef =>
-          IO.ref(List.empty[ToolCall]).flatMap { toolCallsRef =>
-            IO.ref(List.empty[IO[(ToolCall, ToolExecResult)]]).flatMap { executionsRef =>
+    for
+      interruptedRef <- IO.ref(false)
+      textRef <- IO.ref("")
+      textStartedRef <- IO.ref(false)
+      toolCallsRef <- IO.ref(List.empty[ToolCall])
+      executionsRef <- IO.ref(List.empty[IO[(ToolCall, ToolExecResult)]])
+      thinkingFiberRef <- IO.ref(Option.empty[cats.effect.Fiber[IO, Throwable, Unit]])
+      _ <- store.onEscInterrupt(IO.delay(interruptedRef.set(true)))
 
-              val escFiber = store.onEscInterrupt(IO.delay(interruptedRef.set(true)))
+      _ <- store.emitThinking()
+      _ <- (if silent then IO.unit else spinLoop("Thinking", 0).start.flatMap(f => thinkingFiberRef.set(Some(f))))
 
-              val processStream = stream.evalMap { chunk =>
-                interruptedRef.get.flatMap { interrupted =>
-                  if interrupted then
-                    IO.raiseError(new UserAbort())
-                  else
-                    chunk match
-                      case StreamChunk.TextDelta(delta) =>
-                        if delta.nonEmpty then
-                          textStartedRef.get.flatMap { started =>
-                            textRef.update(_ + delta) *>
-                            store.emitTextDelta(delta) *>
-                            IO.print(delta) *>
-                            IO(Console.out.flush()) *>
-                            textStartedRef.set(true)
-                          }
-                        else IO.unit
-                      case StreamChunk.ToolCallChunk(toolCall) =>
-                        toolCallsRef.update(_ :+ toolCall) *>
-                        textStartedRef.get.flatMap { hasText =>
-                          if hasText then store.emitTextDone() *> IO.println("") else IO.unit
-                        } *>
-                        IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
-                          val execIO = store.emitToolStart(label) *>
-                            executeTool(toolCall, System.getProperty("user.dir"), Some(llm)).flatMap { result =>
-                              val resultSummary = summarizeToolResult(toolCall, result.content)
-                              store.emitToolEnd(label, resultSummary, result.content, result.isError).as((toolCall, result))
-                            }
-                          executionsRef.update(_ :+ execIO)
-                        }
-                      case StreamChunk.Done(stopReason, usage, _) =>
-                        stopReason match
-                          case Some("max_tokens") => store.emitMaxTokens() *> IO.println("")
-                          case Some("timeout") => store.emitTimeout() *> IO.println("")
-                          case _ => textStartedRef.get.flatMap { hasText =>
-                            if hasText then store.emitTextDone() *> IO.println("") else IO.unit
-                          }
-                }
-              }.compile.drain
-
-              processStream.handleErrorWith {
-                case _: UserAbort => store.emitInterrupted() *> IO.unit
-                case e => IO.raiseError(e)
-              } *> executionsRef.get.flatMap { execs =>
-                execs.sequence.flatMap { results =>
-                  textRef.get.flatMap { text =>
-                    toolCallsRef.get.map { toolCalls =>
-                      ConsumeResult(text, toolCalls, results, None)
+      processStream = stream
+        .evalMap { chunk =>
+          interruptedRef.get.flatMap { interrupted =>
+            if interrupted then IO.raiseError(new UserAbort())
+            else
+              chunk match
+                case StreamChunk.TextDelta(delta) =>
+                  if delta.nonEmpty then
+                    thinkingFiberRef.get.flatMap {
+                      case Some(fiber) =>
+                        fiber.cancel *> (if silent then IO.unit else clearSpinner("Thinking")) *> thinkingFiberRef.set(
+                          None
+                        )
+                      case None => IO.unit
+                    } *> textStartedRef.get.flatMap { started =>
+                      textRef.update(_ + delta) *>
+                        store.emitTextDelta(delta) *>
+                        (if silent then IO.unit else IO.print(delta) *> IO(Console.out.flush())) *>
+                        textStartedRef.set(true)
                     }
-                  }
-                }
-              }
-            }
+                  else IO.unit
+                case StreamChunk.ToolCallChunk(toolCall) =>
+                  thinkingFiberRef.get.flatMap {
+                    case Some(fiber) =>
+                      fiber.cancel *> (if silent then IO.unit else clearSpinner("Thinking")) *> thinkingFiberRef.set(
+                        None
+                      )
+                    case None => IO.unit
+                  } *>
+                    toolCallsRef.update(_ :+ toolCall) *>
+                    textStartedRef.get.flatMap { hasText =>
+                      if hasText then store.emitTextDone() *> (if silent then IO.unit else IO.println("")) else IO.unit
+                    } *>
+                    IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
+                      val execIO = store.emitToolStart(label) *>
+                        withSpinner(label, silent) {
+                          executeTool(toolCall, System.getProperty("user.dir"), Some(llm))
+                        }.flatMap { result =>
+                          val resultSummary = summarizeToolResult(toolCall, result.content)
+                          val icon = if result.isError then s"${Red}✗${Reset}" else s"${Green}✓${Reset}"
+                          val inputJson = Some(io.circe.Json.fromJsonObject(toolCall.input).noSpaces)
+                          (if silent then IO.unit else IO.println(s"$icon $label - $resultSummary")) *>
+                            store
+                              .emitToolEnd(label, resultSummary, result.content, result.isError, inputJson)
+                              .as((toolCall, result))
+                        }
+                      executionsRef.update(_ :+ execIO)
+                    }
+                case StreamChunk.Done(stopReason, usage, _) =>
+                  stopReason match
+                    case Some("max_tokens") => store.emitMaxTokens() *> (if silent then IO.unit else IO.println(""))
+                    case Some("timeout") => store.emitTimeout() *> (if silent then IO.unit else IO.println(""))
+                    case _ =>
+                      textStartedRef.get.flatMap { hasText =>
+                        if hasText then store.emitTextDone() *> (if silent then IO.unit else IO.println(""))
+                        else IO.unit
+                      }
           }
         }
+        .compile
+        .drain
+
+      _ <- processStream.handleErrorWith {
+        case _: UserAbort => store.emitInterrupted() *> IO.unit
+        case e => IO.raiseError(e)
       }
-    }
+      _ <- thinkingFiberRef.get.flatMap {
+        case Some(fiber) => fiber.cancel *> (if silent then IO.unit else clearSpinner("Thinking"))
+        case None => IO.unit
+      }
+      execs <- executionsRef.get
+      results <- execs.sequence
+      text <- textRef.get
+      toolCalls <- toolCallsRef.get
+    yield ConsumeResult(text, toolCalls, results, None)
 
   private def appendToolRound(
     messages: List[Message],
@@ -206,31 +251,75 @@ object Repl:
     userInput: String,
     llm: LlmHandle[IO],
     projectRoot: String,
-    initialMessages: List[Message] = Nil,
+    initialMessages: List[Message],
     store: ReplUi,
-    onToolRound: Option[List[Message] => IO[Unit]] = None
+    onToolRound: Option[List[Message] => IO[Unit]],
+    silent: Boolean,
+    thinkingMode: Option[io.circe.Json] = None
   ): IO[List[Message]] =
     val systemPrompt = loadSystemPrompt()
     buildUserMessage(userInput).flatMap { userMessage =>
-      def loop(messages: List[Message]): IO[List[Message]] =
-        val allMessages = Message(MessageRole.System, Left(systemPrompt)) :: messages
-        val stream = llm.sendStream(LlmRequest(
+      runReplLoop(
+        userMessage,
+        llm,
+        projectRoot,
+        initialMessages,
+        store,
+        onToolRound,
+        silent,
+        systemPrompt,
+        thinkingMode
+      )
+    }
+
+  def runRepl(
+    userMessage: Message,
+    llm: LlmHandle[IO],
+    projectRoot: String,
+    initialMessages: List[Message],
+    store: ReplUi,
+    onToolRound: Option[List[Message] => IO[Unit]],
+    silent: Boolean,
+    thinkingMode: Option[io.circe.Json]
+  ): IO[List[Message]] =
+    val systemPrompt = loadSystemPrompt()
+    runReplLoop(userMessage, llm, projectRoot, initialMessages, store, onToolRound, silent, systemPrompt, thinkingMode)
+
+  private def runReplLoop(
+    userMessage: Message,
+    llm: LlmHandle[IO],
+    projectRoot: String,
+    initialMessages: List[Message],
+    store: ReplUi,
+    onToolRound: Option[List[Message] => IO[Unit]],
+    silent: Boolean,
+    systemPrompt: String,
+    thinkingMode: Option[io.circe.Json]
+  ): IO[List[Message]] =
+    def loop(messages: List[Message]): IO[List[Message]] =
+      val allMessages = Message(MessageRole.System, Left(systemPrompt)) :: messages
+      val stream = llm.sendStream(
+        LlmRequest(
           messages = allMessages,
           sessionId = "repl",
           agentId = "user",
-          tools = Some(ToolRegistry.ALL_TOOLS)
-        ))
+          tools = Some(ToolRegistry.ALL_TOOLS),
+          thinking = thinkingMode
+        )
+      )
 
-        consumeStream(stream, store, llm).flatMap { consumed =>
-          if consumed.toolCalls.isEmpty then
-            IO.pure(messages)
+      consumeStream(stream, store, llm, silent)
+        .flatMap { consumed =>
+          if consumed.toolCalls.isEmpty then IO.pure(messages)
           else
             val updated = appendToolRound(messages, consumed.text, consumed.toolCalls, consumed.results)
             onToolRound.traverse_(_.apply(updated)) *> loop(updated)
-        }.handleErrorWith {
+        }
+        .handleErrorWith {
           case _: UserAbort => IO.pure(messages)
           case e => IO.raiseError(e)
         }
 
-      loop(initialMessages :+ userMessage)
-    }
+    loop(initialMessages :+ userMessage)
+  end runReplLoop
+end Repl

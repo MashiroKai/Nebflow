@@ -18,18 +18,34 @@ Usage:
 - Output modes: "content" shows matching lines, "files_with_matches" shows only file paths, "count" shows match counts
 - Use -i for case insensitive search"""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> io.circe.Json.obj(
-      "pattern" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The regular expression pattern to search for in file contents".asJson),
-      "path" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "File or directory to search in. Defaults to current working directory.".asJson),
-      "glob" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\")".asJson),
-      "output_mode" -> io.circe.Json.obj("type" -> "string".asJson, "enum" -> io.circe.Json.arr("content".asJson, "files_with_matches".asJson, "count".asJson), "description" -> "Output mode. Defaults to \"files_with_matches\".".asJson),
-      "-i" -> io.circe.Json.obj("type" -> "boolean".asJson, "description" -> "Case insensitive search".asJson),
-      "head_limit" -> io.circe.Json.obj("type" -> "number".asJson, "description" -> "Limit output to first N results. Defaults to 250.".asJson)
-    ),
-    "required" -> io.circe.Json.arr("pattern".asJson)
-  ))
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> io.circe.Json.obj(
+        "pattern" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The regular expression pattern to search for in file contents".asJson
+        ),
+        "path" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "File or directory to search in. Defaults to current working directory.".asJson
+        ),
+        "glob" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Glob pattern to filter files (e.g. \"*.js\", \"*.{ts,tsx}\")".asJson
+        ),
+        "output_mode" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "enum" -> io.circe.Json.arr("content".asJson, "files_with_matches".asJson, "count".asJson),
+          "description" -> "Output mode. Defaults to \"files_with_matches\".".asJson
+        ),
+        "-i" -> io.circe.Json.obj("type" -> "boolean".asJson, "description" -> "Case insensitive search".asJson),
+        "head_limit" -> io.circe.Json
+          .obj("type" -> "number".asJson, "description" -> "Limit output to first N results. Defaults to 250.".asJson)
+      ),
+      "required" -> io.circe.Json.arr("pattern".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
@@ -73,21 +89,29 @@ Usage:
 
     try
       val proc = new ProcessBuilder(("rg" :: args.toList)*).directory(new java.io.File(ctx.projectRoot)).start()
-      val stdout = scala.io.Source.fromInputStream(proc.getInputStream).mkString
-      val stderr = scala.io.Source.fromInputStream(proc.getErrorStream).mkString
-      val exitCode = proc.waitFor()
+      val stdout = scala.io.Source.fromInputStream(proc.getInputStream)
+      val stderr = scala.io.Source.fromInputStream(proc.getErrorStream)
+      try
+        val stdoutStr = stdout.mkString
+        val stderrStr = stderr.mkString
+        val exitCode = proc.waitFor()
 
-      if exitCode == 2 then
-        Right(s"Error: ${if stderr.trim.nonEmpty then stderr.trim else s"rg exited with code $exitCode"}")
-      else if stdout.trim.isEmpty then
-        Right("No matches found.")
-      else if mode == "content" then
-        val lines = stdout.trim.split("\\n")
-        val truncated = lines.length > limit
-        val result = lines.take(limit).mkString("\\n")
-        Right(if truncated then result + s"\\n... and ${lines.length - limit} more matches" else result)
-      else
-        Right(stdout.trim)
-    catch
-      case e: Exception => Right(s"Failed to spawn rg: ${e.getMessage}")
+        if exitCode == 2 then
+          Left(
+            ToolError(s"Error: ${if stderrStr.trim.nonEmpty then stderrStr.trim else s"rg exited with code $exitCode"}")
+          )
+        else if stdoutStr.trim.isEmpty then Right("No matches found.")
+        else if mode == "content" then
+          val lines = stdoutStr.trim.split("\\n")
+          val truncated = lines.length > limit
+          val result = lines.take(limit).mkString("\\n")
+          Right(if truncated then result + s"\\n... and ${lines.length - limit} more matches" else result)
+        else Right(stdoutStr.trim)
+      finally
+        stdout.close()
+        stderr.close()
+        proc.destroy()
+    catch case e: Exception => Left(ToolError(s"Failed to spawn rg: ${e.getMessage}"))
+    end try
   }
+end GrepTool
