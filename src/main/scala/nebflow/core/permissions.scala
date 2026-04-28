@@ -5,7 +5,6 @@ import cats.effect.{IO, Ref}
 enum ToolRisk:
   case Safe
   case NeedsApproval
-  case Blocked
 
 object ToolRisk:
   private val defaults: Map[String, ToolRisk] = Map(
@@ -23,6 +22,11 @@ object ToolRisk:
 
   def classify(toolName: String): ToolRisk =
     defaults.getOrElse(toolName, NeedsApproval)
+
+enum ApprovalDecision:
+  case Approved
+  case NeedsUserApproval
+  case Blocked(reason: String)
 
 case class PermissionPolicy(
   autoApproveAll: Boolean = false,
@@ -46,17 +50,17 @@ class PermissionState private (
 ):
   def policy: IO[PermissionPolicy] = policyRef.get
 
-  def shouldApprove(toolName: String): IO[Boolean] =
+  def shouldApprove(toolName: String): IO[ApprovalDecision] =
     for
       p <- policyRef.get
       counts <- approvalCountRef.get
       count = counts.getOrElse(toolName, 0)
     yield
-      if p.autoApproveAll then true
-      else if p.blockedTools.contains(toolName) then false
-      else if p.autoApproveTools.contains(toolName) then true
-      else if p.autoApproveAfter > 0 && count >= p.autoApproveAfter then true
-      else false
+      if p.autoApproveAll then ApprovalDecision.Approved
+      else if p.blockedTools.contains(toolName) then ApprovalDecision.Blocked(s"$toolName is blocked by policy")
+      else if p.autoApproveTools.contains(toolName) then ApprovalDecision.Approved
+      else if p.autoApproveAfter > 0 && count >= p.autoApproveAfter then ApprovalDecision.Approved
+      else ApprovalDecision.NeedsUserApproval
 
   def recordApproval(toolName: String): IO[Unit] =
     approvalCountRef.update(m => m.updatedWith(toolName)(_.map(_ + 1).orElse(Some(1))))

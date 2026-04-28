@@ -8,7 +8,8 @@ import sttp.client4.StreamBackend
 case class ModelCandidate(
   providerId: String,
   provider: ProviderConfig,
-  model: String
+  model: String,
+  maxTokens: Int = 16384
 )
 
 class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, Fs2Streams[IO]]):
@@ -37,6 +38,7 @@ class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, 
         providerId,
         throw new RuntimeException(s"Model ref \"$ref\" points to unknown provider \"$providerId\"")
       )
-      ModelCandidate(providerId, provider, modelId)
+      val maxTokens = provider.models.find(_.id == modelId).map(_.maxTokens).getOrElse(16384)
+      ModelCandidate(providerId, provider, modelId, maxTokens)
     }
 end ProviderRegistry

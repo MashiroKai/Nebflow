@@ -1,34 +1,37 @@
 package nebflow.core
 
 import cats.effect.IO
-import org.slf4j.{Logger, LoggerFactory, MDC}
+import org.slf4j.{Logger, LoggerFactory}
 
 object NebflowLogger:
   def apply(cls: Class[?]): NebflowLogger = new NebflowLogger(LoggerFactory.getLogger(cls))
   def forName(name: String): NebflowLogger = new NebflowLogger(LoggerFactory.getLogger(name))
 
 class NebflowLogger(private val logger: Logger):
-  def debug(msg: String): IO[Unit] = IO.delay(logger.debug(msg))
-  def info(msg: String): IO[Unit] = IO.delay(logger.info(msg))
-  def warn(msg: String): IO[Unit] = IO.delay(logger.warn(msg))
-  def error(msg: String): IO[Unit] = IO.delay(logger.error(msg))
-  def error(msg: String, cause: Throwable): IO[Unit] = IO.delay(logger.error(msg, cause))
+  private val RESET = "\u001B[0m"
+  private val CYAN = "\u001B[36m"
+  private val YELLOW = "\u001B[33m"
+  private val RED = "\u001B[31m"
+  private val name = logger.getName
 
-  def info(msg: String, kv: (String, String)*): IO[Unit] = IO.delay {
-    kv.foreach { case (k, v) => MDC.put(k, v) }
-    try logger.info(msg)
-    finally kv.foreach { case (k, _) => MDC.remove(k) }
-  }
+  private def fmt(level: String, color: String, msg: String): String =
+    s"$color$level$RESET $name - $msg"
 
-  def warn(msg: String, kv: (String, String)*): IO[Unit] = IO.delay {
-    kv.foreach { case (k, v) => MDC.put(k, v) }
-    try logger.warn(msg)
-    finally kv.foreach { case (k, _) => MDC.remove(k) }
-  }
+  private def withKv(msg: String, kv: Seq[(String, String)]): String =
+    if kv.isEmpty then msg else s"$msg ${kv.map((k, v) => s"$k=$v").mkString(" ")}"
 
-  def debug(msg: String, kv: (String, String)*): IO[Unit] = IO.delay {
-    kv.foreach { case (k, v) => MDC.put(k, v) }
-    try logger.debug(msg)
-    finally kv.foreach { case (k, _) => MDC.remove(k) }
-  }
+  def debug(msg: String): IO[Unit] = IO.delay(logger.debug(s"DEBUG $name - $msg"))
+  def info(msg: String): IO[Unit] = IO.delay(logger.info(fmt("INFO ", CYAN, msg)))
+  def warn(msg: String): IO[Unit] = IO.delay(logger.warn(fmt("WARN ", YELLOW, msg)))
+  def error(msg: String): IO[Unit] = IO.delay(logger.error(fmt("ERROR", RED, msg)))
+  def error(msg: String, cause: Throwable): IO[Unit] = IO.delay(logger.error(fmt("ERROR", RED, msg), cause))
+
+  def info(msg: String, kv: (String, String)*): IO[Unit] =
+    IO.delay(logger.info(fmt("INFO ", CYAN, withKv(msg, kv))))
+
+  def warn(msg: String, kv: (String, String)*): IO[Unit] =
+    IO.delay(logger.warn(fmt("WARN ", YELLOW, withKv(msg, kv))))
+
+  def debug(msg: String, kv: (String, String)*): IO[Unit] =
+    IO.delay(logger.debug(s"DEBUG $name - ${withKv(msg, kv)}"))
 end NebflowLogger
