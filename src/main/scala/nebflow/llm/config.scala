@@ -19,10 +19,20 @@ object LlmProtocol:
     case other => Left(s"Unknown protocol: $other")
   }
 
+case class ModelConfig(
+  id: String,
+  maxTokens: Int = 16384,
+  contextWindow: Int = 128000
+)
+
+object ModelConfig:
+  given Decoder[ModelConfig] = deriveDecoder[ModelConfig]
+
 case class ProviderConfig(
   baseUrl: String,
   apiKey: String,
-  protocol: LlmProtocol
+  protocol: LlmProtocol,
+  models: List[ModelConfig] = Nil
 )
 
 object ProviderConfig:

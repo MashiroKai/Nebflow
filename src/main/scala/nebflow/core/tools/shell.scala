@@ -37,6 +37,9 @@ class PersistentShell:
               .redirectErrorStream(true)
             val cwd = new File(currentDir)
             if cwd.exists() then processBuilder.directory(cwd)
+            // Redirect stdin from /dev/null so commands that wait for input (e.g. sudo) fail fast
+            val devNull = new File("/dev/null")
+            if devNull.exists() then processBuilder.redirectInput(devNull)
             val proc = processBuilder.start()
             procRef.set(proc)
 
@@ -92,6 +95,8 @@ class PersistentShell:
           .redirectErrorStream(true)
         val cwd = new File(currentDir)
         if cwd.exists() then processBuilder.directory(cwd)
+        val devNull = new File("/dev/null")
+        if devNull.exists() then processBuilder.redirectInput(devNull)
         val proc = processBuilder.start()
 
         reader = new BufferedReader(new InputStreamReader(proc.getInputStream))

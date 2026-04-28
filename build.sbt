@@ -35,7 +35,8 @@ lazy val root = (project in file("."))
       // Process / File
       osLib,
       // Logging
-      sl4jNop,
+      logbackClassic,
+      logbackCore,
       // Testing
       munit,
       munitCatsEffect,

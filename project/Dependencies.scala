@@ -43,8 +43,9 @@ object Dependencies {
   val http4sDsl         = "org.http4s" %% "http4s-dsl"          % Http4sVer
   val http4sCirce       = "org.http4s" %% "http4s-circe"        % Http4sVer
 
-  // Logging (silent backend to avoid warnings)
-  val sl4jNop = "org.slf4j" % "slf4j-nop" % "2.0.16"
+  // Logging
+  val logbackClassic = "ch.qos.logback" % "logback-classic" % "1.5.16"
+  val logbackCore    = "ch.qos.logback" % "logback-core" % "1.5.16"
 
   // Testing
   val munit = "org.scalameta" %% "munit" % MunitVer % Test

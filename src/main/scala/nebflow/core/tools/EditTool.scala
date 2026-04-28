@@ -137,6 +137,5 @@ Usage:
             Right(s"OK: $short updated, $added added, $removed removed\n$diff")
         end if
       catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
-    end if
   }
 end EditTool
