@@ -3,7 +3,9 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import java.nio.file.{FileSystems, Files, Path, Paths}
+
+import java.nio.file.*
+
 import scala.jdk.StreamConverters.*
 
 object GlobTool extends Tool:
@@ -16,14 +18,22 @@ object GlobTool extends Tool:
 - Returns matching file paths sorted by modification time
 - Use this tool when you need to quickly find files by name patterns"""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> io.circe.Json.obj(
-      "pattern" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The glob pattern to match files against (e.g. \"**/*.js\", \"src/**/*.ts\")".asJson),
-      "path" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The directory to search in. Defaults to current working directory.".asJson)
-    ),
-    "required" -> io.circe.Json.arr("pattern".asJson)
-  ))
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> io.circe.Json.obj(
+        "pattern" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The glob pattern to match files against (e.g. \"**/*.js\", \"src/**/*.ts\")".asJson
+        ),
+        "path" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The directory to search in. Defaults to current working directory.".asJson
+        )
+      ),
+      "required" -> io.circe.Json.arr("pattern".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
@@ -43,17 +53,24 @@ object GlobTool extends Tool:
 
     try
       val matcher = FileSystems.getDefault.getPathMatcher(s"glob:$pattern")
-      val results = Files.walk(searchDir).toScala(List)
-        .filter(p => !p.toString.contains("node_modules") && !p.toString.contains(".git"))
-        .filter(p => Files.isRegularFile(p) && matcher.matches(p.getFileName))
-        .sortBy(p => -Files.getLastModifiedTime(p).toMillis)
-        .map(p => searchDir.relativize(p).toString)
+      val walkStream = Files.walk(searchDir)
+      try
+        val results = walkStream
+          .toScala(List)
+          .filter(p => !p.toString.contains("node_modules") && !p.toString.contains(".git"))
+          .filter(p => Files.isRegularFile(p) && matcher.matches(p.getFileName))
+          .sortBy(p => -Files.getLastModifiedTime(p).toMillis)
+          .map(p => searchDir.relativize(p).toString)
 
-      if results.isEmpty then Right("No files found matching the pattern.")
-      else
-        val truncated = results.length >= MAX_RESULTS
-        val output = results.take(MAX_RESULTS).mkString("\n")
-        Right(if truncated then output + "\n\n(Results are truncated. Consider using a more specific path or pattern.)" else output)
-    catch
-      case e: Exception => Right(s"Error: ${e.getMessage}")
+        if results.isEmpty then Right("No files found matching the pattern.")
+        else
+          val truncated = results.length >= MAX_RESULTS
+          val output = results.take(MAX_RESULTS).mkString("\n")
+          Right(
+            if truncated then output + "\n\n(Results are truncated. Consider using a more specific path or pattern.)"
+            else output
+          )
+      finally walkStream.close()
+    catch case e: Exception => Left(ToolError(s"Error: ${e.getMessage}"))
   }
+end GlobTool

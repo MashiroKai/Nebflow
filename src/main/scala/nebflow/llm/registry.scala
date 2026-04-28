@@ -1,9 +1,9 @@
 package nebflow.llm
 
-import nebflow.llm.providers.{AnthropicAdapter, OpenAiAdapter}
 import cats.effect.IO
-import sttp.client4.StreamBackend
+import nebflow.llm.providers.{AnthropicAdapter, OpenAiAdapter}
 import sttp.capabilities.fs2.Fs2Streams
+import sttp.client4.StreamBackend
 
 case class ModelCandidate(
   providerId: String,
@@ -23,8 +23,8 @@ class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, 
     adapters.get(providerId) match
       case Some(a) => a
       case None =>
-        val provider = config.llm.providers.getOrElse(providerId,
-          throw new RuntimeException(s"Unknown provider: $providerId"))
+        val provider =
+          config.llm.providers.getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
         val adapter = createAdapter(provider)
         adapters = adapters + (providerId -> adapter)
         adapter
@@ -33,7 +33,10 @@ class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, 
     val chain = config.llm.model.primary :: config.llm.model.fallbacks
     chain.map { ref =>
       val (providerId, modelId) = Config.parseModelRef(ref)
-      val provider = config.llm.providers.getOrElse(providerId,
-        throw new RuntimeException(s"Model ref \"$ref\" points to unknown provider \"$providerId\""))
+      val provider = config.llm.providers.getOrElse(
+        providerId,
+        throw new RuntimeException(s"Model ref \"$ref\" points to unknown provider \"$providerId\"")
+      )
       ModelCandidate(providerId, provider, modelId)
     }
+end ProviderRegistry

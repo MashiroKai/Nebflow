@@ -1,24 +1,24 @@
 package nebflow.cli
 
+import cats.effect.{IO, Ref}
 import nebflow.core.{ReplUi, UserAbort}
 import nebflow.shared.TerminalUtils.*
-import cats.effect.IO
-import cats.effect.Ref
-import org.jline.terminal.{Terminal, TerminalBuilder}
 import org.jline.reader.{LineReader, LineReaderBuilder}
+import org.jline.terminal.{Terminal, TerminalBuilder}
+
 import scala.concurrent.duration.*
 
 class NebflowUI(store: UiStore):
-  private val terminal: Terminal = TerminalBuilder.builder()
+
+  private val terminal: Terminal = TerminalBuilder
+    .builder()
     .system(true)
     .build()
-  private val reader: LineReader = LineReaderBuilder.builder()
+
+  private val reader: LineReader = LineReaderBuilder
+    .builder()
     .terminal(terminal)
     .build()
-
-  private val spinnerFrames = List("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
-  @volatile private var spinnerRunning = false
-  @volatile private var spinnerIndex = 0
 
   def runInteractive(modelRef: String, onInput: String => IO[Unit]): IO[Unit] =
     // Print splash
@@ -31,10 +31,8 @@ class NebflowUI(store: UiStore):
       readInput.flatMap {
         case None => IO.unit // Exit
         case Some(input) =>
-          if input == "quit" || input == "exit" then
-            IO.unit
-          else
-            onInput(input) *> loop
+          if input == "quit" || input == "exit" then IO.unit
+          else onInput(input) *> loop
       }
 
     loop.guarantee(IO(terminal.close()))
@@ -48,24 +46,6 @@ class NebflowUI(store: UiStore):
       case _: org.jline.reader.EndOfFileException => None
       case _: org.jline.reader.UserInterruptException => None
   }
-
-  def startSpinner(label: String): IO[Unit] = IO {
-    spinnerRunning = true
-    spinnerIndex = 0
-    val thread = new Thread(() => {
-      while spinnerRunning do
-        print(s"\r$Cyan${spinnerFrames(spinnerIndex)}$Reset $label")
-        System.out.flush()
-        spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length
-        Thread.sleep(80)
-      print("\r" + " " * (label.length + 10) + "\r")
-      System.out.flush()
-    })
-    thread.setDaemon(true)
-    thread.start()
-  }
-
-  def stopSpinner: IO[Unit] = IO.delay { spinnerRunning = false }
 
   def printText(text: String): IO[Unit] = IO.blocking {
     println(text)
@@ -92,8 +72,65 @@ class NebflowUI(store: UiStore):
     println(s"$Dim$msg$Reset")
   }
 
+  def selectOption(question: String, options: List[String]): IO[Int] = IO.blocking {
+    val out = terminal.writer()
+    val in = terminal.reader()
+
+    out.println()
+    out.println(question)
+    options.zipWithIndex.foreach { case (opt, i) =>
+      if i == 0 then out.println(s"  > $opt")
+      else out.println(s"    $opt")
+    }
+    out.flush()
+
+    var selected = 0
+    var done = false
+
+    terminal.puts(org.jline.utils.InfoCmp.Capability.cursor_invisible)
+    terminal.flush()
+
+    def render() =
+      out.print(s"\u001b[${options.length}A")
+      options.zipWithIndex.foreach { case (opt, i) =>
+        out.print("\u001b[G")
+        out.print("\u001b[2K")
+        if i == selected then out.print(s"> $opt")
+        else out.print(s"  $opt")
+        if i < options.length - 1 then out.print("\n")
+      }
+      out.flush()
+
+    while !done do
+      try
+        val ch = in.read()
+        ch match
+          case 27 => // ESC sequence
+            if in.read() == 91 then // '['
+              in.read() match
+                case 65 => // up
+                  selected = if selected > 0 then selected - 1 else options.length - 1
+                  render()
+                case 66 => // down
+                  selected = if selected < options.length - 1 then selected + 1 else 0
+                  render()
+                case _ => ()
+          case 10 | 13 => // Enter
+            done = true
+          case _ => ()
+      catch case _: Exception => done = true
+
+    terminal.puts(org.jline.utils.InfoCmp.Capability.cursor_normal)
+    out.print(s"\u001b[${options.length}B")
+    out.println()
+    out.flush()
+
+    selected
+  }
+
   def runSingleShot(query: String, onComplete: => IO[Unit]): IO[Unit] = onComplete
 
+end NebflowUI
+
 object NebflowUI:
-  def create: IO[NebflowUI] =
-    UiStore.create.map(store => new NebflowUI(store))
+  def apply(store: UiStore): NebflowUI = new NebflowUI(store)

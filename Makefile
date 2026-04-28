@@ -1,4 +1,5 @@
-.PHONY: compile run assembly clean install
+.PHONY: compile run assembly clean install \
+  lint fmt fix fmt-check check quality-gate
 
 compile:
 	sbt compile
@@ -21,3 +22,25 @@ install: assembly
 	@chmod +x $(HOME)/.local/bin/nebflow
 	@echo "Installed to $(HOME)/.local/bin/nebflow"
 	@echo "Make sure $(HOME)/.local/bin is in your PATH"
+
+# Quality control targets
+
+lint:
+	sbt "scalafmtCheckAll" "scalafix --check"
+
+fmt:
+	sbt scalafmtAll
+
+fix:
+	sbt "scalafix"
+
+fmt-check:
+	sbt scalafmtCheckAll
+
+check: compile fmt-check lint
+	@echo "All automated checks passed."
+
+quality-gate:
+	sbt compile scalafmtCheckAll "scalafix --check"
+	@echo "Quality gate passed."
+

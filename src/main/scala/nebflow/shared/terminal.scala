@@ -54,3 +54,4 @@ object TerminalUtils:
       .replace("\n", "\\n")
       .replace("\r", "\\r")
       .replace("\t", "\\t")
+end TerminalUtils

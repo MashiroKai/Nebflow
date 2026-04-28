@@ -1,15 +1,11 @@
 package nebflow.gateway
 
-import nebflow.shared.{
-  ToolDefinition, ToolCall, FallbackStep, TokenUsage, LlmMeta,
-  LlmRequest, LlmResponse, StreamChunk,
-}
-import nebflow.shared.given
-import nebflow.llm.{FallbackAttempt, FailoverReason, ErrorPermanence}
-
-import io.circe.{Encoder, Decoder, Json}
-import io.circe.generic.semiauto.{deriveEncoder, deriveDecoder}
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
+import nebflow.llm.{ErrorPermanence, FailoverReason, FallbackAttempt}
+import nebflow.shared.*
+import nebflow.shared.given
 
 object GatewayCodecs:
   // ----- enums -----
@@ -43,19 +39,20 @@ object GatewayCodecs:
   given Encoder[StreamChunk] = Encoder.instance {
     case StreamChunk.TextDelta(delta) =>
       Json.obj(
-        "type"  -> "textDelta".asJson,
-        "delta" -> delta.asJson,
+        "type" -> "textDelta".asJson,
+        "delta" -> delta.asJson
       )
     case StreamChunk.ToolCallChunk(toolCall) =>
       Json.obj(
-        "type"     -> "toolCall".asJson,
-        "toolCall" -> toolCall.asJson,
+        "type" -> "toolCall".asJson,
+        "toolCall" -> toolCall.asJson
       )
     case StreamChunk.Done(stopReason, usage, meta) =>
       Json.obj(
-        "type"       -> "done".asJson,
+        "type" -> "done".asJson,
         "stopReason" -> stopReason.asJson,
-        "usage"      -> usage.asJson,
-        "meta"       -> meta.asJson,
+        "usage" -> usage.asJson,
+        "meta" -> meta.asJson
       )
   }
+end GatewayCodecs
