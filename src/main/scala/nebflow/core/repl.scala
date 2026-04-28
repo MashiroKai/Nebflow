@@ -133,11 +133,33 @@ Principles: work until the task is resolved; diagnose failures before trying a n
         _ <- clearSpinner(label)
       yield result
 
+  /**
+   * Run tool executions sequentially, checking interruptedRef before each one.
+   *  This allows the Stop button to cancel pending tool calls.
+   */
+  private def runExecutionsWithInterruptCheck(
+    execs: List[IO[(ToolCall, ToolExecResult)]],
+    interruptedRef: cats.effect.Ref[IO, Boolean]
+  ): IO[List[(ToolCall, ToolExecResult)]] =
+    def loop(
+      remaining: List[IO[(ToolCall, ToolExecResult)]],
+      acc: List[(ToolCall, ToolExecResult)]
+    ): IO[List[(ToolCall, ToolExecResult)]] =
+      remaining match
+        case Nil => IO.pure(acc.reverse)
+        case io :: rest =>
+          interruptedRef.get.flatMap {
+            case true => IO.raiseError(new UserAbort())
+            case false => io.flatMap(r => loop(rest, r :: acc))
+          }
+    loop(execs, Nil)
+
   private def consumeStream(
     stream: fs2.Stream[IO, StreamChunk],
     store: ReplUi,
     llm: LlmHandle[IO],
-    silent: Boolean = false
+    silent: Boolean = false,
+    permState: Option[PermissionState] = None
   ): IO[ConsumeResult] =
     for
       interruptedRef <- IO.ref(false)
@@ -187,7 +209,7 @@ Principles: work until the task is resolved; diagnose failures before trying a n
                     IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
                       val execIO = store.emitToolStart(label) *>
                         withSpinner(label, silent) {
-                          executeTool(toolCall, System.getProperty("user.dir"), Some(llm), Some(store))
+                          executeTool(toolCall, System.getProperty("user.dir"), Some(llm), Some(store), permState)
                         }.flatMap { result =>
                           val resultSummary = summarizeToolResult(toolCall, result.content)
                           val icon = if result.isError then s"${Red}✗${Reset}" else s"${Green}✓${Reset}"
@@ -229,7 +251,7 @@ Principles: work until the task is resolved; diagnose failures before trying a n
         case None => IO.unit
       }
       execs <- executionsRef.get
-      results <- execs.sequence
+      results <- runExecutionsWithInterruptCheck(execs, interruptedRef)
       text <- textRef.get
       toolCalls <- toolCallsRef.get
     yield ConsumeResult(text, toolCalls, results, None)
@@ -262,7 +284,8 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     store: ReplUi,
     onToolRound: Option[List[Message] => IO[Unit]],
     silent: Boolean,
-    thinkingMode: Option[io.circe.Json] = None
+    thinkingMode: Option[io.circe.Json] = None,
+    permState: Option[PermissionState] = None
   ): IO[List[Message]] =
     val systemPrompt = loadSystemPrompt()
     buildUserMessage(userInput).flatMap { userMessage =>
@@ -275,9 +298,12 @@ Principles: work until the task is resolved; diagnose failures before trying a n
         onToolRound,
         silent,
         systemPrompt,
-        thinkingMode
+        thinkingMode,
+        permState
       )
     }
+
+  end runRepl
 
   def runRepl(
     userMessage: Message,
@@ -287,10 +313,22 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     store: ReplUi,
     onToolRound: Option[List[Message] => IO[Unit]],
     silent: Boolean,
-    thinkingMode: Option[io.circe.Json]
+    thinkingMode: Option[io.circe.Json],
+    permState: Option[PermissionState]
   ): IO[List[Message]] =
     val systemPrompt = loadSystemPrompt()
-    runReplLoop(userMessage, llm, projectRoot, initialMessages, store, onToolRound, silent, systemPrompt, thinkingMode)
+    runReplLoop(
+      userMessage,
+      llm,
+      projectRoot,
+      initialMessages,
+      store,
+      onToolRound,
+      silent,
+      systemPrompt,
+      thinkingMode,
+      permState
+    )
 
   private def runReplLoop(
     userMessage: Message,
@@ -301,7 +339,8 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     onToolRound: Option[List[Message] => IO[Unit]],
     silent: Boolean,
     systemPrompt: String,
-    thinkingMode: Option[io.circe.Json]
+    thinkingMode: Option[io.circe.Json],
+    permState: Option[PermissionState]
   ): IO[List[Message]] =
     def loop(messages: List[Message]): IO[List[Message]] =
       val allMessages = Message(MessageRole.System, Left(systemPrompt)) :: messages
@@ -315,7 +354,7 @@ Principles: work until the task is resolved; diagnose failures before trying a n
         )
       )
 
-      consumeStream(stream, store, llm, silent)
+      consumeStream(stream, store, llm, silent, permState)
         .flatMap { consumed =>
           if consumed.toolCalls.isEmpty then IO.pure(messages)
           else
