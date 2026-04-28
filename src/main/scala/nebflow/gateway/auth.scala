@@ -12,7 +12,7 @@ object Auth:
 
   def generateToken: IO[String] = IO.delay {
     val bytes = new Array[Byte](32)
-    SecureRandom.getInstanceStrong().nextBytes(bytes)
+    new SecureRandom().nextBytes(bytes)
     Base64.getUrlEncoder.withoutPadding().encodeToString(bytes)
   }
 
@@ -26,7 +26,7 @@ object Auth:
 
   private def createAndSave(): String =
     val bytes = new Array[Byte](32)
-    SecureRandom.getInstanceStrong().nextBytes(bytes)
+    new SecureRandom().nextBytes(bytes)
     val token = Base64.getUrlEncoder.withoutPadding().encodeToString(bytes)
     os.write.over(tokenPath, token.asJson.noSpaces, createFolders = true)
     token

@@ -49,6 +49,7 @@ let currentAiBubble = null;
 let aiText = '';
 let busy = false;
 let ws = null;
+let heartbeat = null;
 let recognition = null;
 let pendingAttachments = [];
 let thinkingMode = JSON.parse(localStorage.getItem(LS_THINKING_KEY) || 'null');
@@ -111,7 +112,7 @@ function appendAiText(text) {
   const cursor = '<span class="cursor"></span>';
   currentAiBubble.innerHTML = marked.parse(aiText || '', {headerIds: false}) + cursor;
   if (askBox) currentAiBubble.appendChild(askBox);
-  chat.scrollTop = chat.scrollHeight;
+  smartScroll();
 }
 function finishAi() {
   if (currentAiBubble) {
@@ -126,29 +127,6 @@ function finishAi() {
 }
 
 let currentToolCard = null;
-
-// Small lottie spinner for tool pending state
-const toolSpinnerJson = {
-  "v":"5.7.4","fr":60,"ip":0,"op":60,"w":14,"h":14,"nm":"tool-spinner","ddd":0,"assets":[],
-  "layers":[{
-    "ddd":0,"ind":1,"ty":4,"nm":"ring","sr":1,
-    "ks":{
-      "o":{"a":0,"k":100},
-      "r":{"a":1,"k":[{"i":{"x":[0.833],"y":[0.833]},"o":{"x":[0.167],"y":[0.167]},"t":0,"s":[0]},{"t":60,"s":[360]}]},
-      "p":{"a":0,"k":[7,7,0]},"a":{"a":0,"k":[0,0,0]},"s":{"a":0,"k":[29,29,100]}
-    },
-    "ao":0,
-    "shapes":[{
-      "ty":"gr",
-      "it":[
-        {"ty":"el","d":1,"s":{"a":0,"k":[36,36]},"p":{"a":0,"k":[0,0]}},
-        {"ty":"st","c":{"a":0,"k":[0.3,0.3,0.3,1]},"o":{"a":0,"k":100},"w":{"a":0,"k":3},"lc":2,"lj":2,"d":[{"n":"d","v":{"a":0,"k":90}},{"n":"g","v":{"a":0,"k":50}}]},
-        {"ty":"tr","p":{"a":0,"k":[0,0]},"a":{"a":0,"k":[0,0]},"s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
-      ]
-    }],
-    "ip":0,"op":60,"st":0,"bm":0
-  }]
-};
 
 function formatDiff(content) {
   if (!content) return null;
@@ -245,7 +223,7 @@ function renderTool(label, summary, content, isError, inputJson) {
     (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
   row.appendChild(card);
   chat.appendChild(row);
-  chat.scrollTop = chat.scrollHeight;
+  smartScroll();
 
   if (hasBody) attachToolClick(card);
   saveMsg({type:'tool', label, summary, content, isError, input: inputJson});
@@ -268,7 +246,7 @@ function renderToolPending(label) {
     '<div class="content"><div class="label">' + esc(label) + '</div></div>';
   row.appendChild(card);
   chat.appendChild(row);
-  chat.scrollTop = chat.scrollHeight;
+  smartScroll();
   currentToolCard = row;
 }
 function renderError(msg) {
@@ -279,7 +257,7 @@ function renderError(msg) {
   card.textContent = msg;
   row.appendChild(card);
   chat.appendChild(row);
-  chat.scrollTop = chat.scrollHeight;
+  smartScroll();
   saveMsg({type:'error', content: msg});
 }
 
@@ -354,7 +332,7 @@ function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
   box.appendChild(btnRow);
   container.appendChild(box);
   if (typeof lucide !== 'undefined') lucide.createIcons();
-  chat.scrollTop = chat.scrollHeight;
+  smartScroll();
 
   function checkAllAnswered() {
     confirmBtn.disabled = !answers.every(a => a !== null);
@@ -362,8 +340,7 @@ function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
 }
 
 function renderAskUser(items) {
-  // Create a standalone bubble for AskUser, not tied to currentAiBubble
-  // so LLM response appears below after user confirms
+  if (currentToolCard) { currentToolCard.remove(); currentToolCard = null; }
   const row = document.createElement('div');
   row.className = 'row ai';
   const bubble = document.createElement('div');
@@ -416,7 +393,7 @@ function renderPermissionPrompt(toolName, summary, inputJson) {
       ws.send(JSON.stringify({type:'permissionAnswer', approved: false}));
     }
   });
-  chat.scrollTop = chat.scrollHeight;
+  smartScroll();
 }
 
 function esc(s) {
@@ -424,6 +401,22 @@ function esc(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+let scrollSnapped = true;
+function shouldAutoScroll() {
+  const threshold = 60;
+  return chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold;
+}
+function smartScroll() {
+  requestAnimationFrame(() => {
+    if (scrollSnapped || shouldAutoScroll()) {
+      chat.scrollTop = chat.scrollHeight;
+      scrollSnapped = true;
+    }
+  });
+}
+chat.addEventListener('scroll', () => {
+  scrollSnapped = shouldAutoScroll();
+});
 function setStatus(text) {
   statusText.textContent = text || '';
   statusWrap.classList.add('on');
@@ -524,7 +517,7 @@ function renderSystemBubble(text) {
   card.textContent = text;
   row.appendChild(card);
   chat.appendChild(row);
-  chat.scrollTop = chat.scrollHeight;
+  smartScroll();
   saveMsg({type:'system', content: text});
 }
 
@@ -802,13 +795,25 @@ function connect() {
   ws = new WebSocket(`${proto}//${location.host}/ws${tokenQs}`);
   ws.onopen = () => {
     connEl.classList.remove('off');
-    // Restore persisted thinking mode
     if (thinkingMode) {
       ws.send(JSON.stringify({type: 'setThinking', thinking: thinkingMode}));
     }
+    heartbeat = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'ping'}));
+      }
+    }, 30000);
   };
   ws.onclose = () => {
     connEl.classList.add('off');
+    if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+    if (busy) {
+      if (currentToolCard) { currentToolCard.remove(); currentToolCard = null; }
+      setBusy(false);
+      clearStatus();
+      currentAiBubble = null;
+      aiText = '';
+    }
     setTimeout(connect, 2000);
   };
   ws.onerror = () => { connEl.classList.add('off'); };
@@ -825,7 +830,6 @@ function connect() {
         renderToolPending(msg.label);
         break;
       case 'thinking':
-        // Show thinking spinner in a new AI bubble if none exists
         if (!currentAiBubble) {
           const row = document.createElement('div');
           row.className = 'row ai';
@@ -834,25 +838,28 @@ function connect() {
           currentAiBubble.innerHTML = '<span style="color:#999;font-size:13px;">Thinking...</span>';
           row.appendChild(currentAiBubble);
           chat.appendChild(row);
-          chat.scrollTop = chat.scrollHeight;
         }
+        smartScroll();
         break;
       case 'toolEnd':
         if (msg.label && msg.label.startsWith('AskUser')) break;
         renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input);
         break;
       case 'done':
+        if (currentToolCard) { currentToolCard.remove(); currentToolCard = null; }
         finishAi();
         setBusy(false);
         clearStatus();
         break;
       case 'error':
+        if (currentToolCard) { currentToolCard.remove(); currentToolCard = null; }
         finishAi();
         renderError(msg.message);
         setBusy(false);
         clearStatus();
         break;
       case 'interrupted':
+        if (currentToolCard) { currentToolCard.remove(); currentToolCard = null; }
         finishAi();
         setBusy(false);
         clearStatus();
@@ -871,17 +878,22 @@ function connect() {
 function send() {
   const text = input.value.trim();
   if ((!text && pendingAttachments.length === 0) || busy) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
   if (handleSlash(text)) {
     input.value = '';
     return;
   }
   renderUserBubble(text, pendingAttachments);
-  ws.send(JSON.stringify({
-    content: text,
-    attachments: pendingAttachments.map(a => ({
-      mimeType: a.mimeType, data: a.data, name: a.name
-    }))
-  }));
+  try {
+    ws.send(JSON.stringify({
+      content: text,
+      attachments: pendingAttachments.map(a => ({
+        mimeType: a.mimeType, data: a.data, name: a.name
+      }))
+    }));
+  } catch (e) {
+    console.error('WebSocket send failed:', e);
+  }
   input.value = '';
   pendingAttachments = [];
   attPreview.innerHTML = '';

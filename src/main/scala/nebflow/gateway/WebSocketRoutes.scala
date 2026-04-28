@@ -1,7 +1,7 @@
 package nebflow.gateway
 
-import cats.effect.std.Queue
-import cats.effect.{IO, Ref}
+import cats.effect.std.{Queue, Semaphore}
+import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.parser.parse
@@ -29,20 +29,30 @@ class WebSocketRoutes(
       val provided = req.params.get("token").getOrElse("")
       if Auth.validateToken(provided, token) then
         for
+          fiberRef <- Ref.of[IO, Option[Fiber[IO, Throwable, Unit]]](None)
           outbound <- Queue.unbounded[IO, WebSocketFrame]
-          replUi = new WebReplUi(outbound)
+          askSem <- Semaphore[IO](1)
+          permSem <- Semaphore[IO](1)
+          replUi = new WebReplUi(outbound, askSem, permSem)
 
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
-            case WebSocketFrame.Text(text, _) => handleMessage(text, replUi)
+            case WebSocketFrame.Text(text, _) => handleMessage(text, replUi, fiberRef)
             case _ => IO.unit
-          }
+          }.onFinalize(
+            fiberRef.get.flatMap {
+              case Some(f) =>
+                logger.info("WebSocket disconnected, cancelling REPL fiber") *>
+                  f.cancel *> fiberRef.set(None)
+              case None => IO.unit
+            }
+          )
 
           sendStream = Stream.fromQueueUnterminated(outbound)
           _ <- logger.info("WebSocket client connected")
           ws <- wsb.build(sendStream, receivePipe)
         yield ws
       else
-        logger.warn("WebSocket auth failed: invalid token") *>
+        logger.debug("WebSocket auth failed: invalid token") *>
           Forbidden("Invalid token")
 
     case req @ GET -> Root =>
@@ -56,7 +66,8 @@ class WebSocketRoutes(
 
   private def handleMessage(
     text: String,
-    replUi: WebReplUi
+    replUi: WebReplUi,
+    fiberRef: Ref[IO, Option[Fiber[IO, Throwable, Unit]]]
   ): IO[Unit] =
     parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
       case "askUserAnswer" =>
@@ -91,6 +102,8 @@ class WebSocketRoutes(
           case Some(t) => thinkingModeRef.set(Some(t))
           case None => thinkingModeRef.set(None)
 
+      case "ping" => IO.unit
+
       case _ =>
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         val content = json.hcursor.downField("content").as[String].getOrElse("")
@@ -119,41 +132,50 @@ class WebSocketRoutes(
                 else Message(MessageRole.User, Right(blocks.toList))
 
               logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
-                messagesRef.get
-                  .flatMap { history =>
-                    thinkingModeRef.get
-                      .flatMap { thinking =>
-                        Repl.runRepl(
-                          userMessage = userMessage,
-                          llm = llm,
-                          projectRoot = System.getProperty("user.dir"),
-                          initialMessages = history,
-                          store = replUi,
-                          onToolRound = Some { (msgs: List[Message]) => messagesRef.set(msgs) *> saveSession(msgs) },
-                          silent = true,
-                          thinkingMode = thinking,
-                          permState = Some(permState)
-                        )
-                      }
-                      .flatMap { updated =>
-                        messagesRef.set(updated) *> saveSession(updated)
-                      }
-                      .handleErrorWith { e =>
-                        val userMsg = e match
-                          case fe: nebflow.llm.FallbackExhaustedError =>
-                            NebflowError.toUserMessage(NebflowError.LlmFailed(fe.getMessage, Nil))
-                          case _ =>
-                            NebflowError.toUserMessage(
-                              NebflowError.Internal(
-                                Option(e.getMessage).getOrElse("Unknown error")
+                fiberRef.get.flatMap {
+                  case Some(f) =>
+                    logger.info("Cancelling previous REPL fiber before starting new one") *> f.cancel
+                  case None    => IO.unit
+                } *>
+                  messagesRef.get
+                    .flatMap { history =>
+                      thinkingModeRef.get
+                        .flatMap { thinking =>
+                          Repl.runRepl(
+                            userMessage = userMessage,
+                            llm = llm,
+                            projectRoot = System.getProperty("user.dir"),
+                            initialMessages = history,
+                            store = replUi,
+                            onToolRound = Some { (msgs: List[Message]) => messagesRef.set(msgs) *> saveSession(msgs) },
+                            silent = true,
+                            thinkingMode = thinking,
+                            permState = Some(permState)
+                          )
+                        }
+                        .flatMap { updated =>
+                          messagesRef.set(updated) *> saveSession(updated) *> replUi.emitDone()
+                        }
+                        .handleErrorWith { e =>
+                          val userMsg = e match
+                            case fe: nebflow.llm.FallbackExhaustedError =>
+                              val attemptSummaries = fe.attempts.map(a =>
+                                s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
                               )
-                            )
-                        logger.error(s"REPL error: ${e.getMessage}", e) *> replUi.sendError(userMsg)
-                      }
-                  }
-                  .guarantee(replUi.emitDone())
-                  .start
-                  .void
+                              NebflowError.toUserMessage(NebflowError.LlmFailed(fe.getMessage, attemptSummaries))
+                            case _ =>
+                              NebflowError.toUserMessage(
+                                NebflowError.Internal(
+                                  Option(e.getMessage).getOrElse("Unknown error")
+                                )
+                              )
+                          logger.error(s"REPL error: ${e.getMessage}", e) *> replUi.sendError(userMsg) *> replUi
+                            .emitDone()
+                        }
+                    }
+                    .start
+                    .flatMap(f => fiberRef.set(Some(f)))
+                    .void
           }
         else IO.unit
         end if

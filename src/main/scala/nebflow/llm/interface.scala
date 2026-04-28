@@ -31,7 +31,7 @@ object LlmInterface:
                 registry
                   .getAdapter(candidate.providerId)
                   .sendMessage(
-                    SendMessageParams(req.messages, candidate.model, req.tools, req.maxTokens, req.thinking)
+                    SendMessageParams(req.messages, candidate.model, req.tools, Some(candidate.maxTokens), req.thinking)
                   )
             )
             .map { result =>
@@ -100,7 +100,7 @@ object LlmInterface:
                     val stream = registry
                       .getAdapter(candidate.providerId)
                       .sendMessageStream(
-                        SendMessageParams(req.messages, candidate.model, req.tools, req.maxTokens, req.thinking)
+                        SendMessageParams(req.messages, candidate.model, req.tools, Some(candidate.maxTokens), req.thinking)
                       )
                     stream
                       .evalTap { chunk =>
