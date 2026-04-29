@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.core.mcp.*
 import nebflow.core.tools.ToolRegistry
-import nebflow.core.{NebflowLogger, PermissionState}
+import nebflow.core.{FileChangeTracker, NebflowLogger, PermissionState, ReminderState}
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
 import nebflow.shared.{Message, given}
 import org.http4s.ember.server.EmberServerBuilder
@@ -85,6 +85,8 @@ object GatewayMain extends IOApp.Simple:
                   Ref.of[IO, Option[io.circe.Json]](None).flatMap { thinkingModeRef =>
                     PermissionState.create.flatMap { permState =>
                       RateLimiter.create().flatMap { rateLimiter =>
+                        FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
+                        Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
                         EmberServerBuilder
                           .default[IO]
                           .withHost(cfg.host)
@@ -100,7 +102,9 @@ object GatewayMain extends IOApp.Simple:
                                 thinkingModeRef,
                                 permState,
                                 rateLimiter,
-                                token
+                                token,
+                                fileTracker,
+                                reminderStateRef
                               )
                             Router(
                               "/api" -> chatRoutes.routes,
@@ -113,6 +117,8 @@ object GatewayMain extends IOApp.Simple:
                           }
                           .guarantee(releaseBackend)
                       }
+                    }
+                    }
                     }
                   }
               }
