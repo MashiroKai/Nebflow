@@ -109,7 +109,8 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     text: String,
     toolCalls: List[ToolCall],
     results: List[(ToolCall, ToolExecResult)],
-    stopReason: Option[String]
+    stopReason: Option[String],
+    usage: Option[TokenUsage] = None
   )
 
   private val SpinnerFrames = List("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
@@ -160,13 +161,15 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     llm: LlmHandle[IO],
     silent: Boolean = false,
     permState: Option[PermissionState] = None,
-    messagesRef: Option[Ref[IO, List[Message]]] = None
+    messagesRef: Option[Ref[IO, List[Message]]] = None,
+    fileChangeTracker: Option[FileChangeTracker] = None
   ): IO[ConsumeResult] =
     for
       abortSignal <- Deferred[IO, Unit]
       interruptedRef <- IO.ref(false)
       textRef <- IO.ref("")
       textStartedRef <- IO.ref(false)
+      usageRef <- IO.ref(Option.empty[TokenUsage])
       toolCallsRef <- IO.ref(List.empty[ToolCall])
       executionsRef <- IO.ref(List.empty[IO[(ToolCall, ToolExecResult)]])
       thinkingFiberRef <- IO.ref(Option.empty[cats.effect.Fiber[IO, Throwable, Unit]])
@@ -209,7 +212,7 @@ Principles: work until the task is resolved; diagnose failures before trying a n
                 IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
                   val execIO = store.emitToolStart(label) *>
                     withSpinner(label, silent) {
-                      executeTool(toolCall, System.getProperty("user.dir"), Some(llm), Some(store), permState, messagesRef)
+                      executeTool(toolCall, System.getProperty("user.dir"), Some(llm), Some(store), permState, messagesRef, fileChangeTracker)
                         .race(abortSignal.get *> IO.raiseError(new UserAbort()))
                         .flatMap {
                           case Left(result) => IO.pure(result)
@@ -227,6 +230,7 @@ Principles: work until the task is resolved; diagnose failures before trying a n
                   executionsRef.update(_ :+ execIO)
                 }
             case StreamChunk.Done(stopReason, usage, _) =>
+              usage.foreach(u => usageRef.set(Some(u)))
               stopReason match
                 case Some("max_tokens") => store.emitMaxTokens() *> (if silent then IO.unit else IO.println(""))
                 case Some("timeout") => store.emitTimeout() *> (if silent then IO.unit else IO.println(""))
@@ -258,13 +262,15 @@ Principles: work until the task is resolved; diagnose failures before trying a n
       results <- runExecutionsWithInterruptCheck(execs, interruptedRef)
       text <- textRef.get
       toolCalls <- toolCallsRef.get
-    yield ConsumeResult(text, toolCalls, results, None)
+      usage <- usageRef.get
+    yield ConsumeResult(text, toolCalls, results, None, usage)
 
   private def appendToolRound(
     messages: List[Message],
     text: String,
     toolCalls: List[ToolCall],
-    results: List[(ToolCall, ToolExecResult)]
+    results: List[(ToolCall, ToolExecResult)],
+    reminders: List[SystemReminder] = Nil
   ): List[Message] =
     val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
     if text.nonEmpty then assistantBlocks += ContentBlock.Text(text)
@@ -273,10 +279,15 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     }
     val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
 
-    val resultBlocks = results.map { case (call, result) =>
-      ContentBlock.ToolResult(call.id, result.content, Some(result.isError))
+    val resultBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
+    results.foreach { case (call, result) =>
+      resultBlocks += ContentBlock.ToolResult(call.id, result.content, Some(result.isError))
     }
-    val resultMsg = Message(MessageRole.User, Right(resultBlocks))
+    // Inject system reminders alongside tool results
+    reminders.foreach { r =>
+      resultBlocks += ContentBlock.Text(r.render)
+    }
+    val resultMsg = Message(MessageRole.User, Right(resultBlocks.toList))
 
     messages ++ List(assistantMsg, resultMsg)
 
@@ -289,7 +300,10 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     onToolRound: Option[List[Message] => IO[Unit]],
     silent: Boolean,
     thinkingMode: Option[io.circe.Json] = None,
-    permState: Option[PermissionState] = None
+    permState: Option[PermissionState] = None,
+    contextWindow: Int = 128000,
+    reminderStateRef: Option[Ref[IO, ReminderState]] = None,
+    fileChangeTracker: Option[FileChangeTracker] = None
   ): IO[List[Message]] =
     val systemPrompt = loadSystemPrompt()
     buildUserMessage(userInput).flatMap { userMessage =>
@@ -303,7 +317,10 @@ Principles: work until the task is resolved; diagnose failures before trying a n
         silent,
         systemPrompt,
         thinkingMode,
-        permState
+        permState,
+        contextWindow,
+        reminderStateRef,
+        fileChangeTracker
       )
     }
 
@@ -318,7 +335,10 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     onToolRound: Option[List[Message] => IO[Unit]],
     silent: Boolean,
     thinkingMode: Option[io.circe.Json],
-    permState: Option[PermissionState]
+    permState: Option[PermissionState],
+    contextWindow: Int,
+    reminderStateRef: Option[Ref[IO, ReminderState]],
+    fileChangeTracker: Option[FileChangeTracker]
   ): IO[List[Message]] =
     val systemPrompt = loadSystemPrompt()
     runReplLoop(
@@ -331,7 +351,10 @@ Principles: work until the task is resolved; diagnose failures before trying a n
       silent,
       systemPrompt,
       thinkingMode,
-      permState
+      permState,
+      contextWindow,
+      reminderStateRef,
+      fileChangeTracker
     )
 
   private def runReplLoop(
@@ -344,41 +367,63 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     silent: Boolean,
     systemPrompt: String,
     thinkingMode: Option[io.circe.Json],
-    permState: Option[PermissionState]
+    permState: Option[PermissionState],
+    contextWindow: Int,
+    reminderStateRef: Option[Ref[IO, ReminderState]],
+    fileChangeTracker: Option[FileChangeTracker]
   ): IO[List[Message]] =
     // Ref for ContextManageTool to modify messages in-place
     Ref.of[IO, List[Message]](initialMessages).flatMap { ctxMsgRef =>
+
+    def collectReminders(usage: Option[TokenUsage]): IO[List[SystemReminder]] =
+      for
+        fileChangesOpt <- fileChangeTracker.traverse(_.checkChanges()).map(_.flatten)
+        reminders <- reminderStateRef match
+          case Some(ref) => SystemReminders.collectAll(ref, usage, contextWindow, fileChangesOpt)
+          case None => IO.pure(fileChangesOpt.toList)
+      yield reminders
+
     def loop(messages: List[Message]): IO[List[Message]] =
       // Sync the ref so ContextManageTool sees current messages
-      ctxMsgRef.set(messages) *> {
-      val systemMsg = Message(MessageRole.System, Left(systemPrompt))
-      val tagged = systemMsg :: tagMessages(messages)
-      val stream = llm.sendStream(
-        LlmRequest(
-          messages = tagged,
-          sessionId = "repl",
-          agentId = "user",
-          tools = Some(ToolRegistry.ALL_TOOLS),
-          thinking = thinkingMode
-        )
-      )
+      ctxMsgRef.set(messages) *>
+      // Collect system reminders for this turn
+      collectReminders(None).flatMap { reminders =>
+        val systemMsg = Message(MessageRole.System, Left(systemPrompt))
+        // Inject reminders for first turn (no tool results yet)
+        val tagged = systemMsg :: tagMessages(messages)
+        val messagesWithReminders =
+          if reminders.nonEmpty then tagged ++ List(Message(MessageRole.User, Right(reminders.map(r => ContentBlock.Text(r.render)))))
+          else tagged
 
-      consumeStream(stream, store, llm, silent, permState, Some(ctxMsgRef))
-        .flatMap { consumed =>
-          if consumed.toolCalls.isEmpty then IO.pure(messages)
-          else
-            // Read from ctxMsgRef in case ContextManageTool modified messages
-            ctxMsgRef.get.flatMap { managedMsgs =>
-              val base = if managedMsgs != messages then managedMsgs else messages
-              val updated = appendToolRound(base, consumed.text, consumed.toolCalls, consumed.results)
-              onToolRound.traverse_(_.apply(updated)) *> loop(updated)
-            }
-        }
-        .handleErrorWith {
-          case _: UserAbort => IO.pure(messages)
-          case e => IO.raiseError(e)
-        }
-      } // end ctxMsgRef.set *> block
+        val stream = llm.sendStream(
+          LlmRequest(
+            messages = messagesWithReminders,
+            sessionId = "repl",
+            agentId = "user",
+            tools = Some(ToolRegistry.ALL_TOOLS),
+            thinking = thinkingMode
+          )
+        )
+
+        consumeStream(stream, store, llm, silent, permState, Some(ctxMsgRef), fileChangeTracker)
+          .flatMap { consumed =>
+            if consumed.toolCalls.isEmpty then IO.pure(messages)
+            else
+              // Collect reminders for tool-result turn using actual usage
+              collectReminders(consumed.usage).flatMap { reminders2 =>
+                // Read from ctxMsgRef in case ContextManageTool modified messages
+                ctxMsgRef.get.flatMap { managedMsgs =>
+                  val base = if managedMsgs != messages then managedMsgs else messages
+                  val updated = appendToolRound(base, consumed.text, consumed.toolCalls, consumed.results, reminders2)
+                  onToolRound.traverse_(_.apply(updated)) *> loop(updated)
+                }
+              }
+          }
+          .handleErrorWith {
+            case _: UserAbort => IO.pure(messages)
+            case e => IO.raiseError(e)
+          }
+      }
 
     loop(initialMessages :+ userMessage)
     } // end ctxMsgRef flatMap

@@ -9,7 +9,8 @@ case class ModelCandidate(
   providerId: String,
   provider: ProviderConfig,
   model: String,
-  maxTokens: Int = 16384
+  maxTokens: Int = 16384,
+  contextWindow: Int = 128000
 )
 
 class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, Fs2Streams[IO]]):
@@ -38,7 +39,9 @@ class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, 
         providerId,
         throw new RuntimeException(s"Model ref \"$ref\" points to unknown provider \"$providerId\"")
       )
-      val maxTokens = provider.models.find(_.id == modelId).map(_.maxTokens).getOrElse(16384)
-      ModelCandidate(providerId, provider, modelId, maxTokens)
+      val modelConfig = provider.models.find(_.id == modelId)
+      val maxTokens = modelConfig.map(_.maxTokens).getOrElse(16384)
+      val contextWindow = modelConfig.map(_.contextWindow).getOrElse(128000)
+      ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow)
     }
 end ProviderRegistry

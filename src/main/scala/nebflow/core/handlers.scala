@@ -24,7 +24,8 @@ def executeTool(
   llm: Option[LlmHandle[IO]] = None,
   replUi: Option[nebflow.core.ReplUi] = None,
   permState: Option[PermissionState] = None,
-  messagesRef: Option[Ref[IO, List[Message]]] = None
+  messagesRef: Option[Ref[IO, List[Message]]] = None,
+  fileChangeTracker: Option[FileChangeTracker] = None
 ): IO[ToolExecResult] =
   val logger = NebflowLogger.forName("nebflow.handlers")
 
@@ -72,7 +73,14 @@ def executeTool(
               .flatTap { result =>
                 val elapsed = (System.nanoTime() - start) / 1_000_000
                 if result.isError then logger.warn(s"Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
-                else logger.info(s"Tool $summary OK (${elapsed}ms)")
+                else
+                  logger.info(s"Tool $summary OK (${elapsed}ms)") *>
+                  // Record file modifications by agent tools
+                  (if call.name == "Write" || call.name == "Edit" then
+                    call.input("file_path").flatMap(_.asString) match
+                      case Some(path) => fileChangeTracker.traverse_(_.recordAgentModification(path))
+                      case None => IO.unit
+                  else IO.unit)
               }
           }
           }
