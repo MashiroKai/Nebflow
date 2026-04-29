@@ -105,6 +105,5 @@ Usage:
             IO.pure(
               Left(ToolError("AskUserQuestion tool requires an interactive UI. Not available in non-interactive mode."))
             )
-    end if
   end call
 end AskUserQuestionTool
