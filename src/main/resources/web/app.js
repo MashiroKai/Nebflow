@@ -43,6 +43,12 @@ const connEl = document.getElementById('conn');
 const voiceOverlay = document.getElementById('voice-overlay');
 const voiceText = document.getElementById('voice-text');
 
+// Auto-resize textarea
+input.addEventListener('input', () => {
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+});
+
 const LS_KEY = 'nebflow_v3';
 const LS_THINKING_KEY = 'nebflow_thinking';
 let currentAiBubble = null;
@@ -277,52 +283,67 @@ function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
 
     const optsDiv = document.createElement('div');
     optsDiv.className = 'option-opts';
-    item.options.forEach((opt, oi) => {
-      const btn = document.createElement('button');
-      btn.className = 'option-btn';
-      const isStr = typeof opt === 'string';
-      const label = isStr ? opt : opt.label;
-      const desc = isStr ? '' : (opt.desc || opt.description || '');
-      btn.innerHTML = esc(label) + (desc ? '<div style="font-size:11px;color:#888;margin-top:2px;font-weight:normal;">' + esc(desc) + '</div>' : '');
-      btn.onclick = () => {
-        answers[qi] = label;
-        optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
-          el.classList.toggle('picked', i === oi);
-        });
-        customInput && (customInput.style.display = 'none');
-        checkAllAnswered();
-      };
-      optsDiv.appendChild(btn);
-    });
+    const hasOptions = item.options && item.options.length > 0;
 
-    // "Other" option for custom input
-    const otherBtn = document.createElement('button');
-    otherBtn.className = 'option-btn';
-    otherBtn.textContent = 'Other...';
-    const customInput = document.createElement('input');
-    customInput.type = 'text';
+    if (hasOptions) {
+      item.options.forEach((opt, oi) => {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        const isStr = typeof opt === 'string';
+        const label = isStr ? opt : opt.label;
+        const desc = isStr ? '' : (opt.desc || opt.description || '');
+        btn.innerHTML = esc(label) + (desc ? '<div style="font-size:11px;color:#888;margin-top:2px;font-weight:normal;">' + esc(desc) + '</div>' : '');
+        btn.onclick = () => {
+          answers[qi] = label;
+          optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
+            el.classList.toggle('picked', i === oi);
+          });
+          customInput && (customInput.style.display = 'none');
+          checkAllAnswered();
+        };
+        optsDiv.appendChild(btn);
+      });
+    }
+
+    // "Other" option for custom input (always shown for choice questions, or as the only input for open-ended)
+    const customInput = document.createElement('textarea');
     customInput.className = 'option-custom-input';
     customInput.placeholder = 'Type your answer...';
-    customInput.style.display = 'none';
+    customInput.rows = 2;
+    if (!hasOptions) customInput.style.display = ''; // visible by default for open-ended
+
+    let otherBtn = null;
+    if (hasOptions) {
+      otherBtn = document.createElement('button');
+      otherBtn.className = 'option-btn';
+      otherBtn.textContent = 'Other...';
+      customInput.style.display = 'none';
+      otherBtn.onclick = () => {
+        optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+        otherBtn.classList.add('picked');
+        customInput.style.display = '';
+        customInput.focus();
+        if (customInput.value.trim()) {
+          answers[qi] = customInput.value.trim();
+        }
+        checkAllAnswered();
+      };
+      optsDiv.appendChild(otherBtn);
+    } else {
+      // Open-ended: auto-focus and show input immediately
+      answers[qi] = null; // needs to be filled
+    }
+
     customInput.oninput = () => {
       if (customInput.value.trim()) {
         answers[qi] = customInput.value.trim();
-        optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
-        otherBtn.classList.add('picked');
+        if (hasOptions) {
+          optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+          otherBtn && otherBtn.classList.add('picked');
+        }
         checkAllAnswered();
       }
     };
-    otherBtn.onclick = () => {
-      optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
-      otherBtn.classList.add('picked');
-      customInput.style.display = '';
-      customInput.focus();
-      if (customInput.value.trim()) {
-        answers[qi] = customInput.value.trim();
-      }
-      checkAllAnswered();
-    };
-    optsDiv.appendChild(otherBtn);
     optsDiv.appendChild(customInput);
     box.appendChild(optsDiv);
   });
@@ -792,8 +813,8 @@ function startVoice(e) {
     }
     const display = (final + interim).trim();
     voiceText.textContent = display || 'Listening...';
-    if (final) input.value = final;
-    else if (interim) input.value = interim;
+    if (final) input.value += final;
+    else if (interim) { input.value = input.value.replace(/\s*$/, ' ') + interim; }
   };
   recognition.onerror = (ev) => {
     voiceText.textContent = 'Error: ' + ev.error;
@@ -926,6 +947,7 @@ function send() {
     console.error('WebSocket send failed:', e);
   }
   input.value = '';
+  input.style.height = 'auto';
   pendingAttachments = [];
   attPreview.innerHTML = '';
   setBusy(true);

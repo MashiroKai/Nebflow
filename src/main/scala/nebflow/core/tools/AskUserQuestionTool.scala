@@ -10,12 +10,12 @@ object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
 
   val description =
-    """Ask the user one or more questions with predefined options. The user can always type a custom answer via the "Other" input.
+    """Ask the user one or more questions. Each question can have predefined options or be open-ended.
 
 Usage:
-- Each question MUST have at least 1 option
-- The UI always provides an "Other..." option so the user can type freely
-- Do NOT use this tool for simple questions without options — just ask directly in your text response
+- Provide options for multiple-choice questions
+- Omit options entirely for open-ended questions (user gets a text input)
+- The UI always provides an "Other..." option so the user can type freely even for multiple-choice
 - Supports multiple questions in one call — ask everything you need at once"""
 
   val inputSchema = JsonObject.fromIterable(
@@ -87,9 +87,8 @@ Usage:
         Some(AskItem(question, opts))
       }.toList
 
-      if items.exists(_.options.isEmpty) then IO.pure(Left(ToolError("All questions must have at least one option.")))
-      else
-        ctx.replUi match
+      // Open-ended questions (empty options) are allowed — UI shows a text input
+      ctx.replUi match
           case Some(ui) =>
             ui.askUser(items).map { answers =>
               if answers.contains("__cancelled__") then Left(ToolError("User cancelled the question."))
@@ -106,6 +105,5 @@ Usage:
             IO.pure(
               Left(ToolError("AskUserQuestion tool requires an interactive UI. Not available in non-interactive mode."))
             )
-    end if
   end call
 end AskUserQuestionTool
