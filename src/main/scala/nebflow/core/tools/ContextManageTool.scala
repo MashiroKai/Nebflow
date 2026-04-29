@@ -4,9 +4,11 @@ import cats.effect.IO
 import cats.effect.Ref
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.core.NebflowLogger
 import nebflow.shared.*
 
 object ContextManageTool extends Tool:
+  private val logger = NebflowLogger.forName("nebflow.context")
   val name = "ContextManage"
 
   val description = """Manage your own context window by replacing or deleting previous messages.
@@ -100,7 +102,7 @@ Use this tool proactively to keep your context window focused and avoid hitting 
               val removedChars = (start to end).map(i => messages(i).textContent.length).sum
               val summaryMsg = Message(MessageRole.Assistant, Left(s"[context summary] $content"))
               val updated = messages.take(start) ++ (summaryMsg :: messages.drop(end + 1))
-              ref.set(updated) *> IO.pure(Right(
+              ref.set(updated) *> logger.info(s"Replaced [ctx:$start-$end] ($count msgs, $removedChars chars)") *> IO.pure(Right(
                 s"OK: Replaced [ctx:$start-$end] ($count messages, ${removedChars} chars) with summary"
               ))
           }
@@ -130,7 +132,7 @@ Use this tool proactively to keep your context window focused and avoid hitting 
               val count = end - start + 1
               val removedChars = (start to end).map(i => messages(i).textContent.length).sum
               val updated = messages.take(start) ++ messages.drop(end + 1)
-              ref.set(updated) *> IO.pure(Right(
+              ref.set(updated) *> logger.info(s"Deleted [ctx:$start-$end] ($count msgs, $removedChars chars freed)") *> IO.pure(Right(
                 s"OK: Deleted [ctx:$start-$end] ($count messages, ${removedChars} chars freed)"
               ))
         }

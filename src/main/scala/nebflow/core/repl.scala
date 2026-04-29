@@ -399,6 +399,8 @@ Principles: work until the task is resolved; diagnose failures before trying a n
               msg.copy(content = Right(ContentBlock.Text(tag + t) :: rest))
             case (tr: ContentBlock.ToolResult) :: _ =>
               msg.copy(content = Right(ContentBlock.ToolResult(tr.toolUseId, tag + tr.content, tr.isError) :: blocks.tail))
-            case _ => msg.copy(content = Left(tag + msg.textContent))
+            case (tu: ContentBlock.ToolUse) :: rest =>
+              msg.copy(content = Right(ContentBlock.Text(tag) :: tu :: rest))
+            case _ => msg.copy(content = Right(ContentBlock.Text(tag) :: blocks))
     }
 end Repl
