@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.core.mcp.*
 import nebflow.core.tools.ToolRegistry
-import nebflow.core.{NebflowLogger, PermissionState}
+import nebflow.core.{FileChangeTracker, NebflowLogger, PermissionState, ReminderState}
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
 import nebflow.shared.{Message, given}
 import org.http4s.ember.server.EmberServerBuilder
@@ -76,6 +76,12 @@ object GatewayMain extends IOApp.Simple:
             LlmInterface.createLlm().flatMap { case (handle, releaseBackend) =>
               initMcpServers(config).flatMap { _ =>
                 val chatRoutes = new ChatRoutes(handle, token)
+                // Read contextWindow from config for the primary model
+                val contextWindow = {
+                  val (providerId, modelId) = Config.parseModelRef(config.llm.model.primary)
+                  val provider = config.llm.providers.getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
+                  provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(128000)
+                }
                 val baseUrl = s"http://localhost:${cfg.port}"
                 val url = s"$baseUrl?token=$token"
 
@@ -85,6 +91,8 @@ object GatewayMain extends IOApp.Simple:
                   Ref.of[IO, Option[io.circe.Json]](None).flatMap { thinkingModeRef =>
                     PermissionState.create.flatMap { permState =>
                       RateLimiter.create().flatMap { rateLimiter =>
+                        FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
+                        Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
                         EmberServerBuilder
                           .default[IO]
                           .withHost(cfg.host)
@@ -100,7 +108,10 @@ object GatewayMain extends IOApp.Simple:
                                 thinkingModeRef,
                                 permState,
                                 rateLimiter,
-                                token
+                                token,
+                                fileTracker,
+                                reminderStateRef,
+                                contextWindow
                               )
                             Router(
                               "/api" -> chatRoutes.routes,
@@ -112,8 +123,10 @@ object GatewayMain extends IOApp.Simple:
                             openBrowser(url) *> IO.never
                           }
                           .guarantee(releaseBackend)
-                      }
-                    }
+                      } // end rateLimiter
+                    } // end fileTracker
+                    } // end reminderStateRef
+                  } // end thinkingModeRef
                   }
               }
             }
