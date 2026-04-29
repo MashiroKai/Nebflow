@@ -88,7 +88,6 @@ Usage:
       }.toList
 
       if items.exists(_.options.isEmpty) then IO.pure(Left(ToolError("All questions must have at least one option.")))
-      else if items.exists(_.options.length < 2) then IO.pure(Left(ToolError("All questions must have at least 2 options.")))
       else
         ctx.replUi match
           case Some(ui) =>
