@@ -2,12 +2,20 @@ package nebflow.cli
 
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
+import io.circe.{Decoder, Encoder, Json}
 import io.circe.parser
 import io.circe.syntax.*
 import nebflow.core.ReplUi
 
 enum Phase:
   case Prompt, Thinking, Streaming, ToolRunning, AskUser
+
+case class HistoryEntry(text: String, timestamp: Long)
+object HistoryEntry:
+  given Encoder[HistoryEntry] = Encoder.instance(h => Json.obj("text" -> h.text.asJson, "ts" -> h.timestamp.asJson))
+  given Decoder[HistoryEntry] = Decoder.instance(c => for
+    t <- c.downField("text").as[String]; ts <- c.downField("ts").as[Long]
+  yield HistoryEntry(t, ts))
 
 case class CompletedRound(
   id: Int,
@@ -25,7 +33,7 @@ case class UiState(
   toolLabel: String,
   askUserItems: Option[List[nebflow.core.AskItem]] = None,
   completedRounds: List[CompletedRound] = Nil,
-  inputHistory: List[String] = Nil,
+  inputHistory: List[HistoryEntry] = Nil,
   currentInput: String = "",
   historyIndex: Int = -1
 )
@@ -114,10 +122,13 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
         text,
         "user"
       )
+      val filtered = text.trim.toLowerCase
+      val skipHistory = filtered == "quit" || filtered == "exit"
+      val newHistory = if skipHistory then s.inputHistory else s.inputHistory :+ HistoryEntry(text, System.currentTimeMillis())
       stateRef.update(
         _.copy(
           completedRounds = s.completedRounds :+ round,
-          inputHistory = s.inputHistory :+ text
+          inputHistory = newHistory
         )
       )
     }
@@ -140,9 +151,10 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
       if s.inputHistory.isEmpty then IO.pure(None)
       else
         val newIndex = if s.historyIndex < 0 then s.inputHistory.length - 1 else Math.max(0, s.historyIndex - 1)
+        val text = s.inputHistory(newIndex).text
         stateRef
-          .update(_.copy(historyIndex = newIndex, currentInput = s.inputHistory(newIndex)))
-          .as(Some(s.inputHistory(newIndex)))
+          .update(_.copy(historyIndex = newIndex, currentInput = text))
+          .as(Some(text))
     }
 
   def historyDown(): IO[Option[String]] =
@@ -152,9 +164,10 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
         val newIndex = s.historyIndex + 1
         if newIndex >= s.inputHistory.length then stateRef.update(_.copy(historyIndex = -1, currentInput = "")).as(None)
         else
+          val text = s.inputHistory(newIndex).text
           stateRef
-            .update(_.copy(historyIndex = newIndex, currentInput = s.inputHistory(newIndex)))
-            .as(Some(s.inputHistory(newIndex)))
+            .update(_.copy(historyIndex = newIndex, currentInput = text))
+            .as(Some(text))
     }
 
   def triggerEsc(): IO[Unit] =
@@ -208,13 +221,21 @@ object UiStore:
 
   private def historyPath: os.Path = os.home / ".nebflow" / "input_history.json"
 
-  private def loadHistory: List[String] =
+  private def loadHistory: List[HistoryEntry] =
     try
-      if os.exists(historyPath) then io.circe.parser.decode[List[String]](os.read(historyPath)).getOrElse(Nil)
+      if os.exists(historyPath) then
+        val raw = os.read(historyPath)
+        // Try new format first (List[HistoryEntry])
+        io.circe.parser.decode[List[HistoryEntry]](raw) match
+          case Right(entries) => entries
+          case Left(_) =>
+            // Fallback: old format (List[String]) — migrate
+            io.circe.parser.decode[List[String]](raw).getOrElse(Nil)
+              .map(t => HistoryEntry(t, 0L))
       else Nil
     catch case _: Exception => Nil
 
-  def saveHistory(history: List[String]): IO[Unit] = IO.blocking {
+  def saveHistory(history: List[HistoryEntry]): IO[Unit] = IO.blocking {
     try os.write.over(historyPath, history.asJson.spaces2, createFolders = true)
     catch case _: Exception => ()
   }

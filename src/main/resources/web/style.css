@@ -228,6 +228,20 @@ body {
   cursor: default;
   pointer-events: none;
 }
+.option-custom-input {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px 10px;
+  border: 1px solid #ddd;
+  border-radius: 14px;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+.option-custom-input:focus {
+  border-color: #07c160;
+}
 .option-btn-row {
   display: flex;
   gap: 8px;
