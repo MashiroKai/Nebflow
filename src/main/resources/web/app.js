@@ -46,7 +46,7 @@ const voiceText = document.getElementById('voice-text');
 // Auto-resize textarea
 input.addEventListener('input', () => {
   input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
 });
 
 const LS_KEY = 'nebflow_v3';
