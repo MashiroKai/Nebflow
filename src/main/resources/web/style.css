@@ -351,7 +351,7 @@ body {
   line-height: 1.4;
   resize: none;
   overflow-y: auto;
-  max-height: 120px;
+  max-height: 200px;
   font-family: inherit;
   box-sizing: border-box;
 }
