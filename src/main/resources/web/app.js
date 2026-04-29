@@ -802,19 +802,20 @@ function startVoice(e) {
   recognition.interimResults = true;
   voiceOverlay.classList.add('on');
   voiceText.textContent = 'Listening...';
+  const voiceBase = input.value; // text before this voice session
 
   recognition.onresult = (ev) => {
-    let final = '';
-    let interim = '';
+    let finalText = '';
+    let interimText = '';
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const t = ev.results[i][0].transcript;
-      if (ev.results[i].isFinal) final += t;
-      else interim += t;
+      if (ev.results[i].isFinal) finalText += t;
+      else interimText += t;
     }
-    const display = (final + interim).trim();
-    voiceText.textContent = display || 'Listening...';
-    if (final) input.value += final;
-    else if (interim) { input.value = input.value.replace(/\s*$/, ' ') + interim; }
+    const current = finalText || interimText;
+    voiceText.textContent = current || 'Listening...';
+    // Replace only this session's portion, keep previous text
+    input.value = voiceBase + (voiceBase && current ? ' ' : '') + current;
   };
   recognition.onerror = (ev) => {
     voiceText.textContent = 'Error: ' + ev.error;
