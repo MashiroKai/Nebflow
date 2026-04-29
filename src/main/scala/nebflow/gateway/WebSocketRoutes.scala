@@ -5,7 +5,7 @@ import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.parser.parse
-import nebflow.core.{NebflowError, NebflowLogger, PermissionPolicy, PermissionState, Repl}
+import nebflow.core.{FileChangeTracker, NebflowError, NebflowLogger, PermissionPolicy, PermissionState, ReminderState, Repl}
 import nebflow.shared.*
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -22,7 +22,9 @@ class WebSocketRoutes(
   thinkingModeRef: Ref[IO, Option[io.circe.Json]],
   permState: PermissionState,
   rateLimiter: RateLimiter,
-  token: String
+  token: String,
+  fileChangeTracker: FileChangeTracker,
+  reminderStateRef: Ref[IO, ReminderState]
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
@@ -86,7 +88,8 @@ class WebSocketRoutes(
         val policyStr = parse(text).flatMap(_.hcursor.downField("policy").as[String]).getOrElse("ask")
         val policy = PermissionPolicy.fromString(policyStr)
         logger.info(s"Permission policy changed to: $policyStr") *>
-          permState.setPolicy(policy)
+          permState.setPolicy(policy) *>
+          reminderStateRef.update(_.copy(policyReminderPending = true, policyPendingName = Some(policyStr)))
 
       case "interrupt" =>
         logger.info("User interrupted") *> replUi.triggerEsc()
@@ -95,7 +98,9 @@ class WebSocketRoutes(
         val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
         command match
           case "clear" =>
-            logger.info("Session cleared") *> messagesRef.set(Nil) *> saveSession(Nil) *> replUi.emitDone()
+            logger.info("Session cleared") *> messagesRef.set(Nil) *> saveSession(Nil) *>
+              reminderStateRef.update(_.copy(sessionStarted = false, highestPressureLevel = 0)) *>
+              replUi.emitDone()
           case _ => IO.unit
 
       case "setThinking" =>
@@ -156,7 +161,10 @@ class WebSocketRoutes(
                             onToolRound = Some { (msgs: List[Message]) => messagesRef.set(msgs) *> saveSession(msgs) },
                             silent = true,
                             thinkingMode = thinking,
-                            permState = Some(permState)
+                            permState = Some(permState),
+                            contextWindow = 128000,
+                            reminderStateRef = Some(reminderStateRef),
+                            fileChangeTracker = Some(fileChangeTracker)
                           )
                         }
                         .flatMap { updated =>
