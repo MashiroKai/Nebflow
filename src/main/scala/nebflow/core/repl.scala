@@ -1,6 +1,6 @@
 package nebflow.core
 
-import cats.effect.IO
+import cats.effect.{IO, Ref, Deferred}
 import cats.syntax.all.*
 import nebflow.core.tools.{ToolError, ToolRegistry}
 import nebflow.shared.*
@@ -159,78 +159,82 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     store: ReplUi,
     llm: LlmHandle[IO],
     silent: Boolean = false,
-    permState: Option[PermissionState] = None
+    permState: Option[PermissionState] = None,
+    messagesRef: Option[Ref[IO, List[Message]]] = None
   ): IO[ConsumeResult] =
     for
+      abortSignal <- Deferred[IO, Unit]
       interruptedRef <- IO.ref(false)
       textRef <- IO.ref("")
       textStartedRef <- IO.ref(false)
       toolCallsRef <- IO.ref(List.empty[ToolCall])
       executionsRef <- IO.ref(List.empty[IO[(ToolCall, ToolExecResult)]])
       thinkingFiberRef <- IO.ref(Option.empty[cats.effect.Fiber[IO, Throwable, Unit]])
-      _ <- store.onEscInterrupt(IO.delay(interruptedRef.set(true)))
+      _ <- store.onEscInterrupt(interruptedRef.set(true) *> abortSignal.complete(()).void)
 
       _ <- store.emitThinking()
       _ <- (if silent then IO.unit else spinLoop("Thinking", 0).start.flatMap(f => thinkingFiberRef.set(Some(f))))
 
       processStream = stream
+        .interruptWhen(abortSignal.get.map(_ => Left(new UserAbort())))
         .evalMap { chunk =>
-          interruptedRef.get.flatMap { interrupted =>
-            if interrupted then IO.raiseError(new UserAbort())
-            else
-              chunk match
-                case StreamChunk.TextDelta(delta) =>
-                  if delta.nonEmpty then
-                    thinkingFiberRef.get.flatMap {
-                      case Some(fiber) =>
-                        fiber.cancel *> (if silent then IO.unit else clearSpinner("Thinking")) *> thinkingFiberRef.set(
-                          None
-                        )
-                      case None => IO.unit
-                    } *> textStartedRef.get.flatMap { started =>
-                      textRef.update(_ + delta) *>
-                        store.emitTextDelta(delta) *>
-                        (if silent then IO.unit else IO.print(delta) *> IO(Console.out.flush())) *>
-                        textStartedRef.set(true)
-                    }
-                  else IO.unit
-                case StreamChunk.ToolCallChunk(toolCall) =>
-                  thinkingFiberRef.get.flatMap {
-                    case Some(fiber) =>
-                      fiber.cancel *> (if silent then IO.unit else clearSpinner("Thinking")) *> thinkingFiberRef.set(
-                        None
-                      )
-                    case None => IO.unit
-                  } *>
-                    toolCallsRef.update(_ :+ toolCall) *>
-                    textStartedRef.get.flatMap { hasText =>
-                      if hasText then store.emitTextDone() *> (if silent then IO.unit else IO.println("")) else IO.unit
-                    } *>
-                    IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
-                      val execIO = store.emitToolStart(label) *>
-                        withSpinner(label, silent) {
-                          executeTool(toolCall, System.getProperty("user.dir"), Some(llm), Some(store), permState)
-                        }.flatMap { result =>
-                          val resultSummary = summarizeToolResult(toolCall, result.content)
-                          val icon = if result.isError then s"${Red}✗${Reset}" else s"${Green}✓${Reset}"
-                          val inputJson = Some(io.circe.Json.fromJsonObject(toolCall.input).noSpaces)
-                          (if silent then IO.unit else IO.println(s"$icon $label - $resultSummary")) *>
-                            store
-                              .emitToolEnd(label, resultSummary, result.content, result.isError, inputJson)
-                              .as((toolCall, result))
+          chunk match
+            case StreamChunk.TextDelta(delta) =>
+              if delta.nonEmpty then
+                thinkingFiberRef.get.flatMap {
+                  case Some(fiber) =>
+                    fiber.cancel *> (if silent then IO.unit else clearSpinner("Thinking")) *> thinkingFiberRef.set(
+                      None
+                    )
+                  case None => IO.unit
+                } *> textStartedRef.get.flatMap { started =>
+                  textRef.update(_ + delta) *>
+                    store.emitTextDelta(delta) *>
+                    (if silent then IO.unit else IO.print(delta) *> IO(Console.out.flush())) *>
+                    textStartedRef.set(true)
+                }
+              else IO.unit
+            case StreamChunk.ToolCallChunk(toolCall) =>
+              thinkingFiberRef.get.flatMap {
+                case Some(fiber) =>
+                  fiber.cancel *> (if silent then IO.unit else clearSpinner("Thinking")) *> thinkingFiberRef.set(
+                    None
+                  )
+                case None => IO.unit
+              } *>
+                toolCallsRef.update(_ :+ toolCall) *>
+                textStartedRef.get.flatMap { hasText =>
+                  if hasText then store.emitTextDone() *> (if silent then IO.unit else IO.println("")) else IO.unit
+                } *>
+                IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
+                  val execIO = store.emitToolStart(label) *>
+                    withSpinner(label, silent) {
+                      executeTool(toolCall, System.getProperty("user.dir"), Some(llm), Some(store), permState, messagesRef)
+                        .race(abortSignal.get *> IO.raiseError(new UserAbort()))
+                        .flatMap {
+                          case Left(result) => IO.pure(result)
+                          case Right(_) => IO.raiseError(new UserAbort())
                         }
-                      executionsRef.update(_ :+ execIO)
+                    }.flatMap { result =>
+                      val resultSummary = summarizeToolResult(toolCall, result.content)
+                      val icon = if result.isError then s"${Red}✗${Reset}" else s"${Green}✓${Reset}"
+                      val inputJson = Some(io.circe.Json.fromJsonObject(toolCall.input).noSpaces)
+                      (if silent then IO.unit else IO.println(s"$icon $label - $resultSummary")) *>
+                        store
+                          .emitToolEnd(label, resultSummary, result.content, result.isError, inputJson)
+                          .as((toolCall, result))
                     }
-                case StreamChunk.Done(stopReason, usage, _) =>
-                  stopReason match
-                    case Some("max_tokens") => store.emitMaxTokens() *> (if silent then IO.unit else IO.println(""))
-                    case Some("timeout") => store.emitTimeout() *> (if silent then IO.unit else IO.println(""))
-                    case _ =>
-                      textStartedRef.get.flatMap { hasText =>
-                        if hasText then store.emitTextDone() *> (if silent then IO.unit else IO.println(""))
-                        else IO.unit
-                      }
-          }
+                  executionsRef.update(_ :+ execIO)
+                }
+            case StreamChunk.Done(stopReason, usage, _) =>
+              stopReason match
+                case Some("max_tokens") => store.emitMaxTokens() *> (if silent then IO.unit else IO.println(""))
+                case Some("timeout") => store.emitTimeout() *> (if silent then IO.unit else IO.println(""))
+                case _ =>
+                  textStartedRef.get.flatMap { hasText =>
+                    if hasText then store.emitTextDone() *> (if silent then IO.unit else IO.println(""))
+                    else IO.unit
+                  }
         }
         .compile
         .drain
@@ -342,11 +346,16 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     thinkingMode: Option[io.circe.Json],
     permState: Option[PermissionState]
   ): IO[List[Message]] =
+    // Ref for ContextManageTool to modify messages in-place
+    Ref.of[IO, List[Message]](initialMessages).flatMap { ctxMsgRef =>
     def loop(messages: List[Message]): IO[List[Message]] =
-      val allMessages = Message(MessageRole.System, Left(systemPrompt)) :: messages
+      // Sync the ref so ContextManageTool sees current messages
+      ctxMsgRef.set(messages) *> {
+      val systemMsg = Message(MessageRole.System, Left(systemPrompt))
+      val tagged = systemMsg :: tagMessages(messages)
       val stream = llm.sendStream(
         LlmRequest(
-          messages = allMessages,
+          messages = tagged,
           sessionId = "repl",
           agentId = "user",
           tools = Some(ToolRegistry.ALL_TOOLS),
@@ -354,18 +363,44 @@ Principles: work until the task is resolved; diagnose failures before trying a n
         )
       )
 
-      consumeStream(stream, store, llm, silent, permState)
+      consumeStream(stream, store, llm, silent, permState, Some(ctxMsgRef))
         .flatMap { consumed =>
           if consumed.toolCalls.isEmpty then IO.pure(messages)
           else
-            val updated = appendToolRound(messages, consumed.text, consumed.toolCalls, consumed.results)
-            onToolRound.traverse_(_.apply(updated)) *> loop(updated)
+            // Read from ctxMsgRef in case ContextManageTool modified messages
+            ctxMsgRef.get.flatMap { managedMsgs =>
+              val base = if managedMsgs != messages then managedMsgs else messages
+              val updated = appendToolRound(base, consumed.text, consumed.toolCalls, consumed.results)
+              onToolRound.traverse_(_.apply(updated)) *> loop(updated)
+            }
         }
         .handleErrorWith {
           case _: UserAbort => IO.pure(messages)
           case e => IO.raiseError(e)
         }
+      } // end ctxMsgRef.set *> block
 
     loop(initialMessages :+ userMessage)
+    } // end ctxMsgRef flatMap
   end runReplLoop
+
+  /** Inject [ctx:N] tags into all messages in the conversation array.
+   *  System prompt is injected separately (untracked) so it's never editable.
+   *  All messages here get a tag — having a tag means editable by ContextManage.
+   */
+  private def tagMessages(messages: List[Message]): List[Message] =
+    messages.zipWithIndex.map { case (msg, idx) =>
+      val tag = s"[ctx:$idx] "
+      msg.content match
+        case Left(text) => msg.copy(content = Left(tag + text))
+        case Right(blocks) =>
+          blocks match
+            case (ContentBlock.Text(t)) :: rest =>
+              msg.copy(content = Right(ContentBlock.Text(tag + t) :: rest))
+            case (tr: ContentBlock.ToolResult) :: _ =>
+              msg.copy(content = Right(ContentBlock.ToolResult(tr.toolUseId, tag + tr.content, tr.isError) :: blocks.tail))
+            case (tu: ContentBlock.ToolUse) :: rest =>
+              msg.copy(content = Right(ContentBlock.Text(tag) :: tu :: rest))
+            case _ => msg.copy(content = Right(ContentBlock.Text(tag) :: blocks))
+    }
 end Repl
