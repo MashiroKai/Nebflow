@@ -10,11 +10,11 @@ object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
 
   val description =
-    """Ask the user one or more questions with predefined options. The user selects via arrow keys in the terminal.
+    """Ask the user one or more questions with predefined options. The user can always type a custom answer via the "Other" input.
 
 Usage:
-- Each question MUST have at least 2 options
-- The terminal automatically adds "Other (custom input)" so the user can always type freely
+- Each question MUST have at least 1 option
+- The UI always provides an "Other..." option so the user can type freely
 - Do NOT use this tool for simple questions without options — just ask directly in your text response
 - Supports multiple questions in one call — ask everything you need at once"""
 
@@ -88,6 +88,7 @@ Usage:
       }.toList
 
       if items.exists(_.options.isEmpty) then IO.pure(Left(ToolError("All questions must have at least one option.")))
+      else if items.exists(_.options.length < 2) then IO.pure(Left(ToolError("All questions must have at least 2 options.")))
       else
         ctx.replUi match
           case Some(ui) =>
