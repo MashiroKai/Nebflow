@@ -9,14 +9,20 @@ import java.nio.file.{Files, Path, Paths}
 object EditTool extends Tool:
   val name = "Edit"
 
-  val description = """Performs exact string replacements in files.
+  val description = """Performs exact string replacements or line insertions in files.
 
 Usage:
-- You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt to edit without reading the file first.
+- You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt an edit without reading the file first.
 - When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.
-- Use replace_all for replacing and renaming strings across the file."""
+- Use replace_all for replacing and renaming strings across the file.
+
+Insert mode:
+- Instead of old_string/new_string, provide insert_after_line (line number) and content to insert lines at a specific position.
+- insert_after_line=0 inserts at the beginning of the file.
+- insert_after_line=-1 or omitting it appends to the end of the file.
+- This is more efficient than string replacement when adding new code blocks."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -32,16 +38,28 @@ Usage:
         "replace_all" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
           "description" -> "Replace all occurences of old_string (default false)".asJson
+        ),
+        "insert_after_line" -> io.circe.Json.obj(
+          "type" -> "integer".asJson,
+          "description" -> "Insert content after this line number (1-based). 0=beginning, -1=end. Mutually exclusive with old_string/new_string.".asJson
+        ),
+        "content" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Content to insert (used with insert_after_line)".asJson
         )
       ),
-      "required" -> io.circe.Json.arr("file_path".asJson, "old_string".asJson, "new_string".asJson)
+      "required" -> io.circe.Json.arr("file_path".asJson)
     )
   )
 
   def summarize(input: JsonObject): String =
     val path = input("file_path").flatMap(_.asString).getOrElse("")
     val short = path.split("/").lastOption.getOrElse(path)
-    s"Edit($short)"
+    if input.contains("insert_after_line") then
+      val line = input("insert_after_line").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(-1)
+      s"Insert($short:$line)"
+    else
+      s"Edit($short)"
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith("OK:") then
@@ -60,8 +78,6 @@ Usage:
     val oldLines = oldContent.split("\\r?\\n").toList
     val newLines = newContent.split("\\r?\\n").toList
     val sb = new StringBuilder
-    // Unified diff with single line number, no hunk headers
-    // Format: "lineno |line"  (empty lineno for deletions, new lineno for additions)
     var oldIdx = 0
     var newIdx = 0
     while oldIdx < oldLines.length || newIdx < newLines.length do
@@ -91,51 +107,80 @@ Usage:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
-    val oldString = input("old_string").flatMap(_.asString).getOrElse("")
-    val newString = input("new_string").flatMap(_.asString).getOrElse("")
-    val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
     val filePath =
       if filePathStr.startsWith("/") then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
     if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
-    else if oldString == newString then Right("old_string and new_string are exactly the same. No changes to make.")
     else
-      try
-        val original = Files.readString(filePath)
-        if !original.contains(oldString) then
-          Left(
-            ToolError(
-              "old_string not found in file. Ensure the string matches exactly, including whitespace and indentation."
-            )
-          )
-        else
-          val matchCount = original.sliding(oldString.length).count(_ == oldString)
-          if matchCount > 1 && !replaceAll then
-            Left(
-              ToolError(
-                s"Found $matchCount matches of old_string. Either provide more context to make it unique, or set replace_all to true."
-              )
-            )
+      // Determine mode: insert or replace
+      val insertLine = input("insert_after_line").flatMap(_.asNumber).flatMap(_.toInt)
+      val insertContent = input("content").flatMap(_.asString)
+
+      insertLine match
+        case Some(lineNum) =>
+          // Insert mode
+          val content = insertContent.getOrElse("")
+          if content.isEmpty then Left(ToolError("content is required when using insert_after_line"))
           else
-            val updated =
-              if replaceAll then original.replace(oldString, newString)
-              else
-                original.replaceFirst(
-                  java.util.regex.Pattern.quote(oldString),
-                  java.util.regex.Matcher.quoteReplacement(newString)
+            try
+              val original = Files.readString(filePath)
+              val lines = original.split("\\r?\\n", -1).toList
+              val insertIdx = if lineNum < 0 then lines.length else lineNum
+              val clamped = Math.max(0, Math.min(insertIdx, lines.length))
+              val insertLines = content.split("\\r?\\n", -1).toList
+              val newLines = lines.take(clamped) ++ insertLines ++ lines.drop(clamped)
+              val updated = newLines.mkString("\n")
+              Files.writeString(filePath, updated)
+
+              val short = filePath.getFileName.toString
+              val diff = makeDiff(short, original, updated)
+              Right(s"OK: $short updated, ${insertLines.length} inserted after line $clamped\n$diff")
+            catch case e: Exception => Left(ToolError(s"Error inserting: ${e.getMessage}"))
+
+        case None =>
+          // Replace mode (original behavior)
+          val oldString = input("old_string").flatMap(_.asString).getOrElse("")
+          val newString = input("new_string").flatMap(_.asString).getOrElse("")
+          val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
+
+          if oldString.isEmpty then Left(ToolError("old_string is required when not using insert_after_line"))
+          else if oldString == newString then Right("old_string and new_string are exactly the same. No changes to make.")
+          else
+            try
+              val original = Files.readString(filePath)
+              if !original.contains(oldString) then
+                Left(
+                  ToolError(
+                    "old_string not found in file. Ensure the string matches exactly, including whitespace and indentation."
+                  )
                 )
-            Files.writeString(filePath, updated)
+              else
+                val matchCount = original.sliding(oldString.length).count(_ == oldString)
+                if matchCount > 1 && !replaceAll then
+                  Left(
+                    ToolError(
+                      s"Found $matchCount matches of old_string. Either provide more context to make it unique, or set replace_all to true."
+                    )
+                  )
+                else
+                  val updated =
+                    if replaceAll then original.replace(oldString, newString)
+                    else
+                      original.replaceFirst(
+                        java.util.regex.Pattern.quote(oldString),
+                        java.util.regex.Matcher.quoteReplacement(newString)
+                      )
+                  Files.writeString(filePath, updated)
 
-            val oldLines = original.split("\\r?\\n").toList
-            val newLines = updated.split("\\r?\\n").toList
-            val added = newLines.count(l => !oldLines.contains(l))
-            val removed = oldLines.count(l => !newLines.contains(l))
+                  val oldLines = original.split("\\r?\\n").toList
+                  val newLines = updated.split("\\r?\\n").toList
+                  val added = newLines.count(l => !oldLines.contains(l))
+                  val removed = oldLines.count(l => !newLines.contains(l))
 
-            val short = filePath.getFileName.toString
-            val diff = makeDiff(short, original, updated)
-            Right(s"OK: $short updated, $added added, $removed removed\n$diff")
-        end if
-      catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
+                  val short = filePath.getFileName.toString
+                  val diff = makeDiff(short, original, updated)
+                  Right(s"OK: $short updated, $added added, $removed removed\n$diff")
+            catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
   }
 end EditTool

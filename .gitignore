@@ -8,4 +8,4 @@ project/project/
 .vscode/
 .DS_Store
 .claude/
-nebflow
+/nebflow
