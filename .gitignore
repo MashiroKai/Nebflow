@@ -7,4 +7,5 @@ project/project/
 .idea/
 .vscode/
 .DS_Store
-.claude/worktrees/
+.claude/
+/nebflow

@@ -289,10 +289,41 @@ function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
         optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
           el.classList.toggle('picked', i === oi);
         });
+        customInput && (customInput.style.display = 'none');
         checkAllAnswered();
       };
       optsDiv.appendChild(btn);
     });
+
+    // "Other" option for custom input
+    const otherBtn = document.createElement('button');
+    otherBtn.className = 'option-btn';
+    otherBtn.textContent = 'Other...';
+    const customInput = document.createElement('input');
+    customInput.type = 'text';
+    customInput.className = 'option-custom-input';
+    customInput.placeholder = 'Type your answer...';
+    customInput.style.display = 'none';
+    customInput.oninput = () => {
+      if (customInput.value.trim()) {
+        answers[qi] = customInput.value.trim();
+        optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+        otherBtn.classList.add('picked');
+        checkAllAnswered();
+      }
+    };
+    otherBtn.onclick = () => {
+      optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+      otherBtn.classList.add('picked');
+      customInput.style.display = '';
+      customInput.focus();
+      if (customInput.value.trim()) {
+        answers[qi] = customInput.value.trim();
+      }
+      checkAllAnswered();
+    };
+    optsDiv.appendChild(otherBtn);
+    optsDiv.appendChild(customInput);
     box.appendChild(optsDiv);
   });
 
@@ -912,6 +943,43 @@ stopBtn.onclick = () => {
 let composing = false;
 input.addEventListener('compositionstart', () => { composing = true; });
 input.addEventListener('compositionend', () => { composing = false; });
+input.addEventListener('paste', (e) => {
+  const files = [];
+  if (e.clipboardData.items) {
+    for (const item of e.clipboardData.items) {
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+  }
+  if (files.length === 0) return; // normal text paste, let browser handle it
+  e.preventDefault();
+  files.forEach(file => {
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        pendingAttachments.push({
+          type: 'image', mimeType: file.type,
+          data: reader.result.split(',')[1],
+          name: file.name, preview: reader.result
+        });
+        renderAttachmentPreview();
+      };
+      reader.readAsDataURL(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        pendingAttachments.push({
+          type: 'text', mimeType: file.type || 'text/plain',
+          data: reader.result, name: file.name
+        });
+        renderAttachmentPreview();
+      };
+      reader.readAsText(file);
+    }
+  });
+});
 input.onkeydown = (e) => {
   if (slashDropdown.classList.contains('on')) {
     if (e.key === 'ArrowDown') {

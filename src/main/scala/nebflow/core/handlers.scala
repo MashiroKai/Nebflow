@@ -1,9 +1,10 @@
 package nebflow.core
 
 import cats.effect.IO
+import cats.effect.Ref
 import cats.syntax.all.*
 import nebflow.core.tools.*
-import nebflow.shared.{LlmHandle, ToolCall}
+import nebflow.shared.{LlmHandle, Message, ToolCall}
 
 case class ToolExecResult(content: String, isError: Boolean = false)
 
@@ -22,7 +23,8 @@ def executeTool(
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
   replUi: Option[nebflow.core.ReplUi] = None,
-  permState: Option[PermissionState] = None
+  permState: Option[PermissionState] = None,
+  messagesRef: Option[Ref[IO, List[Message]]] = None
 ): IO[ToolExecResult] =
   val logger = NebflowLogger.forName("nebflow.handlers")
 
@@ -54,7 +56,7 @@ def executeTool(
           val msg = NebflowError.toUserMessage(NebflowError.ToolDenied(call.name, reason))
           IO.pure(ToolExecResult(msg, isError = true))
         case ApprovalDecision.Approved =>
-          val ctx = ToolContext(projectRoot, llm, replUi)
+          val ctx = ToolContext(projectRoot, llm, replUi, messagesRef)
           IO.delay(System.nanoTime()).flatMap { start =>
           logger.debug(s"Executing tool: $summary") *> {
             tool

@@ -12,6 +12,8 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.http4s.{HttpRoutes, StaticFile}
 
+import scala.concurrent.duration.*
+
 class WebSocketRoutes(
   wsb: WebSocketBuilder2[IO],
   llm: LlmHandle[IO],
@@ -134,9 +136,13 @@ class WebSocketRoutes(
               logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
                 fiberRef.get.flatMap {
                   case Some(f) =>
-                    logger.info("Cancelling previous REPL fiber before starting new one") *> f.cancel
+                    // Wait for previous REPL to finish so its response is saved,
+                    // with a timeout to avoid blocking indefinitely
+                    logger.info("Waiting for previous REPL fiber to complete") *>
+                      f.join.timeout(5.seconds).void handleErrorWith (_ => f.cancel)
                   case None    => IO.unit
                 } *>
+                  // Refresh history after previous fiber completed
                   messagesRef.get
                     .flatMap { history =>
                       thinkingModeRef.get

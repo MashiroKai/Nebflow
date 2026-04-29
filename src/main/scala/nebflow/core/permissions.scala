@@ -1,6 +1,9 @@
 package nebflow.core
 
 import cats.effect.{IO, Ref}
+import io.circe.*
+import io.circe.syntax.*
+import io.circe.parser.decode
 
 enum ToolRisk:
   case Safe
@@ -14,6 +17,7 @@ object ToolRisk:
     "WebSearch" -> Safe,
     "WebFetch" -> Safe,
     "AskUserQuestion" -> Safe,
+    "ContextManage" -> Safe,
     "Bash" -> NeedsApproval,
     "Write" -> NeedsApproval,
     "Edit" -> NeedsApproval,
@@ -36,6 +40,24 @@ case class PermissionPolicy(
 )
 
 object PermissionPolicy:
+  given Encoder[PermissionPolicy] = Encoder.instance { p =>
+    Json.obj(
+      "autoApproveAll" -> p.autoApproveAll.asJson,
+      "autoApproveTools" -> p.autoApproveTools.toList.asJson,
+      "blockedTools" -> p.blockedTools.toList.asJson,
+      "autoApproveAfter" -> p.autoApproveAfter.asJson
+    )
+  }
+
+  given Decoder[PermissionPolicy] = Decoder.instance { c =>
+    for
+      auto <- c.downField("autoApproveAll").as[Option[Boolean]].map(_.getOrElse(false))
+      autoTools <- c.downField("autoApproveTools").as[Option[List[String]]].map(_.getOrElse(Nil).toSet)
+      blocked <- c.downField("blockedTools").as[Option[List[String]]].map(_.getOrElse(Nil).toSet)
+      after <- c.downField("autoApproveAfter").as[Option[Int]].map(_.getOrElse(Int.MaxValue))
+    yield PermissionPolicy(auto, autoTools, blocked, after)
+  }
+
   def default: PermissionPolicy = PermissionPolicy()
   def fromString(s: String): PermissionPolicy = s match
     case "auto"     => PermissionPolicy(autoApproveAll = true)
@@ -66,14 +88,31 @@ class PermissionState private (
     approvalCountRef.update(m => m.updatedWith(toolName)(_.map(_ + 1).orElse(Some(1))))
 
   def updatePolicy(f: PermissionPolicy => PermissionPolicy): IO[Unit] =
-    policyRef.update(f)
+    policyRef.update(f) *> PermissionState.savePolicy(policyRef)
 
   def setPolicy(policy: PermissionPolicy): IO[Unit] =
-    policyRef.set(policy)
+    policyRef.set(policy) *> PermissionState.savePolicy(policyRef)
 
 object PermissionState:
+  private val policyPath: os.Path = os.home / ".nebflow" / "permission_policy.json"
+
+  private def loadPolicy: PermissionPolicy =
+    try
+      if os.exists(policyPath) then decode[PermissionPolicy](os.read(policyPath)).getOrElse(PermissionPolicy.default)
+      else PermissionPolicy.default
+    catch case _: Exception => PermissionPolicy.default
+
+  private def savePolicy(ref: Ref[IO, PermissionPolicy]): IO[Unit] =
+    ref.get.flatMap { p =>
+      IO.blocking {
+        try os.write.over(policyPath, p.asJson.spaces2, createFolders = true)
+        catch case _: Exception => ()
+      }
+    }
+
   def create: IO[PermissionState] =
     for
-      policyRef <- Ref.of[IO, PermissionPolicy](PermissionPolicy.default)
+      saved <- IO.blocking(loadPolicy)
+      policyRef <- Ref.of[IO, PermissionPolicy](saved)
       countRef <- Ref.of[IO, Map[String, Int]](Map.empty)
     yield new PermissionState(policyRef, countRef)
