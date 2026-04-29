@@ -4,7 +4,6 @@ import cats.effect.{IO, Ref, Deferred}
 import cats.syntax.all.*
 import nebflow.core.tools.{ToolError, ToolRegistry}
 import nebflow.shared.*
-import nebflow.shared.TokenUsage
 import nebflow.shared.TerminalUtils.*
 
 import java.nio.file.{Files, Paths}

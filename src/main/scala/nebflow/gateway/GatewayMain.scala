@@ -76,6 +76,12 @@ object GatewayMain extends IOApp.Simple:
             LlmInterface.createLlm().flatMap { case (handle, releaseBackend) =>
               initMcpServers(config).flatMap { _ =>
                 val chatRoutes = new ChatRoutes(handle, token)
+                // Read contextWindow from config for the primary model
+                val contextWindow = {
+                  val (providerId, modelId) = Config.parseModelRef(config.llm.model.primary)
+                  val provider = config.llm.providers.getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
+                  provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(128000)
+                }
                 val baseUrl = s"http://localhost:${cfg.port}"
                 val url = s"$baseUrl?token=$token"
 
@@ -104,7 +110,8 @@ object GatewayMain extends IOApp.Simple:
                                 rateLimiter,
                                 token,
                                 fileTracker,
-                                reminderStateRef
+                                reminderStateRef,
+                                contextWindow
                               )
                             Router(
                               "/api" -> chatRoutes.routes,
@@ -116,10 +123,10 @@ object GatewayMain extends IOApp.Simple:
                             openBrowser(url) *> IO.never
                           }
                           .guarantee(releaseBackend)
-                      }
-                    }
-                    }
-                    }
+                      } // end rateLimiter
+                    } // end fileTracker
+                    } // end reminderStateRef
+                  } // end thinkingModeRef
                   }
               }
             }
