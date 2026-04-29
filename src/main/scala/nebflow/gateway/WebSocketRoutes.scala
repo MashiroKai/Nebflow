@@ -24,7 +24,8 @@ class WebSocketRoutes(
   rateLimiter: RateLimiter,
   token: String,
   fileChangeTracker: FileChangeTracker,
-  reminderStateRef: Ref[IO, ReminderState]
+  reminderStateRef: Ref[IO, ReminderState],
+  contextWindow: Int = 128000
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
@@ -162,7 +163,7 @@ class WebSocketRoutes(
                             silent = true,
                             thinkingMode = thinking,
                             permState = Some(permState),
-                            contextWindow = 128000,
+                            contextWindow = contextWindow,
                             reminderStateRef = Some(reminderStateRef),
                             fileChangeTracker = Some(fileChangeTracker)
                           )

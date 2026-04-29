@@ -814,7 +814,7 @@ function startVoice(e) {
     const display = (final + interim).trim();
     voiceText.textContent = display || 'Listening...';
     if (final) input.value += final;
-    else if (interim) { input.value = input.value.replace(/\s*$/, '') + interim; }
+    else if (interim) { input.value = input.value.replace(/\s*$/, ' ') + interim; }
   };
   recognition.onerror = (ev) => {
     voiceText.textContent = 'Error: ' + ev.error;
