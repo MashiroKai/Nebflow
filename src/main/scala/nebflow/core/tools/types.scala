@@ -1,14 +1,15 @@
 package nebflow.core.tools
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import io.circe.JsonObject
-import nebflow.shared.LlmHandle
+import nebflow.shared.{LlmHandle, Message}
 
 /** 工具执行上下文 */
 case class ToolContext(
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
-  replUi: Option[nebflow.core.ReplUi] = None
+  replUi: Option[nebflow.core.ReplUi] = None,
+  messagesRef: Option[Ref[IO, List[Message]]] = None
 )
 
 /** 工具错误 */

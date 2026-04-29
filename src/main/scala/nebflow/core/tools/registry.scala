@@ -20,7 +20,8 @@ object ToolRegistry:
       "WebSearch" -> WebSearchTool,
       "WebFetch" -> WebFetchTool,
       "Curl" -> CurlTool,
-      "AskUserQuestion" -> AskUserQuestionTool
+      "AskUserQuestion" -> AskUserQuestionTool,
+      "ContextManage" -> ContextManageTool
     )
     tools.putAll(builtins.asJava)
   }
