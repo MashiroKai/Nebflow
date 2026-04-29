@@ -2,6 +2,8 @@ package nebflow.core
 
 import cats.effect.Ref
 import cats.effect.IO
+import cats.syntax.all.*
+import nebflow.core.NebflowLogger
 import nebflow.shared.TokenUsage
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -51,6 +53,8 @@ object SystemReminders:
     val fileList = files.take(20).mkString("\n  - ", "\n  - ", if files.length > 20 then s"\n  ... and ${files.length - 20} more" else "")
     SystemReminder("fileChanges", s"The following files were modified externally since the last message:$fileList")
 
+  private val logger = NebflowLogger.forName("nebflow.reminders")
+
   def collectAll(
     stateRef: Ref[IO, ReminderState],
     usage: Option[TokenUsage],
@@ -83,6 +87,11 @@ object SystemReminders:
 
       // External file changes
       _ = fileChangesOpt.foreach(reminders += _)
+
+      // Log collected reminders
+      _ <- reminders.toList.traverse_ { r =>
+        logger.info(s"[${r.category}] ${r.content.take(100)}")
+      }
 
       // Update state
       _ <- stateRef.set(state.copy(
