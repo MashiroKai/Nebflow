@@ -407,17 +407,27 @@ Principles: work until the task is resolved; diagnose failures before trying a n
 
         consumeStream(stream, store, llm, silent, permState, Some(ctxMsgRef), fileChangeTracker)
           .flatMap { consumed =>
-            if consumed.toolCalls.isEmpty then IO.pure(messages)
-            else
-              // Collect reminders for tool-result turn using actual usage
-              collectReminders(consumed.usage).flatMap { reminders2 =>
+            // Collect reminders using actual usage (works for both tool and no-tool paths)
+            collectReminders(consumed.usage).flatMap { reminders =>
+              if consumed.toolCalls.isEmpty then
+                // No tool calls — append assistant reply + reminders (if any)
+                val assistantMsg = if consumed.text.nonEmpty then
+                  Some(Message(MessageRole.Assistant, Left(consumed.text)))
+                else None
+                val reminderMsg = if reminders.nonEmpty then
+                  Some(Message(MessageRole.User, Right(reminders.map(r => ContentBlock.Text(r.render)))))
+                else None
+                val extra = List(assistantMsg, reminderMsg).flatten
+                if extra.nonEmpty then IO.pure(messages ++ extra)
+                else IO.pure(messages)
+              else
                 // Read from ctxMsgRef in case ContextManageTool modified messages
                 ctxMsgRef.get.flatMap { managedMsgs =>
                   val base = if managedMsgs != messages then managedMsgs else messages
-                  val updated = appendToolRound(base, consumed.text, consumed.toolCalls, consumed.results, reminders2)
+                  val updated = appendToolRound(base, consumed.text, consumed.toolCalls, consumed.results, reminders)
                   onToolRound.traverse_(_.apply(updated)) *> loop(updated)
                 }
-              }
+            }
           }
           .handleErrorWith {
             case _: UserAbort => IO.pure(messages)
