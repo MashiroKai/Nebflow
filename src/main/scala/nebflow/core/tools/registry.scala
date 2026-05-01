@@ -21,7 +21,8 @@ object ToolRegistry:
       "WebFetch" -> WebFetchTool,
       "Curl" -> CurlTool,
       "AskUserQuestion" -> AskUserQuestionTool,
-      "ContextManage" -> ContextManageTool
+      "ContextManage" -> ContextManageTool,
+      "NewSession" -> NewSessionTool
     )
     tools.putAll(builtins.asJava)
   }

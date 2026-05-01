@@ -149,21 +149,23 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
       case None => bodyWithTools
 
     Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
-      val request = basicRequest
-        .post(uri"$base/v1/messages")
-        .header("x-api-key", apiKey)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .body(bodyWithThinking.noSpaces)
-        .response(asStreamUnsafe(Fs2Streams[IO]))
-        .readTimeout(180.seconds)
+      Stream.eval(IO.ref(0)).flatMap { inputTokensRef =>
+        val request = basicRequest
+          .post(uri"$base/v1/messages")
+          .header("x-api-key", apiKey)
+          .header("anthropic-version", "2023-06-01")
+          .header("content-type", "application/json")
+          .body(bodyWithThinking.noSpaces)
+          .response(asStreamUnsafe(Fs2Streams[IO]))
+          .readTimeout(180.seconds)
 
-      Stream.eval(backend.send(request)).flatMap { response =>
-        response.body match
-          case Left(error) =>
-            Stream.eval(IO.raiseError(new RuntimeException(s"Anthropic API error: $error")))
-          case Right(byteStream) =>
-            parseSseIncrementally(byteStream, toolCallState)
+        Stream.eval(backend.send(request)).flatMap { response =>
+          response.body match
+            case Left(error) =>
+              Stream.eval(IO.raiseError(new RuntimeException(s"Anthropic API error: $error")))
+            case Right(byteStream) =>
+              parseSseIncrementally(byteStream, toolCallState, inputTokensRef)
+        }
       }
     }
 
@@ -171,7 +173,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
 
   private def parseSseIncrementally(
     byteStream: Stream[IO, Byte],
-    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
+    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
+    inputTokensRef: Ref[IO, Int]
   ): Stream[IO, StreamChunk] =
     Stream.eval(IO.ref(Option.empty[String])).flatMap { eventTypeRef =>
       byteStream
@@ -183,8 +186,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
           else if line.startsWith("data:") then
             val data = line.drop(5).trim
             eventTypeRef.getAndSet(None).flatMap {
-              case Some(et) => processAnthropicEvent(et, data, toolCallState)
-              case None => processAnthropicEvent("", data, toolCallState)
+              case Some(et) => processAnthropicEvent(et, data, toolCallState, inputTokensRef)
+              case None => processAnthropicEvent("", data, toolCallState, inputTokensRef)
             }
           else IO.pure(Nil)
         }
@@ -194,7 +197,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
   private def processAnthropicEvent(
     eventType: String,
     data: String,
-    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
+    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
+    inputTokensRef: Ref[IO, Int]
   ): IO[List[StreamChunk]] =
     if data == "[DONE]" then IO.pure(Nil)
     else
@@ -202,6 +206,15 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         case Left(_) => IO.pure(Nil)
         case Right(json) =>
           eventType match
+            case "message_start" =>
+              // Capture input_tokens from message_start (message_delta only has output_tokens)
+              val inputTokens = json.hcursor
+                .downField("message")
+                .downField("usage")
+                .downField("input_tokens")
+                .as[Int]
+                .getOrElse(0)
+              inputTokensRef.set(inputTokens).as(Nil)
             case "content_block_delta" =>
               json.hcursor.downField("delta").downField("type").as[String].toOption match
                 case Some("text_delta") =>
@@ -238,12 +251,10 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
               }
             case "message_delta" =>
               val stopReason = json.hcursor.downField("delta").downField("stop_reason").as[String].toOption
-              val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
-                TokenUsage(
-                  inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
-                  outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0)
-                )
+              val outputTokens = json.hcursor.downField("usage").downField("output_tokens").as[Int].getOrElse(0)
+              inputTokensRef.get.map { inputTokens =>
+                val usage = Some(TokenUsage(inputTokens = inputTokens, outputTokens = outputTokens))
+                List(StreamChunk.Done(stopReason, usage))
               }
-              IO.pure(List(StreamChunk.Done(stopReason, usage)))
             case _ => IO.pure(Nil)
 end AnthropicAdapter

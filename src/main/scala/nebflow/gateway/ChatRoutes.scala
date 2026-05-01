@@ -47,9 +47,8 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
             }
             .handleErrorWith {
               case e: FallbackExhaustedError =>
-                val attemptSummaries = e.attempts.map(a =>
-                  s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
-                )
+                val attemptSummaries =
+                  e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
                 val msg = NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
                 BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
               case other =>
@@ -79,9 +78,8 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
             }
             .handleErrorWith {
               case e: FallbackExhaustedError =>
-                val attemptSummaries = e.attempts.map(a =>
-                  s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
-                )
+                val attemptSummaries =
+                  e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
                 val msg = NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
                 BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
               case other =>

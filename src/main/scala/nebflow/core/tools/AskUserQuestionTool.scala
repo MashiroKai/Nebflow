@@ -89,21 +89,22 @@ Usage:
 
       // Open-ended questions (empty options) are allowed — UI shows a text input
       ctx.replUi match
-          case Some(ui) =>
-            ui.askUser(items).map { answers =>
-              if answers.contains("__cancelled__") then Left(ToolError("User cancelled the question."))
-              else
-                Right(
-                  answers.zipWithIndex
-                    .map { case (a, i) =>
-                      s"${i + 1}. ${items(i).question} -> $a"
-                    }
-                    .mkString("\n")
-                )
-            }
-          case None =>
-            IO.pure(
-              Left(ToolError("AskUserQuestion tool requires an interactive UI. Not available in non-interactive mode."))
-            )
+        case Some(ui) =>
+          ui.askUser(items).map { answers =>
+            if answers.contains("__cancelled__") then Left(ToolError("User cancelled the question."))
+            else
+              Right(
+                answers.zipWithIndex
+                  .map { case (a, i) =>
+                    s"${i + 1}. ${items(i).question} -> $a"
+                  }
+                  .mkString("\n")
+              )
+          }
+        case None =>
+          IO.pure(
+            Left(ToolError("AskUserQuestion tool requires an interactive UI. Not available in non-interactive mode."))
+          )
+    end if
   end call
 end AskUserQuestionTool

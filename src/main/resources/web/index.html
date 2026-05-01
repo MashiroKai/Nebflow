@@ -7,33 +7,64 @@
   <script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
   <script src="https://unpkg.com/lottie-web@5.12.2/build/player/lottie.min.js"></script>
   <script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/katex@0.16.11/dist/katex.min.css">
+  <script src="https://unpkg.com/katex@0.16.11/dist/katex.min.js"></script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div id="header">
-    <div class="title"><span>nebflow</span></div>
-    <div class="conn off" id="conn"></div>
-  </div>
-  <div id="chat"></div>
-  <div id="status-wrap">
-    <div id="lottie-spinner"></div>
-    <span id="status-text"></span>
-  </div>
-  <div class="voice-overlay" id="voice-overlay">
-    <div class="voice-wave"><i data-lucide="mic"></i></div>
-    <div class="voice-text" id="voice-text">Listening...</div>
-    <div class="voice-hint">Release to send</div>
-  </div>
-  <div id="input-bar" style="position:relative;">
-    <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
-    <div id="input-wrap" style="position:relative;">
-      <div id="attachment-preview"></div>
-      <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
-      <div id="slash-dropdown"></div>
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span class="sidebar-title">Sessions</span>
+      <button id="new-session-btn" title="New Session">+</button>
     </div>
-    <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
-    <button id="send-btn"><i data-lucide="send"></i></button>
-    <button id="stop-btn"><i data-lucide="square"></i></button>
+    <div id="session-list"></div>
+  </div>
+  <div id="main">
+    <div id="header">
+      <div class="title"><span class="header-brand">nebflow</span><span id="session-name"></span></div>
+      <div class="header-right">
+        <div class="conn off" id="conn"></div>
+      </div>
+    </div>
+    <div id="chat"></div>
+    <div id="status-wrap">
+      <div id="lottie-spinner"></div>
+      <span id="status-text"></span>
+    </div>
+    <div class="voice-overlay" id="voice-overlay">
+      <div class="voice-wave"><i data-lucide="mic"></i></div>
+      <div class="voice-text" id="voice-text">Listening...</div>
+      <div class="voice-hint">Release to send</div>
+    </div>
+    <div id="input-bar" style="position:relative;">
+      <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
+      <div id="input-wrap" style="position:relative;">
+        <div id="attachment-preview"></div>
+        <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
+        <div id="slash-dropdown"></div>
+      </div>
+      <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
+      <button id="send-btn"><i data-lucide="send"></i></button>
+      <button id="stop-btn"><i data-lucide="square"></i></button>
+    </div>
+  </div>
+  <div id="modal-overlay">
+    <div id="modal-box">
+      <div id="modal-title">New Session</div>
+      <input id="modal-input" type="text" placeholder="Session name" autocomplete="off">
+      <div id="modal-actions">
+        <button id="modal-cancel">Cancel</button>
+        <button id="modal-confirm">Create</button>
+      </div>
+    </div>
+    <div id="delete-box">
+      <div id="delete-title">Delete Session</div>
+      <div id="delete-msg"></div>
+      <div id="delete-actions">
+        <button id="delete-cancel">Cancel</button>
+        <button id="delete-confirm">Delete</button>
+      </div>
+    </div>
   </div>
   <script src="app.js"></script>
 </body>

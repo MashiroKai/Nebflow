@@ -58,8 +58,7 @@ Insert mode:
     if input.contains("insert_after_line") then
       val line = input("insert_after_line").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(-1)
       s"Insert($short:$line)"
-    else
-      s"Edit($short)"
+    else s"Edit($short)"
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith("OK:") then
@@ -145,7 +144,8 @@ Insert mode:
           val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
 
           if oldString.isEmpty then Left(ToolError("old_string is required when not using insert_after_line"))
-          else if oldString == newString then Right("old_string and new_string are exactly the same. No changes to make.")
+          else if oldString == newString then
+            Right("old_string and new_string are exactly the same. No changes to make.")
           else
             try
               val original = Files.readString(filePath)
@@ -181,6 +181,10 @@ Insert mode:
                   val short = filePath.getFileName.toString
                   val diff = makeDiff(short, original, updated)
                   Right(s"OK: $short updated, $added added, $removed removed\n$diff")
+              end if
             catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
+          end if
+      end match
+    end if
   }
 end EditTool
