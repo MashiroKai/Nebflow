@@ -2,14 +2,16 @@ package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
 import io.circe.JsonObject
-import nebflow.shared.{LlmHandle, Message}
+import nebflow.shared.{LlmHandle, Message, TokenUsage}
 
 /** 工具执行上下文 */
 case class ToolContext(
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
   replUi: Option[nebflow.core.ReplUi] = None,
-  messagesRef: Option[Ref[IO, List[Message]]] = None
+  messagesRef: Option[Ref[IO, List[Message]]] = None,
+  sessionStore: Option[nebflow.gateway.SessionStore] = None,
+  usageRef: Option[Ref[IO, Option[TokenUsage]]] = None
 )
 
 /** 工具错误 */

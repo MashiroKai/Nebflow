@@ -4,21 +4,149 @@ body {
   background: #ededed;
   height: 100vh;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   overflow: hidden;
 }
-#header {
+
+/* ---------- Sidebar ---------- */
+#sidebar {
+  width: 260px;
   background: #1a1a1a;
+  color: #e0e0e0;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  height: 100vh;
+}
+#sidebar-header {
+  padding: 14px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid #2a2a2a;
+}
+.sidebar-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#new-session-btn {
+  background: none;
+  border: 1px solid #444;
+  color: #888;
+  font-size: 16px;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  font-family: inherit;
+  line-height: 1;
+}
+#new-session-btn:hover { background: #2a2a2a; color: #fff; border-color: #666; }
+#session-list {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+.session-item {
+  padding: 10px 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  transition: background 0.15s;
+}
+.session-item:hover { background: #242424; }
+.session-item.active { background: #2c2c2c; }
+.session-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 24px;
+}
+.session-name {
+  font-size: 13.5px;
+  color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-item.active .session-name {
+  color: #fff;
+  font-weight: 500;
+}
+.session-time {
+  font-size: 11px;
+  color: #666;
+}
+.session-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #07c160;
+  display: none;
+  flex-shrink: 0;
+  position: absolute;
+  top: 10px;
+  right: 32px;
+}
+.session-dot.show { display: block; }
+.session-delete {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+}
+.session-item:hover .session-delete { opacity: 1; }
+.session-delete:hover { color: #f44336; }
+.session-delete svg { width: 14px; height: 14px; }
+
+/* ---------- Main ---------- */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+#header {
+  background: #2e2e2e;
   color: #fff;
   padding: 10px 16px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
 }
-#header .title { display: flex; align-items: center; gap: 8px; }
+#header .title { display: flex; align-items: center; gap: 10px; }
+#header .header-brand { color: #fff; font-weight: 600; font-size: 15px; }
+#header #session-name { color: #888; font-size: 13px; }
+#header .header-right { display: flex; align-items: center; gap: 10px; }
 #header .conn {
   width: 8px; height: 8px; border-radius: 50%;
   background: #4caf50;
@@ -427,7 +555,7 @@ body {
 }
 
 #status-wrap {
-  position: fixed;
+  position: absolute;
   bottom: 64px;
   left: 50%;
   transform: translateX(-50%);
@@ -448,7 +576,7 @@ body {
 #lottie-spinner { width: 20px; height: 20px; }
 
 .voice-overlay {
-  position: fixed;
+  position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.5);
   display: none;
@@ -525,3 +653,127 @@ body {
   font-size: 12px;
   color: #888;
 }
+
+/* ---------- Modal ---------- */
+#modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+#modal-overlay.on { display: flex; }
+#modal-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px;
+  width: 340px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  animation: modalIn 0.15s ease;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+#modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 16px;
+}
+#modal-input {
+  width: 100%;
+  border: 1px solid #ddd;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+#modal-input:focus { border-color: #07c160; }
+#modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+#modal-cancel {
+  padding: 8px 18px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fff;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+#modal-cancel:hover { background: #f5f5f5; }
+#modal-confirm {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 10px;
+  background: #07c160;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+#modal-confirm:hover { background: #06ad56; }
+
+/* ---------- Delete Session Modal ---------- */
+#delete-box {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px;
+  width: 340px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  display: none;
+  animation: modalIn 0.15s ease;
+}
+#delete-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 12px;
+}
+#delete-msg {
+  font-size: 14px;
+  color: #555;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+#delete-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+#delete-cancel {
+  padding: 8px 18px;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: #fff;
+  color: #666;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+#delete-cancel:hover { background: #f5f5f5; }
+#delete-confirm {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 10px;
+  background: #f44336;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+#delete-confirm:hover { background: #d32f2f; }

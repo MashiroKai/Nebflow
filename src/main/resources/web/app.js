@@ -23,6 +23,38 @@ const spinnerJson = {
 
 marked.setOptions({ breaks: true, gfm: true, headerIds: false });
 
+// KaTeX math rendering — protect math blocks from Markdown processing
+function renderMarkdownWithMath(text) {
+  if (!text) return '';
+  const mathBlocks = [];
+  // Protect display math ($$...$$)
+  let protected_ = text.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => {
+    mathBlocks.push({ display: true, math: math.trim() });
+    return `MATHBLOCK${mathBlocks.length - 1}END`;
+  });
+  // Protect inline math ($...$), skip escaped \$
+  protected_ = protected_.replace(/(?<!\\)\$([^\$\n]+?)\$/g, (m, math) => {
+    mathBlocks.push({ display: false, math: math.trim() });
+    return `MATHBLOCK${mathBlocks.length - 1}END`;
+  });
+  let html = marked.parse(protected_, { headerIds: false });
+  // Restore math blocks as KaTeX
+  mathBlocks.forEach((block, i) => {
+    const token = `MATHBLOCK${i}END`;
+    try {
+      const rendered = katex.renderToString(block.math, {
+        displayMode: block.display,
+        throwOnError: false,
+        trust: true
+      });
+      html = html.replace(token, rendered);
+    } catch (e) {
+      html = html.replace(token, block.display ? `$$${block.math}$$` : `$${block.math}$`);
+    }
+  });
+  return html;
+}
+
 const lottieSpinner = lottie.loadAnimation({
   container: document.getElementById('lottie-spinner'),
   renderer: 'svg', loop: true, autoplay: false,
@@ -50,7 +82,9 @@ input.addEventListener('input', () => {
 });
 
 const LS_KEY = 'nebflow_v3';
+const LS_SESSIONS_KEY = 'nebflow_sessions';
 const LS_THINKING_KEY = 'nebflow_thinking';
+const LS_HISTORY_KEY = 'nebflow_input_history';
 let currentAiBubble = null;
 let aiText = '';
 let busy = false;
@@ -59,44 +93,113 @@ let heartbeat = null;
 let recognition = null;
 let pendingAttachments = [];
 let thinkingMode = JSON.parse(localStorage.getItem(LS_THINKING_KEY) || 'null');
+let activeSessionId = null;
+let sessions = [];
+let legacyMigrated = false;
+
+// ---------- Input History ----------
+let inputHistory = JSON.parse(localStorage.getItem(LS_HISTORY_KEY) || '[]');
+let historyIndex = -1; // -1 means not navigating history
+let historyDraft = ''; // save current input when navigating up
 
 // ---------- Persistence ----------
 function saveMsg(entry) {
-  const arr = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+  if (!activeSessionId) return;
+  const all = JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) || '{}');
+  const arr = all[activeSessionId] || [];
   arr.push(entry);
-  localStorage.setItem(LS_KEY, JSON.stringify(arr));
+  all[activeSessionId] = arr;
+  localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all));
 }
 function loadMsgs() {
-  return JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+  if (activeSessionId) {
+    const all = JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) || '{}');
+    return all[activeSessionId] || [];
+  }
+  // No session ID yet (first load before WebSocket) — read from legacy key
+  try { return JSON.parse(localStorage.getItem(LS_KEY) || '[]'); } catch(e) { return []; }
 }
 
 // ---------- Rendering ----------
+const MAX_FILE_SIZE = 500 * 1024; // 500KB limit for text attachments
+
+function addFileAttachment(file, callback) {
+  if (file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (file.size > 5 * 1024 * 1024) {
+        alert('Image too large (max 5MB): ' + file.name);
+        return;
+      }
+      pendingAttachments.push({
+        type: 'image', mimeType: file.type,
+        data: reader.result.split(',')[1],
+        name: file.name, preview: reader.result
+      });
+      renderAttachmentPreview();
+      if (callback) callback();
+    };
+    reader.readAsDataURL(file);
+  } else {
+    // Non-image: check size
+    if (file.size > MAX_FILE_SIZE) {
+      alert('File too large (max 500KB for text files): ' + file.name + ' (' + (file.size / 1024).toFixed(0) + 'KB)');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      pendingAttachments.push({
+        type: 'text', mimeType: file.type || 'text/plain',
+        data: reader.result, name: file.name
+      });
+      renderAttachmentPreview();
+      if (callback) callback();
+    };
+    reader.readAsText(file);
+  }
+}
+
 function renderUserBubble(text, attachments) {
   const row = document.createElement('div');
   row.className = 'row user';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble user';
+
+  // Text bubble (separate)
   if (text) {
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble user';
     const t = document.createElement('div');
     t.textContent = text;
     bubble.appendChild(t);
+    row.appendChild(bubble);
   }
+
+  // Attachment bubbles (separate from text)
   (attachments || []).forEach(att => {
     if (att.type === 'image' && att.preview) {
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user';
       const img = document.createElement('img');
       img.src = att.preview;
+      img.style.maxWidth = '180px';
+      img.style.maxHeight = '180px';
+      img.style.borderRadius = '8px';
       bubble.appendChild(img);
+      row.appendChild(bubble);
     } else {
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble user';
+      bubble.style.fontSize = '13px';
       const tag = document.createElement('span');
       tag.className = 'file-tag';
-      tag.textContent = 'file: ' + (att.name || 'file');
+      tag.textContent = (att.name || 'file');
       bubble.appendChild(tag);
+      row.appendChild(bubble);
     }
   });
-  row.appendChild(bubble);
+
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
-  saveMsg({type:'user', text, attachments: (attachments||[]).map(a=>({type:a.type,name:a.name}))});
+  saveMsg({type:'user', text, attachments: (attachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
 }
 
 function appendAiText(text) {
@@ -116,7 +219,7 @@ function appendAiText(text) {
   const askBox = currentAiBubble.querySelector('.option-box');
   if (askBox) askBox.remove();
   const cursor = '<span class="cursor"></span>';
-  currentAiBubble.innerHTML = marked.parse(aiText || '', {headerIds: false}) + cursor;
+  currentAiBubble.innerHTML = renderMarkdownWithMath(aiText || '') + cursor;
   if (askBox) currentAiBubble.appendChild(askBox);
   smartScroll();
 }
@@ -124,7 +227,7 @@ function finishAi() {
   if (currentAiBubble) {
     const askBox = currentAiBubble.querySelector('.option-box');
     if (askBox) askBox.remove();
-    currentAiBubble.innerHTML = marked.parse(aiText || '', {headerIds: false});
+    currentAiBubble.innerHTML = renderMarkdownWithMath(aiText || '');
     if (askBox) currentAiBubble.appendChild(askBox);
     saveMsg({type:'ai', text: aiText});
     currentAiBubble = null;
@@ -264,7 +367,7 @@ function renderError(msg) {
   row.appendChild(card);
   chat.appendChild(row);
   smartScroll();
-  saveMsg({type:'error', content: msg});
+  // Don't persist error messages — they're transient
 }
 
 // ---------- Universal Option Box (AskUser / Permission / SlashCmd) ----------
@@ -305,7 +408,8 @@ function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
       });
     }
 
-    // "Other" option for custom input (always shown for choice questions, or as the only input for open-ended)
+    // "Other" option for custom input (shown when allowOther is true)
+    const allowOther = item.allowOther !== false; // default true
     const customInput = document.createElement('textarea');
     customInput.className = 'option-custom-input';
     customInput.placeholder = 'Type your answer...';
@@ -313,7 +417,7 @@ function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
     if (!hasOptions) customInput.style.display = ''; // visible by default for open-ended
 
     let otherBtn = null;
-    if (hasOptions) {
+    if (hasOptions && allowOther) {
       otherBtn = document.createElement('button');
       otherBtn.className = 'option-btn';
       otherBtn.textContent = 'Other...';
@@ -329,6 +433,9 @@ function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
         checkAllAnswered();
       };
       optsDiv.appendChild(otherBtn);
+    } else if (hasOptions) {
+      // No "Other" — hide custom input
+      customInput.style.display = 'none';
     } else {
       // Open-ended: auto-focus and show input immediately
       answers[qi] = null; // needs to be filled
@@ -556,6 +663,10 @@ const slashCommands = {
         renderSystemBubble('Policy: ' + answers[0]);
       }, 'Apply');
     }
+  },
+  '/new': {
+    desc: 'Create a new session',
+    run: showNewSessionModal
   }
 };
 
@@ -645,27 +756,40 @@ function restoreFromStorage() {
     if (m.type === 'user') {
       const row = document.createElement('div');
       row.className = 'row user';
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble user';
       if (m.text) {
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble user';
         const t = document.createElement('div');
         t.textContent = m.text;
         bubble.appendChild(t);
+        row.appendChild(bubble);
       }
       (m.attachments || []).forEach(att => {
-        const tag = document.createElement('span');
-        tag.className = 'file-tag';
-        tag.textContent = 'file: ' + (att.name || 'file');
-        bubble.appendChild(tag);
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble user';
+        if (att.type === 'image' && att.preview) {
+          const img = document.createElement('img');
+          img.src = att.preview;
+          img.style.maxWidth = '180px';
+          img.style.maxHeight = '180px';
+          img.style.borderRadius = '8px';
+          bubble.appendChild(img);
+        } else {
+          bubble.style.fontSize = '13px';
+          const tag = document.createElement('span');
+          tag.className = 'file-tag';
+          tag.textContent = (att.name || 'file');
+          bubble.appendChild(tag);
+        }
+        row.appendChild(bubble);
       });
-      row.appendChild(bubble);
       chat.appendChild(row);
     } else if (m.type === 'ai') {
       const row = document.createElement('div');
       row.className = 'row ai';
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
-      bubble.innerHTML = marked.parse(m.text || '', {headerIds: false});
+      bubble.innerHTML = renderMarkdownWithMath(m.text || '');
       row.appendChild(bubble);
       chat.appendChild(row);
     } else if (m.type === 'tool') {
@@ -702,7 +826,7 @@ function restoreFromStorage() {
         el.style.opacity = '0.5';
       });
     } else if (m.type === 'error') {
-      renderError(m.content);
+      // Skip error messages on restore — they're transient
     } else if (m.type === 'system') {
       const row = document.createElement('div');
       row.className = 'row error';
@@ -759,35 +883,31 @@ function renderAttachmentPreview() {
 attachBtn.onclick = () => {
   const f = document.createElement('input');
   f.type = 'file';
-  f.accept = 'image/*,.txt,.md,.json,.scala,.js,.ts,.py,.java,.go,.rs,.csv,.xml,.yaml,.yml,.html,.css';
+  f.style.display = 'none';
+  f.accept = 'image/*,.txt,.md,.json,.scala,.js,.ts,.py,.java,.go,.rs,.csv,.xml,.yaml,.yml,.html,.css,.log,.sh,.bash,.toml,.conf,.cfg,.ini,.env,.sql,.proto,.graphql,.tf,.dart,.rb,.php,.c,.cpp,.h,.hpp,.r,.swift,.kt,.kts';
+  document.body.appendChild(f);
   f.onchange = (e) => {
     const file = e.target.files[0];
-    if (!file) return;
-    if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        pendingAttachments.push({
-          type: 'image', mimeType: file.type,
-          data: reader.result.split(',')[1],
-          name: file.name, preview: reader.result
-        });
-        renderAttachmentPreview();
-      };
-      reader.readAsDataURL(file);
-    } else {
-      const reader = new FileReader();
-      reader.onload = () => {
-        pendingAttachments.push({
-          type: 'text', mimeType: file.type || 'text/plain',
-          data: reader.result, name: file.name
-        });
-        renderAttachmentPreview();
-      };
-      reader.readAsText(file);
-    }
+    if (file) addFileAttachment(file);
+    f.remove();
   };
   f.click();
 };
+
+// ---------- Drag & Drop ----------
+document.body.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+});
+document.body.addEventListener('drop', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  const files = [];
+  if (e.dataTransfer.files) {
+    for (const f of e.dataTransfer.files) files.push(f);
+  }
+  files.forEach(f => addFileAttachment(f));
+});
 
 // ---------- Voice ----------
 function startVoice(e) {
@@ -804,17 +924,16 @@ function startVoice(e) {
   voiceText.textContent = 'Listening...';
   const voiceBase = input.value; // text before this voice session
 
+  let voiceFinal = ''; // accumulated finalized text this session
   recognition.onresult = (ev) => {
-    let finalText = '';
     let interimText = '';
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const t = ev.results[i][0].transcript;
-      if (ev.results[i].isFinal) finalText += t;
+      if (ev.results[i].isFinal) voiceFinal += t;
       else interimText += t;
     }
-    const current = finalText || interimText;
+    const current = voiceFinal + interimText;
     voiceText.textContent = current || 'Listening...';
-    // Replace only this session's portion, keep previous text
     input.value = voiceBase + (voiceBase && current ? ' ' : '') + current;
   };
   recognition.onerror = (ev) => {
@@ -923,6 +1042,10 @@ function connect() {
       case 'askPermission':
         renderPermissionPrompt(msg.toolName, msg.summary, msg.input);
         break;
+      case 'sessionList':
+        renderSessionSidebar(msg.sessions, msg.activeId);
+        migrateLegacyIfNeeded();
+        break;
     }
   };
 }
@@ -937,6 +1060,14 @@ function send() {
     return;
   }
   renderUserBubble(text, pendingAttachments);
+  // Save to input history
+  if (text && text !== '/clear') {
+    inputHistory.push(text);
+    if (inputHistory.length > 200) inputHistory = inputHistory.slice(-200);
+    localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(inputHistory));
+  }
+  historyIndex = -1;
+  historyDraft = '';
   try {
     ws.send(JSON.stringify({
       content: text,
@@ -978,30 +1109,7 @@ input.addEventListener('paste', (e) => {
   }
   if (files.length === 0) return; // normal text paste, let browser handle it
   e.preventDefault();
-  files.forEach(file => {
-    if (file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        pendingAttachments.push({
-          type: 'image', mimeType: file.type,
-          data: reader.result.split(',')[1],
-          name: file.name, preview: reader.result
-        });
-        renderAttachmentPreview();
-      };
-      reader.readAsDataURL(file);
-    } else {
-      const reader = new FileReader();
-      reader.onload = () => {
-        pendingAttachments.push({
-          type: 'text', mimeType: file.type || 'text/plain',
-          data: reader.result, name: file.name
-        });
-        renderAttachmentPreview();
-      };
-      reader.readAsText(file);
-    }
-  });
+  files.forEach(file => addFileAttachment(file));
 });
 input.onkeydown = (e) => {
   if (slashDropdown.classList.contains('on')) {
@@ -1026,6 +1134,39 @@ input.onkeydown = (e) => {
       return;
     }
   }
+  // Input history navigation (up/down arrows)
+  if (!slashDropdown.classList.contains('on') && !composing && !e.isComposing && e.keyCode !== 229) {
+    if (e.key === 'ArrowUp' && input.selectionStart === 0 && input.selectionEnd === 0) {
+      e.preventDefault();
+      if (inputHistory.length === 0) return;
+      if (historyIndex === -1) {
+        historyDraft = input.value;
+        historyIndex = inputHistory.length - 1;
+      } else if (historyIndex > 0) {
+        historyIndex--;
+      }
+      input.value = inputHistory[historyIndex];
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+      input.setSelectionRange(input.value.length, input.value.length);
+      return;
+    }
+    if (e.key === 'ArrowDown' && input.selectionStart === input.value.length && input.selectionEnd === input.selectionStart) {
+      e.preventDefault();
+      if (historyIndex === -1) return;
+      if (historyIndex >= inputHistory.length - 1) {
+        historyIndex = -1;
+        input.value = historyDraft;
+      } else {
+        historyIndex++;
+        input.value = inputHistory[historyIndex];
+      }
+      input.style.height = 'auto';
+      input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+      input.setSelectionRange(input.value.length, input.value.length);
+      return;
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     if (composing || e.isComposing || e.keyCode === 229) {
       e.preventDefault();
@@ -1036,7 +1177,172 @@ input.onkeydown = (e) => {
   }
 };
 
+// ---------- Session Sidebar ----------
+const sessionList = document.getElementById('session-list');
+const newSessionBtn = document.getElementById('new-session-btn');
+const sessionNameEl = document.getElementById('session-name');
+const modalOverlay = document.getElementById('modal-overlay');
+const modalBox = document.getElementById('modal-box');
+const modalInput = document.getElementById('modal-input');
+const modalCancel = document.getElementById('modal-cancel');
+const modalConfirm = document.getElementById('modal-confirm');
+const deleteBox = document.getElementById('delete-box');
+const deleteTitle = document.getElementById('delete-title');
+const deleteMsg = document.getElementById('delete-msg');
+const deleteCancelBtn = document.getElementById('delete-cancel');
+const deleteConfirmBtn = document.getElementById('delete-confirm');
+
+function formatSessionTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (isToday) return hh + ':' + mm;
+  if (isYesterday) return 'Yesterday ' + hh + ':' + mm;
+  return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm;
+}
+
+function renderSessionSidebar(sessionData, activeId) {
+  sessions = sessionData || [];
+  const prevActiveId = activeSessionId;
+  if (activeId) activeSessionId = activeId;
+  // If active session changed (including first load from null), clear chat and restore from storage
+  if (activeId && prevActiveId !== activeId) {
+    chat.innerHTML = '';
+    currentAiBubble = null;
+    aiText = '';
+    currentToolCard = null;
+    restoreFromStorage();
+  }
+  // Clean up localStorage for deleted sessions
+  try {
+    const all = JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) || '{}');
+    const currentIds = new Set((sessionData || []).map(s => s.id));
+    let changed = false;
+    for (const key of Object.keys(all)) {
+      if (!currentIds.has(key)) { delete all[key]; changed = true; }
+    }
+    if (changed) localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all));
+  } catch(e) {}
+  sessionList.innerHTML = '';
+  sessions.forEach(s => {
+    const item = document.createElement('div');
+    item.className = 'session-item' + (s.id === activeSessionId ? ' active' : '');
+    item.dataset.id = s.id;
+    const dotCls = s.hasUnread ? ' session-dot show' : ' session-dot';
+    item.innerHTML = '<div class="session-info">' +
+      '<div class="session-name">' + esc(s.name) + '</div>' +
+      '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>' +
+      '</div>' +
+      '<div class="' + dotCls + '"></div>' +
+      '<button class="session-delete" title="Delete"><i data-lucide="x"></i></button>';
+    item.querySelector('.session-delete').onclick = (e) => {
+      e.stopPropagation();
+      showDeleteModal(s.id, s.name);
+    };
+    item.onclick = (e) => {
+      if (e.target.closest('.session-delete')) return;
+      if (s.id !== activeSessionId) switchSession(s.id);
+    };
+    sessionList.appendChild(item);
+  });
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+  // Update header session name
+  const active = sessions.find(s => s.id === activeSessionId);
+  if (active && active.name !== 'Default Session') {
+    sessionNameEl.textContent = '· ' + active.name;
+    sessionNameEl.style.display = '';
+  } else {
+    sessionNameEl.textContent = '';
+  }
+}
+
+function switchSession(sessionId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({type: 'switchSession', sessionId}));
+}
+
+function deleteSession(sessionId) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({type: 'deleteSession', sessionId}));
+}
+
+// Migrate old nebflow_v3 data into session-based storage (runs once)
+function migrateLegacyIfNeeded() {
+  if (!activeSessionId || legacyMigrated) return;
+  legacyMigrated = true;
+  const all = JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) || '{}');
+  if (all[activeSessionId]) return; // already migrated
+  // Try to read from legacy key
+  try {
+    const oldMsgs = JSON.parse(localStorage.getItem(LS_KEY) || '[]');
+    if (Array.isArray(oldMsgs) && oldMsgs.length > 0) {
+      all[activeSessionId] = oldMsgs;
+      localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all));
+      // Re-render chat with the migrated data
+      chat.innerHTML = '';
+      restoreFromStorage();
+    }
+  } catch(e) {}
+}
+
+function showNewSessionModal() {
+  deleteBox.style.display = 'none';
+  modalBox.style.display = 'block';
+  modalInput.value = '';
+  modalOverlay.classList.add('on');
+  setTimeout(() => modalInput.focus(), 50);
+}
+
+function hideModals() {
+  modalOverlay.classList.remove('on');
+}
+
+function confirmNewSession() {
+  const name = modalInput.value.trim();
+  hideModals();
+  if (!name) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  // Don't clear chat here — wait for sessionList with new activeId to trigger renderSessionSidebar
+  ws.send(JSON.stringify({type: 'createSession', name}));
+}
+
+// --- Delete modal ---
+let pendingDeleteId = null;
+
+function showDeleteModal(sessionId, sessionName) {
+  modalBox.style.display = 'none';
+  deleteBox.style.display = 'block';
+  deleteMsg.textContent = 'Delete session "' + sessionName + '"?';
+  pendingDeleteId = sessionId;
+  modalOverlay.classList.add('on');
+}
+
+function confirmDeleteSession() {
+  const id = pendingDeleteId;
+  pendingDeleteId = null;
+  hideModals();
+  if (id) deleteSession(id);
+}
+
+newSessionBtn.onclick = showNewSessionModal;
+modalCancel.onclick = hideModals;
+modalConfirm.onclick = confirmNewSession;
+modalInput.onkeydown = (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); confirmNewSession(); }
+  if (e.key === 'Escape') hideModals();
+};
+deleteCancelBtn.onclick = hideModals;
+deleteConfirmBtn.onclick = confirmDeleteSession;
+modalOverlay.onclick = (e) => {
+  if (e.target === modalOverlay) hideModals();
+};
+
 // Init
-restoreFromStorage();
 connect();
 input.focus();

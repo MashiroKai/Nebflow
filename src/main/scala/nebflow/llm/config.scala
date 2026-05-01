@@ -75,10 +75,34 @@ case class ServiceLlmConfig(
 object ServiceLlmConfig:
   given Decoder[ServiceLlmConfig] = deriveDecoder[ServiceLlmConfig]
 
+case class EmbeddingConfig(
+  provider: String,
+  model: String,
+  apiKey: String,
+  baseUrl: Option[String] = None
+)
+
+object EmbeddingConfig:
+  given Decoder[EmbeddingConfig] = deriveDecoder[EmbeddingConfig]
+
+case class VectorInjectionConfig(
+  enable: Boolean = false,
+  embedding: EmbeddingConfig,
+  language: String = "zh",
+  threshold: Double = 0.7,
+  topK: Int = 1,
+  qdrantUrl: String = "http://localhost:6333",
+  collection: String = "nebflow_skill_tags"
+)
+
+object VectorInjectionConfig:
+  given Decoder[VectorInjectionConfig] = deriveDecoder[VectorInjectionConfig]
+
 case class NebflowServiceConfig(
   llm: ServiceLlmConfig,
   mcpServers: Option[Map[String, McpServerConfig]] = None,
-  search: Option[SearchConfig] = None
+  search: Option[SearchConfig] = None,
+  vectorInjection: Option[VectorInjectionConfig] = None
 )
 
 object NebflowServiceConfig:
@@ -89,7 +113,10 @@ object Config:
   val DefaultConfigPath: os.Path = NebflowHome / "nebflow.json"
 
   def resolveEnvVars(str: String): String =
-    """\$\{([^}]+)\}""".r.replaceAllIn(str, m => sys.env.getOrElse(m.group(1), m.matched))
+    """\$\{([^}]+)\}""".r.replaceAllIn(
+      str,
+      m => java.util.regex.Matcher.quoteReplacement(sys.env.getOrElse(m.group(1), m.matched))
+    )
 
   def parseModelRef(ref: String): (String, String) =
     val idx = ref.indexOf('/')
@@ -113,7 +140,9 @@ object Config:
 
     resolvedJson.as[NebflowServiceConfig] match
       case Right(cfg) => cfg
-      case Left(err) => throw new RuntimeException(s"Config parse error: ${err.message}")
+      case Left(err) =>
+        val path = io.circe.CursorOp.opsToPath(err.history)
+        throw new RuntimeException(s"Config parse error at '$path': ${err.message}")
 
   private def resolveEnvVarsInJson(json: Json): Json =
     json.fold(

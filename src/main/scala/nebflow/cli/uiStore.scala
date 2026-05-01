@@ -2,8 +2,7 @@ package nebflow.cli
 
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
-import io.circe.{Decoder, Encoder, Json}
-import io.circe.parser
+import io.circe.*
 import io.circe.syntax.*
 import nebflow.core.ReplUi
 
@@ -11,11 +10,14 @@ enum Phase:
   case Prompt, Thinking, Streaming, ToolRunning, AskUser
 
 case class HistoryEntry(text: String, timestamp: Long)
+
 object HistoryEntry:
   given Encoder[HistoryEntry] = Encoder.instance(h => Json.obj("text" -> h.text.asJson, "ts" -> h.timestamp.asJson))
-  given Decoder[HistoryEntry] = Decoder.instance(c => for
-    t <- c.downField("text").as[String]; ts <- c.downField("ts").as[Long]
-  yield HistoryEntry(t, ts))
+
+  given Decoder[HistoryEntry] = Decoder.instance(c =>
+    for t <- c.downField("text").as[String]; ts <- c.downField("ts").as[Long]
+    yield HistoryEntry(t, ts)
+  )
 
 case class CompletedRound(
   id: Int,
@@ -124,7 +126,8 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
       )
       val filtered = text.trim.toLowerCase
       val skipHistory = filtered == "quit" || filtered == "exit"
-      val newHistory = if skipHistory then s.inputHistory else s.inputHistory :+ HistoryEntry(text, System.currentTimeMillis())
+      val newHistory =
+        if skipHistory then s.inputHistory else s.inputHistory :+ HistoryEntry(text, System.currentTimeMillis())
       stateRef.update(
         _.copy(
           completedRounds = s.completedRounds :+ round,
@@ -230,7 +233,9 @@ object UiStore:
           case Right(entries) => entries
           case Left(_) =>
             // Fallback: old format (List[String]) — migrate
-            io.circe.parser.decode[List[String]](raw).getOrElse(Nil)
+            io.circe.parser
+              .decode[List[String]](raw)
+              .getOrElse(Nil)
               .map(t => HistoryEntry(t, 0L))
       else Nil
     catch case _: Exception => Nil

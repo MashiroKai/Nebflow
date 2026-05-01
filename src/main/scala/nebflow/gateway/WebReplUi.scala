@@ -2,9 +2,9 @@ package nebflow.gateway
 
 import cats.effect.std.{Queue, Semaphore}
 import cats.effect.{IO, Ref}
+import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import io.circe.parser.parse
 import nebflow.core.ReplUi
 import org.http4s.websocket.WebSocketFrame
 
@@ -19,6 +19,8 @@ class WebReplUi(
 
   private def sendJson(json: Json): IO[Unit] =
     queue.offer(WebSocketFrame.Text(json.noSpaces))
+
+  def sendRaw(json: Json): IO[Unit] = sendJson(json)
 
   def emitThinking(): IO[Unit] =
     sendJson(Json.obj("type" -> "thinking".asJson))
@@ -83,7 +85,11 @@ class WebReplUi(
             o.description.map(d => "description" -> d.asJson)
           Json.obj(fields*)
         }
-        Json.obj("question" -> item.question.asJson, "options" -> opts.asJson)
+        Json.obj(
+          "question" -> item.question.asJson,
+          "options" -> opts.asJson,
+          "allowOther" -> item.allowOther.asJson
+        )
       }
       cats.effect.Deferred[IO, List[String]].flatMap { d =>
         askUserDeferred.set(Some(d)) *>
@@ -102,12 +108,14 @@ class WebReplUi(
     permSemaphore.permit.use { _ =>
       cats.effect.Deferred[IO, Boolean].flatMap { d =>
         permissionDeferred.set(Some(d)) *>
-          sendJson(Json.obj(
-            "type" -> "askPermission".asJson,
-            "toolName" -> toolName.asJson,
-            "summary" -> summary.asJson,
-            "input" -> parse(inputJson).getOrElse(Json.Null)
-          )) *>
+          sendJson(
+            Json.obj(
+              "type" -> "askPermission".asJson,
+              "toolName" -> toolName.asJson,
+              "summary" -> summary.asJson,
+              "input" -> parse(inputJson).getOrElse(Json.Null)
+            )
+          ) *>
           d.get
       }
     }

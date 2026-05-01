@@ -152,7 +152,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toOpenAiMessages(params.messages)),
       "max_tokens" -> (params.maxTokens.getOrElse(4096)).asJson,
-      "stream" -> true.asJson
+      "stream" -> true.asJson,
+      "stream_options" -> Json.obj("include_usage" -> true.asJson)
     )
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
@@ -202,54 +203,65 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     parse(data) match
       case Left(_) => IO.pure(Nil)
       case Right(json) =>
-        val delta = json.hcursor.downField("choices").downN(0).downField("delta").as[Json].toOption
-        val finishReason = json.hcursor.downField("choices").downN(0).downField("finish_reason").as[String].toOption
+        // Check for usage-only chunk (stream_options.include_usage sends a final chunk with empty choices)
+        val usageOpt = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+          TokenUsage(
+            inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
+            outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
+          )
+        }
+        val choicesEmpty = json.hcursor.downField("choices").as[List[Json]].toOption.exists(_.isEmpty)
+        if usageOpt.isDefined && choicesEmpty then IO.pure(List(StreamChunk.Done(None, usageOpt)))
+        else
+          val delta = json.hcursor.downField("choices").downN(0).downField("delta").as[Json].toOption
+          val finishReason = json.hcursor.downField("choices").downN(0).downField("finish_reason").as[String].toOption
 
-        delta match
-          case None => IO.pure(Nil)
-          case Some(d) =>
-            val textChunks = d.hcursor.downField("content").as[String].toOption.filter(_.nonEmpty).toList
-            val textDeltas = textChunks.map(StreamChunk.TextDelta.apply)
+          delta match
+            case None => IO.pure(Nil)
+            case Some(d) =>
+              val textChunks = d.hcursor.downField("content").as[String].toOption.filter(_.nonEmpty).toList
+              val textDeltas = textChunks.map(StreamChunk.TextDelta.apply)
 
-            d.hcursor.downField("tool_calls").as[List[Json]].toOption match
-              case Some(tcs) =>
-                tcs
-                  .foldM(Nil: List[StreamChunk]) { (acc, tc) =>
-                    val index = tc.hcursor.downField("index").as[Int].getOrElse(0)
-                    val id = tc.hcursor.downField("id").as[String].toOption
-                    val name = tc.hcursor.downField("function").downField("name").as[String].toOption
-                    val args = tc.hcursor.downField("function").downField("arguments").as[String].toOption
+              d.hcursor.downField("tool_calls").as[List[Json]].toOption match
+                case Some(tcs) =>
+                  tcs
+                    .foldM(Nil: List[StreamChunk]) { (acc, tc) =>
+                      val index = tc.hcursor.downField("index").as[Int].getOrElse(0)
+                      val id = tc.hcursor.downField("id").as[String].toOption
+                      val name = tc.hcursor.downField("function").downField("name").as[String].toOption
+                      val args = tc.hcursor.downField("function").downField("arguments").as[String].toOption
 
-                    (id, name) match
-                      case (Some(toolId), Some(toolName)) =>
-                        toolCallState
-                          .update(_ + (index -> (toolId, toolName, new StringBuilder(args.getOrElse("")))))
-                          .as(acc)
-                      case _ =>
-                        toolCallState
-                          .modify { m =>
-                            m.get(index) match
-                              case Some((tid, tname, sb)) =>
-                                args.foreach(sb.append)
-                                (m.updated(index, (tid, tname, sb)), ())
-                              case None => (m, ())
+                      (id, name) match
+                        case (Some(toolId), Some(toolName)) =>
+                          toolCallState
+                            .update(_ + (index -> (toolId, toolName, new StringBuilder(args.getOrElse("")))))
+                            .as(acc)
+                        case _ =>
+                          toolCallState
+                            .modify { m =>
+                              m.get(index) match
+                                case Some((tid, tname, sb)) =>
+                                  args.foreach(sb.append)
+                                  (m.updated(index, (tid, tname, sb)), ())
+                                case None => (m, ())
+                            }
+                            .as(acc)
+                    }
+                    .flatMap { acc =>
+                      if finishReason.contains("tool_calls") || finishReason.contains("function_call") then
+                        toolCallState.getAndSet(Map.empty).map { m =>
+                          acc ++ m.values.toList.map { case (id, name, sb) =>
+                            val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
+                            StreamChunk.ToolCallChunk(ToolCall(id, name, input))
                           }
-                          .as(acc)
-                  }
-                  .flatMap { acc =>
-                    if finishReason.contains("tool_calls") || finishReason.contains("function_call") then
-                      toolCallState.getAndSet(Map.empty).map { m =>
-                        acc ++ m.values.toList.map { case (id, name, sb) =>
-                          val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
-                          StreamChunk.ToolCallChunk(ToolCall(id, name, input))
                         }
-                      }
-                    else if finishReason.isDefined then IO.pure(acc :+ StreamChunk.Done(finishReason, None))
-                    else IO.pure(textDeltas ++ acc)
-                  }
-              case None =>
-                if finishReason.isDefined then IO.pure(textDeltas :+ StreamChunk.Done(finishReason, None))
-                else IO.pure(textDeltas)
-            end match
-        end match
+                      else if finishReason.isDefined then IO.pure(acc :+ StreamChunk.Done(finishReason, None))
+                      else IO.pure(textDeltas ++ acc)
+                    }
+                case None =>
+                  if finishReason.isDefined then IO.pure(textDeltas :+ StreamChunk.Done(finishReason, None))
+                  else IO.pure(textDeltas)
+              end match
+          end match
+        end if
 end OpenAiAdapter

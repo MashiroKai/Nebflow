@@ -7,7 +7,8 @@ import java.util.concurrent.atomic.AtomicReference
 /** 提问项 */
 case class AskItem(
   question: String,
-  options: List[AskOption]
+  options: List[AskOption],
+  allowOther: Boolean = true
 )
 
 case class AskOption(

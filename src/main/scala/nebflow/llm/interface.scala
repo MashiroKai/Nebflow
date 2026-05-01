@@ -6,6 +6,8 @@ import nebflow.core.NebflowLogger
 import nebflow.shared.*
 import sttp.client4.httpclient.fs2.HttpClientFs2Backend
 
+import scala.concurrent.duration.*
+
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
 
@@ -70,10 +72,16 @@ object LlmInterface:
               sessionOverrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
             )
 
+          val maxRetries = Fallback.MaxRetries
+
           fs2.Stream.eval(IO.ref(false)).flatMap { lockedRef =>
             fs2.Stream.eval(IO.ref(List.empty[FallbackAttempt])).flatMap { failureRef =>
-              def tryCandidate(candidates: List[ModelCandidate]): fs2.Stream[IO, StreamChunk] =
-                candidates match
+              def tryCandidate(
+                remaining: List[ModelCandidate],
+                retriesLeft: Int = maxRetries,
+                backoffMs: Long = Fallback.InitialBackoffMs
+              ): fs2.Stream[IO, StreamChunk] =
+                remaining match
                   case Nil =>
                     fs2.Stream.eval(
                       failureRef.get.flatMap { failures =>
@@ -100,7 +108,13 @@ object LlmInterface:
                     val stream = registry
                       .getAdapter(candidate.providerId)
                       .sendMessageStream(
-                        SendMessageParams(req.messages, candidate.model, req.tools, Some(candidate.maxTokens), req.thinking)
+                        SendMessageParams(
+                          req.messages,
+                          candidate.model,
+                          req.tools,
+                          Some(candidate.maxTokens),
+                          req.thinking
+                        )
                       )
                     stream
                       .evalTap { chunk =>
@@ -113,23 +127,39 @@ object LlmInterface:
                         fs2.Stream.eval(lockedRef.get).flatMap { locked =>
                           if locked then fs2.Stream.eval(IO.raiseError(err))
                           else
+                            val classification = Fallback.classifyError(err)
                             val attempt = FallbackAttempt(
                               candidate.providerId,
                               candidate.model,
-                              Some(Fallback.classifyError(err).reason),
-                              Some(Fallback.classifyError(err).permanence),
+                              Some(classification.reason),
+                              Some(classification.permanence),
                               0,
-                              0,
+                              maxRetries - retriesLeft,
                               java.time.Instant.now().toString
                             )
-                            fs2.Stream
-                              .eval(
+
+                            if classification.permanence == ErrorPermanence.Permanent then
+                              fs2.Stream.eval(
                                 logger.warn(
-                                  s"Stream fallback: ${candidate.providerId}/${candidate.model} failed, trying next"
+                                  s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
                                 )
                                   *> failureRef.update(_ :+ attempt)
-                              )
-                              .flatMap(_ => tryCandidate(rest))
+                              ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                            else if retriesLeft > 0 then
+                              val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
+                              val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
+                              fs2.Stream.eval(
+                                logger.warn(
+                                  s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
+                                ) *> IO.sleep(delay.millis)
+                              ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
+                            else
+                              fs2.Stream.eval(
+                                logger.warn(
+                                  s"Stream fallback: ${candidate.providerId}/${candidate.model} retries exhausted"
+                                )
+                                  *> failureRef.update(_ :+ attempt)
+                              ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                         }
                       }
 

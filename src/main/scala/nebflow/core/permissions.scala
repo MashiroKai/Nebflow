@@ -2,14 +2,15 @@ package nebflow.core
 
 import cats.effect.{IO, Ref}
 import io.circe.*
-import io.circe.syntax.*
 import io.circe.parser.decode
+import io.circe.syntax.*
 
 enum ToolRisk:
   case Safe
   case NeedsApproval
 
 object ToolRisk:
+
   private val defaults: Map[String, ToolRisk] = Map(
     "Read" -> Safe,
     "Glob" -> Safe,
@@ -40,6 +41,7 @@ case class PermissionPolicy(
 )
 
 object PermissionPolicy:
+
   given Encoder[PermissionPolicy] = Encoder.instance { p =>
     Json.obj(
       "autoApproveAll" -> p.autoApproveAll.asJson,
@@ -59,12 +61,16 @@ object PermissionPolicy:
   }
 
   def default: PermissionPolicy = PermissionPolicy()
+
   def fromString(s: String): PermissionPolicy = s match
-    case "auto"     => PermissionPolicy(autoApproveAll = true)
-    case "safe"     => PermissionPolicy(autoApproveTools = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "AskUserQuestion"))
-    case "ask"      => PermissionPolicy.default
-    case "block"    => PermissionPolicy(blockedTools = Set("Bash", "Write", "Edit", "Curl"))
-    case _          => PermissionPolicy.default
+    case "auto" => PermissionPolicy(autoApproveAll = true)
+    case "safe" =>
+      PermissionPolicy(autoApproveTools = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "AskUserQuestion"))
+    case "ask" => PermissionPolicy.default
+    case "block" => PermissionPolicy(blockedTools = Set("Bash", "Write", "Edit", "Curl"))
+    case _ => PermissionPolicy.default
+
+end PermissionPolicy
 
 class PermissionState private (
   policyRef: Ref[IO, PermissionPolicy],
@@ -92,6 +98,8 @@ class PermissionState private (
 
   def setPolicy(policy: PermissionPolicy): IO[Unit] =
     policyRef.set(policy) *> PermissionState.savePolicy(policyRef)
+
+end PermissionState
 
 object PermissionState:
   private val policyPath: os.Path = os.home / ".nebflow" / "permission_policy.json"

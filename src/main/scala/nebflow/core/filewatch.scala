@@ -1,7 +1,9 @@
 package nebflow.core
 
 import cats.effect.{IO, Ref}
+
 import java.nio.file.{Files, Path, Paths}
+
 import scala.jdk.CollectionConverters.*
 
 class FileChangeTracker private (
@@ -10,9 +12,18 @@ class FileChangeTracker private (
   modifiedByAgent: Ref[IO, Set[(String, Long)]],
   lastCheckRef: Ref[IO, Long]
 ):
+
   private val ExcludedDirs = Set(
-    ".git", "target", ".bsp", ".metals", ".bloop", ".idea",
-    ".vscode", "node_modules", ".claude", "dist"
+    ".git",
+    "target",
+    ".bsp",
+    ".metals",
+    ".bloop",
+    ".idea",
+    ".vscode",
+    "node_modules",
+    ".claude",
+    "dist"
   )
   private val ExcludedFiles = Set(".DS_Store")
 
@@ -21,8 +32,10 @@ class FileChangeTracker private (
   private val DebounceMs: Long = 5 * 1000L // 5 seconds
 
   private def scanFiles(): Map[String, Long] =
-    Files.walk(rootPath)
-      .iterator().asScala
+    Files
+      .walk(rootPath)
+      .iterator()
+      .asScala
       .filter(Files.isRegularFile(_))
       .filter { p =>
         val rel = rootPath.relativize(p).toString
@@ -34,7 +47,9 @@ class FileChangeTracker private (
       }
       .map { p =>
         val rel = rootPath.relativize(p).toString
-        val modTime = try Files.getLastModifiedTime(p).toMillis catch case _: Exception => 0L
+        val modTime =
+          try Files.getLastModifiedTime(p).toMillis
+          catch case _: Exception => 0L
         rel -> modTime
       }
       .toMap
@@ -77,23 +92,38 @@ class FileChangeTracker private (
     IO.blocking {
       val absPath = Paths.get(path).toAbsolutePath.normalize
       val rel = rootPath.relativize(absPath).toString
-      val modTime = try Files.getLastModifiedTime(absPath).toMillis catch case _: Exception => System.currentTimeMillis()
+      val modTime =
+        try Files.getLastModifiedTime(absPath).toMillis
+        catch case _: Exception => System.currentTimeMillis()
       (rel, modTime)
     }.flatMap { entry =>
       modifiedByAgent.update(_ + entry)
     }
 
+end FileChangeTracker
+
 object FileChangeTracker:
+
   private val ExcludedDirs = Set(
-    ".git", "target", ".bsp", ".metals", ".bloop", ".idea",
-    ".vscode", "node_modules", ".claude", "dist"
+    ".git",
+    "target",
+    ".bsp",
+    ".metals",
+    ".bloop",
+    ".idea",
+    ".vscode",
+    "node_modules",
+    ".claude",
+    "dist"
   )
   private val ExcludedFiles = Set(".DS_Store")
 
   def scanProject(projectRoot: String): Map[String, Long] =
     val rootPath = Paths.get(projectRoot).toAbsolutePath.normalize
-    Files.walk(rootPath)
-      .iterator().asScala
+    Files
+      .walk(rootPath)
+      .iterator()
+      .asScala
       .filter(Files.isRegularFile(_))
       .filter { p =>
         val rel = rootPath.relativize(p).toString
@@ -103,7 +133,9 @@ object FileChangeTracker:
       }
       .map { p =>
         val rel = rootPath.relativize(p).toString
-        val modTime = try Files.getLastModifiedTime(p).toMillis catch case _: Exception => 0L
+        val modTime =
+          try Files.getLastModifiedTime(p).toMillis
+          catch case _: Exception => 0L
         rel -> modTime
       }
       .toMap
@@ -115,3 +147,4 @@ object FileChangeTracker:
       agentRef <- Ref.of[IO, Set[(String, Long)]](Set.empty)
       lastCheckRef <- Ref.of[IO, Long](0L)
     yield new FileChangeTracker(projectRoot, snapshotRef, agentRef, lastCheckRef)
+end FileChangeTracker

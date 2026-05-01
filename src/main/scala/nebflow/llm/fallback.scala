@@ -51,6 +51,9 @@ object Fallback:
   private val JitterMinMs = 1000
   private val JitterMaxMs = 3000
   private val DefaultTimeoutMs = 120_000
+  val MaxRetries: Int = 3
+  val InitialBackoffMs: Long = 3000L
+  val MaxBackoffMs: Long = 30000L
 
   def classifyError(error: Throwable): ErrorClassification =
     // Check for structured sttp4 HttpError first
@@ -112,86 +115,60 @@ object Fallback:
   def tryProviderWithFallback[T](
     candidates: List[ModelCandidate],
     action: ModelCandidate => IO[T],
+    maxRetries: Int = MaxRetries,
     onAttempt: Option[FallbackAttempt => IO[Unit]] = None
   ): IO[FallbackResult[T]] =
-    def loop(
-      remaining: List[ModelCandidate],
-      attempts: List[FallbackAttempt]
-    ): IO[FallbackResult[T]] = remaining match
-      case Nil =>
-        IO.raiseError(new FallbackExhaustedError(attempts))
-      case candidate :: rest =>
-        val start = System.currentTimeMillis()
-        val attemptIO = withTimeoutIO(action(candidate), DefaultTimeoutMs)
 
-        attemptIO.attempt.flatMap {
-          case Right(result) =>
-            val attempt = FallbackAttempt(
-              candidate.providerId,
-              candidate.model,
-              None,
-              None,
-              System.currentTimeMillis() - start,
-              0,
-              java.time.Instant.now().toString
-            )
-            val newAttempts = attempts :+ attempt
-            onAttempt.traverse_(_.apply(attempt)) *>
-              IO.pure(FallbackResult(result, newAttempts, candidate))
-          case Left(error) =>
-            val classification = classifyError(error)
-            val durationMs = System.currentTimeMillis() - start
+    def tryWithRetry(
+      candidate: ModelCandidate,
+      retriesLeft: Int,
+      backoffMs: Long,
+      priorFailures: List[FallbackAttempt]
+    )(fallback: List[FallbackAttempt] => IO[FallbackResult[T]]): IO[FallbackResult[T]] =
+      val start = System.currentTimeMillis()
+      withTimeoutIO(action(candidate), DefaultTimeoutMs).attempt.flatMap {
+        case Right(result) =>
+          val attempt = FallbackAttempt(
+            candidate.providerId,
+            candidate.model,
+            None,
+            None,
+            System.currentTimeMillis() - start,
+            maxRetries - retriesLeft,
+            java.time.Instant.now().toString
+          )
+          IO.pure(FallbackResult(result, priorFailures :+ attempt, candidate))
+        case Left(error) =>
+          val classification = classifyError(error)
+          val durationMs = System.currentTimeMillis() - start
+          val failAttempt = FallbackAttempt(
+            candidate.providerId,
+            candidate.model,
+            Some(classification.reason),
+            Some(classification.permanence),
+            durationMs,
+            maxRetries - retriesLeft,
+            java.time.Instant.now().toString
+          )
+          onAttempt.traverse_(_.apply(failAttempt))
+          val allFailures = priorFailures :+ failAttempt
 
-            // Rate limit: retry with jitter
-            val withRetry: IO[FallbackResult[T]] =
-              if classification.reason == FailoverReason.RateLimit then
-                sleepWithJitter(JitterMinMs, JitterMaxMs) *>
-                  IO.delay(System.currentTimeMillis()).flatMap { retryStart =>
-                    withTimeoutIO(action(candidate), DefaultTimeoutMs).attempt.flatMap {
-                      case Right(result) =>
-                        val attempt = FallbackAttempt(
-                          candidate.providerId,
-                          candidate.model,
-                          None,
-                          None,
-                          System.currentTimeMillis() - retryStart,
-                          1,
-                          java.time.Instant.now().toString
-                        )
-                        val newAttempts = attempts :+ attempt
-                        onAttempt.traverse_(_.apply(attempt)) *>
-                          IO.pure(FallbackResult(result, newAttempts, candidate))
-                      case Left(_) =>
-                        val failAttempt = FallbackAttempt(
-                          candidate.providerId,
-                          candidate.model,
-                          Some(classification.reason),
-                          Some(classification.permanence),
-                          durationMs,
-                          0,
-                          java.time.Instant.now().toString
-                        )
-                        val newAttempts = attempts :+ failAttempt
-                        onAttempt.traverse_(_.apply(failAttempt)) *>
-                          loop(rest, newAttempts)
-                    }
-                  }
-              else
-                val attempt = FallbackAttempt(
-                  candidate.providerId,
-                  candidate.model,
-                  Some(classification.reason),
-                  Some(classification.permanence),
-                  durationMs,
-                  0,
-                  java.time.Instant.now().toString
-                )
-                val newAttempts = attempts :+ attempt
-                onAttempt.traverse_(_.apply(attempt)) *>
-                  loop(rest, newAttempts)
+          if classification.permanence == ErrorPermanence.Permanent then fallback(allFailures)
+          else if retriesLeft > 0 then
+            val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
+            val delay = math.min(backoffMs + jitter, MaxBackoffMs)
+            IO.sleep(delay.millis) *>
+              tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
+          else fallback(allFailures)
+      }
+    end tryWithRetry
 
-            withRetry
-        }
+    def loop(remaining: List[ModelCandidate], attempts: List[FallbackAttempt]): IO[FallbackResult[T]] =
+      remaining match
+        case Nil =>
+          IO.raiseError(new FallbackExhaustedError(attempts))
+        case candidate :: rest =>
+          tryWithRetry(candidate, maxRetries, InitialBackoffMs, attempts)(failures => loop(rest, failures))
 
     loop(candidates, Nil)
   end tryProviderWithFallback
