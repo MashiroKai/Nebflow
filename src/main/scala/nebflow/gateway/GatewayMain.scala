@@ -3,11 +3,12 @@ package nebflow.gateway
 import cats.effect.{IO, IOApp, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
+import nebflow.core.*
 import nebflow.core.mcp.*
 import nebflow.core.tools.ToolRegistry
-import nebflow.core.{FileChangeTracker, NebflowLogger, PermissionState, ReminderState}
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
-import nebflow.shared.{Message, given}
+import nebflow.shared.{LlmHandle, Message, given}
+import nebflow.skill.*
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 
@@ -15,20 +16,6 @@ import scala.concurrent.duration.*
 
 object GatewayMain extends IOApp.Simple:
   private val logger = NebflowLogger.forName("nebflow.gateway")
-
-  private val webSessionPath = os.home / ".nebflow" / "sessions" / "web.json"
-
-  private def loadWebSession(): IO[List[Message]] = IO.blocking {
-    if os.exists(webSessionPath) then
-      io.circe.parser.decode[List[Message]](os.read(webSessionPath)) match
-        case Right(msgs) => msgs
-        case Left(_) => Nil
-    else Nil
-  }
-
-  private def saveWebSession(messages: List[Message]): IO[Unit] = IO.blocking {
-    os.write.over(webSessionPath, messages.asJson.spaces2, createFolders = true)
-  }
 
   private def openBrowser(url: String): IO[Unit] = IO.blocking {
     val os = sys.props.getOrElse("os.name", "").toLowerCase
@@ -67,71 +54,97 @@ object GatewayMain extends IOApp.Simple:
 
   def run: IO[Unit] =
     GatewayConfig.load.flatMap { cfg =>
-      val config = Config.loadServiceConfig()
-
-      Auth.loadOrCreateToken.flatMap { token =>
-        // Global session state shared across all connections
-        loadWebSession().flatMap { initialHistory =>
-          Ref.of[IO, List[Message]](initialHistory).flatMap { globalMessagesRef =>
+      IO.blocking(Config.loadServiceConfig()).flatMap { config =>
+        Auth.loadOrCreateToken.flatMap { token =>
+          // Global session state shared across all connections
+          val sessionStore = new SessionStore(os.home / ".nebflow" / "sessions")
+          sessionStore.load.flatMap { _ =>
             LlmInterface.createLlm().flatMap { case (handle, releaseBackend) =>
               initMcpServers(config).flatMap { _ =>
                 val chatRoutes = new ChatRoutes(handle, token)
                 // Read contextWindow from config for the primary model
-                val contextWindow = {
+                val contextWindow =
                   val (providerId, modelId) = Config.parseModelRef(config.llm.model.primary)
-                  val provider = config.llm.providers.getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
+                  val provider = config.llm.providers
+                    .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
                   provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(128000)
-                }
                 val baseUrl = s"http://localhost:${cfg.port}"
                 val url = s"$baseUrl?token=$token"
 
                 logger.info(s"nebflow v${nebflow.Version.string}") *>
                   logger.info(s"gateway listening on ${cfg.host}:${cfg.port}") *>
                   logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)") *>
-                  Ref.of[IO, Option[io.circe.Json]](None).flatMap { thinkingModeRef =>
-                    PermissionState.create.flatMap { permState =>
-                      RateLimiter.create().flatMap { rateLimiter =>
-                        FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
-                        Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
-                        EmberServerBuilder
-                          .default[IO]
-                          .withHost(cfg.host)
-                          .withPort(cfg.port)
-                          .withIdleTimeout(10.minutes)
-                          .withHttpWebSocketApp { wsb =>
-                            val wsRoutes =
-                              new WebSocketRoutes(
-                                wsb,
-                                handle,
-                                globalMessagesRef,
-                                saveWebSession,
-                                thinkingModeRef,
-                                permState,
-                                rateLimiter,
-                                token,
-                                fileTracker,
-                                reminderStateRef,
-                                contextWindow
-                              )
-                            Router(
-                              "/api" -> chatRoutes.routes,
-                              "/" -> wsRoutes.routes
-                            ).orNotFound
-                          }
-                          .build
-                          .use { _ =>
-                            openBrowser(url) *> IO.never
-                          }
-                          .guarantee(releaseBackend)
-                      } // end rateLimiter
-                    } // end fileTracker
-                    } // end reminderStateRef
-                  } // end thinkingModeRef
+                  initSkillDiscovery(config, handle).flatMap { skillDiscoveryOpt =>
+                    Ref.of[IO, Option[io.circe.Json]](None).flatMap { thinkingModeRef =>
+                      PermissionState.create.flatMap { permState =>
+                        RateLimiter.create().flatMap { rateLimiter =>
+                          FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
+                            Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
+                              EmberServerBuilder
+                                .default[IO]
+                                .withHost(cfg.host)
+                                .withPort(cfg.port)
+                                .withIdleTimeout(1.hour)
+                                .withHttpWebSocketApp { wsb =>
+                                  val wsRoutes =
+                                    new WebSocketRoutes(
+                                      wsb,
+                                      handle,
+                                      sessionStore,
+                                      thinkingModeRef,
+                                      permState,
+                                      rateLimiter,
+                                      token,
+                                      fileTracker,
+                                      reminderStateRef,
+                                      contextWindow,
+                                      skillDiscoveryOpt
+                                    )
+                                  Router(
+                                    "/api" -> chatRoutes.routes,
+                                    "/" -> wsRoutes.routes
+                                  ).orNotFound
+                                }
+                                .build
+                                .use { _ =>
+                                  openBrowser(url) *> IO.never
+                                }
+                                .guarantee(releaseBackend)
+                            } // end rateLimiter
+                          } // end fileTracker
+                        } // end reminderStateRef
+                      } // end thinkingModeRef
+                    } // end skillDiscoveryOpt
                   }
               }
             }
           }
         }
-      }
+      } // end config flatMap
     }
+
+  private def initSkillDiscovery(config: NebflowServiceConfig, llm: LlmHandle[IO]): IO[Option[SkillDiscovery]] =
+    config.vectorInjection match
+      case Some(viConfig) if viConfig.enable =>
+        val skillsDir = Config.NebflowHome / "skills"
+        val embedding = new EmbeddingService(viConfig.embedding)
+        val qdrant = new QdrantClient(viConfig.qdrantUrl)
+        val indexer = new SkillIndexer(qdrant, embedding, viConfig)
+
+        // Estimate vector size from model name
+        val vectorSize = viConfig.embedding.model match
+          case m if m.contains("3-small") => 1536
+          case m if m.contains("3-large") => 3072
+          case m if m.contains("embedding") => 1536
+          case _ => 1024
+
+        (for
+          _ <- qdrant.ensureCollection(viConfig.collection, vectorSize)
+          _ <- indexer.indexIncremental(skillsDir, llm)
+        yield Some(new SkillDiscovery(qdrant, embedding, viConfig)))
+          .handleErrorWith { e =>
+            logger.warn(s"Skill system init failed, continuing without: ${e.getMessage}") *> IO.pure(None)
+          }
+      case _ =>
+        IO.pure(None)
 end GatewayMain

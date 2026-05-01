@@ -1,10 +1,11 @@
 package nebflow.core
 
-import cats.effect.{IO, Ref, Deferred}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import nebflow.core.tools.{ToolError, ToolRegistry}
 import nebflow.shared.*
 import nebflow.shared.TerminalUtils.*
+import nebflow.skill.SkillDiscovery
 
 import java.nio.file.{Files, Paths}
 
@@ -98,6 +99,69 @@ object Repl:
         catch case _: Exception => ""
       case None => ""
 
+  private def buildEnvInfo(projectRoot: String): String =
+    val sb = new StringBuilder
+    sb.append("## Environment\n\n")
+    sb.append("| Property | Value |\n")
+    sb.append("|----------|-------|\n")
+    sb.append(s"| Working directory | `$projectRoot` |\n")
+    sb.append(s"| Platform | ${sys.props.getOrElse("os.name", "unknown").toLowerCase} |\n")
+    sb.append(s"| Shell | ${sys.env.getOrElse("SHELL", "unknown")} |\n")
+    sb.append(s"| OS Version | ${sys.props.getOrElse("os.name", "")} ${sys.props.getOrElse("os.version", "")} |\n")
+    sb.append(s"| Nebflow version | v${nebflow.Version.string} |\n")
+    sb.append("\n")
+
+    // Git info
+    try
+      val dir = new java.io.File(projectRoot)
+      val isGitRepo = new java.io.File(dir, ".git").exists()
+      if isGitRepo then
+        sb.append("## Git Status\n\n")
+        def gitCmd(args: String): String =
+          val proc = Runtime.getRuntime.exec(s"git $args".split(" "), null, dir)
+          val out = scala.io.Source.fromInputStream(proc.getInputStream).mkString.trim
+          proc.waitFor()
+          out
+
+        val branch = gitCmd("rev-parse --abbrev-ref HEAD")
+        sb.append(s"| Property | Value |\n")
+        sb.append("|----------|-------|\n")
+        sb.append(s"| Current branch | `$branch` |\n")
+
+        val mainBranch = Seq("main", "master")
+          .find(b =>
+            val p = Runtime.getRuntime.exec(Array("git", "rev-parse", "--verify", b), null, dir)
+            p.waitFor() == 0
+          )
+          .getOrElse("main")
+        sb.append(s"| Main branch | `$mainBranch` |\n")
+
+        val gitUser = gitCmd("config user.name")
+        if gitUser.nonEmpty then sb.append(s"| Git user | $gitUser |\n")
+
+        val status = gitCmd("status --porcelain")
+        if status.nonEmpty then
+          val lines = status.linesIterator.take(10).toList
+          val formatted = lines.map(_.trim).mkString("`", "`<br>`", "`")
+          sb.append(s"| Modified | $formatted |\n")
+
+        val log = gitCmd("log --oneline -5")
+        if log.nonEmpty then
+          sb.append("\n### Recent Commits\n\n")
+          sb.append("| Commit | Message |\n")
+          sb.append("|--------|--------|\n")
+          log.linesIterator.foreach { line =>
+            val parts = line.split(" ", 2)
+            if parts.length == 2 then sb.append(s"| `${parts(0)}` | ${parts(1)} |\n")
+          }
+        sb.append("\n")
+      end if
+    catch case _: Exception => ()
+    end try
+
+    sb.toString
+  end buildEnvInfo
+
   private val fallbackPrompt = """You are the Nebflow assistant. Your duties:
 1. Understand the user's intent and break it into executable subtasks
 2. Use tools to execute those subtasks
@@ -162,7 +226,8 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     silent: Boolean = false,
     permState: Option[PermissionState] = None,
     messagesRef: Option[Ref[IO, List[Message]]] = None,
-    fileChangeTracker: Option[FileChangeTracker] = None
+    fileChangeTracker: Option[FileChangeTracker] = None,
+    sessionStore: Option[nebflow.gateway.SessionStore] = None
   ): IO[ConsumeResult] =
     for
       abortSignal <- Deferred[IO, Unit]
@@ -212,7 +277,17 @@ Principles: work until the task is resolved; diagnose failures before trying a n
                 IO.delay(summarizeToolCall(toolCall)).flatMap { label =>
                   val execIO = store.emitToolStart(label) *>
                     withSpinner(label, silent) {
-                      executeTool(toolCall, System.getProperty("user.dir"), Some(llm), Some(store), permState, messagesRef, fileChangeTracker)
+                      executeTool(
+                        toolCall,
+                        System.getProperty("user.dir"),
+                        Some(llm),
+                        Some(store),
+                        permState,
+                        messagesRef,
+                        fileChangeTracker,
+                        sessionStore,
+                        Some(usageRef)
+                      )
                         .race(abortSignal.get *> IO.raiseError(new UserAbort()))
                         .flatMap {
                           case Left(result) => IO.pure(result)
@@ -283,48 +358,11 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     results.foreach { case (call, result) =>
       resultBlocks += ContentBlock.ToolResult(call.id, result.content, Some(result.isError))
     }
-    // Inject system reminders alongside tool results
-    reminders.foreach { r =>
-      resultBlocks += ContentBlock.Text(r.render)
-    }
+    // Inject system reminders alongside tool results (merged into one block)
+    if reminders.nonEmpty then resultBlocks += ContentBlock.Text(SystemReminder.renderAll(reminders))
     val resultMsg = Message(MessageRole.User, Right(resultBlocks.toList))
 
     messages ++ List(assistantMsg, resultMsg)
-
-  def runRepl(
-    userInput: String,
-    llm: LlmHandle[IO],
-    projectRoot: String,
-    initialMessages: List[Message],
-    store: ReplUi,
-    onToolRound: Option[List[Message] => IO[Unit]],
-    silent: Boolean,
-    thinkingMode: Option[io.circe.Json] = None,
-    permState: Option[PermissionState] = None,
-    contextWindow: Int = 128000,
-    reminderStateRef: Option[Ref[IO, ReminderState]] = None,
-    fileChangeTracker: Option[FileChangeTracker] = None
-  ): IO[List[Message]] =
-    val systemPrompt = loadSystemPrompt()
-    buildUserMessage(userInput).flatMap { userMessage =>
-      runReplLoop(
-        userMessage,
-        llm,
-        projectRoot,
-        initialMessages,
-        store,
-        onToolRound,
-        silent,
-        systemPrompt,
-        thinkingMode,
-        permState,
-        contextWindow,
-        reminderStateRef,
-        fileChangeTracker
-      )
-    }
-
-  end runRepl
 
   def runRepl(
     userMessage: Message,
@@ -338,9 +376,14 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     permState: Option[PermissionState],
     contextWindow: Int,
     reminderStateRef: Option[Ref[IO, ReminderState]],
-    fileChangeTracker: Option[FileChangeTracker]
+    fileChangeTracker: Option[FileChangeTracker],
+    skillDiscovery: Option[SkillDiscovery] = None,
+    userText: Option[String] = None,
+    sessionStore: Option[nebflow.gateway.SessionStore] = None
   ): IO[List[Message]] =
-    val systemPrompt = loadSystemPrompt()
+    val basePrompt = loadSystemPrompt()
+    val envInfo = buildEnvInfo(projectRoot)
+    val systemPrompt = s"$basePrompt\n\n$envInfo"
     runReplLoop(
       userMessage,
       llm,
@@ -354,8 +397,13 @@ Principles: work until the task is resolved; diagnose failures before trying a n
       permState,
       contextWindow,
       reminderStateRef,
-      fileChangeTracker
+      fileChangeTracker,
+      skillDiscovery,
+      userText,
+      sessionStore
     )
+
+  end runRepl
 
   private def runReplLoop(
     userMessage: Message,
@@ -370,92 +418,96 @@ Principles: work until the task is resolved; diagnose failures before trying a n
     permState: Option[PermissionState],
     contextWindow: Int,
     reminderStateRef: Option[Ref[IO, ReminderState]],
-    fileChangeTracker: Option[FileChangeTracker]
+    fileChangeTracker: Option[FileChangeTracker],
+    skillDiscovery: Option[SkillDiscovery],
+    userText: Option[String],
+    sessionStore: Option[nebflow.gateway.SessionStore]
   ): IO[List[Message]] =
     // Ref for ContextManageTool to modify messages in-place
     Ref.of[IO, List[Message]](initialMessages).flatMap { ctxMsgRef =>
 
-    def collectReminders(usage: Option[TokenUsage]): IO[List[SystemReminder]] =
-      for
-        fileChangesOpt <- fileChangeTracker.traverse(_.checkChanges()).map(_.flatten)
-        reminders <- reminderStateRef match
-          case Some(ref) => SystemReminders.collectAll(ref, usage, contextWindow, fileChangesOpt)
-          case None => IO.pure(fileChangesOpt.toList)
-      yield reminders
+      def collectReminders(usage: Option[TokenUsage]): IO[List[SystemReminder]] =
+        for
+          fileChangesOpt <- fileChangeTracker.traverse(_.checkChanges()).map(_.flatten)
+          skillMatchOpt <- skillMatchForTurn
+          currentPolicy <- permState match
+            case Some(ps) => ps.policy
+            case None => IO.pure(PermissionPolicy.default)
+          reminders <- reminderStateRef match
+            case Some(ref) =>
+              SystemReminders.collectAll(ref, usage, contextWindow, fileChangesOpt, currentPolicy, skillMatchOpt)
+            case None => IO.pure(fileChangesOpt.toList)
+        yield reminders
 
-    def loop(messages: List[Message]): IO[List[Message]] =
-      // Sync the ref so ContextManageTool sees current messages
-      ctxMsgRef.set(messages) *>
-      // Collect system reminders for this turn
-      collectReminders(None).flatMap { reminders =>
-        val systemMsg = Message(MessageRole.System, Left(systemPrompt))
-        // Inject reminders for first turn (no tool results yet)
-        val tagged = systemMsg :: tagMessages(messages)
-        val messagesWithReminders =
-          if reminders.nonEmpty then tagged ++ List(Message(MessageRole.User, Right(reminders.map(r => ContentBlock.Text(r.render)))))
-          else tagged
-
-        val stream = llm.sendStream(
-          LlmRequest(
-            messages = messagesWithReminders,
-            sessionId = "repl",
-            agentId = "user",
-            tools = Some(ToolRegistry.ALL_TOOLS),
-            thinking = thinkingMode
-          )
-        )
-
-        consumeStream(stream, store, llm, silent, permState, Some(ctxMsgRef), fileChangeTracker)
-          .flatMap { consumed =>
-            // Collect reminders using actual usage (works for both tool and no-tool paths)
-            collectReminders(consumed.usage).flatMap { reminders =>
-              if consumed.toolCalls.isEmpty then
-                // No tool calls — append assistant reply + reminders (if any)
-                val assistantMsg = if consumed.text.nonEmpty then
-                  Some(Message(MessageRole.Assistant, Left(consumed.text)))
-                else None
-                val reminderMsg = if reminders.nonEmpty then
-                  Some(Message(MessageRole.User, Right(reminders.map(r => ContentBlock.Text(r.render)))))
-                else None
-                val extra = List(assistantMsg, reminderMsg).flatten
-                if extra.nonEmpty then IO.pure(messages ++ extra)
-                else IO.pure(messages)
-              else
-                // Read from ctxMsgRef in case ContextManageTool modified messages
-                ctxMsgRef.get.flatMap { managedMsgs =>
-                  val base = if managedMsgs != messages then managedMsgs else messages
-                  val updated = appendToolRound(base, consumed.text, consumed.toolCalls, consumed.results, reminders)
-                  onToolRound.traverse_(_.apply(updated)) *> loop(updated)
-                }
+      // Skill discovery: only run once on first turn using original user text
+      lazy val skillMatchForTurn: IO[Option[nebflow.skill.SkillMatch]] =
+        (skillDiscovery, userText) match
+          case (Some(sd), Some(text)) if text.nonEmpty =>
+            sd.findRelevantSkill(text).handleErrorWith { e =>
+              IO.pure(None)
             }
-          }
-          .handleErrorWith {
-            case _: UserAbort => IO.pure(messages)
-            case e => IO.raiseError(e)
-          }
-      }
+          case _ => IO.pure(None)
 
-    loop(initialMessages :+ userMessage)
+      def loop(messages: List[Message]): IO[List[Message]] =
+        // Sync the ref so ContextManageTool sees current messages
+        ctxMsgRef.set(messages) *>
+          // Collect system reminders for this turn
+          collectReminders(None).flatMap { reminders =>
+            val systemMsg = Message(MessageRole.System, Left(systemPrompt))
+            // Inject reminders for first turn (no tool results yet)
+            val tagged = systemMsg :: messages
+            val messagesWithReminders =
+              if reminders.nonEmpty then
+                tagged ++ List(
+                  Message(MessageRole.User, Right(List(ContentBlock.Text(SystemReminder.renderAll(reminders)))))
+                )
+              else tagged
+
+            val stream = llm.sendStream(
+              LlmRequest(
+                messages = messagesWithReminders,
+                sessionId = "repl",
+                agentId = "user",
+                tools = Some(ToolRegistry.ALL_TOOLS),
+                thinking = thinkingMode
+              )
+            )
+
+            consumeStream(stream, store, llm, silent, permState, Some(ctxMsgRef), fileChangeTracker, sessionStore)
+              .flatMap { consumed =>
+                // Collect reminders using actual usage (works for both tool and no-tool paths)
+                collectReminders(consumed.usage).flatMap { reminders =>
+                  if consumed.toolCalls.isEmpty then
+                    // No tool calls — append assistant reply + reminders (if any)
+                    val assistantMsg =
+                      if consumed.text.nonEmpty then Some(Message(MessageRole.Assistant, Left(consumed.text)))
+                      else None
+                    val reminderMsg =
+                      if reminders.nonEmpty then
+                        Some(
+                          Message(MessageRole.User, Right(List(ContentBlock.Text(SystemReminder.renderAll(reminders)))))
+                        )
+                      else None
+                    val extra = List(assistantMsg, reminderMsg).flatten
+                    if extra.nonEmpty then IO.pure(messages ++ extra)
+                    else IO.pure(messages)
+                  else
+                    // Read from ctxMsgRef in case ContextManageTool modified messages
+                    ctxMsgRef.get.flatMap { managedMsgs =>
+                      val base = if managedMsgs != messages then managedMsgs else messages
+                      val updated =
+                        appendToolRound(base, consumed.text, consumed.toolCalls, consumed.results, reminders)
+                      onToolRound.traverse_(_.apply(updated)) *> loop(updated)
+                    }
+                }
+              }
+              .handleErrorWith {
+                case _: UserAbort => IO.pure(messages)
+                case e => IO.raiseError(e)
+              }
+          }
+
+      loop(initialMessages :+ userMessage)
     } // end ctxMsgRef flatMap
   end runReplLoop
-
-  /** Inject [ctx:N] tags into all messages in the conversation array.
-   *  System prompt is injected separately (untracked) so it's never editable.
-   *  All messages here get a tag — having a tag means editable by ContextManage.
-   */
-  private def tagMessages(messages: List[Message]): List[Message] =
-    messages.zipWithIndex.map { case (msg, idx) =>
-      val tag = s"[ctx:$idx] "
-      msg.content match
-        case Left(text) => msg.copy(content = Left(tag + text))
-        case Right(blocks) =>
-          blocks match
-            case (ContentBlock.Text(t)) :: rest =>
-              msg.copy(content = Right(ContentBlock.Text(tag + t) :: rest))
-            case (tr: ContentBlock.ToolResult) :: _ =>
-              msg.copy(content = Right(ContentBlock.ToolResult(tr.toolUseId, tag + tr.content, tr.isError) :: blocks.tail))
-            case (tu: ContentBlock.ToolUse) :: rest =>
-              msg.copy(content = Right(ContentBlock.Text(tag) :: tu :: rest))
-            case _ => msg.copy(content = Right(ContentBlock.Text(tag) :: blocks))
-    }
 end Repl

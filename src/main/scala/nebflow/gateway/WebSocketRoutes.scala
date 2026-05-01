@@ -5,8 +5,10 @@ import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.parser.parse
-import nebflow.core.{FileChangeTracker, NebflowError, NebflowLogger, PermissionPolicy, PermissionState, ReminderState, Repl}
+import io.circe.syntax.*
+import nebflow.core.*
 import nebflow.shared.*
+import nebflow.skill.SkillDiscovery
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
@@ -17,17 +19,30 @@ import scala.concurrent.duration.*
 class WebSocketRoutes(
   wsb: WebSocketBuilder2[IO],
   llm: LlmHandle[IO],
-  messagesRef: Ref[IO, List[Message]],
-  saveSession: List[Message] => IO[Unit],
+  sessionStore: SessionStore,
   thinkingModeRef: Ref[IO, Option[io.circe.Json]],
   permState: PermissionState,
   rateLimiter: RateLimiter,
   token: String,
   fileChangeTracker: FileChangeTracker,
   reminderStateRef: Ref[IO, ReminderState],
-  contextWindow: Int = 128000
+  contextWindow: Int = 128000,
+  skillDiscovery: Option[SkillDiscovery] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
+
+  private def sendSessionList(replUi: WebReplUi): IO[Unit] =
+    for
+      sessions <- sessionStore.listSessions
+      activeId <- sessionStore.getActiveId
+      _ <- replUi.sendRaw(
+        io.circe.Json.obj(
+          "type" -> "sessionList".asJson,
+          "sessions" -> sessions.asJson,
+          "activeId" -> activeId.asJson
+        )
+      )
+    yield ()
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
@@ -53,12 +68,15 @@ class WebSocketRoutes(
           )
 
           sendStream = Stream.fromQueueUnterminated(outbound)
+          // Send initial session list on connect
+          _ <- sendSessionList(replUi)
           _ <- logger.info("WebSocket client connected")
           ws <- wsb.build(sendStream, receivePipe)
         yield ws
       else
         logger.debug("WebSocket auth failed: invalid token") *>
           Forbidden("Invalid token")
+      end if
 
     case req @ GET -> Root =>
       StaticFile.fromResource("web/index.html", Some(req)).getOrElseF(NotFound())
@@ -68,6 +86,33 @@ class WebSocketRoutes(
       if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
       else NotFound()
   }
+
+  private val inputHistoryPath = os.home / ".nebflow" / "input_history.jsonl"
+
+  private def logInputHistory(content: String, attachments: List[io.circe.Json]): IO[Unit] =
+    val filtered = content.trim.toLowerCase
+    if (filtered == "quit" || filtered == "exit") && attachments.isEmpty then IO.unit
+    else if content.trim.isEmpty && attachments.isEmpty then IO.unit
+    else
+      IO.blocking {
+        val inputType =
+          if attachments.nonEmpty then "file"
+          else if content.length > 200 then "paste"
+          else "input"
+        val files = attachments.flatMap(_.hcursor.downField("name").as[String].toOption)
+        val entry = io.circe.Json.obj(
+          "text" -> io.circe.Json.fromString(content.take(2000)),
+          "ts" -> io.circe.Json.fromString(
+            java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
+          ),
+          "type" -> io.circe.Json.fromString(inputType)
+        )
+        val withFiles =
+          if files.nonEmpty then
+            entry.mapObject(_.add("files", io.circe.Json.fromValues(files.map(io.circe.Json.fromString))))
+          else entry
+        os.write.append(inputHistoryPath, withFiles.noSpaces + "\n", createFolders = true)
+      }
 
   private def handleMessage(
     text: String,
@@ -90,7 +135,7 @@ class WebSocketRoutes(
         val policy = PermissionPolicy.fromString(policyStr)
         logger.info(s"Permission policy changed to: $policyStr") *>
           permState.setPolicy(policy) *>
-          reminderStateRef.update(_.copy(policyReminderPending = true, policyPendingName = Some(policyStr)))
+          reminderStateRef.update(_.copy(policyReminderPending = true))
 
       case "interrupt" =>
         logger.info("User interrupted") *> replUi.triggerEsc()
@@ -99,7 +144,7 @@ class WebSocketRoutes(
         val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
         command match
           case "clear" =>
-            logger.info("Session cleared") *> messagesRef.set(Nil) *> saveSession(Nil) *>
+            logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
               reminderStateRef.update(_.copy(sessionStarted = false, highestPressureLevel = 0)) *>
               replUi.emitDone()
           case _ => IO.unit
@@ -109,6 +154,38 @@ class WebSocketRoutes(
         json.hcursor.downField("thinking").focus match
           case Some(t) => thinkingModeRef.set(Some(t))
           case None => thinkingModeRef.set(None)
+
+      case "switchSession" =>
+        val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+        if sessionId.nonEmpty then
+          (sessionStore.switchSession(sessionId) *> sendSessionList(replUi)).handleErrorWith { e =>
+            logger.warn(s"Switch session failed: ${e.getMessage}") *> IO.unit
+          }
+        else IO.unit
+
+      case "createSession" =>
+        val name = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("New Session")
+        (sessionStore
+          .createSession(name)
+          .flatMap { meta =>
+            sessionStore.switchSession(meta.id) *> sendSessionList(replUi)
+          })
+          .handleErrorWith { e =>
+            logger.warn(s"Create session failed: ${e.getMessage}") *> IO.unit
+          }
+
+      case "deleteSession" =>
+        val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+        if sessionId.nonEmpty then
+          sessionStore.deleteSession(sessionId).attempt.flatMap {
+            case Right(_) => sendSessionList(replUi)
+            case Left(e) =>
+              logger.warn(s"Delete session failed: ${e.getMessage}") *>
+                replUi.sendRaw(
+                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Delete failed: ${e.getMessage}".asJson)
+                )
+          }
+        else IO.unit
 
       case "ping" => IO.unit
 
@@ -132,7 +209,10 @@ class WebSocketRoutes(
                 val data = att.hcursor.downField("data").as[String].getOrElse("")
                 val name = att.hcursor.downField("name").as[String].getOrElse("")
                 if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
-                else if data.nonEmpty then blocks += ContentBlock.Text(s"[file: $name]\n$data")
+                else if data.nonEmpty then
+                  val maxChars = 30000
+                  if data.length <= maxChars then blocks += ContentBlock.Text(s"[file: $name]\n$data")
+                  else blocks += ContentBlock.Text(s"[file: $name] (文件过大，已截断前 ${maxChars} 字符)\n${data.take(maxChars)}")
               }
 
               val userMessage =
@@ -140,57 +220,74 @@ class WebSocketRoutes(
                 else Message(MessageRole.User, Right(blocks.toList))
 
               logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
+                logInputHistory(content, attachments) *>
                 fiberRef.get.flatMap {
                   case Some(f) =>
                     // Wait for previous REPL to finish so its response is saved,
-                    // with a timeout to avoid blocking indefinitely
+                    // with a timeout to avoid blocking indefinitely.
+                    // On timeout, flush whatever was saved via onToolRound before cancelling.
                     logger.info("Waiting for previous REPL fiber to complete") *>
-                      f.join.timeout(5.seconds).void handleErrorWith (_ => f.cancel)
-                  case None    => IO.unit
+                      f.join.timeout(5.seconds).void handleErrorWith { _ =>
+                        sessionStore.flushIndex *> f.cancel
+                      }
+                  case None => IO.unit
                 } *>
-                  // Refresh history after previous fiber completed
-                  messagesRef.get
-                    .flatMap { history =>
-                      thinkingModeRef.get
-                        .flatMap { thinking =>
-                          Repl.runRepl(
-                            userMessage = userMessage,
-                            llm = llm,
-                            projectRoot = System.getProperty("user.dir"),
-                            initialMessages = history,
-                            store = replUi,
-                            onToolRound = Some { (msgs: List[Message]) => messagesRef.set(msgs) *> saveSession(msgs) },
-                            silent = true,
-                            thinkingMode = thinking,
-                            permState = Some(permState),
-                            contextWindow = contextWindow,
-                            reminderStateRef = Some(reminderStateRef),
-                            fileChangeTracker = Some(fileChangeTracker)
-                          )
-                        }
-                        .flatMap { updated =>
-                          messagesRef.set(updated) *> saveSession(updated) *> replUi.emitDone()
-                        }
-                        .handleErrorWith { e =>
-                          val userMsg = e match
-                            case fe: nebflow.llm.FallbackExhaustedError =>
-                              val attemptSummaries = fe.attempts.map(a =>
-                                s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
-                              )
-                              NebflowError.toUserMessage(NebflowError.LlmFailed(fe.getMessage, attemptSummaries))
-                            case _ =>
-                              NebflowError.toUserMessage(
-                                NebflowError.Internal(
-                                  Option(e.getMessage).getOrElse("Unknown error")
+                // Capture session ID first to prevent race with concurrent session switch
+                sessionStore.getActiveId
+                  .flatMap { replSessionId =>
+                    sessionStore.getActiveMessages
+                      .flatMap { history =>
+                        thinkingModeRef.get
+                          .flatMap { thinking =>
+                            Repl.runRepl(
+                              userMessage = userMessage,
+                              llm = llm,
+                              projectRoot = System.getProperty("user.dir"),
+                              initialMessages = history,
+                              store = replUi,
+                              onToolRound = Some { (msgs: List[Message]) =>
+                                sessionStore.saveMessagesForSession(replSessionId, msgs)
+                              },
+                              silent = true,
+                              thinkingMode = thinking,
+                              permState = Some(permState),
+                              contextWindow = contextWindow,
+                              reminderStateRef = Some(reminderStateRef),
+                              fileChangeTracker = Some(fileChangeTracker),
+                              skillDiscovery = skillDiscovery,
+                              userText = Some(content),
+                              sessionStore = Some(sessionStore)
+                            )
+                          }
+                          .flatMap { updated =>
+                            sessionStore.saveMessagesForSession(
+                              replSessionId,
+                              updated
+                            ) *> sessionStore.flushIndex *> replUi.emitDone() *>
+                              sendSessionList(replUi)
+                          }
+                          .handleErrorWith { e =>
+                            val userMsg = e match
+                              case fe: nebflow.llm.FallbackExhaustedError =>
+                                val attemptSummaries = fe.attempts.map(a =>
+                                  s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
                                 )
-                              )
-                          logger.error(s"REPL error: ${e.getMessage}", e) *> replUi.sendError(userMsg) *> replUi
-                            .emitDone()
-                        }
-                    }
-                    .start
-                    .flatMap(f => fiberRef.set(Some(f)))
-                    .void
+                                NebflowError.toUserMessage(NebflowError.LlmFailed(fe.getMessage, attemptSummaries))
+                              case _ =>
+                                NebflowError.toUserMessage(
+                                  NebflowError.Internal(
+                                    Option(e.getMessage).getOrElse("Unknown error")
+                                  )
+                                )
+                            logger.error(s"REPL error: ${e.getMessage}", e) *> replUi.sendError(userMsg) *> replUi
+                              .emitDone()
+                          }
+                          .guarantee(fiberRef.set(None))
+                      }
+                  }
+                  .start
+                  .flatMap(f => fiberRef.set(Some(f)))
+                  .void
           }
         else IO.unit
         end if

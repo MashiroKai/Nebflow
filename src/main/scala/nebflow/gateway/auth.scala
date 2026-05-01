@@ -1,8 +1,8 @@
 package nebflow.gateway
 
 import cats.effect.IO
-import io.circe.syntax.*
 import io.circe.parser
+import io.circe.syntax.*
 
 import java.security.SecureRandom
 import java.util.Base64
@@ -20,7 +20,7 @@ object Auth:
     if os.exists(tokenPath) then
       parser.decode[String](os.read(tokenPath)) match
         case Right(t) => t
-        case Left(_)  => createAndSave()
+        case Left(_) => createAndSave()
     else createAndSave()
   }
 
