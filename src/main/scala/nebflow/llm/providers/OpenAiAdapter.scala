@@ -52,12 +52,19 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
               })
             )
           else if toolResultParts.nonEmpty then
-            val first = toolResultParts.head
-            Json.obj(
-              "role" -> "tool".asJson,
-              "content" -> first._2.asJson,
-              "tool_call_id" -> first._1.asJson
-            )
+            if toolResultParts.size == 1 then
+              val (id, content) = toolResultParts.head
+              Json.obj(
+                "role" -> "tool".asJson,
+                "content" -> content.asJson,
+                "tool_call_id" -> id.asJson
+              )
+            else
+              Json.obj(
+                "role" -> "tool".asJson,
+                "content" -> toolResultParts.map(_._2).mkString("\n").asJson,
+                "tool_call_id" -> toolResultParts.head._1.asJson
+              )
           else
             val contentParts = scala.collection.mutable.ListBuffer.empty[Json]
             textParts.foreach(t => contentParts += Json.obj("type" -> "text".asJson, "text" -> t.asJson))
@@ -106,7 +113,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toOpenAiMessages(params.messages)),
-      "max_tokens" -> (params.maxTokens.getOrElse(4096)).asJson
+      "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson
     )
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
@@ -123,25 +130,27 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         case Left(error) =>
           IO.raiseError(new RuntimeException(s"OpenAI API error: $error"))
         case Right(bodyStr) =>
-          IO.pure {
+          IO.defer {
             parse(bodyStr) match
-              case Left(err) => throw new RuntimeException(s"Failed to parse response: ${err.message}")
+              case Left(err) => IO.raiseError(new RuntimeException(s"Failed to parse response: ${err.message}"))
               case Right(json) =>
-                val reply = json.hcursor
-                  .downField("choices")
-                  .downN(0)
-                  .downField("message")
-                  .downField("content")
-                  .as[String]
-                  .getOrElse("")
-                val toolCalls = extractToolCalls(json)
-                val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
-                  TokenUsage(
-                    inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
-                    outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
-                  )
+                IO.pure {
+                  val reply = json.hcursor
+                    .downField("choices")
+                    .downN(0)
+                    .downField("message")
+                    .downField("content")
+                    .as[String]
+                    .getOrElse("")
+                  val toolCalls = extractToolCalls(json)
+                  val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+                    TokenUsage(
+                      inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
+                      outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
+                    )
+                  }
+                  AdapterResponse(reply, toolCalls, usage)
                 }
-                AdapterResponse(reply, toolCalls, usage)
           }
     }
 
@@ -151,7 +160,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toOpenAiMessages(params.messages)),
-      "max_tokens" -> (params.maxTokens.getOrElse(4096)).asJson,
+      "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson,
       "stream" -> true.asJson,
       "stream_options" -> Json.obj("include_usage" -> true.asJson)
     )

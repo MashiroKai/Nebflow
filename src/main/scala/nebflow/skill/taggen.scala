@@ -18,7 +18,8 @@ object SkillTagGenerator:
     skillDesc: String,
     language: String
   ): IO[List[String]] =
-    val prompt = s"""You are a semantic search tag specialist for Nebflow. Your job is to predict what users would naturally say or type when they need a particular skill. Think in REVERSE: given a skill's description, imagine the exact words, phrases, or questions a user would express to trigger it.
+    val prompt =
+      s"""You are a semantic search tag specialist for Nebflow. Your job is to predict what users would naturally say or type when they need a particular skill. Think in REVERSE: given a skill's description, imagine the exact words, phrases, or questions a user would express to trigger it.
 
 Tags must be real user utterances — the kind of things people actually type in a chat. NOT abstract keywords, category labels, or technical jargon.
 
@@ -55,21 +56,25 @@ Respond with ONLY a JSON object: {"tags": ["tag1", "tag2", ...]}"""
       maxTokens = Some(256)
     )
 
-    llm.send(request).map { response =>
-      val text = response.reply.trim
-      // Extract JSON from possible markdown code blocks or raw text
-      val jsonStr = text match
-        case SkillTagGenerator.re.ExtractJson(json) => json
-        case _ => text
-      parse(jsonStr).toOption
-        .flatMap(_.hcursor.get[List[String]]("tags").toOption)
-        .filter(_.nonEmpty)
-        .getOrElse {
-          logger.warn(s"Failed to parse tags for skill '$skillName', response: ${text.take(100)}")
-          List(skillName, skillDesc).filter(_.nonEmpty)
-        }
-    }.handleErrorWith { e =>
-      logger.warn(s"Tag generation failed for '$skillName': ${e.getMessage}") *>
-        IO.pure(List(skillName))
-    }
+    llm
+      .send(request)
+      .map { response =>
+        val text = response.reply.trim
+        // Extract JSON from possible markdown code blocks or raw text
+        val jsonStr = text match
+          case SkillTagGenerator.re.ExtractJson(json) => json
+          case _ => text
+        parse(jsonStr).toOption
+          .flatMap(_.hcursor.get[List[String]]("tags").toOption)
+          .filter(_.nonEmpty)
+          .getOrElse {
+            logger.warn(s"Failed to parse tags for skill '$skillName', response: ${text.take(100)}")
+            List(skillName, skillDesc).filter(_.nonEmpty)
+          }
+      }
+      .handleErrorWith { e =>
+        logger.warn(s"Tag generation failed for '$skillName': ${e.getMessage}") *>
+          IO.pure(List(skillName))
+      }
+  end generateTags
 end SkillTagGenerator

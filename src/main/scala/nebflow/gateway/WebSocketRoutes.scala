@@ -1,14 +1,17 @@
 package nebflow.gateway
 
-import cats.effect.std.{Queue, Semaphore}
+import cats.effect.std.{Dispatcher, Queue, Semaphore}
 import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
+import nebflow.agent.{SessionCommand, *}
 import nebflow.core.*
 import nebflow.shared.*
 import nebflow.skill.SkillDiscovery
+import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
+import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
@@ -26,51 +29,51 @@ class WebSocketRoutes(
   token: String,
   fileChangeTracker: FileChangeTracker,
   reminderStateRef: Ref[IO, ReminderState],
-  contextWindow: Int = 128000,
-  skillDiscovery: Option[SkillDiscovery] = None
+  contextWindow: Int = Defaults.ContextWindow,
+  skillDiscovery: Option[SkillDiscovery] = None,
+  actorSystem: ActorSystem[GuardianCommand] = null,
+  dispatcher: Dispatcher[IO] = null
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
-  private def sendSessionList(replUi: WebReplUi): IO[Unit] =
-    for
-      sessions <- sessionStore.listSessions
-      activeId <- sessionStore.getActiveId
-      _ <- replUi.sendRaw(
-        io.circe.Json.obj(
-          "type" -> "sessionList".asJson,
-          "sessions" -> sessions.asJson,
-          "activeId" -> activeId.asJson
-        )
-      )
-    yield ()
-
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
-      val provided = req.params.get("token").getOrElse("")
+      // Read token from cookie first (secure), fall back to URL param (backward compat)
+      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+      val provided = if cookieToken.nonEmpty then cookieToken else req.params.get("token").getOrElse("")
       if Auth.validateToken(provided, token) then
         for
-          fiberRef <- Ref.of[IO, Option[Fiber[IO, Throwable, Unit]]](None)
           outbound <- Queue.unbounded[IO, WebSocketFrame]
           askSem <- Semaphore[IO](1)
           permSem <- Semaphore[IO](1)
           replUi = new WebReplUi(outbound, askSem, permSem)
+          wsConnId = java.util.UUID.randomUUID().toString.take(8)
+
+          // Per-connection wsSend that routes to this connection's outbound queue
+          perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
+
+          // Create a SessionActor for this WS connection via GuardianActor
+          sessionRefOpt <-
+            if actorSystem != null then createSessionActor(wsConnId, perConnWsSend).map(Some(_))
+            else IO.pure(None)
 
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
-            case WebSocketFrame.Text(text, _) => handleMessage(text, replUi, fiberRef)
+            case WebSocketFrame.Text(text, _) =>
+              handleMessage(text, replUi, sessionRefOpt)
             case _ => IO.unit
           }.onFinalize(
-            fiberRef.get.flatMap {
-              case Some(f) =>
-                logger.info("WebSocket disconnected, cancelling REPL fiber") *>
-                  f.cancel *> fiberRef.set(None)
+            (sessionRefOpt match
+              case Some(_) => IO(actorSystem ! GuardianCommand.DestroySession(wsConnId))
               case None => IO.unit
-            }
+            )
           )
 
           sendStream = Stream.fromQueueUnterminated(outbound)
-          // Send initial session list on connect
-          _ <- sendSessionList(replUi)
           _ <- logger.info("WebSocket client connected")
+          // Trigger initial session list via actor
+          _ <- sessionRefOpt match
+            case Some(ref) => IO(ref ! SessionCommand.SendSessionList())
+            case None => IO.unit
           ws <- wsb.build(sendStream, receivePipe)
         yield ws
       else
@@ -81,11 +84,29 @@ class WebSocketRoutes(
     case req @ GET -> Root =>
       StaticFile.fromResource("web/index.html", Some(req)).getOrElseF(NotFound())
 
+    case req @ GET -> Root / "css" / file =>
+      StaticFile.fromResource(s"web/css/$file", Some(req)).getOrElseF(NotFound())
+
+    case req @ GET -> Root / "js" / file =>
+      StaticFile.fromResource(s"web/js/$file", Some(req)).getOrElseF(NotFound())
+
     case req @ GET -> Root / fileName =>
       val allowed = Set("style.css", "app.js")
       if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
       else NotFound()
   }
+
+  private def createSessionActor(
+    wsConnId: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[org.apache.pekko.actor.typed.ActorRef[SessionCommand]] =
+    import scala.concurrent.ExecutionContext.Implicits.global
+    implicit val sched: org.apache.pekko.actor.typed.Scheduler = actorSystem.scheduler
+    implicit val askTimeout: org.apache.pekko.util.Timeout =
+      org.apache.pekko.util.Timeout(scala.concurrent.duration.Duration(5, "seconds"))
+    IO.fromFuture(IO {
+      actorSystem.ask[SessionRef](replyTo => GuardianCommand.CreateSession(wsConnId, replyTo, wsSend))
+    }).map(_.actor)
 
   private val inputHistoryPath = os.home / ".nebflow" / "input_history.jsonl"
 
@@ -117,18 +138,24 @@ class WebSocketRoutes(
   private def handleMessage(
     text: String,
     replUi: WebReplUi,
-    fiberRef: Ref[IO, Option[Fiber[IO, Throwable, Unit]]]
+    sessionRefOpt: Option[org.apache.pekko.actor.typed.ActorRef[SessionCommand]]
   ): IO[Unit] =
     parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
       case "askUserAnswer" =>
         parse(text).flatMap(_.hcursor.downField("answers").as[List[String]]).toOption match
-          case Some(answers) => replUi.answerAskUser(answers)
+          case Some(answers) =>
+            sessionRefOpt match
+              case Some(ref) => IO(ref ! SessionCommand.AskUserResponse("", answers))
+              case None => replUi.answerAskUser(answers)
           case None => IO.unit
 
       case "permissionAnswer" =>
         val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
-        logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-          replUi.answerPermission(approved)
+        logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *> (
+          sessionRefOpt match
+            case Some(ref) => IO(ref ! SessionCommand.PermissionResponse("", approved))
+            case None => replUi.answerPermission(approved)
+        )
 
       case "setPolicy" =>
         val policyStr = parse(text).flatMap(_.hcursor.downField("policy").as[String]).getOrElse("ask")
@@ -138,7 +165,9 @@ class WebSocketRoutes(
           reminderStateRef.update(_.copy(policyReminderPending = true))
 
       case "interrupt" =>
-        logger.info("User interrupted") *> replUi.triggerEsc()
+        logger.info("User interrupted") *> (sessionRefOpt match
+          case Some(ref) => sessionStore.getActiveId.flatMap(id => IO(ref ! SessionCommand.Interrupt(id)))
+          case None => replUi.triggerEsc())
 
       case "command" =>
         val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
@@ -158,43 +187,168 @@ class WebSocketRoutes(
       case "switchSession" =>
         val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
         if sessionId.nonEmpty then
-          (sessionStore.switchSession(sessionId) *> sendSessionList(replUi)).handleErrorWith { e =>
-            logger.warn(s"Switch session failed: ${e.getMessage}") *> IO.unit
-          }
+          sessionRefOpt match
+            case Some(ref) =>
+              askActor[SwitchResult](ref, replyTo => SessionCommand.SwitchSession(sessionId, replyTo))(_ => IO.unit)
+            case None => IO.unit
         else IO.unit
 
       case "createSession" =>
         val name = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("New Session")
-        (sessionStore
-          .createSession(name)
-          .flatMap { meta =>
-            sessionStore.switchSession(meta.id) *> sendSessionList(replUi)
-          })
-          .handleErrorWith { e =>
-            logger.warn(s"Create session failed: ${e.getMessage}") *> IO.unit
-          }
+        sessionRefOpt match
+          case Some(ref) =>
+            askActor[SessionRef](ref, replyTo => SessionCommand.CreateSessionCmd(name, replyTo))(_ => IO.unit)
+          case None => IO.unit
 
       case "deleteSession" =>
         val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
         if sessionId.nonEmpty then
-          sessionStore.deleteSession(sessionId).attempt.flatMap {
-            case Right(_) => sendSessionList(replUi)
-            case Left(e) =>
-              logger.warn(s"Delete session failed: ${e.getMessage}") *>
-                replUi.sendRaw(
-                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Delete failed: ${e.getMessage}".asJson)
-                )
-          }
+          sessionRefOpt match
+            case Some(ref) =>
+              askActor[DeleteResult](ref, replyTo => SessionCommand.DeleteSession(sessionId, replyTo))(_ => IO.unit)
+            case None => IO.unit
+        else IO.unit
+
+      case "renameSession" =>
+        val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+        val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+        val newName = json.hcursor.downField("name").as[String].getOrElse("")
+        if sessionId.nonEmpty && newName.nonEmpty then
+          sessionRefOpt match
+            case Some(ref) =>
+              askActor[Boolean](ref, replyTo => SessionCommand.RenameSession(sessionId, newName, replyTo))(_ => IO.unit)
+            case None => IO.unit
         else IO.unit
 
       case "ping" => IO.unit
 
+      // --- Agent management messages ---
+      case "listAgents" =>
+        sessionRefOpt match
+          case Some(ref) =>
+            askActor[AgentListResp](ref, replyTo => SessionCommand.ListAgents(replyTo)) { resp =>
+              val agentsJson = resp.agents.map { a =>
+                io.circe.Json.obj(
+                  "name" -> a.name.asJson,
+                  "description" -> a.description.asJson,
+                  "tools" -> a.tools.asJson,
+                  "subagents" -> a.subagents.asJson
+                )
+              }
+              replUi.sendRaw(
+                io.circe.Json.obj(
+                  "type" -> "agentList".asJson,
+                  "agents" -> agentsJson.asJson
+                )
+              )
+            }
+          case None => IO.unit
+
+      case "getAgentConfig" =>
+        val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+        if agentName.nonEmpty then
+          sessionRefOpt match
+            case Some(ref) =>
+              askActor[AgentConfigResp](ref, replyTo => SessionCommand.GetAgentConfig(agentName, replyTo)) { resp =>
+                replUi.sendRaw(
+                  io.circe.Json.obj(
+                    "type" -> "agentConfig".asJson,
+                    "name" -> resp.name.asJson,
+                    "yaml" -> resp.yaml.asJson,
+                    "systemMd" -> resp.systemMd.asJson
+                  )
+                )
+              }
+            case None => IO.unit
+        else IO.unit
+
+      case "createAgent" =>
+        val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+        val agentName = json.hcursor.downField("name").as[String].getOrElse("")
+        val yaml = json.hcursor.downField("yaml").as[String].getOrElse("")
+        val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
+        if agentName.nonEmpty then
+          sessionRefOpt match
+            case Some(ref) =>
+              askActor[AgentCreatedResp](
+                ref,
+                replyTo => SessionCommand.CreateAgent(agentName, yaml, systemMd, replyTo)
+              ) { resp =>
+                if resp.name.nonEmpty then
+                  replUi.sendRaw(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> resp.name.asJson))
+                else IO.unit
+              }
+            case None => IO.unit
+        else IO.unit
+
+      case "updateAgent" =>
+        val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+        val agentName = json.hcursor.downField("name").as[String].getOrElse("")
+        val yaml = json.hcursor.downField("yaml").as[String].getOrElse("")
+        val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
+        if agentName.nonEmpty then
+          sessionRefOpt match
+            case Some(ref) =>
+              askActor[AgentUpdatedResp](
+                ref,
+                replyTo => SessionCommand.UpdateAgent(agentName, yaml, systemMd, replyTo)
+              ) { resp =>
+                if resp.name.nonEmpty then
+                  replUi.sendRaw(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> resp.name.asJson))
+                else IO.unit
+              }
+            case None => IO.unit
+        else IO.unit
+
+      case "createAgentSession" =>
+        val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+        if agentName.nonEmpty then
+          sessionRefOpt match
+            case Some(ref) =>
+              askActor[SessionRef](ref, replyTo => SessionCommand.CreateAgentSession(agentName, replyTo))(_ => IO.unit)
+            case None => IO.unit
+        else IO.unit
+
+      // --- Config management messages ---
+      case "getConfig" =>
+        sessionRefOpt match
+          case Some(ref) =>
+            askActor[ConfigDataResp](ref, replyTo => SessionCommand.GetConfig(replyTo)) { resp =>
+              replUi.sendRaw(
+                io.circe.Json.obj(
+                  "type" -> "configData".asJson,
+                  "config" -> resp.config.asJson
+                )
+              )
+            }
+          case None => IO.unit
+
+      case "updateConfig" =>
+        val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
+        if cfg.nonEmpty then
+          sessionRefOpt match
+            case Some(ref) =>
+              askActor[ConfigUpdatedResp](ref, replyTo => SessionCommand.UpdateConfig(cfg, replyTo)) { resp =>
+                replUi.sendRaw(
+                  io.circe.Json.obj(
+                    "type" -> "configUpdated".asJson,
+                    "success" -> resp.success.asJson
+                  )
+                )
+              }
+            case None => IO.unit
+        else IO.unit
+
+      // --- Default: user message → forward to SessionActor ---
       case _ =>
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         val content = json.hcursor.downField("content").as[String].getOrElse("")
         val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
 
-        if content.trim == "__interrupt__" then replUi.triggerEsc()
+        if content.trim == "__interrupt__" then
+          sessionRefOpt match
+            case Some(ref) => sessionStore.getActiveId.flatMap(id => IO(ref ! SessionCommand.Interrupt(id)))
+            case None => replUi.triggerEsc()
         else if content.nonEmpty || attachments.nonEmpty then
           rateLimiter.check("ws").flatMap { allowed =>
             if !allowed then
@@ -215,81 +369,27 @@ class WebSocketRoutes(
                   else blocks += ContentBlock.Text(s"[file: $name] (文件过大，已截断前 ${maxChars} 字符)\n${data.take(maxChars)}")
               }
 
-              val userMessage =
-                if blocks.length == 1 && content.nonEmpty then Message(MessageRole.User, Left(content))
-                else Message(MessageRole.User, Right(blocks.toList))
-
               logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
-                logInputHistory(content, attachments) *>
-                fiberRef.get.flatMap {
-                  case Some(f) =>
-                    // Wait for previous REPL to finish so its response is saved,
-                    // with a timeout to avoid blocking indefinitely.
-                    // On timeout, flush whatever was saved via onToolRound before cancelling.
-                    logger.info("Waiting for previous REPL fiber to complete") *>
-                      f.join.timeout(5.seconds).void handleErrorWith { _ =>
-                        sessionStore.flushIndex *> f.cancel
-                      }
-                  case None => IO.unit
-                } *>
-                // Capture session ID first to prevent race with concurrent session switch
-                sessionStore.getActiveId
-                  .flatMap { replSessionId =>
-                    sessionStore.getActiveMessages
-                      .flatMap { history =>
-                        thinkingModeRef.get
-                          .flatMap { thinking =>
-                            Repl.runRepl(
-                              userMessage = userMessage,
-                              llm = llm,
-                              projectRoot = System.getProperty("user.dir"),
-                              initialMessages = history,
-                              store = replUi,
-                              onToolRound = Some { (msgs: List[Message]) =>
-                                sessionStore.saveMessagesForSession(replSessionId, msgs)
-                              },
-                              silent = true,
-                              thinkingMode = thinking,
-                              permState = Some(permState),
-                              contextWindow = contextWindow,
-                              reminderStateRef = Some(reminderStateRef),
-                              fileChangeTracker = Some(fileChangeTracker),
-                              skillDiscovery = skillDiscovery,
-                              userText = Some(content),
-                              sessionStore = Some(sessionStore)
-                            )
-                          }
-                          .flatMap { updated =>
-                            sessionStore.saveMessagesForSession(
-                              replSessionId,
-                              updated
-                            ) *> sessionStore.flushIndex *> replUi.emitDone() *>
-                              sendSessionList(replUi)
-                          }
-                          .handleErrorWith { e =>
-                            val userMsg = e match
-                              case fe: nebflow.llm.FallbackExhaustedError =>
-                                val attemptSummaries = fe.attempts.map(a =>
-                                  s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
-                                )
-                                NebflowError.toUserMessage(NebflowError.LlmFailed(fe.getMessage, attemptSummaries))
-                              case _ =>
-                                NebflowError.toUserMessage(
-                                  NebflowError.Internal(
-                                    Option(e.getMessage).getOrElse("Unknown error")
-                                  )
-                                )
-                            logger.error(s"REPL error: ${e.getMessage}", e) *> replUi.sendError(userMsg) *> replUi
-                              .emitDone()
-                          }
-                          .guarantee(fiberRef.set(None))
-                      }
-                  }
-                  .start
-                  .flatMap(f => fiberRef.set(Some(f)))
-                  .void
+                logInputHistory(content, attachments) *> (sessionRefOpt match
+                  case Some(ref) =>
+                    IO(ref ! SessionCommand.UserMessage(content, blocks.toList))
+                  case None => IO.unit)
           }
         else IO.unit
         end if
   end handleMessage
+
+  /** Helper to ask a Pekko actor and handle the response, eliminating boilerplate. */
+  private def askActor[A](
+    ref: org.apache.pekko.actor.typed.ActorRef[SessionCommand],
+    f: org.apache.pekko.actor.typed.ActorRef[A] => SessionCommand
+  )(handler: A => IO[Unit]): IO[Unit] =
+    import scala.concurrent.ExecutionContext.Implicits.global
+    implicit val sched: org.apache.pekko.actor.typed.Scheduler = actorSystem.scheduler
+    implicit val askTimeout: org.apache.pekko.util.Timeout =
+      org.apache.pekko.util.Timeout(scala.concurrent.duration.Duration(5, "seconds"))
+    IO.fromFuture(IO(ref.ask[A](replyTo => f(replyTo))))
+      .flatMap(handler)
+      .handleErrorWith(e => logger.warn(s"Actor ask failed: ${e.getMessage}") *> IO.unit)
+
 end WebSocketRoutes

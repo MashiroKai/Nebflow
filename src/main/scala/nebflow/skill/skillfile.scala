@@ -28,16 +28,18 @@ object SkillFile:
     IO.blocking {
       if !os.exists(dir) then Nil
       else
-        os.list(dir).flatMap { entry =>
-          if os.isDir(entry) then
-            // Folder-based skill: look for skill.md or any .md inside
-            val mds = os.list(entry).filter(_.last.endsWith(".md"))
-            mds.headOption.map(parse).getOrElse(None)
-          else if entry.last.endsWith(".md") then
-            // Flat file (backward compat)
-            parse(entry)
-          else None
-        }.toList
+        os.list(dir)
+          .flatMap { entry =>
+            if os.isDir(entry) then
+              // Folder-based skill: look for skill.md or any .md inside
+              val mds = os.list(entry).filter(_.last.endsWith(".md"))
+              mds.headOption.map(parse).getOrElse(None)
+            else if entry.last.endsWith(".md") then
+              // Flat file (backward compat)
+              parse(entry)
+            else None
+          }
+          .toList
     }
 
   private def parseSimpleYaml(text: String): Map[String, String] =

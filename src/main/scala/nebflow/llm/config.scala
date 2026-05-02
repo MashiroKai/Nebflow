@@ -3,6 +3,7 @@ package nebflow.llm
 import io.circe.generic.semiauto.deriveDecoder
 import io.circe.parser.parse
 import io.circe.{Decoder, Json}
+import nebflow.shared.Defaults
 
 enum LlmProtocol:
   case Anthropic, OpenAI
@@ -21,8 +22,8 @@ object LlmProtocol:
 
 case class ModelConfig(
   id: String,
-  maxTokens: Int = 16384,
-  contextWindow: Int = 128000
+  maxTokens: Int = Defaults.MaxTokens,
+  contextWindow: Int = Defaults.ContextWindow
 )
 
 object ModelConfig:

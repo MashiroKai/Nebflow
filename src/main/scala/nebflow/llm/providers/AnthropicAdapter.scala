@@ -74,7 +74,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
-      "max_tokens" -> (params.maxTokens.getOrElse(16384)).asJson
+      "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokens)).asJson
     )
     val bodyWithSystem = systemMsg match
       case Some(m) => body.deepMerge(Json.obj("system" -> m.textContent.asJson))
@@ -98,44 +98,45 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         case Left(error) =>
           IO.raiseError(new RuntimeException(s"Anthropic API error: $error"))
         case Right(bodyStr) =>
-          IO.pure(parseNonStreamingResponse(bodyStr))
+          IO.defer {
+            parse(bodyStr) match
+              case Left(err) => IO.raiseError(new RuntimeException(s"Failed to parse response: ${err.message}"))
+              case Right(json) => IO.pure(parseNonStreamingResponse(json))
+          }
     }
 
   end sendMessage
 
-  private def parseNonStreamingResponse(bodyStr: String): AdapterResponse =
-    parse(bodyStr) match
-      case Left(err) => throw new RuntimeException(s"Failed to parse response: ${err.message}")
-      case Right(json) =>
-        val content = json.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
-        val textBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("text"))
-        val toolUseBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("tool_use"))
+  private def parseNonStreamingResponse(json: Json): AdapterResponse =
+    val content = json.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
+    val textBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("text"))
+    val toolUseBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("tool_use"))
 
-        val reply = textBlocks.flatMap(_.hcursor.downField("text").as[String].toOption).mkString("")
-        val toolCalls = toolUseBlocks.map { b =>
-          val id = b.hcursor.downField("id").as[String].getOrElse("")
-          val name = b.hcursor.downField("name").as[String].getOrElse("")
-          val input = b.hcursor.downField("input").as[JsonObject].getOrElse(JsonObject.empty)
-          ToolCall(id, name, input)
-        }
+    val reply = textBlocks.flatMap(_.hcursor.downField("text").as[String].toOption).mkString("")
+    val toolCalls = toolUseBlocks.map { b =>
+      val id = b.hcursor.downField("id").as[String].getOrElse("")
+      val name = b.hcursor.downField("name").as[String].getOrElse("")
+      val input = b.hcursor.downField("input").as[JsonObject].getOrElse(JsonObject.empty)
+      ToolCall(id, name, input)
+    }
 
-        val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
-          TokenUsage(
-            inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
-            outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0),
-            cacheReadTokens = u.hcursor.downField("cache_read_input_tokens").as[Int].toOption,
-            cacheWriteTokens = u.hcursor.downField("cache_creation_input_tokens").as[Int].toOption
-          )
-        }
+    val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+      TokenUsage(
+        inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
+        outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0),
+        cacheReadTokens = u.hcursor.downField("cache_read_input_tokens").as[Int].toOption,
+        cacheWriteTokens = u.hcursor.downField("cache_creation_input_tokens").as[Int].toOption
+      )
+    }
 
-        AdapterResponse(reply, toolCalls, usage)
+    AdapterResponse(reply, toolCalls, usage)
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
     val systemMsg = params.messages.find(_.role == MessageRole.System)
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
-      "max_tokens" -> (params.maxTokens.getOrElse(16384)).asJson,
+      "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokens)).asJson,
       "stream" -> true.asJson
     )
     val bodyWithSystem = systemMsg match

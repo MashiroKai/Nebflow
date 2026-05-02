@@ -28,6 +28,8 @@ lazy val root = (project in file("."))
       fs2Core,
       // Effect
       catsEffect,
+      // Actor
+      pekkoActorTyped,
       // JSON
       circeCore,
       circeParser,
@@ -37,6 +39,8 @@ lazy val root = (project in file("."))
       // Logging
       logbackClassic,
       logbackCore,
+      // Diff
+      diffUtils,
       // Testing
       munit,
       munitCatsEffect,

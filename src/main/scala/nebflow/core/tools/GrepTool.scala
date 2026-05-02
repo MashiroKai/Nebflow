@@ -102,10 +102,10 @@ Usage:
           )
         else if stdoutStr.trim.isEmpty then Right("No matches found.")
         else if mode == "content" then
-          val lines = stdoutStr.trim.split("\\n")
+          val lines = stdoutStr.trim.split("\n")
           val truncated = lines.length > limit
-          val result = lines.take(limit).mkString("\\n")
-          Right(if truncated then result + s"\\n... and ${lines.length - limit} more matches" else result)
+          val result = lines.take(limit).mkString("\n")
+          Right(if truncated then result + s"\n... and ${lines.length - limit} more matches" else result)
         else Right(stdoutStr.trim)
       finally
         stdout.close()

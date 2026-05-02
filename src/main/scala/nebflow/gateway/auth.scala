@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.parser
 import io.circe.syntax.*
 
+import java.nio.file.attribute.PosixFilePermissions
 import java.security.SecureRandom
 import java.util.Base64
 
@@ -29,6 +30,14 @@ object Auth:
     new SecureRandom().nextBytes(bytes)
     val token = Base64.getUrlEncoder.withoutPadding().encodeToString(bytes)
     os.write.over(tokenPath, token.asJson.noSpaces, createFolders = true)
+    // Restrict file permissions to owner-only (rw-------)
+    try
+      val perms = PosixFilePermissions.fromString("rw-------")
+      java.nio.file.Files.setPosixFilePermissions(
+        java.nio.file.Paths.get(tokenPath.toString),
+        perms
+      )
+    catch case _: Exception => () // best effort on non-POSIX systems
     token
 
   def validateToken(provided: String, expected: String): Boolean =

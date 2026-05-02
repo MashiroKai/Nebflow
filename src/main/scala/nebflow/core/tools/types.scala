@@ -2,7 +2,7 @@ package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
 import io.circe.JsonObject
-import nebflow.shared.{LlmHandle, Message, TokenUsage}
+import nebflow.shared.*
 
 /** 工具执行上下文 */
 case class ToolContext(
@@ -11,7 +11,10 @@ case class ToolContext(
   replUi: Option[nebflow.core.ReplUi] = None,
   messagesRef: Option[Ref[IO, List[Message]]] = None,
   sessionStore: Option[nebflow.gateway.SessionStore] = None,
-  usageRef: Option[Ref[IO, Option[TokenUsage]]] = None
+  usageRef: Option[Ref[IO, Option[TokenUsage]]] = None,
+  inspectMappingRef: Option[Ref[IO, Option[List[Int]]]] = None,
+  sessionActorRef: Option[org.apache.pekko.actor.typed.ActorRef[nebflow.agent.SessionCommand]] = None,
+  contextWindow: Int = Defaults.ContextWindow
 )
 
 /** 工具错误 */

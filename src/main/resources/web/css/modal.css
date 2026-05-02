@@ -1,0 +1,248 @@
+/* ---------- Agent Editor Modal ---------- */
+#agent-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 310;
+}
+#agent-overlay.on { display: flex; }
+#agent-modal {
+  display: none;
+  background: #1e1e1e;
+  border-radius: 12px;
+  padding: 20px;
+  width: 420px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+#agent-modal.show { display: block; }
+#agent-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 14px;
+}
+#agent-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#agent-name-input,
+#agent-desc-input,
+#agent-system-input {
+  width: 100%;
+  background: #111;
+  color: #ccc;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  line-height: 1.5;
+  resize: vertical;
+}
+#agent-name-input:focus,
+#agent-desc-input:focus,
+#agent-system-input:focus {
+  outline: none;
+  border-color: #555;
+}
+#agent-name-input {
+  font-family: inherit;
+  font-size: 13px;
+}
+#agent-model-input {
+  width: 100%;
+  background: #111;
+  color: #ccc;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+#agent-model-input:focus {
+  border-color: #555;
+}
+#agent-tools-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.agent-tool-check {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #aaa;
+  cursor: pointer;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 3px 8px;
+  transition: all 0.15s;
+  user-select: none;
+}
+.agent-tool-check.checked {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: #07c16010;
+}
+.agent-tool-check input { display: none; }
+.agent-field-label {
+  font-size: 11px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#agent-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+#agent-modal-actions button {
+  font-size: 12px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid #444;
+  background: none;
+  color: #aaa;
+  transition: all 0.15s;
+}
+#agent-modal-actions button:hover { background: #2a2a2a; color: #fff; }
+#agent-modal-save { border-color: var(--color-primary) !important; color: var(--color-primary) !important; }
+#agent-modal-save:hover { background: #07c16020 !important; }
+
+/* ---------- Modal ---------- */
+#modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+}
+#modal-overlay.on { display: flex; }
+#modal-box {
+  background: #1e1e1e;
+  border-radius: 16px;
+  padding: 24px;
+  width: 340px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  animation: modalIn 0.15s ease;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+#modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 16px;
+}
+#modal-input {
+  width: 100%;
+  background: #111;
+  color: #ccc;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+#modal-input:focus { border-color: #555; }
+#modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+#modal-cancel {
+  padding: 8px 18px;
+  border: 1px solid #444;
+  border-radius: 10px;
+  background: none;
+  color: #aaa;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+#modal-cancel:hover { background: #2a2a2a; }
+#modal-confirm {
+  padding: 8px 18px;
+  border: none;
+  border-radius: 10px;
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+#modal-confirm:hover { background: var(--color-primary-hover); }
+
+/* ---------- Delete Session Modal ---------- */
+#delete-box {
+  background: #1e1e1e;
+  border-radius: 16px;
+  padding: 24px;
+  width: 340px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  display: none;
+  animation: modalIn 0.15s ease;
+}
+#delete-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 12px;
+}
+#delete-msg {
+  font-size: 14px;
+  color: #888;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+#delete-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+#delete-cancel {
+  padding: 8px 18px;
+  border: 1px solid #444;
+  border-radius: 10px;
+  background: none;
+  color: #aaa;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+#delete-cancel:hover { background: #2a2a2a; }
+#delete-confirm {
+  padding: 8px 18px;
+  border: 1px solid #e55;
+  border-radius: 10px;
+  background: none;
+  color: #e55;
+  font-size: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+#delete-confirm:hover { background: #e5515; }

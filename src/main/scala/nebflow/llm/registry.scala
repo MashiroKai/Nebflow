@@ -1,7 +1,9 @@
 package nebflow.llm
 
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import nebflow.llm.providers.{AnthropicAdapter, OpenAiAdapter}
+import nebflow.shared.Defaults
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
 
@@ -9,27 +11,27 @@ case class ModelCandidate(
   providerId: String,
   provider: ProviderConfig,
   model: String,
-  maxTokens: Int = 16384,
-  contextWindow: Int = 128000
+  maxTokens: Int = Defaults.MaxTokens,
+  contextWindow: Int = Defaults.ContextWindow
 )
 
 class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, Fs2Streams[IO]]):
-  private var adapters: Map[String, ProviderAdapter[IO]] = Map.empty
+  private val adaptersRef: Ref[IO, Map[String, ProviderAdapter[IO]]] = Ref.unsafe(Map.empty)
 
   private def createAdapter(provider: ProviderConfig): ProviderAdapter[IO] =
     provider.protocol match
       case LlmProtocol.OpenAI => OpenAiAdapter(provider.baseUrl, provider.apiKey, backend)
       case LlmProtocol.Anthropic => AnthropicAdapter(provider.baseUrl, provider.apiKey, backend)
 
-  def getAdapter(providerId: String): ProviderAdapter[IO] =
-    adapters.get(providerId) match
-      case Some(a) => a
+  def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =
+    adaptersRef.get.map(_.get(providerId)).flatMap {
+      case Some(a) => IO.pure(a)
       case None =>
         val provider =
           config.llm.providers.getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
         val adapter = createAdapter(provider)
-        adapters = adapters + (providerId -> adapter)
-        adapter
+        adaptersRef.update(_ + (providerId -> adapter)).as(adapter)
+    }
 
   def getCandidates(): List[ModelCandidate] =
     val chain = config.llm.model.primary :: config.llm.model.fallbacks
@@ -40,8 +42,8 @@ class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, 
         throw new RuntimeException(s"Model ref \"$ref\" points to unknown provider \"$providerId\"")
       )
       val modelConfig = provider.models.find(_.id == modelId)
-      val maxTokens = modelConfig.map(_.maxTokens).getOrElse(16384)
-      val contextWindow = modelConfig.map(_.contextWindow).getOrElse(128000)
+      val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
+      val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
       ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow)
     }
 end ProviderRegistry

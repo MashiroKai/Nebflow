@@ -8,8 +8,8 @@ package nebflow
  */
 object Version:
   val major = 1
-  val minor = 0
-  val edit = 52
+  val minor = 1
+  val edit = 57
 
   val string: String = f"$major.$minor%02d.$edit%03d"
 end Version

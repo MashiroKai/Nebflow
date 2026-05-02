@@ -47,45 +47,53 @@ Usage:
       m.map(m => s"${m.group(1)} of ${m.group(2)} lines").getOrElse(s"${result.split("\\n").length} lines")
     else s"${result.split("\\n").length} lines"
 
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
+  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val filePath =
       if filePathStr.startsWith("/") then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
-    if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
-    else if Files.isDirectory(filePath) then
-      Left(ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents."))
-    else if Files.size(filePath) > MAX_FILE_BYTES then
-      val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
-      val shortName = filePath.getFileName.toString
-      Left(
-        ToolError(
-          s"File too large to read safely: $shortName (${f"$sizeMb%.1f"}MB, limit ${MAX_FILE_BYTES / 1024 / 1024}MB). " +
-            s"Use offset/limit to read specific sections, or Bash with head/tail."
-        )
-      )
-    else
-      try
-        val content = Files.readString(filePath)
-        val lines = content.split("\\r?\\n").toList
-        val start = input("offset").flatMap(_.asNumber).flatMap(_.toInt).map(_ - 1).getOrElse(0)
-        val end = input("limit").flatMap(_.asNumber).flatMap(_.toInt) match
-          case Some(limit) => start + limit
-          case None => Math.min(lines.length, start + MAX_LINE_COUNT)
-        val selected = lines.slice(start, end)
+    // Sandbox check: only allow reading within project root
+    nebflow.core.PathSandbox.isAllowed(filePath.toString, ctx.projectRoot).flatMap {
+      case false => IO.pure(Left(ToolError(s"Access denied: path outside project root")))
+      case true =>
+        IO.blocking {
 
-        val result = selected.zipWithIndex
-          .map { case (line, i) =>
-            s"${start + i + 1}\t$line"
-          }
-          .mkString("\n")
+          if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
+          else if Files.isDirectory(filePath) then
+            Left(ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents."))
+          else if Files.size(filePath) > MAX_FILE_BYTES then
+            val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
+            val shortName = filePath.getFileName.toString
+            Left(
+              ToolError(
+                s"File too large to read safely: $shortName (${f"$sizeMb%.1f"}MB, limit ${MAX_FILE_BYTES / 1024 / 1024}MB). " +
+                  s"Use offset/limit to read specific sections, or Bash with head/tail."
+              )
+            )
+          else
+            try
+              val content = Files.readString(filePath)
+              val lines = content.split("\\r?\\n").toList
+              val start = input("offset").flatMap(_.asNumber).flatMap(_.toInt).map(_ - 1).getOrElse(0)
+              val end = input("limit").flatMap(_.asNumber).flatMap(_.toInt) match
+                case Some(limit) => start + limit
+                case None => Math.min(lines.length, start + MAX_LINE_COUNT)
+              val selected = lines.slice(start, end)
 
-        val totalLines = lines.length
-        val showedLines = selected.length
-        val suffix = if showedLines < totalLines then s"\n\n(showing $showedLines of $totalLines lines)" else ""
-        Right(result + suffix)
-      catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
-    end if
-  }
+              val result = selected.zipWithIndex
+                .map { case (line, i) =>
+                  s"${start + i + 1}\t$line"
+                }
+                .mkString("\n")
+
+              val totalLines = lines.length
+              val showedLines = selected.length
+              val suffix = if showedLines < totalLines then s"\n\n(showing $showedLines of $totalLines lines)" else ""
+              Right(result + suffix)
+            catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
+          end if
+        }
+    }
+  end call
 end ReadTool

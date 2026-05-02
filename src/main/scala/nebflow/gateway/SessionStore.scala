@@ -14,18 +14,21 @@ case class SessionMeta(
   name: String,
   createdAt: Long,
   updatedAt: Long,
-  hasUnread: Boolean
+  hasUnread: Boolean,
+  agentName: Option[String] = None
 )
 
 object SessionMeta:
+
   given Encoder[SessionMeta] = Encoder.instance { m =>
-    Json.obj(
+    val base = Json.obj(
       "id" -> m.id.asJson,
       "name" -> m.name.asJson,
       "createdAt" -> m.createdAt.asJson,
       "updatedAt" -> m.updatedAt.asJson,
       "hasUnread" -> m.hasUnread.asJson
     )
+    m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -35,7 +38,8 @@ object SessionMeta:
       createdAt <- c.downField("createdAt").as[Long]
       updatedAt <- c.downField("updatedAt").as[Long]
       hasUnread <- c.downField("hasUnread").as[Option[Boolean]].map(_.getOrElse(false))
-    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread)
+      agentName <- c.downField("agentName").as[Option[String]]
+    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName)
   }
 
 class SessionStore(sessionsDir: os.Path):
@@ -85,8 +89,7 @@ class SessionStore(sessionsDir: os.Path):
   private def migrateFromLegacy: IO[Unit] =
     val legacyPath = sessionsDir / "web.json"
     IO.blocking {
-      if os.exists(legacyPath) then
-        Some(os.read(legacyPath))
+      if os.exists(legacyPath) then Some(os.read(legacyPath))
       else None
     }.flatMap {
       case Some(raw) =>
@@ -117,6 +120,12 @@ class SessionStore(sessionsDir: os.Path):
       else Nil
     }
 
+  /**
+   * Load messages for a specific session directly from disk (bypasses activeMessagesRef).
+   *  Used by SessionActor to safely start REPL for non-active sessions.
+   */
+  def loadMessagesForSession(id: String): IO[List[Message]] = loadSessionMessages(id)
+
   private def saveSessionMessages(id: String, msgs: List[Message]): IO[Unit] =
     IO.blocking(os.write.over(sessionFile(id), msgs.asJson.spaces2, createFolders = true))
 
@@ -140,11 +149,13 @@ class SessionStore(sessionsDir: os.Path):
       activeMessagesRef.set(msgs) *>
         saveSessionMessages(activeId, msgs) *>
         indexRef.set((activeId, updated))
-      // Don't save index on every message to reduce disk writes — save periodically or on switch
+    // Don't save index on every message to reduce disk writes — save periodically or on switch
     }
 
-  /** Save messages to a specific session (not necessarily the active one).
-   *  Updates the active ref only if the target is still the active session. */
+  /**
+   * Save messages to a specific session (not necessarily the active one).
+   *  Updates the active ref only if the target is still the active session.
+   */
   def saveMessagesForSession(targetId: String, msgs: List[Message]): IO[Unit] =
     indexRef.get.flatMap { case (activeId, sessions) =>
       val now = System.currentTimeMillis()
@@ -163,51 +174,62 @@ class SessionStore(sessionsDir: os.Path):
   def getActiveMeta: IO[Option[SessionMeta]] =
     indexRef.get.map { case (activeId, sessions) => sessions.find(_.id == activeId) }
 
+  def getSessionMeta(id: String): IO[Option[SessionMeta]] =
+    indexRef.get.map { case (_, sessions) => sessions.find(_.id == id) }
+
   def switchSession(id: String): IO[List[Message]] =
     // Use modify for atomic read-modify-write to prevent concurrent corruption.
     // Returns: Right(oldId) for switch, Left(None) for same-session, Left(Some(err)) for not-found
-    indexRef.modify { case (currentId, sessions) =>
-      if id == currentId then ((currentId, sessions), Left(Option.empty[String]))
-      else
-        sessions.find(_.id == id) match
-          case None => ((currentId, sessions), Left(Some(s"Session $id not found")))
-          case Some(_) =>
-            val updated = sessions.map(s =>
-              if s.id == id then s.copy(hasUnread = false)
-              else s
-            )
-            ((id, updated), Right(currentId))
-    }.flatMap {
-      case Left(None) => activeMessagesRef.get
-      case Left(Some(err)) => IO.raiseError(new RuntimeException(err))
-      case Right(oldId) =>
-        activeMessagesRef.get.flatMap { currentMsgs =>
-          saveSessionMessages(oldId, currentMsgs) *> loadSessionMessages(id).flatMap { newMsgs =>
-            activeMessagesRef.set(newMsgs) *> saveIndex *> newMsgs.pure[IO]
+    indexRef
+      .modify { case (currentId, sessions) =>
+        if id == currentId then ((currentId, sessions), Left(Option.empty[String]))
+        else
+          sessions.find(_.id == id) match
+            case None => ((currentId, sessions), Left(Some(s"Session $id not found")))
+            case Some(_) =>
+              val updated = sessions.map(s =>
+                if s.id == id then s.copy(hasUnread = false)
+                else s
+              )
+              ((id, updated), Right(currentId))
+      }
+      .flatMap {
+        case Left(None) => activeMessagesRef.get
+        case Left(Some(err)) => IO.raiseError(new RuntimeException(err))
+        case Right(oldId) =>
+          activeMessagesRef.get.flatMap { currentMsgs =>
+            saveSessionMessages(oldId, currentMsgs) *> loadSessionMessages(id).flatMap { newMsgs =>
+              activeMessagesRef.set(newMsgs) *> saveIndex *> newMsgs.pure[IO]
+            }
           }
-        }
-    }
+      }
 
-  def createSession(name: String, initialMsgs: List[Message] = Nil): IO[SessionMeta] =
+  def createSession(name: String, initialMsgs: List[Message] = Nil, agentName: Option[String] = None): IO[SessionMeta] =
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
-    val meta = SessionMeta(id, name, now, now, hasUnread = true)
+    val meta = SessionMeta(id, name, now, now, hasUnread = true, agentName = agentName)
     indexRef.get.flatMap { case (activeId, sessions) =>
       saveSessionMessages(id, initialMsgs) *>
         indexRef.set((activeId, meta :: sessions)) *> saveIndex *> meta.pure[IO]
     }
 
   def deleteSession(id: String): IO[Unit] =
-    indexRef.get.flatMap { case (activeId, sessions) =>
-      if id == activeId then
-        IO.raiseError(new RuntimeException("Cannot delete the active session"))
-      else
+    indexRef
+      .modify { case (activeId, sessions) =>
         val updated = sessions.filterNot(_.id == id)
+        val newActiveId =
+          if id == activeId then updated.maxByOption(_.updatedAt).map(_.id).getOrElse("")
+          else activeId
+        ((newActiveId, updated), (id == activeId, newActiveId))
+      }
+      .flatMap { case (wasActive, newActiveId) =>
         IO.blocking {
           val f = sessionFile(id)
           if os.exists(f) then os.remove(f)
-        } *> indexRef.set((activeId, updated)) *> saveIndex
-    }
+        } *> (if wasActive && newActiveId.nonEmpty then
+                loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
+              else IO.unit) *> saveIndex
+      }
 
   def markUnread(id: String): IO[Unit] =
     indexRef.update { case (activeId, sessions) =>

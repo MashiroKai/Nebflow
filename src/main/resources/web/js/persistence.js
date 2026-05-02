@@ -1,0 +1,227 @@
+// persistence.js — localStorage persistence module for Nebflow
+// Save, load, restore, and migrate chat messages.
+
+import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY } from './state.js';
+import { renderMarkdownWithMath, escapeHtml, smartScroll, formatDiff, buildToolDetail, attachToolClick, esc } from './utils.js';
+
+const MAX_MSGS_PER_SESSION = 200;
+
+// ---------- Safe localStorage write with quota handling ----------
+function safeSetItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    if (e.name === 'QuotaExceededError' || e.code === 22) {
+      console.warn('[persistence] localStorage quota exceeded, pruning...');
+      pruneStorage(key);
+      try { localStorage.setItem(key, value); } catch (e2) {
+        console.error('[persistence] still over quota after pruning, clearing sessions');
+        try { localStorage.removeItem(LS_SESSIONS_KEY); } catch (_) {}
+      }
+    }
+  }
+}
+
+function pruneStorage(key) {
+  try {
+    const all = safeGetJSON(key, {});
+    const sessionIds = Object.keys(all);
+    // Trim each session to most recent 50 messages
+    let changed = false;
+    sessionIds.forEach(sid => {
+      if (all[sid] && all[sid].length > 50) {
+        all[sid] = all[sid].slice(-50);
+        changed = true;
+      }
+    });
+    if (changed) {
+      try { localStorage.setItem(key, JSON.stringify(all)); } catch (_) {}
+    }
+  } catch (_) {}
+}
+
+// ---------- Strip large fields (image previews) before saving ----------
+function stripForStorage(entry) {
+  if (entry.type === 'user' && entry.attachments) {
+    return {
+      ...entry,
+      attachments: entry.attachments.map(a => ({
+        type: a.type,
+        name: a.name,
+        // Drop preview data URL (can be 100KB+ per image)
+        preview: a.type === 'image' ? '[image]' : a.preview
+      }))
+    };
+  }
+  // Truncate very long tool content
+  if (entry.type === 'tool' && entry.content && entry.content.length > 2000) {
+    return { ...entry, content: entry.content.slice(0, 2000) + '... [truncated]' };
+  }
+  return entry;
+}
+
+// ---------- Safe JSON parse from localStorage ----------
+function safeGetJSON(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); } catch(e) { return fallback; }
+}
+
+// ---------- Save a message entry to localStorage ----------
+export function saveMsg(entry, sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  if (!sid) return;
+  try {
+    const all = safeGetJSON(LS_SESSIONS_KEY, {});
+    const arr = all[sid] || [];
+    arr.push(stripForStorage(entry));
+    // Cap messages per session
+    if (arr.length > MAX_MSGS_PER_SESSION) {
+      all[sid] = arr.slice(-MAX_MSGS_PER_SESSION);
+    } else {
+      all[sid] = arr;
+    }
+    safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
+  } catch (e) {
+    console.error('[persistence] saveMsg error:', e);
+  }
+}
+
+// ---------- Load messages for the active session from localStorage ----------
+export function loadMsgs() {
+  if (state.activeSessionId) {
+    const all = safeGetJSON(LS_SESSIONS_KEY, {});
+    return all[state.activeSessionId] || [];
+  }
+  // No session ID yet (first load before WebSocket) — read from legacy key
+  return safeGetJSON(LS_KEY, []);
+}
+
+// ---------- Replay all stored messages into the DOM ----------
+// Builds DOM directly (doesn't call render functions from chat.js) to avoid
+// circular deps and to avoid re-saving.
+export function restoreFromStorage() {
+  const chat = state.dom.chat;
+  const msgs = loadMsgs();
+  msgs.forEach(m => {
+    if (m.type === 'user') {
+      const row = document.createElement('div');
+      row.className = 'row user';
+      if (m.text) {
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble user';
+        const t = document.createElement('div');
+        t.textContent = m.text;
+        bubble.appendChild(t);
+        row.appendChild(bubble);
+      }
+      (m.attachments || []).forEach(att => {
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble user';
+        if (att.type === 'image' && att.preview) {
+          const img = document.createElement('img');
+          img.src = att.preview;
+          img.style.maxWidth = '180px';
+          img.style.maxHeight = '180px';
+          img.style.borderRadius = '8px';
+          bubble.appendChild(img);
+        } else {
+          bubble.style.fontSize = '13px';
+          const tag = document.createElement('span');
+          tag.className = 'file-tag';
+          tag.textContent = (att.name || 'file');
+          bubble.appendChild(tag);
+        }
+        row.appendChild(bubble);
+      });
+      chat.appendChild(row);
+    } else if (m.type === 'ai') {
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+      row.appendChild(bubble);
+      chat.appendChild(row);
+    } else if (m.type === 'tool') {
+      // Inline render to avoid triggering saveMsg again
+      const row = document.createElement('div');
+      row.className = 'row tool';
+      const card = document.createElement('div');
+      card.className = 'tool-card';
+      const isError = m.isError;
+      const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                           : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+      const diffHtml = formatDiff(m.content);
+      const detailHtml = buildToolDetail(m.input, m.label);
+      const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
+      const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
+      const hasBody = !!bodyHtml;
+      card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+        '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + '</div>' +
+        (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+      row.appendChild(card);
+      chat.appendChild(row);
+      if (hasBody) attachToolClick(card);
+    } else if (m.type === 'askUser') {
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      row.appendChild(bubble);
+      chat.appendChild(row);
+      // Inline option-box render (no showOptions import — avoids chat.js dep)
+      const box = document.createElement('div');
+      box.className = 'option-box';
+      m.items.forEach(item => {
+        const q = document.createElement('div');
+        q.className = 'option-q';
+        q.textContent = item.question;
+        box.appendChild(q);
+        const optsDiv = document.createElement('div');
+        optsDiv.className = 'option-opts';
+        (item.options || []).forEach(opt => {
+          const btn = document.createElement('button');
+          btn.className = 'option-btn';
+          const label = typeof opt === 'string' ? opt : opt.label;
+          btn.textContent = label;
+          btn.disabled = true;
+          btn.style.opacity = '0.5';
+          optsDiv.appendChild(btn);
+        });
+        box.appendChild(optsDiv);
+      });
+      bubble.appendChild(box);
+    } else if (m.type === 'error') {
+      // Skip error messages on restore — they're transient
+    } else if (m.type === 'system') {
+      const row = document.createElement('div');
+      row.className = 'row error';
+      const card = document.createElement('div');
+      card.className = 'error-card';
+      card.style.background = '#e3f2fd';
+      card.style.color = '#1565c0';
+      card.textContent = m.content;
+      row.appendChild(card);
+      chat.appendChild(row);
+    }
+  });
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// ---------- One-time migration from old localStorage key ----------
+export function migrateLegacyIfNeeded() {
+  if (!state.activeSessionId || state.legacyMigrated) return;
+  state.legacyMigrated = true;
+  const all = safeGetJSON(LS_SESSIONS_KEY, {});
+  if (all[state.activeSessionId]) return; // already migrated
+  // Try to read from legacy key
+  try {
+    const oldMsgs = safeGetJSON(LS_KEY, []);
+    if (Array.isArray(oldMsgs) && oldMsgs.length > 0) {
+      all[state.activeSessionId] = oldMsgs;
+      safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
+      // Re-render chat with the migrated data
+      state.dom.chat.innerHTML = '';
+      restoreFromStorage();
+    }
+  } catch(e) {}
+}

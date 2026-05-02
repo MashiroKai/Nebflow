@@ -51,37 +51,6 @@ Usage:
       if parts.nonEmpty then parts.mkString(", ") else "File updated"
     else result.split("\\n").headOption.getOrElse(result)
 
-  private def makeDiff(fileName: String, oldContent: String, newContent: String): String =
-    val oldLines = oldContent.split("\\r?\\n").toList
-    val newLines = newContent.split("\\r?\\n").toList
-    val sb = new StringBuilder
-    var oldIdx = 0
-    var newIdx = 0
-    while oldIdx < oldLines.length || newIdx < newLines.length do
-      if oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx) then
-        val nn = newIdx + 1
-        sb.append(f"$nn%3d |${oldLines(oldIdx)}\n")
-        oldIdx += 1
-        newIdx += 1
-      else
-        val matchedOld = oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx)
-        if !matchedOld && oldIdx < oldLines.length then
-          val on = oldIdx + 1
-          sb.append(f"$on%3d |-${oldLines(oldIdx)}\n")
-          oldIdx += 1
-        else
-          val matchedNew = oldIdx < oldLines.length && newIdx < newLines.length && oldLines(oldIdx) == newLines(newIdx)
-          if !matchedNew && newIdx < newLines.length then
-            val nn = newIdx + 1
-            sb.append(f"$nn%3d |+${newLines(newIdx)}\n")
-            newIdx += 1
-          else
-            if oldIdx < oldLines.length then oldIdx += 1
-            if newIdx < newLines.length then newIdx += 1
-    sb.toString().trim
-
-  end makeDiff
-
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val content = input("content").flatMap(_.asString).getOrElse("")
@@ -98,19 +67,19 @@ Usage:
         if dir != null then Files.createDirectories(dir)
 
         if isNew then
-          Files.writeString(filePath, content)
+          DiffUtil.writeFile(filePath, content, "\n")
           Right(s"OK:CREATED $filePath")
         else
-          val original = Files.readString(filePath)
-          Files.writeString(filePath, content)
+          val original = DiffUtil.readFile(filePath)
+          val lineSep = DiffUtil.detectLineSep(original)
+          DiffUtil.writeFile(filePath, content, lineSep)
 
           val oldLines = original.split("\\r?\\n").toList
           val newLines = content.split("\\r?\\n").toList
-          val added = newLines.count(l => !oldLines.contains(l))
-          val removed = oldLines.count(l => !newLines.contains(l))
+          val (added, removed) = DiffUtil.lineStats(oldLines, newLines)
 
           val short = filePath.getFileName.toString
-          val diff = makeDiff(short, original, content)
+          val diff = DiffUtil.makeDiff(short, original, content)
           Right(s"OK:UPDATED $short, $added added, $removed removed\n$diff")
     catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
   }

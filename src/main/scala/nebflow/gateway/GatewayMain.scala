@@ -3,12 +3,14 @@ package nebflow.gateway
 import cats.effect.{IO, IOApp, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
+import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.mcp.*
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
-import nebflow.shared.{LlmHandle, Message, given}
+import nebflow.shared.*
 import nebflow.skill.*
+import org.apache.pekko.actor.typed.ActorSystem
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 
@@ -67,7 +69,7 @@ object GatewayMain extends IOApp.Simple:
                   val (providerId, modelId) = Config.parseModelRef(config.llm.model.primary)
                   val provider = config.llm.providers
                     .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
-                  provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(128000)
+                  provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
                 val baseUrl = s"http://localhost:${cfg.port}"
                 val url = s"$baseUrl?token=$token"
 
@@ -80,42 +82,69 @@ object GatewayMain extends IOApp.Simple:
                         RateLimiter.create().flatMap { rateLimiter =>
                           FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
                             Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
-                              EmberServerBuilder
-                                .default[IO]
-                                .withHost(cfg.host)
-                                .withPort(cfg.port)
-                                .withIdleTimeout(1.hour)
-                                .withHttpWebSocketApp { wsb =>
-                                  val wsRoutes =
-                                    new WebSocketRoutes(
-                                      wsb,
-                                      handle,
-                                      sessionStore,
-                                      thinkingModeRef,
-                                      permState,
-                                      rateLimiter,
-                                      token,
-                                      fileTracker,
-                                      reminderStateRef,
-                                      contextWindow,
-                                      skillDiscoveryOpt
-                                    )
-                                  Router(
-                                    "/api" -> chatRoutes.routes,
-                                    "/" -> wsRoutes.routes
-                                  ).orNotFound
-                                }
-                                .build
-                                .use { _ =>
-                                  openBrowser(url) *> IO.never
-                                }
-                                .guarantee(releaseBackend)
-                            } // end rateLimiter
+                              // Create Dispatcher for the multi-agent runtime, then start server
+                              cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
+                                val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir)
+                                cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
+                                  val sharedResources = SharedResources(
+                                    llm = handle,
+                                    dispatcher = dispatcher,
+                                    sessionStore = sessionStore,
+                                    projectRoot = os.pwd,
+                                    wsSend = _ => IO.unit,
+                                    thinkingModeRef = thinkingModeRef,
+                                    permState = permState,
+                                    rateLimiter = rateLimiter,
+                                    fileChangeTracker = fileTracker,
+                                    reminderStateRef = reminderStateRef,
+                                    contextWindow = contextWindow,
+                                    skillDiscovery = skillDiscoveryOpt,
+                                    agentLibrary = agentLibrary,
+                                    askSemaphore = askSemaphore
+                                  )
+                                  val actorSystem = ActorSystem(GuardianActor(sharedResources), "nebflow-guardian")
+
+                                  EmberServerBuilder
+                                    .default[IO]
+                                    .withHost(cfg.host)
+                                    .withPort(cfg.port)
+                                    .withIdleTimeout(1.hour)
+                                    .withHttpWebSocketApp { wsb =>
+                                      val wsRoutes = new WebSocketRoutes(
+                                        wsb,
+                                        handle,
+                                        sessionStore,
+                                        thinkingModeRef,
+                                        permState,
+                                        rateLimiter,
+                                        token,
+                                        fileTracker,
+                                        reminderStateRef,
+                                        contextWindow,
+                                        skillDiscoveryOpt,
+                                        actorSystem,
+                                        dispatcher
+                                      )
+                                      Router(
+                                        "/api" -> chatRoutes.routes,
+                                        "/" -> wsRoutes.routes
+                                      ).orNotFound
+                                    }
+                                    .build
+                                    .use { _ =>
+                                      openBrowser(url) *> IO.never[Unit]
+                                    }
+                                    .guarantee(releaseBackend *> IO {
+                                      actorSystem.terminate()
+                                    })
+                                } // end askSemaphore
+                              } // end dispatcher.use
+                            } // end reminderStateRef
                           } // end fileTracker
-                        } // end reminderStateRef
-                      } // end thinkingModeRef
-                    } // end skillDiscoveryOpt
-                  }
+                        } // end rateLimiter
+                      } // end permState
+                    } // end thinkingModeRef
+                  } // end skillDiscoveryOpt
               }
             }
           }

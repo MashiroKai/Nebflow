@@ -122,5 +122,5 @@ class HttpTransport(url: String, headers: Map[String, String]) extends McpTransp
           case None => JsonRpcResponse(id = id, result = result)
   }
 
-  def close(): IO[Unit] = IO.unit
+  def close(): IO[Unit] = IO.blocking(backend.close())
 end HttpTransport

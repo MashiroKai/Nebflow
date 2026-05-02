@@ -4,24 +4,64 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>nebflow</title>
-  <script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
-  <script src="https://unpkg.com/lottie-web@5.12.2/build/player/lottie.min.js"></script>
-  <script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
   <link rel="stylesheet" href="https://unpkg.com/katex@0.16.11/dist/katex.min.css">
-  <script src="https://unpkg.com/katex@0.16.11/dist/katex.min.js"></script>
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/nav.css">
+  <link rel="stylesheet" href="css/sidebar.css">
+  <link rel="stylesheet" href="css/chat.css">
+  <link rel="stylesheet" href="css/modal.css">
+  <link rel="stylesheet" href="css/input.css">
 </head>
 <body>
-  <div id="sidebar">
-    <div id="sidebar-header">
-      <span class="sidebar-title">Sessions</span>
-      <button id="new-session-btn" title="New Session">+</button>
+  <!-- Nav Bar (54px icon strip) -->
+  <div id="nav-bar">
+    <div class="nav-item active" data-tab="sessions" title="Sessions">
+      <i data-lucide="message-square"></i>
     </div>
-    <div id="session-list"></div>
+    <div class="nav-item" data-tab="agents" title="Agents">
+      <i data-lucide="bot"></i>
+    </div>
+    <div class="nav-item" data-tab="settings" title="Settings">
+      <i data-lucide="settings"></i>
+    </div>
+    <div class="nav-spacer"></div>
+    <div class="nav-item nav-brand" title="Nebflow">
+      <span class="nav-logo">N</span>
+    </div>
   </div>
+
+  <!-- Sidebar Panel (220px, content changes by active tab) -->
+  <div id="sidebar-panel">
+    <!-- Sessions Panel -->
+    <div id="panel-sessions" class="panel active">
+      <div class="panel-header">
+        <span class="panel-title">Sessions</span>
+        <button id="new-session-btn" title="New Session">+</button>
+      </div>
+      <div id="session-list"></div>
+    </div>
+    <!-- Agents Panel -->
+    <div id="panel-agents" class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Agents</span>
+        <button id="new-agent-btn" title="New Agent">+</button>
+      </div>
+      <div id="agent-list"></div>
+    </div>
+    <!-- Settings Panel -->
+    <div id="panel-settings" class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Settings</span>
+      </div>
+      <div id="settings-content"></div>
+    </div>
+  </div>
+
+  <!-- Main Chat Area -->
   <div id="main">
     <div id="header">
-      <div class="title"><span class="header-brand">nebflow</span><span id="session-name"></span></div>
+      <div class="header-left"><span class="header-brand">nebflow</span></div>
+	      <div class="header-center"><span id="session-name"></span></div>
       <div class="header-right">
         <div class="conn off" id="conn"></div>
       </div>
@@ -48,6 +88,8 @@
       <button id="stop-btn"><i data-lucide="square"></i></button>
     </div>
   </div>
+
+  <!-- Modals -->
   <div id="modal-overlay">
     <div id="modal-box">
       <div id="modal-title">New Session</div>
@@ -66,6 +108,34 @@
       </div>
     </div>
   </div>
-  <script src="app.js"></script>
+  <!-- Agent Editor Modal (separate overlay) -->
+  <div id="agent-overlay">
+    <div id="agent-modal">
+      <div id="agent-modal-title">Edit Agent</div>
+      <div id="agent-modal-body">
+        <div class="agent-field-label">Name</div>
+        <input id="agent-name-input" type="text" placeholder="Agent name" autocomplete="off">
+        <div class="agent-field-label">Description</div>
+        <textarea id="agent-desc-input" placeholder="What does this agent do?" rows="3" spellcheck="false"></textarea>
+        <div class="agent-field-label">Model</div>
+        <select id="agent-model-input">
+          <option value="default">default</option>
+        </select>
+        <div class="agent-field-label">Tools</div>
+        <div id="agent-tools-grid"></div>
+        <div class="agent-field-label">System Prompt</div>
+        <textarea id="agent-system-input" placeholder="System prompt (Markdown)" rows="8" spellcheck="false"></textarea>
+      </div>
+      <div id="agent-modal-actions">
+        <button id="agent-modal-cancel">Cancel</button>
+        <button id="agent-modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+  <script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
+  <script src="https://unpkg.com/lottie-web@5.12.2/build/player/lottie.min.js"></script>
+  <script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
+  <script src="https://unpkg.com/katex@0.16.11/dist/katex.min.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
