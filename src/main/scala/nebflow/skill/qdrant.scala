@@ -41,83 +41,84 @@ class QdrantClient(baseUrl: String):
           .readTimeout(30.seconds)
           .send(backend)
 
-        if createResp.code.isSuccess then
-          logger.info(s"Created Qdrant collection: $name (dim=$vectorSize)")
-        else
-          logger.warn(s"Failed to create collection: ${createResp.code} ${createResp.body.take(200)}")
+        if createResp.code.isSuccess then logger.info(s"Created Qdrant collection: $name (dim=$vectorSize)")
+        else logger.warn(s"Failed to create collection: ${createResp.code} ${createResp.body.take(200)}")
       else ()
     }
 
   def upsertPoints(collection: String, points: List[QdrantPoint]): IO[Unit] =
     if points.isEmpty then IO.unit
-    else IO.blocking {
-      val pointsJson = points.map { p =>
-        Json.obj(
-          "id" -> Json.fromString(p.id),
-          "vector" -> Json.fromValues(p.vector.map(v => Json.fromDoubleOrNull(v.toDouble))),
-          "payload" -> Json.fromFields(
-            p.payload.map { case (k, v) => k -> Json.fromString(v) }
+    else
+      IO.blocking {
+        val pointsJson = points.map { p =>
+          Json.obj(
+            "id" -> Json.fromString(p.id),
+            "vector" -> Json.fromValues(p.vector.map(v => Json.fromDoubleOrNull(v.toDouble))),
+            "payload" -> Json.fromFields(
+              p.payload.map { case (k, v) => k -> Json.fromString(v) }
+            )
           )
-        )
+        }
+        val body = Json.obj("points" -> Json.fromValues(pointsJson))
+
+        val resp = basicRequest
+          .put(uri"$baseUrl/collections/$collection/points")
+          .header("Content-Type", "application/json")
+          .body(body.noSpaces)
+          .response(asStringAlways)
+          .readTimeout(30.seconds)
+          .send(backend)
+
+        if !resp.code.isSuccess then logger.warn(s"Qdrant upsert error: ${resp.code} ${resp.body.take(200)}")
       }
-      val body = Json.obj("points" -> Json.fromValues(pointsJson))
-
-      val resp = basicRequest
-        .put(uri"$baseUrl/collections/$collection/points")
-        .header("Content-Type", "application/json")
-        .body(body.noSpaces)
-        .response(asStringAlways)
-        .readTimeout(30.seconds)
-        .send(backend)
-
-      if !resp.code.isSuccess then
-        logger.warn(s"Qdrant upsert error: ${resp.code} ${resp.body.take(200)}")
-    }
 
   def search(collection: String, vector: Array[Float], limit: Int, threshold: Double): IO[List[SearchResult]] =
     if vector.isEmpty then IO.pure(Nil)
-    else IO.blocking {
-      val body = Json.obj(
-        "vector" -> Json.fromValues(vector.map(v => Json.fromDoubleOrNull(v.toDouble))),
-        "limit" -> Json.fromInt(limit),
-        "score_threshold" -> Json.fromDoubleOrNull(threshold),
-        "with_payload" -> Json.fromBoolean(true)
-      )
+    else
+      IO.blocking {
+        val body = Json.obj(
+          "vector" -> Json.fromValues(vector.map(v => Json.fromDoubleOrNull(v.toDouble))),
+          "limit" -> Json.fromInt(limit),
+          "score_threshold" -> Json.fromDoubleOrNull(threshold),
+          "with_payload" -> Json.fromBoolean(true)
+        )
 
-      val resp = basicRequest
-        .post(uri"$baseUrl/collections/$collection/points/search")
-        .header("Content-Type", "application/json")
-        .body(body.noSpaces)
-        .response(asStringAlways)
-        .readTimeout(15.seconds)
-        .send(backend)
+        val resp = basicRequest
+          .post(uri"$baseUrl/collections/$collection/points/search")
+          .header("Content-Type", "application/json")
+          .body(body.noSpaces)
+          .response(asStringAlways)
+          .readTimeout(15.seconds)
+          .send(backend)
 
-      if resp.code.isSuccess then
-        val json = io.circe.parser.parse(resp.body).toOption.getOrElse(Json.Null)
-        json.hcursor.downField("result").as[List[Json]] match
-          case Right(arr) =>
-            arr.flatMap { item =>
-              val score = item.hcursor.get[Double]("score").getOrElse(0.0)
-              val payload = item.hcursor.downField("payload").as[Map[String, String]].getOrElse(Map.empty)
-              val id = item.hcursor.get[String]("id").getOrElse("")
-              Some(SearchResult(id, score, payload))
-            }
-          case Left(_) => Nil
-      else
-        logger.warn(s"Qdrant search error: ${resp.code} ${resp.body.take(200)}")
-        Nil
-    }
+        if resp.code.isSuccess then
+          val json = io.circe.parser.parse(resp.body).toOption.getOrElse(Json.Null)
+          json.hcursor.downField("result").as[List[Json]] match
+            case Right(arr) =>
+              arr.flatMap { item =>
+                val score = item.hcursor.get[Double]("score").getOrElse(0.0)
+                val payload = item.hcursor.downField("payload").as[Map[String, String]].getOrElse(Map.empty)
+                val id = item.hcursor.get[String]("id").getOrElse("")
+                Some(SearchResult(id, score, payload))
+              }
+            case Left(_) => Nil
+        else
+          logger.warn(s"Qdrant search error: ${resp.code} ${resp.body.take(200)}")
+          Nil
+      }
 
   def deleteByFilter(collection: String, field: String, value: String): IO[Unit] =
     IO.blocking {
       val body = Json.obj(
         "filter" -> Json.obj(
-          "must" -> Json.fromValues(List(
-            Json.obj(
-              "key" -> Json.fromString(field),
-              "match" -> Json.obj("value" -> Json.fromString(value))
+          "must" -> Json.fromValues(
+            List(
+              Json.obj(
+                "key" -> Json.fromString(field),
+                "match" -> Json.obj("value" -> Json.fromString(value))
+              )
             )
-          ))
+          )
         )
       )
 
@@ -129,12 +130,13 @@ class QdrantClient(baseUrl: String):
         .readTimeout(15.seconds)
         .send(backend)
 
-      if !resp.code.isSuccess then
-        logger.warn(s"Qdrant delete error: ${resp.code} ${resp.body.take(200)}")
+      if !resp.code.isSuccess then logger.warn(s"Qdrant delete error: ${resp.code} ${resp.body.take(200)}")
     }
 
-  /** Scroll all points and extract specified payload fields, grouped by groupField.
-   *  Paginates automatically to handle >100 points. */
+  /**
+   * Scroll all points and extract specified payload fields, grouped by groupField.
+   *  Paginates automatically to handle >100 points.
+   */
   def scrollPayloads(collection: String, groupField: String, mtimeField: String): IO[Map[String, Long]] =
     def scrollPage(offset: Option[String], acc: Map[String, Long]): IO[Map[String, Long]] =
       IO.blocking {
@@ -175,4 +177,7 @@ class QdrantClient(baseUrl: String):
       }
 
     scrollPage(None, Map.empty)
+  end scrollPayloads
+
+  def close(): Unit = backend.close()
 end QdrantClient

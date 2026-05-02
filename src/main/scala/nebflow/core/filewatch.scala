@@ -13,46 +13,34 @@ class FileChangeTracker private (
   lastCheckRef: Ref[IO, Long]
 ):
 
-  private val ExcludedDirs = Set(
-    ".git",
-    "target",
-    ".bsp",
-    ".metals",
-    ".bloop",
-    ".idea",
-    ".vscode",
-    "node_modules",
-    ".claude",
-    "dist"
-  )
-  private val ExcludedFiles = Set(".DS_Store")
-
   private val rootPath = Paths.get(projectRoot).toAbsolutePath.normalize
 
   private val DebounceMs: Long = 5 * 1000L // 5 seconds
 
   private def scanFiles(): Map[String, Long] =
-    Files
-      .walk(rootPath)
-      .iterator()
-      .asScala
-      .filter(Files.isRegularFile(_))
-      .filter { p =>
-        val rel = rootPath.relativize(p).toString
-        val segments = rel.split(java.io.File.separator)
-        // Exclude files in excluded directories (any depth)
-        !segments.exists(ExcludedDirs.contains) &&
-        // Exclude specific filenames
-        !ExcludedFiles.contains(segments.last)
-      }
-      .map { p =>
-        val rel = rootPath.relativize(p).toString
-        val modTime =
-          try Files.getLastModifiedTime(p).toMillis
-          catch case _: Exception => 0L
-        rel -> modTime
-      }
-      .toMap
+    val stream = Files.walk(rootPath)
+    try
+      stream
+        .iterator()
+        .asScala
+        .filter(Files.isRegularFile(_))
+        .filter { p =>
+          val rel = rootPath.relativize(p).toString
+          val segments = rel.split(java.io.File.separator)
+          // Exclude files in excluded directories (any depth)
+          !segments.exists(FileChangeTracker.ExcludedDirs.contains) &&
+          // Exclude specific filenames
+          !FileChangeTracker.ExcludedFiles.contains(segments.last)
+        }
+        .map { p =>
+          val rel = rootPath.relativize(p).toString
+          val modTime =
+            try Files.getLastModifiedTime(p).toMillis
+            catch case _: Exception => 0L
+          rel -> modTime
+        }
+        .toMap
+    finally stream.close()
 
   def checkChanges(): IO[Option[SystemReminder]] =
     for
@@ -104,7 +92,7 @@ end FileChangeTracker
 
 object FileChangeTracker:
 
-  private val ExcludedDirs = Set(
+  val ExcludedDirs = Set(
     ".git",
     "target",
     ".bsp",
@@ -116,29 +104,31 @@ object FileChangeTracker:
     ".claude",
     "dist"
   )
-  private val ExcludedFiles = Set(".DS_Store")
+  val ExcludedFiles = Set(".DS_Store")
 
   def scanProject(projectRoot: String): Map[String, Long] =
     val rootPath = Paths.get(projectRoot).toAbsolutePath.normalize
-    Files
-      .walk(rootPath)
-      .iterator()
-      .asScala
-      .filter(Files.isRegularFile(_))
-      .filter { p =>
-        val rel = rootPath.relativize(p).toString
-        val segments = rel.split(java.io.File.separator)
-        !segments.exists(ExcludedDirs.contains) &&
-        !ExcludedFiles.contains(segments.last)
-      }
-      .map { p =>
-        val rel = rootPath.relativize(p).toString
-        val modTime =
-          try Files.getLastModifiedTime(p).toMillis
-          catch case _: Exception => 0L
-        rel -> modTime
-      }
-      .toMap
+    val stream = Files.walk(rootPath)
+    try
+      stream
+        .iterator()
+        .asScala
+        .filter(Files.isRegularFile(_))
+        .filter { p =>
+          val rel = rootPath.relativize(p).toString
+          val segments = rel.split(java.io.File.separator)
+          !segments.exists(ExcludedDirs.contains) &&
+          !ExcludedFiles.contains(segments.last)
+        }
+        .map { p =>
+          val rel = rootPath.relativize(p).toString
+          val modTime =
+            try Files.getLastModifiedTime(p).toMillis
+            catch case _: Exception => 0L
+          rel -> modTime
+        }
+        .toMap
+    finally stream.close()
 
   def create(projectRoot: String): IO[FileChangeTracker] =
     for
