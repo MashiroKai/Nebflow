@@ -24,19 +24,23 @@ class SkillIndexer(
       tags <- SkillTagGenerator.generateTags(llm, skill.name, skill.description, skill.language)
       _ <- IO(logger.info(s"Generated ${tags.length} tags for ${skill.name}: ${tags.take(5).mkString(", ")}"))
       vectors <- embedding.embedBatch(tags)
-      points = tags.zip(vectors).zipWithIndex.map { case ((tag, vec), idx) =>
-        QdrantPoint(
-          id = UUID.nameUUIDFromBytes(s"${skill.name}-$idx".getBytes(StandardCharsets.UTF_8)).toString,
-          vector = vec,
-          payload = Map(
-            "skill_id" -> skill.name,
-            "tag" -> tag,
-            "description" -> skill.description,
-            "file_path" -> skill.filePath.toString,
-            "mtime" -> skill.mtime.toString
+      points = tags
+        .zip(vectors)
+        .zipWithIndex
+        .map { case ((tag, vec), idx) =>
+          QdrantPoint(
+            id = UUID.nameUUIDFromBytes(s"${skill.name}-$idx".getBytes(StandardCharsets.UTF_8)).toString,
+            vector = vec,
+            payload = Map(
+              "skill_id" -> skill.name,
+              "tag" -> tag,
+              "description" -> skill.description,
+              "file_path" -> skill.filePath.toString,
+              "mtime" -> skill.mtime.toString
+            )
           )
-        )
-      }.filter(_.vector.nonEmpty)
+        }
+        .filter(_.vector.nonEmpty)
       _ <- qdrant.deleteByFilter(config.collection, "skill_id", skill.name)
       _ <- qdrant.upsertPoints(config.collection, points)
       _ <- IO(logger.info(s"Indexed ${points.length} vectors for skill '${skill.name}'"))
@@ -45,8 +49,7 @@ class SkillIndexer(
   /** Incremental index: only process skills that are new or modified. */
   def indexIncremental(skillsDir: os.Path, llm: LlmHandle[IO]): IO[Unit] =
     SkillFile.scanDir(skillsDir).flatMap { skills =>
-      if skills.isEmpty then
-        IO(logger.info(s"No skill files found in $skillsDir"))
+      if skills.isEmpty then IO(logger.info(s"No skill files found in $skillsDir"))
       else
         getIndexedMtimes().flatMap { indexedMtimes =>
           // Skills to index: new files or modified files (mtime changed)
@@ -66,10 +69,16 @@ class SkillIndexer(
               IO(logger.info(s"Deleting removed skill: $name")) *>
                 qdrant.deleteByFilter(config.collection, "skill_id", name)
             }
-            val indexIO = toIndex.traverse_(skill => indexSkill(skill, llm).handleErrorWith { e =>
-              IO(logger.warn(s"Failed to index skill '${skill.name}': ${e.getMessage}"))
-            })
-            IO(logger.info(s"Incremental index: ${toIndex.length} to index, ${toDelete.length} to delete, ${skills.length} total")) *>
+            val indexIO = toIndex.traverse_(skill =>
+              indexSkill(skill, llm).handleErrorWith { e =>
+                IO(logger.warn(s"Failed to index skill '${skill.name}': ${e.getMessage}"))
+              }
+            )
+            IO(
+              logger.info(
+                s"Incremental index: ${toIndex.length} to index, ${toDelete.length} to delete, ${skills.length} total"
+              )
+            ) *>
               deleteIO *> indexIO
         }
     }

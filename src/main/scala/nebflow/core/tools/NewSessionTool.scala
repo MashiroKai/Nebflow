@@ -3,28 +3,25 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.agent.SessionCommand
 import nebflow.core.{AskItem, AskOption}
+import nebflow.shared.*
 
 object NewSessionTool extends Tool:
   val name = "NewSession"
 
   val description =
-    """Proactively suggest creating a new session when the user's message clearly shifts to an unrelated task or topic.
+    """Create a new session with an initial task. Asks the user for confirmation first, then the new session starts working immediately.
 
-This tool only asks the user for confirmation — it does NOT modify the current session. Use it liberally whenever you detect a topic shift, even if the user didn't explicitly ask to switch.
+Use this tool when:
+- The user's request is unrelated to the current task and deserves its own session
+- You want to delegate a sub-task to a separate session that runs independently
+- A topic shift is detected that warrants a clean context
 
-Examples of when to call this tool:
-- User was debugging a Python backend issue, then suddenly asks about writing a React component
-- User was working on a database migration, then pastes an unrelated error log
-- User was discussing architecture, then asks to write a shell script for something completely different
-- The new message has no logical connection to the ongoing conversation
-
-Do NOT call this tool for:
-- Follow-up questions on the same topic
-- Natural progression of the current task (e.g., "now add tests for that")
-- Minor tangents that still relate to the current work
-
-After confirmation, a clean empty session is created. Tell the user it's ready and they can switch via the sidebar."""
+Parameters:
+- name: Short descriptive name for the new session
+- message: The initial task/message to send to the new session. Write it as specific instructions for what needs to be done.
+  After user confirms, this message is injected into the new session and it starts processing immediately."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -32,10 +29,14 @@ After confirmation, a clean empty session is created. Tell the user it's ready a
       "properties" -> io.circe.Json.obj(
         "name" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Short name for the new session, describing the new topic(use user's language)".asJson
+          "description" -> "Short name for the new session (use user's language)".asJson
+        ),
+        "message" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The initial task to execute in the new session".asJson
         )
       ),
-      "required" -> io.circe.Json.arr("name".asJson)
+      "required" -> io.circe.Json.arr("name".asJson, "message".asJson)
     )
   )
 
@@ -48,30 +49,45 @@ After confirmation, a clean empty session is created. Tell the user it's ready a
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val suggestedName = input("name").flatMap(_.asString).getOrElse("New Session")
+    val message = input("message").flatMap(_.asString).getOrElse("")
 
-    (ctx.replUi, ctx.sessionStore) match
-      case (Some(ui), Some(store)) =>
-        val items = List(
-          AskItem(
-            s"Topic shift detected. Create a new session \"$suggestedName\"?",
-            List(
-              AskOption("Yes, create new session"),
-              AskOption("No, continue here")
-            ),
-            allowOther = false
+    if message.isEmpty then IO.pure(Left(ToolError("message is required — describe what the new session should do")))
+    else
+      ctx.replUi match
+        case Some(ui) =>
+          val preview = if message.length > 80 then message.take(77) + "..." else message
+          val items = List(
+            AskItem(
+              s"Create new session \"$suggestedName\" with task:\n$preview",
+              List(
+                AskOption("Yes, create and start"),
+                AskOption("No, continue here")
+              ),
+              allowOther = false
+            )
           )
-        )
-        ui.askUser(items).flatMap { answers =>
-          answers.headOption match
-            case Some(a) if a.startsWith("Yes") =>
-              store.createSession(suggestedName).map { _ =>
-                Right(s"New session \"$suggestedName\" created. Tell the user they can switch to it via the sidebar.")
-              }
-            case _ =>
-              IO.pure(Right("User chose to continue in the current session."))
-          end match
-        }
-      case _ =>
-        IO.pure(Left(ToolError("NewSession tool requires interactive UI and session storage.")))
+          ui.askUser(items).flatMap { answers =>
+            answers.headOption match
+              case Some(a) if a.startsWith("Yes") =>
+                (ctx.sessionStore, ctx.sessionActorRef) match
+                  case (Some(store), Some(actorRef)) =>
+                    for
+                      meta <- store.createSession(suggestedName)
+                      _ <- store.switchSession(meta.id)
+                      _ <- IO(actorRef ! SessionCommand.SendSessionList())
+                      _ <- IO(actorRef ! SessionCommand.UserMessage(message, List(ContentBlock.Text(message))))
+                    yield Right(s"New session \"$suggestedName\" created and started.")
+                  case (Some(store), None) =>
+                    store.createSession(suggestedName).map { _ =>
+                      Right(s"New session \"$suggestedName\" created. Tell the user to switch to it via sidebar.")
+                    }
+                  case _ =>
+                    IO.pure(Left(ToolError("Session storage not available.")))
+              case _ =>
+                IO.pure(Right("User chose to continue in the current session."))
+          }
+        case None =>
+          IO.pure(Left(ToolError("NewSession tool requires interactive UI.")))
+    end if
   end call
 end NewSessionTool

@@ -43,9 +43,16 @@ object Dependencies {
   val http4sDsl         = "org.http4s" %% "http4s-dsl"          % Http4sVer
   val http4sCirce       = "org.http4s" %% "http4s-circe"        % Http4sVer
 
+  // Actor
+  val PekkoVer = "1.1.3"
+  val pekkoActorTyped = "org.apache.pekko" %% "pekko-actor-typed" % PekkoVer
+
   // Logging
   val logbackClassic = "ch.qos.logback" % "logback-classic" % "1.5.16"
   val logbackCore    = "ch.qos.logback" % "logback-core" % "1.5.16"
+
+  // Diff
+  val diffUtils = "io.github.java-diff-utils" % "java-diff-utils" % "4.12"
 
   // Testing
   val munit = "org.scalameta" %% "munit" % MunitVer % Test

@@ -57,4 +57,6 @@ class EmbeddingService(config: EmbeddingConfig):
       logger.warn(s"Embedding call failed: ${e.getMessage}")
       IO.pure(texts.map(_ => Array.emptyFloatArray))
     }
+
+  def close(): Unit = backend.close()
 end EmbeddingService

@@ -124,11 +124,14 @@ class PersistentShell:
     backgroundJobs.get(jobId) match
       case null => None
       case f if f.isDone =>
+        backgroundJobs.remove(jobId) // Evict completed entry
         try Some(f.get())
         catch case e: Exception => Some(s"[Background job failed: ${e.getMessage}]")
       case _ => None
 
   def listBackgroundJobs(): List[(String, Boolean)] =
+    // Evict completed entries during listing
+    backgroundJobs.asScala.foreach { case (id, f) => if f.isDone then backgroundJobs.remove(id) }
     backgroundJobs.asScala.toList.map { case (id, f) => (id, f.isDone) }
 
   def queryDir(): IO[String] =

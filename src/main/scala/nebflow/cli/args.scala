@@ -17,7 +17,7 @@ object Args:
     import builder.*
     OParser.sequence(
       programName("nebflow"),
-      head("nebflow", "1.0.0"),
+      head("nebflow", nebflow.Version.string),
       opt[Unit]('c', "continue")
         .action((_, c) => c.copy(mode = CliMode.ContinueSession))
         .text("Continue last session"),
