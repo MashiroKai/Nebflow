@@ -757,7 +757,7 @@ object AgentActor:
                     None,
                     Some(ctx.self),
                     agentDef.contextWindow,
-                    sessionId = Some(ctx.self.path.name),
+                    sessionId = state.sessionId,
                     taskStore = Some(resources.taskStore),
                     wsSend = Some(state.wsSend)
                   )
@@ -774,7 +774,7 @@ object AgentActor:
                         None,
                         Some(ctx.self),
                         agentDef.contextWindow,
-                        sessionId = Some(ctx.self.path.name),
+                        sessionId = state.sessionId,
                         taskStore = Some(resources.taskStore),
                         wsSend = Some(state.wsSend)
                       )
@@ -818,7 +818,7 @@ object AgentActor:
                                 None,
                                 Some(ctx.self),
                                 agentDef.contextWindow,
-                                sessionId = Some(ctx.self.path.name),
+                                sessionId = state.sessionId,
                                 taskStore = Some(resources.taskStore),
                                 wsSend = Some(state.wsSend)
                               )
