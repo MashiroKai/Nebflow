@@ -27,7 +27,6 @@ export default {
   busyTimeoutId: null,
   currentAiBubble: null,
   aiText: '',
-  currentToolCard: null,
 
   // Multi-agent
   activeAgentId: null,
@@ -37,6 +36,12 @@ export default {
 
   // Per-session streaming text buffer: sessionId -> accumulated text
   sessionTexts: {},
+
+  // Per-session pending tool card: sessionId -> DOM row element
+  sessionToolCards: {},
+
+  // Task list cache per session
+  sessionTasks: {},
 
   // Agent panel
   agentsData: [],
@@ -50,6 +55,15 @@ export default {
   historyIndex: -1,
   historyDraft: '',
   pendingDeleteId: null,
+
+  // Server config (sent on WS connect)
+  streamTimeoutMs: 900000,
+  serverVersion: '',
+  currentPolicy: 'ask',
+  serverThinking: null,
+
+  // Send lock (prevents rapid double-send)
+  isSending: false,
 
   // Scroll
   scrollSnapped: true,

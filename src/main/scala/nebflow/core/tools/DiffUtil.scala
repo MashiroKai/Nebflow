@@ -37,9 +37,7 @@ object DiffUtil:
     val finalContent = if lineSep != "\n" then normalized.replace("\n", lineSep) else normalized
     Files.writeString(path, finalContent, StandardCharsets.UTF_8)
 
-  /**
-   * Compute added/removed line counts using diff-utils.
-   */
+  /** Compute added/removed line counts using diff-utils. */
   def lineStats(oldLines: List[String], newLines: List[String]): (Int, Int) =
     val patch = diff(oldLines.asJava, newLines.asJava)
     var added = 0
@@ -98,16 +96,17 @@ object DiffUtil:
           val nn = newIdx + 1
           sb.append(f"$nn%3d |+${tgtLines(i)}\n")
           newIdx += 1
+      end for
 
       // Context lines after last delta
       while oldIdx < oldLines.length do
         val nn = newIdx + 1
-        if nn <= newLines.length then
-          sb.append(f"$nn%3d |${oldLines(oldIdx)}\n")
+        if nn <= newLines.length then sb.append(f"$nn%3d |${oldLines(oldIdx)}\n")
         oldIdx += 1
         newIdx += 1
 
       sb.toString().trim
+    end if
 
   end makeDiff
 

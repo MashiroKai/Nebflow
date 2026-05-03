@@ -118,12 +118,17 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
       case None => body
+    // OpenAI o-series models support reasoning_effort; silently ignore for others
+    val bodyWithThinking = params.thinking match
+      case Some(t) if t.hcursor.get[String]("type").toOption.contains("enabled") =>
+        bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> "high".asJson))
+      case _ => bodyWithTools
 
     val request = basicRequest
       .post(uri"$base/chat/completions")
       .header("Authorization", s"Bearer $apiKey")
       .header("content-type", "application/json")
-      .body(bodyWithTools.noSpaces)
+      .body(bodyWithThinking.noSpaces)
 
     backend.send(request).flatMap { response =>
       response.body match
@@ -167,15 +172,20 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
       case None => body
+    // OpenAI o-series models support reasoning_effort; silently ignore for others
+    val bodyWithThinking = params.thinking match
+      case Some(t) if t.hcursor.get[String]("type").toOption.contains("enabled") =>
+        bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> "high".asJson))
+      case _ => bodyWithTools
 
     Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
       val request = basicRequest
         .post(uri"$base/chat/completions")
         .header("Authorization", s"Bearer $apiKey")
         .header("content-type", "application/json")
-        .body(bodyWithTools.noSpaces)
+        .body(bodyWithThinking.noSpaces)
         .response(asStreamUnsafe(Fs2Streams[IO]))
-        .readTimeout(180.seconds)
+        .readTimeout(360.seconds)
 
       Stream.eval(backend.send(request)).flatMap { response =>
         response.body match

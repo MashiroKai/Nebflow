@@ -6,6 +6,7 @@ import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.mcp.*
+import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
 import nebflow.shared.*
@@ -100,7 +101,8 @@ object GatewayMain extends IOApp.Simple:
                                     contextWindow = contextWindow,
                                     skillDiscovery = skillDiscoveryOpt,
                                     agentLibrary = agentLibrary,
-                                    askSemaphore = askSemaphore
+                                    askSemaphore = askSemaphore,
+                                    taskStore = FileTaskStore
                                   )
                                   val actorSystem = ActorSystem(GuardianActor(sharedResources), "nebflow-guardian")
 

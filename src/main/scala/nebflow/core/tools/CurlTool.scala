@@ -17,7 +17,8 @@ object CurlTool extends Tool:
   val description = """Make an HTTP request to a URL and return the response.
 
 Usage:
-- Use for API calls, webhooks, or any HTTP-based interaction
+- Only use WebSearch and WebFetch for accessing information beyond your training data. Use Curl for API calls, webhooks, or HTTP-based interactions that require specific headers, methods, or body content.
+- Do NOT generate or guess URLs unless you are confident they help the user with programming tasks.
 - Supports GET, POST, PUT, PATCH, DELETE and other HTTP methods
 - Headers and request body can be provided as JSON
 - Automatically formats JSON responses

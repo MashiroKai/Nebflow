@@ -6,8 +6,8 @@ import {
   setBusy, setStatus, clearStatus,
   renderUserBubble, appendAiText, finishAi,
   appendAgentText, finishAgent, getAgentColor,
-  renderTool, renderToolPending, renderError,
-  renderSystemBubble,
+  renderTool, renderToolPending, renderError, renderTimeoutNotice,
+  renderSystemBubble, renderRetryStatus, clearRetryStatus,
   showOptions, renderAskUser, renderPermissionPrompt,
   renderAttachmentPreview
 } from './chat.js';
@@ -23,6 +23,7 @@ import {
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, setNewSessionHandler } from './input.js';
 import { saveMsg, loadMsgs, restoreFromStorage, migrateLegacyIfNeeded } from './persistence.js';
+import { renderTaskList } from './taskList.js';
 
 // ---------- 1. Populate DOM refs ----------
 state.dom = {
@@ -119,6 +120,8 @@ function clearBusyFor(msg) {
     }
   }
   clearTimeout(state.busyTimeoutId);
+  // Always release the send lock when the backend signals completion
+  state.isSending = false;
 }
 
 // --- Chat streaming ---
@@ -130,6 +133,7 @@ onMessage('textDelta', (msg) => {
   if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
   if (isActive(msg)) {
     if (!state.busySessionId) setBusy(msg.sessionId || state.activeSessionId);
+    clearRetryStatus();
     appendAiText(msg.delta);
   }
 });
@@ -166,14 +170,15 @@ onMessage('thinking', (msg) => {
 onMessage('toolStart', (msg) => {
   if (isActive(msg)) {
     if (!state.busySessionId) setBusy(msg.sessionId || state.activeSessionId);
-    renderToolPending(msg.label);
+    clearRetryStatus();
+    renderToolPending(msg.label, msg.sessionId);
   }
 });
 
 onMessage('toolEnd', (msg) => {
   if (msg.label && msg.label.startsWith('AskUser')) return;
   if (isActive(msg)) {
-    const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input);
+    const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
     if (data) saveMsg(data, msg.sessionId);
   } else {
     saveMsg({type: 'tool', label: msg.label, summary: msg.summary, content: msg.content, isError: msg.isError, input: msg.input}, msg.sessionId);
@@ -193,7 +198,12 @@ onMessage('done', (msg) => {
     delete state.sessionTexts[msg.sessionId];
   }
   if (isActive(msg)) {
-    if (state.currentToolCard) { state.currentToolCard.remove(); state.currentToolCard = null; }
+    // Clean up per-session pending tool card for this session
+    const sid = msg.sessionId || state.activeSessionId;
+    if (sid && state.sessionToolCards[sid]) {
+      state.sessionToolCards[sid].remove();
+      delete state.sessionToolCards[sid];
+    }
     const data = finishAi();
     if (data) saveMsg(data, msg.sessionId);
     Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
@@ -208,7 +218,11 @@ onMessage('done', (msg) => {
 onMessage('error', (msg) => {
   clearBusyFor(msg);
   if (isActive(msg)) {
-    if (state.currentToolCard) { state.currentToolCard.remove(); state.currentToolCard = null; }
+    const sid = msg.sessionId || state.activeSessionId;
+    if (sid && state.sessionToolCards[sid]) {
+      state.sessionToolCards[sid].remove();
+      delete state.sessionToolCards[sid];
+    }
     finishAi();
     renderError(msg.message);
     clearStatus();
@@ -221,7 +235,11 @@ onMessage('error', (msg) => {
 onMessage('interrupted', (msg) => {
   clearBusyFor(msg);
   if (isActive(msg)) {
-    if (state.currentToolCard) { state.currentToolCard.remove(); state.currentToolCard = null; }
+    const sid = msg.sessionId || state.activeSessionId;
+    if (sid && state.sessionToolCards[sid]) {
+      state.sessionToolCards[sid].remove();
+      delete state.sessionToolCards[sid];
+    }
     finishAi();
     clearStatus();
   }
@@ -230,9 +248,8 @@ onMessage('interrupted', (msg) => {
 onMessage('timeout', (msg) => {
   clearBusyFor(msg);
   if (isActive(msg)) {
-    if (state.currentToolCard) { state.currentToolCard.remove(); state.currentToolCard = null; }
     finishAi();
-    renderError('Response timed out');
+    renderTimeoutNotice();
     clearStatus();
   } else {
     markSessionUnread(msg.sessionId);
@@ -242,7 +259,11 @@ onMessage('timeout', (msg) => {
 onMessage('maxTokens', (msg) => {
   clearBusyFor(msg);
   if (isActive(msg)) {
-    if (state.currentToolCard) { state.currentToolCard.remove(); state.currentToolCard = null; }
+    const sid = msg.sessionId || state.activeSessionId;
+    if (sid && state.sessionToolCards[sid]) {
+      state.sessionToolCards[sid].remove();
+      delete state.sessionToolCards[sid];
+    }
     finishAi();
     renderError('Max tokens reached — response truncated');
     clearStatus();
@@ -284,25 +305,41 @@ onMessage('agentStart', (msg) => {
     const { chat } = state.dom;
     const row = document.createElement('div');
     row.className = 'row ai agent-row';
-    const badge = document.createElement('div');
-    badge.className = 'agent-badge';
-    badge.style.borderColor = color;
-    badge.style.color = color;
-    badge.textContent = state.activeAgentId;
-    row.appendChild(badge);
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai';
     bubble.innerHTML = '<span style="color:#999;font-size:13px;">Thinking...</span>';
+    // Only show badge for non-default agents
+    if (state.activeAgentId && state.activeAgentId !== 'default') {
+      const badge = document.createElement('div');
+      badge.className = 'agent-badge';
+      badge.style.borderColor = color;
+      badge.style.color = color;
+      badge.textContent = state.activeAgentId;
+      row.appendChild(badge);
+    }
     row.appendChild(bubble);
     chat.appendChild(row);
-    state.agentBubbles[state.activeAgentId] = { bubble, text: '', row, badge };
+    state.agentBubbles[state.activeAgentId] = { bubble, text: '', row, badge: row.querySelector('.agent-badge') };
   }
 });
 
 onMessage('agentTextDelta', (msg) => { if (isActive(msg)) appendAgentText(msg.agentId || state.activeAgentId, msg.delta); });
-onMessage('agentToolStart', (msg) => { if (isActive(msg)) renderToolPending(msg.label); });
-onMessage('agentToolEnd', (msg) => { if (isActive(msg)) renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input); });
-onMessage('agentEnd', (msg) => { if (isActive(msg)) finishAgent(msg.name || msg.agentId); });
+onMessage('agentToolStart', (msg) => { if (isActive(msg)) renderToolPending(msg.label, msg.sessionId); });
+onMessage('agentToolEnd', (msg) => {
+  if (!isActive(msg)) return;
+  const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
+  if (data) saveMsg(data, msg.sessionId);
+});
+onMessage('agentEnd', (msg) => {
+  if (!isActive(msg)) return;
+  clearBusyFor(msg);
+  const id = msg.name || msg.agentId;
+  const a = state.agentBubbles[id];
+  if (a && a.text) {
+    saveMsg({ type: 'agent', agentId: id, text: a.text }, msg.sessionId || state.activeSessionId);
+  }
+  finishAgent(id);
+});
 
 onMessage('agentThinking', (msg) => {
   if (!isActive(msg)) return;
@@ -311,11 +348,24 @@ onMessage('agentThinking', (msg) => {
   }
 });
 
+onMessage('agentRetryStatus', (msg) => {
+  if (isActive(msg)) renderRetryStatus(msg.message);
+});
+
 onMessage('agentDone', (msg) => {
   if (!isActive(msg)) return;
-  Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
+  clearBusyFor(msg);
+  const sid = msg.sessionId || state.activeSessionId;
+  Object.keys(state.agentBubbles).forEach(id => {
+    const a = state.agentBubbles[id];
+    if (a && a.text) {
+      saveMsg({ type: 'agent', agentId: id, text: a.text }, sid);
+    }
+    finishAgent(id);
+  });
   state.agentBubbles = {};
   state.activeAgentId = null;
+  clearStatus();
 });
 
 // --- Agent panel events (global) ---
@@ -324,9 +374,21 @@ onMessage('agentList', (msg) => {
   renderAgentList();
 });
 
-onMessage('agentConfig', (msg) => showAgentModal(msg.name, msg.yaml || '', msg.systemMd || ''));
+onMessage('agentConfig', (msg) => showAgentModal(msg.name, msg.configJson || '', msg.systemMd || ''));
 onMessage('agentCreated', () => sendWs({ type: 'listAgents' }));
 onMessage('agentUpdated', () => sendWs({ type: 'listAgents' }));
+
+// --- Server config ---
+onMessage('serverConfig', (msg) => {
+  if (msg.streamTimeoutMs) state.streamTimeoutMs = msg.streamTimeoutMs;
+  if (msg.version) state.serverVersion = msg.version;
+  if (msg.policy) state.currentPolicy = msg.policy;
+  if (msg.thinking) {
+    state.serverThinking = msg.thinking;
+    state.thinkingMode = msg.thinking;
+    try { localStorage.setItem('nebflow_thinking', JSON.stringify(msg.thinking)); } catch(e) {}
+  }
+});
 
 onMessage('configData', (msg) => {
   state.configText = msg.config || '';
@@ -336,6 +398,25 @@ onMessage('configData', (msg) => {
 
 onMessage('configUpdated', (msg) => {
   if (!msg.success) renderError('Config update failed');
+});
+
+// --- Retry / fallback status ---
+onMessage('retryStatus', (msg) => {
+  if (isActive(msg)) renderRetryStatus(msg.message);
+});
+
+// --- Session busy state (backend authority) ---
+onMessage('sessionBusy', (msg) => {
+  if (isActive(msg)) {
+    if (msg.busy) setBusy(msg.sessionId);
+    else setBusy(null);
+  }
+});
+
+// --- Task list ---
+onMessage('taskListUpdate', (msg) => {
+  if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
+  if (isActive(msg)) renderTaskList(msg.tasks);
 });
 
 // ---------- 4. Cross-module wiring ----------

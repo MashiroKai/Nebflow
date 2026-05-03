@@ -61,3 +61,31 @@
 ALL CHECKS PASSED. Code is ready for merge.
 
 Signed-off-by: Claude Code Review
+[Nebflow QC] Merge to main detected at 2026-04-29 18:03:44
+[Nebflow QC] Launching automated quality review...
+The `gh pr list` command requires your approval to run. Could you approve it so I can fetch the open PRs? Alternatively, please provide a PR number if you already know which one you'd like me to review.
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.
+[Nebflow QC] Merge to main detected at 2026-04-29 21:55:23
+[Nebflow QC] Launching automated quality review...
+I need permission to run `gh pr list`. Could you approve the command, or alternatively, tell me which PR number you'd like me to review? You can also share a PR URL.
+
+If there are no open PRs yet and you'd like me to review **uncommitted changes** instead, I can do that too — let me know!
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.
+[Nebflow QC] Merge to main detected at 2026-05-01 10:32:56
+[Nebflow QC] Launching automated quality review...
+I'm unable to run `gh pr list` — it keeps requiring approval that isn't being granted. Could you either:
+
+1. **Approve the `gh pr list` command** when prompted, or
+2. **Provide a PR number** directly so I can proceed with the review
+
+Alternatively, if you'd like me to review the current uncommitted/staged changes instead of a PR, let me know and I can do that with `git diff`.
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.
+[Nebflow QC] Merge to main detected at 2026-05-02 15:17:34
+[Nebflow QC] Launching automated quality review...
+It looks like `gh` commands require explicit approval in your permission settings. Could you either:
+
+1. **Approve the `gh` commands** so I can list open PRs, or
+2. **Tell me the PR number** you'd like me to review?
+
+Alternatively, if you'd like me to review the **latest commit** (`fd7507c` — multi-agent system, context compact, code quality review fixes) instead of a PR, I can do that by examining the diff directly with `git`.
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.

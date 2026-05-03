@@ -13,10 +13,12 @@ object GlobTool extends Tool:
 
   val name = "Glob"
 
-  val description = """- Fast file pattern matching tool that works with any codebase size
+  val description = """Fast file pattern matching tool that works with any codebase size.
+
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 - Returns matching file paths sorted by modification time
-- Use this tool when you need to quickly find files by name patterns"""
+- Use this tool when you need to quickly find files by name patterns
+- ALWAYS use Glob (not Bash with find/ls) to find files by name"""
 
   val inputSchema = JsonObject.fromIterable(
     List(
