@@ -179,6 +179,10 @@ export function addFileAttachment(file, callback) {
 
 // ---------- Send ----------
 export function send() {
+  if (state.isSending) {
+    console.warn('[send] blocked: already sending');
+    return;
+  }
   const input = state.dom.input;
   const text = input.value.trim();
   const isBusy = state.busySessionId !== null && state.busySessionId === state.activeSessionId;
@@ -190,8 +194,11 @@ export function send() {
     console.warn('[send] ws not open:', { ws: !!state.ws, readyState: state.ws?.readyState });
     return;
   }
+  state.isSending = true;
   if (handleSlash(text)) {
     input.value = '';
+    // Debounce: keep lock briefly to prevent accidental double-trigger of slash commands
+    setTimeout(() => { state.isSending = false; }, 300);
     return;
   }
   renderUserBubble(text, state.pendingAttachments);
@@ -221,20 +228,22 @@ export function send() {
   state.pendingAttachments = [];
   state.dom.attPreview.innerHTML = '';
   setBusy(state.activeSessionId);
+  // Release send lock after a short debounce to prevent double-click / rapid Enter
+  setTimeout(() => { state.isSending = false; }, 300);
   state.currentAiBubble = null;
   state.aiText = '';
-  // Safety timeout: backend has 300s timeout and sends 'timeout' event.
-  // This is a last-resort fallback in case backend event never arrives.
+  // Safety timeout: backend sends 'timeout' event, but this is a last-resort fallback
+  // in case the backend event never arrives. Uses streamTimeoutMs from server config (+ 30s buffer).
   clearTimeout(state.busyTimeoutId);
   state.busyTimeoutId = setTimeout(() => {
     if (state.busySessionId === state.activeSessionId) {
-      import('./chat.js').then(({ renderError, clearStatus }) => {
-        renderError('Response timed out');
+      import('./chat.js').then(({ renderTimeoutNotice, clearStatus }) => {
+        renderTimeoutNotice();
         setBusy(null);
         clearStatus();
       });
     }
-  }, 330000);
+  }, state.streamTimeoutMs + 30000);
 }
 
 // ---------- Wire up /new to session module (called from main.js) ----------
@@ -262,19 +271,10 @@ export function initInput() {
   // Send button
   sendBtn.onclick = send;
 
-  // Stop button — immediately reset UI, then send interrupt
+  // Stop button — send interrupt, wait for backend confirmation to reset UI
   stopBtn.onclick = () => {
     sendWs({content: '__interrupt__'});
-    // Reset UI immediately without waiting for backend confirmation
     clearTimeout(state.busyTimeoutId);
-    if (state.currentToolCard) { state.currentToolCard.remove(); state.currentToolCard = null; }
-    state.aiText = '';
-    state.currentAiBubble = null;
-    state.busySessionId = null;
-    input.disabled = false;
-    sendBtn.style.display = 'flex';
-    stopBtn.style.display = 'none';
-    input.focus();
   };
 
   // Composition start/end (IME)

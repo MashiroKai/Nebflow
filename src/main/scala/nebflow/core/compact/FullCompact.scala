@@ -8,17 +8,18 @@ import nebflow.shared.given
 object FullCompact:
 
   private val MaxCharsPerFile = 5000
-  private val MaxRestoreTokens = 50000   // ~200K chars
+  private val MaxRestoreTokens = 50000 // ~200K chars
 
-  /** Full compact: SubAgent generates summary + specifies files to restore, replaces all messages.
-    *
-    * @param messages     current message list
-    * @param llm          LLM handle
-    * @param config       compact config
-    * @param projectRoot  project root (for resolving relative paths)
-    * @return Right(compacted) — summary message + file restore message, or Left(errorMessage)
-    */
-  def compact(
+  /**
+   * Full compact: SubAgent generates summary + specifies files to restore, replaces all messages.
+   *
+   * @param messages     current message list
+   * @param llm          LLM handle
+   * @param config       compact config
+   * @param projectRoot  project root (for resolving relative paths)
+   * @return Right(compacted) — summary message + file restore message, or Left(errorMessage)
+   */
+  private[compact] def compact(
     messages: List[Message],
     llm: LlmHandle[IO],
     config: CompactConfig,
@@ -43,22 +44,37 @@ object FullCompact:
       for
         chunks <- llm.sendStream(request).compile.toList
         text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
-      yield
-        if text.isEmpty then Left("SubAgent returned empty response")
-        else
-          val (summaryText, filePaths) = extractFiles(text)
-
-          val summaryMessage = Message(MessageRole.User, Left(
-            s"<system-reminder>Context compaction completed. Compressed ${messages.size} messages.\n\n$summaryText</system-reminder>"
-          ))
-
-          val fileRestoreMessage = buildFileRestoreMessage(filePaths, projectRoot)
-          Right(List(summaryMessage) ++ fileRestoreMessage.toList)
+      yield parseResponse(text, messages, projectRoot)
   end compact
 
-  /** Extract <files> tag from SubAgent output.
-    * Returns (summary without files tag, file path list)
-    */
+  /**
+   * Parse LLM response text into a compacted message list.
+   * Extracts <files> tags and builds file restore messages.
+   */
+  def parseResponse(
+    text: String,
+    originalMessages: List[Message],
+    projectRoot: String = ""
+  ): Either[String, List[Message]] =
+    if text.isEmpty then Left("SubAgent returned empty response")
+    else
+      val (summaryText, filePaths) = extractFiles(text)
+
+      val summaryMessage = Message(
+        MessageRole.User,
+        Left(
+          s"<context-compact mode=\"full\">Compressed ${originalMessages.size} messages.\n\n$summaryText</context-compact>"
+        )
+      )
+
+      val fileRestoreMessage = buildFileRestoreMessage(filePaths, projectRoot)
+      Right(List(summaryMessage) ++ fileRestoreMessage.toList)
+  end parseResponse
+
+  /**
+   * Extract <files> tag from SubAgent output.
+   * Returns (summary without files tag, file path list)
+   */
   private def extractFiles(text: String): (String, List[String]) =
     val startTag = "<files>"
     val endTag = "</files>"
@@ -81,7 +97,7 @@ object FullCompact:
     if paths.isEmpty then None
     else
       val sb = new StringBuilder
-      sb.append("<system-reminder>Restored files after compaction:\n\n")
+      sb.append("<context-compact>Restored files after compaction:\n\n")
       var usedChars = 0
       for path <- paths if usedChars < MaxRestoreTokens * 4 do
         val resolved = if path.startsWith("/") then path else s"$projectRoot/$path"
@@ -93,7 +109,7 @@ object FullCompact:
             if usedChars + section.length <= MaxRestoreTokens * 4 then
               sb.append(section)
               usedChars += section.length
-      sb.append("</system-reminder>")
+      sb.append("</context-compact>")
       if usedChars == 0 then None
       else Some(Message(MessageRole.User, Left(sb.toString)))
 

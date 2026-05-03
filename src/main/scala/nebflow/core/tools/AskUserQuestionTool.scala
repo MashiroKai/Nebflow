@@ -12,11 +12,20 @@ object AskUserQuestionTool extends Tool:
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended.
 
-Usage:
-- Provide options for multiple-choice questions
-- Omit options entirely for open-ended questions (user gets a text input)
-- The UI always provides an "Other..." option so the user can type freely even for multiple-choice
-- Supports multiple questions in one call — ask everything you need at once"""
+Use `AskUserQuestion` when you need to pause and get clarification from the user before proceeding. Typical scenarios:
+
+1. **Ambiguous input** — the user's request is unclear or could lead to incorrect output.
+2. **Insufficient details** — the requirement is too vague and needs more context.
+3. **Technical or design decisions** — multiple valid approaches exist and you need the user to choose or confirm.
+4. **Missing information** — you need the user to provide files, credentials, preferences, or other data to continue.
+
+Guidelines:
+- Ask all related questions in a single tool call rather than making multiple sequential calls.
+- For multiple-choice questions, provide clear label values and optional description for each option.
+- For open-ended questions, omit options so the user gets a free-text input.
+- Do not use this tool for trivial confirmations you can decide yourself.
+- The UI always provides an "Other..." option so the user can type freely even for multiple-choice.
+- Supports multiple questions in one call — ask everything you need at once."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -88,22 +97,21 @@ Usage:
       }.toList
 
       // Open-ended questions (empty options) are allowed — UI shows a text input
-      ctx.replUi match
-        case Some(ui) =>
-          ui.askUser(items).map { answers =>
-            if answers.contains("__cancelled__") then Left(ToolError("User cancelled the question."))
-            else
-              Right(
-                answers.zipWithIndex
-                  .map { case (a, i) =>
-                    s"${i + 1}. ${items(i).question} -> $a"
-                  }
-                  .mkString("\n")
+      ctx.agentActorRef match
+        case Some(agentRef) =>
+          // TODO: Phase 1 AskUser wiring — send AskUser to agent actor and await response
+          // For now, instruct the agent to ask the user directly in its next response
+          IO.pure(
+            Left(
+              ToolError(
+                "AskUserQuestion requires async user response support (not yet wired). " +
+                  "Please ask the user directly in your natural language response instead."
               )
-          }
+            )
+          )
         case None =>
           IO.pure(
-            Left(ToolError("AskUserQuestion tool requires an interactive UI. Not available in non-interactive mode."))
+            Left(ToolError("AskUserQuestion tool requires an agent actor. Not available in non-interactive mode."))
           )
     end if
   end call

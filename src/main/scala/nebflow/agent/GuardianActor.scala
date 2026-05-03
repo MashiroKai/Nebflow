@@ -11,11 +11,13 @@ import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 object GuardianActor:
 
   def apply(resources: SharedResources): Behavior[GuardianCommand] =
-    Behaviors.supervise(
-      Behaviors.setup[GuardianCommand] { context =>
-        guardian(resources, Map.empty, context)
-      }
-    ).onFailure[Exception](org.apache.pekko.actor.typed.SupervisorStrategy.restart)
+    Behaviors
+      .supervise(
+        Behaviors.setup[GuardianCommand] { context =>
+          guardian(resources, Map.empty, context)
+        }
+      )
+      .onFailure[Exception](org.apache.pekko.actor.typed.SupervisorStrategy.restart)
 
   private def guardian(
     resources: SharedResources,
@@ -32,7 +34,10 @@ object GuardianActor:
         guardian(resources, sessions + (wsConnId -> session), ctx)
 
       case GuardianCommand.DestroySession(wsConnId) =>
-        sessions.get(wsConnId).foreach(ctx.stop)
+        sessions.get(wsConnId).foreach { ref =>
+          ref ! SessionCommand.Terminate()
+          ctx.stop(ref)
+        }
         guardian(resources, sessions - wsConnId, ctx)
 
       case SessionTerminated(wsConnId) =>

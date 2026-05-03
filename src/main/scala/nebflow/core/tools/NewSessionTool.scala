@@ -3,8 +3,6 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.agent.SessionCommand
-import nebflow.core.{AskItem, AskOption}
 import nebflow.shared.*
 
 object NewSessionTool extends Tool:
@@ -53,41 +51,14 @@ Parameters:
 
     if message.isEmpty then IO.pure(Left(ToolError("message is required — describe what the new session should do")))
     else
-      ctx.replUi match
-        case Some(ui) =>
-          val preview = if message.length > 80 then message.take(77) + "..." else message
-          val items = List(
-            AskItem(
-              s"Create new session \"$suggestedName\" with task:\n$preview",
-              List(
-                AskOption("Yes, create and start"),
-                AskOption("No, continue here")
-              ),
-              allowOther = false
-            )
-          )
-          ui.askUser(items).flatMap { answers =>
-            answers.headOption match
-              case Some(a) if a.startsWith("Yes") =>
-                (ctx.sessionStore, ctx.sessionActorRef) match
-                  case (Some(store), Some(actorRef)) =>
-                    for
-                      meta <- store.createSession(suggestedName)
-                      _ <- store.switchSession(meta.id)
-                      _ <- IO(actorRef ! SessionCommand.SendSessionList())
-                      _ <- IO(actorRef ! SessionCommand.UserMessage(message, List(ContentBlock.Text(message))))
-                    yield Right(s"New session \"$suggestedName\" created and started.")
-                  case (Some(store), None) =>
-                    store.createSession(suggestedName).map { _ =>
-                      Right(s"New session \"$suggestedName\" created. Tell the user to switch to it via sidebar.")
-                    }
-                  case _ =>
-                    IO.pure(Left(ToolError("Session storage not available.")))
-              case _ =>
-                IO.pure(Right("User chose to continue in the current session."))
-          }
+      ctx.sessionStore match
+        case Some(store) =>
+          for
+            meta <- store.createSession(suggestedName)
+            _ <- store.switchSession(meta.id)
+          yield Right(s"New session \"$suggestedName\" created and switched to.")
         case None =>
-          IO.pure(Left(ToolError("NewSession tool requires interactive UI.")))
+          IO.pure(Left(ToolError("Session storage not available.")))
     end if
   end call
 end NewSessionTool

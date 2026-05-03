@@ -1,20 +1,22 @@
 package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
-import io.circe.JsonObject
+import io.circe.{Json, JsonObject}
+import nebflow.core.task.TaskStore
 import nebflow.shared.*
 
 /** 工具执行上下文 */
 case class ToolContext(
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
-  replUi: Option[nebflow.core.ReplUi] = None,
-  messagesRef: Option[Ref[IO, List[Message]]] = None,
+  // Access constraint: sessionStore is a persistence layer — tools should not modify
+  // messages directly. Only session-management tools (e.g. NewSessionTool) may use it.
   sessionStore: Option[nebflow.gateway.SessionStore] = None,
-  usageRef: Option[Ref[IO, Option[TokenUsage]]] = None,
-  inspectMappingRef: Option[Ref[IO, Option[List[Int]]]] = None,
-  sessionActorRef: Option[org.apache.pekko.actor.typed.ActorRef[nebflow.agent.SessionCommand]] = None,
-  contextWindow: Int = Defaults.ContextWindow
+  agentActorRef: Option[org.apache.pekko.actor.typed.ActorRef[nebflow.agent.AgentCommand]] = None,
+  contextWindow: Int = Defaults.ContextWindow,
+  sessionId: Option[String] = None,
+  taskStore: Option[TaskStore] = None,
+  wsSend: Option[Json => IO[Unit]] = None
 )
 
 /** 工具错误 */
