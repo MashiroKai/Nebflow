@@ -89,3 +89,7 @@ It looks like `gh` commands require explicit approval in your permission setting
 
 Alternatively, if you'd like me to review the **latest commit** (`fd7507c` — multi-agent system, context compact, code quality review fixes) instead of a PR, I can do that by examining the diff directly with `git`.
 [Nebflow QC] Review complete. See .nebflow-qc.log for details.
+[Nebflow QC] Merge to main detected at 2026-05-03 16:21:54
+[Nebflow QC] Launching automated quality review...
+No PR number was provided. Could you share the PR number to review, or approve `gh pr list` to see open PRs?
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.

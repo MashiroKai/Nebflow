@@ -9,9 +9,11 @@ import nebflow.core.mcp.*
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
+import nebflow.service.{AgentService, ConfigService, SessionService}
 import nebflow.shared.*
 import nebflow.skill.*
 import org.apache.pekko.actor.typed.ActorSystem
+import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 
@@ -104,7 +106,10 @@ object GatewayMain extends IOApp.Simple:
                                     askSemaphore = askSemaphore,
                                     taskStore = FileTaskStore
                                   )
-                                  val actorSystem = ActorSystem(GuardianActor(sharedResources), "nebflow-guardian")
+                                  val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
+                                  val sessionService = new SessionService(sessionStore)
+                                  val agentService = new AgentService(agentLibrary)
+                                  val configService = ConfigService
 
                                   EmberServerBuilder
                                     .default[IO]
@@ -114,18 +119,21 @@ object GatewayMain extends IOApp.Simple:
                                     .withHttpWebSocketApp { wsb =>
                                       val wsRoutes = new WebSocketRoutes(
                                         wsb,
-                                        handle,
-                                        sessionStore,
+                                        sessionService,
+                                        agentService,
+                                        configService,
                                         thinkingModeRef,
                                         permState,
                                         rateLimiter,
                                         token,
                                         fileTracker,
                                         reminderStateRef,
+                                        sessionStore,
                                         contextWindow,
                                         skillDiscoveryOpt,
                                         actorSystem,
-                                        dispatcher
+                                        dispatcher,
+                                        sharedResources
                                       )
                                       Router(
                                         "/api" -> chatRoutes.routes,
