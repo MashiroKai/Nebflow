@@ -21,7 +21,11 @@ object SessionActor:
     agentStates: Map[String, AgentSessionState] = Map.empty
   )
 
-  def apply(wsConnId: String, resources: SharedResources): Behavior[SessionCommand] =
+  def apply(
+    wsConnId: String,
+    resources: SharedResources,
+    wsSend: io.circe.Json => IO[Unit]
+  ): Behavior[SessionCommand] =
     Behaviors
       .supervise(
         Behaviors.setup[SessionCommand] { context =>
@@ -31,7 +35,7 @@ object SessionActor:
             case AgentEvent.Failed(sessionId, error) =>
               SessionCommand.AgentTurnFailed(sessionId, error)
           }
-          active(resources, wsConnId, SessionData(), context, replyAdapter)
+          active(resources, wsSend, wsConnId, SessionData(), context, replyAdapter)
         }
       )
       .onFailure[Exception](
@@ -40,6 +44,7 @@ object SessionActor:
 
   private def active(
     resources: SharedResources,
+    wsSend: io.circe.Json => IO[Unit],
     wsConnId: String,
     data: SessionData,
     ctx: org.apache.pekko.actor.typed.scaladsl.ActorContext[SessionCommand],
@@ -54,14 +59,14 @@ object SessionActor:
 
         val agentIo = resources.sessionStore.getActiveId.flatMap { sessionId =>
           if data.agentStates.contains(sessionId) then
-            resources.wsSend(
+            wsSend(
               io.circe.Json.obj(
                 "type" -> "error".asJson,
                 "message" -> "A response is already being generated for this session".asJson,
                 "sessionId" -> sessionId.asJson
               )
             ) *>
-              resources.wsSend(
+              wsSend(
                 io.circe.Json.obj(
                   "type" -> "sessionBusy".asJson,
                   "sessionId" -> sessionId.asJson,
@@ -101,6 +106,7 @@ object SessionActor:
           AgentActor(
             agentDef,
             resources,
+            wsSend,
             depth = 0,
             parentRef = None,
             sessionId = Some(sessionId),
@@ -112,6 +118,7 @@ object SessionActor:
         agentRef ! AgentCommand.UserInput(text, Some(adapter))
         active(
           resources,
+          wsSend,
           wsConnId,
           data.copy(agentStates = data.agentStates + (sessionId -> AgentSessionState(agentRef))),
           ctx,
@@ -126,7 +133,7 @@ object SessionActor:
           yield ()
         )
         resources.dispatcher.unsafeRunAndForget(
-          resources.wsSend(
+          wsSend(
             io.circe.Json.obj(
               "type" -> "sessionBusy".asJson,
               "sessionId" -> sessionId.asJson,
@@ -134,17 +141,17 @@ object SessionActor:
             )
           )
         )
-        active(resources, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+        active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
 
       case SessionCommand.AgentTurnFailed(sessionId, error) =>
         resources.dispatcher.unsafeRunAndForget(
-          resources.wsSend(
+          wsSend(
             io.circe.Json.obj(
               "type" -> "error".asJson,
               "message" -> error.message.asJson,
               "sessionId" -> sessionId.asJson
             )
-          ) *> resources.wsSend(
+          ) *> wsSend(
             io.circe.Json.obj(
               "type" -> "sessionBusy".asJson,
               "sessionId" -> sessionId.asJson,
@@ -152,7 +159,7 @@ object SessionActor:
             )
           )
         )
-        active(resources, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+        active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
 
       case SessionCommand.Terminate() =>
         data.agentStates.values.foreach(_.agentRef ! AgentCommand.Stop("session closing"))
@@ -163,9 +170,9 @@ object SessionActor:
           case Some(agentState) =>
             agentState.agentRef ! AgentCommand.Interrupt()
             resources.dispatcher.unsafeRunAndForget(
-              resources.wsSend(
+              wsSend(
                 io.circe.Json.obj("type" -> "interrupted".asJson, "sessionId" -> sessionId.asJson)
-              ) *> resources.wsSend(
+              ) *> wsSend(
                 io.circe.Json.obj(
                   "type" -> "sessionBusy".asJson,
                   "sessionId" -> sessionId.asJson,
@@ -173,13 +180,13 @@ object SessionActor:
                 )
               )
             )
-            active(resources, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+            active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
           case None => Behaviors.same
 
       case SessionCommand.AgentTerminated(sessionId) =>
         if data.agentStates.contains(sessionId) then
           resources.dispatcher.unsafeRunAndForget(
-            resources.wsSend(
+            wsSend(
               io.circe.Json.obj(
                 "type" -> "sessionBusy".asJson,
                 "sessionId" -> sessionId.asJson,
@@ -187,7 +194,7 @@ object SessionActor:
               )
             )
           )
-          active(resources, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+          active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
         else Behaviors.same
 
       case SessionCommand.AskUserResponse(_, answers) =>

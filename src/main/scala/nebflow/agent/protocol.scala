@@ -266,7 +266,8 @@ case class AgentState(
   pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
   recentToolCalls: List[ToolCallRecord] = Nil,
-  turnIdx: Int = 0
+  turnIdx: Int = 0,
+  wsSend: io.circe.Json => IO[Unit] = _ => IO.unit
 )
 
 // ============================================================

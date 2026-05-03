@@ -94,7 +94,6 @@ object GatewayMain extends IOApp.Simple:
                                     dispatcher = dispatcher,
                                     sessionStore = sessionStore,
                                     projectRoot = os.pwd,
-                                    wsSend = _ => IO.unit,
                                     thinkingModeRef = thinkingModeRef,
                                     permState = permState,
                                     rateLimiter = rateLimiter,

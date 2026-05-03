@@ -45,6 +45,7 @@ object AgentActor:
   def apply(
     agentDef: AgentDef,
     resources: SharedResources,
+    wsSend: io.circe.Json => IO[Unit],
     depth: Int,
     parentRef: Option[ActorRef[AgentCommand]] = None,
     sessionId: Option[String] = None,
@@ -78,7 +79,8 @@ object AgentActor:
                 pendingManualCompaction = None,
                 latestUsage = None,
                 pendingAskUser = None,
-                pendingPermission = None
+                pendingPermission = None,
+                wsSend = wsSend
               ),
               stash,
               context
@@ -164,7 +166,7 @@ object AgentActor:
           AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
         parentRef match
           case Some(p) => p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(agentError))
-          case None => emitStream(resources, ctx, AgentStreamEvent.Done, isSubagent = false, state.sessionId)
+          case None => emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.Done, isSubagent = false, state.sessionId)
         replyTo.foreach(_ ! AgentEvent.Failed(state.sessionId.getOrElse(""), agentError))
         stash.unstashAll(
           idle(
@@ -206,7 +208,7 @@ object AgentActor:
 
       // --- Subagent stream forwarding ---
       case AgentCommand.SubagentStreamEvent(subId, event) =>
-        emitStream(resources, ctx, event)
+        emitStream(resources.dispatcher, state.wsSend, ctx, event)
         Behaviors.same
 
       // --- Subagent returned result ---
@@ -299,7 +301,7 @@ object AgentActor:
           case _ =>
             // Regular subagent result
             state.subagents.get(subId).foreach(ctx.unwatch)
-            emitStream(resources, ctx, AgentStreamEvent.AgentEnd(subId))
+            emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.AgentEnd(subId))
             val resultText = result match
               case Right(text) => s"[Subagent $subId completed]: $text"
               case Left(err) => s"[Subagent $subId failed]: ${err.message}"
@@ -349,7 +351,7 @@ object AgentActor:
         state.subagents.values.foreach(_ ! AgentCommand.Interrupt())
         state.pendingAskUser.foreach(d => resources.dispatcher.unsafeRunAndForget(d.complete(Nil)))
         state.pendingPermission.foreach(d => resources.dispatcher.unsafeRunAndForget(d.complete(false)))
-        emitStream(resources, ctx, AgentStreamEvent.Done)
+        emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.Done)
         stash.unstashAll(
           idle(
             agentDef,
@@ -392,7 +394,7 @@ object AgentActor:
                   s"subId=$subId subName=${subDef.name} mode=${pending.mode} msgs=${state.messages.size}"
                 )
                 val subActor = ctx.spawn(
-                  AgentActor(subDef, resources, depth + 1, Some(ctx.self)),
+                  AgentActor(subDef, resources, state.wsSend, depth + 1, Some(ctx.self)),
                   subId
                 )
                 ctx.watchWith(
@@ -411,7 +413,7 @@ object AgentActor:
                   )
                 )
                 subActor ! AgentCommand.UserInput(messagesJson, None)
-                emitStream(resources, ctx, AgentStreamEvent.AgentStart(subDef.name, subDef.description))
+                emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.AgentStart(subDef.name, subDef.description))
                 val newState = state.copy(subagents = state.subagents + (subId -> subActor))
                 processing(agentDef, resources, depth, parentRef, newState, stash, ctx)
               case None =>
@@ -465,7 +467,7 @@ object AgentActor:
               s"subId=$subId subName=${subDef.name} task=${task.take(40)}"
             )
             val subActor = ctx.spawn(
-              AgentActor(subDef, resources, subDepth, Some(ctx.self)),
+              AgentActor(subDef, resources, state.wsSend, subDepth, Some(ctx.self)),
               subId
             )
             ctx.watchWith(
@@ -478,12 +480,13 @@ object AgentActor:
               )
             )
             subActor ! AgentCommand.UserInput(task, None)
-            emitStream(resources, ctx, AgentStreamEvent.AgentStart(subDef.name, subDef.description))
+            emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.AgentStart(subDef.name, subDef.description))
             val newState = state.copy(subagents = state.subagents + (subId -> subActor))
             processing(agentDef, resources, depth, parentRef, newState, stash, ctx)
           case None =>
             emitStream(
-              resources,
+              resources.dispatcher,
+              state.wsSend,
               ctx,
               AgentStreamEvent.ToolEnd(
                 s"Delegate($agentName)",
@@ -581,7 +584,7 @@ object AgentActor:
     maybeAutoCompact(agentDef, resources, depth, parentRef, state, stash, ctx, replyTo) match
       case Some(behavior) => behavior
       case None =>
-        emitStream(resources, ctx, AgentStreamEvent.AgentStart(agentDef.name, agentDef.description))
+        emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.AgentStart(agentDef.name, agentDef.description))
 
         val systemPrompt = buildSystemPrompt(agentDef, resources)
         val tools = buildToolList(agentDef, depth, parentRef.isDefined)
@@ -601,11 +604,11 @@ object AgentActor:
           val msg = attempt.message.getOrElse(
             s"${attempt.providerId}/${attempt.model} failed, retrying..."
           )
-          emitStreamIO(resources, ctx, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
+          emitStreamIO(state.wsSend, ctx, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
 
         val io = resources.llm
           .sendStream(request, onAttempt = Some(onAttemptCb))
-          .through(streamEmitter(resources, ctx, isSubagent, sessionIdOpt))
+          .through(streamEmitter(state.wsSend, ctx, isSubagent, sessionIdOpt))
           .compile
           .toList
           .map(aggregateChunks)
@@ -679,7 +682,7 @@ object AgentActor:
 
     val io = freshCalls
       .traverse { call =>
-        emitStreamIO(resources, ctx, AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)), isSubagent, sessionIdOpt) *>
+        emitStreamIO(state.wsSend, ctx, AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)), isSubagent, sessionIdOpt) *>
           (call.name match
             case "delegate" =>
               handleDelegate(call, agentDef, resources, depth, parentRef, state, ctx)
@@ -735,7 +738,7 @@ object AgentActor:
                     })
                   )
                   for
-                    _ <- resources.wsSend(askJson)
+                    _ <- state.wsSend(askJson)
                     _ <- resources.askSemaphore.acquire
                     answers <- deferred.get
                     _ <- resources.askSemaphore.release
@@ -756,7 +759,7 @@ object AgentActor:
                     agentDef.contextWindow,
                     sessionId = Some(ctx.self.path.name),
                     taskStore = Some(resources.taskStore),
-                    wsSend = Some(resources.wsSend)
+                    wsSend = Some(state.wsSend)
                   )
                 case ToolRisk.NeedsApproval =>
                   resources.permState.shouldApprove(call.name).flatMap {
@@ -773,7 +776,7 @@ object AgentActor:
                         agentDef.contextWindow,
                         sessionId = Some(ctx.self.path.name),
                         taskStore = Some(resources.taskStore),
-                        wsSend = Some(resources.wsSend)
+                        wsSend = Some(state.wsSend)
                       )
                     case ApprovalDecision.Blocked(reason) =>
                       IO.pure(
@@ -801,7 +804,7 @@ object AgentActor:
                           "input" -> call.input.asJson
                         )
                         for
-                          _ <- resources.wsSend(permJson)
+                          _ <- state.wsSend(permJson)
                           approved <- deferred.get
                           result <-
                             if approved then
@@ -817,7 +820,7 @@ object AgentActor:
                                 agentDef.contextWindow,
                                 sessionId = Some(ctx.self.path.name),
                                 taskStore = Some(resources.taskStore),
-                                wsSend = Some(resources.wsSend)
+                                wsSend = Some(state.wsSend)
                               )
                             else IO.pure(ToolExecResult("Permission denied by user", isError = true))
                         yield result
@@ -831,7 +834,7 @@ object AgentActor:
             .flatTap { (call, r) =>
               val summary = summarizeToolResult(call, r.content)
               emitStreamIO(
-                resources,
+                state.wsSend,
                 ctx,
                 AgentStreamEvent.ToolEnd(
                   nebflow.core.summarizeToolCall(call),
@@ -954,7 +957,7 @@ object AgentActor:
     replyTo: Option[ActorRef[AgentEvent]],
     thinking: Option[String] = None
   ): Behavior[AgentCommand] =
-    emitStream(resources, ctx, AgentStreamEvent.Done, isSubagent = parentRef.isDefined, state.sessionId)
+    emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.Done, isSubagent = parentRef.isDefined, state.sessionId)
     parentRef match
       case Some(parent) =>
         parent ! AgentCommand.DelegateResult(ctx.self.path.name, Right(text))
@@ -1002,28 +1005,29 @@ object AgentActor:
   // ============================================================
 
   private def emitStream(
-    resources: SharedResources,
+    dispatcher: cats.effect.std.Dispatcher[IO],
+    wsSend: io.circe.Json => IO[Unit],
     ctx: ActorContext[?],
     event: AgentStreamEvent,
     isSubagent: Boolean = true,
     sessionId: Option[String] = None
   ): Unit =
-    resources.dispatcher.unsafeRunAndForget(
-      resources.wsSend(event.toJson(ctx.self.path.name, isSubagent, sessionId))
+    dispatcher.unsafeRunAndForget(
+      wsSend(event.toJson(ctx.self.path.name, isSubagent, sessionId))
     )
 
   private def emitStreamIO(
-    resources: SharedResources,
+    wsSend: io.circe.Json => IO[Unit],
     ctx: ActorContext[?],
     event: AgentStreamEvent,
     isSubagent: Boolean = true,
     sessionId: Option[String] = None
   ): IO[Unit] =
-    resources.wsSend(event.toJson(ctx.self.path.name, isSubagent, sessionId))
+    wsSend(event.toJson(ctx.self.path.name, isSubagent, sessionId))
 
   /** Emit streaming events as chunks arrive. */
   private def streamEmitter(
-    resources: SharedResources,
+    wsSend: io.circe.Json => IO[Unit],
     ctx: ActorContext[AgentCommand],
     isSubagent: Boolean = true,
     sessionId: Option[String] = None
@@ -1035,19 +1039,19 @@ object AgentActor:
             AgentStreamEvent.TextDelta(delta).toJson(ctx.self.path.name, true, None)
           else
             Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
-          resources.wsSend(json)
+          wsSend(json)
         case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty =>
           val json = if isSubagent then
             AgentStreamEvent.Thinking.toJson(ctx.self.path.name, true, None)
           else
             Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
-          resources.wsSend(json)
+          wsSend(json)
         case StreamChunk.ToolCallChunk(tc) =>
           val json = if isSubagent then
             AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(tc)).toJson(ctx.self.path.name, true, None)
           else
             Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> nebflow.core.summarizeToolCall(tc).asJson)
-          resources.wsSend(json)
+          wsSend(json)
         case _ => IO.unit
       }
 
