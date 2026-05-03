@@ -159,6 +159,10 @@
   border: 1.5px solid;
   margin-bottom: 4px;
   font-family: ui-monospace, SFMono-Regular, monospace;
+  max-width: 160px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .agent-row .bubble.ai {
   margin-top: 0;
@@ -238,8 +242,9 @@
 .option-box {
   margin-top: 6px;
   padding: 8px;
-  background: rgba(0,0,0,0.03);
+  background: rgba(0,0,0,0.06);
   border-radius: 10px;
+  border: 1px solid var(--color-border);
 }
 .option-q {
   font-size: 13px;
@@ -372,3 +377,25 @@
 }
 #status-wrap.on { opacity: 1; }
 #lottie-spinner { width: 20px; height: 20px; }
+
+/* ---------- Retry status ---------- */
+.retry-status {
+  position: sticky;
+  top: 8px;
+  background: #fff3cd;
+  color: #856404;
+  padding: 6px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+  margin-bottom: 10px;
+  z-index: 20;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+
+/* dark theme */
+@media (prefers-color-scheme: dark) {
+  .retry-status {
+    background: #3d3418;
+    color: #ffd54f;
+  }
+}

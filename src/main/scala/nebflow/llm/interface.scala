@@ -44,7 +44,8 @@ object LlmInterface:
                           req.thinking
                         )
                       )
-                    )
+                    ),
+                onAttempt = None
               )
               .flatMap { result =>
                 val durationMs = System.currentTimeMillis() - start
@@ -80,7 +81,10 @@ object LlmInterface:
           }
         end send
 
-        def sendStream(req: LlmRequest): fs2.Stream[IO, StreamChunk] =
+        def sendStream(
+          req: LlmRequest,
+          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        ): fs2.Stream[IO, StreamChunk] =
           fs2.Stream.eval(sessionOverrides.get).flatMap { overrides =>
             val candidates = overrides.get(req.sessionId).toList ++ registry
               .getCandidates()
@@ -157,6 +161,7 @@ object LlmInterface:
                                 maxRetries - retriesLeft,
                                 java.time.Instant.now().toString
                               )
+                              val notify = onAttempt.traverse_(_.apply(attempt))
 
                               if classification.permanence == ErrorPermanence.Permanent then
                                 fs2.Stream.eval(
@@ -164,12 +169,13 @@ object LlmInterface:
                                     s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
                                   )
                                     *> failureRef.update(_ :+ attempt)
+                                    *> notify
                                 ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                               else if retriesLeft > 0 then
                                 val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
                                 val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
                                 fs2.Stream.eval(
-                                  logger.warn(
+                                  notify *> logger.warn(
                                     s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
                                   ) *> IO.sleep(delay.millis)
                                 ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
@@ -179,7 +185,9 @@ object LlmInterface:
                                     s"Stream fallback: ${candidate.providerId}/${candidate.model} retries exhausted"
                                   )
                                     *> failureRef.update(_ :+ attempt)
+                                    *> notify
                                 ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                              end if
                           }
                         }
 

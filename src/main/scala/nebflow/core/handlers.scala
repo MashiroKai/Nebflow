@@ -7,30 +7,19 @@ import nebflow.shared.*
 
 case class ToolExecResult(content: String, isError: Boolean = false)
 
-/** Check if a file-editing tool targets a path outside the project root. */
-private def isOutsideProject(call: ToolCall, projectRoot: String): IO[Boolean] =
-  if call.name == "Write" || call.name == "Edit" then
-    val filePathStr = call.input("file_path").flatMap(_.asString).getOrElse("")
-    val resolved =
-      if filePathStr.startsWith("/") then filePathStr
-      else s"$projectRoot/$filePathStr"
-    PathSandbox.isAllowed(resolved, projectRoot).map(!_)
-  else IO.pure(false)
-
 def executeTool(
   call: ToolCall,
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
-  replUi: Option[nebflow.core.ReplUi] = None,
   permState: Option[PermissionState] = None,
-  messagesRef: Option[Ref[IO, List[Message]]] = None,
   fileChangeTracker: Option[FileChangeTracker] = None,
   sessionStore: Option[nebflow.gateway.SessionStore] = None,
-  usageRef: Option[Ref[IO, Option[TokenUsage]]] = None,
   sessionTag: Option[String] = None,
-  inspectMappingRef: Option[Ref[IO, Option[List[Int]]]] = None,
-  sessionActorRef: Option[org.apache.pekko.actor.typed.ActorRef[nebflow.agent.SessionCommand]] = None,
-  contextWindow: Int = Defaults.ContextWindow
+  agentActorRef: Option[org.apache.pekko.actor.typed.ActorRef[nebflow.agent.AgentCommand]] = None,
+  contextWindow: Int = Defaults.ContextWindow,
+  sessionId: Option[String] = None,
+  taskStore: Option[nebflow.core.task.TaskStore] = None,
+  wsSend: Option[io.circe.Json => IO[Unit]] = None
 ): IO[ToolExecResult] =
   val logger = NebflowLogger.forName("nebflow.handlers")
 
@@ -39,55 +28,15 @@ def executeTool(
       val summary = tool.summarize(call.input)
       val risk = ToolRisk.classify(call.name)
 
-      // Permission check: Write/Edit inside project → auto-approve (unless blocked)
-      val approvalIO: IO[ApprovalDecision] = (risk, permState, replUi) match
-        case (ToolRisk.Safe, _, _) => IO.pure(ApprovalDecision.Approved)
-        case (ToolRisk.NeedsApproval, _, _) if call.name == "Write" || call.name == "Edit" =>
-          // Check blockedTools first, even for in-project writes
-          permState match
-            case Some(ps) =>
-              ps.shouldApprove(call.name).flatMap {
-                case ApprovalDecision.Blocked(reason) => IO.pure(ApprovalDecision.Blocked(reason))
-                case ApprovalDecision.Approved => IO.pure(ApprovalDecision.Approved)
-                case ApprovalDecision.NeedsUserApproval =>
-                  isOutsideProject(call, projectRoot).flatMap {
-                    case false => IO.pure(ApprovalDecision.Approved) // in-project auto-approve
-                    case true =>
-                      replUi match
-                        case Some(ui) =>
-                          val inputJson = io.circe.Json.fromJsonObject(call.input).noSpaces
-                          ui.askPermission(call.name, summary, inputJson).flatMap {
-                            case true =>
-                              ps.recordApproval(call.name) *> logger
-                                .info(s"User approved: $summary") *> IO.pure(ApprovalDecision.Approved)
-                            case false =>
-                              logger.info(s"User denied: $summary") *> IO.pure(
-                                ApprovalDecision.Blocked("User denied permission")
-                              )
-                          }
-                        case None => IO.pure(ApprovalDecision.Approved)
-                  }
-              }
-            case None =>
-              isOutsideProject(call, projectRoot).flatMap {
-                case false => IO.pure(ApprovalDecision.Approved)
-                case true => IO.pure(ApprovalDecision.Approved) // no permission system = auto-approve
-              }
-        case (ToolRisk.NeedsApproval, Some(ps), Some(ui)) =>
-          ps.shouldApprove(call.name).flatMap {
-            case ApprovalDecision.Approved => IO.pure(ApprovalDecision.Approved)
-            case ApprovalDecision.Blocked(reason) => IO.pure(ApprovalDecision.Blocked(reason))
-            case ApprovalDecision.NeedsUserApproval =>
-              val inputJson = io.circe.Json.fromJsonObject(call.input).noSpaces
-              ui.askPermission(call.name, summary, inputJson).flatMap {
-                case true =>
-                  ps.recordApproval(call.name) *> logger
-                    .info(s"User approved: $summary") *> IO.pure(ApprovalDecision.Approved)
-                case false =>
-                  logger.info(s"User denied: $summary") *> IO.pure(ApprovalDecision.Blocked("User denied permission"))
-              }
+      // Permission check: blocked by policy, otherwise auto-approve
+      val approvalIO: IO[ApprovalDecision] = (risk, permState) match
+        case (ToolRisk.Safe, _) => IO.pure(ApprovalDecision.Approved)
+        case (ToolRisk.NeedsApproval, Some(ps)) =>
+          ps.shouldApprove(call.name).map {
+            case ApprovalDecision.Blocked(reason) => ApprovalDecision.Blocked(reason)
+            case _ => ApprovalDecision.Approved
           }
-        case _ => IO.pure(ApprovalDecision.Approved) // no permission system = auto-approve
+        case _ => IO.pure(ApprovalDecision.Approved)
 
       approvalIO.flatMap {
         case ApprovalDecision.Blocked(reason) =>
@@ -97,13 +46,12 @@ def executeTool(
           val ctx = ToolContext(
             projectRoot,
             llm,
-            replUi,
-            messagesRef,
             sessionStore,
-            usageRef,
-            inspectMappingRef,
-            sessionActorRef,
-            contextWindow
+            agentActorRef,
+            contextWindow,
+            sessionId,
+            taskStore,
+            wsSend
           )
           val tag = sessionTag.map(t => s"[$t] ").getOrElse("")
           IO.delay(System.nanoTime()).flatMap { start =>
@@ -114,9 +62,9 @@ def executeTool(
                   case Left(err) => ToolExecResult(err.message, isError = true)
                   case Right(result) => ToolExecResult(result)
                 }
-                .handleError {
-                  case _: UserAbort => throw new UserAbort()
-                  case e => ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true)
+                .handleErrorWith {
+                  case _: UserAbort => IO.raiseError(new UserAbort())
+                  case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
                 }
                 .flatTap { result =>
                   val elapsed = (System.nanoTime() - start) / 1_000_000
@@ -134,7 +82,7 @@ def executeTool(
             }
           }
         case ApprovalDecision.NeedsUserApproval =>
-          // Should not reach here — handled above with ui.askPermission
+          // Should not reach here — all NeedsUserApproval are converted to Approved above
           IO.pure(ToolExecResult(s"Unexpected approval state for ${call.name}", isError = true))
       }
     case None =>

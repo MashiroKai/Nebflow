@@ -1,7 +1,7 @@
 // persistence.js — localStorage persistence module for Nebflow
 // Save, load, restore, and migrate chat messages.
 
-import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY } from './state.js';
+import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, formatDiff, buildToolDetail, attachToolClick, esc } from './utils.js';
 
 const MAX_MSGS_PER_SESSION = 200;
@@ -116,7 +116,7 @@ export function restoreFromStorage() {
       (m.attachments || []).forEach(att => {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
-        if (att.type === 'image' && att.preview) {
+        if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
           const img = document.createElement('img');
           img.src = att.preview;
           img.style.maxWidth = '180px';
@@ -190,6 +190,28 @@ export function restoreFromStorage() {
         box.appendChild(optsDiv);
       });
       bubble.appendChild(box);
+    } else if (m.type === 'agent') {
+      const row = document.createElement('div');
+      row.className = 'row ai agent-row';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+      if (m.agentId && m.agentId !== 'default') {
+        const badge = document.createElement('div');
+        badge.className = 'agent-badge';
+        const colorIdx = m.agentId.length % AGENT_PALETTE.length;
+        const color = AGENT_PALETTE[colorIdx];
+        badge.style.borderColor = color;
+        badge.style.color = color;
+        badge.textContent = m.agentId;
+        badge.style.maxWidth = '160px';
+        badge.style.whiteSpace = 'nowrap';
+        badge.style.overflow = 'hidden';
+        badge.style.textOverflow = 'ellipsis';
+        row.appendChild(badge);
+      }
+      row.appendChild(bubble);
+      chat.appendChild(row);
     } else if (m.type === 'error') {
       // Skip error messages on restore — they're transient
     } else if (m.type === 'system') {

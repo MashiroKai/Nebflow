@@ -44,9 +44,6 @@ class WebSocketRoutes(
       if Auth.validateToken(provided, token) then
         for
           outbound <- Queue.unbounded[IO, WebSocketFrame]
-          askSem <- Semaphore[IO](1)
-          permSem <- Semaphore[IO](1)
-          replUi = new WebReplUi(outbound, askSem, permSem)
           wsConnId = java.util.UUID.randomUUID().toString.take(8)
 
           // Per-connection wsSend that routes to this connection's outbound queue
@@ -59,7 +56,7 @@ class WebSocketRoutes(
 
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
             case WebSocketFrame.Text(text, _) =>
-              handleMessage(text, replUi, sessionRefOpt)
+              handleMessage(text, perConnWsSend, sessionRefOpt)
             case _ => IO.unit
           }.onFinalize(
             (sessionRefOpt match
@@ -70,6 +67,22 @@ class WebSocketRoutes(
 
           sendStream = Stream.fromQueueUnterminated(outbound)
           _ <- logger.info("WebSocket client connected")
+          // Send server config to frontend: timeout, version, current policy & thinking state
+          policy <- permState.policy
+          thinking <- thinkingModeRef.get
+          _ <- outbound.offer(
+            WebSocketFrame.Text(
+              io.circe.Json
+                .obj(
+                  "type" -> "serverConfig".asJson,
+                  "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
+                  "version" -> nebflow.Version.string.asJson,
+                  "policy" -> PermissionPolicy.toName(policy).asJson,
+                  "thinking" -> thinking.getOrElse(io.circe.Json.Null)
+                )
+                .noSpaces
+            )
+          )
           // Trigger initial session list via actor
           _ <- sessionRefOpt match
             case Some(ref) => IO(ref ! SessionCommand.SendSessionList())
@@ -137,7 +150,7 @@ class WebSocketRoutes(
 
   private def handleMessage(
     text: String,
-    replUi: WebReplUi,
+    wsSend: io.circe.Json => IO[Unit],
     sessionRefOpt: Option[org.apache.pekko.actor.typed.ActorRef[SessionCommand]]
   ): IO[Unit] =
     parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
@@ -146,7 +159,7 @@ class WebSocketRoutes(
           case Some(answers) =>
             sessionRefOpt match
               case Some(ref) => IO(ref ! SessionCommand.AskUserResponse("", answers))
-              case None => replUi.answerAskUser(answers)
+              case None => IO.unit
           case None => IO.unit
 
       case "permissionAnswer" =>
@@ -154,7 +167,7 @@ class WebSocketRoutes(
         logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *> (
           sessionRefOpt match
             case Some(ref) => IO(ref ! SessionCommand.PermissionResponse("", approved))
-            case None => replUi.answerPermission(approved)
+            case None => IO.unit
         )
 
       case "setPolicy" =>
@@ -167,15 +180,14 @@ class WebSocketRoutes(
       case "interrupt" =>
         logger.info("User interrupted") *> (sessionRefOpt match
           case Some(ref) => sessionStore.getActiveId.flatMap(id => IO(ref ! SessionCommand.Interrupt(id)))
-          case None => replUi.triggerEsc())
+          case None => IO.unit)
 
       case "command" =>
         val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
         command match
           case "clear" =>
             logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
-              reminderStateRef.update(_.copy(sessionStarted = false, highestPressureLevel = 0)) *>
-              replUi.emitDone()
+              reminderStateRef.update(_.copy(sessionStarted = false, highestPressureLevel = 0))
           case _ => IO.unit
 
       case "setThinking" =>
@@ -235,7 +247,7 @@ class WebSocketRoutes(
                   "subagents" -> a.subagents.asJson
                 )
               }
-              replUi.sendRaw(
+              wsSend(
                 io.circe.Json.obj(
                   "type" -> "agentList".asJson,
                   "agents" -> agentsJson.asJson
@@ -250,11 +262,11 @@ class WebSocketRoutes(
           sessionRefOpt match
             case Some(ref) =>
               askActor[AgentConfigResp](ref, replyTo => SessionCommand.GetAgentConfig(agentName, replyTo)) { resp =>
-                replUi.sendRaw(
+                wsSend(
                   io.circe.Json.obj(
                     "type" -> "agentConfig".asJson,
                     "name" -> resp.name.asJson,
-                    "yaml" -> resp.yaml.asJson,
+                    "configJson" -> resp.configJson.asJson,
                     "systemMd" -> resp.systemMd.asJson
                   )
                 )
@@ -265,17 +277,17 @@ class WebSocketRoutes(
       case "createAgent" =>
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-        val yaml = json.hcursor.downField("yaml").as[String].getOrElse("")
+        val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
         val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
         if agentName.nonEmpty then
           sessionRefOpt match
             case Some(ref) =>
               askActor[AgentCreatedResp](
                 ref,
-                replyTo => SessionCommand.CreateAgent(agentName, yaml, systemMd, replyTo)
+                replyTo => SessionCommand.CreateAgent(agentName, configJson, systemMd, replyTo)
               ) { resp =>
                 if resp.name.nonEmpty then
-                  replUi.sendRaw(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> resp.name.asJson))
+                  wsSend(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> resp.name.asJson))
                 else IO.unit
               }
             case None => IO.unit
@@ -284,17 +296,17 @@ class WebSocketRoutes(
       case "updateAgent" =>
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-        val yaml = json.hcursor.downField("yaml").as[String].getOrElse("")
+        val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
         val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
         if agentName.nonEmpty then
           sessionRefOpt match
             case Some(ref) =>
               askActor[AgentUpdatedResp](
                 ref,
-                replyTo => SessionCommand.UpdateAgent(agentName, yaml, systemMd, replyTo)
+                replyTo => SessionCommand.UpdateAgent(agentName, configJson, systemMd, replyTo)
               ) { resp =>
                 if resp.name.nonEmpty then
-                  replUi.sendRaw(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> resp.name.asJson))
+                  wsSend(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> resp.name.asJson))
                 else IO.unit
               }
             case None => IO.unit
@@ -314,7 +326,7 @@ class WebSocketRoutes(
         sessionRefOpt match
           case Some(ref) =>
             askActor[ConfigDataResp](ref, replyTo => SessionCommand.GetConfig(replyTo)) { resp =>
-              replUi.sendRaw(
+              wsSend(
                 io.circe.Json.obj(
                   "type" -> "configData".asJson,
                   "config" -> resp.config.asJson
@@ -329,7 +341,7 @@ class WebSocketRoutes(
           sessionRefOpt match
             case Some(ref) =>
               askActor[ConfigUpdatedResp](ref, replyTo => SessionCommand.UpdateConfig(cfg, replyTo)) { resp =>
-                replUi.sendRaw(
+                wsSend(
                   io.circe.Json.obj(
                     "type" -> "configUpdated".asJson,
                     "success" -> resp.success.asJson
@@ -348,12 +360,17 @@ class WebSocketRoutes(
         if content.trim == "__interrupt__" then
           sessionRefOpt match
             case Some(ref) => sessionStore.getActiveId.flatMap(id => IO(ref ! SessionCommand.Interrupt(id)))
-            case None => replUi.triggerEsc()
+            case None => IO.unit
         else if content.nonEmpty || attachments.nonEmpty then
           rateLimiter.check("ws").flatMap { allowed =>
             if !allowed then
               logger.warn("Rate limit exceeded") *>
-                replUi.sendError(NebflowError.toUserMessage(NebflowError.RateLimited("websocket")))
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "error".asJson,
+                    "message" -> NebflowError.toUserMessage(NebflowError.RateLimited("websocket")).asJson
+                  )
+                )
             else
               val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
               if content.nonEmpty then blocks += ContentBlock.Text(content)

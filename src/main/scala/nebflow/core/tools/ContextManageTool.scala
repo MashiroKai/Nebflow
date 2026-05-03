@@ -1,37 +1,43 @@
 package nebflow.core.tools
 
-import cats.effect.{IO, Ref}
-import cats.syntax.all.*
-import io.circe.JsonObject
+import cats.effect.IO
 import io.circe.syntax.*
-import nebflow.core.compact.{CompactConfig, FullCompact, MicroCompact}
-import nebflow.shared.*
+import io.circe.{Json, JsonObject}
+import nebflow.agent.{AgentCommand, CompactionResult}
 
 object ContextManageTool extends Tool:
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.context")
-
   val name = "ContextManage"
 
   val description =
-    """Manage your context window. Triggers a sub-agent that reads your conversation history and compresses it.
+    """Trigger context compaction to free up context window space.
 
-Modes:
-- "full" — Compress entire history into one summary. Best when context is very large.
-- "micro" — Selectively compress completed parts while keeping recent context intact. Best for targeted cleanup."""
+The system will automatically compact context when it exceeds 80% of the window.
+Use this tool proactively if you want to compact before hitting that threshold,
+or if you want to use micro mode for targeted cleanup.
+
+## Modes
+
+- "full" — Compress entire history into one summary (default). Best for a clean slate.
+- "micro" — Selectively compress completed parts while keeping recent context intact.
+
+## When to use
+
+- After finishing a multi-file research phase, before starting implementation
+- After a long debugging session that resolved an issue
+- Before starting a new sub-task unrelated to the previous one
+- When context feels crowded but you still need recent messages verbatim (use micro)"""
 
   val inputSchema = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
-      "properties" -> io.circe.Json.obj(
-        "mode" -> io.circe.Json.obj(
+      "properties" -> Json.obj(
+        "mode" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> io.circe.Json.arr("full".asJson, "micro".asJson),
-          "description" -> """Compression mode.
-|- "full" — Compress entire history into one summary. Best when context is very large.
-|- "micro" — Selectively compress completed parts while keeping recent context intact. Best for targeted cleanup.""".asJson
+          "enum" -> Json.arr("full".asJson, "micro".asJson),
+          "description" -> "Compaction mode: full (default) or micro".asJson
         )
       ),
-      "required" -> io.circe.Json.arr("mode".asJson)
+      "required" -> Json.arr()
     )
   )
 
@@ -43,22 +49,18 @@ Modes:
     if result.length > 120 then result.take(117) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    (ctx.messagesRef, ctx.llm) match
-      case (Some(ref), Some(llm)) =>
-        val mode = input("mode").flatMap(_.asString).getOrElse("full")
-        for
-          messages <- ref.get
-          config = CompactConfig.forContextWindow(ctx.contextWindow)
-          result <- mode match
-            case "micro" => MicroCompact.compact(messages, llm, config, ctx.projectRoot)
-            case _ => FullCompact.compact(messages, llm, config, ctx.projectRoot)
-        yield result match
-          case Left(err) => Left(ToolError(s"Compact failed: $err"))
-          case Right(compacted) =>
-            ref.set(compacted)
-            Right(s"OK: Compacted ${messages.size} -> ${compacted.size} messages ($mode)")
-
-      case (None, _) => IO.pure(Left(ToolError("No message ref available")))
-      case (_, None) => IO.pure(Left(ToolError("No LLM handle available")))
+    val mode = input("mode").flatMap(_.asString).getOrElse("full")
+    ctx.agentActorRef match
+      case Some(agentRef) =>
+        val deferred = cats.effect.Deferred.unsafe[IO, Either[String, CompactionResult]]
+        IO(agentRef ! AgentCommand.TriggerCompaction(mode, Some(deferred))) *>
+          deferred.get.map {
+            case Right(cr) =>
+              Right(s"Context compaction completed ($mode mode): ${cr.before} messages -> ${cr.after} messages")
+            case Left(err) =>
+              Left(ToolError(s"Context compaction failed: $err"))
+          }
+      case None =>
+        IO.pure(Left(ToolError("No agent actor available to trigger compaction")))
 
 end ContextManageTool

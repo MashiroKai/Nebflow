@@ -22,7 +22,12 @@ object ToolRegistry:
       "Curl" -> CurlTool,
       "AskUserQuestion" -> AskUserQuestionTool,
       "ContextManage" -> ContextManageTool,
-      "NewSession" -> NewSessionTool
+      "NewSession" -> NewSessionTool,
+      "TaskCreate" -> TaskCreateTool,
+      "TaskList" -> TaskListTool,
+      "TaskGet" -> TaskGetTool,
+      "TaskUpdate" -> TaskUpdateTool,
+      "TaskDelete" -> TaskDeleteTool
     )
     tools.putAll(builtins.asJava)
   }

@@ -77,39 +77,31 @@ function deleteSession(sessionId) {
 }
 
 // ---------- Agent Modal ----------
-const ALL_TOOLS = ['Read','Write','Edit','Bash','Glob','Grep','WebSearch','WebFetch','Curl','AskUserQuestion','ContextManage'];
+const ALL_TOOLS = ['Read','Write','Edit','Bash','Glob','Grep','WebSearch','WebFetch','Curl','AskUserQuestion','ContextManage','NewSession'];
 
-function parseYamlFields(yaml) {
-  const fields = {};
-  yaml.split('\n').forEach(line => {
-    const trimmed = line.trim();
-    const idx = trimmed.indexOf(':');
-    if (idx >= 0) {
-      const key = trimmed.substring(0, idx).trim();
-      let value = trimmed.substring(idx + 1).trim();
-      value = value.replace(/^["']|["']$/g, '');
-      if (key) fields[key] = value;
-    }
-  });
-  return fields;
+function buildConfigJson(name, desc, modelRoute, tools) {
+  return JSON.stringify({
+    name: name,
+    description: desc || '',
+    modelRoute: modelRoute || 'default',
+    contextWindow: 128000,
+    maxTokens: 16384,
+    tools: tools,
+    subagents: [],
+    keepAlive: false
+  }, null, 2);
 }
 
-function buildYaml(desc, modelRoute, tools) {
-  let yaml = `description: "${(desc || '').replace(/"/g, '\\"')}"\n`;
-  if (modelRoute && modelRoute !== 'default') yaml += `modelRoute: ${modelRoute}\n`;
-  if (tools.length > 0) yaml += `tools: ${tools.join(', ')}\n`;
-  return yaml;
-}
-
-export function showAgentModal(name, yaml, systemMd) {
+export function showAgentModal(name, configJson, systemMd) {
   document.getElementById('agent-modal').classList.add('show');
   document.getElementById('agent-overlay').classList.add('on');
   document.getElementById('agent-modal-title').textContent = name ? `Edit: ${name}` : 'New Agent';
   document.getElementById('agent-name-input').value = name || '';
   document.getElementById('agent-name-input').disabled = !!name;
 
-  // Parse YAML into fields
-  const fields = yaml ? parseYamlFields(yaml) : {};
+  // Parse JSON config
+  let fields = {};
+  try { fields = JSON.parse(configJson || '{}'); } catch(e) {}
   document.getElementById('agent-desc-input').value = fields.description || '';
   document.getElementById('agent-system-input').value = systemMd || '';
 
@@ -141,7 +133,7 @@ export function showAgentModal(name, yaml, systemMd) {
   modelSelect.value = existingValues.has(currentModel) ? currentModel : 'default';
 
   // Build tool checkboxes
-  const selectedTools = (fields.tools || '').split(',').map(t => t.trim().replace(/^- /, '')).filter(Boolean);
+  const selectedTools = Array.isArray(fields.tools) ? fields.tools : [];
   const grid = document.getElementById('agent-tools-grid');
   grid.innerHTML = '';
   ALL_TOOLS.forEach(tool => {
@@ -215,9 +207,9 @@ export function initModals() {
     // Gather checked tools
     const tools = [];
     document.querySelectorAll('#agent-tools-grid input[type=checkbox]:checked').forEach(cb => tools.push(cb.value));
-    const yaml = buildYaml(desc, modelRoute, tools);
+    const configJson = buildConfigJson(name, desc, modelRoute, tools);
     const isNew = !document.getElementById('agent-name-input').disabled;
-    sendWs({type: isNew ? 'createAgent' : 'updateAgent', name, yaml, systemMd});
+    sendWs({type: isNew ? 'createAgent' : 'updateAgent', name, configJson, systemMd});
     hideAgentModal();
   });
 

@@ -27,6 +27,25 @@ export function clearStatus() {
   stopSpinner();
 }
 
+export function renderRetryStatus(msg) {
+  const { chat } = state.dom;
+  let el = document.getElementById('retry-status');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'retry-status';
+    el.className = 'retry-status';
+    chat.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.display = 'block';
+  smartScroll();
+}
+
+export function clearRetryStatus() {
+  const el = document.getElementById('retry-status');
+  if (el) el.style.display = 'none';
+}
+
 // ---------- Busy toggle (per-session) ----------
 export function setBusy(sessionId) {
   const { input, sendBtn, stopBtn } = state.dom;
@@ -130,15 +149,18 @@ export function appendAgentText(agentId, text) {
   if (!state.agentBubbles[agentId]) {
     const row = document.createElement('div');
     row.className = 'row ai agent-row';
-    const badge = document.createElement('div');
-    badge.className = 'agent-badge';
-    const color = getAgentColor(agentId);
-    badge.style.borderColor = color;
-    badge.style.color = color;
-    badge.textContent = agentId;
-    row.appendChild(badge);
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai';
+    let badge = null;
+    if (agentId && agentId !== 'default') {
+      badge = document.createElement('div');
+      badge.className = 'agent-badge';
+      const color = getAgentColor(agentId);
+      badge.style.borderColor = color;
+      badge.style.color = color;
+      badge.textContent = agentId;
+      row.appendChild(badge);
+    }
     row.appendChild(bubble);
     chat.appendChild(row);
     state.agentBubbles[agentId] = { bubble, text: '', row, badge };
@@ -159,11 +181,15 @@ export function finishAgent(agentId) {
 }
 
 // ---------- Tool rendering ----------
-export function renderTool(label, summary, content, isError, inputJson) {
+export function renderTool(label, summary, content, isError, inputJson, sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  // Guard: do not render into a different session's chat
+  if (sid && sid !== state.activeSessionId) return null;
   const chat = state.dom.chat;
-  if (state.currentToolCard) {
-    state.currentToolCard.remove();
-    state.currentToolCard = null;
+  const pending = state.sessionToolCards[sid];
+  if (pending) {
+    pending.remove();
+    delete state.sessionToolCards[sid];
   }
   const row = document.createElement('div');
   row.className = 'row tool';
@@ -187,7 +213,10 @@ export function renderTool(label, summary, content, isError, inputJson) {
   return { type: 'tool', label, summary, content, isError, input: inputJson };
 }
 
-export function renderToolPending(label) {
+export function renderToolPending(label, sessionId) {
+  const sid = sessionId || state.activeSessionId;
+  // Guard: only render into the active session
+  if (sid && sid !== state.activeSessionId) return;
   const chat = state.dom.chat;
   if (state.currentAiBubble && state.currentAiBubble.classList.contains('thinking-placeholder')) {
     const row = state.currentAiBubble.closest('.row');
@@ -195,7 +224,8 @@ export function renderToolPending(label) {
     state.currentAiBubble = null;
     state.aiText = '';
   }
-  if (state.currentToolCard) state.currentToolCard.remove();
+  const pending = state.sessionToolCards[sid];
+  if (pending) pending.remove();
   const row = document.createElement('div');
   row.className = 'row tool';
   const card = document.createElement('div');
@@ -206,7 +236,7 @@ export function renderToolPending(label) {
   row.appendChild(card);
   chat.appendChild(row);
   smartScroll();
-  state.currentToolCard = row;
+  state.sessionToolCards[sid] = row;
 }
 
 // ---------- Error ----------
@@ -217,6 +247,41 @@ export function renderError(msg) {
   const card = document.createElement('div');
   card.className = 'error-card';
   card.textContent = msg;
+  row.appendChild(card);
+  chat.appendChild(row);
+  smartScroll();
+}
+
+// ---------- Timeout notice with retry ----------
+export function renderTimeoutNotice() {
+  const chat = state.dom.chat;
+  const row = document.createElement('div');
+  row.className = 'row error';
+  const card = document.createElement('div');
+  card.className = 'error-card';
+  card.style.display = 'flex';
+  card.style.alignItems = 'center';
+  card.style.gap = '12px';
+  const text = document.createElement('span');
+  text.textContent = 'Response timed out';
+  card.appendChild(text);
+  const btn = document.createElement('button');
+  btn.textContent = 'Retry';
+  btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid #888;background:#2a2a2a;color:#eee;cursor:pointer;font-size:13px;font-family:inherit;';
+  btn.onmouseenter = () => { btn.style.background = '#3a3a3a'; };
+  btn.onmouseleave = () => { btn.style.background = '#2a2a2a'; };
+  btn.onclick = () => {
+    row.remove();
+    // Find last user message from input history and resend
+    const history = state.inputHistory;
+    const lastMsg = history.length > 0 ? history[history.length - 1] : '';
+    if (lastMsg) {
+      state.dom.input.value = lastMsg;
+      // Import send from input.js dynamically to avoid circular dependency
+      import('./input.js').then(({ send }) => send());
+    }
+  };
+  card.appendChild(btn);
   row.appendChild(card);
   chat.appendChild(row);
   smartScroll();
@@ -368,23 +433,35 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
 // ---------- AskUser ----------
 export function renderAskUser(items) {
+  console.log('[askUser] rendering', items?.length || 0, 'questions');
+  if (!Array.isArray(items) || items.length === 0) {
+    renderError('Waiting for question...');
+    return { type: 'askUser', items: [] };
+  }
   const chat = state.dom.chat;
-  if (state.currentToolCard) { state.currentToolCard.remove(); state.currentToolCard = null; }
+  const sid = state.activeSessionId;
+  if (sid && state.sessionToolCards[sid]) { state.sessionToolCards[sid].remove(); delete state.sessionToolCards[sid]; }
   const row = document.createElement('div');
   row.className = 'row ai';
   const bubble = document.createElement('div');
   bubble.className = 'bubble ai';
   row.appendChild(bubble);
   chat.appendChild(row);
-  showOptions(bubble, items, (answers) => {
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'askUserAnswer', answers }));
-    }
-  }, 'Confirm', () => {
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'askUserAnswer', answers: ['__cancelled__'] }));
-    }
-  });
+  try {
+    showOptions(bubble, items, (answers) => {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: 'askUserAnswer', answers }));
+      }
+    }, 'Confirm', () => {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: 'askUserAnswer', answers: ['__cancelled__'] }));
+      }
+    });
+  } catch (e) {
+    console.error('[askUser] render failed:', e);
+    bubble.textContent = 'Failed to render options. Please try again.';
+  }
+  return { type: 'askUser', items };
 }
 
 // ---------- Permission prompt ----------
@@ -431,12 +508,13 @@ export function renderAttachmentPreview() {
   const attPreview = state.dom.attPreview;
   attPreview.innerHTML = '';
   state.pendingAttachments.forEach((att, idx) => {
-    if (att.type === 'image' && att.preview) {
+    if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
       const img = document.createElement('img');
       img.src = att.preview;
       img.className = 'att-thumb';
+      img.onerror = () => { img.style.display = 'none'; };
       wrap.appendChild(img);
       const rm = document.createElement('div');
       rm.className = 'att-remove';

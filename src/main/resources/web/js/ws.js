@@ -35,10 +35,8 @@ export function connect() {
   }
 
   state.ws.onopen = () => {
-    console.log('[ws] connected, resetting busy');
+    console.log('[ws] connected');
     state.dom.connEl.classList.remove('off');
-    // Reset busy on reconnect so UI is not stuck
-    state.busySessionId = null;
     if (state.thinkingMode) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
@@ -53,12 +51,6 @@ export function connect() {
     console.log('[ws] disconnected');
     state.dom.connEl.classList.add('off');
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
-    if (state.busySessionId) {
-      state.busySessionId = null;
-      state.dom.input.disabled = false;
-      state.dom.sendBtn.style.display = 'flex';
-      state.dom.stopBtn.style.display = 'none';
-    }
     setTimeout(connect, 2000);
   };
 

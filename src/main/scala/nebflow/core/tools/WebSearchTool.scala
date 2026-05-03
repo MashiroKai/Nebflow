@@ -44,6 +44,10 @@ Available engines (default: Bing INT):
 - CN: Bing CN, Baidu, Sogou, 360, Toutiao, WeChat Articles, Jisilu
 
 Usage:
+- Only use WebSearch and WebFetch for accessing information beyond your training data.
+- Do NOT generate or guess URLs unless you are confident they help the user with programming tasks.
+- When the user provides a URL, use WebFetch to retrieve its contents rather than guessing what's there.
+- Web search results may contain outdated information — verify critical facts before relying on them.
 - Provides up-to-date information for current events and recent data
 - Use for facts, news, documentation lookups
 - Supports search operators: site:, filetype:, "exact match", -exclude, OR

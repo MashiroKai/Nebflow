@@ -72,6 +72,7 @@ export function renderMarkdownWithMath(text) {
         const rendered = katex.renderToString(block.math, {
           displayMode: block.display,
           throwOnError: false,
+          strict: 'ignore',
           trust: true
         });
         html = html.replace(token, rendered);
@@ -137,43 +138,12 @@ export function buildToolDetail(inputJson, label) {
   }
 }
 
-// === Tool card click handler (long-press to toggle body) ===
+// === Tool card click handler (click to toggle body) ===
 export function attachToolClick(card) {
-  let pressTimer = null;
-  let pressStart = 0;
-  const LONG_PRESS_MS = 400;
-
-  function onMouseDown(e) {
-    pressStart = Date.now();
-    pressTimer = setTimeout(() => { pressTimer = null; }, LONG_PRESS_MS);
-  }
-  function onMouseUp(e) {
-    const duration = Date.now() - pressStart;
-    if (pressTimer && duration < LONG_PRESS_MS) {
-      const body = card.querySelector('.body');
-      if (body) body.classList.toggle('open');
-    }
-    clearTimeout(pressTimer);
-    pressTimer = null;
-  }
-  function onTouchStart(e) {
-    pressStart = Date.now();
-    pressTimer = setTimeout(() => { pressTimer = null; }, LONG_PRESS_MS);
-  }
-  function onTouchEnd(e) {
-    const duration = Date.now() - pressStart;
-    if (pressTimer && duration < LONG_PRESS_MS) {
-      const body = card.querySelector('.body');
-      if (body) body.classList.toggle('open');
-    }
-    clearTimeout(pressTimer);
-    pressTimer = null;
-  }
-
-  card.addEventListener('mousedown', onMouseDown);
-  card.addEventListener('mouseup', onMouseUp);
-  card.addEventListener('touchstart', onTouchStart, {passive:true});
-  card.addEventListener('touchend', onTouchEnd);
+  card.addEventListener('click', () => {
+    const body = card.querySelector('.body');
+    if (body) body.classList.toggle('open');
+  });
 }
 
 // === Scroll helpers ===
