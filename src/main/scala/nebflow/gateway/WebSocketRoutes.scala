@@ -52,8 +52,7 @@ class WebSocketRoutes(
 
           sessionRefOpt <-
             if actorSystem != null && sharedResources != null then
-              val perConnResources = sharedResources.copy(wsSend = perConnWsSend)
-              IO(actorSystem.systemActorOf(SessionActor(wsConnId, perConnResources), s"session-$wsConnId"))
+              IO(actorSystem.systemActorOf(SessionActor(wsConnId, sharedResources, perConnWsSend), s"session-$wsConnId"))
                 .map(Some(_))
             else IO.pure(None)
 
