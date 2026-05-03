@@ -8,28 +8,6 @@ import nebflow.gateway.SessionMeta
 import nebflow.shared.*
 
 // ============================================================
-// Guardian Actor Messages
-// ============================================================
-
-case class SessionRef(actor: org.apache.pekko.actor.typed.ActorRef[SessionCommand])
-case object Ack
-
-sealed trait GuardianCommand
-
-object GuardianCommand:
-
-  case class CreateSession(
-    wsConnId: String,
-    replyTo: org.apache.pekko.actor.typed.ActorRef[SessionRef],
-    wsSend: io.circe.Json => cats.effect.IO[Unit]
-  ) extends GuardianCommand
-  case class DestroySession(wsConnId: String) extends GuardianCommand
-  case class Shutdown(replyTo: org.apache.pekko.actor.typed.ActorRef[Ack.type]) extends GuardianCommand
-
-// Guardian internal
-case class SessionTerminated(wsConnId: String) extends GuardianCommand
-
-// ============================================================
 // Session Actor Messages
 // ============================================================
 
@@ -38,26 +16,9 @@ sealed trait SessionCommand
 object SessionCommand:
   case class UserMessage(text: String, blocks: List[nebflow.shared.ContentBlock]) extends SessionCommand
   case class Interrupt(sessionId: String) extends SessionCommand
-
-  case class SwitchSession(sessionId: String, replyTo: org.apache.pekko.actor.typed.ActorRef[SwitchResult])
-      extends SessionCommand
-
-  case class CreateSessionCmd(name: String, replyTo: org.apache.pekko.actor.typed.ActorRef[SessionRef])
-      extends SessionCommand
-
-  case class DeleteSession(sessionId: String, replyTo: org.apache.pekko.actor.typed.ActorRef[DeleteResult])
-      extends SessionCommand
-
-  case class RenameSession(sessionId: String, newName: String, replyTo: org.apache.pekko.actor.typed.ActorRef[Boolean])
-      extends SessionCommand
-  case class ListSessions(replyTo: org.apache.pekko.actor.typed.ActorRef[SessionList]) extends SessionCommand
   case class AgentTerminated(agentId: String) extends SessionCommand
   case class AskUserResponse(requestId: String, answers: List[String]) extends SessionCommand
   case class PermissionResponse(requestId: String, approved: Boolean) extends SessionCommand
-  case class SetThinking(enabled: Boolean) extends SessionCommand
-  case class SetPolicy(policy: String) extends SessionCommand
-  case class ClearChat() extends SessionCommand
-  case class SendSessionList() extends SessionCommand
   case class Terminate() extends SessionCommand
 
   // Internal — agent data loaded, spawn on actor thread
@@ -69,52 +30,10 @@ object SessionCommand:
     replyAdapter: org.apache.pekko.actor.typed.ActorRef[AgentEvent]
   ) extends SessionCommand
 
-  // Agent management commands
-  case class ListAgents(replyTo: org.apache.pekko.actor.typed.ActorRef[AgentListResp]) extends SessionCommand
-
-  case class GetAgentConfig(name: String, replyTo: org.apache.pekko.actor.typed.ActorRef[AgentConfigResp])
-      extends SessionCommand
-
-  case class CreateAgent(
-    name: String,
-    configJson: String,
-    systemMd: String,
-    replyTo: org.apache.pekko.actor.typed.ActorRef[AgentCreatedResp]
-  ) extends SessionCommand
-
-  case class UpdateAgent(
-    name: String,
-    configJson: String,
-    systemMd: String,
-    replyTo: org.apache.pekko.actor.typed.ActorRef[AgentUpdatedResp]
-  ) extends SessionCommand
-
-  case class CreateAgentSession(agentName: String, replyTo: org.apache.pekko.actor.typed.ActorRef[SessionRef])
-      extends SessionCommand
-
-  // Config management commands
-  case class GetConfig(replyTo: org.apache.pekko.actor.typed.ActorRef[ConfigDataResp]) extends SessionCommand
-
-  case class UpdateConfig(config: String, replyTo: org.apache.pekko.actor.typed.ActorRef[ConfigUpdatedResp])
-      extends SessionCommand
-
   // AgentActor integration
   case class AgentTurnCompleted(sessionId: String, messages: List[Message]) extends SessionCommand
   case class AgentTurnFailed(sessionId: String, error: AgentError) extends SessionCommand
 end SessionCommand
-
-case class SwitchResult(success: Boolean, messages: Option[List[Message]] = None, error: Option[String] = None)
-case class DeleteResult(success: Boolean, error: Option[String] = None)
-case class SessionList(sessions: List[SessionMeta], activeId: String)
-
-// Agent / Config response types
-case class AgentInfo(name: String, description: String, tools: List[String], subagents: List[String])
-case class AgentListResp(agents: List[AgentInfo])
-case class AgentConfigResp(name: String, configJson: String, systemMd: String)
-case class AgentCreatedResp(name: String)
-case class AgentUpdatedResp(name: String)
-case class ConfigDataResp(config: String)
-case class ConfigUpdatedResp(success: Boolean)
 
 // ============================================================
 // Agent Actor Messages
@@ -280,6 +199,12 @@ enum AgentStreamEvent:
         Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
 
 end AgentStreamEvent
+
+// ============================================================
+// Shared response types
+// ============================================================
+
+case class AgentInfo(name: String, description: String, tools: List[String], subagents: List[String])
 
 // ============================================================
 // Agent Error

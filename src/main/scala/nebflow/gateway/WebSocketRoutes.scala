@@ -1,16 +1,16 @@
 package nebflow.gateway
 
-import cats.effect.std.{Dispatcher, Queue, Semaphore}
-import cats.effect.{Fiber, IO, Ref}
+import cats.effect.std.{Dispatcher, Queue}
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.agent.{SessionCommand, *}
 import nebflow.core.*
+import nebflow.service.{AgentService, ConfigService, SessionService}
 import nebflow.shared.*
 import nebflow.skill.SkillDiscovery
-import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -21,24 +21,26 @@ import scala.concurrent.duration.*
 
 class WebSocketRoutes(
   wsb: WebSocketBuilder2[IO],
-  llm: LlmHandle[IO],
-  sessionStore: SessionStore,
+  sessionService: SessionService,
+  agentService: AgentService,
+  configService: ConfigService.type,
   thinkingModeRef: Ref[IO, Option[io.circe.Json]],
   permState: PermissionState,
   rateLimiter: RateLimiter,
   token: String,
   fileChangeTracker: FileChangeTracker,
   reminderStateRef: Ref[IO, ReminderState],
+  sessionStore: SessionStore,
   contextWindow: Int = Defaults.ContextWindow,
   skillDiscovery: Option[SkillDiscovery] = None,
-  actorSystem: ActorSystem[GuardianCommand] = null,
-  dispatcher: Dispatcher[IO] = null
+  actorSystem: ActorSystem[Nothing] = null,
+  dispatcher: Dispatcher[IO] = null,
+  sharedResources: SharedResources = null
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
-      // Read token from cookie first (secure), fall back to URL param (backward compat)
       val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
       val provided = if cookieToken.nonEmpty then cookieToken else req.params.get("token").getOrElse("")
       if Auth.validateToken(provided, token) then
@@ -46,12 +48,13 @@ class WebSocketRoutes(
           outbound <- Queue.unbounded[IO, WebSocketFrame]
           wsConnId = java.util.UUID.randomUUID().toString.take(8)
 
-          // Per-connection wsSend that routes to this connection's outbound queue
           perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
 
-          // Create a SessionActor for this WS connection via GuardianActor
           sessionRefOpt <-
-            if actorSystem != null then createSessionActor(wsConnId, perConnWsSend).map(Some(_))
+            if actorSystem != null && sharedResources != null then
+              val perConnResources = sharedResources.copy(wsSend = perConnWsSend)
+              IO(actorSystem.systemActorOf(SessionActor(wsConnId, perConnResources), s"session-$wsConnId"))
+                .map(Some(_))
             else IO.pure(None)
 
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
@@ -59,15 +62,13 @@ class WebSocketRoutes(
               handleMessage(text, perConnWsSend, sessionRefOpt)
             case _ => IO.unit
           }.onFinalize(
-            (sessionRefOpt match
-              case Some(_) => IO(actorSystem ! GuardianCommand.DestroySession(wsConnId))
+            sessionRefOpt match
+              case Some(ref) => IO(ref ! SessionCommand.Terminate())
               case None => IO.unit
-            )
           )
 
           sendStream = Stream.fromQueueUnterminated(outbound)
           _ <- logger.info("WebSocket client connected")
-          // Send server config to frontend: timeout, version, current policy & thinking state
           policy <- permState.policy
           thinking <- thinkingModeRef.get
           _ <- outbound.offer(
@@ -83,10 +84,7 @@ class WebSocketRoutes(
                 .noSpaces
             )
           )
-          // Trigger initial session list via actor
-          _ <- sessionRefOpt match
-            case Some(ref) => IO(ref ! SessionCommand.SendSessionList())
-            case None => IO.unit
+          _ <- sessionService.sendSessionList(perConnWsSend)
           ws <- wsb.build(sendStream, receivePipe)
         yield ws
       else
@@ -108,18 +106,6 @@ class WebSocketRoutes(
       if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
       else NotFound()
   }
-
-  private def createSessionActor(
-    wsConnId: String,
-    wsSend: io.circe.Json => IO[Unit]
-  ): IO[org.apache.pekko.actor.typed.ActorRef[SessionCommand]] =
-    import scala.concurrent.ExecutionContext.Implicits.global
-    implicit val sched: org.apache.pekko.actor.typed.Scheduler = actorSystem.scheduler
-    implicit val askTimeout: org.apache.pekko.util.Timeout =
-      org.apache.pekko.util.Timeout(scala.concurrent.duration.Duration(5, "seconds"))
-    IO.fromFuture(IO {
-      actorSystem.ask[SessionRef](replyTo => GuardianCommand.CreateSession(wsConnId, replyTo, wsSend))
-    }).map(_.actor)
 
   private val inputHistoryPath = os.home / ".nebflow" / "input_history.jsonl"
 
@@ -151,7 +137,7 @@ class WebSocketRoutes(
   private def handleMessage(
     text: String,
     wsSend: io.circe.Json => IO[Unit],
-    sessionRefOpt: Option[org.apache.pekko.actor.typed.ActorRef[SessionCommand]]
+    sessionRefOpt: Option[ActorRef[SessionCommand]]
   ): IO[Unit] =
     parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
       case "askUserAnswer" =>
@@ -199,26 +185,29 @@ class WebSocketRoutes(
       case "switchSession" =>
         val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
         if sessionId.nonEmpty then
-          sessionRefOpt match
-            case Some(ref) =>
-              askActor[SwitchResult](ref, replyTo => SessionCommand.SwitchSession(sessionId, replyTo))(_ => IO.unit)
-            case None => IO.unit
+          sessionService.switchSession(sessionId).flatMap { _ =>
+            sessionService.sendSessionList(wsSend)
+          }.handleErrorWith { e =>
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+          }
         else IO.unit
 
       case "createSession" =>
         val name = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("New Session")
-        sessionRefOpt match
-          case Some(ref) =>
-            askActor[SessionRef](ref, replyTo => SessionCommand.CreateSessionCmd(name, replyTo))(_ => IO.unit)
-          case None => IO.unit
+        sessionService.createSession(name).flatMap { _ =>
+          sessionService.sendSessionList(wsSend)
+        }.handleErrorWith { e =>
+          wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+        }
 
       case "deleteSession" =>
         val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
         if sessionId.nonEmpty then
-          sessionRefOpt match
-            case Some(ref) =>
-              askActor[DeleteResult](ref, replyTo => SessionCommand.DeleteSession(sessionId, replyTo))(_ => IO.unit)
-            case None => IO.unit
+          sessionService.deleteSession(sessionId).flatMap { _ =>
+            sessionService.sendSessionList(wsSend)
+          }.handleErrorWith { e =>
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+          }
         else IO.unit
 
       case "renameSession" =>
@@ -226,52 +215,48 @@ class WebSocketRoutes(
         val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
         val newName = json.hcursor.downField("name").as[String].getOrElse("")
         if sessionId.nonEmpty && newName.nonEmpty then
-          sessionRefOpt match
-            case Some(ref) =>
-              askActor[Boolean](ref, replyTo => SessionCommand.RenameSession(sessionId, newName, replyTo))(_ => IO.unit)
-            case None => IO.unit
+          sessionService.renameSession(sessionId, newName).flatMap { _ =>
+            sessionService.sendSessionList(wsSend)
+          }.handleErrorWith { e =>
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+          }
         else IO.unit
 
       case "ping" => IO.unit
 
-      // --- Agent management messages ---
       case "listAgents" =>
-        sessionRefOpt match
-          case Some(ref) =>
-            askActor[AgentListResp](ref, replyTo => SessionCommand.ListAgents(replyTo)) { resp =>
-              val agentsJson = resp.agents.map { a =>
-                io.circe.Json.obj(
-                  "name" -> a.name.asJson,
-                  "description" -> a.description.asJson,
-                  "tools" -> a.tools.asJson,
-                  "subagents" -> a.subagents.asJson
-                )
-              }
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "agentList".asJson,
-                  "agents" -> agentsJson.asJson
-                )
-              )
-            }
-          case None => IO.unit
+        agentService.listAgents.flatMap { agents =>
+          val agentsJson = agents.map { a =>
+            io.circe.Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "tools" -> a.tools.asJson,
+              "subagents" -> a.subagents.asJson
+            )
+          }
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "agentList".asJson,
+              "agents" -> agentsJson.asJson
+            )
+          )
+        }
 
       case "getAgentConfig" =>
         val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
         if agentName.nonEmpty then
-          sessionRefOpt match
-            case Some(ref) =>
-              askActor[AgentConfigResp](ref, replyTo => SessionCommand.GetAgentConfig(agentName, replyTo)) { resp =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "agentConfig".asJson,
-                    "name" -> resp.name.asJson,
-                    "configJson" -> resp.configJson.asJson,
-                    "systemMd" -> resp.systemMd.asJson
-                  )
+          agentService.getAgentConfig(agentName).flatMap {
+            case Some(cfg) =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "agentConfig".asJson,
+                  "name" -> cfg.name.asJson,
+                  "configJson" -> cfg.configJson.asJson,
+                  "systemMd" -> cfg.systemMd.asJson
                 )
-              }
+              )
             case None => IO.unit
+          }
         else IO.unit
 
       case "createAgent" =>
@@ -280,17 +265,12 @@ class WebSocketRoutes(
         val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
         val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
         if agentName.nonEmpty then
-          sessionRefOpt match
-            case Some(ref) =>
-              askActor[AgentCreatedResp](
-                ref,
-                replyTo => SessionCommand.CreateAgent(agentName, configJson, systemMd, replyTo)
-              ) { resp =>
-                if resp.name.nonEmpty then
-                  wsSend(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> resp.name.asJson))
-                else IO.unit
-              }
-            case None => IO.unit
+          agentService.createAgent(agentName, configJson, systemMd).flatMap {
+            case Left(err) =>
+              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+            case Right(_) =>
+              wsSend(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> agentName.asJson))
+          }
         else IO.unit
 
       case "updateAgent" =>
@@ -299,59 +279,49 @@ class WebSocketRoutes(
         val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
         val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
         if agentName.nonEmpty then
-          sessionRefOpt match
-            case Some(ref) =>
-              askActor[AgentUpdatedResp](
-                ref,
-                replyTo => SessionCommand.UpdateAgent(agentName, configJson, systemMd, replyTo)
-              ) { resp =>
-                if resp.name.nonEmpty then
-                  wsSend(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> resp.name.asJson))
-                else IO.unit
-              }
-            case None => IO.unit
+          agentService.updateAgent(agentName, configJson, systemMd).flatMap {
+            case Left(err) =>
+              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+            case Right(_) =>
+              wsSend(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> agentName.asJson))
+          }
         else IO.unit
 
       case "createAgentSession" =>
         val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
         if agentName.nonEmpty then
-          sessionRefOpt match
-            case Some(ref) =>
-              askActor[SessionRef](ref, replyTo => SessionCommand.CreateAgentSession(agentName, replyTo))(_ => IO.unit)
-            case None => IO.unit
+          (for
+            defnOpt <- sharedResources.agentLibrary.get(agentName)
+            defn <- IO.fromOption(defnOpt)(new RuntimeException(s"Agent not found: $agentName"))
+            meta <- sessionService.createSession(s"Agent: ${defn.name}", agentName = Some(agentName))
+            _ <- sessionService.switchSession(meta.id)
+            _ <- sessionService.sendSessionList(wsSend)
+          yield ()).handleErrorWith { e =>
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+          }
         else IO.unit
 
-      // --- Config management messages ---
       case "getConfig" =>
-        sessionRefOpt match
-          case Some(ref) =>
-            askActor[ConfigDataResp](ref, replyTo => SessionCommand.GetConfig(replyTo)) { resp =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "configData".asJson,
-                  "config" -> resp.config.asJson
-                )
-              )
-            }
-          case None => IO.unit
+        configService.getConfig.flatMap { cfg =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "configData".asJson,
+              "config" -> cfg.asJson
+            )
+          )
+        }
 
       case "updateConfig" =>
         val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
         if cfg.nonEmpty then
-          sessionRefOpt match
-            case Some(ref) =>
-              askActor[ConfigUpdatedResp](ref, replyTo => SessionCommand.UpdateConfig(cfg, replyTo)) { resp =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "configUpdated".asJson,
-                    "success" -> resp.success.asJson
-                  )
-                )
-              }
-            case None => IO.unit
+          configService.updateConfig(cfg).flatMap {
+            case Left(err) =>
+              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+            case Right(_) =>
+              wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+          }
         else IO.unit
 
-      // --- Default: user message → forward to SessionActor ---
       case _ =>
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         val content = json.hcursor.downField("content").as[String].getOrElse("")
@@ -395,18 +365,5 @@ class WebSocketRoutes(
         else IO.unit
         end if
   end handleMessage
-
-  /** Helper to ask a Pekko actor and handle the response, eliminating boilerplate. */
-  private def askActor[A](
-    ref: org.apache.pekko.actor.typed.ActorRef[SessionCommand],
-    f: org.apache.pekko.actor.typed.ActorRef[A] => SessionCommand
-  )(handler: A => IO[Unit]): IO[Unit] =
-    import scala.concurrent.ExecutionContext.Implicits.global
-    implicit val sched: org.apache.pekko.actor.typed.Scheduler = actorSystem.scheduler
-    implicit val askTimeout: org.apache.pekko.util.Timeout =
-      org.apache.pekko.util.Timeout(scala.concurrent.duration.Duration(5, "seconds"))
-    IO.fromFuture(IO(ref.ask[A](replyTo => f(replyTo))))
-      .flatMap(handler)
-      .handleErrorWith(e => logger.warn(s"Actor ask failed: ${e.getMessage}") *> IO.unit)
 
 end WebSocketRoutes
