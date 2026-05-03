@@ -2,40 +2,10 @@ package nebflow.llm
 
 import cats.effect.{IO, Temporal}
 import cats.syntax.all.*
+import nebflow.shared.*
 
 import scala.concurrent.duration.*
 import scala.util.Random
-
-enum FailoverReason:
-
-  case Auth, RateLimit, Overloaded, ServerError, ModelNotFound, ProviderError, Format, ConnectionReset, Timeout,
-    EmptyStream, Unknown
-
-enum ErrorPermanence:
-  case Transient, Permanent
-
-case class ErrorClassification(
-  reason: FailoverReason,
-  permanence: ErrorPermanence,
-  statusCode: Option[Int] = None,
-  message: Option[String] = None
-)
-
-case class FallbackAttempt(
-  providerId: String,
-  model: String,
-  reason: Option[FailoverReason],
-  permanence: Option[ErrorPermanence],
-  durationMs: Long,
-  retriesUsed: Int,
-  timestamp: String
-)
-
-case class FallbackResult[T](
-  data: T,
-  attempts: List[FallbackAttempt],
-  usedCandidate: ModelCandidate
-)
 
 class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Exception:
 
@@ -50,7 +20,7 @@ class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Except
 object Fallback:
   private val JitterMinMs = 1000
   private val JitterMaxMs = 3000
-  private val DefaultTimeoutMs = 120_000
+  private val DefaultTimeoutMs = Defaults.LlmTimeoutMs
   val MaxRetries: Int = 3
   val InitialBackoffMs: Long = 3000L
   val MaxBackoffMs: Long = 30000L
@@ -117,14 +87,14 @@ object Fallback:
     action: ModelCandidate => IO[T],
     maxRetries: Int = MaxRetries,
     onAttempt: Option[FallbackAttempt => IO[Unit]] = None
-  ): IO[FallbackResult[T]] =
+  ): IO[nebflow.shared.FallbackResult[T]] =
 
     def tryWithRetry(
       candidate: ModelCandidate,
       retriesLeft: Int,
       backoffMs: Long,
       priorFailures: List[FallbackAttempt]
-    )(fallback: List[FallbackAttempt] => IO[FallbackResult[T]]): IO[FallbackResult[T]] =
+    )(fallback: List[FallbackAttempt] => IO[nebflow.shared.FallbackResult[T]]): IO[nebflow.shared.FallbackResult[T]] =
       val start = System.currentTimeMillis()
       withTimeoutIO(action(candidate), DefaultTimeoutMs).attempt.flatMap {
         case Right(result) =>
@@ -137,7 +107,18 @@ object Fallback:
             maxRetries - retriesLeft,
             java.time.Instant.now().toString
           )
-          IO.pure(FallbackResult(result, priorFailures :+ attempt, candidate))
+          val successNotify =
+            if priorFailures.nonEmpty then
+              onAttempt.traverse_(
+                _.apply(
+                  attempt.copy(
+                    reason = Some(FailoverReason.Unknown),
+                    message = Some(s"Switched to ${candidate.providerId}/${candidate.model} successfully")
+                  )
+                )
+              )
+            else IO.unit
+          successNotify *> IO.pure(nebflow.shared.FallbackResult(result, priorFailures :+ attempt, candidate))
         case Left(error) =>
           val classification = classifyError(error)
           val durationMs = System.currentTimeMillis() - start
@@ -163,7 +144,7 @@ object Fallback:
       }
     end tryWithRetry
 
-    def loop(remaining: List[ModelCandidate], attempts: List[FallbackAttempt]): IO[FallbackResult[T]] =
+    def loop(remaining: List[ModelCandidate], attempts: List[FallbackAttempt]): IO[nebflow.shared.FallbackResult[T]] =
       remaining match
         case Nil =>
           IO.raiseError(new FallbackExhaustedError(attempts))

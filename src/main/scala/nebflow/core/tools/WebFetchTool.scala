@@ -26,6 +26,10 @@ object WebFetchTool extends Tool:
   val description = """Fetch and read a URL, converting the content to text or markdown.
 
 Usage:
+- Only use WebSearch and WebFetch for accessing information beyond your training data.
+- Do NOT generate or guess URLs unless you are confident they help the user with programming tasks.
+- When the user provides a URL, use WebFetch to retrieve its contents rather than guessing what's there.
+- Web search results may contain outdated information — verify critical facts before relying on them.
 - Use this tool for accessing URLs provided by the user or found via WebSearch
 - Supports HTML pages, plain text, JSON, and other text-based content
 - Automatically skips binary content (images, videos, archives)

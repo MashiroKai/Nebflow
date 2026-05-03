@@ -9,10 +9,10 @@ object GrepTool extends Tool:
 
   val name = "Grep"
 
-  val description = """A powerful search tool built on ripgrep
+  val description = """A powerful search tool built on ripgrep.
 
 Usage:
-- ALWAYS use Grep for search tasks.
+- ALWAYS use Grep for search tasks. Do not use Bash with grep/rg.
 - Supports full regex syntax (e.g. "log.*Error", "function\\s+\\w+")
 - Filter files with glob parameter (e.g. "*.js", "*.{ts,tsx}")
 - Output modes: "content" shows matching lines, "files_with_matches" shows only file paths, "count" shows match counts

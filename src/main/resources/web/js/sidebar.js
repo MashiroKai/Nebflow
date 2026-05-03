@@ -6,6 +6,7 @@ import { showAgentModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll } from './utils.js';
 import { finishAgent } from './chat.js';
 import { restoreFromStorage } from './persistence.js';
+import { renderTaskList } from './taskList.js';
 
 // ---------- Nav Bar Tab Switching ----------
 export function initNavTabs() {
@@ -78,8 +79,9 @@ export function renderSettings() {
       <div class="settings-row">
         <span class="settings-label">Permission Policy</span>
         <div class="policy-group">
-          <label class="policy-option"><input type="radio" name="policy" value="ask" checked> Ask</label>
-          <label class="policy-option"><input type="radio" name="policy" value="trust"> Trust All</label>
+          <label class="policy-option"><input type="radio" name="policy" value="ask"> Ask</label>
+          <label class="policy-option"><input type="radio" name="policy" value="auto"> Trust All</label>
+          <label class="policy-option"><input type="radio" name="policy" value="block"> Block Dangerous</label>
         </div>
       </div>
     </div>
@@ -96,28 +98,36 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">About</div>
       <div class="about-info">
-        Nebflow v0.1<br>
+        Nebflow v${state.serverVersion || '...'}<br>
         Connection: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? 'Disconnected' : 'Connected'}</span>
       </div>
     </div>`;
-  // Thinking toggle
+  // Thinking toggle — unified with /thinking slash command (includes budget_tokens)
   document.getElementById('toggle-thinking').addEventListener('click', function() {
     this.classList.toggle('on');
     const enabled = this.classList.contains('on');
-    state.thinkingMode = enabled ? {type: 'enabled'} : null;
+    state.thinkingMode = enabled ? {type: 'enabled', budget_tokens: 16000} : null;
     try { localStorage.setItem(LS_THINKING_KEY, JSON.stringify(state.thinkingMode)); } catch(e) {}
     sendWs({type: 'setThinking', thinking: state.thinkingMode});
   });
-  // Policy radio
+  // Policy radio — restore current selection from state
+  const currentPolicy = state.currentPolicy || 'ask';
   content.querySelectorAll('input[name="policy"]').forEach(r => {
+    r.checked = (r.value === currentPolicy);
     r.addEventListener('change', () => {
+      state.currentPolicy = r.value;
       sendWs({type: 'setPolicy', policy: r.value});
     });
   });
-  // Config save
+  // Config save — validate JSON before sending
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
     const cfg = document.getElementById('config-editor').value;
-    sendWs({type: 'updateConfig', config: cfg});
+    try {
+      JSON.parse(cfg);
+      sendWs({type: 'updateConfig', config: cfg});
+    } catch(e) {
+      alert('Invalid JSON: ' + e.message);
+    }
   });
   document.getElementById('btn-reload-config')?.addEventListener('click', () => {
     sendWs({type: 'getConfig'});
@@ -246,8 +256,10 @@ export function renderSessionSidebar(sessionData, activeId) {
 function resetChatForActiveSession() {
   state.aiText = '';
   state.currentAiBubble = null;
-  if (state.currentToolCard) { state.currentToolCard.remove(); state.currentToolCard = null; }
-  state.currentToolCard = null;
+  Object.keys(state.sessionToolCards).forEach(sid => {
+    if (state.sessionToolCards[sid]) state.sessionToolCards[sid].remove();
+  });
+  state.sessionToolCards = {};
   state.dom.chat.innerHTML = '';
   restoreFromStorage();
   smartScroll();
@@ -283,6 +295,8 @@ export function switchSession(sessionId) {
   // Switch active session
   state.activeSessionId = sessionId;
   resetChatForActiveSession();
+  // Restore cached task list for this session (or clear if none)
+  renderTaskList(state.sessionTasks[sessionId] || []);
   sendWs({type: 'switchSession', sessionId});
 }
 

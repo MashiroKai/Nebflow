@@ -55,6 +55,12 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                 "content" -> content.asJson
               )
               if isError.contains(true) then base.deepMerge(Json.obj("is_error" -> true.asJson)) else base
+            case ContentBlock.Thinking(thinking, signature) =>
+              val base = Json.obj(
+                "type" -> "thinking".asJson,
+                "thinking" -> thinking.asJson
+              )
+              signature.fold(base)(s => base.deepMerge(Json.obj("signature" -> s.asJson)))
           }
           Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(content))
       end match
@@ -111,6 +117,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     val content = json.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
     val textBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("text"))
     val toolUseBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("tool_use"))
+    val thinkingBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("thinking"))
 
     val reply = textBlocks.flatMap(_.hcursor.downField("text").as[String].toOption).mkString("")
     val toolCalls = toolUseBlocks.map { b =>
@@ -158,7 +165,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
           .header("content-type", "application/json")
           .body(bodyWithThinking.noSpaces)
           .response(asStreamUnsafe(Fs2Streams[IO]))
-          .readTimeout(180.seconds)
+          .readTimeout(360.seconds)
 
         Stream.eval(backend.send(request)).flatMap { response =>
           response.body match
@@ -221,6 +228,9 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                 case Some("text_delta") =>
                   val text = json.hcursor.downField("delta").downField("text").as[String].getOrElse("")
                   IO.pure(if text.nonEmpty then List(StreamChunk.TextDelta(text)) else Nil)
+                case Some("thinking_delta") =>
+                  val thinking = json.hcursor.downField("delta").downField("thinking").as[String].getOrElse("")
+                  IO.pure(if thinking.nonEmpty then List(StreamChunk.ThinkingDelta(thinking)) else Nil)
                 case Some("input_json_delta") =>
                   val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
                   val partial = json.hcursor.downField("delta").downField("partial_json").as[String].getOrElse("")

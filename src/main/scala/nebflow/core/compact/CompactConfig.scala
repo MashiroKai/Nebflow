@@ -10,5 +10,6 @@ case class CompactConfig(
 )
 
 object CompactConfig:
+
   def forContextWindow(window: Int): CompactConfig =
     CompactConfig(contextWindow = window)

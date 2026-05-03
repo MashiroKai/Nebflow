@@ -3,7 +3,6 @@ package nebflow.gateway
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.llm.{ErrorPermanence, FailoverReason, FallbackAttempt}
 import nebflow.shared.*
 import nebflow.shared.given
 
@@ -40,6 +39,11 @@ object GatewayCodecs:
     case StreamChunk.TextDelta(delta) =>
       Json.obj(
         "type" -> "textDelta".asJson,
+        "delta" -> delta.asJson
+      )
+    case StreamChunk.ThinkingDelta(delta) =>
+      Json.obj(
+        "type" -> "thinkingDelta".asJson,
         "delta" -> delta.asJson
       )
     case StreamChunk.ToolCallChunk(toolCall) =>

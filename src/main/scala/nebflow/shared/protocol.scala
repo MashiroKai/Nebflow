@@ -22,6 +22,9 @@ object ContentBlock:
   case class ToolResult(toolUseId: String, content: String, isError: Option[Boolean] = None) extends ContentBlock:
     val `type` = "tool_result"
 
+  case class Thinking(thinking: String, signature: Option[String] = None) extends ContentBlock:
+    val `type` = "thinking"
+
 // ===== Message =====
 
 enum MessageRole:
@@ -108,6 +111,7 @@ sealed trait StreamChunk
 
 object StreamChunk:
   case class TextDelta(delta: String) extends StreamChunk
+  case class ThinkingDelta(delta: String) extends StreamChunk
   case class ToolCallChunk(toolCall: ToolCall) extends StreamChunk
 
   case class Done(stopReason: Option[String], usage: Option[TokenUsage], meta: Option[LlmMeta] = None)
@@ -117,7 +121,11 @@ object StreamChunk:
 
 trait LlmHandle[F[_]]:
   def send(req: LlmRequest): F[LlmResponse]
-  def sendStream(req: LlmRequest): fs2.Stream[F, StreamChunk]
+
+  def sendStream(
+    req: LlmRequest,
+    onAttempt: Option[FallbackAttempt => cats.effect.IO[Unit]] = None
+  ): fs2.Stream[F, StreamChunk]
 
 // ===== Circe Codecs =====
 
@@ -138,6 +146,9 @@ given Encoder[ContentBlock] = Encoder.instance {
   case ContentBlock.ToolResult(toolUseId, content, isError) =>
     val base = Json.obj("type" -> "tool_result".asJson, "toolUseId" -> toolUseId.asJson, "content" -> content.asJson)
     isError.fold(base)(e => base.deepMerge(Json.obj("isError" -> e.asJson)))
+  case ContentBlock.Thinking(thinking, signature) =>
+    val base = Json.obj("type" -> "thinking".asJson, "thinking" -> thinking.asJson)
+    signature.fold(base)(s => base.deepMerge(Json.obj("signature" -> s.asJson)))
 }
 
 given Decoder[ContentBlock] = Decoder.instance { cursor =>
@@ -156,6 +167,11 @@ given Decoder[ContentBlock] = Decoder.instance { cursor =>
         id <- cursor.downField("toolUseId").as[String]; content <- cursor.downField("content").as[String];
         isError <- cursor.downField("isError").as[Option[Boolean]]
       yield ContentBlock.ToolResult(id, content, isError)
+    case "thinking" =>
+      for
+        thinking <- cursor.downField("thinking").as[String]
+        signature <- cursor.downField("signature").as[Option[String]]
+      yield ContentBlock.Thinking(thinking, signature)
     case other => Left(DecodingFailure(s"Unknown content block type: $other", cursor.history))
   }
 }
