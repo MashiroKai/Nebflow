@@ -21,6 +21,13 @@ Usage:
 - When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as appears AFTER the line number prefix.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - Use replace_all for replacing and renaming strings across the file.
+- Do not use Bash (sed, awk) to edit files — use this tool instead.
+
+Edit patterns:
+- Rename a variable: Use replace_all to change every occurrence. Do not do it one at a time.
+- Modify a specific function: Include enough context (function signature, surrounding lines) to make the old_string unique.
+- Multi-location edits: If the same change needs to happen in multiple places, use multiple Edit calls in parallel rather than trying to write a complex regex.
+- Large refactors: If a change affects more than 3-4 files, consider whether the scope matches what the user asked for.
 
 Line Replace mode:
 - Provide start_line (1-based) and new_string to replace a single line.

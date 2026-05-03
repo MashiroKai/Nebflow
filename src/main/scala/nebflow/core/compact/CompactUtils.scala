@@ -10,7 +10,7 @@ object CompactUtils:
       case msg @ Message(_, Right(blocks)) =>
         val stripped = blocks.map {
           case ContentBlock.Image(_, mediaType) => ContentBlock.Text(s"[image: $mediaType]")
-          case other                            => other
+          case other => other
         }
         msg.copy(content = Right(stripped))
       case other => other

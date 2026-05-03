@@ -26,7 +26,8 @@ case class ReminderState(
   sessionStarted: Boolean = false,
   highestPressureLevel: Int = 0,
   sandboxReminderPending: Boolean = true,
-  policyReminderPending: Boolean = false
+  policyReminderPending: Boolean = false,
+  writesWithoutRead: Int = 0
 )
 
 object SystemReminders:
@@ -42,8 +43,7 @@ object SystemReminders:
       val newHighest = PressureLevels.filter(l => pct >= l).maxOption.getOrElse(0)
       if newHighest > highestLevel then
         val suggestion =
-          if newHighest >= 80 then
-            s"\nContext is approaching the limit. Consider using the ContextManage tool to summarize or delete older messages to free up space."
+          if newHighest >= 80 then "\nContext is approaching the limit. Compression will be triggered automatically."
           else ""
         (
           Some(
@@ -79,6 +79,12 @@ object SystemReminders:
       .take(20)
       .mkString("\n  - ", "\n  - ", if files.length > 20 then s"\n  ... and ${files.length - 20} more" else "")
     SystemReminder("fileChanges", s"The following files were modified externally since the last message:$fileList")
+
+  def verificationReminder(count: Int): SystemReminder =
+    SystemReminder(
+      "verification",
+      s"You have made $count file edits without reading the results. Consider using the Read tool to verify your changes are correct before proceeding."
+    )
 
   private val logger = NebflowLogger.forName("nebflow.reminders")
 
@@ -116,6 +122,9 @@ object SystemReminders:
 
         // External file changes
         fileChangesOpt.foreach(reminders += _)
+
+        // Verification reminder: too many writes without read
+        if state.writesWithoutRead >= 3 then reminders += verificationReminder(state.writesWithoutRead)
 
         // Skill discovery match
         skillMatchOpt.foreach { m =>

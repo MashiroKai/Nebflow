@@ -13,7 +13,7 @@ object MicroCompact:
   case class Keep(indices: List[Int]) extends Instruction
   case class Compact(start: Int, end: Int, summary: String) extends Instruction
 
-  def compact(
+  private[compact] def compact(
     messages: List[Message],
     llm: LlmHandle[IO],
     config: CompactConfig,
@@ -38,13 +38,17 @@ object MicroCompact:
       for
         chunks <- llm.sendStream(request).compile.toList
         text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
-      yield
-        if text.isEmpty then Left("SubAgent returned empty response")
-        else
-          parseAndApply(text, messages) match
-            case Left(err) => Left(err)
-            case Right(newMessages) => Right(newMessages)
+      yield parseResponse(text, messages)
   end compact
+
+  /** Parse LLM response text into a compacted message list. */
+  def parseResponse(
+    text: String,
+    originalMessages: List[Message]
+  ): Either[String, List[Message]] =
+    if text.isEmpty then Left("SubAgent returned empty response")
+    else parseAndApply(text, originalMessages)
+  end parseResponse
 
   // ===== Parse instructions and apply =====
 
@@ -54,8 +58,7 @@ object MicroCompact:
   ): Either[String, List[Message]] =
     val instructions = parseInstructions(text)
 
-    if instructions.isEmpty then
-      Left("SubAgent output contains no valid instructions")
+    if instructions.isEmpty then Left("SubAgent output contains no valid instructions")
     else
       val coveredIndices = instructions.flatMap {
         case Keep(indices) => indices
@@ -64,28 +67,37 @@ object MicroCompact:
 
       val expectedIndices = (0 until messages.length).toSet
 
-      if coveredIndices != expectedIndices then
-        val missing = (expectedIndices -- coveredIndices).toList.sorted
-        val extra = (coveredIndices -- expectedIndices).toList.sorted
-        Left(
-          s"Instruction coverage mismatch. " +
-          s"Missing: ${if missing.nonEmpty then missing.mkString("[", ",", "]") else "none"}. " +
-          s"Extra: ${if extra.nonEmpty then extra.mkString("[", ",", "]") else "none"}"
-        )
+      // Fail only on extra (out-of-range) indices; default missing to keep
+      val extra = coveredIndices.filter(_ >= messages.length).toList.sorted
+      if extra.nonEmpty then
+        Left(s"Instruction coverage has extra indices out of range: ${extra.mkString("[", ",", "]")}")
       else
-        val newMessages = instructions.flatMap {
+        val missing = (expectedIndices -- coveredIndices).toList.sorted
+        val augmentedInstructions =
+          if missing.nonEmpty then instructions :+ Keep(missing) else instructions
+
+        val newMessages = augmentedInstructions.flatMap {
           case Keep(indices) => indices.map(messages(_))
           case Compact(s, e, summary) =>
-            List(Message(MessageRole.User, Left(
-              s"<system-reminder>Context micro-compact. Compressed messages $s-$e.\n$summary</system-reminder>"
-            )))
+            List(
+              Message(
+                MessageRole.User,
+                Left(
+                  s"<context-compact mode=\"micro\">Compressed messages $s-$e.\n$summary</context-compact>"
+                )
+              )
+            )
         }
         Right(newMessages)
+
+    end if
+
+  end parseAndApply
 
   /** Parse <keep> and <compact> tags from SubAgent output */
   private def parseInstructions(text: String): List[Instruction] =
     val keepPattern = """<keep>\s*([\d,\s]+)\s*</keep>""".r
-    val compactPattern = """<compact\s+start="(\d+)"\s+end="(\d+)">\s*(.*?)\s*</compact>""".r
+    val compactPattern = """<compact\s+start=\"(\d+)\"\s+end=\"(\d+)\">\s*(.*?)\s*</compact>""".r
 
     val tags = List.newBuilder[(Int, Instruction)]
 
