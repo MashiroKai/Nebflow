@@ -36,7 +36,6 @@ const slashCommands = {
         ], (answers) => {
           const mode = answers[0];
           state.thinkingMode = mode === 'Enable' ? {type: 'enabled', budget_tokens: 16000} : null;
-          try { localStorage.setItem('nebflow_thinking', JSON.stringify(state.thinkingMode)); } catch(e) {}
           sendWs({type: 'setThinking', thinking: state.thinkingMode});
           renderSystemBubble('Thinking: ' + mode.toLowerCase());
         }, 'Confirm');

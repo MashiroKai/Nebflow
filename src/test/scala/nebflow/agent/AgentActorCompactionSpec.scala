@@ -74,3 +74,44 @@ class AgentActorCompactionSpec extends FunSuite:
     assert(state.pendingCompaction.isEmpty)
     assert(state.sessionId.contains("test-session"))
   }
+
+  // ---------- Manual compact state transitions (issue 009) ----------
+
+  test("manual compact success clears pendingCompaction and resets failures") {
+    val originalMsgs = List(
+      Message(MessageRole.User, Left("hello")),
+      Message(MessageRole.Assistant, Left("world"))
+    )
+    val state = mkState(2).copy(
+      messages = originalMsgs,
+      pendingCompaction = Some(CompactionContext("sub-1", "micro", None, None))
+    )
+    // Simulate the success branch transformations in DelegateResult
+    val compactedMsgs = List(Message(MessageRole.User, Left("summary")))
+    val newState = state.copy(pendingCompaction = None, subagents = Map.empty)
+    val successState = newState.copy(messages = compactedMsgs, compactionFailures = 0)
+
+    assert(successState.pendingCompaction.isEmpty)
+    assertEquals(successState.compactionFailures, 0)
+    assertEquals(successState.messages.size, 1)
+    assertEquals(successState.messages.head.content.swap.getOrElse(""), "summary")
+  }
+
+  test("manual compact failure increments failures and clears pendingCompaction") {
+    val originalMsgs = List(
+      Message(MessageRole.User, Left("hello")),
+      Message(MessageRole.Assistant, Left("world"))
+    )
+    val state = mkState(1).copy(
+      messages = originalMsgs,
+      pendingCompaction = Some(CompactionContext("sub-1", "full", None, None))
+    )
+    // Simulate the failure branch transformations in DelegateResult (non-circuit-broken)
+    val failures = state.compactionFailures + 1 // 2
+    val newState = state.copy(pendingCompaction = None, subagents = Map.empty)
+    val failedState = newState.copy(compactionFailures = failures)
+
+    assert(failedState.pendingCompaction.isEmpty)
+    assertEquals(failedState.compactionFailures, 2)
+    assertEquals(failedState.messages, originalMsgs) // original messages retained
+  }

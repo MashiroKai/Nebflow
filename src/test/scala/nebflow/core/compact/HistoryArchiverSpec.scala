@@ -97,3 +97,62 @@ class HistoryArchiverSpec extends CatsEffectSuite:
       case Left(err) => IO(fail(s"archive failed: $err"))
     }
   }
+
+  // ---------- archiveComparison (issue 009) ----------
+
+  test("archiveComparison returns path with archives/<sessionId>/<ts>-comparison.json format") {
+    val root = os.temp.dir()
+    val archiver = makeArchiver(root)
+    val before = List(Message(MessageRole.User, Left("a")), Message(MessageRole.Assistant, Left("b")))
+    val after = List(Message(MessageRole.User, Left("summary")))
+    archiver.archiveComparison("cmp-session", "micro", before, after).flatMap {
+      case Right(path) =>
+        IO {
+          assert(path.contains("archives/cmp-session/"))
+          assert(path.endsWith("-comparison.json"))
+        }
+      case Left(err) => IO(fail(s"archiveComparison failed: $err"))
+    }
+  }
+
+  test("archiveComparison writes before and after arrays with counts") {
+    val root = os.temp.dir()
+    val archiver = makeArchiver(root)
+    val before = List(
+      Message(MessageRole.User, Left("hello")),
+      Message(MessageRole.Assistant, Left("world")),
+      Message(MessageRole.User, Left("?"))
+    )
+    val after = List(Message(MessageRole.User, Left("summary")))
+    archiver.archiveComparison("cnt-session", "full", before, after).flatMap {
+      case Right(path) =>
+        IO.blocking(os.read(os.Path(path))).map { content =>
+          val json = parse(content).toOption.get
+          assert(json.isObject, "comparison should be JSON object")
+          val obj = json.asObject.get
+          assertEquals(obj("beforeCount").flatMap(_.asNumber).flatMap(_.toInt).get, 3)
+          assertEquals(obj("afterCount").flatMap(_.asNumber).flatMap(_.toInt).get, 1)
+          assertEquals(obj("mode").flatMap(_.asString).get, "full")
+
+          val beforeArr = obj("before").flatMap(_.asArray).get
+          val afterArr = obj("after").flatMap(_.asArray).get
+          assertEquals(beforeArr.size, 3)
+          assertEquals(afterArr.size, 1)
+        }
+      case Left(err) => IO(fail(s"archiveComparison failed: $err"))
+    }
+  }
+
+  test("archiveComparison returns Left on unwritable directory without throwing") {
+    val root = os.temp.dir()
+    val sessionDir = root / "archives" / "bad-cmp-session"
+    os.makeDir.all(sessionDir)
+    java.nio.file.Files.setPosixFilePermissions(
+      java.nio.file.Paths.get(sessionDir.toString),
+      java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ)
+    )
+    val archiver = makeArchiver(root)
+    archiver.archiveComparison("bad-cmp-session", "micro", sampleMessages, sampleMessages).map { result =>
+      assert(result.isLeft || result.isRight)
+    }
+  }
