@@ -19,7 +19,8 @@ def executeTool(
   contextWindow: Int = Defaults.ContextWindow,
   sessionId: Option[String] = None,
   taskStore: Option[nebflow.core.task.TaskStore] = None,
-  wsSend: Option[io.circe.Json => IO[Unit]] = None
+  wsSend: Option[io.circe.Json => IO[Unit]] = None,
+  readTracker: Option[nebflow.core.tools.ReadTracker] = None
 ): IO[ToolExecResult] =
   val logger = NebflowLogger.forName("nebflow.handlers")
 
@@ -51,7 +52,8 @@ def executeTool(
             contextWindow,
             sessionId,
             taskStore,
-            wsSend
+            wsSend,
+            readTracker
           )
           val tag = sessionTag.map(t => s"[$t] ").getOrElse("")
           IO.delay(System.nanoTime()).flatMap { start =>
