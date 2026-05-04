@@ -11,43 +11,6 @@ object FullCompact:
   private val MaxRestoreTokens = 50000 // ~200K chars
 
   /**
-   * Full compact: SubAgent generates summary + specifies files to restore, replaces all messages.
-   *
-   * @param messages     current message list
-   * @param llm          LLM handle
-   * @param config       compact config
-   * @param projectRoot  project root (for resolving relative paths)
-   * @return Right(compacted) — summary message + file restore message, or Left(errorMessage)
-   */
-  private[compact] def compact(
-    messages: List[Message],
-    llm: LlmHandle[IO],
-    config: CompactConfig,
-    projectRoot: String = ""
-  ): IO[Either[String, List[Message]]] =
-    if messages.size < 6 then IO.pure(Right(messages))
-    else
-      val cleaned = CompactUtils.stripImages(messages)
-      val messagesJson = cleaned.asJson.noSpaces
-
-      val request = LlmRequest(
-        messages = List(
-          Message(MessageRole.System, Left(CompactPrompts.full)),
-          Message(MessageRole.User, Left(messagesJson))
-        ),
-        sessionId = "compact",
-        agentId = "compact",
-        tools = None,
-        maxTokens = Some(Defaults.MaxTokensCompact)
-      )
-
-      for
-        chunks <- llm.sendStream(request).compile.toList
-        text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
-      yield parseResponse(text, messages, projectRoot)
-  end compact
-
-  /**
    * Parse LLM response text into a compacted message list.
    * Extracts <files> tags and builds file restore messages.
    */

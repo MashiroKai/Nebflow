@@ -376,6 +376,9 @@
   z-index: 100;
 }
 #status-wrap.on { opacity: 1; }
+#status-wrap.compacting { background: rgba(99,102,241,0.85); }   /* indigo-500 */
+#status-wrap.compact-done { background: rgba(34,197,94,0.85); }  /* green-500 */
+#status-wrap.compact-failed { background: rgba(239,68,68,0.85); } /* red-500 */
 #lottie-spinner { width: 20px; height: 20px; }
 
 /* ---------- Retry status ---------- */
