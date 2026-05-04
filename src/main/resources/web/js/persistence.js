@@ -3,6 +3,7 @@
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, formatDiff, buildToolDetail, attachToolClick, esc } from './utils.js';
+import { renderWithRegistry } from './cardRegistry.js';
 
 const MAX_MSGS_PER_SESSION = 200;
 
@@ -147,20 +148,27 @@ export function restoreFromStorage() {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
-      const isError = m.isError;
-      const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                           : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-      const diffHtml = formatDiff(m.content);
-      const detailHtml = buildToolDetail(m.input, m.label);
-      const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
-      const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
-      const hasBody = !!bodyHtml;
-      card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-        '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + '</div>' +
-        (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
-      row.appendChild(card);
-      chat.appendChild(row);
-      if (hasBody) attachToolClick(card);
+      // Try plugin renderer first
+      const data = { label: m.label, summary: m.summary, content: m.content, isError: m.isError, input: m.input, sessionId: state.activeSessionId };
+      if (renderWithRegistry(card, data)) {
+        row.appendChild(card);
+        chat.appendChild(row);
+      } else {
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        const diffHtml = formatDiff(m.content);
+        const detailHtml = buildToolDetail(m.input, m.label);
+        const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
+        const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
+        const hasBody = !!bodyHtml;
+        card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+          '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + '</div>' +
+          (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+        row.appendChild(card);
+        chat.appendChild(row);
+        if (hasBody) attachToolClick(card);
+      }
     } else if (m.type === 'askUser') {
       const row = document.createElement('div');
       row.className = 'row ai';
