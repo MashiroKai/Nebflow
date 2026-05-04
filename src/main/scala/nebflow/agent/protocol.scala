@@ -351,7 +351,8 @@ case class AgentState(
   recentFilesRead: Set[String] = Set.empty,
   stagnationCount: Int = 0,
   stage: AdaptiveStage = AdaptiveStage.Normal,
-  progressStreak: Int = 0
+  progressStreak: Int = 0,
+  readTracker: Option[nebflow.core.tools.ReadTracker] = None
 )
 
 // ============================================================
