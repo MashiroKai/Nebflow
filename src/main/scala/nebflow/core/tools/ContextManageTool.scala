@@ -11,9 +11,9 @@ object ContextManageTool extends Tool:
   val description =
     """Trigger context compaction to free up context window space.
 
-The system will automatically compact context when it exceeds 80% of the window.
-Use this tool proactively if you want to compact before hitting that threshold,
-or if you want to use micro mode for targeted cleanup.
+The system will automatically compact context when remaining tokens fall below
+bufferTokens (default 13000). Use this tool proactively if you want to compact
+before hitting that threshold, or if you want to use micro mode for targeted cleanup.
 
 ## Modes
 

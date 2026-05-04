@@ -76,7 +76,6 @@ object AgentActor:
                 activeStreamFiber = None,
                 sessionId = sessionId,
                 pendingCompaction = None,
-                pendingManualCompaction = None,
                 latestUsage = None,
                 pendingAskUser = None,
                 pendingPermission = None,
@@ -229,6 +228,17 @@ object AgentActor:
               pendingCompaction = None,
               subagents = state.subagents - subId
             )
+            // Archive original messages before applying compaction (non-blocking).
+            // 即使 parseResponse 失败(Left),原始历史也应被快照,因为这是最需要回滚的高风险场景。
+            val snapshotIO = state.sessionId match
+              case Some(sid) =>
+                resources.historyArchiver.archive(sid, state.messages).map {
+                  case Right(path) => Some(path)
+                  case Left(_) => None
+                }.handleError(_ => None)
+              case None => IO.pure(None)
+            val snapshotPath = resources.dispatcher.unsafeRunSync(snapshotIO)
+
             compactedMessages match
               case Right(compacted) =>
                 NebflowLogger
@@ -240,13 +250,27 @@ object AgentActor:
                   depth,
                   state.sessionId,
                   "compaction-complete",
-                  s"subId=$subId mode=${pending.mode} before=${state.messages.size} after=${compacted.size}"
+                  s"subId=$subId mode=${pending.mode} before=${state.messages.size} after=${compacted.size} snapshot=${snapshotPath.getOrElse("-")}"
                 )
+                resources.dispatcher.unsafeRunAndForget(
+                  emitStreamIO(
+                    state.wsSend,
+                    ctx,
+                    AgentStreamEvent.CompactComplete(state.messages.size, compacted.size, snapshotPath),
+                    isSubagent = depth > 0,
+                    state.sessionId
+                  )
+                )
+
                 pending.replyDeferred.foreach { d =>
                   resources.dispatcher.unsafeRunAndForget(
                     d.complete(Right(CompactionResult(state.messages.size, compacted.size)))
                   )
                 }
+                val successState = newState.copy(
+                  messages = compacted,
+                  compactionFailures = 0
+                )
                 if pending.replyTo.isDefined then
                   // Auto-compaction: resume LLM call with compacted messages
                   pipeLlmCall(
@@ -254,7 +278,7 @@ object AgentActor:
                     resources,
                     depth,
                     parentRef,
-                    newState.copy(messages = compacted),
+                    successState,
                     stash,
                     ctx,
                     pending.replyTo
@@ -265,38 +289,76 @@ object AgentActor:
                     resources,
                     depth,
                     parentRef,
-                    newState.copy(messages = compacted),
+                    successState,
                     stash,
                     ctx
                   )
               case Left(err) =>
-                NebflowLogger.forName("nebflow.agent").warn(s"Auto-compact failed: $err")
+                val failures = state.compactionFailures + 1
+                val maxFailures = CompactConfig().circuitBreakerMax
+                NebflowLogger.forName("nebflow.agent").warn(s"Auto-compact failed: $err (attempt $failures/$maxFailures)")
                 logAgentEvent(
                   ctx,
                   agentDef,
                   depth,
                   state.sessionId,
                   "compaction-fail",
-                  s"subId=$subId mode=${pending.mode} err=${err.take(60)}"
+                  s"subId=$subId mode=${pending.mode} err=${err.take(60)} failures=$failures"
                 )
+                resources.dispatcher.unsafeRunAndForget(
+                  emitStreamIO(
+                    state.wsSend,
+                    ctx,
+                    AgentStreamEvent.CompactFailed(err, failures, maxFailures),
+                    isSubagent = depth > 0,
+                    state.sessionId
+                  )
+                )
+
                 pending.replyDeferred.foreach { d =>
                   resources.dispatcher.unsafeRunAndForget(
                     d.complete(Left(err))
                   )
                 }
-                if pending.replyTo.isDefined then
+                val failedState = newState.copy(compactionFailures = failures)
+                if failures >= maxFailures then
+                  // Circuit breaker open: stop and report failure
+                  val agentError = AgentError(
+                    ctx.self.path.name,
+                    agentDef.name,
+                    depth,
+                    AgentErrorType.ToolFailed,
+                    s"Compaction circuit breaker open after $failures attempts"
+                  )
+                  parentRef match
+                    case Some(p) => p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(agentError))
+                    case None =>
+                      emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.Done, isSubagent = false, state.sessionId)
+                  pending.replyTo.foreach(_ ! AgentEvent.Failed(state.sessionId.getOrElse(""), agentError))
+                  stash.unstashAll(
+                    idle(
+                      agentDef,
+                      resources,
+                      depth,
+                      parentRef,
+                      failedState.copy(status = AgentStatus.Error(s"Compaction circuit breaker open after $failures attempts")),
+                      stash,
+                      ctx
+                    )
+                  )
+                else if pending.replyTo.isDefined then
                   // Auto-compaction failed: try LLM with original messages anyway
                   pipeLlmCall(
                     agentDef,
                     resources,
                     depth,
                     parentRef,
-                    newState,
+                    failedState,
                     stash,
                     ctx,
                     pending.replyTo
                   )
-                else processing(agentDef, resources, depth, parentRef, newState, stash, ctx)
+                else processing(agentDef, resources, depth, parentRef, failedState, stash, ctx)
             end match
           case _ =>
             // Regular subagent result
@@ -363,7 +425,6 @@ object AgentActor:
               activeStreamFiber = None,
               subagents = Map.empty,
               pendingCompaction = None,
-              pendingManualCompaction = None,
               pendingAskUser = None,
               pendingPermission = None
             ),
@@ -436,6 +497,21 @@ object AgentActor:
             resources.dispatcher.unsafeRunAndForget(d.complete(Left("Compaction already in progress")))
           }
           Behaviors.same
+        else if state.compactionFailures >= CompactConfig().circuitBreakerMax then
+          val err = s"Compaction circuit breaker open after ${state.compactionFailures} attempts"
+          replyDeferred.foreach { d =>
+            resources.dispatcher.unsafeRunAndForget(d.complete(Left(err)))
+          }
+          resources.dispatcher.unsafeRunAndForget(
+            emitStreamIO(
+              state.wsSend,
+              ctx,
+              AgentStreamEvent.CompactFailed(err, state.compactionFailures, CompactConfig().circuitBreakerMax),
+              isSubagent = depth > 0,
+              state.sessionId
+            )
+          )
+          Behaviors.same
         else
           val subId = s"context-manage-${java.util.UUID.randomUUID().toString.take(8)}"
           val io = resources.agentLibrary.get("context-manage").flatMap { defnOpt =>
@@ -443,12 +519,21 @@ object AgentActor:
           }
           resources.dispatcher.unsafeRunAndForget(io)
           val pending = CompactionContext(subId, mode, replyDeferred)
+          resources.dispatcher.unsafeRunAndForget(
+            emitStreamIO(
+              state.wsSend,
+              ctx,
+              AgentStreamEvent.CompactStart(mode, None, None),
+              isSubagent = depth > 0,
+              state.sessionId
+            )
+          )
           processing(
             agentDef,
             resources,
             depth,
             parentRef,
-            state.copy(pendingCompaction = Some(pending), pendingManualCompaction = None),
+            state.copy(pendingCompaction = Some(pending)),
             stash,
             ctx
           )
@@ -525,7 +610,7 @@ object AgentActor:
   // Start LLM call -> pipe result back to self
   // ============================================================
 
-  /** Check if auto-compaction is needed and trigger it. Returns true if compacting. */
+  /** Check if auto-compaction is needed and trigger it. Returns Some(behavior) if compacting. */
   private def maybeAutoCompact(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -536,9 +621,24 @@ object AgentActor:
     ctx: ActorContext[AgentCommand],
     replyTo: Option[ActorRef[AgentEvent]]
   ): Option[Behavior[AgentCommand]] =
-    if state.pendingCompaction.isDefined then None
+    if agentDef.name == "context-manage" then None // prevent self-recursive compaction
+    else if state.pendingCompaction.isDefined then None
+    else if state.compactionFailures >= CompactConfig().circuitBreakerMax then
+      logAgentEvent(
+        ctx,
+        agentDef,
+        depth,
+        state.sessionId,
+        "auto-compact-skipped",
+        s"circuitBreakerOpen failures=${state.compactionFailures} max=${CompactConfig().circuitBreakerMax}"
+      )
+      None
     else
-      val inputTokens = state.latestUsage.map(_.inputTokens).getOrElse(estimateTokens(state.messages))
+      // inputTokens 优先用上一轮 LLM 的真实 usage(latestUsage.inputTokens),
+      // 若缺失(首次 turn 或 usage 未上报)则用 TokenEstimator 的字符近似值。
+      // 注意:前者是"上一轮实际消耗",后者是"当前 messages 的近似";两者不在同一基线上,
+      // 但均用于触发 heuristics,不用于精确计费。
+      val inputTokens = state.latestUsage.map(_.inputTokens).getOrElse(TokenEstimator.estimate(state.messages))
       val threshold = agentDef.contextWindow - CompactConfig().bufferTokens
       if inputTokens > threshold then
         logAgentEvent(
@@ -555,6 +655,15 @@ object AgentActor:
         }
         resources.dispatcher.unsafeRunAndForget(io)
         val pending = CompactionContext(subId, "full", None, replyTo)
+        resources.dispatcher.unsafeRunAndForget(
+          emitStreamIO(
+            state.wsSend,
+            ctx,
+            AgentStreamEvent.CompactStart("full", Some(inputTokens), Some(threshold)),
+            isSubagent = depth > 0,
+            state.sessionId
+          )
+        )
         Some(
           processing(
             agentDef,
@@ -690,18 +799,6 @@ object AgentActor:
               handleReport(call, agentDef, parentRef, ctx)
             case "ask_parent" =>
               handleAskParent(call, parentRef, ctx)
-            case "ContextManage" =>
-              if state.pendingCompaction.isDefined then
-                IO.pure(ToolExecResult("Compaction already in progress", isError = true))
-              else
-                val mode = call.input("mode").flatMap(_.asString).getOrElse("full")
-                val deferred = cats.effect.Deferred.unsafe[IO, Either[String, CompactionResult]]
-                IO(ctx.self ! AgentCommand.TriggerCompaction(mode, Some(deferred))) *>
-                  deferred.get.map {
-                    case Right(cr) =>
-                      ToolExecResult(s"Context compression succeeded: ${cr.before} messages -> ${cr.after} messages")
-                    case Left(err) => ToolExecResult(s"Context compression failed: $err", isError = true)
-                  }
             case "AskUserQuestion" =>
               if askUserDeferred.isDefined then
                 IO.pure(ToolExecResult("Another AskUser request is already pending", isError = true))
@@ -1063,22 +1160,7 @@ object AgentActor:
     val stopReason = chunks.collectFirst { case StreamChunk.Done(sr, _, _) => sr }.flatten
     ConsumeResult(text, toolCalls, Nil, stopReason, usage, Option.when(thinking.nonEmpty)(thinking))
 
-  /** Rough token estimation: ~4 chars per token for English/ASCII, ~2 for CJK. */
-  private def estimateTokens(messages: List[Message]): Int =
-    val totalChars = messages.map { m =>
-      m.content match
-        case Left(text) => text.length
-        case Right(blocks) =>
-          blocks.map {
-            case ContentBlock.Text(t) => t.length
-            case ContentBlock.ToolUse(_, _, input) => input.toString.length
-            case ContentBlock.ToolResult(_, content, _) => content.length
-            case ContentBlock.Image(data, _) => data.length / 10
-            case ContentBlock.Thinking(t, _) => t.length
-          }.sum
-    }.sum
-    totalChars / 3
-  end estimateTokens
+  // Token estimation moved to compact.TokenEstimator
 
   // ============================================================
   // Prompt / tool helpers
@@ -1089,9 +1171,10 @@ object AgentActor:
     else Repl.loadSystemPrompt() + "\n\n" + Repl.buildEnvInfo(resources.projectRoot.toString)
 
   private def buildToolList(agentDef: AgentDef, depth: Int, hasParent: Boolean): Option[List[ToolDefinition]] =
-    val base =
-      if agentDef.tools.nonEmpty then ToolRegistry.ALL_TOOLS.filter(t => agentDef.tools.contains(t.name))
-      else ToolRegistry.ALL_TOOLS
+    val base = agentDef.tools match
+      case Nil => Nil
+      case List("*") => ToolRegistry.ALL_TOOLS
+      case names => ToolRegistry.ALL_TOOLS.filter(t => names.contains(t.name))
     val synthetic = List.newBuilder[ToolDefinition]
     // delegate — only if this agent has subagent slots
     if agentDef.subagents.nonEmpty then
