@@ -112,6 +112,7 @@ object SessionActor:
 
       case SessionCommand.SpawnAgent(sessionId, agentDef, initialMessages, text, adapter) =>
         val broadcastWsSend = (json: io.circe.Json) => wsHub.broadcast(json)
+        val readTracker = resources.dispatcher.unsafeRunSync(nebflow.core.tools.ReadTracker.create)
         val agentRef = ctx.spawn(
           AgentActor(
             agentDef,
@@ -120,7 +121,8 @@ object SessionActor:
             depth = 0,
             parentRef = None,
             sessionId = Some(sessionId),
-            initialMessages = initialMessages
+            initialMessages = initialMessages,
+            readTracker = Some(readTracker)
           ),
           s"agent-$sessionId-${System.currentTimeMillis()}"
         )
