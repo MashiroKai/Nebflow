@@ -23,7 +23,7 @@ export function setStatus(text) {
 
 export function clearStatus() {
   const { statusWrap } = state.dom;
-  statusWrap.classList.remove('on');
+  statusWrap.classList.remove('on', 'compacting', 'compact-done', 'compact-failed');
   stopSpinner();
 }
 
