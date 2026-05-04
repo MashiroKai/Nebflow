@@ -1,13 +1,21 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
 
+import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
 
 object WriteTool extends Tool:
   val CONTEXT_LINES = 3
+
+  /** Maximum content size accepted by Write, in UTF-8 encoded bytes.
+    * Aligned with ReadTool.MAX_FILE_BYTES so anything Read can return is
+    * also writable in a single Write call.
+    */
+  val MAX_WRITE_BYTES: Int = 512 * 1024
 
   val name = "Write"
 
@@ -15,7 +23,7 @@ object WriteTool extends Tool:
 
 Usage:
 - This tool will overwrite the existing file if there is one at the provided path.
-- If this is an existing file, you MUST use the Read tool first to read the file's contents. This tool will fail if you did not read the file first.
+- Recommended: read the existing file first so the new content is informed by current state.
 - ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
 - Prefer the Edit tool for modifying existing files — it only sends the diff. Only use this tool to create new files or for complete rewrites.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.
@@ -42,47 +50,83 @@ Usage:
     s"Write($short)"
 
   def summarizeResult(input: JsonObject, result: String): String =
-    if result.startsWith("OK:CREATED") then "File created"
-    else if result.startsWith("OK:UPDATED") then
-      val added = "(\\d+) added".r.findFirstMatchIn(result).map(_.group(1))
-      val removed = "(\\d+) removed".r.findFirstMatchIn(result).map(_.group(1))
-      val parts = List(
-        added.map(a => s"$a line${if a == "1" then "" else "s"} added"),
-        removed.map(r => s"$r line${if r == "1" then "" else "s"} removed")
-      ).flatten
-      if parts.nonEmpty then parts.mkString(", ") else "File updated"
+    if result.startsWith(DiffUtil.OkCreatedPrefix) then "File created"
+    else if result.startsWith(DiffUtil.OkUpdatedPrefix) then
+      DiffUtil.parseUpdatedStats(result) match
+        case Some((added, removed)) =>
+          val parts = List(
+            Option.when(added > 0)(s"$added line${if added == 1 then "" else "s"} added"),
+            Option.when(removed > 0)(s"$removed line${if removed == 1 then "" else "s"} removed")
+          ).flatten
+          if parts.nonEmpty then parts.mkString(", ") else "File updated"
+        case None => "File updated"
     else result.split("\\n").headOption.getOrElse(result)
 
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
+  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val content = input("content").flatMap(_.asString).getOrElse("")
     val filePath =
       if filePathStr.startsWith("/") then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
-    try
-      if Files.exists(filePath) && Files.isDirectory(filePath) then
-        Left(ToolError(s"Path is a directory, not a file: $filePath"))
-      else
-        val isNew = !Files.exists(filePath)
-        val dir = filePath.getParent
-        if dir != null then Files.createDirectories(dir)
+    val contentBytes = content.getBytes(StandardCharsets.UTF_8).length
+    if contentBytes > MAX_WRITE_BYTES then
+      IO.pure(
+        Left(
+          ToolError(
+            s"Content too large: $contentBytes bytes (limit $MAX_WRITE_BYTES). Split into multiple Edit calls."
+          )
+        )
+      )
+    else if Files.exists(filePath) && Files.isDirectory(filePath) then
+      IO.pure(Left(ToolError(s"Path is a directory, not a file: $filePath")))
+    else
+      val isNew = !Files.exists(filePath)
+      val readCheck: IO[Either[ToolError, Unit]] =
+        if !isNew then
+          ctx.readTracker match
+            case Some(rt) =>
+              rt.hasBeenRead(filePath).map {
+                case true  => Right(())
+                case false =>
+                  Left(ToolError(s"File was not read in this session: $filePath. Read it first with the Read tool."))
+              }
+            case None => IO.pure(Right(()))
+        else IO.pure(Right(()))
 
-        if isNew then
-          DiffUtil.writeFile(filePath, content, "\n")
-          Right(s"OK:CREATED $filePath")
-        else
-          val original = DiffUtil.readFile(filePath)
-          val lineSep = DiffUtil.detectLineSep(original)
-          DiffUtil.writeFile(filePath, content, lineSep)
+      readCheck.flatMap {
+        case Left(err) => IO.pure(Left(err))
+        case Right(()) =>
+          IO.blocking {
+            try
+              val dir = filePath.getParent
+              if dir != null then Files.createDirectories(dir)
 
-          val oldLines = original.split("\\r?\\n").toList
-          val newLines = content.split("\\r?\\n").toList
-          val (added, removed) = DiffUtil.lineStats(oldLines, newLines)
+              if isNew then
+                DiffUtil.writeFile(filePath, content, "\n")
+                Right(DiffUtil.renderCreatedResult(filePath))
+              else
+                val original = DiffUtil.readFile(filePath)
+                val lineSep = DiffUtil.detectLineSep(original)
+                val mtime = Files.getLastModifiedTime(filePath)
 
-          val short = filePath.getFileName.toString
-          val diff = DiffUtil.makeDiff(short, original, content)
-          Right(s"OK:UPDATED $short, $added added, $removed removed\n$diff")
-    catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
-  }
+                // Compute the diff/stats before re-checking mtime so any work
+                // between read and write is bracketed by the mtime guard.
+                val short = filePath.getFileName.toString
+                val (added, removed) = DiffUtil.lineStats(original, content)
+                val diff = DiffUtil.makeDiff(short, original, content)
+
+                if Files.getLastModifiedTime(filePath) != mtime then
+                  Left(ToolError("File was modified externally between read and write. Please re-check and retry."))
+                else
+                  DiffUtil.writeFile(filePath, content, lineSep)
+                  Right(DiffUtil.renderUpdatedResult(short, added, removed, diff))
+            catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
+          }.flatMap {
+            case Right(result) =>
+              ctx.readTracker.traverse_(_.recordRead(filePath)).as(Right(result))
+            case left => IO.pure(left)
+          }
+      }
+  end call
 end WriteTool
