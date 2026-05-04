@@ -1,6 +1,6 @@
 // sidebar.js — Left panel management: nav tabs, agent list, settings, session sidebar
 
-import state, { LS_THINKING_KEY, LS_SESSIONS_KEY } from './state.js';
+import state, { LS_SESSIONS_KEY } from './state.js';
 import { sendWs } from './ws.js';
 import { showAgentModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll } from './utils.js';
@@ -107,7 +107,6 @@ export function renderSettings() {
     this.classList.toggle('on');
     const enabled = this.classList.contains('on');
     state.thinkingMode = enabled ? {type: 'enabled', budget_tokens: 16000} : null;
-    try { localStorage.setItem(LS_THINKING_KEY, JSON.stringify(state.thinkingMode)); } catch(e) {}
     sendWs({type: 'setThinking', thinking: state.thinkingMode});
   });
   // Policy radio — restore current selection from state

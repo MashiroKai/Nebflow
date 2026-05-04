@@ -127,7 +127,11 @@ object AgentActor:
         )
         val userMsg = Message(MessageRole.User, Left(text))
         val newMessages = state.messages :+ userMsg
-        pipeLlmCall(agentDef, resources, depth, parentRef, state.copy(messages = newMessages), stash, ctx, replyTo)
+        pipeLlmCall(
+          agentDef, resources, depth, parentRef,
+          state.copy(messages = newMessages, recentFilesRead = Set.empty),
+          stash, ctx, replyTo
+        )
 
       case AgentCommand.Stop(_) =>
         logAgentEvent(ctx, agentDef, depth, state.sessionId, "stop", "reason=user")
@@ -168,7 +172,8 @@ object AgentActor:
             ctx,
             result.text,
             replyTo,
-            result.thinking
+            result.thinking,
+            textAlreadyStreamed = true
           )
         else pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
 
@@ -223,14 +228,18 @@ object AgentActor:
           val finishAnswer = tc.results.collectFirst {
             case (call, r) if call.name == "finish" => r.content.stripPrefix("[finish] ")
           }.getOrElse("")
-          finishTurn(agentDef, resources, depth, parentRef, updatedState, stash, ctx, finishAnswer, tc.replyTo, tc.thinking)
+          finishTurn(agentDef, resources, depth, parentRef, updatedState, stash, ctx, finishAnswer, tc.replyTo, tc.thinking, textAlreadyStreamed = false)
         else
           // Loop: start next LLM call with updated messages
           pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, stash, ctx, tc.replyTo)
 
       // --- Subagent stream forwarding ---
       case AgentCommand.SubagentStreamEvent(subId, event) =>
-        emitStream(resources.dispatcher, state.wsSend, ctx, event)
+        // Compaction sub-agent events are internal; do not forward to frontend.
+        // Non-compaction sub-agents are forwarded normally.
+        val isCompaction = state.pendingCompaction.exists(_.subagentId == subId)
+        if !isCompaction then emitStream(resources.dispatcher, state.wsSend, ctx, event)
+        else logAgentEvent(ctx, agentDef, depth, state.sessionId, "compact-sub-stream", s"subId=$subId event=${event.getClass.getSimpleName}")
         Behaviors.same
 
       // --- Subagent returned result ---
@@ -251,35 +260,44 @@ object AgentActor:
               pendingCompaction = None,
               subagents = state.subagents - subId
             )
-            // Archive original messages before applying compaction (non-blocking).
-            // 即使 parseResponse 失败(Left),原始历史也应被快照,因为这是最需要回滚的高风险场景。
-            val snapshotIO = state.sessionId match
-              case Some(sid) =>
-                resources.historyArchiver.archive(sid, state.messages).map {
-                  case Right(path) => Some(path)
-                  case Left(_) => None
-                }.handleError(_ => None)
-              case None => IO.pure(None)
-            val snapshotPath = resources.dispatcher.unsafeRunSync(snapshotIO)
 
             compactedMessages match
               case Right(compacted) =>
                 NebflowLogger
                   .forName("nebflow.agent")
                   .info(s"Auto-compact: ${state.messages.size} -> ${compacted.size} messages")
+
+                // Archive before/after comparison synchronously (local IO, fast).
+                // Path is fed into CompactComplete so frontend / logs can trace it.
+                val comparisonPath = state.sessionId.flatMap { sid =>
+                  val archiveIO = resources.historyArchiver
+                    .archiveComparison(sid, pending.mode, state.messages, compacted)
+                    .map {
+                      case Right(path) => Some(path)
+                      case Left(err) =>
+                        NebflowLogger.forName("nebflow.agent").warn(s"Comparison archive failed: $err")
+                        None
+                    }
+                    .handleError { e =>
+                      NebflowLogger.forName("nebflow.agent").warn(s"Comparison archive error: ${e.getMessage}")
+                      None
+                    }
+                  resources.dispatcher.unsafeRunSync(archiveIO)
+                }
+
                 logAgentEvent(
                   ctx,
                   agentDef,
                   depth,
                   state.sessionId,
                   "compaction-complete",
-                  s"subId=$subId mode=${pending.mode} before=${state.messages.size} after=${compacted.size} snapshot=${snapshotPath.getOrElse("-")}"
+                  s"subId=$subId mode=${pending.mode} before=${state.messages.size} after=${compacted.size} comparison=${comparisonPath.getOrElse("-")}"
                 )
                 resources.dispatcher.unsafeRunAndForget(
                   emitStreamIO(
                     state.wsSend,
                     ctx,
-                    AgentStreamEvent.CompactComplete(state.messages.size, compacted.size, snapshotPath),
+                    AgentStreamEvent.CompactComplete(state.messages.size, compacted.size, None, comparisonPath),
                     isSubagent = depth > 0,
                     state.sessionId
                   )
@@ -294,28 +312,17 @@ object AgentActor:
                   messages = compacted,
                   compactionFailures = 0
                 )
-                if pending.replyTo.isDefined then
-                  // Auto-compaction: resume LLM call with compacted messages
-                  pipeLlmCall(
-                    agentDef,
-                    resources,
-                    depth,
-                    parentRef,
-                    successState,
-                    stash,
-                    ctx,
-                    pending.replyTo
-                  )
-                else
-                  processing(
-                    agentDef,
-                    resources,
-                    depth,
-                    parentRef,
-                    successState,
-                    stash,
-                    ctx
-                  )
+                // Resume LLM inference regardless of auto or manual compact.
+                pipeLlmCall(
+                  agentDef,
+                  resources,
+                  depth,
+                  parentRef,
+                  successState,
+                  stash,
+                  ctx,
+                  pending.replyTo
+                )
               case Left(err) =>
                 val failures = state.compactionFailures + 1
                 val maxFailures = CompactConfig().circuitBreakerMax
@@ -369,8 +376,8 @@ object AgentActor:
                       ctx
                     )
                   )
-                else if pending.replyTo.isDefined then
-                  // Auto-compaction failed: try LLM with original messages anyway
+                else
+                  // Compaction failed but not circuit-broken: resume LLM with original messages.
                   pipeLlmCall(
                     agentDef,
                     resources,
@@ -381,7 +388,6 @@ object AgentActor:
                     ctx,
                     pending.replyTo
                   )
-                else processing(agentDef, resources, depth, parentRef, failedState, stash, ctx)
             end match
           case _ =>
             // Regular subagent result
@@ -479,8 +485,10 @@ object AgentActor:
                   "subagent-spawn",
                   s"subId=$subId subName=${subDef.name} mode=${pending.mode} msgs=${state.messages.size}"
                 )
+                // Compaction sub-agent runs silently: internal events do not leak to frontend.
+                val silentWsSend: Json => IO[Unit] = _ => IO.unit
                 val subActor = ctx.spawn(
-                  AgentActor(subDef, resources, state.wsSend, depth + 1, Some(ctx.self), readTracker = state.readTracker),
+                  AgentActor(subDef, resources, silentWsSend, depth + 1, Some(ctx.self), readTracker = state.readTracker),
                   subId
                 )
                 ctx.watchWith(
@@ -499,7 +507,7 @@ object AgentActor:
                   )
                 )
                 subActor ! AgentCommand.UserInput(messagesJson, None)
-                emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.AgentStart(subDef.name, subDef.description))
+                // Do NOT emit AgentStart for compaction sub-agent to frontend.
                 val newState = state.copy(subagents = state.subagents + (subId -> subActor))
                 processing(agentDef, resources, depth, parentRef, newState, stash, ctx)
               case None =>
@@ -638,14 +646,9 @@ object AgentActor:
     val declaredWait = freshCalls.exists(_.name == "declareWait")
     if declaredWait then return true
 
-    val hasNewRead = freshCalls.exists { c =>
-      c.name == "Read" && c.input("file_path").flatMap(_.asString)
-        .exists(!state.recentFilesRead.contains(_))
-    }
-    val hasSideEffect = freshCalls.exists { c =>
-      Set("Write", "Edit", "Bash").contains(c.name)
-    }
-    hasNewRead || hasSideEffect
+    // Any non-duplicate, non-blocked tool call counts as progress.
+    // Deduplication already filtered out exact repeats; freshCalls are genuinely new explorations.
+    freshCalls.nonEmpty
 
   // ============================================================
   // Start LLM call -> pipe result back to self
@@ -675,49 +678,47 @@ object AgentActor:
       )
       None
     else
-      // inputTokens 优先用上一轮 LLM 的真实 usage(latestUsage.inputTokens),
-      // 若缺失(首次 turn 或 usage 未上报)则用 TokenEstimator 的字符近似值。
-      // 注意:前者是"上一轮实际消耗",后者是"当前 messages 的近似";两者不在同一基线上,
-      // 但均用于触发 heuristics,不用于精确计费。
-      val inputTokens = state.latestUsage.map(_.inputTokens).getOrElse(TokenEstimator.estimate(state.messages))
+      // 严格使用上一轮 LLM 的真实 usage 触发 auto-compact。
+      // 若 latestUsage 缺失（首次 turn 或 provider 未上报），不触发，避免估算偏差。
+      val inputTokensOpt = state.latestUsage.map(_.inputTokens)
       val threshold = agentDef.contextWindow - CompactConfig().bufferTokens
-      if inputTokens > threshold then
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          "auto-compact-trigger",
-          s"inputTokens=$inputTokens threshold=$threshold usage=${state.latestUsage.isDefined}"
-        )
-        val subId = s"context-manage-${java.util.UUID.randomUUID().toString.take(8)}"
-        val io = resources.agentLibrary.get("context-manage").flatMap { defnOpt =>
-          IO(ctx.self ! AgentCommand.CompactionDefLoaded(defnOpt))
-        }
-        resources.dispatcher.unsafeRunAndForget(io)
-        val pending = CompactionContext(subId, "full", None, replyTo)
-        resources.dispatcher.unsafeRunAndForget(
-          emitStreamIO(
-            state.wsSend,
+      inputTokensOpt match
+        case Some(inputTokens) if inputTokens > threshold =>
+          logAgentEvent(
             ctx,
-            AgentStreamEvent.CompactStart("full", Some(inputTokens), Some(threshold)),
-            isSubagent = depth > 0,
-            state.sessionId
-          )
-        )
-        Some(
-          processing(
             agentDef,
-            resources,
             depth,
-            parentRef,
-            state.copy(pendingCompaction = Some(pending)),
-            stash,
-            ctx
+            state.sessionId,
+            "auto-compact-trigger",
+            s"inputTokens=$inputTokens threshold=$threshold"
           )
-        )
-      else None
-      end if
+          val subId = s"context-manage-${java.util.UUID.randomUUID().toString.take(8)}"
+          val io = resources.agentLibrary.get("context-manage").flatMap { defnOpt =>
+            IO(ctx.self ! AgentCommand.CompactionDefLoaded(defnOpt))
+          }
+          resources.dispatcher.unsafeRunAndForget(io)
+          val pending = CompactionContext(subId, "full", None, replyTo)
+          resources.dispatcher.unsafeRunAndForget(
+            emitStreamIO(
+              state.wsSend,
+              ctx,
+              AgentStreamEvent.CompactStart("full", Some(inputTokens), Some(threshold)),
+              isSubagent = depth > 0,
+              state.sessionId
+            )
+          )
+          Some(
+            processing(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.copy(pendingCompaction = Some(pending)),
+              stash,
+              ctx
+            )
+          )
+        case _ => None
   end maybeAutoCompact
 
   private def pipeLlmCall(
@@ -753,13 +754,6 @@ object AgentActor:
         val systemPrompt = buildSystemPrompt(agentDef, resources)
         val tools = buildToolList(agentDef, depth, parentRef.isDefined)
         val messagesWithSystem = Message(MessageRole.System, Left(systemPrompt)) :: state.messages
-        val request = LlmRequest(
-          messages = messagesWithSystem,
-          sessionId = state.sessionId.getOrElse(ctx.self.path.name),
-          agentId = agentDef.name,
-          tools = tools,
-          maxTokens = Some(agentDef.maxTokens)
-        )
 
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
@@ -770,17 +764,27 @@ object AgentActor:
           )
           emitStreamIO(state.wsSend, ctx, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
 
-        val io = resources.llm
-          .sendStream(request, onAttempt = Some(onAttemptCb))
-          .through(streamEmitter(state.wsSend, ctx, isSubagent, sessionIdOpt))
-          .compile
-          .toList
-          .map(aggregateChunks)
-          .attempt
-          .flatMap {
-            case Right(result) => IO(ctx.self ! LlmComplete(result, replyTo))
-            case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo))
-          }
+        val io = resources.runtimePrefs.getThinking.flatMap { thinkingOpt =>
+          val request = LlmRequest(
+            messages = messagesWithSystem,
+            sessionId = state.sessionId.getOrElse(ctx.self.path.name),
+            agentId = agentDef.name,
+            tools = tools,
+            maxTokens = Some(agentDef.maxTokens),
+            thinking = thinkingOpt.map(nebflow.service.ThinkingConfig.toLlmJson)
+          )
+          resources.llm
+            .sendStream(request, onAttempt = Some(onAttemptCb))
+            .through(streamEmitter(state.wsSend, ctx, isSubagent, sessionIdOpt))
+            .compile
+            .toList
+            .map(aggregateChunks)
+            .attempt
+            .flatMap {
+              case Right(result) => IO(ctx.self ! LlmComplete(result, replyTo))
+              case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo))
+            }
+        }
 
         resources.dispatcher.unsafeRunAndForget(io)
         processing(agentDef, resources, depth, parentRef, state, stash, ctx)
@@ -830,33 +834,43 @@ object AgentActor:
       (List.empty[ToolCall], List.empty[(ToolCall, ToolExecResult)])
     ) { case ((fresh, dups), call) =>
       val inputHash = ToolCallRecord.canonicalHash(call.input)
-      val isDup = state.recentToolCalls.exists { r =>
+      val dupRecord = state.recentToolCalls.find { r =>
         r.name == call.name && r.inputHash == inputHash && (nextTurnIdx - r.turnIdx) <= DuplicateLookbackTurns
       }
-      val isSameFileReRead = call.name == "Read" &&
-        call.input("file_path").flatMap(_.asString).exists(state.recentFilesRead.contains)
+      val isDup = dupRecord.isDefined
+      val readSignature = if call.name == "Read" then
+        for
+          path <- call.input("file_path").flatMap(_.asString)
+          offset = call.input("offset").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
+          limit = call.input("limit").flatMap(_.asNumber).flatMap(_.toInt)
+        yield limit match
+          case Some(l) => s"$path@$offset:$l"
+          case None    => s"$path@full"
+      else None
+      val isSameFileReRead = readSignature.exists(state.recentFilesRead.contains)
       if isDup || isSameFileReRead then
-        val lastTurn = state.recentToolCalls
-          .find(r => r.name == call.name && r.inputHash == inputHash)
-          .map(_.turnIdx)
-          .getOrElse(0)
-        val warningText = if isSameFileReRead then
-          s"[Loop detection] You already read this file earlier. Do not read it again unless the user explicitly asks. Synthesize what you know."
+        val lastTurn = dupRecord.map(_.turnIdx).getOrElse(0)
+        val (warningText, reasonDetail) = if isSameFileReRead then
+          val sig = readSignature.getOrElse("")
+          (
+            s"[Loop detection] You already read this file at the same position earlier. Do not read it again unless the user explicitly asks. Synthesize what you know.",
+            s"reason=same-file sig=$sig"
+          )
         else
-          s"[Loop detection] You already called ${call.name} with the same parameters at turn $lastTurn and received the result. " +
-            "Do not repeat the same call. Synthesize your findings instead."
+          (
+            s"[Loop detection] You already called ${call.name} with the same parameters at turn $lastTurn and received the result. " +
+              "Do not repeat the same call. Synthesize your findings instead.",
+            s"reason=duplicate tool=${call.name} lastTurn=$lastTurn"
+          )
+        logAgentEvent(
+          ctx, agentDef, depth, state.sessionId, "tool-dedup",
+          s"$reasonDetail turn=$nextTurnIdx"
+        )
         val warning = ToolExecResult(warningText, isError = false)
         (fresh, dups :+ (call, warning))
       else
         (fresh :+ call, dups)
     }
-
-    // Log loop detection if any duplicates were found
-    if duplicateResults.nonEmpty then
-      logAgentEvent(
-        ctx, agentDef, depth, state.sessionId, "tool-dedup",
-        s"skipped=${duplicateResults.map(_._1.name).mkString(",")} turn=$nextTurnIdx"
-      )
 
     // Track deferreds created for AskUser / Permission so they can be saved to state
     var askUserDeferred: Option[cats.effect.Deferred[IO, List[String]]] = None
@@ -880,9 +894,9 @@ object AgentActor:
     val newStagnationCount = if hadProgress then 0 else state.stagnationCount + 1
     val newProgressStreak = if hadProgress then state.progressStreak + 1 else 0
     val targetStage = newStagnationCount match
-      case n if n >= 4 => AdaptiveStage.Paused
-      case n if n >= 3 => AdaptiveStage.Conservative
-      case n if n >= 2 => AdaptiveStage.Cautious
+      case n if n >= 9 => AdaptiveStage.Paused
+      case n if n >= 6 => AdaptiveStage.Conservative
+      case n if n >= 3 => AdaptiveStage.Cautious
       case _ => AdaptiveStage.Normal
     val newStage =
       if targetStage.ordinal > state.stage.ordinal then targetStage
@@ -958,7 +972,6 @@ object AgentActor:
                     None,
                     None,
                     None,
-                    None,
                     Some(ctx.self),
                     agentDef.contextWindow,
                     sessionId = state.sessionId,
@@ -967,13 +980,12 @@ object AgentActor:
                     readTracker = state.readTracker
                   )
                 case ToolRisk.NeedsApproval =>
-                  resources.permState.shouldApprove(call.name).flatMap {
+                  resources.runtimePrefs.shouldApprove(call.name).flatMap {
                     case ApprovalDecision.Approved =>
                       executeTool(
                         call,
                         resources.projectRoot.toString,
                         Some(resources.llm),
-                        None,
                         None,
                         None,
                         None,
@@ -1018,7 +1030,6 @@ object AgentActor:
                                 call,
                                 resources.projectRoot.toString,
                                 Some(resources.llm),
-                                None,
                                 None,
                                 None,
                                 None,
@@ -1085,9 +1096,15 @@ object AgentActor:
       .sortBy(-_.turnIdx)
       .take(MaxRecentToolCalls)
 
-    val newRecentFilesRead = freshCalls.filter(_.name == "Read")
-      .flatMap(_.input("file_path").flatMap(_.asString))
-      .toSet ++ state.recentFilesRead
+    val newRecentFilesRead = freshCalls.filter(_.name == "Read").flatMap { call =>
+      for
+        path <- call.input("file_path").flatMap(_.asString)
+        offset = call.input("offset").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
+        limit = call.input("limit").flatMap(_.asNumber).flatMap(_.toInt)
+      yield limit match
+        case Some(l) => s"$path@$offset:$l"
+        case None    => s"$path@full"
+    }.toSet ++ state.recentFilesRead
 
     val updatedState = state.copy(
       pendingAskUser = askUserDeferred.orElse(state.pendingAskUser),
@@ -1185,8 +1202,18 @@ object AgentActor:
     ctx: ActorContext[AgentCommand],
     text: String,
     replyTo: Option[ActorRef[AgentEvent]],
-    thinking: Option[String] = None
+    thinking: Option[String] = None,
+    textAlreadyStreamed: Boolean = false
   ): Behavior[AgentCommand] =
+    if !textAlreadyStreamed && text.nonEmpty then
+      emitStream(
+        resources.dispatcher,
+        state.wsSend,
+        ctx,
+        AgentStreamEvent.TextDelta(text),
+        isSubagent = parentRef.isDefined,
+        state.sessionId
+      )
     emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.Done, isSubagent = parentRef.isDefined, state.sessionId)
     parentRef match
       case Some(parent) =>
@@ -1210,7 +1237,8 @@ object AgentActor:
           messages = newMessages,
           status = AgentStatus.Idle,
           pendingAskUser = None,
-          pendingPermission = None
+          pendingPermission = None,
+          recentFilesRead = Set.empty
         )
 
         resources.dispatcher.unsafeRunAndForget(persistIfSession(resources, updatedState))

@@ -413,10 +413,9 @@ onMessage('serverConfig', (msg) => {
   if (msg.streamTimeoutMs) state.streamTimeoutMs = msg.streamTimeoutMs;
   if (msg.version) state.serverVersion = msg.version;
   if (msg.policy) state.currentPolicy = msg.policy;
-  if (msg.thinking) {
+  if (msg.thinking !== undefined) {
     state.serverThinking = msg.thinking;
     state.thinkingMode = msg.thinking;
-    try { localStorage.setItem('nebflow_thinking', JSON.stringify(msg.thinking)); } catch(e) {}
   }
 });
 

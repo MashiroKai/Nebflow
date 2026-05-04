@@ -11,7 +11,6 @@ def executeTool(
   call: ToolCall,
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
-  permState: Option[PermissionState] = None,
   fileChangeTracker: Option[FileChangeTracker] = None,
   sessionStore: Option[nebflow.gateway.SessionStore] = None,
   sessionTag: Option[String] = None,
@@ -27,65 +26,44 @@ def executeTool(
   ToolRegistry.TOOL_MAP.get(call.name) match
     case Some(tool) =>
       val summary = tool.summarize(call.input)
-      val risk = ToolRisk.classify(call.name)
-
-      // Permission check: blocked by policy, otherwise auto-approve
-      val approvalIO: IO[ApprovalDecision] = (risk, permState) match
-        case (ToolRisk.Safe, _) => IO.pure(ApprovalDecision.Approved)
-        case (ToolRisk.NeedsApproval, Some(ps)) =>
-          ps.shouldApprove(call.name).map {
-            case ApprovalDecision.Blocked(reason) => ApprovalDecision.Blocked(reason)
-            case _ => ApprovalDecision.Approved
-          }
-        case _ => IO.pure(ApprovalDecision.Approved)
-
-      approvalIO.flatMap {
-        case ApprovalDecision.Blocked(reason) =>
-          val msg = NebflowError.toUserMessage(NebflowError.ToolDenied(call.name, reason))
-          IO.pure(ToolExecResult(msg, isError = true))
-        case ApprovalDecision.Approved =>
-          val ctx = ToolContext(
-            projectRoot,
-            llm,
-            sessionStore,
-            agentActorRef,
-            contextWindow,
-            sessionId,
-            taskStore,
-            wsSend,
-            readTracker
-          )
-          val tag = sessionTag.map(t => s"[$t] ").getOrElse("")
-          IO.delay(System.nanoTime()).flatMap { start =>
-            logger.debug(s"${tag}Executing tool: $summary") *> {
-              tool
-                .call(call.input, ctx)
-                .map {
-                  case Left(err) => ToolExecResult(err.message, isError = true)
-                  case Right(result) => ToolExecResult(result)
-                }
-                .handleErrorWith {
-                  case _: UserAbort => IO.raiseError(new UserAbort())
-                  case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
-                }
-                .flatTap { result =>
-                  val elapsed = (System.nanoTime() - start) / 1_000_000
-                  if result.isError then
-                    logger.warn(s"${tag}Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
-                  else
-                    logger.info(s"${tag}Tool $summary OK (${elapsed}ms)") *>
-                      // Record file modifications by agent tools
-                      (if call.name == "Write" || call.name == "Edit" then
-                         call.input("file_path").flatMap(_.asString) match
-                           case Some(path) => fileChangeTracker.traverse_(_.recordAgentModification(path))
-                           case None => IO.unit
-                       else IO.unit)
-                }
+      val ctx = ToolContext(
+        projectRoot,
+        llm,
+        sessionStore,
+        agentActorRef,
+        contextWindow,
+        sessionId,
+        taskStore,
+        wsSend,
+        readTracker
+      )
+      val tag = sessionTag.map(t => s"[$t] ").getOrElse("")
+      IO.delay(System.nanoTime()).flatMap { start =>
+        logger.debug(s"${tag}Executing tool: $summary") *> {
+          tool
+            .call(call.input, ctx)
+            .map {
+              case Left(err) => ToolExecResult(err.message, isError = true)
+              case Right(result) => ToolExecResult(result)
             }
-          }
-        case ApprovalDecision.NeedsUserApproval =>
-          // Should not reach here — all NeedsUserApproval are converted to Approved above
-          IO.pure(ToolExecResult(s"Unexpected approval state for ${call.name}", isError = true))
+            .handleErrorWith {
+              case _: UserAbort => IO.raiseError(new UserAbort())
+              case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
+            }
+            .flatTap { result =>
+              val elapsed = (System.nanoTime() - start) / 1_000_000
+              if result.isError then
+                logger.warn(s"${tag}Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
+              else
+                logger.info(s"${tag}Tool $summary OK (${elapsed}ms)") *>
+                  // Record file modifications by agent tools
+                  (if call.name == "Write" || call.name == "Edit" then
+                     call.input("file_path").flatMap(_.asString) match
+                       case Some(path) => fileChangeTracker.traverse_(_.recordAgentModification(path))
+                       case None => IO.unit
+                   else IO.unit)
+            }
+        }
       }
     case None =>
       logger.warn(s"Unknown tool requested: ${call.name}") *>

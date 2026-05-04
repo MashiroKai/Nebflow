@@ -4,8 +4,9 @@ import cats.effect.IO
 import cats.effect.std.{Dispatcher, Semaphore}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.TaskStore
-import nebflow.core.{FileChangeTracker, PermissionState, ReminderState}
+import nebflow.core.{FileChangeTracker, ReminderState}
 import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.service.RuntimePreferencesService
 import nebflow.shared.*
 
 /**
@@ -19,8 +20,7 @@ case class SharedResources(
   dispatcher: Dispatcher[IO],
   sessionStore: SessionStore,
   projectRoot: os.Path,
-  thinkingModeRef: cats.effect.Ref[IO, Option[io.circe.Json]],
-  permState: PermissionState,
+  runtimePrefs: RuntimePreferencesService,
   rateLimiter: RateLimiter,
   fileChangeTracker: FileChangeTracker,
   reminderStateRef: cats.effect.Ref[IO, ReminderState],
