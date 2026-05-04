@@ -2,6 +2,7 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.effect.std.{Dispatcher, Semaphore}
+import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.TaskStore
 import nebflow.core.{FileChangeTracker, PermissionState, ReminderState}
 import nebflow.gateway.{RateLimiter, SessionStore}
@@ -27,5 +28,6 @@ case class SharedResources(
   skillDiscovery: Option[nebflow.skill.SkillDiscovery],
   agentLibrary: AgentLibrary,
   askSemaphore: Semaphore[IO],
-  taskStore: TaskStore
+  taskStore: TaskStore,
+  historyArchiver: HistoryArchiver
 )
