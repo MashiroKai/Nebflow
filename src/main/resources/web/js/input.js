@@ -214,11 +214,13 @@ export function send() {
   state.historyIndex = -1;
   state.historyDraft = '';
   try {
+    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     sendWs({
       content: text,
       attachments: state.pendingAttachments.map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name
-      }))
+      })),
+      clientMessageId
     });
   } catch (e) {
     console.error('WebSocket send failed:', e);

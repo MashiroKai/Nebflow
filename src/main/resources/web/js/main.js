@@ -419,6 +419,20 @@ onMessage('taskListUpdate', (msg) => {
   if (isActive(msg)) renderTaskList(msg.tasks);
 });
 
+onMessage('progressUpdate', (msg) => {
+  if (isActive(msg)) {
+    setStatus(`Turn ${msg.turnIdx} · ${msg.stage}`);
+  }
+});
+
+onMessage('paused', (msg) => {
+  clearBusyFor(msg);
+  if (isActive(msg)) {
+    renderSystemBubble(msg.summary);
+    clearStatus();
+  }
+});
+
 // ---------- 4. Cross-module wiring ----------
 setNewSessionHandler(() => startInlineNewSession());
 window.__showDeleteModal = showDeleteModal;
