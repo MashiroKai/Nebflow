@@ -3,6 +3,7 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { renderMarkdownWithMath, escapeHtml, formatDiff, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner } from './utils.js';
+import { renderWithRegistry } from './cardRegistry.js';
 
 // ---------- Agent color assignment ----------
 export function getAgentColor(agentId) {
@@ -195,6 +196,17 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   row.className = 'row tool';
   const card = document.createElement('div');
   card.className = 'tool-card';
+
+  // Try plugin renderer first
+  const data = { label, summary, content, isError, input: inputJson, sessionId: sid };
+  if (renderWithRegistry(card, data)) {
+    row.appendChild(card);
+    chat.appendChild(row);
+    smartScroll();
+    return { type: 'tool', label, summary, content, isError, input: inputJson };
+  }
+
+  // Fallback to default rendering
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const diffHtml = formatDiff(content);

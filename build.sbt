@@ -34,6 +34,7 @@ lazy val root = (project in file("."))
       circeCore,
       circeParser,
       circeGeneric,
+      circeYaml,
       // Process / File
       osLib,
       // Logging
