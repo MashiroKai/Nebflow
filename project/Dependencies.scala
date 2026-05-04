@@ -34,6 +34,7 @@ object Dependencies {
   val circeCore = "io.circe" %% "circe-core" % CirceVer
   val circeParser = "io.circe" %% "circe-parser" % CirceVer
   val circeGeneric = "io.circe" %% "circe-generic" % CirceVer
+  val circeYaml = "io.circe" %% "circe-yaml" % "0.14.2"
 
   // Process / File
   val osLib = "com.lihaoyi" %% "os-lib" % OsLibVer
