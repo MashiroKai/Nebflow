@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
 
@@ -89,6 +90,10 @@ Usage:
           val suffix = if showedLines < totalLines then s"\n\n(showing $showedLines of $totalLines lines)" else ""
           Right(result + suffix)
         catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
+    }.flatMap {
+      case Right(output) =>
+        ctx.readTracker.traverse_(_.recordRead(filePath)).as(Right(output))
+      case left => IO.pure(left)
     }
   end call
 end ReadTool
