@@ -22,6 +22,9 @@ case class ToolContext(
 /** 工具错误 */
 case class ToolError(message: String)
 
+/** 进程执行结果 */
+case class ProcessResult(stdout: String, stderr: String, exitCode: Int, cwd: String)
+
 /** 工具接口 */
 trait Tool:
   def name: String
