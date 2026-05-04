@@ -27,6 +27,10 @@ object AgentActor:
   private val MaxRecentToolCalls = 20
   private val DuplicateLookbackTurns = 5
   private val MaxTurns = 200
+  private val SyntheticTools = Set(
+    "finish", "declareWait", "delegate", "report", "ask_parent",
+    "ContextManage", "AskUserQuestion"
+  )
   private val lifecycleLogger = NebflowLogger.forName("nebflow.agent.lifecycle")
 
   private def stageConstraints(stage: AdaptiveStage): Set[String] = stage match
@@ -797,10 +801,13 @@ object AgentActor:
     result: ConsumeResult,
     replyTo: Option[ActorRef[AgentEvent]]
   ): Behavior[AgentCommand] =
-    val allowedTools = agentDef.tools.toSet
+    val allowedTools = agentDef.tools match
+      case Nil => Set.empty[String]
+      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
+      case names => names.toSet
     val filteredCalls =
       if allowedTools.isEmpty then result.toolCalls
-      else result.toolCalls.filter(tc => allowedTools.contains(tc.name))
+      else result.toolCalls.filter(tc => allowedTools.contains(tc.name) || SyntheticTools.contains(tc.name))
 
     // Stage-based tool blocking
     val blockedTools = stageConstraints(state.stage)
