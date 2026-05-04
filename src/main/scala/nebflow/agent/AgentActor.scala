@@ -26,7 +26,14 @@ object AgentActor:
   private val MaxDepth = 5
   private val MaxRecentToolCalls = 20
   private val DuplicateLookbackTurns = 5
+  private val MaxTurns = 200
   private val lifecycleLogger = NebflowLogger.forName("nebflow.agent.lifecycle")
+
+  private def stageConstraints(stage: AdaptiveStage): Set[String] = stage match
+    case AdaptiveStage.Normal       => Set.empty
+    case AdaptiveStage.Cautious     => Set.empty
+    case AdaptiveStage.Conservative => Set("Write", "Edit", "Bash")
+    case AdaptiveStage.Paused       => Set("*")
 
   private def logAgentEvent(
     ctx: ActorContext[?],
@@ -199,12 +206,22 @@ object AgentActor:
         val updatedState = state.copy(
           messages = newMessages,
           pendingAskUser = None,
-          pendingPermission = None
+          pendingPermission = None,
+          stagnationCount = tc.nextStagnationCount.getOrElse(state.stagnationCount),
+          stage = tc.nextStage.getOrElse(state.stage),
+          progressStreak = tc.nextProgressStreak.getOrElse(state.progressStreak)
         )
         resources.dispatcher.unsafeRunAndForget(persistIfSession(resources, updatedState))
 
-        // Loop: start next LLM call with updated messages
-        pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, stash, ctx, tc.replyTo)
+        val didFinish = tc.results.exists { case (call, _) => call.name == "finish" }
+        if didFinish then
+          val finishAnswer = tc.results.collectFirst {
+            case (call, r) if call.name == "finish" => r.content.stripPrefix("[finish] ")
+          }.getOrElse("")
+          finishTurn(agentDef, resources, depth, parentRef, updatedState, stash, ctx, finishAnswer, tc.replyTo, tc.thinking)
+        else
+          // Loop: start next LLM call with updated messages
+          pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, stash, ctx, tc.replyTo)
 
       // --- Subagent stream forwarding ---
       case AgentCommand.SubagentStreamEvent(subId, event) =>
@@ -384,7 +401,9 @@ object AgentActor:
                 val subDef = subDefBase.copy(systemPrompt = prompt)
                 val subId = pending.subagentId
                 val cleaned = nebflow.core.compact.CompactUtils.stripImages(state.messages)
-                val messagesJson = cleaned.asJson.noSpaces
+                // Cap at 500 messages to avoid OOM when serializing huge histories
+                val capped = if cleaned.size > 500 then cleaned.takeRight(500) else cleaned
+                val messagesJson = capped.asJson.noSpaces
                 logAgentEvent(
                   ctx,
                   agentDef,
@@ -521,6 +540,22 @@ object AgentActor:
       case Some(sid) => resources.sessionStore.saveMessagesForSession(sid, state.messages)
       case None => IO.unit
 
+  private def evaluateProgress(
+    freshCalls: List[ToolCall],
+    state: AgentState
+  ): Boolean =
+    val declaredWait = freshCalls.exists(_.name == "declareWait")
+    if declaredWait then return true
+
+    val hasNewRead = freshCalls.exists { c =>
+      c.name == "Read" && c.input("file_path").flatMap(_.asString)
+        .exists(!state.recentFilesRead.contains(_))
+    }
+    val hasSideEffect = freshCalls.exists { c =>
+      Set("Write", "Edit", "Bash").contains(c.name)
+    }
+    hasNewRead || hasSideEffect
+
   // ============================================================
   // Start LLM call -> pipe result back to self
   // ============================================================
@@ -580,6 +615,20 @@ object AgentActor:
     ctx: ActorContext[AgentCommand],
     replyTo: Option[ActorRef[AgentEvent]]
   ): Behavior[AgentCommand] =
+    // Hard turn limit: if we've exceeded MaxTurns, force completion
+    if state.turnIdx >= MaxTurns then
+      val warningMsg = s"[Turn limit reached] Agent has exceeded the maximum of $MaxTurns turns. " +
+        "Stopping now. Please synthesize a final answer based on the information gathered so far."
+      logAgentEvent(ctx, agentDef, depth, state.sessionId, "turn-limit", s"turnIdx=${state.turnIdx}")
+      return finishTurn(
+        agentDef, resources, depth, parentRef,
+        state.copy(messages = state.messages :+ Message(MessageRole.User, Left(warningMsg))),
+        stash, ctx,
+        "I apologize, but I've reached the maximum number of turns for this session. " +
+          "Here's what I was able to determine from the work done so far: [synthesize findings]",
+        replyTo
+      )
+
     // Inter-turn auto-compaction: check threshold before calling LLM
     maybeAutoCompact(agentDef, resources, depth, parentRef, state, stash, ctx, replyTo) match
       case Some(behavior) => behavior
@@ -642,25 +691,43 @@ object AgentActor:
       if allowedTools.isEmpty then result.toolCalls
       else result.toolCalls.filter(tc => allowedTools.contains(tc.name))
 
+    // Stage-based tool blocking
+    val blockedTools = stageConstraints(state.stage)
+    val (stageBlocked, stageAllowed) = filteredCalls.partition { c =>
+      blockedTools.contains("*") || blockedTools.contains(c.name)
+    }
+    val stageBlockedResults = stageBlocked.map { call =>
+      val warning = state.stage match
+        case AdaptiveStage.Conservative =>
+          s"[Stage: Conservative] ${call.name} is disabled. Synthesize your findings without further modifications."
+        case AdaptiveStage.Paused =>
+          "[Stage: Paused] All tools are disabled. Please call finish() with your current best answer."
+        case _ => s"[Stage: ${state.stage}] ${call.name} is temporarily disabled."
+      (call, ToolExecResult(warning, isError = false))
+    }
+
     // Deduplication: detect repetitive tool calls within recent turns
     val nextTurnIdx = state.turnIdx + 1
-    val (freshCalls, duplicateResults) = filteredCalls.foldLeft(
+    val (freshCalls, duplicateResults) = stageAllowed.foldLeft(
       (List.empty[ToolCall], List.empty[(ToolCall, ToolExecResult)])
     ) { case ((fresh, dups), call) =>
-      val inputJson = Json.fromJsonObject(call.input).noSpaces
+      val inputHash = ToolCallRecord.canonicalHash(call.input)
       val isDup = state.recentToolCalls.exists { r =>
-        r.name == call.name && r.inputHash == inputJson && (nextTurnIdx - r.turnIdx) <= DuplicateLookbackTurns
+        r.name == call.name && r.inputHash == inputHash && (nextTurnIdx - r.turnIdx) <= DuplicateLookbackTurns
       }
-      if isDup then
+      val isSameFileReRead = call.name == "Read" &&
+        call.input("file_path").flatMap(_.asString).exists(state.recentFilesRead.contains)
+      if isDup || isSameFileReRead then
         val lastTurn = state.recentToolCalls
-          .find(r => r.name == call.name && r.inputHash == inputJson)
+          .find(r => r.name == call.name && r.inputHash == inputHash)
           .map(_.turnIdx)
           .getOrElse(0)
-        val warning = ToolExecResult(
+        val warningText = if isSameFileReRead then
+          s"[Loop detection] You already read this file earlier. Do not read it again unless the user explicitly asks. Synthesize what you know."
+        else
           s"[Loop detection] You already called ${call.name} with the same parameters at turn $lastTurn and received the result. " +
-            "Do not repeat the same call. Synthesize your findings instead.",
-          isError = false
-        )
+            "Do not repeat the same call. Synthesize your findings instead."
+        val warning = ToolExecResult(warningText, isError = false)
         (fresh, dups :+ (call, warning))
       else
         (fresh :+ call, dups)
@@ -680,7 +747,32 @@ object AgentActor:
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
 
-    val io = freshCalls
+    val limitedFreshCalls = state.stage match
+      case AdaptiveStage.Cautious if freshCalls.size > 3 =>
+        logAgentEvent(ctx, agentDef, depth, state.sessionId, "tool-limit",
+          s"capped parallel calls from ${freshCalls.size} to 3")
+        freshCalls.take(3)
+      case _ => freshCalls
+
+    // Progress tracking — computed on actor thread before IO so updatedState is consistent
+    val hadProgress = if limitedFreshCalls.isEmpty && duplicateResults.isEmpty && stageBlocked.isEmpty then
+      true // No tool calls at all — agent is synthesizing or responding
+    else
+      evaluateProgress(limitedFreshCalls, state)
+    val newStagnationCount = if hadProgress then 0 else state.stagnationCount + 1
+    val newProgressStreak = if hadProgress then state.progressStreak + 1 else 0
+    val targetStage = newStagnationCount match
+      case n if n >= 4 => AdaptiveStage.Paused
+      case n if n >= 3 => AdaptiveStage.Conservative
+      case n if n >= 2 => AdaptiveStage.Cautious
+      case _ => AdaptiveStage.Normal
+    val newStage =
+      if targetStage.ordinal > state.stage.ordinal then targetStage
+      else if newProgressStreak >= 2 && targetStage.ordinal < state.stage.ordinal then
+        AdaptiveStage.fromOrdinal(state.stage.ordinal - 1)
+      else state.stage
+
+    val io = limitedFreshCalls
       .traverse { call =>
         emitStreamIO(state.wsSend, ctx, AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)), isSubagent, sessionIdOpt) *>
           (call.name match
@@ -744,6 +836,12 @@ object AgentActor:
                     _ <- resources.askSemaphore.release
                   yield ToolExecResult(answers.mkString(", "))
                 end if
+            case "finish" =>
+              val answer = call.input("answer").flatMap(_.asString).getOrElse("")
+              IO.pure(ToolExecResult(s"[finish] $answer", isError = false))
+            case "declareWait" =>
+              val reason = call.input("reason").flatMap(_.asString).getOrElse("")
+              IO.pure(ToolExecResult(s"[Wait declared] $reason", isError = false))
             case _ =>
               ToolRisk.classify(call.name) match
                 case ToolRisk.Safe =>
@@ -849,25 +947,48 @@ object AgentActor:
             }
       }
       .flatMap { freshResults =>
-        val allResults = freshResults ++ duplicateResults
-        IO(ctx.self ! ToolsComplete(allResults, result.text, replyTo, thinking = result.thinking))
+        val allResults = freshResults ++ stageBlockedResults ++ duplicateResults
+
+        if newStage != state.stage || newStagnationCount != state.stagnationCount then
+          emitStream(
+            resources.dispatcher, state.wsSend, ctx,
+            AgentStreamEvent.ProgressUpdate(nextTurnIdx, newStagnationCount, newStage.toString),
+            isSubagent = depth > 0, state.sessionId
+          )
+        if newStage == AdaptiveStage.Paused && state.stage != AdaptiveStage.Paused then
+          emitStream(
+            resources.dispatcher, state.wsSend, ctx,
+            AgentStreamEvent.Paused("Agent has paused after detecting stagnation. Providing best-effort summary..."),
+            isSubagent = depth > 0, state.sessionId
+          )
+
+        IO(ctx.self ! ToolsComplete(allResults, result.text, replyTo, None, result.thinking,
+          Some(newStagnationCount), Some(newStage), Some(newProgressStreak)))
       }
 
     resources.dispatcher.unsafeRunAndForget(io)
 
-    // Update recentToolCalls with all calls from this turn (fresh + duplicates)
+    // Update recentToolCalls with all calls from this turn (fresh + blocked + duplicates)
     val newRecords = filteredCalls.map { call =>
-      ToolCallRecord(call.name, Json.fromJsonObject(call.input).noSpaces, nextTurnIdx)
+      ToolCallRecord(call.name, ToolCallRecord.canonicalHash(call.input), nextTurnIdx)
     }
     val prunedRecent = (state.recentToolCalls ++ newRecords)
       .sortBy(-_.turnIdx)
       .take(MaxRecentToolCalls)
 
+    val newRecentFilesRead = freshCalls.filter(_.name == "Read")
+      .flatMap(_.input("file_path").flatMap(_.asString))
+      .toSet ++ state.recentFilesRead
+
     val updatedState = state.copy(
       pendingAskUser = askUserDeferred.orElse(state.pendingAskUser),
       pendingPermission = permissionDeferred.orElse(state.pendingPermission),
       recentToolCalls = prunedRecent,
-      turnIdx = nextTurnIdx
+      turnIdx = nextTurnIdx,
+      recentFilesRead = newRecentFilesRead,
+      stagnationCount = newStagnationCount,
+      stage = newStage,
+      progressStreak = newProgressStreak
     )
     processing(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
   end pipeToolExecutions
@@ -1169,6 +1290,34 @@ object AgentActor:
         )
       )
     end if
+    synthetic += ToolDefinition(
+      name = "finish",
+      description = "Signal that the task is complete and provide the final answer.",
+      inputSchema = JsonObject.fromIterable(List(
+        "type" -> Json.fromString("object"),
+        "properties" -> Json.fromFields(List(
+          "answer" -> Json.fromFields(List(
+            "type" -> Json.fromString("string"),
+            "description" -> Json.fromString("The final answer or summary of findings")
+          ))
+        )),
+        "required" -> Json.fromValues(List(Json.fromString("answer")))
+      ))
+    )
+    synthetic += ToolDefinition(
+      name = "declareWait",
+      description = "Declare that this turn is intentionally waiting for an external condition and should not count as stagnation.",
+      inputSchema = JsonObject.fromIterable(List(
+        "type" -> Json.fromString("object"),
+        "properties" -> Json.fromFields(List(
+          "reason" -> Json.fromFields(List(
+            "type" -> Json.fromString("string"),
+            "description" -> Json.fromString("Explanation of what is being waited for")
+          ))
+        )),
+        "required" -> Json.fromValues(List(Json.fromString("reason")))
+      ))
+    )
     Some(base ++ synthetic.result())
 
   end buildToolList
