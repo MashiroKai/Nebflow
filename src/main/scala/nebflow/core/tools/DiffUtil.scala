@@ -37,6 +37,19 @@ object DiffUtil:
     val finalContent = if lineSep != "\n" then normalized.replace("\n", lineSep) else normalized
     Files.writeString(path, finalContent, StandardCharsets.UTF_8)
 
+  /**
+   * Single source of truth for splitting content into lines.
+   * Uses split with limit -1 so trailing empty strings are preserved.
+   * This keeps line indices, line-replace ranges, lineStats and makeDiff all
+   * in agreement with each other.
+   */
+  def splitLines(content: String): List[String] =
+    content.split("\\r?\\n", -1).toList
+
+  /** Join lines using the given separator. */
+  def joinLines(lines: List[String], lineSep: String): String =
+    lines.mkString(lineSep)
+
   /** Compute added/removed line counts using diff-utils. */
   def lineStats(oldLines: List[String], newLines: List[String]): (Int, Int) =
     val patch = diff(oldLines.asJava, newLines.asJava)
@@ -48,6 +61,10 @@ object DiffUtil:
     }
     (added, removed)
 
+  /** Convenience overload that splits both contents using splitLines. */
+  def lineStats(oldContent: String, newContent: String): (Int, Int) =
+    lineStats(splitLines(oldContent), splitLines(newContent))
+
   private val ContextLines = 2
 
   /**
@@ -55,8 +72,8 @@ object DiffUtil:
    * Shows context lines, removals (-), and additions (+).
    */
   def makeDiff(fileName: String, oldContent: String, newContent: String): String =
-    val oldLines = oldContent.split("\\r?\\n").toList
-    val newLines = newContent.split("\\r?\\n").toList
+    val oldLines = splitLines(oldContent)
+    val newLines = splitLines(newContent)
     val patch = diff(oldLines.asJava, newLines.asJava)
 
     if patch.getDeltas.isEmpty then "(no changes)"
@@ -109,5 +126,34 @@ object DiffUtil:
     end if
 
   end makeDiff
+
+  // ---------------------------------------------------------------------------
+  // Result format contract — single source of truth for OK:CREATED / OK:UPDATED
+  // strings produced by EditTool and WriteTool, plus the matching parser used
+  // by their summarizeResult implementations.
+  // ---------------------------------------------------------------------------
+
+  val OkCreatedPrefix: String = "OK:CREATED"
+  val OkUpdatedPrefix: String = "OK:UPDATED"
+
+  /** Render the success string returned when a brand new file was created. */
+  def renderCreatedResult(filePath: Path): String =
+    s"$OkCreatedPrefix $filePath"
+
+  /** Render the success string returned when an existing file was updated. */
+  def renderUpdatedResult(fileName: String, added: Int, removed: Int, diff: String): String =
+    s"$OkUpdatedPrefix $fileName, $added added, $removed removed\n$diff"
+
+  private val UpdatedStatsRegex = """OK:UPDATED\s+\S+,\s*(\d+)\s+added,\s*(\d+)\s+removed""".r
+
+  /**
+   * Parse an OK:UPDATED result string and return (added, removed) line counts.
+   * Returns None when the input is not an OK:UPDATED result or does not match
+   * the expected stats format.
+   */
+  def parseUpdatedStats(result: String): Option[(Int, Int)] =
+    UpdatedStatsRegex.findFirstMatchIn(result).map { m =>
+      (m.group(1).toInt, m.group(2).toInt)
+    }
 
 end DiffUtil
