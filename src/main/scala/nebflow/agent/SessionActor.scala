@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.core.*
+import nebflow.gateway.WsHub
 import nebflow.shared.*
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
@@ -18,13 +19,13 @@ object SessionActor:
   )
 
   private case class SessionData(
-    agentStates: Map[String, AgentSessionState] = Map.empty
+    agentStates: Map[String, AgentSessionState] = Map.empty,
+    recentMessageIds: List[String] = Nil
   )
 
   def apply(
-    wsConnId: String,
     resources: SharedResources,
-    wsSend: io.circe.Json => IO[Unit]
+    wsHub: WsHub
   ): Behavior[SessionCommand] =
     Behaviors
       .supervise(
@@ -35,7 +36,7 @@ object SessionActor:
             case AgentEvent.Failed(sessionId, error) =>
               SessionCommand.AgentTurnFailed(sessionId, error)
           }
-          active(resources, wsSend, wsConnId, SessionData(), context, replyAdapter)
+          active(resources, wsHub, SessionData(), context, replyAdapter)
         }
       )
       .onFailure[Exception](
@@ -44,69 +45,78 @@ object SessionActor:
 
   private def active(
     resources: SharedResources,
-    wsSend: io.circe.Json => IO[Unit],
-    wsConnId: String,
+    wsHub: WsHub,
     data: SessionData,
     ctx: org.apache.pekko.actor.typed.scaladsl.ActorContext[SessionCommand],
     replyAdapter: ActorRef[AgentEvent]
   ): Behavior[SessionCommand] =
     Behaviors.receiveMessage:
 
-      case SessionCommand.UserMessage(text, blocks) =>
-        val userMessage =
-          if blocks.length == 1 && text.nonEmpty then Message(MessageRole.User, Left(text))
-          else Message(MessageRole.User, Right(blocks))
+      case SessionCommand.UserMessage(text, blocks, clientMessageId) =>
+        clientMessageId match
+          case Some(id) if data.recentMessageIds.contains(id) =>
+            logger.info(s"Dropping duplicate message with clientMessageId=$id")
+            Behaviors.same
+          case _ =>
+            val userMessage =
+              if blocks.length == 1 && text.nonEmpty then Message(MessageRole.User, Left(text))
+              else Message(MessageRole.User, Right(blocks))
 
-        val agentIo = resources.sessionStore.getActiveId.flatMap { sessionId =>
-          if data.agentStates.contains(sessionId) then
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "error".asJson,
-                "message" -> "A response is already being generated for this session".asJson,
-                "sessionId" -> sessionId.asJson
-              )
-            ) *>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "sessionBusy".asJson,
-                  "sessionId" -> sessionId.asJson,
-                  "busy" -> true.asJson
-                )
-              ).void
-          else
-            for
-              _ <- IO(logger.info(s"[${sessionTag(sessionId)}] starting AgentActor: ${text.take(60)}"))
-              history <- resources.sessionStore.loadMessagesForSession(sessionId)
-              metaOpt <- resources.sessionStore.getSessionMeta(sessionId)
-              agentDef <- metaOpt.flatMap(_.agentName) match
-                case Some(agentName) =>
-                  resources.agentLibrary.get(agentName).flatMap {
-                    case Some(defn) => IO.pure(defn)
+            val newIds = clientMessageId match
+              case Some(id) => (data.recentMessageIds :+ id).takeRight(100)
+              case None => data.recentMessageIds
+
+            val agentIo = resources.sessionStore.getActiveId.flatMap { sessionId =>
+              if data.agentStates.contains(sessionId) then
+                wsHub.broadcast(
+                  io.circe.Json.obj(
+                    "type" -> "error".asJson,
+                    "message" -> "A response is already being generated for this session".asJson,
+                    "sessionId" -> sessionId.asJson
+                  )
+                ) *>
+                  wsHub.broadcast(
+                    io.circe.Json.obj(
+                      "type" -> "sessionBusy".asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "busy" -> true.asJson
+                    )
+                  ).void
+              else
+                for
+                  _ <- IO(logger.info(s"[${sessionTag(sessionId)}] starting AgentActor: ${text.take(60)}"))
+                  history <- resources.sessionStore.loadMessagesForSession(sessionId)
+                  metaOpt <- resources.sessionStore.getSessionMeta(sessionId)
+                  agentDef <- metaOpt.flatMap(_.agentName) match
+                    case Some(agentName) =>
+                      resources.agentLibrary.get(agentName).flatMap {
+                        case Some(defn) => IO.pure(defn)
+                        case None =>
+                          resources.agentLibrary.get("default").flatMap {
+                            case Some(d) => IO.pure(d)
+                            case None =>
+                              IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
+                          }
+                      }
                     case None =>
                       resources.agentLibrary.get("default").flatMap {
                         case Some(d) => IO.pure(d)
-                        case None =>
-                          IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
+                        case None => IO.raiseError(new RuntimeException("No default agent available"))
                       }
-                  }
-                case None =>
-                  resources.agentLibrary.get("default").flatMap {
-                    case Some(d) => IO.pure(d)
-                    case None => IO.raiseError(new RuntimeException("No default agent available"))
-                  }
-              initialMessages = history :+ userMessage
-            yield ctx.self ! SessionCommand.SpawnAgent(sessionId, agentDef, initialMessages, text, replyAdapter)
-        }
+                  initialMessages = history :+ userMessage
+                yield ctx.self ! SessionCommand.SpawnAgent(sessionId, agentDef, initialMessages, text, replyAdapter)
+            }
 
-        resources.dispatcher.unsafeRunAndForget(agentIo)
-        Behaviors.same
+            resources.dispatcher.unsafeRunAndForget(agentIo)
+            active(resources, wsHub, data.copy(recentMessageIds = newIds), ctx, replyAdapter)
 
       case SessionCommand.SpawnAgent(sessionId, agentDef, initialMessages, text, adapter) =>
+        val broadcastWsSend = (json: io.circe.Json) => wsHub.broadcast(json)
         val agentRef = ctx.spawn(
           AgentActor(
             agentDef,
             resources,
-            wsSend,
+            broadcastWsSend,
             depth = 0,
             parentRef = None,
             sessionId = Some(sessionId),
@@ -118,8 +128,7 @@ object SessionActor:
         agentRef ! AgentCommand.UserInput(text, Some(adapter))
         active(
           resources,
-          wsSend,
-          wsConnId,
+          wsHub,
           data.copy(agentStates = data.agentStates + (sessionId -> AgentSessionState(agentRef))),
           ctx,
           replyAdapter
@@ -133,7 +142,7 @@ object SessionActor:
           yield ()
         )
         resources.dispatcher.unsafeRunAndForget(
-          wsSend(
+          wsHub.broadcast(
             io.circe.Json.obj(
               "type" -> "sessionBusy".asJson,
               "sessionId" -> sessionId.asJson,
@@ -141,17 +150,17 @@ object SessionActor:
             )
           )
         )
-        active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+        active(resources, wsHub, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
 
       case SessionCommand.AgentTurnFailed(sessionId, error) =>
         resources.dispatcher.unsafeRunAndForget(
-          wsSend(
+          wsHub.broadcast(
             io.circe.Json.obj(
               "type" -> "error".asJson,
               "message" -> error.message.asJson,
               "sessionId" -> sessionId.asJson
             )
-          ) *> wsSend(
+          ) *> wsHub.broadcast(
             io.circe.Json.obj(
               "type" -> "sessionBusy".asJson,
               "sessionId" -> sessionId.asJson,
@@ -159,7 +168,7 @@ object SessionActor:
             )
           )
         )
-        active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+        active(resources, wsHub, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
 
       case SessionCommand.Terminate() =>
         data.agentStates.values.foreach(_.agentRef ! AgentCommand.Stop("session closing"))
@@ -170,9 +179,9 @@ object SessionActor:
           case Some(agentState) =>
             agentState.agentRef ! AgentCommand.Interrupt()
             resources.dispatcher.unsafeRunAndForget(
-              wsSend(
+              wsHub.broadcast(
                 io.circe.Json.obj("type" -> "interrupted".asJson, "sessionId" -> sessionId.asJson)
-              ) *> wsSend(
+              ) *> wsHub.broadcast(
                 io.circe.Json.obj(
                   "type" -> "sessionBusy".asJson,
                   "sessionId" -> sessionId.asJson,
@@ -180,13 +189,13 @@ object SessionActor:
                 )
               )
             )
-            active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+            active(resources, wsHub, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
           case None => Behaviors.same
 
       case SessionCommand.AgentTerminated(sessionId) =>
         if data.agentStates.contains(sessionId) then
           resources.dispatcher.unsafeRunAndForget(
-            wsSend(
+            wsHub.broadcast(
               io.circe.Json.obj(
                 "type" -> "sessionBusy".asJson,
                 "sessionId" -> sessionId.asJson,
@@ -194,7 +203,7 @@ object SessionActor:
               )
             )
           )
-          active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+          active(resources, wsHub, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
         else Behaviors.same
 
       case SessionCommand.AskUserResponse(_, answers) =>

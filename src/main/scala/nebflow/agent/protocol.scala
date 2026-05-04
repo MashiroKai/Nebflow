@@ -14,7 +14,7 @@ import nebflow.shared.*
 sealed trait SessionCommand
 
 object SessionCommand:
-  case class UserMessage(text: String, blocks: List[nebflow.shared.ContentBlock]) extends SessionCommand
+  case class UserMessage(text: String, blocks: List[nebflow.shared.ContentBlock], clientMessageId: Option[String] = None) extends SessionCommand
   case class Interrupt(sessionId: String) extends SessionCommand
   case class AgentTerminated(agentId: String) extends SessionCommand
   case class AskUserResponse(requestId: String, answers: List[String]) extends SessionCommand
@@ -87,7 +87,10 @@ object AgentCommand:
     originalText: String,
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]],
     compactedMessages: Option[List[Message]] = None,
-    thinking: Option[String] = None
+    thinking: Option[String] = None,
+    nextStagnationCount: Option[Int] = None,
+    nextStage: Option[AdaptiveStage] = None,
+    nextProgressStreak: Option[Int] = None
   ) extends AgentCommand
 
   // Internal — compaction agent definition loaded, ready to spawn on actor thread
@@ -141,6 +144,8 @@ enum AgentStreamEvent:
   case Thinking
   case RetryStatus(message: String)
   case Done
+  case ProgressUpdate(turnIdx: Int, stagnationCount: Int, stage: String)
+  case Paused(summary: String)
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
     case TextDelta(text) =>
@@ -197,6 +202,36 @@ enum AgentStreamEvent:
         Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
       else
         Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
+    case ProgressUpdate(turnIdx, stagnationCount, stage) =>
+      if isSubagent then
+        Json.obj(
+          "type" -> "agentProgressUpdate".asJson,
+          "agentId" -> agentId.asJson,
+          "turnIdx" -> turnIdx.asJson,
+          "stagnationCount" -> stagnationCount.asJson,
+          "stage" -> stage.asJson
+        )
+      else
+        Json.obj(
+          "type" -> "progressUpdate".asJson,
+          "sessionId" -> sessionId.asJson,
+          "turnIdx" -> turnIdx.asJson,
+          "stagnationCount" -> stagnationCount.asJson,
+          "stage" -> stage.asJson
+        )
+    case Paused(summary) =>
+      if isSubagent then
+        Json.obj(
+          "type" -> "agentPaused".asJson,
+          "agentId" -> agentId.asJson,
+          "summary" -> summary.asJson
+        )
+      else
+        Json.obj(
+          "type" -> "paused".asJson,
+          "sessionId" -> sessionId.asJson,
+          "summary" -> summary.asJson
+        )
 
 end AgentStreamEvent
 
@@ -233,6 +268,9 @@ enum AgentStatus:
   case WaitingForUser
   case Error(msg: String)
 
+enum AdaptiveStage:
+  case Normal, Cautious, Conservative, Paused
+
 // ============================================================
 // Agent Runtime State (behavior closure parameter, not Ref[IO])
 // ============================================================
@@ -245,6 +283,20 @@ case class ToolCallRecord(
   inputHash: String,
   turnIdx: Int
 )
+
+object ToolCallRecord:
+  /** Recursively sort JSON keys for deterministic hashing. */
+  def canonicalHash(input: JsonObject): String =
+    canonicalJsonObject(input).noSpaces
+
+  private def canonicalJson(json: Json): Json = json match
+    case j if j.isObject => canonicalJsonObject(j.asObject.get)
+    case j if j.isArray  => Json.fromValues(j.asArray.get.map(canonicalJson))
+    case other           => other
+
+  private def canonicalJsonObject(obj: JsonObject): Json =
+    Json.fromFields(obj.toList.sortBy(_._1).map((k, v) => k -> canonicalJson(v)))
+end ToolCallRecord
 
 case class CompactionContext(
   subagentId: String,
@@ -267,7 +319,12 @@ case class AgentState(
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
   recentToolCalls: List[ToolCallRecord] = Nil,
   turnIdx: Int = 0,
-  wsSend: io.circe.Json => IO[Unit] = _ => IO.unit
+  wsSend: io.circe.Json => IO[Unit] = _ => IO.unit,
+  hasInjectedAntiLoop: Boolean = false,
+  recentFilesRead: Set[String] = Set.empty,
+  stagnationCount: Int = 0,
+  stage: AdaptiveStage = AdaptiveStage.Normal,
+  progressStreak: Int = 0
 )
 
 // ============================================================
