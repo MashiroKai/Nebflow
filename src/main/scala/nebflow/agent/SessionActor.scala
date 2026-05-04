@@ -174,6 +174,9 @@ object SessionActor:
 
       case SessionCommand.Terminate() =>
         data.agentStates.values.foreach(_.agentRef ! AgentCommand.Stop("session closing"))
+        resources.dispatcher.unsafeRunAndForget(
+          nebflow.core.tools.ShellSession.destroySession(wsConnId)
+        )
         Behaviors.stopped
 
       case SessionCommand.Interrupt(sessionId) =>
