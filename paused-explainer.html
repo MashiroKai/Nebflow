@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stage: Paused — Nebflow 自适应循环机制</title>
+  <style>
+    :root {
+      --bg: #1a1a1a;
+      --bg2: #242424;
+      --bg3: #2d2d2d;
+      --text: #e0e0e0;
+      --text2: #a0a0a0;
+      --accent: #6C8EBF;
+      --accent2: #82B366;
+      --warn: #D6B656;
+      --danger: #c75450;
+      --border: #3a3a3a;
+      --code-bg: #111;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 15px;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    h1 {
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      letter-spacing: -0.3px;
+    }
+    .subtitle {
+      color: var(--text2);
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+    h2 {
+      font-size: 20px;
+      font-weight: 600;
+      margin-top: 40px;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-top: 28px;
+      margin-bottom: 10px;
+      color: var(--accent);
+    }
+    p { margin: 10px 0; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Stage flow */
+    .stage-flow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 24px 0;
+      padding: 20px;
+      background: var(--bg2);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+    .stage-box {
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    .stage-normal { background: #2a3a2a; color: #82B366; border: 1px solid #82B36655; }
+    .stage-cautious { background: #3a3a2a; color: #D6B656; border: 1px solid #D6B65655; }
+    .stage-conservative { background: #3a2a2a; color: #c75450; border: 1px solid #c7545055; }
+    .stage-paused { background: #2a2a3a; color: #6C8EBF; border: 1px solid #6C8EBF55; }
+    .stage-arrow {
+      color: var(--text2);
+      font-size: 18px;
+    }
+
+    /* Cards */
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      margin: 16px 0;
+    }
+    .card-title {
+      font-weight: 600;
+      font-size: 15px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge-green { background: #82B36622; color: #82B366; }
+    .badge-yellow { background: #D6B65622; color: #D6B656; }
+    .badge-red { background: #c7545022; color: #c75450; }
+    .badge-blue { background: #6C8EBF22; color: #6C8EBF; }
+
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      font-weight: 600;
+      color: var(--text2);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    tr:hover td { background: var(--bg3); }
+
+    /* Code blocks */
+    pre, code {
+      font-family: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+      font-size: 13px;
+    }
+    code {
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #d4a574;
+    }
+    pre {
+      background: var(--code-bg);
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      line-height: 1.6;
+    }
+    pre code { background: none; padding: 0; }
+
+    /* Diagram */
+    .diagram {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      margin: 20px 0;
+      font-family: "SF Mono", monospace;
+      font-size: 13px;
+      line-height: 2;
+      overflow-x: auto;
+    }
+    .d-turn { color: #a0a0a0; }
+    .d-tool { color: #82B366; }
+    .d-text { color: #6C8EBF; }
+    .d-warn { color: #D6B656; }
+    .d-block { color: #c75450; }
+    .d-comment { color: #666; font-style: italic; }
+
+    /* Legend */
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin: 16px 0;
+      font-size: 13px;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+
+    /* Callout */
+    .callout {
+      background: #6C8EBF11;
+      border-left: 3px solid var(--accent);
+      padding: 14px 18px;
+      border-radius: 0 8px 8px 0;
+      margin: 16px 0;
+      font-size: 14px;
+    }
+    .callout-warn {
+      background: #D6B65611;
+      border-left-color: var(--warn);
+    }
+
+    /* Footer */
+    .footer {
+      margin-top: 60px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      color: var(--text2);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    @media (max-width: 600px) {
+      .container { padding: 24px 16px; }
+      h1 { font-size: 22px; }
+      .stage-flow { justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Stage: Paused</h1>
+  <div class="subtitle">Nebflow 自适应循环机制详解</div>
+
+  <h2>1. 背景：为什么需要 Paused 阶段？</h2>
+  <p>
+    当 LLM Agent 面对复杂或困难的任务时，它可能陷入"循环"：反复调用相同的工具、不产生新信息、却不肯结束。
+    传统的解决方案是设置一个硬性的 turn 上限（例如 50 轮），但这会限制 agent 处理真正复杂任务的能力。
+  </p>
+  <p>
+    Nebflow 采用<strong>自适应循环（Progress-Aware Adaptive Loop）</strong>：不是按固定轮数限制，而是根据
+    <strong>进展检测（progress detection）</strong>动态调整约束强度。当 agent 连续多轮没有产生实质进展时，
+    系统逐步收紧限制，最终进入 <code>Paused</code> 阶段——所有工具被禁用，强制 agent 调用 <code>finish()</code>
+    给出当前最佳答案。
+  </p>
+
+  <h2>2. 四个阶段的演进</h2>
+  <div class="stage-flow">
+    <div class="stage-box stage-normal">Normal</div>
+    <span class="stage-arrow">→</span>
+    <div class="stage-box stage-cautious">Cautious</div>
+    <span class="stage-arrow">→</span>
+    <div class="stage-box stage-conservative">Conservative</div>
+    <span class="stage-arrow">→</span>
+    <div class="stage-box stage-paused">Paused</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>阶段</th>
+        <th>触发条件</th>
+        <th>工具限制</th>
+        <th>Max Turns</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-green">Normal</span></td>
+        <td><code>stagnationCount = 0</code></td>
+        <td>无限制（agent 可调用所有工具）</td>
+        <td>200</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-yellow">Cautious</span></td>
+        <td><code>stagnationCount ≥ 3</code></td>
+        <td>并行工具调用上限 3 个</td>
+        <td>200</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-red">Conservative</span></td>
+        <td><code>stagnationCount ≥ 6</code></td>
+        <td>仅保留 Read（只读，禁止写入）</td>
+        <td>150</td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-blue">Paused</span></td>
+        <td><code>stagnationCount ≥ 9</code></td>
+        <td><strong>所有工具禁用</strong>（除 finish/declareWait）</td>
+        <td>100</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. 进展检测（Progress Detection）</h2>
+  <p>
+    每轮 LLM 调用后，系统评估本轮是否"有进展"。以下任一情况都被视为<strong>有进展</strong>：
+  </p>
+  <ul>
+    <li>调用了之前未调用过的新工具</li>
+    <li>调用了相同工具但输入参数不同</li>
+    <li>产生了文本回复（无工具调用，纯思考/回答）</li>
+  </ul>
+  <p>
+    如果一轮中所有工具调用都是<strong>完全重复</strong>的（相同工具 + 相同参数），且没有任何新信息产生，
+    则 <code>stagnationCount</code> 增加 1。
+  </p>
+
+  <div class="card">
+    <div class="card-title">重复调用检测逻辑</div>
+    <p>
+      系统维护一个 <code>recentToolCalls</code> 列表，记录最近 20 轮的工具调用（名称 + 输入哈希）。
+      当本轮的工具调用与列表中的任何记录完全匹配时，视为重复。
+    </p>
+    <pre><code>val isDuplicate = recentToolCalls.exists { record =&gt;
+  record.name == call.name &amp;&amp; record.inputHash == call.inputHash
+}</code></pre>
+  </div>
+
+  <h2>4. Paused 阶段的行为</h2>
+  <p>当 <code>stagnationCount ≥ 9</code> 时，agent 进入 Paused 阶段：</p>
+
+  <div class="diagram">
+<span class="d-comment"># 系统提示（注入到 agent 的 system prompt 中）</span>
+<span class="d-warn">[STAGE: PAUSED] All tools are disabled.</span>
+<span class="d-warn">You have been looping without making progress.</span>
+<span class="d-warn">Please call finish() with your current best answer.</span>
+
+<span class="d-comment"># 此时发送给 LLM 的可用工具列表：</span>
+<span class="d-tool">finish(answer: string)</span>     <span class="d-comment"># 结束任务，给出答案</span>
+<span class="d-tool">declareWait(reason: string)</span>  <span class="d-comment"># 声明需要等待（不会结束）</span>
+  </div>
+
+  <div class="callout callout-warn">
+    <strong>注意：</strong>Paused 阶段并非强制终止。agent 仍然可以调用 <code>declareWait</code> 来声明"需要等待"。
+    如果 agent 认为当前确实无法继续（例如等待外部资源），系统会豁免本轮的停滞计数，不会继续加压。
+  </div>
+
+  <h2>5. 从 Paused 恢复</h2>
+  <p>
+    Paused 阶段不是单向的。如果用户发送新的消息，或 agent 调用 <code>declareWait</code> 后获得了新的上下文，
+    系统的停滞计数会被重置：
+  </p>
+  <pre><code>// 每当检测到进展时
+stagnationCount = 0
+stage = Normal
+
+// 用户发送新消息时
+stagnationCount = 0
+stage = Normal
+progressStreak = 0</code></pre>
+
+  <h2>6. 完整执行流程示例</h2>
+  <div class="diagram">
+<span class="d-turn">Turn 1-3:</span>  <span class="d-tool">Read</span> → <span class="d-tool">Grep</span> → <span class="d-tool">Read</span>    <span class="d-comment"># 有新信息，progressStreak++</span>
+<span class="d-turn">Turn 4-6:</span>  <span class="d-tool">Read(fileA)</span> → <span class="d-tool">Read(fileA)</span> → <span class="d-tool">Read(fileA)</span>  <span class="d-comment"># 重复！stagnationCount=3</span>
+<span class="d-warn">           ↳ 进入 Cautious 阶段</span>
+<span class="d-turn">Turn 7-9:</span>  <span class="d-tool">Read</span> → <span class="d-text">(纯文本回复)</span> → <span class="d-tool">Read</span>  <span class="d-comment"># 文本回复重置 stagnation</span>
+<span class="d-turn">Turn 10-15:</span> <span class="d-block">(连续6轮无进展)</span>              <span class="d-comment"># stagnationCount=6</span>
+<span class="d-warn">           ↳ 进入 Conservative 阶段（仅 Read）</span>
+<span class="d-turn">Turn 16-21:</span> <span class="d-block">(连续3轮无进展)</span>              <span class="d-comment"># stagnationCount=9</span>
+<span class="d-warn">           ↳ 进入 Paused 阶段（所有工具禁用）</span>
+<span class="d-turn">Turn 22:</span>   <span class="d-tool">finish("根据分析，最佳方案是...")</span>  <span class="d-comment"># 任务结束</span>
+  </div>
+
+  <h2>7. 代码实现</h2>
+  <p>核心逻辑位于 <code>AgentActor.scala</code> 中的 <code>evaluateProgress</code> 和 <code>stageConstraints</code>：</p>
+
+  <pre><code>private def stageConstraints(stage: AdaptiveStage): StageConstraints = stage match
+  case AdaptiveStage.Normal       =&gt; StageConstraints(None, 200)
+  case AdaptiveStage.Cautious     =&gt; StageConstraints(Some(keepSafeOnly), 200)
+  case AdaptiveStage.Conservative =&gt; StageConstraints(Some(keepReadOnly), 150)
+  case AdaptiveStage.Paused       =&gt; StageConstraints(Some(denyAllExceptFinish), 100)
+
+private def evaluateProgress(
+  freshCalls: List[ToolCall],
+  duplicateResults: List[(ToolCall, ToolExecResult)],
+  stageBlocked: List[(ToolCall, ToolExecResult)],
+  hadTextReply: Boolean
+): Boolean =
+  val limitedFresh = freshCalls.filterNot(c =&gt;
+    Set("finish", "declareWait").contains(c.name)
+  )
+  limitedFresh.nonEmpty || hadTextReply
+
+// 停滞计数更新
+val newStagnationCount = if hadProgress then 0 else state.stagnationCount + 1
+val newStage = stageFromStagnation(newStagnationCount)</code></pre>
+
+  <h2>8. 设计哲学</h2>
+  <div class="card">
+    <div class="card-title">为什么不直接用硬 turn 限制？</div>
+    <p>
+      硬限制（如"最多 50 轮"）的问题是：<strong>它惩罚了真正需要多轮思考的复杂任务</strong>。
+      一个正在稳步推进的 agent 不应该因为轮数到了而被强行打断。
+    </p>
+    <p>
+      自适应循环的哲学是：<strong>限制的不是轮数，而是"无效轮数"</strong>。
+      只要 agent 每轮都在产生新信息，它可以持续运行很长时间；只有当它开始原地打转时，
+      系统才逐步介入，最终温和地引导它结束。
+    </p>
+  </div>
+
+  <div class="footer">
+    Nebflow v1.0 · Progress-Aware Adaptive Loop
+  </div>
+</div>
+</body>
+</html>

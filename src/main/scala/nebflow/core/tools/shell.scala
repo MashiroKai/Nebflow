@@ -262,7 +262,7 @@ object ShellSession:
     def loop: IO[Unit] =
       IO.sleep(5.minutes) *> evictCompleted(jobsRef).handleErrorWith { e =>
         IO.println(s"[ShellSession] Cleanup error: ${e.getMessage}")
-      } *> loop
+      } *> IO.defer(loop)
     loop.start
 
   private def evictCompleted(jobsRef: Ref[IO, Map[String, BackgroundJob]]): IO[Unit] =
