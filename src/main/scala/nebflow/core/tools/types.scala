@@ -16,7 +16,8 @@ case class ToolContext(
   contextWindow: Int = Defaults.ContextWindow,
   sessionId: Option[String] = None,
   taskStore: Option[TaskStore] = None,
-  wsSend: Option[Json => IO[Unit]] = None
+  wsSend: Option[Json => IO[Unit]] = None,
+  readTracker: Option[ReadTracker] = None
 )
 
 /** 工具错误 */
