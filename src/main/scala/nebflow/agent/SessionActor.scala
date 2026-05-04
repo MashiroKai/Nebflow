@@ -174,9 +174,10 @@ object SessionActor:
 
       case SessionCommand.Terminate() =>
         data.agentStates.values.foreach(_.agentRef ! AgentCommand.Stop("session closing"))
-        resources.dispatcher.unsafeRunAndForget(
-          nebflow.core.tools.ShellSession.destroySession(wsConnId)
-        )
+        val destroyIos = data.agentStates.keys.toList.map { sid =>
+          nebflow.core.tools.ShellSession.destroySession(sid)
+        }
+        resources.dispatcher.unsafeRunAndForget(destroyIos.sequence_)
         Behaviors.stopped
 
       case SessionCommand.Interrupt(sessionId) =>
