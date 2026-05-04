@@ -4,6 +4,9 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 
+import scala.concurrent.TimeoutException
+import scala.concurrent.duration.*
+
 object BashTool extends Tool:
   val DEFAULT_TIMEOUT = 120_000L // 2 minutes
   val MAX_TIMEOUT = 600_000L // 10 minutes
@@ -42,7 +45,10 @@ Git safety:
     List(
       "type" -> "object".asJson,
       "properties" -> io.circe.Json.obj(
-        "command" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The bash command to run".asJson),
+        "command" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The bash command to run. Required unless background_job_id is provided.".asJson
+        ),
         "timeout" -> io.circe.Json
           .obj("type" -> "number".asJson, "description" -> "Optional timeout in milliseconds (max 600000)".asJson),
         "description" -> io.circe.Json.obj(
@@ -52,9 +58,21 @@ Git safety:
         "run_in_background" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
           "description" -> "If true, run the command in the background and return a job ID immediately".asJson
+        ),
+        "dangerouslyDisableSandbox" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "ONLY use when absolutely necessary. This bypasses injection pattern checks (e.g. command substitution). Permanently dangerous commands (rm -rf, git push --force, etc.) remain blocked regardless. Use with extreme caution.".asJson
+        ),
+        "background_job_id" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Job ID to query or cancel. When provided, command is not required.".asJson
+        ),
+        "cancel_background_job" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "If true with background_job_id, cancel the background job.".asJson
         )
       ),
-      "required" -> io.circe.Json.arr("command".asJson)
+      "required" -> io.circe.Json.arr() // command is conditionally required: required when background_job_id is absent
     )
   )
 
@@ -91,7 +109,7 @@ Git safety:
     """fork\s+bomb""".r
   )
 
-  // Injection patterns: warned but not blocked
+  // Injection patterns: default block, bypass with dangerouslyDisableSandbox
   private val InjectionPatterns = List(
     ("""\$\(\s*.*?\brm\b""".r, "Command substitution containing rm detected"),
     ("""`\s*.*?\brm\b""".r, "Backtick substitution containing rm detected"),
@@ -109,96 +127,115 @@ Git safety:
 
   def summarize(input: JsonObject): String =
     val desc = input("description").flatMap(_.asString)
-    desc match
-      case Some(d) => s"Bash($d)"
-      case None =>
+    val bgJobId = input("background_job_id").flatMap(_.asString)
+    (desc, bgJobId) match
+      case (Some(d), _) => s"Bash($d)"
+      case (_, Some(id)) => s"Bash(query job $id)"
+      case _ =>
         val cmd = input("command").flatMap(_.asString).getOrElse("").trim
-        val firstLine = cmd.split("\\n").headOption.getOrElse(cmd)
-        if firstLine.length > 50 then s"Bash(${firstLine.take(47)}...)"
+        val firstLine = cmd.split('\n').headOption.getOrElse(cmd)
+        if firstLine.isEmpty then "Bash(empty)"
+        else if firstLine.length > 50 then s"Bash(${firstLine.take(47)}...)"
         else s"Bash($firstLine)"
 
   def summarizeResult(input: JsonObject, result: String): String =
-    if result.startsWith("[Command timed out") then "Timed out"
+    if result.contains("[Command timed out") then "Timed out"
     else if result.startsWith("[Blocked by sandbox") then "Blocked"
     else if result.startsWith("[Background job") then "Background"
+    else if result.startsWith("[Sandbox bypassed]") then "Sandbox bypassed"
+    else if result.startsWith("[Command executed successfully with no output]") then "No output"
     else
-      val lines = result.split("\\n").filter(_.trim.nonEmpty)
-      if lines.length <= 1 then lines.headOption.getOrElse("No output")
+      val lines = result.split('\n').filter(_.trim.nonEmpty)
+      if lines.isEmpty then "No output"
+      else if lines.length == 1 then lines.head
       else s"${lines.length} lines of output"
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val timeout = input("timeout")
       .flatMap(_.asNumber)
       .flatMap(_.toLong)
-      .map(t => Math.min(t, MAX_TIMEOUT))
+      .map(t => t.max(1L).min(MAX_TIMEOUT))
       .getOrElse(DEFAULT_TIMEOUT)
-    val command = input("command").flatMap(_.asString).getOrElse("")
+    val commandOpt = input("command").flatMap(_.asString)
+    val command = commandOpt.getOrElse("")
     val background = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
     val desc = input("description").flatMap(_.asString)
+    val bypass = input("dangerouslyDisableSandbox").flatMap(_.asBoolean).getOrElse(false)
+    val bgJobId = input("background_job_id").flatMap(_.asString)
+    val cancelBg = input("cancel_background_job").flatMap(_.asBoolean).getOrElse(false)
 
-    if command.isEmpty then IO.pure(Right("[Empty command]"))
-    else if isDangerous(command) then
-      IO.pure(
-        Left(
-          ToolError(
-            "[Blocked by sandbox] This command is permanently blocked for safety and cannot be approved."
+    val sessionId = ctx.sessionId.getOrElse("default")
+    val timeoutDuration = timeout.millis
+
+    // If background_job_id is provided, enter query/cancel mode
+    bgJobId match
+      case Some(jobId) =>
+        ShellSession.forSession(sessionId).flatMap { shell =>
+          if cancelBg then
+            shell.cancelBackgroundJob(jobId).map { cancelled =>
+              if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
+              else Right(s"[Background job not found] Job ID: $jobId")
+            }
+          else
+            shell.getBackgroundResult(jobId).map {
+              case None => Right(s"[Background job pending] Job ID: $jobId")
+              case Some(Left(e)) =>
+                val errMsg = e match
+                  case _: TimeoutException => "[Command timed out]"
+                  case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                Right(s"[Background job failed] Job ID: $jobId\n$errMsg")
+              case Some(Right(result)) =>
+                val out = result.stdout
+                val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
+                Right(s"[Background job completed] Job ID: $jobId\n$out$errLine")
+            }
+        }
+      case None =>
+        if command.isEmpty then IO.pure(Right("[Empty command]"))
+        else if isDangerous(command) then
+          IO.pure(
+            Left(
+              ToolError(
+                "[Blocked by sandbox] This command is permanently blocked for safety and cannot be approved."
+              )
+            )
           )
-        )
-      )
-    else
-      val injectionWarning = checkInjection(command)
-      if injectionWarning.isDefined then
-        val warning = injectionWarning.get
-        val shell = PersistentShell.get()
-        val prefix = desc match
-          case Some(d) => s"[$d]\n"
-          case None => ""
-
-        shell
-          .execute(command, timeout)
-          .map { output =>
-            val dir = shell.getCurrentDir
-            val dirLine = if dir.nonEmpty then s"(cwd: $dir)\n" else ""
-            val warnLine = s"[Warning: $warning]\n"
-            val fullOutput = warnLine + prefix + dirLine + output
-            if fullOutput.isEmpty then Right(s"$warnLine[Command executed successfully with no output]")
-            else if output.contains("timed out") then Left(ToolError(s"[Command timed out after ${timeout}ms]"))
-            else Right(fullOutput)
-          }
-          .handleError { e =>
-            val msg = e.getMessage
-            if msg.contains("timed out") then Left(ToolError(s"[Command timed out after ${timeout}ms]"))
-            else Left(ToolError(s"Error: $msg"))
-          }
-      else
-        val shell = PersistentShell.get()
-
-        if background then
-          // Background execution
-          val jobId = shell.executeBackground(command, timeout)
-          IO.pure(Right(s"[Background job started] Job ID: $jobId\nUse this ID to check status later."))
         else
-          val prefix = desc match
-            case Some(d) => s"[$d]\n"
-            case None => ""
-
-          shell
-            .execute(command, timeout)
-            .map { output =>
-              val dir = shell.getCurrentDir
-              val dirLine = if dir.nonEmpty then s"(cwd: $dir)\n" else ""
-              val fullOutput = prefix + dirLine + output
-              if fullOutput.isEmpty then Right("[Command executed successfully with no output]")
-              else if output.contains("timed out") then Left(ToolError(s"[Command timed out after ${timeout}ms]"))
-              else Right(fullOutput)
-            }
-            .handleError { e =>
-              val msg = e.getMessage
-              if msg.contains("timed out") then Left(ToolError(s"[Command timed out after ${timeout}ms]"))
-              else Left(ToolError(s"Error: $msg"))
-            }
+          val injectionWarning = checkInjection(command)
+          (injectionWarning, bypass) match
+            case (Some(warning), false) =>
+              IO.pure(Left(ToolError(s"[Blocked by sandbox] Injection detected: $warning")))
+            case _ =>
+              val sandboxMark = injectionWarning.map(_ => "[Sandbox bypassed] ").getOrElse("")
+              ShellSession.forSession(sessionId).flatMap { shell =>
+                if background then
+                  shell.executeBackground(command, timeoutDuration).map { jobId =>
+                    Right(s"$sandboxMark[Background job started] Job ID: $jobId\nUse this ID to check status later.")
+                  }
+                else
+                  executeAndFormat(shell, command, timeoutDuration, desc, sandboxMark)
+              }
+          end match
         end if
-      end if
-    end if
   end call
+
+  private def executeAndFormat(
+    shell: ShellSession,
+    command: String,
+    timeout: FiniteDuration,
+    desc: Option[String],
+    sandboxMark: String
+  ): IO[Either[ToolError, String]] =
+    shell.execute(command, timeout).map { result =>
+      val prefix = desc.map(d => s"[$d]\n").getOrElse("")
+      val dirLine = s"(cwd: ${result.cwd})\n"
+      val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
+      val output = result.stdout + errLine
+      val full = sandboxMark + prefix + dirLine + output
+      if full.trim.isEmpty then Right(sandboxMark + "[Command executed successfully with no output]")
+      else Right(full)
+    }.handleErrorWith {
+      case _: TimeoutException => IO.pure(Left(ToolError(s"[Command timed out after ${timeout.toMillis}ms]")))
+      case e => IO.pure(Left(ToolError(s"Error: ${e.getMessage}")))
+    }
 end BashTool
