@@ -35,7 +35,8 @@ class WebSocketRoutes(
   sessionActorRef: ActorRef[SessionCommand],
   contextWindow: Int = Defaults.ContextWindow,
   skillDiscovery: Option[SkillDiscovery] = None,
-  sharedResources: SharedResources = null
+  sharedResources: SharedResources = null,
+  pluginManifests: List[nebflow.plugin.PluginManifest] = Nil
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
@@ -94,6 +95,32 @@ class WebSocketRoutes(
     case req @ GET -> Root / fileName =>
       val allowed = Set("style.css", "app.js")
       if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
+      else NotFound()
+
+    case req @ GET -> Root / "plugins" / "manifest.json" =>
+      val json = io.circe.Json.obj(
+        "plugins" -> pluginManifests.map { pm =>
+          io.circe.Json.obj(
+            "name" -> pm.name.asJson,
+            "version" -> pm.version.asJson,
+            "description" -> pm.description.asJson,
+            "frontend" -> pm.frontend.map { fe =>
+              io.circe.Json.obj(
+                "scripts" -> fe.scripts.asJson,
+                "styles" -> fe.styles.asJson
+              )
+            }.getOrElse(io.circe.Json.Null)
+          )
+        }.asJson
+      )
+      Ok(json.noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+
+    case req @ GET -> Root / "plugins" / pluginName / path =>
+      val pluginDir = nebflow.plugin.PluginLoader.PluginDir / pluginName
+      val filePath = pluginDir / os.RelPath(path)
+      // Security: ensure the resolved path stays within the plugin directory
+      if filePath.toString.startsWith(pluginDir.toString) && os.exists(filePath) && os.isFile(filePath) then
+        StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
       else NotFound()
   }
 
