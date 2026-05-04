@@ -110,6 +110,12 @@ object GatewayMain extends IOApp.Simple:
                                   val agentService = new AgentService(agentLibrary)
                                   val configService = ConfigService
 
+                                  val wsHub = new WsHub()
+                                  val sessionActorRef = actorSystem.systemActorOf(
+                                    SessionActor(sharedResources, wsHub),
+                                    "session-global"
+                                  )
+
                                   EmberServerBuilder
                                     .default[IO]
                                     .withHost(cfg.host)
@@ -128,10 +134,10 @@ object GatewayMain extends IOApp.Simple:
                                         fileTracker,
                                         reminderStateRef,
                                         sessionStore,
+                                        wsHub,
+                                        sessionActorRef,
                                         contextWindow,
                                         skillDiscoveryOpt,
-                                        actorSystem,
-                                        dispatcher,
                                         sharedResources
                                       )
                                       Router(

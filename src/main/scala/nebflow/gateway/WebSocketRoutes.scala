@@ -31,10 +31,10 @@ class WebSocketRoutes(
   fileChangeTracker: FileChangeTracker,
   reminderStateRef: Ref[IO, ReminderState],
   sessionStore: SessionStore,
+  wsHub: WsHub,
+  sessionActorRef: ActorRef[SessionCommand],
   contextWindow: Int = Defaults.ContextWindow,
   skillDiscovery: Option[SkillDiscovery] = None,
-  actorSystem: ActorSystem[Nothing] = null,
-  dispatcher: Dispatcher[IO] = null,
   sharedResources: SharedResources = null
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
@@ -46,24 +46,16 @@ class WebSocketRoutes(
       if Auth.validateToken(provided, token) then
         for
           outbound <- Queue.unbounded[IO, WebSocketFrame]
-          wsConnId = java.util.UUID.randomUUID().toString.take(8)
 
           perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
-
-          sessionRefOpt <-
-            if actorSystem != null && sharedResources != null then
-              IO(actorSystem.systemActorOf(SessionActor(wsConnId, sharedResources, perConnWsSend), s"session-$wsConnId"))
-                .map(Some(_))
-            else IO.pure(None)
+          hubConnId <- wsHub.register(perConnWsSend)
 
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
             case WebSocketFrame.Text(text, _) =>
-              handleMessage(text, perConnWsSend, sessionRefOpt)
+              handleMessage(text, perConnWsSend, Some(sessionActorRef))
             case _ => IO.unit
           }.onFinalize(
-            sessionRefOpt match
-              case Some(ref) => IO(ref ! SessionCommand.Terminate())
-              case None => IO.unit
+            wsHub.unregister(hubConnId)
           )
 
           sendStream = Stream.fromQueueUnterminated(outbound)
@@ -325,6 +317,7 @@ class WebSocketRoutes(
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         val content = json.hcursor.downField("content").as[String].getOrElse("")
         val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
+        val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
 
         if content.trim == "__interrupt__" then
           sessionRefOpt match
@@ -358,7 +351,7 @@ class WebSocketRoutes(
               logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
                 logInputHistory(content, attachments) *> (sessionRefOpt match
                   case Some(ref) =>
-                    IO(ref ! SessionCommand.UserMessage(content, blocks.toList))
+                    IO(ref ! SessionCommand.UserMessage(content, blocks.toList, clientMessageId))
                   case None => IO.unit)
           }
         else IO.unit

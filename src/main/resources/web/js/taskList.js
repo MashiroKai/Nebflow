@@ -90,19 +90,10 @@ export function renderTaskList(tasks) {
   // Re-render lucide icons
   if (typeof lucide !== 'undefined') lucide.createIcons();
 
-  // Fade completed tasks after TTL
+  // Collapse completed tasks after TTL — remove from layout entirely
   container.querySelectorAll('.task-done.task-fade').forEach(el => {
     const timer = setTimeout(() => {
-      el.classList.add('task-fading');
-      setTimeout(() => {
-        if (el.parentNode) {
-          el.style.maxHeight = '0';
-          el.style.padding = '0';
-          el.style.margin = '0';
-          el.style.opacity = '0';
-          el.style.overflow = 'hidden';
-        }
-      }, 300);
+      el.classList.add('task-collapsed');
     }, RECENT_COMPLETED_TTL_MS);
     container._fadeTimers.push(timer);
   });
