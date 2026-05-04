@@ -103,7 +103,8 @@ object GatewayMain extends IOApp.Simple:
                                     skillDiscovery = skillDiscoveryOpt,
                                     agentLibrary = agentLibrary,
                                     askSemaphore = askSemaphore,
-                                    taskStore = FileTaskStore
+                                    taskStore = FileTaskStore,
+                                    historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd)
                                   )
                                   val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
                                   val sessionService = new SessionService(sessionStore)

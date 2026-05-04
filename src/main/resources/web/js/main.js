@@ -368,6 +368,36 @@ onMessage('agentDone', (msg) => {
   clearStatus();
 });
 
+// --- Compaction events ---
+onMessage('compactStart', (msg) => {
+  if (!isActive(msg)) return;
+  if (!state.busySessionId) setBusy(msg.sessionId || state.activeSessionId);
+  state.dom.statusWrap.classList.add('compacting');
+  setStatus('Compacting context...');
+});
+
+onMessage('compactComplete', (msg) => {
+  if (!isActive(msg)) return;
+  const wrap = state.dom.statusWrap;
+  wrap.classList.remove('compacting');
+  wrap.classList.add('compact-done');
+  const detail = msg.snapshotPath ? ` (snapshot: ${msg.snapshotPath.split('/').pop()})` : '';
+  setStatus(`Context compacted: ${msg.before} → ${msg.after} messages${detail}`);
+  setTimeout(clearStatus, 3000);
+});
+
+onMessage('compactFailed', (msg) => {
+  if (!isActive(msg)) return;
+  const wrap = state.dom.statusWrap;
+  wrap.classList.remove('compacting');
+  wrap.classList.add('compact-failed');
+  setStatus(`Context compaction failed (attempt ${msg.attempt}/${msg.maxAttempts})`);
+  if (msg.attempt >= msg.maxAttempts) {
+    renderError(`Context compaction circuit breaker open after ${msg.attempt} attempts`);
+    clearBusyFor(msg);
+  }
+});
+
 // --- Agent panel events (global) ---
 onMessage('agentList', (msg) => {
   state.agentsData = msg.agents || [];
