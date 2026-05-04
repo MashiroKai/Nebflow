@@ -753,7 +753,30 @@ object AgentActor:
 
         val systemPrompt = buildSystemPrompt(agentDef, resources)
         val tools = buildToolList(agentDef, depth, parentRef.isDefined)
-        val messagesWithSystem = Message(MessageRole.System, Left(systemPrompt)) :: state.messages
+
+        // Collect dynamic system reminders and append to static system prompt.
+        val remindersIO = for
+          fileChangesOpt <- resources.fileChangeTracker.checkChanges()
+          currentPolicy  <- resources.runtimePrefs.getPolicy
+          userInput = state.messages.reverseIterator.collectFirst {
+            case m if m.role == MessageRole.User => m.textContent
+          }.getOrElse("")
+          skillMatchOpt <- resources.skillDiscovery match
+            case Some(sd) => sd.findRelevantSkill(userInput)
+            case None     => IO.pure(None)
+          reminders <- SystemReminders.collectAll(
+            resources.reminderStateRef,
+            state.latestUsage,
+            agentDef.contextWindow,
+            fileChangesOpt,
+            currentPolicy,
+            skillMatchOpt
+          )
+        yield reminders
+        val reminders = resources.dispatcher.unsafeRunSync(remindersIO)
+        val remindersText = SystemReminder.renderAll(reminders)
+        val fullSystem = if remindersText.nonEmpty then s"$systemPrompt\n\n$remindersText" else systemPrompt
+        val messagesWithSystem = Message(MessageRole.System, Left(fullSystem)) :: state.messages
 
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
@@ -1068,6 +1091,17 @@ object AgentActor:
       }
       .flatMap { freshResults =>
         val allResults = freshResults ++ stageBlockedResults ++ duplicateResults
+
+        // Update writesWithoutRead counter: Read resets, Write/Edit increment.
+        val hasRead = freshResults.exists { case (call, result) => call.name == "Read" && !result.isError }
+        val writeCount = freshResults.count { case (call, result) => Set("Write", "Edit").contains(call.name) && !result.isError }
+        if hasRead || writeCount > 0 then
+          resources.dispatcher.unsafeRunAndForget(
+            resources.reminderStateRef.update { rs =>
+              if hasRead then rs.copy(writesWithoutRead = 0)
+              else rs.copy(writesWithoutRead = rs.writesWithoutRead + writeCount)
+            }
+          )
 
         if newStage != state.stage || newStagnationCount != state.stagnationCount then
           emitStream(
