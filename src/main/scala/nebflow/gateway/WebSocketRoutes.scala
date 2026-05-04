@@ -50,9 +50,10 @@ class WebSocketRoutes(
 
           perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
 
+          readTracker <- nebflow.core.tools.ReadTracker.create
           sessionRefOpt <-
             if actorSystem != null && sharedResources != null then
-              IO(actorSystem.systemActorOf(SessionActor(wsConnId, sharedResources, perConnWsSend), s"session-$wsConnId"))
+              IO(actorSystem.systemActorOf(SessionActor(wsConnId, sharedResources, perConnWsSend, readTracker), s"session-$wsConnId"))
                 .map(Some(_))
             else IO.pure(None)
 
