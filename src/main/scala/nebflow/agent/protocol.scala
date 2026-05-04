@@ -147,7 +147,7 @@ enum AgentStreamEvent:
   case ProgressUpdate(turnIdx: Int, stagnationCount: Int, stage: String)
   case Paused(summary: String)
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
-  case CompactComplete(before: Int, after: Int, snapshotPath: Option[String])
+  case CompactComplete(before: Int, after: Int, snapshotPath: Option[String], comparisonPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
@@ -243,14 +243,15 @@ enum AgentStreamEvent:
         "inputTokens" -> inputTokens.asJson,
         "threshold" -> threshold.asJson
       )
-    case CompactComplete(before, after, snapshotPath) =>
+    case CompactComplete(before, after, snapshotPath, comparisonPath) =>
       val base = Json.obj(
         "type" -> "compactComplete".asJson,
         "agentId" -> agentId.asJson,
         "before" -> before.asJson,
         "after" -> after.asJson
       )
-      snapshotPath.fold(base)(p => base.deepMerge(Json.obj("snapshotPath" -> p.asJson)))
+      val withSnapshot = snapshotPath.fold(base)(p => base.deepMerge(Json.obj("snapshotPath" -> p.asJson)))
+      comparisonPath.fold(withSnapshot)(p => withSnapshot.deepMerge(Json.obj("comparisonPath" -> p.asJson)))
     case CompactFailed(reason, attempt, maxAttempts) =>
       Json.obj(
         "type" -> "compactFailed".asJson,
@@ -348,7 +349,7 @@ case class AgentState(
   turnIdx: Int = 0,
   wsSend: io.circe.Json => IO[Unit] = _ => IO.unit,
   hasInjectedAntiLoop: Boolean = false,
-  recentFilesRead: Set[String] = Set.empty,
+  recentFilesRead: Set[String] = Set.empty, // entries are "path@offset:limit" for precise read-range tracking
   stagnationCount: Int = 0,
   stage: AdaptiveStage = AdaptiveStage.Normal,
   progressStreak: Int = 0,

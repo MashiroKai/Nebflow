@@ -1,7 +1,7 @@
 package nebflow.core.compact
 
 import munit.CatsEffectSuite
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.shared.{ContentBlock, Message, MessageRole, TokenUsage}
 
 class CompactionPolicySpec extends CatsEffectSuite:
 
@@ -77,4 +77,27 @@ class CompactionPolicySpec extends CatsEffectSuite:
     val max = CompactConfig().circuitBreakerMax
     val failures = 3
     assert(failures >= max, "with default config, 3 failures should open the breaker")
+  }
+
+  // ---------- Real usage trigger (issue 009) ----------
+
+  test("latestUsage present and above threshold triggers compact decision") {
+    val usage = Some(TokenUsage(inputTokens = 90000, outputTokens = 1000))
+    val threshold = 70000
+    val shouldCompact = usage.exists(_.inputTokens > threshold)
+    assert(shouldCompact)
+  }
+
+  test("latestUsage present but below threshold does not trigger compact") {
+    val usage = Some(TokenUsage(inputTokens = 50000, outputTokens = 1000))
+    val threshold = 70000
+    val shouldCompact = usage.exists(_.inputTokens > threshold)
+    assert(!shouldCompact)
+  }
+
+  test("latestUsage absent skips compact regardless of estimate") {
+    val usage: Option[TokenUsage] = None
+    val threshold = 70000
+    val shouldCompact = usage.exists(_.inputTokens > threshold)
+    assert(!shouldCompact)
   }

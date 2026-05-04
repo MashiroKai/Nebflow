@@ -8,7 +8,8 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.agent.{SessionCommand, *}
 import nebflow.core.*
-import nebflow.service.{AgentService, ConfigService, SessionService}
+import nebflow.service.{AgentService, ConfigService, RuntimePreferencesService, SessionService}
+import nebflow.service.{ThinkingConfig}
 import nebflow.shared.*
 import nebflow.skill.SkillDiscovery
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
@@ -24,8 +25,7 @@ class WebSocketRoutes(
   sessionService: SessionService,
   agentService: AgentService,
   configService: ConfigService.type,
-  thinkingModeRef: Ref[IO, Option[io.circe.Json]],
-  permState: PermissionState,
+  runtimePrefs: RuntimePreferencesService,
   rateLimiter: RateLimiter,
   token: String,
   fileChangeTracker: FileChangeTracker,
@@ -60,8 +60,7 @@ class WebSocketRoutes(
 
           sendStream = Stream.fromQueueUnterminated(outbound)
           _ <- logger.info("WebSocket client connected")
-          policy <- permState.policy
-          thinking <- thinkingModeRef.get
+          prefs <- runtimePrefs.getAll
           _ <- outbound.offer(
             WebSocketFrame.Text(
               io.circe.Json
@@ -69,8 +68,8 @@ class WebSocketRoutes(
                   "type" -> "serverConfig".asJson,
                   "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
                   "version" -> nebflow.Version.string.asJson,
-                  "policy" -> PermissionPolicy.toName(policy).asJson,
-                  "thinking" -> thinking.getOrElse(io.circe.Json.Null)
+                  "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
+                  "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null)
                 )
                 .noSpaces
             )
@@ -125,6 +124,19 @@ class WebSocketRoutes(
         os.write.append(inputHistoryPath, withFiles.noSpaces + "\n", createFolders = true)
       }
 
+  private def broadcastServerConfig: IO[Unit] =
+    runtimePrefs.getAll.flatMap { prefs =>
+      wsHub.broadcast(
+        io.circe.Json.obj(
+          "type" -> "serverConfig".asJson,
+          "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
+          "version" -> nebflow.Version.string.asJson,
+          "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
+          "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null)
+        )
+      )
+    }
+
   private def handleMessage(
     text: String,
     wsSend: io.circe.Json => IO[Unit],
@@ -151,8 +163,9 @@ class WebSocketRoutes(
         val policyStr = parse(text).flatMap(_.hcursor.downField("policy").as[String]).getOrElse("ask")
         val policy = PermissionPolicy.fromString(policyStr)
         logger.info(s"Permission policy changed to: $policyStr") *>
-          permState.setPolicy(policy) *>
-          reminderStateRef.update(_.copy(policyReminderPending = true))
+          runtimePrefs.setPolicy(policy) *>
+          reminderStateRef.update(_.copy(policyReminderPending = true)) *>
+          broadcastServerConfig
 
       case "interrupt" =>
         logger.info("User interrupted") *> (sessionRefOpt match
@@ -170,8 +183,19 @@ class WebSocketRoutes(
       case "setThinking" =>
         val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
         json.hcursor.downField("thinking").focus match
-          case Some(t) => thinkingModeRef.set(Some(t))
-          case None => thinkingModeRef.set(None)
+          case Some(t) if !t.isNull =>
+            ThinkingConfig.fromJson(t) match
+              case Right(tc) =>
+                logger.info(s"Thinking mode changed to: enabled=${tc.enabled}, budget=${tc.budgetTokens}") *>
+                  runtimePrefs.setThinking(Some(tc)) *>
+                  broadcastServerConfig
+              case Left(err) =>
+                logger.warn(s"Invalid thinking config: $err") *>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid thinking config: $err".asJson))
+          case _ =>
+            logger.info("Thinking mode disabled") *>
+              runtimePrefs.setThinking(None) *>
+              broadcastServerConfig
 
       case "switchSession" =>
         val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
