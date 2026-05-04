@@ -141,6 +141,9 @@ enum AgentStreamEvent:
   case Thinking
   case RetryStatus(message: String)
   case Done
+  case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
+  case CompactComplete(before: Int, after: Int, snapshotPath: Option[String])
+  case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
     case TextDelta(text) =>
@@ -197,6 +200,30 @@ enum AgentStreamEvent:
         Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
       else
         Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
+    case CompactStart(mode, inputTokens, threshold) =>
+      Json.obj(
+        "type" -> "compactStart".asJson,
+        "agentId" -> agentId.asJson,
+        "mode" -> mode.asJson,
+        "inputTokens" -> inputTokens.asJson,
+        "threshold" -> threshold.asJson
+      )
+    case CompactComplete(before, after, snapshotPath) =>
+      val base = Json.obj(
+        "type" -> "compactComplete".asJson,
+        "agentId" -> agentId.asJson,
+        "before" -> before.asJson,
+        "after" -> after.asJson
+      )
+      snapshotPath.fold(base)(p => base.deepMerge(Json.obj("snapshotPath" -> p.asJson)))
+    case CompactFailed(reason, attempt, maxAttempts) =>
+      Json.obj(
+        "type" -> "compactFailed".asJson,
+        "agentId" -> agentId.asJson,
+        "reason" -> reason.asJson,
+        "attempt" -> attempt.asJson,
+        "maxAttempts" -> maxAttempts.asJson
+      )
 
 end AgentStreamEvent
 
@@ -261,7 +288,7 @@ case class AgentState(
   activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]],
   sessionId: Option[String] = None,
   pendingCompaction: Option[CompactionContext] = None,
-  pendingManualCompaction: Option[String] = None,
+  compactionFailures: Int = 0,
   latestUsage: Option[TokenUsage] = None,
   pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
