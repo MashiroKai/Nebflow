@@ -24,9 +24,9 @@ class AgentLibrary(agentsDir: os.Path):
       name = "context-manage",
       description = "Compress conversation history to free up context window space",
       modelRoute = "default",
-      contextWindow = 16000,
+      contextWindow = 60000,
       maxTokens = 8192,
-      tools = Nil,
+      tools = List(),
       subagents = Nil,
       systemPrompt = nebflow.core.compact.CompactPrompts.full
     ),
@@ -36,7 +36,7 @@ class AgentLibrary(agentsDir: os.Path):
       modelRoute = "default",
       contextWindow = Defaults.ContextWindow,
       maxTokens = Defaults.MaxTokens,
-      tools = Nil,
+      tools = List("*"),
       subagents = Nil,
       systemPrompt = ""
     )
