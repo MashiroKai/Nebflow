@@ -97,3 +97,7 @@ No PR number was provided. Could you share the PR number to review, or approve `
 [Nebflow QC] Launching automated quality review...
 Which PR would you like reviewed? Please provide a PR number, or approve `gh pr list` to see open PRs.
 [Nebflow QC] Review complete. See .nebflow-qc.log for details.
+[Nebflow QC] Merge to main detected at 2026-05-04 16:53:06
+[Nebflow QC] Launching automated quality review...
+需要 PR 编号。请提供要 review 的 PR 号，或批准 `gh pr list` 让我列出开放的 PR。
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.

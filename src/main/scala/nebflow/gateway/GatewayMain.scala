@@ -9,7 +9,7 @@ import nebflow.core.mcp.*
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
-import nebflow.service.{AgentService, ConfigService, SessionService}
+import nebflow.service.{AgentService, ConfigService, RuntimePreferencesService, SessionService}
 import nebflow.shared.*
 import nebflow.skill.*
 import org.apache.pekko.actor.typed.ActorSystem
@@ -80,32 +80,30 @@ object GatewayMain extends IOApp.Simple:
                   logger.info(s"gateway listening on ${cfg.host}:${cfg.port}") *>
                   logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)") *>
                   initSkillDiscovery(config, handle).flatMap { skillDiscoveryOpt =>
-                    Ref.of[IO, Option[io.circe.Json]](None).flatMap { thinkingModeRef =>
-                      PermissionState.create.flatMap { permState =>
-                        RateLimiter.create().flatMap { rateLimiter =>
-                          FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
-                            Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
-                              // Create Dispatcher for the multi-agent runtime, then start server
-                              cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
-                                val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir)
-                                cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
-                                  val sharedResources = SharedResources(
-                                    llm = handle,
-                                    dispatcher = dispatcher,
-                                    sessionStore = sessionStore,
-                                    projectRoot = os.pwd,
-                                    thinkingModeRef = thinkingModeRef,
-                                    permState = permState,
-                                    rateLimiter = rateLimiter,
-                                    fileChangeTracker = fileTracker,
-                                    reminderStateRef = reminderStateRef,
-                                    contextWindow = contextWindow,
-                                    skillDiscovery = skillDiscoveryOpt,
-                                    agentLibrary = agentLibrary,
-                                    askSemaphore = askSemaphore,
-                                    taskStore = FileTaskStore,
-                                    historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd)
-                                  )
+                    RuntimePreferencesService.create.flatMap { runtimePrefs =>
+                      RateLimiter.create().flatMap { rateLimiter =>
+                        FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
+                          Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
+                            // Create Dispatcher for the multi-agent runtime, then start server
+                            cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
+                              val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir)
+                              cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
+                                val sharedResources = SharedResources(
+                                  llm = handle,
+                                  dispatcher = dispatcher,
+                                  sessionStore = sessionStore,
+                                  projectRoot = os.pwd,
+                                  runtimePrefs = runtimePrefs,
+                                  rateLimiter = rateLimiter,
+                                  fileChangeTracker = fileTracker,
+                                  reminderStateRef = reminderStateRef,
+                                  contextWindow = contextWindow,
+                                  skillDiscovery = skillDiscoveryOpt,
+                                  agentLibrary = agentLibrary,
+                                  askSemaphore = askSemaphore,
+                                  taskStore = FileTaskStore,
+                                  historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd)
+                                )
                                   val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
                                   val sessionService = new SessionService(sessionStore)
                                   val agentService = new AgentService(agentLibrary)
@@ -128,8 +126,7 @@ object GatewayMain extends IOApp.Simple:
                                         sessionService,
                                         agentService,
                                         configService,
-                                        thinkingModeRef,
-                                        permState,
+                                        runtimePrefs,
                                         rateLimiter,
                                         token,
                                         fileTracker,
@@ -158,9 +155,8 @@ object GatewayMain extends IOApp.Simple:
                             } // end reminderStateRef
                           } // end fileTracker
                         } // end rateLimiter
-                      } // end permState
-                    } // end thinkingModeRef
-                  } // end skillDiscoveryOpt
+                      } // end runtimePrefs
+                    } // end skillDiscoveryOpt
               }
             }
           }

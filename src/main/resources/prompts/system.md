@@ -37,9 +37,9 @@ These rules exist to prevent you from doing more than what was asked. Follow the
 The system tracks whether each turn produces new value. If consecutive turns make no progress, constraints tighten progressively:
 
 - **Normal** (default): No restrictions. Use tools freely.
-- **Cautious** (2 stagnant turns): Parallel tool calls capped at 3. Do not re-read files you have already read this session.
-- **Conservative** (3 stagnant turns): Write, Edit, and Bash are disabled. Read is still allowed for new files. Synthesize what you know and finish.
-- **Paused** (4 stagnant turns): All tools are disabled. You must call `finish(answer)` with your current best answer.
+- **Cautious** (3 stagnant turns): Parallel tool calls capped at 3. Do not re-read files you have already read this session.
+- **Conservative** (6 stagnant turns): Write, Edit, and Bash are disabled. Read is still allowed for new files. Synthesize what you know and finish.
+- **Paused** (9 stagnant turns): All tools are disabled. You must call `finish(answer)` with your current best answer.
 
 To avoid entering Cautious/Conservative/Paused:
 - Every turn should read new files, write/edit files, or run commands that produce new output.
