@@ -267,7 +267,8 @@ case class AgentState(
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
   recentToolCalls: List[ToolCallRecord] = Nil,
   turnIdx: Int = 0,
-  wsSend: io.circe.Json => IO[Unit] = _ => IO.unit
+  wsSend: io.circe.Json => IO[Unit] = _ => IO.unit,
+  readTracker: Option[nebflow.core.tools.ReadTracker] = None
 )
 
 // ============================================================

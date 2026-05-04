@@ -49,7 +49,8 @@ object AgentActor:
     depth: Int,
     parentRef: Option[ActorRef[AgentCommand]] = None,
     sessionId: Option[String] = None,
-    initialMessages: List[Message] = Nil
+    initialMessages: List[Message] = Nil,
+    readTracker: Option[nebflow.core.tools.ReadTracker] = None
   ): Behavior[AgentCommand] =
     Behaviors
       .supervise(
@@ -80,7 +81,8 @@ object AgentActor:
                 latestUsage = None,
                 pendingAskUser = None,
                 pendingPermission = None,
-                wsSend = wsSend
+                wsSend = wsSend,
+                readTracker = readTracker
               ),
               stash,
               context
@@ -394,7 +396,7 @@ object AgentActor:
                   s"subId=$subId subName=${subDef.name} mode=${pending.mode} msgs=${state.messages.size}"
                 )
                 val subActor = ctx.spawn(
-                  AgentActor(subDef, resources, state.wsSend, depth + 1, Some(ctx.self)),
+                  AgentActor(subDef, resources, state.wsSend, depth + 1, Some(ctx.self), readTracker = state.readTracker),
                   subId
                 )
                 ctx.watchWith(
@@ -467,7 +469,7 @@ object AgentActor:
               s"subId=$subId subName=${subDef.name} task=${task.take(40)}"
             )
             val subActor = ctx.spawn(
-              AgentActor(subDef, resources, state.wsSend, subDepth, Some(ctx.self)),
+              AgentActor(subDef, resources, state.wsSend, subDepth, Some(ctx.self), readTracker = state.readTracker),
               subId
             )
             ctx.watchWith(
@@ -759,7 +761,8 @@ object AgentActor:
                     agentDef.contextWindow,
                     sessionId = state.sessionId,
                     taskStore = Some(resources.taskStore),
-                    wsSend = Some(state.wsSend)
+                    wsSend = Some(state.wsSend),
+                    readTracker = state.readTracker
                   )
                 case ToolRisk.NeedsApproval =>
                   resources.permState.shouldApprove(call.name).flatMap {
@@ -776,7 +779,8 @@ object AgentActor:
                         agentDef.contextWindow,
                         sessionId = state.sessionId,
                         taskStore = Some(resources.taskStore),
-                        wsSend = Some(state.wsSend)
+                        wsSend = Some(state.wsSend),
+                        readTracker = state.readTracker
                       )
                     case ApprovalDecision.Blocked(reason) =>
                       IO.pure(
@@ -820,7 +824,8 @@ object AgentActor:
                                 agentDef.contextWindow,
                                 sessionId = state.sessionId,
                                 taskStore = Some(resources.taskStore),
-                                wsSend = Some(state.wsSend)
+                                wsSend = Some(state.wsSend),
+                                readTracker = state.readTracker
                               )
                             else IO.pure(ToolExecResult("Permission denied by user", isError = true))
                         yield result

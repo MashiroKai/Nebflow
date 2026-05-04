@@ -1,7 +1,6 @@
 package nebflow.agent
 
 import cats.effect.IO
-import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
 import nebflow.core.*
@@ -24,7 +23,8 @@ object SessionActor:
   def apply(
     wsConnId: String,
     resources: SharedResources,
-    wsSend: io.circe.Json => IO[Unit]
+    wsSend: io.circe.Json => IO[Unit],
+    readTracker: nebflow.core.tools.ReadTracker
   ): Behavior[SessionCommand] =
     Behaviors
       .supervise(
@@ -35,7 +35,7 @@ object SessionActor:
             case AgentEvent.Failed(sessionId, error) =>
               SessionCommand.AgentTurnFailed(sessionId, error)
           }
-          active(resources, wsSend, wsConnId, SessionData(), context, replyAdapter)
+          active(resources, wsSend, wsConnId, SessionData(), context, replyAdapter, readTracker)
         }
       )
       .onFailure[Exception](
@@ -48,7 +48,8 @@ object SessionActor:
     wsConnId: String,
     data: SessionData,
     ctx: org.apache.pekko.actor.typed.scaladsl.ActorContext[SessionCommand],
-    replyAdapter: ActorRef[AgentEvent]
+    replyAdapter: ActorRef[AgentEvent],
+    readTracker: nebflow.core.tools.ReadTracker
   ): Behavior[SessionCommand] =
     Behaviors.receiveMessage:
 
@@ -110,7 +111,8 @@ object SessionActor:
             depth = 0,
             parentRef = None,
             sessionId = Some(sessionId),
-            initialMessages = initialMessages
+            initialMessages = initialMessages,
+            readTracker = Some(readTracker)
           ),
           s"agent-$sessionId-${System.currentTimeMillis()}"
         )
@@ -122,7 +124,8 @@ object SessionActor:
           wsConnId,
           data.copy(agentStates = data.agentStates + (sessionId -> AgentSessionState(agentRef))),
           ctx,
-          replyAdapter
+          replyAdapter,
+          readTracker
         )
 
       case SessionCommand.AgentTurnCompleted(sessionId, messages) =>
@@ -141,7 +144,7 @@ object SessionActor:
             )
           )
         )
-        active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+        active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter, readTracker)
 
       case SessionCommand.AgentTurnFailed(sessionId, error) =>
         resources.dispatcher.unsafeRunAndForget(
@@ -159,7 +162,7 @@ object SessionActor:
             )
           )
         )
-        active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+        active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter, readTracker)
 
       case SessionCommand.Terminate() =>
         data.agentStates.values.foreach(_.agentRef ! AgentCommand.Stop("session closing"))
@@ -180,7 +183,7 @@ object SessionActor:
                 )
               )
             )
-            active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+            active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter, readTracker)
           case None => Behaviors.same
 
       case SessionCommand.AgentTerminated(sessionId) =>
@@ -194,7 +197,7 @@ object SessionActor:
               )
             )
           )
-          active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter)
+          active(resources, wsSend, wsConnId, data.copy(agentStates = data.agentStates - sessionId), ctx, replyAdapter, readTracker)
         else Behaviors.same
 
       case SessionCommand.AskUserResponse(_, answers) =>
