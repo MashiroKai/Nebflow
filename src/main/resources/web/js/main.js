@@ -24,6 +24,8 @@ import {
 import { send, handleSlash, addFileAttachment, initInput, setNewSessionHandler } from './input.js';
 import { saveMsg, loadMsgs, restoreFromStorage, migrateLegacyIfNeeded } from './persistence.js';
 import { renderTaskList } from './taskList.js';
+import { registerCardRenderer, renderWithRegistry } from './cardRegistry.js';
+import { escapeHtml } from './utils.js';
 
 // ---------- 1. Populate DOM refs ----------
 state.dom = {
@@ -478,6 +480,49 @@ state.dom.chat.addEventListener('scroll', () => {
   state.scrollSnapped = state.dom.chat.scrollTop + state.dom.chat.clientHeight >= state.dom.chat.scrollHeight - 40;
 });
 
-// ---------- 6. Start ----------
+// ---------- 6. Expose global Nebflow API for plugins ----------
+window.Nebflow = {
+  registerCardRenderer,
+  escapeHtml,
+  get state() { return state; },
+};
+
+// ---------- 7. Load plugins ----------
+async function loadPlugins() {
+  try {
+    const res = await fetch('/plugins/manifest.json');
+    if (!res.ok) return;
+    const data = await res.json();
+    const plugins = data.plugins || [];
+    for (const plugin of plugins) {
+      // Load CSS first
+      for (const cssPath of (plugin.frontend?.styles || [])) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = `/plugins/${plugin.name}/${cssPath}`;
+        document.head.appendChild(link);
+      }
+      // Load JS in order
+      for (const jsPath of (plugin.frontend?.scripts || [])) {
+        await new Promise((resolve, reject) => {
+          const script = document.createElement('script');
+          script.src = `/plugins/${plugin.name}/${jsPath}`;
+          script.onload = resolve;
+          script.onerror = () => {
+            console.warn(`[plugin] Failed to load ${plugin.name}/${jsPath}`);
+            resolve(); // continue loading other plugins
+          };
+          document.head.appendChild(script);
+        });
+      }
+    }
+    console.log(`[plugin] Loaded ${plugins.length} plugin(s)`);
+  } catch (e) {
+    console.warn('[plugin] Failed to load plugins:', e);
+  }
+}
+loadPlugins();
+
+// ---------- 8. Start ----------
 connect();
 state.dom.input.focus();

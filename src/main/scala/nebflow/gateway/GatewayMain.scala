@@ -32,30 +32,18 @@ object GatewayMain extends IOApp.Simple:
     catch case _: Exception => ()
   }
 
-  private def initMcpServers(config: NebflowServiceConfig): IO[List[Unit]] =
-    config.mcpServers match
-      case Some(servers) =>
-        servers.toList
-          .traverse { case (serverId, serverConfig) =>
-            val transport = (serverConfig.command, serverConfig.url) match
-              case (Some(cmd), _) =>
-                new StdioTransport(cmd, serverConfig.args.getOrElse(Nil), serverConfig.env.getOrElse(Map.empty))
-              case (_, Some(url)) =>
-                new HttpTransport(url, serverConfig.headers.getOrElse(Map.empty))
-              case _ =>
-                throw new RuntimeException(s"MCP server $serverId must have either command or url")
-
-            val client = new McpClient(transport)
-            client.initialize() *>
-              client.listTools().flatMap { tools =>
-                val wrapped = tools.map(t => createMcpToolWrapper(serverId, t, client))
-                IO.delay(ToolRegistry.registerTools(wrapped))
-              }
-          }
-          .handleErrorWith { e =>
-            IO.println(s"[MCP] Warning: ${e.getMessage}") *> IO.pure(Nil)
-          }
-      case None => IO.pure(Nil)
+  private def initMcpServers(config: NebflowServiceConfig): IO[(McpManager, List[nebflow.plugin.PluginManifest])] =
+    McpManager.create.flatMap { manager =>
+      val fromConfig = IO.pure(config.mcpServers.getOrElse(Map.empty))
+      val fromJson   = McpManager.loadMcpServersJson
+      nebflow.plugin.PluginLoader.scan().flatMap { manifests =>
+        val fromPlugins = nebflow.plugin.PluginLoader.extractMcpConfigs(manifests)
+        // Merge configs from nebflow.json, mcp-servers.json, and plugin.yaml
+        // Priority: plugins override mcp-servers.json overrides nebflow.json
+        val merged = (fromConfig, fromJson, IO.pure(fromPlugins)).mapN { (a, b, c) => a ++ b ++ c }
+        merged.flatMap(manager.startAll).as((manager, manifests))
+      }
+    }
 
   def run: IO[Unit] =
     GatewayConfig.load.flatMap { cfg =>
@@ -65,7 +53,7 @@ object GatewayMain extends IOApp.Simple:
           val sessionStore = new SessionStore(os.home / ".nebflow" / "sessions")
           sessionStore.load.flatMap { _ =>
             LlmInterface.createLlm().flatMap { case (handle, releaseBackend) =>
-              initMcpServers(config).flatMap { _ =>
+              initMcpServers(config).flatMap { case (mcpManager, pluginManifests) =>
                 val chatRoutes = new ChatRoutes(handle, token)
                 // Read contextWindow from config for the primary model
                 val contextWindow =
@@ -136,7 +124,8 @@ object GatewayMain extends IOApp.Simple:
                                         sessionActorRef,
                                         contextWindow,
                                         skillDiscoveryOpt,
-                                        sharedResources
+                                        sharedResources,
+                                        pluginManifests
                                       )
                                       Router(
                                         "/api" -> chatRoutes.routes,
@@ -147,9 +136,11 @@ object GatewayMain extends IOApp.Simple:
                                     .use { _ =>
                                       openBrowser(url) *> IO.never[Unit]
                                     }
-                                    .guarantee(releaseBackend *> IO {
-                                      actorSystem.terminate()
-                                    })
+                                    .guarantee(
+                                      mcpManager.stopAll() *>
+                                        releaseBackend *>
+                                        IO { actorSystem.terminate() }
+                                    )
                                 } // end askSemaphore
                               } // end dispatcher.use
                             } // end reminderStateRef
