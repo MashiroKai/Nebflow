@@ -43,7 +43,7 @@ class AgentLibrary(agentsDir: os.Path, serviceConfig: Option[NebflowServiceConfi
       systemPrompt = nebflow.core.compact.CompactPrompts.full
     )
     val defaultAgent = AgentDef(
-      name = "default",
+      name = "Nebula",
       description = "Default chat agent for general-purpose conversations",
       modelRoute = "default",
       contextWindow = Defaults.ContextWindow,
@@ -54,7 +54,7 @@ class AgentLibrary(agentsDir: os.Path, serviceConfig: Option[NebflowServiceConfi
     )
     Map(
       "context-manage" -> ctxManage,
-      "default" -> defaultAgent.copy(contextWindow = resolveContextWindow(defaultAgent.contextWindow))
+      "Nebula" -> defaultAgent.copy(contextWindow = resolveContextWindow(defaultAgent.contextWindow))
     )
 
   end builtins

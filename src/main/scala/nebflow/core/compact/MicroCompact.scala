@@ -46,34 +46,35 @@ object MicroCompact:
         // Guard: tool_use and its matching tool_result must be handled by the same instruction.
         // If they are split (e.g. tool_use compacted but tool_result kept), reject.
         checkPairingIntegrity(instructions, missing, messages) match
-          case Left(err) => return Left(err)
-          case Right(_)  => ()
+          case Left(err) => Left(err)
+          case Right(_) =>
+            // Expand every instruction into (sortKey, List[Message]) pairs.
+            // Keep: each index becomes its own pair so ordering is preserved.
+            // Compact: sortKey = start.
+            val expanded: List[(Int, List[Message])] =
+              (instructions ++ missing.map(i => Keep(List(i)))).flatMap {
+                case Keep(idx) =>
+                  idx.distinct.sorted.map(i => (i, List(messages(i))))
+                case Compact(s, e, summary) =>
+                  val placeholder = Message(
+                    MessageRole.User,
+                    Left(
+                      s"<context-compact mode=\"micro\">Compressed messages $s-$e.\n$summary</context-compact>"
+                    )
+                  )
+                  List((s, List(placeholder)))
+              }
 
-        // Expand every instruction into (sortKey, List[Message]) pairs.
-        // Keep: each index becomes its own pair so ordering is preserved.
-        // Compact: sortKey = start.
-        val expanded: List[(Int, List[Message])] =
-          (instructions ++ missing.map(i => Keep(List(i)))).flatMap {
-            case Keep(idx) =>
-              idx.distinct.sorted.map(i => (i, List(messages(i))))
-            case Compact(s, e, summary) =>
-              val placeholder = Message(
-                MessageRole.User,
-                Left(
-                  s"<context-compact mode=\"micro\">Compressed messages $s-$e.\n$summary</context-compact>"
-                )
-              )
-              List((s, List(placeholder)))
-          }
-
-        val ordered = expanded.sortBy(_._1).flatMap(_._2)
-        validatePairing(ordered)
+            val ordered = expanded.sortBy(_._1).flatMap(_._2)
+            validatePairing(ordered)
+      end if
 
     end if
 
   end parseAndApply
 
-  /** Check that no instruction splits a tool_use/tool_result pair.
+  /**
+   * Check that no instruction splits a tool_use/tool_result pair.
    *  A pair is split when the two indices map to different instructions
    *  (or one is covered and the other defaults to keep).
    */
@@ -155,7 +156,8 @@ object MicroCompact:
       else trimmed
     else trimmed
 
-  /** Parse <keep> and <compact> tags from SubAgent output.
+  /**
+   * Parse <keep> and <compact> tags from SubAgent output.
    *  Tolerates single/double quotes, attribute order, and markdown fences.
    */
   private def parseInstructions(text: String): List[Instruction] =

@@ -24,9 +24,9 @@ Returns each task's id, subject, status, and blockedBy (open blockers only).
 
 ## Task System Overview
 
-- Status progresses: `pending` -> `in_progress` -> `completed`
-- Valid transitions only: pending -> in_progress, in_progress -> completed
-- `completed` cannot go back to any other state
+- Status progresses: `pending` -> `in_progress` -> `completed` or `failed`
+- Valid transitions: pending -> in_progress, pending -> completed, pending -> failed, in_progress -> completed, in_progress -> failed
+- `completed` and `failed` cannot go back to any other state
 - Use TaskUpdate to change status and manage dependencies
 - Use TaskDelete to permanently remove a task (irreversible)"""
 
@@ -50,9 +50,10 @@ Returns each task's id, subject, status, and blockedBy (open blockers only).
           else
             val lines = tasks.map { t =>
               val status = t.status match
-                case TaskStatus.Pending    => "pending"
+                case TaskStatus.Pending => "pending"
                 case TaskStatus.InProgress => "in_progress"
-                case TaskStatus.Completed  => "completed"
+                case TaskStatus.Completed => "completed"
+                case TaskStatus.Failed => "failed"
               val blocked = if t.blockedBy.nonEmpty then s" [blocked by #${t.blockedBy.mkString(", #")}]" else ""
               s"#${t.id} [$status] ${t.subject}$blocked"
             }

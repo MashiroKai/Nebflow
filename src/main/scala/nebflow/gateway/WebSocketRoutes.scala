@@ -8,6 +8,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.core.*
+import nebflow.core.tools.ToolRegistry
 import nebflow.service.*
 import nebflow.shared.*
 import nebflow.skill.SkillDiscovery
@@ -50,6 +51,7 @@ class WebSocketRoutes(
         case Some(ref) => IO.pure(ref)
         case None =>
           val broadcastWsSend = (json: io.circe.Json) => wsHub.broadcast(json)
+          val recordingWsSend = makeRecordingWsSend(sessionId, broadcastWsSend)
           val agentIo = for
             history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
             metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
@@ -58,14 +60,14 @@ class WebSocketRoutes(
                 sharedResources.agentLibrary.get(agentName).flatMap {
                   case Some(defn) => IO.pure(defn)
                   case None =>
-                    sharedResources.agentLibrary.get("default").flatMap {
+                    sharedResources.agentLibrary.get("Nebula").flatMap {
                       case Some(d) => IO.pure(d)
                       case None =>
                         IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
                     }
                 }
               case None =>
-                sharedResources.agentLibrary.get("default").flatMap {
+                sharedResources.agentLibrary.get("Nebula").flatMap {
                   case Some(d) => IO.pure(d)
                   case None => IO.raiseError(new RuntimeException("No default agent available"))
                 }
@@ -74,7 +76,7 @@ class WebSocketRoutes(
             AgentActor(
               agentDef,
               sharedResources,
-              broadcastWsSend,
+              recordingWsSend,
               depth = 0,
               parentRef = None,
               sessionId = Some(sessionId),
@@ -130,6 +132,9 @@ class WebSocketRoutes(
           sendStream = Stream.fromQueueUnterminated(outbound)
           _ <- logger.info("WebSocket client connected")
           prefs <- runtimePrefs.getAll
+          toolsList = ToolRegistry.userConfigurableTools.map(t =>
+            io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
+          )
           _ <- outbound.offer(
             WebSocketFrame.Text(
               io.circe.Json
@@ -138,7 +143,8 @@ class WebSocketRoutes(
                   "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
                   "version" -> nebflow.Version.string.asJson,
                   "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
-                  "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null)
+                  "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
+                  "tools" -> toolsList.asJson
                 )
                 .noSpaces
             )
@@ -221,6 +227,9 @@ class WebSocketRoutes(
       }
 
   private def broadcastServerConfig: IO[Unit] =
+    val toolsList = ToolRegistry.userConfigurableTools.map(t =>
+      io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
+    )
     runtimePrefs.getAll.flatMap { prefs =>
       wsHub.broadcast(
         io.circe.Json.obj(
@@ -228,255 +237,435 @@ class WebSocketRoutes(
           "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
           "version" -> nebflow.Version.string.asJson,
           "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
-          "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null)
+          "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
+          "tools" -> toolsList.asJson
         )
       )
     }
+
+  private val MaxMessageSize = 1024 * 1024 // 1MB
 
   private def handleMessage(
     text: String,
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
-    parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
-      case "askUserAnswer" =>
-        parse(text).flatMap(_.hcursor.downField("answers").as[List[String]]).toOption match
-          case Some(answers) =>
-            withActiveAgent(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
-          case None => IO.unit
-
-      case "permissionAnswer" =>
-        val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
-        logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-          withActiveAgent(ref => IO(ref ! AgentCommand.PermissionAnswered(approved)))
-
-      case "setPolicy" =>
-        val policyStr = parse(text).flatMap(_.hcursor.downField("policy").as[String]).getOrElse("ask")
-        val policy = PermissionPolicy.fromString(policyStr)
-        logger.info(s"Permission policy changed to: $policyStr") *>
-          runtimePrefs.setPolicy(policy) *>
-          reminderStateRef.update(_.copy(policyReminderPending = true)) *>
-          broadcastServerConfig
-
-      case "interrupt" =>
-        logger.info("User interrupted") *> withActiveAgent(ref => IO(ref ! AgentCommand.Interrupt()))
-
-      case "command" =>
-        val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
-        command match
-          case "clear" =>
-            logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
-              reminderStateRef.update(_.copy(sessionStarted = false, highestPressureLevel = 0))
-          case _ => IO.unit
-
-      case "setThinking" =>
-        val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-        json.hcursor.downField("thinking").focus match
-          case Some(t) if !t.isNull =>
-            ThinkingConfig.fromJson(t) match
-              case Right(tc) =>
-                logger.info(s"Thinking mode changed to: enabled=${tc.enabled}, budget=${tc.budgetTokens}") *>
-                  runtimePrefs.setThinking(Some(tc)) *>
-                  broadcastServerConfig
-              case Left(err) =>
-                logger.warn(s"Invalid thinking config: $err") *>
-                  wsSend(
-                    io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid thinking config: $err".asJson)
-                  )
-          case _ =>
-            logger.info("Thinking mode disabled") *>
-              runtimePrefs.setThinking(None) *>
-              broadcastServerConfig
-
-      case "switchSession" =>
-        val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-        if sessionId.nonEmpty then
-          sessionService
-            .switchSession(sessionId)
-            .flatMap { _ =>
-              sessionService.sendSessionList(wsSend)
-            }
-            .handleErrorWith { e =>
-              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-            }
-        else IO.unit
-
-      case "createSession" =>
-        val name = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("New Session")
-        sessionService
-          .createSession(name)
-          .flatMap { _ =>
-            sessionService.sendSessionList(wsSend)
-          }
-          .handleErrorWith { e =>
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-          }
-
-      case "deleteSession" =>
-        val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-        if sessionId.nonEmpty then
-          removeRootAgent(sessionId) *> sessionService
-            .deleteSession(sessionId)
-            .flatMap { _ =>
-              sessionService.sendSessionList(wsSend)
-            }
-            .handleErrorWith { e =>
-              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-            }
-        else IO.unit
-
-      case "renameSession" =>
-        val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-        val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-        val newName = json.hcursor.downField("name").as[String].getOrElse("")
-        if sessionId.nonEmpty && newName.nonEmpty then
-          sessionService
-            .renameSession(sessionId, newName)
-            .flatMap { _ =>
-              sessionService.sendSessionList(wsSend)
-            }
-            .handleErrorWith { e =>
-              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-            }
-        else IO.unit
-
-      case "ping" => IO.unit
-
-      case "listAgents" =>
-        agentService.listAgents.flatMap { agents =>
-          val agentsJson = agents.map { a =>
-            io.circe.Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "tools" -> a.tools.asJson,
-              "subagents" -> a.subagents.asJson
-            )
-          }
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "agentList".asJson,
-              "agents" -> agentsJson.asJson
-            )
-          )
-        }
-
-      case "getAgentConfig" =>
-        val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-        if agentName.nonEmpty then
-          agentService.getAgentConfig(agentName).flatMap {
-            case Some(cfg) =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "agentConfig".asJson,
-                  "name" -> cfg.name.asJson,
-                  "configJson" -> cfg.configJson.asJson,
-                  "systemMd" -> cfg.systemMd.asJson
-                )
-              )
+    if text.length > MaxMessageSize then logger.warn(s"Dropping oversized WebSocket message (${text.length} bytes)")
+    else
+      parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
+        case "askUserAnswer" =>
+          parse(text).flatMap(_.hcursor.downField("answers").as[List[String]]).toOption match
+            case Some(answers) =>
+              // Route to the session that asked the question, not the currently active session
+              val askSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption
+              askSessionId match
+                case Some(sid) =>
+                  ensureRootAgent(sid)
+                    .flatMap(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
+                    .handleErrorWith(e =>
+                      logger.warn(s"Failed to route askUserAnswer to session $sid: ${e.getMessage}")
+                    )
+                case None =>
+                  withActiveAgent(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
             case None => IO.unit
-          }
-        else IO.unit
 
-      case "createAgent" =>
-        val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-        val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-        val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
-        val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
-        if agentName.nonEmpty then
-          agentService.createAgent(agentName, configJson, systemMd).flatMap {
-            case Left(err) =>
-              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-            case Right(_) =>
-              wsSend(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> agentName.asJson))
-          }
-        else IO.unit
+        case "permissionAnswer" =>
+          val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
+          val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption
+          logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
+            (permSessionId match
+              case Some(sid) =>
+                ensureRootAgent(sid)
+                  .flatMap(ref => IO(ref ! AgentCommand.PermissionAnswered(approved)))
+                  .handleErrorWith(e =>
+                    logger.warn(s"Failed to route permissionAnswer to session $sid: ${e.getMessage}")
+                  )
+              case None =>
+                withActiveAgent(ref => IO(ref ! AgentCommand.PermissionAnswered(approved))))
 
-      case "updateAgent" =>
-        val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-        val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-        val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
-        val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
-        if agentName.nonEmpty then
-          agentService.updateAgent(agentName, configJson, systemMd).flatMap {
-            case Left(err) =>
-              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-            case Right(_) =>
-              wsSend(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> agentName.asJson))
-          }
-        else IO.unit
+        case "setPolicy" =>
+          val policyStr = parse(text).flatMap(_.hcursor.downField("policy").as[String]).getOrElse("ask")
+          val policy = PermissionPolicy.fromString(policyStr)
+          logger.info(s"Permission policy changed to: $policyStr") *>
+            runtimePrefs.setPolicy(policy) *>
+            reminderStateRef.update(_.copy(policyReminderPending = true)) *>
+            broadcastServerConfig
 
-      case "createAgentSession" =>
-        val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-        if agentName.nonEmpty then
-          (for
-            defnOpt <- sharedResources.agentLibrary.get(agentName)
-            defn <- IO.fromOption(defnOpt)(new RuntimeException(s"Agent not found: $agentName"))
-            meta <- sessionService.createSession(s"Agent: ${defn.name}", agentName = Some(agentName))
-            _ <- sessionService.switchSession(meta.id)
-            _ <- sessionService.sendSessionList(wsSend)
-          yield ()).handleErrorWith { e =>
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-          }
-        else IO.unit
+        case "interrupt" =>
+          logger.info("User interrupted") *> withActiveAgent(ref => IO(ref ! AgentCommand.Interrupt()))
 
-      case "getConfig" =>
-        configService.getConfig.flatMap { cfg =>
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "configData".asJson,
-              "config" -> cfg.asJson
+        case "command" =>
+          val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
+          command match
+            case "clear" =>
+              logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
+                reminderStateRef.update(_.copy(sessionStarted = false, highestPressureLevel = 0))
+            case _ => IO.unit
+
+        case "setThinking" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          json.hcursor.downField("thinking").focus match
+            case Some(t) if !t.isNull =>
+              ThinkingConfig.fromJson(t) match
+                case Right(tc) =>
+                  logger.info(s"Thinking mode changed to: enabled=${tc.enabled}, budget=${tc.budgetTokens}") *>
+                    runtimePrefs.setThinking(Some(tc)) *>
+                    broadcastServerConfig
+                case Left(err) =>
+                  logger.warn(s"Invalid thinking config: $err") *>
+                    wsSend(
+                      io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid thinking config: $err".asJson)
+                    )
+            case _ =>
+              logger.info("Thinking mode disabled") *>
+                runtimePrefs.setThinking(None) *>
+                broadcastServerConfig
+
+        case "switchSession" =>
+          val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+          if sessionId.nonEmpty then
+            sessionService
+              .switchSession(sessionId)
+              .flatMap { _ =>
+                sessionService.sendSessionList(wsSend)
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        case "createSession" =>
+          val name = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("New Session")
+          sessionService
+            .createSession(name)
+            .flatMap { _ =>
+              sessionService.sendSessionList(wsSend)
+            }
+            .handleErrorWith { e =>
+              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+            }
+
+        case "deleteSession" =>
+          val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+          if sessionId.nonEmpty then
+            removeRootAgent(sessionId) *> sessionService
+              .deleteSession(sessionId)
+              .flatMap { _ =>
+                sessionService.sendSessionList(wsSend)
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        case "renameSession" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val newName = json.hcursor.downField("name").as[String].getOrElse("")
+          if sessionId.nonEmpty && newName.nonEmpty then
+            sessionService
+              .renameSession(sessionId, newName)
+              .flatMap { _ =>
+                sessionService.sendSessionList(wsSend)
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        case "ping" => IO.unit
+
+        case "getHistory" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val limit = json.hcursor.downField("limit").as[Int].getOrElse(50)
+          val beforeIndex = json.hcursor.downField("beforeIndex").as[Option[Int]].getOrElse(None)
+          if sessionId.nonEmpty then
+            (sharedResources.sessionStore
+              .getUiMessages(sessionId, 0, 0)
+              .map(_._2)
+              .attempt
+              .flatMap {
+                case Right(total) =>
+                  beforeIndex match
+                    case None =>
+                      val offset = Math.max(0, total - limit)
+                      sharedResources.sessionStore.getUiMessages(sessionId, offset, limit).flatMap { case (msgs, _) =>
+                        wsSend(
+                          io.circe.Json.obj(
+                            "type" -> "historyPage".asJson,
+                            "sessionId" -> sessionId.asJson,
+                            "messages" -> msgs.asJson,
+                            "total" -> total.asJson,
+                            "offset" -> offset.asJson,
+                            "hasMore" -> (total > limit).asJson
+                          )
+                        )
+                      }
+                    case Some(before) =>
+                      val offset = Math.max(0, before - limit)
+                      val actualLimit = Math.min(limit, before)
+                      sharedResources.sessionStore.getUiMessages(sessionId, offset, actualLimit).flatMap {
+                        case (msgs, _) =>
+                          wsSend(
+                            io.circe.Json.obj(
+                              "type" -> "historyPage".asJson,
+                              "sessionId" -> sessionId.asJson,
+                              "messages" -> msgs.asJson,
+                              "total" -> total.asJson,
+                              "offset" -> offset.asJson,
+                              "hasMore" -> (before > limit).asJson
+                            )
+                          )
+                      }
+                case Left(_) => IO.unit
+              })
+              .handleErrorWith { e =>
+                wsSend(
+                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"getHistory failed: ${e.getMessage}".asJson)
+                )
+              }
+          else IO.unit
+          end if
+
+        case "listAgents" =>
+          agentService.listAgents.flatMap { agents =>
+            val always = ToolRegistry.AlwaysAvailable.toList.sorted
+            val agentsJson = agents.map { a =>
+              // Resolve actual tools: user-configured + auto-injected
+              val subagentTools = if a.subagents.nonEmpty then ToolRegistry.SubagentTools else Set.empty[String]
+              // Filter out wildcard "*" — it's a runtime marker, not a real tool name
+              val userTools = (a.tools.toSet ++ subagentTools).filterNot(_ == "*").toList.sorted
+              // User tools + always-available (always-available sent separately for UI distinction)
+              val allTools = (userTools ++ always).sorted
+              io.circe.Json.obj(
+                "name" -> a.name.asJson,
+                "description" -> a.description.asJson,
+                "tools" -> allTools.asJson,
+                "builtInTools" -> always.asJson,
+                "subagents" -> a.subagents.asJson
+              )
+            }
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "agentList".asJson,
+                "agents" -> agentsJson.asJson
+              )
             )
-          )
-        }
-
-      case "updateConfig" =>
-        val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
-        if cfg.nonEmpty then
-          configService.updateConfig(cfg).flatMap {
-            case Left(err) =>
-              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-            case Right(_) =>
-              wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
           }
-        else IO.unit
 
-      case _ =>
-        val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-        val content = json.hcursor.downField("content").as[String].getOrElse("")
-        val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
-        val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
-
-        if content.trim == "__interrupt__" then withActiveAgent(ref => IO(ref ! AgentCommand.Interrupt()))
-        else if content.nonEmpty || attachments.nonEmpty then
-          rateLimiter.check("ws").flatMap { allowed =>
-            if !allowed then
-              logger.warn("Rate limit exceeded") *>
+        case "getAgentConfig" =>
+          val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+          if agentName.nonEmpty then
+            agentService.getAgentConfig(agentName).flatMap {
+              case Some(cfg) =>
                 wsSend(
                   io.circe.Json.obj(
-                    "type" -> "error".asJson,
-                    "message" -> NebflowError.toUserMessage(NebflowError.RateLimited("websocket")).asJson
+                    "type" -> "agentConfig".asJson,
+                    "name" -> cfg.name.asJson,
+                    "configJson" -> cfg.configJson.asJson,
+                    "systemMd" -> cfg.systemMd.asJson
                   )
                 )
-            else
-              val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
-              if content.nonEmpty then blocks += ContentBlock.Text(content)
+              case None => IO.unit
+            }
+          else IO.unit
 
-              attachments.foreach { att =>
-                val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                val data = att.hcursor.downField("data").as[String].getOrElse("")
-                val name = att.hcursor.downField("name").as[String].getOrElse("")
-                if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
-                else if data.nonEmpty then
-                  val maxChars = 30000
-                  if data.length <= maxChars then blocks += ContentBlock.Text(s"[file: $name]\n$data")
-                  else blocks += ContentBlock.Text(s"[file: $name] (文件过大，已截断前 ${maxChars} 字符)\n${data.take(maxChars)}")
-              }
+        case "createAgent" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val agentName = json.hcursor.downField("name").as[String].getOrElse("")
+          val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
+          val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
+          if agentName.nonEmpty then
+            agentService.createAgent(agentName, configJson, systemMd).flatMap {
+              case Left(err) =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+              case Right(_) =>
+                wsSend(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> agentName.asJson))
+            }
+          else IO.unit
 
-              logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
-                logInputHistory(content, attachments) *>
-                withActiveAgent(ref => IO(ref ! AgentCommand.UserInput(content, None, clientMessageId)))
+        case "updateAgent" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val agentName = json.hcursor.downField("name").as[String].getOrElse("")
+          val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
+          val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
+          if agentName.nonEmpty then
+            agentService.updateAgent(agentName, configJson, systemMd).flatMap {
+              case Left(err) =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+              case Right(_) =>
+                wsSend(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> agentName.asJson))
+            }
+          else IO.unit
+
+        case "createAgentSession" =>
+          val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+          if agentName.nonEmpty then
+            (for
+              defnOpt <- sharedResources.agentLibrary.get(agentName)
+              defn <- IO.fromOption(defnOpt)(new RuntimeException(s"Agent not found: $agentName"))
+              meta <- sessionService.createSession(s"Agent: ${defn.name}", agentName = Some(agentName))
+              _ <- sessionService.switchSession(meta.id)
+              _ <- sessionService.sendSessionList(wsSend)
+            yield ()).handleErrorWith { e =>
+              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+            }
+          else IO.unit
+
+        case "getConfig" =>
+          configService.getConfig.flatMap { cfg =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "configData".asJson,
+                "config" -> cfg.asJson
+              )
+            )
           }
-        else IO.unit
-        end if
+
+        case "updateConfig" =>
+          val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
+          if cfg.nonEmpty then
+            configService.updateConfig(cfg).flatMap {
+              case Left(err) =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+              case Right(_) =>
+                wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+            }
+          else IO.unit
+
+        case _ =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val content = json.hcursor.downField("content").as[String].getOrElse("")
+          val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
+          val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
+
+          if content.trim == "__interrupt__" then withActiveAgent(ref => IO(ref ! AgentCommand.Interrupt()))
+          else if content.nonEmpty || attachments.nonEmpty then
+            rateLimiter.check("ws").flatMap { allowed =>
+              if !allowed then
+                logger.warn("Rate limit exceeded") *>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "error".asJson,
+                      "message" -> NebflowError.toUserMessage(NebflowError.RateLimited("websocket")).asJson
+                    )
+                  )
+              else
+                val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
+                if content.nonEmpty then blocks += ContentBlock.Text(content)
+
+                attachments.foreach { att =>
+                  val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                  val data = att.hcursor.downField("data").as[String].getOrElse("")
+                  val name = att.hcursor.downField("name").as[String].getOrElse("")
+                  if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
+                  else if data.nonEmpty then
+                    val maxChars = 30000
+                    if data.length <= maxChars then blocks += ContentBlock.Text(s"[file: $name]\n$data")
+                    else
+                      blocks += ContentBlock.Text(s"[file: $name] (文件过大，已截断前 ${maxChars} 字符)\n${data.take(maxChars)}")
+                }
+
+                logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
+                  logInputHistory(content, attachments) *>
+                  // Record user message as UiMessage for history
+                  sessionStore.getActiveId.flatMap { sid =>
+                    if sid.nonEmpty then
+                      val attJson = attachments.map { att =>
+                        val name = att.hcursor.downField("name").as[String].getOrElse("")
+                        val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                        io.circe.Json.obj(
+                          "name" -> name.asJson,
+                          "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson
+                        )
+                      }
+                      sharedResources.sessionStore
+                        .appendUiMessages(sid, List(UiMessage.User(content, attJson)))
+                        .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
+                    else IO.unit
+                  } *>
+                  withActiveAgent(ref => IO(ref ! AgentCommand.UserInput(content, None, clientMessageId)))
+            }
+          else IO.unit
+          end if
+    end if
   end handleMessage
+
+  // ============================================================
+  // UI Message recording — wraps wsSend to persist frontend-renderable history
+  // ============================================================
+
+  /** Per-session accumulator for text deltas (emitted one-by-one, saved on textDone). */
+  private val sessionTextBuffers: Ref[IO, Map[String, String]] =
+    Ref.unsafe[IO, Map[String, String]](Map.empty)
+
+  private def makeRecordingWsSend(
+    sessionId: String,
+    underlying: io.circe.Json => IO[Unit]
+  ): io.circe.Json => IO[Unit] = json =>
+    val hc = json.hcursor
+    val eventType = hc.downField("type").as[String].getOrElse("")
+    val record = eventType match
+      case "textDelta" =>
+        // Accumulate text for this session
+        val delta = hc.downField("delta").as[String].getOrElse("")
+        if delta.nonEmpty then
+          sessionTextBuffers.update(m => m.updatedWith(sessionId)(_.map(_ + delta).orElse(Some(delta))))
+        else IO.unit
+
+      case "done" =>
+        // Flush accumulated AI text as a UiMessage
+        sessionTextBuffers
+          .modify { m =>
+            val text = m.getOrElse(sessionId, "")
+            (m - sessionId, text)
+          }
+          .flatMap { text =>
+            if text.nonEmpty then sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text)))
+            else IO.unit
+          }
+
+      case "toolEnd" =>
+        val label = hc.downField("label").as[String].getOrElse("")
+        val summary = hc.downField("summary").as[String].getOrElse("")
+        val content = hc.downField("content").as[String].getOrElse("")
+        val isError = hc.downField("isError").as[Boolean].getOrElse(false)
+        val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
+        sharedResources.sessionStore.appendUiMessages(
+          sessionId,
+          List(UiMessage.Tool(label, summary, content, isError, input))
+        )
+
+      case "agentEnd" =>
+        val agentId = hc.downField("agentId").as[String].getOrElse("")
+        // Sub-agent text is streamed as agentTextDelta — we need to capture it.
+        // For now, agentEnd without accumulated text is a no-op.
+        // Agent text is typically short and embedded in the main AI bubble on the frontend.
+        // We'll record a minimal agent entry for history if needed.
+        IO.unit
+
+      case "askUser" =>
+        val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
+        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items)))
+
+      case "progressUpdate" =>
+        val stage = hc.downField("stage").as[String].getOrElse("")
+        val stagCnt = hc.downField("stagnationCount").as[Int].getOrElse(0)
+        val turnIdx = hc.downField("turnIdx").as[Int].getOrElse(0)
+        if stage != "Normal" then
+          sharedResources.sessionStore.appendUiMessages(
+            sessionId,
+            List(UiMessage.Stage(stage, stagCnt, turnIdx.toString))
+          )
+        else IO.unit
+
+      case "paused" =>
+        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.Stage("Paused", 9, "?")))
+
+      case _ => IO.unit
+
+    record.handleErrorWith(e =>
+      IO(logger.warn(s"Failed to record UI message for session $sessionId: ${e.getMessage}"))
+    ) *> underlying(json)
 
 end WebSocketRoutes

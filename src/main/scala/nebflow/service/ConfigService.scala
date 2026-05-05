@@ -14,11 +14,14 @@ object ConfigService:
     content.replaceAll("(?i)\"(api[_-]?key|secret|token|password)\"\\s*:\\s*\"[^\"]*\"", "\"$1\":\"***\"")
   }
 
-  def updateConfig(incoming: String): IO[Either[String, Unit]] = IO.blocking {
-    val existing = if os.exists(configPath) then os.read(configPath) else "{}"
-    val merged = mergeConfig(existing, incoming)
-    os.write.over(configPath, merged, createFolders = true)
-  }.attempt.map(_.leftMap(_.getMessage).void)
+  def updateConfig(incoming: String): IO[Either[String, Unit]] = IO
+    .blocking {
+      val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+      val merged = mergeConfig(existing, incoming)
+      os.write.over(configPath, merged, createFolders = true)
+    }
+    .attempt
+    .map(_.leftMap(_.getMessage).void)
 
   /**
    * Merge new config into existing, preserving secret values that were redacted as "***".
