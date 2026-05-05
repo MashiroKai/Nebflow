@@ -56,6 +56,7 @@ object CompactPrompts:
       |- Keep the summary under 3000 characters
       |- The <files> section should only include files that actually need restoring —
       |  files the assistant is actively working with or will need in the next step
+      |- Write the summary in the SAME language as the user's messages. If the user writes in Chinese, summarize in Chinese; if English, use English.
       |""".stripMargin
 
   val micro: String =
@@ -104,6 +105,7 @@ object CompactPrompts:
       |- If a large file was read but only part was useful:
       |  "Read middleware.ts (500 lines). Useful: line 15-30 authGuard() function"
       |- Keep summaries concise but complete enough to continue working
+      |- Write summaries in the SAME language as the user's messages. If the user writes in Chinese, summarize in Chinese; if English, use English.
       |""".stripMargin
 
 end CompactPrompts

@@ -77,7 +77,11 @@ function deleteSession(sessionId) {
 }
 
 // ---------- Agent Modal ----------
-const ALL_TOOLS = ['Read','Write','Edit','Bash','Glob','Grep','WebSearch','WebFetch','Curl','AskUserQuestion','ContextManage','NewSession'];
+// Tools are loaded dynamically from backend ToolRegistry via serverConfig
+
+function getAvailableTools() {
+  return state.availableTools.map(t => typeof t === 'string' ? t : t.name);
+}
 
 function buildConfigJson(name, desc, modelRoute, tools) {
   return JSON.stringify({
@@ -130,11 +134,16 @@ export function showAgentModal(name, configJson, systemMd) {
   } catch (_) {}
   modelSelect.value = existingValues.has(currentModel) ? currentModel : 'default';
 
-  // Build tool checkboxes
+  // Build tool checkboxes from backend-provided tool list
   const selectedTools = Array.isArray(fields.tools) ? fields.tools : [];
   const grid = document.getElementById('agent-tools-grid');
   grid.innerHTML = '';
-  ALL_TOOLS.forEach(tool => {
+  const toolNames = getAvailableTools();
+  if (toolNames.length === 0) {
+    grid.innerHTML = '<div style="color:#999;font-size:12px;">Loading tools...</div>';
+    return;
+  }
+  toolNames.forEach(tool => {
     const label = document.createElement('label');
     label.className = 'agent-tool-check' + (selectedTools.includes(tool) ? ' checked' : '');
     const cb = document.createElement('input');
@@ -147,6 +156,25 @@ export function showAgentModal(name, configJson, systemMd) {
       cb.checked = !cb.checked;
       label.classList.toggle('checked', cb.checked);
     };
+    grid.appendChild(label);
+  });
+
+  // Built-in tools section (always included, non-editable)
+  const builtIn = ['ContextManage', 'declareWait', 'finish'];
+  const builtInLabel = document.createElement('div');
+  builtInLabel.className = 'agent-built-in-label';
+  builtInLabel.textContent = 'Built-in';
+  grid.appendChild(builtInLabel);
+  builtIn.forEach(tool => {
+    const label = document.createElement('label');
+    label.className = 'agent-tool-check checked builtin';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = tool;
+    cb.checked = true;
+    cb.disabled = true;
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(tool));
     grid.appendChild(label);
   });
 }
@@ -202,9 +230,12 @@ export function initModals() {
     const modelRoute = document.getElementById('agent-model-input').value.trim();
     const systemMd = document.getElementById('agent-system-input').value;
     if (!name) return;
-    // Gather checked tools
+    // Gather checked tools (exclude built-in tools — they're always included at runtime)
+    const builtInSet = new Set(['ContextManage', 'declareWait', 'finish']);
     const tools = [];
-    document.querySelectorAll('#agent-tools-grid input[type=checkbox]:checked').forEach(cb => tools.push(cb.value));
+    document.querySelectorAll('#agent-tools-grid input[type=checkbox]:checked').forEach(cb => {
+      if (!builtInSet.has(cb.value)) tools.push(cb.value);
+    });
     const configJson = buildConfigJson(name, desc, modelRoute, tools);
     const isNew = !document.getElementById('agent-name-input').disabled;
     sendWs({type: isNew ? 'createAgent' : 'updateAgent', name, configJson, systemMd});

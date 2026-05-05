@@ -37,9 +37,9 @@ All tasks are created with status `pending`.
 
 ## Task System Overview
 
-- Status progresses: `pending` -> `in_progress` -> `completed`
-- Valid transitions only: pending -> in_progress, in_progress -> completed
-- `completed` cannot go back to any other state
+- Status progresses: `pending` -> `in_progress` -> `completed` or `failed`
+- Valid transitions: pending -> in_progress, pending -> completed, pending -> failed, in_progress -> completed, in_progress -> failed
+- `completed` and `failed` cannot go back to any other state
 - Use TaskUpdate to change status and manage dependencies (addBlocks, addBlockedBy, removeBlocks, removeBlockedBy)
 - Use TaskDelete to permanently remove a task (irreversible)
 - Prefer working on tasks in ID order when multiple are available"""
@@ -83,22 +83,9 @@ All tasks are created with status `pending`.
         )
         for
           id <- store.create(sessionId, createInput)
-          _ <- emitTaskListUpdate(store, sessionId, ctx)
+          _ <- TaskToolHelper.emitTaskListUpdate(store, sessionId, ctx)
         yield Right(s"Task #$id created successfully: ${createInput.subject}")
       case (None, _) => IO.pure(Left(ToolError("No task store available")))
       case (_, None) => IO.pure(Left(ToolError("No session ID available")))
-
-  private def emitTaskListUpdate(store: TaskStore, sessionId: String, ctx: ToolContext): IO[Unit] =
-    ctx.wsSend match
-      case Some(send) =>
-        store.list(sessionId).flatMap { tasks =>
-          val json = io.circe.Json.obj(
-            "type" -> "taskListUpdate".asJson,
-            "sessionId" -> sessionId.asJson,
-            "tasks" -> tasks.asJson
-          )
-          send(json)
-        }
-      case None => IO.unit
 
 end TaskCreateTool

@@ -41,7 +41,11 @@ object LlmInterface:
                           candidate.model,
                           req.tools,
                           Some(candidate.maxTokens),
-                          req.thinking
+                          req.thinking,
+                          req.systemStable,
+                          req.systemDynamic,
+                          Some(req.sessionId),
+                          Some(req.agentId)
                         )
                       )
                     ),
@@ -135,7 +139,11 @@ object LlmInterface:
                                 candidate.model,
                                 req.tools,
                                 Some(candidate.maxTokens),
-                                req.thinking
+                                req.thinking,
+                                req.systemStable,
+                                req.systemDynamic,
+                                Some(req.sessionId),
+                                Some(req.agentId)
                               )
                             )
                           )
