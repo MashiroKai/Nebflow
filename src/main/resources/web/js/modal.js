@@ -84,8 +84,6 @@ function buildConfigJson(name, desc, modelRoute, tools) {
     name: name,
     description: desc || '',
     modelRoute: modelRoute || 'default',
-    contextWindow: 128000,
-    maxTokens: 16384,
     tools: tools,
     subagents: [],
     keepAlive: false
