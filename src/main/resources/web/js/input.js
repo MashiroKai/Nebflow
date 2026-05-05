@@ -184,9 +184,9 @@ export function send() {
   }
   const input = state.dom.input;
   const text = input.value.trim();
-  const isBusy = state.busySessionId !== null && state.busySessionId === state.activeSessionId;
+  const isBusy = state.busySessionIds.has(state.activeSessionId);
   if ((!text && state.pendingAttachments.length === 0) || isBusy) {
-    console.warn('[send] blocked:', { text: text.slice(0,20), busySessionId: state.busySessionId, wsState: state.ws?.readyState });
+    console.warn('[send] blocked:', { text: text.slice(0,20), busy: state.busySessionIds.has(state.activeSessionId), wsState: state.ws?.readyState });
     return;
   }
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
@@ -240,12 +240,16 @@ export function send() {
   state.aiText = '';
   // Safety timeout: backend sends 'timeout' event, but this is a last-resort fallback
   // in case the backend event never arrives. Uses streamTimeoutMs from server config (+ 30s buffer).
-  clearTimeout(state.busyTimeoutId);
-  state.busyTimeoutId = setTimeout(() => {
-    if (state.busySessionId === state.activeSessionId) {
-      import('./chat.js').then(({ renderTimeoutNotice, clearStatus }) => {
-        renderTimeoutNotice();
-        setBusy(null);
+  const sid = state.activeSessionId;
+  if (sid && state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  state.sessionBusyTimeouts[sid] = setTimeout(() => {
+    if (state.busySessionIds.has(sid)) {
+      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
+        if (sid === state.activeSessionId) renderTimeoutNotice();
+        clearBusy(sid);
         clearStatus();
       });
     }
@@ -277,10 +281,15 @@ export function initInput() {
   // Send button
   sendBtn.onclick = send;
 
-  // Stop button — send interrupt, wait for backend confirmation to reset UI
+  // Stop button — send interrupt with sessionId, reset UI immediately
   stopBtn.onclick = () => {
-    sendWs({content: '__interrupt__'});
-    clearTimeout(state.busyTimeoutId);
+    const sid = state.activeSessionId;
+    sendWs({content: '__interrupt__', sessionId: sid});
+    if (sid && state.sessionBusyTimeouts[sid]) {
+      clearTimeout(state.sessionBusyTimeouts[sid]);
+      delete state.sessionBusyTimeouts[sid];
+    }
+    import('./chat.js').then(({ clearBusy }) => clearBusy(sid));
   };
 
   // Composition start/end (IME)
