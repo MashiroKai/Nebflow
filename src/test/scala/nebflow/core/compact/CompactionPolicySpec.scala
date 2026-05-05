@@ -22,34 +22,54 @@ class CompactionPolicySpec extends CatsEffectSuite:
 
   test("TokenEstimator: image block counts 1500 tokens each, text separate") {
     val msgs = List(
-      Message(MessageRole.User, Right(List(
-        ContentBlock.Text("x" * 300),
-        ContentBlock.Image("data", "image/png"),
-      )))
+      Message(
+        MessageRole.User,
+        Right(
+          List(
+            ContentBlock.Text("x" * 300),
+            ContentBlock.Image("data", "image/png")
+          )
+        )
+      )
     )
     assertEquals(TokenEstimator.estimate(msgs), 1600)
   }
 
   test("TokenEstimator: multiple images accumulate") {
     val msgs = List(
-      Message(MessageRole.User, Right(List(
-        ContentBlock.Image("a", "image/png"),
-        ContentBlock.Image("b", "image/jpeg"),
-      )))
+      Message(
+        MessageRole.User,
+        Right(
+          List(
+            ContentBlock.Image("a", "image/png"),
+            ContentBlock.Image("b", "image/jpeg")
+          )
+        )
+      )
     )
     assertEquals(TokenEstimator.estimate(msgs), 3000)
   }
 
   test("TokenEstimator: mixed blocks (text + image + tool_use + tool_result + thinking)") {
     val msgs = List(
-      Message(MessageRole.User, Right(List(
-        ContentBlock.Text("x" * 600),           // 200 tokens
-        ContentBlock.Image("d1", "png"),        // 1500 tokens
-        ContentBlock.ToolUse("t1", "read", io.circe.JsonObject.empty), // 0 (json empty)
-      ))),
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.Thinking("thoughts" * 10, None), // 70 chars ~ 23 tokens
-      )))
+      Message(
+        MessageRole.User,
+        Right(
+          List(
+            ContentBlock.Text("x" * 600), // 200 tokens
+            ContentBlock.Image("d1", "png"), // 1500 tokens
+            ContentBlock.ToolUse("t1", "read", io.circe.JsonObject.empty) // 0 (json empty)
+          )
+        )
+      ),
+      Message(
+        MessageRole.Assistant,
+        Right(
+          List(
+            ContentBlock.Thinking("thoughts" * 10, None) // 70 chars ~ 23 tokens
+          )
+        )
+      )
     )
     val est = TokenEstimator.estimate(msgs)
     assert(est > 0)
@@ -101,3 +121,4 @@ class CompactionPolicySpec extends CatsEffectSuite:
     val shouldCompact = usage.exists(_.inputTokens > threshold)
     assert(!shouldCompact)
   }
+end CompactionPolicySpec

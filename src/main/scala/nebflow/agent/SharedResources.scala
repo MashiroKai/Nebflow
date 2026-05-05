@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.std.{Dispatcher, Semaphore}
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.TaskStore
+import nebflow.core.tools.FileLockManager
 import nebflow.core.{FileChangeTracker, ReminderState}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.service.RuntimePreferencesService
@@ -29,5 +30,6 @@ case class SharedResources(
   agentLibrary: AgentLibrary,
   askSemaphore: Semaphore[IO],
   taskStore: TaskStore,
-  historyArchiver: HistoryArchiver
+  historyArchiver: HistoryArchiver,
+  fileLockManager: FileLockManager
 )

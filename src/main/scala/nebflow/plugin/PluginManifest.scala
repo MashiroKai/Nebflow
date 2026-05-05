@@ -1,7 +1,7 @@
 package nebflow.plugin
 
-import io.circe.{Decoder, Json}
 import io.circe.generic.semiauto.deriveDecoder
+import io.circe.{Decoder, Json}
 
 /** Frontend asset configuration for a plugin. */
 case class FrontendConfig(

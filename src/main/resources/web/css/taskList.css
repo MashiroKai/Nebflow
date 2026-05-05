@@ -6,7 +6,7 @@
 }
 
 #task-list.has-tasks {
-  max-height: 300px;
+  max-height: 50vh;
   overflow-y: auto;
   padding: 8px 12px;
 }
@@ -42,7 +42,6 @@
   padding: 4px 0;
   font-size: 13px;
   line-height: 1.4;
-  transition: opacity 0.3s ease, max-height 0.3s ease, padding 0.3s ease, margin 0.3s ease;
 }
 
 .task-icon {
@@ -69,10 +68,6 @@
   to { transform: rotate(360deg); }
 }
 
-.task-done .task-icon {
-  color: var(--color-success, #4caf50);
-}
-
 .task-pending .task-icon {
   color: var(--color-text-muted, #888);
 }
@@ -88,11 +83,6 @@
 .task-active .task-label {
   font-weight: 600;
   color: var(--color-text, #000);
-}
-
-.task-done .task-label {
-  color: var(--color-text-muted, #888);
-  text-decoration: line-through;
 }
 
 .task-id {
@@ -112,13 +102,4 @@
   font-size: 11px;
   color: var(--color-text-muted, #888);
   padding: 2px 0;
-}
-
-.task-collapsed {
-  max-height: 0;
-  padding: 0;
-  margin: 0;
-  opacity: 0;
-  overflow: hidden;
-  pointer-events: none;
 }

@@ -212,11 +212,11 @@ Git safety:
                   shell.executeBackground(command, timeoutDuration).map { jobId =>
                     Right(s"$sandboxMark[Background job started] Job ID: $jobId\nUse this ID to check status later.")
                   }
-                else
-                  executeAndFormat(shell, command, timeoutDuration, desc, sandboxMark)
+                else executeAndFormat(shell, command, timeoutDuration, desc, sandboxMark)
               }
           end match
         end if
+    end match
   end call
 
   private def executeAndFormat(
@@ -226,16 +226,19 @@ Git safety:
     desc: Option[String],
     sandboxMark: String
   ): IO[Either[ToolError, String]] =
-    shell.execute(command, timeout).map { result =>
-      val prefix = desc.map(d => s"[$d]\n").getOrElse("")
-      val dirLine = s"(cwd: ${result.cwd})\n"
-      val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
-      val output = result.stdout + errLine
-      val full = sandboxMark + prefix + dirLine + output
-      if full.trim.isEmpty then Right(sandboxMark + "[Command executed successfully with no output]")
-      else Right(full)
-    }.handleErrorWith {
-      case _: TimeoutException => IO.pure(Left(ToolError(s"[Command timed out after ${timeout.toMillis}ms]")))
-      case e => IO.pure(Left(ToolError(s"Error: ${e.getMessage}")))
-    }
+    shell
+      .execute(command, timeout)
+      .map { result =>
+        val prefix = desc.map(d => s"[$d]\n").getOrElse("")
+        val dirLine = s"(cwd: ${result.cwd})\n"
+        val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
+        val output = result.stdout + errLine
+        val full = sandboxMark + prefix + dirLine + output
+        if full.trim.isEmpty then Right(sandboxMark + "[Command executed successfully with no output]")
+        else Right(full)
+      }
+      .handleErrorWith {
+        case _: TimeoutException => IO.pure(Left(ToolError(s"[Command timed out after ${timeout.toMillis}ms]")))
+        case e => IO.pure(Left(ToolError(s"Error: ${e.getMessage}")))
+      }
 end BashTool
