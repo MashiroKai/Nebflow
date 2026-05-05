@@ -155,7 +155,9 @@ onMessage('textDone', (msg) => {
 onMessage('thinking', (msg) => {
   if (isActive(msg)) {
     if (!state.busySessionId) setBusy(msg.sessionId || state.activeSessionId);
-    if (!state.currentAiBubble) {
+    // Guard against duplicate thinking bubbles: check both state ref and DOM.
+    const existing = state.dom.chat.querySelector('.thinking-placeholder');
+    if (!state.currentAiBubble && !existing) {
       const { chat } = state.dom;
       const row = document.createElement('div');
       row.className = 'row ai';
