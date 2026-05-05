@@ -231,6 +231,11 @@ export function send() {
   setBusy(state.activeSessionId);
   // Release send lock after a short debounce to prevent double-click / rapid Enter
   setTimeout(() => { state.isSending = false; }, 300);
+  // Clean up any orphaned thinking placeholders from previous incomplete streams
+  state.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+    const row = el.closest('.row');
+    if (row) row.remove();
+  });
   state.currentAiBubble = null;
   state.aiText = '';
   // Safety timeout: backend sends 'timeout' event, but this is a last-resort fallback
