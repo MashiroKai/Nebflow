@@ -2,7 +2,10 @@ package nebflow.service
 
 import cats.effect.IO
 import cats.syntax.all.*
+import io.circe.parser.parse
+import io.circe.syntax.*
 import nebflow.agent.{AgentInfo, AgentLibrary}
+import nebflow.shared.Defaults
 
 class AgentService(library: AgentLibrary):
 
@@ -13,11 +16,12 @@ class AgentService(library: AgentLibrary):
 
   def getAgentConfig(name: String): IO[Option[AgentConfig]] =
     library.get(name).map(_.map { defn =>
-      val configJson =
+      val rawJson =
         if defn.configPath.nonEmpty && os.exists(os.Path(defn.configPath) / "agent.json")
         then os.read(os.Path(defn.configPath) / "agent.json")
         else ""
-      AgentConfig(defn.name, configJson, defn.systemPrompt)
+      val resolvedJson = replaceDefaultContextWindow(rawJson)
+      AgentConfig(defn.name, resolvedJson, defn.systemPrompt)
     })
 
   def createAgent(name: String, configJson: String, systemMd: String): IO[Either[String, Unit]] =
@@ -27,7 +31,8 @@ class AgentService(library: AgentLibrary):
         IO.blocking {
           val dir = AgentLibrary.defaultDir / name
           os.makeDir.all(dir)
-          os.write.over(dir / "agent.json", configJson)
+          val resolved = replaceDefaultContextWindow(configJson)
+          os.write.over(dir / "agent.json", resolved)
           os.write.over(dir / "system.md", systemMd)
         }.attempt.map(_.leftMap(_.getMessage))
 
@@ -38,9 +43,21 @@ class AgentService(library: AgentLibrary):
         IO.blocking {
           val dir = AgentLibrary.defaultDir / name
           if !os.exists(dir) then throw new RuntimeException(s"Agent not found: $name")
-          os.write.over(dir / "agent.json", configJson)
+          val resolved = replaceDefaultContextWindow(configJson)
+          os.write.over(dir / "agent.json", resolved)
           os.write.over(dir / "system.md", systemMd)
         }.attempt.map(_.leftMap(_.getMessage))
+
+  /** Replace hardcoded default contextWindow in agent JSON with the resolved value from nebflow.json. */
+  private def replaceDefaultContextWindow(jsonStr: String): String =
+    parse(jsonStr) match
+      case Left(_) => jsonStr
+      case Right(json) =>
+        val cw = json.hcursor.downField("contextWindow").as[Int].getOrElse(Defaults.ContextWindow)
+        if cw == Defaults.ContextWindow then
+          val resolved = library.resolvedContextWindow
+          json.deepMerge(io.circe.Json.obj("contextWindow" -> resolved.asJson)).noSpaces
+        else jsonStr
 
   private val AgentNameRegex = "[a-zA-Z0-9_-]+".r
 
