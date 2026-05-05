@@ -13,11 +13,11 @@ object TokenEstimator:
         case Left(text) => (tc + text.length, ic)
         case Right(blocks) =>
           blocks.foldLeft((tc, ic)) {
-            case ((t, i), ContentBlock.Text(text))              => (t + text.length, i)
-            case ((t, i), ContentBlock.ToolUse(_, _, input))    => (t + input.toString.length, i)
-            case ((t, i), ContentBlock.ToolResult(_, content, _))=> (t + content.length, i)
-            case ((t, i), ContentBlock.Image(_, _))             => (t, i + 1)               // 每张图按固定 token 计,不走 chars/3
-            case ((t, i), ContentBlock.Thinking(t2, _))         => (t + t2.length, i)
+            case ((t, i), ContentBlock.Text(text)) => (t + text.length, i)
+            case ((t, i), ContentBlock.ToolUse(_, _, input)) => (t + input.toString.length, i)
+            case ((t, i), ContentBlock.ToolResult(_, content, _)) => (t + content.length, i)
+            case ((t, i), ContentBlock.Image(_, _)) => (t, i + 1) // 每张图按固定 token 计,不走 chars/3
+            case ((t, i), ContentBlock.Thinking(t2, _)) => (t + t2.length, i)
           }
     }
     (textChars / 3) + (imageCount * ImageTokenEstimate)

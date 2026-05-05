@@ -5,11 +5,12 @@ import cats.syntax.all.*
 import io.circe.Json
 
 /**
- * WebSocket multicast hub — decouples SessionActor from individual connections.
+ * WebSocket multicast hub — decouples root agents from individual connections.
  * All WebSocket connections register their per-connection send callback here;
- * SessionActor broadcasts events to every registered connection.
+ * root agents broadcast events to every registered connection.
  */
 class WsHub:
+
   private val connsRef: Ref[IO, Map[String, Json => IO[Unit]]] =
     Ref.unsafe[IO, Map[String, Json => IO[Unit]]](Map.empty)
 

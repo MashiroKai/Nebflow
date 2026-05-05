@@ -11,10 +11,11 @@ import java.nio.file.{Files, Path, Paths}
 object WriteTool extends Tool:
   val CONTEXT_LINES = 3
 
-  /** Maximum content size accepted by Write, in UTF-8 encoded bytes.
-    * Aligned with ReadTool.MAX_FILE_BYTES so anything Read can return is
-    * also writable in a single Write call.
-    */
+  /**
+   * Maximum content size accepted by Write, in UTF-8 encoded bytes.
+   * Aligned with ReadTool.MAX_FILE_BYTES so anything Read can return is
+   * also writable in a single Write call.
+   */
   val MAX_WRITE_BYTES: Int = 512 * 1024
 
   val name = "Write"
@@ -87,7 +88,7 @@ Usage:
           ctx.readTracker match
             case Some(rt) =>
               rt.hasBeenRead(filePath).map {
-                case true  => Right(())
+                case true => Right(())
                 case false =>
                   Left(ToolError(s"File was not read in this session: $filePath. Read it first with the Read tool."))
               }
@@ -97,7 +98,7 @@ Usage:
       readCheck.flatMap {
         case Left(err) => IO.pure(Left(err))
         case Right(()) =>
-          IO.blocking {
+          val writeIO = IO.blocking {
             try
               val dir = filePath.getParent
               if dir != null then Files.createDirectories(dir)
@@ -122,11 +123,16 @@ Usage:
                   DiffUtil.writeFile(filePath, content, lineSep)
                   Right(DiffUtil.renderUpdatedResult(short, added, removed, diff))
             catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
-          }.flatMap {
+          }
+          val lockedWrite = ctx.fileLockManager match
+            case Some(lm) => lm.withWriteLock(filePath)(writeIO)
+            case None => writeIO
+          lockedWrite.flatMap {
             case Right(result) =>
               ctx.readTracker.traverse_(_.recordRead(filePath)).as(Right(result))
             case left => IO.pure(left)
           }
       }
+    end if
   end call
 end WriteTool

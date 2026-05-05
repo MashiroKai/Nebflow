@@ -17,6 +17,10 @@ object ToolRisk:
     "WebFetch" -> Safe,
     "AskUserQuestion" -> Safe,
     "ContextManage" -> Safe,
+    "declareWait" -> Safe,
+    "delegate" -> Safe,
+    "report" -> Safe,
+    "ask_parent" -> Safe,
     "Bash" -> NeedsApproval,
     "Write" -> NeedsApproval,
     "Edit" -> NeedsApproval,
@@ -70,4 +74,3 @@ object PermissionPolicy:
     case _ => PermissionPolicy.default
 
 end PermissionPolicy
-

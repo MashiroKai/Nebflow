@@ -12,7 +12,7 @@ class FullCompactSpec extends CatsEffectSuite:
     val messages = List(
       textMsg(MessageRole.User, "hello"),
       textMsg(MessageRole.Assistant, "world"),
-      textMsg(MessageRole.User, "bye"),
+      textMsg(MessageRole.User, "bye")
     )
     val llmOut = """
 Summary of conversation:
@@ -32,7 +32,7 @@ The user greeted and said goodbye.
   test("empty projectRoot does not crash file extraction") {
     val messages = List(
       textMsg(MessageRole.User, "hello"),
-      textMsg(MessageRole.Assistant, "world"),
+      textMsg(MessageRole.Assistant, "world")
     )
     val llmOut = """
 Summary:
@@ -47,3 +47,4 @@ Nothing important.
     // so fileRestoreMessage should be None. Must not throw.
     assert(result.isRight, clues(result))
   }
+end FullCompactSpec

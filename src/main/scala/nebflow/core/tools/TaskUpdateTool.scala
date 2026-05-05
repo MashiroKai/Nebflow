@@ -19,11 +19,16 @@ object TaskUpdateTool extends Tool:
 - After resolving, call TaskList to find your next task
 
 - ONLY mark a task as completed when you have FULLY accomplished it
-- If you encounter errors, blockers, or cannot finish, keep as in_progress
+- If you encounter errors, blockers, or cannot finish, mark as failed
 - Never mark completed if:
   - Tests are failing
   - Implementation is partial
   - You encountered unresolved errors
+
+**Mark tasks as failed:**
+- When you cannot complete a task due to errors, blockers, or external issues
+- When a task is no longer feasible
+- `failed` is a terminal state — it cannot transition back
 
 **Update task details:**
 - When establishing dependencies between tasks
@@ -31,13 +36,16 @@ object TaskUpdateTool extends Tool:
 
 ## Status Workflow
 
-Status progresses: `pending` -> `in_progress` -> `completed`
+Status progresses: `pending` -> `in_progress` -> `completed` or `failed`
 
-Valid transitions only:
+Valid transitions:
 - `pending` -> `in_progress`
+- `pending` -> `completed` (for trivial tasks)
+- `pending` -> `failed`
 - `in_progress` -> `completed`
+- `in_progress` -> `failed`
 - `completed` cannot be changed to any other state
-- No transition from `pending` directly to `completed`
+- `failed` cannot be changed to any other state
 
 ## Dependency Management
 
@@ -51,6 +59,7 @@ Valid transitions only:
 
 Mark as in progress: {"taskId": "1", "status": "in_progress"}
 Mark as completed:  {"taskId": "1", "status": "completed"}
+Mark as failed:     {"taskId": "1", "status": "failed"}
 Set dependency:     {"taskId": "2", "addBlockedBy": ["1"]}
 Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
 
@@ -76,7 +85,7 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
         ),
         "status" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("pending".asJson, "in_progress".asJson, "completed".asJson),
+          "enum" -> Json.arr("pending".asJson, "in_progress".asJson, "completed".asJson, "failed".asJson),
           "description" -> "New status".asJson
         ),
         "addBlocks" -> Json.obj(
@@ -121,38 +130,31 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
           description = input("description").flatMap(_.asString),
           activeForm = input("activeForm").flatMap(_.asString),
           status = input("status").flatMap(_.asString).flatMap {
-            case "pending"     => Some(TaskStatus.Pending)
+            case "pending" => Some(TaskStatus.Pending)
             case "in_progress" => Some(TaskStatus.InProgress)
-            case "completed"   => Some(TaskStatus.Completed)
-            case _             => None
+            case "completed" => Some(TaskStatus.Completed)
+            case "failed" => Some(TaskStatus.Failed)
+            case _ => None
           },
           addBlocks = input("addBlocks").flatMap(_.as[List[String]].toOption),
           addBlockedBy = input("addBlockedBy").flatMap(_.as[List[String]].toOption),
           removeBlocks = input("removeBlocks").flatMap(_.as[List[String]].toOption),
           removeBlockedBy = input("removeBlockedBy").flatMap(_.as[List[String]].toOption)
         )
-        store.update(sessionId, taskId, updates).flatMap {
-          case Some(updated) =>
-            emitTaskListUpdate(store, sessionId, ctx).as(Right(s"Task #${updated.id} updated: ${updated.status}"))
-          case None => IO.pure(Left(ToolError(s"Task #$taskId not found")))
-        }.handleErrorWith {
-          case e: IllegalStateException => IO.pure(Left(ToolError(e.getMessage)))
-          case e => IO.raiseError(e)
-        }
+        store
+          .update(sessionId, taskId, updates)
+          .flatMap {
+            case Some(updated) =>
+              TaskToolHelper
+                .emitTaskListUpdate(store, sessionId, ctx)
+                .as(Right(s"Task #${updated.id} updated: ${updated.status}"))
+            case None => IO.pure(Left(ToolError(s"Task #$taskId not found")))
+          }
+          .handleErrorWith {
+            case e: IllegalStateException => IO.pure(Left(ToolError(e.getMessage)))
+            case e => IO.raiseError(e)
+          }
       case (None, _) => IO.pure(Left(ToolError("No task store available")))
       case (_, None) => IO.pure(Left(ToolError("No session ID available")))
-
-  private def emitTaskListUpdate(store: TaskStore, sessionId: String, ctx: ToolContext): IO[Unit] =
-    ctx.wsSend match
-      case Some(send) =>
-        store.list(sessionId).flatMap { tasks =>
-          val json = io.circe.Json.obj(
-            "type" -> "taskListUpdate".asJson,
-            "sessionId" -> sessionId.asJson,
-            "tasks" -> tasks.asJson
-          )
-          send(json)
-        }
-      case None => IO.unit
 
 end TaskUpdateTool
