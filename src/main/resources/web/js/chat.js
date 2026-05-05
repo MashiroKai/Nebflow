@@ -176,7 +176,11 @@ export function appendAgentText(agentId, text) {
 export function finishAgent(agentId) {
   const a = state.agentBubbles[agentId];
   if (a) {
-    a.bubble.innerHTML = renderMarkdownWithMath(a.text || '');
+    if (!a.text || a.text.trim() === '') {
+      if (a.row) a.row.remove();
+    } else {
+      a.bubble.innerHTML = renderMarkdownWithMath(a.text);
+    }
   }
   if (state.activeAgentId === agentId) state.activeAgentId = null;
 }
