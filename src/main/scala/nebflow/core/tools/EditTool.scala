@@ -92,12 +92,12 @@ Insert mode:
         val start = input("start_line").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
         input("end_line").flatMap(_.asNumber).flatMap(_.toInt) match
           case Some(e) if e != start => s"Edit($short:$start-$e)"
-          case _                     => s"Edit($short:$start)"
+          case _ => s"Edit($short:$start)"
       case Right(Mode.Insert) =>
         val line = input("insert_after_line").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(-1)
         s"Insert($short:$line)"
       case Right(Mode.Replace) => s"Edit($short)"
-      case Left(_)             => s"Edit($short, invalid mode)"
+      case Left(_) => s"Edit($short, invalid mode)"
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith(DiffUtil.OkUpdatedPrefix) then
@@ -119,14 +119,15 @@ Insert mode:
   private enum Mode:
     case Replace, LineReplace, Insert
 
-  /** Resolve the edit mode from the explicit `mode` field.
-    * Returns Left for missing or unknown mode values.
-    */
+  /**
+   * Resolve the edit mode from the explicit `mode` field.
+   * Returns Left for missing or unknown mode values.
+   */
   private def resolveMode(input: JsonObject): Either[ToolError, Mode] =
     input("mode").flatMap(_.asString) match
-      case Some("replace")      => Right(Mode.Replace)
+      case Some("replace") => Right(Mode.Replace)
       case Some("line_replace") => Right(Mode.LineReplace)
-      case Some("insert")       => Right(Mode.Insert)
+      case Some("insert") => Right(Mode.Insert)
       case Some(other) =>
         Left(ToolError(s"Unknown mode: '$other'. Allowed values: replace, line_replace, insert."))
       case None =>
@@ -146,7 +147,7 @@ Insert mode:
           val readCheck: IO[Either[ToolError, Unit]] = ctx.readTracker match
             case Some(rt) =>
               rt.hasBeenRead(filePath).map {
-                case true  => Right(())
+                case true => Right(())
                 case false =>
                   Left(ToolError(s"File was not read in this session: $filePath. Read it first with the Read tool."))
               }
@@ -155,17 +156,22 @@ Insert mode:
           readCheck.flatMap {
             case Left(err) => IO.pure(Left(err))
             case Right(()) =>
-              IO.blocking {
+              val editIO = IO.blocking {
                 mode match
                   case Mode.LineReplace => doLineReplace(input, filePath)
-                  case Mode.Insert      => doInsert(input, filePath)
-                  case Mode.Replace     => doReplace(input, filePath)
-              }.flatMap {
+                  case Mode.Insert => doInsert(input, filePath)
+                  case Mode.Replace => doReplace(input, filePath)
+              }
+              val lockedEdit = ctx.fileLockManager match
+                case Some(lm) => lm.withWriteLock(filePath)(editIO)
+                case None => editIO
+              lockedEdit.flatMap {
                 case Right(result) =>
                   ctx.readTracker.traverse_(_.recordRead(filePath)).as(Right(result))
                 case left => IO.pure(left)
               }
           }
+    end match
   end call
 
   // ---------------------------------------------------------------------------
@@ -223,7 +229,12 @@ Insert mode:
               val (added, removed) = DiffUtil.lineStats(original, updatedStr)
               Right(DiffUtil.renderUpdatedResult(short, added, removed, diff))
           catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
+          end try
         end if
+
+    end match
+
+  end doLineReplace
 
   private def doInsert(input: JsonObject, filePath: Path): Either[ToolError, String] =
     val insertLineOpt = input("insert_after_line").flatMap(_.asNumber).flatMap(_.toInt)
@@ -263,6 +274,10 @@ Insert mode:
               Right(DiffUtil.renderUpdatedResult(short, added, removed, diff))
           catch case e: Exception => Left(ToolError(s"Error inserting: ${e.getMessage}"))
 
+    end match
+
+  end doInsert
+
   private def doReplace(input: JsonObject, filePath: Path): Either[ToolError, String] =
     val oldString = input("old_string").flatMap(_.asString).getOrElse("")
     val newString = input("new_string").flatMap(_.asString).getOrElse("")
@@ -271,8 +286,7 @@ Insert mode:
     if oldString.isEmpty then Left(ToolError("replace mode requires old_string"))
     else if input.contains("start_line") || input.contains("insert_after_line") then
       Left(ToolError("replace mode does not accept start_line / insert_after_line; remove those fields"))
-    else if oldString == newString then
-      Right("old_string and new_string are exactly the same. No changes to make.")
+    else if oldString == newString then Right("old_string and new_string are exactly the same. No changes to make.")
     else
       try
         val original = DiffUtil.readFile(filePath)
@@ -311,5 +325,7 @@ Insert mode:
             Right(DiffUtil.renderUpdatedResult(short, added, removed, diff))
         end if
       catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
+    end if
+  end doReplace
 
 end EditTool

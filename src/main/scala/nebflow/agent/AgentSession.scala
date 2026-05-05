@@ -10,7 +10,8 @@ import io.circe.syntax.*
  */
 private[agent] trait AgentSession:
 
-  /** Check for duplicate clientMessageId and update recentMessageIds.
+  /**
+   * Check for duplicate clientMessageId and update recentMessageIds.
    *  Returns (isDuplicate, updatedState).
    */
   protected def checkDuplicate(
@@ -32,10 +33,12 @@ private[agent] trait AgentSession:
     sessionId: String,
     busy: Boolean
   ): IO[Unit] =
-    wsSend(Json.obj(
-      "type" -> "sessionBusy".asJson,
-      "sessionId" -> sessionId.asJson,
-      "busy" -> busy.asJson
-    ))
+    wsSend(
+      Json.obj(
+        "type" -> "sessionBusy".asJson,
+        "sessionId" -> sessionId.asJson,
+        "busy" -> busy.asJson
+      )
+    )
 
 end AgentSession

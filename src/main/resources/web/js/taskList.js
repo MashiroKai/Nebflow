@@ -1,24 +1,15 @@
-import state from './state.js';
-
-const RECENT_COMPLETED_TTL_MS = 30000;
 const MAX_VISIBLE = 10;
 
 const iconMap = {
   pending: 'square',
-  in_progress: 'loader-2',
-  completed: 'check-square'
+  in_progress: 'loader-2'
 };
+
+const activeStatuses = new Set(['pending', 'in_progress']);
 
 export function renderTaskList(tasks) {
   const container = document.getElementById('task-list');
   if (!container) return;
-
-  // Issue #8: Bind timers to container element instead of module global
-  // Clear old fade timers for this container
-  if (container._fadeTimers) {
-    container._fadeTimers.forEach(t => clearTimeout(t));
-  }
-  container._fadeTimers = [];
 
   if (!tasks || tasks.length === 0) {
     container.classList.remove('has-tasks');
@@ -26,27 +17,37 @@ export function renderTaskList(tasks) {
     return;
   }
 
+  // Only show active tasks; completed/filtered are reflected in stats only
+  const active = tasks.filter(t => activeStatuses.has(t.status));
+  const terminalCount = tasks.length - active.length;
+
+  if (active.length === 0) {
+    // All done — show brief summary then collapse
+    container.classList.remove('has-tasks');
+    container.innerHTML = '';
+    return;
+  }
+
   container.classList.add('has-tasks');
 
-  // Sort: in_progress first, then pending, then completed
-  const order = { in_progress: 0, pending: 1, completed: 2 };
-  const sorted = [...tasks].sort((a, b) => {
-    const oa = order[a.status] ?? 1;
-    const ob = order[b.status] ?? 1;
-    if (oa !== ob) return oa - ob;
+  // Sort: in_progress first, then pending by ID
+  const sorted = [...active].sort((a, b) => {
+    if (a.status !== b.status) {
+      const order = { in_progress: 0, pending: 1 };
+      return (order[a.status] ?? 1) - (order[b.status] ?? 1);
+    }
     return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
   });
 
   // Stats
-  const counts = { pending: 0, in_progress: 0, completed: 0 };
-  tasks.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
-  const total = tasks.length;
+  const counts = { pending: 0, in_progress: 0 };
+  active.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
 
   let html = '<div class="task-card">';
   html += '<div class="task-header">';
-  html += `<span class="task-count">${total} task${total !== 1 ? 's' : ''}</span>`;
+  html += `<span class="task-count">${active.length} task${active.length !== 1 ? 's' : ''}</span>`;
   const parts = [];
-  if (counts.completed > 0) parts.push(`${counts.completed} done`);
+  if (terminalCount > 0) parts.push(`${terminalCount} done`);
   if (counts.in_progress > 0) parts.push(`${counts.in_progress} in progress`);
   if (counts.pending > 0) parts.push(`${counts.pending} open`);
   if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
@@ -55,18 +56,11 @@ export function renderTaskList(tasks) {
   const visible = sorted.slice(0, MAX_VISIBLE);
   visible.forEach(task => {
     const isActive = task.status === 'in_progress';
-    const isDone = task.status === 'completed';
-    const isPending = task.status === 'pending';
 
     let cls = 'task-item';
-    if (isActive) cls += ' task-active';
-    else if (isDone) cls += ' task-done';
-    else cls += ' task-pending';
-
-    if (isDone) cls += ' task-fade';
+    cls += isActive ? ' task-active' : ' task-pending';
 
     const iconName = iconMap[task.status] || 'square';
-
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
     const blocked = task.blockedBy && task.blockedBy.length > 0
       ? ` <span class="task-blocked">blocked by #${task.blockedBy.join(', #')}</span>`
@@ -87,16 +81,7 @@ export function renderTaskList(tasks) {
   html += '</div>';
   container.innerHTML = html;
 
-  // Re-render lucide icons
   if (typeof lucide !== 'undefined') lucide.createIcons();
-
-  // Collapse completed tasks after TTL — remove from layout entirely
-  container.querySelectorAll('.task-done.task-fade').forEach(el => {
-    const timer = setTimeout(() => {
-      el.classList.add('task-collapsed');
-    }, RECENT_COMPLETED_TTL_MS);
-    container._fadeTimers.push(timer);
-  });
 }
 
 function escapeHtml(str) {
