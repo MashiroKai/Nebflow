@@ -57,6 +57,8 @@ class AgentLibrary(agentsDir: os.Path, serviceConfig: Option[NebflowServiceConfi
       "default" -> defaultAgent.copy(contextWindow = resolveContextWindow(defaultAgent.contextWindow))
     )
 
+  end builtins
+
   def loadAll(): IO[Map[String, AgentDef]] =
     IO.blocking {
       if !os.exists(agentsDir) then Map.empty
