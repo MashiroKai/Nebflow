@@ -167,12 +167,24 @@ object AgentActor extends AgentCore with AgentSession:
         else pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
 
       case LlmFailed(error, replyTo) =>
-        logAgentEvent(ctx, agentDef, depth, state.sessionId, "llm-fail", s"err=${error.getMessage.take(60)}")
+        logAgentEvent(ctx, agentDef, depth, state.sessionId, "llm-fail", s"err=${error.getMessage.take(80)}")
         val agentError =
           AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
         parentRef match
           case Some(p) => p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(agentError))
           case None =>
+            // Emit error to frontend so the user knows what happened, then Done to clear the spinner
+            resources.dispatcher.unsafeRunAndForget(
+              state
+                .wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "error".asJson,
+                    "sessionId" -> state.sessionId.asJson,
+                    "message" -> s"LLM request failed: ${error.getMessage.take(200)}".asJson
+                  )
+                )
+                .handleErrorWith(_ => IO.unit)
+            )
             emitStream(
               resources.dispatcher,
               state.wsSend,
@@ -217,34 +229,7 @@ object AgentActor extends AgentCore with AgentSession:
             )
         )
 
-        val didFinish = tc.results.exists { case (call, _) => call.name == "finish" }
-        if didFinish then
-          // When LLM called finish(), prefer the already-streamed text if available.
-          // Otherwise, use the finish tool's answer. textAlreadyStreamed controls whether
-          // finishTurn emits a TextDelta (false = emit, true = skip since already streamed).
-          val (turnText, wasStreamed) =
-            if tc.originalText.nonEmpty then (tc.originalText, true)
-            else
-              val answer = tc.results
-                .collectFirst {
-                  case (call, r) if call.name == "finish" => r.content.stripPrefix("[finish] ")
-                }
-                .getOrElse("")
-              (answer, false)
-          finishTurn(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            updatedState,
-            stash,
-            ctx,
-            turnText,
-            tc.replyTo,
-            tc.thinking,
-            textAlreadyStreamed = wasStreamed
-          )
-        else if didContextManage then
+        if didContextManage then
           // ContextManage triggered: state is updated, results appended, but do NOT pipe
           // next LLM call — DelegateResult from compaction sub-agent will drive the next turn.
           processing(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
@@ -438,6 +423,7 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.AskUser(requestId, items, replyTo) =>
         val askJson = io.circe.Json.obj(
           "type" -> "askUser".asJson,
+          "sessionId" -> state.sessionId.asJson,
           "items" -> io.circe.Json.fromValues(items.map { item =>
             io.circe.Json.obj(
               "question" -> item.question.asJson,
@@ -479,14 +465,20 @@ object AgentActor extends AgentCore with AgentSession:
               )
             )
             processing(agentDef, resources, depth, parentRef, clearedState, stash, ctx)
-          case None => Behaviors.same
+          case None =>
+            // Not for us — forward to sub-agents (a sub-agent may have a pending AskUser)
+            state.subagents.values.foreach(_ ! AgentCommand.UserAnswered(answers))
+            Behaviors.same
 
       case AgentCommand.PermissionAnswered(approved) =>
         state.pendingPermission match
           case Some(deferred) =>
             resources.dispatcher.unsafeRunAndForget(deferred.complete(approved).handleErrorWith(_ => IO.unit))
             Behaviors.same
-          case None => Behaviors.same
+          case None =>
+            // Not for us — forward to sub-agents
+            state.subagents.values.foreach(_ ! AgentCommand.PermissionAnswered(approved))
+            Behaviors.same
 
       // --- Busy signal for root agents ---
       case AgentCommand.UserInput(_, _, _) if depth == 0 && parentRef.isEmpty =>

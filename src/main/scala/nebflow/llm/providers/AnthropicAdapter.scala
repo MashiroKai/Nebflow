@@ -67,37 +67,87 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     }
 
   private def toAnthropicTools(tools: List[ToolDefinition]): Json =
-    Json.fromValues(tools.map { t =>
+    val toolJsons = tools.map { t =>
       Json.obj(
         "name" -> t.name.asJson,
         "description" -> t.description.asJson,
         "input_schema" -> Json.fromJsonObject(t.inputSchema)
       )
-    })
+    }
+    // Add cache_control to the last tool definition to extend the cache prefix through tools
+    if toolJsons.isEmpty then Json.fromValues(Nil)
+    else
+      val (init, last) = (toolJsons.init, toolJsons.last)
+      val lastWithCache = last.deepMerge(Json.obj("cache_control" -> Json.obj("type" -> "ephemeral".asJson)))
+      Json.fromValues(init :+ lastWithCache)
+
+  /** Build the system field as content blocks with cache_control on the stable prefix. */
+  private def buildSystemBlocks(params: SendMessageParams): Json =
+    val stableOpt = params.systemStable.filter(_.nonEmpty)
+    val dynamicOpt = params.systemDynamic.filter(_.nonEmpty)
+    // Fallback: if systemParts not provided, extract from messages (backward compat)
+    val fallbackSystem = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(_.nonEmpty)
+
+    val stable = stableOpt.orElse(fallbackSystem)
+    if stable.isEmpty && dynamicOpt.isEmpty then Json.Null
+    else
+      val blocks = scala.collection.mutable.ListBuffer.empty[Json]
+      stable.foreach { text =>
+        // Stable part gets cache_control — this is the cache breakpoint shared across sessions
+        blocks += Json.obj(
+          "type" -> "text".asJson,
+          "text" -> text.asJson,
+          "cache_control" -> Json.obj("type" -> "ephemeral".asJson)
+        )
+      }
+      dynamicOpt.foreach { text =>
+        // Dynamic part (env info, reminders) — no cache_control, changes every turn
+        blocks += Json.obj(
+          "type" -> "text".asJson,
+          "text" -> text.asJson
+        )
+      }
+      Json.fromValues(blocks.toList)
+  end buildSystemBlocks
 
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
-    val systemMsg = params.messages.find(_.role == MessageRole.System)
+    val systemBlocks = buildSystemBlocks(params)
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
       "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokens)).asJson
     )
-    val bodyWithSystem = systemMsg match
-      case Some(m) => body.deepMerge(Json.obj("system" -> m.textContent.asJson))
-      case None => body
+    val bodyWithSystem =
+      if systemBlocks != Json.Null then body.deepMerge(Json.obj("system" -> systemBlocks))
+      else body
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
     val bodyWithThinking = params.thinking match
       case Some(t) => bodyWithTools.deepMerge(Json.obj("thinking" -> t))
       case None => bodyWithTools
+    val bodyWithMetadata = (params.sessionId, params.agentId) match
+      case (Some(sid), Some(aid)) =>
+        bodyWithThinking.deepMerge(
+          Json.obj(
+            "metadata" -> Json.obj(
+              "session_id" -> sid.asJson,
+              "agent_id" -> aid.asJson
+            )
+          )
+        )
+      case (Some(sid), _) =>
+        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+      case (_, Some(aid)) =>
+        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _ => bodyWithThinking
 
     val request = basicRequest
       .post(uri"$base/v1/messages")
       .header("x-api-key", apiKey)
       .header("anthropic-version", "2023-06-01")
       .header("content-type", "application/json")
-      .body(bodyWithThinking.noSpaces)
+      .body(bodyWithMetadata.noSpaces)
 
     backend.send(request).flatMap { response =>
       response.body match
@@ -139,22 +189,37 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     AdapterResponse(reply, toolCalls, usage)
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
-    val systemMsg = params.messages.find(_.role == MessageRole.System)
+    val systemBlocks = buildSystemBlocks(params)
     val body = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
       "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokens)).asJson,
       "stream" -> true.asJson
     )
-    val bodyWithSystem = systemMsg match
-      case Some(m) => body.deepMerge(Json.obj("system" -> m.textContent.asJson))
-      case None => body
+    val bodyWithSystem =
+      if systemBlocks != Json.Null then body.deepMerge(Json.obj("system" -> systemBlocks))
+      else body
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
       case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
       case None => bodyWithSystem
     val bodyWithThinking = params.thinking match
       case Some(t) => bodyWithTools.deepMerge(Json.obj("thinking" -> t))
       case None => bodyWithTools
+    val bodyWithMetadata = (params.sessionId, params.agentId) match
+      case (Some(sid), Some(aid)) =>
+        bodyWithThinking.deepMerge(
+          Json.obj(
+            "metadata" -> Json.obj(
+              "session_id" -> sid.asJson,
+              "agent_id" -> aid.asJson
+            )
+          )
+        )
+      case (Some(sid), _) =>
+        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+      case (_, Some(aid)) =>
+        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _ => bodyWithThinking
 
     Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
       Stream.eval(IO.ref(0)).flatMap { inputTokensRef =>
@@ -163,7 +228,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
           .header("x-api-key", apiKey)
           .header("anthropic-version", "2023-06-01")
           .header("content-type", "application/json")
-          .body(bodyWithThinking.noSpaces)
+          .body(bodyWithMetadata.noSpaces)
           .response(asStreamUnsafe(Fs2Streams[IO]))
           .readTimeout(360.seconds)
 

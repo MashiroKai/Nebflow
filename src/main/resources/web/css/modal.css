@@ -93,6 +93,21 @@
   color: var(--color-primary);
   background: #07c16010;
 }
+.agent-tool-check.builtin {
+  opacity: 0.45;
+  cursor: default;
+  border-style: dashed;
+  background: transparent;
+}
+.agent-built-in-label {
+  width: 100%;
+  font-size: 10px;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+  margin-bottom: 2px;
+}
 .agent-tool-check input { display: none; }
 .agent-field-label {
   font-size: 11px;

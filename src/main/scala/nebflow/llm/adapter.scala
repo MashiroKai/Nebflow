@@ -7,7 +7,15 @@ case class SendMessageParams(
   model: String,
   tools: Option[List[ToolDefinition]] = None,
   maxTokens: Option[Int] = None,
-  thinking: Option[io.circe.Json] = None
+  thinking: Option[io.circe.Json] = None,
+  /** Stable system prompt — cached by providers that support it. */
+  systemStable: Option[String] = None,
+  /** Dynamic system content (env info, reminders) — changes frequently. */
+  systemDynamic: Option[String] = None,
+  /** Session identifier for LLM provider metadata. */
+  sessionId: Option[String] = None,
+  /** Agent identifier for LLM provider metadata. */
+  agentId: Option[String] = None
 )
 
 case class AdapterResponse(

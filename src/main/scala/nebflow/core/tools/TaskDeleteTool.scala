@@ -28,8 +28,8 @@ automatically cleaned up.
 
 ## Task System Overview
 
-- Status progresses: `pending` -> `in_progress` -> `completed`
-- Valid transitions only: pending -> in_progress, in_progress -> completed
+- Status progresses: `pending` -> `in_progress` -> `completed` or `failed`
+- Valid transitions: pending -> in_progress, pending -> completed, pending -> failed, in_progress -> completed, in_progress -> failed
 - Use TaskUpdate to change status and manage dependencies
 - Use TaskDelete only when a task is truly no longer needed"""
 
@@ -58,24 +58,10 @@ automatically cleaned up.
       case (Some(store), Some(sessionId)) =>
         val taskId = input("taskId").flatMap(_.asString).getOrElse("")
         store.delete(sessionId, taskId).flatMap { deleted =>
-          if deleted then
-            emitTaskListUpdate(store, sessionId, ctx).as(Right(s"Task #$taskId deleted"))
+          if deleted then TaskToolHelper.emitTaskListUpdate(store, sessionId, ctx).as(Right(s"Task #$taskId deleted"))
           else IO.pure(Left(ToolError(s"Task #$taskId not found")))
         }
       case (None, _) => IO.pure(Left(ToolError("No task store available")))
       case (_, None) => IO.pure(Left(ToolError("No session ID available")))
-
-  private def emitTaskListUpdate(store: TaskStore, sessionId: String, ctx: ToolContext): IO[Unit] =
-    ctx.wsSend match
-      case Some(send) =>
-        store.list(sessionId).flatMap { tasks =>
-          val json = io.circe.Json.obj(
-            "type" -> "taskListUpdate".asJson,
-            "sessionId" -> sessionId.asJson,
-            "tasks" -> tasks.asJson
-          )
-          send(json)
-        }
-      case None => IO.unit
 
 end TaskDeleteTool

@@ -5,7 +5,7 @@ import cats.effect.IO
 import nebflow.shared.{Message, MessageRole}
 import io.circe.parser.parse
 import io.circe.{Decoder, Json}
-import cats.syntax.all._
+import cats.syntax.all.*
 
 class HistoryArchiverSpec extends CatsEffectSuite:
 
@@ -15,7 +15,7 @@ class HistoryArchiverSpec extends CatsEffectSuite:
   private def sampleMessages: List[Message] =
     List(
       Message(MessageRole.User, Left("hello")),
-      Message(MessageRole.Assistant, Left("world")),
+      Message(MessageRole.Assistant, Left("world"))
     )
 
   test("archive returns path with archives/<sessionId>/<ts>.json format") {
@@ -156,3 +156,4 @@ class HistoryArchiverSpec extends CatsEffectSuite:
       assert(result.isLeft || result.isRight)
     }
   }
+end HistoryArchiverSpec

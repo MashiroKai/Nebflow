@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.shared.{Message, given}
+import nebflow.shared.{Message, UiMessage, given}
 
 import java.util.UUID
 
@@ -77,10 +77,12 @@ class SessionStore(sessionsDir: os.Path):
         }
       else if sessions.nonEmpty then
         // Fallback: use most recent session
-        val first = sessions.maxByOption(_.updatedAt).get
-        loadSessionMessages(first.id).flatMap { msgs =>
-          indexRef.set((first.id, sessions)) *> activeMessagesRef.set(msgs)
-        }
+        sessions.maxByOption(_.updatedAt) match
+          case Some(first) =>
+            loadSessionMessages(first.id).flatMap { msgs =>
+              indexRef.set((first.id, sessions)) *> activeMessagesRef.set(msgs)
+            }
+          case None => createDefaultSession
       else
         // No sessions at all — create default
         createDefaultSession
@@ -122,7 +124,7 @@ class SessionStore(sessionsDir: os.Path):
 
   /**
    * Load messages for a specific session directly from disk (bypasses activeMessagesRef).
-   *  Used by SessionActor to safely start REPL for non-active sessions.
+   * Used to load history when creating a root agent for a non-active session.
    */
   def loadMessagesForSession(id: String): IO[List[Message]] = loadSessionMessages(id)
 
@@ -226,9 +228,9 @@ class SessionStore(sessionsDir: os.Path):
         IO.blocking {
           val f = sessionFile(id)
           if os.exists(f) then os.remove(f)
-        } *> (if wasActive && newActiveId.nonEmpty then
-                loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
-              else IO.unit) *> saveIndex
+        } *> deleteUiMessages(id) *> (if wasActive && newActiveId.nonEmpty then
+                                        loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
+                                      else IO.unit) *> saveIndex
       }
 
   def markUnread(id: String): IO[Unit] =
@@ -242,4 +244,50 @@ class SessionStore(sessionsDir: os.Path):
       val updated = sessions.map(s => if s.id == id then s.copy(name = newName) else s)
       (activeId, updated)
     } *> saveIndex
+
+  // ============================================================
+  // UI Messages (frontend rendering history)
+  // ============================================================
+
+  private def uiFile(id: String): os.Path = sessionsDir / s"$id.ui.json"
+
+  private def loadUiMessages(id: String): IO[List[UiMessage]] =
+    IO.blocking {
+      val f = uiFile(id)
+      if os.exists(f) then decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
+      else Nil
+    }
+
+  private def saveUiMessages(id: String, msgs: List[UiMessage]): IO[Unit] =
+    IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true))
+
+  /** Append UI messages to a session. Creates the file if it doesn't exist. */
+  def appendUiMessages(sessionId: String, msgs: List[UiMessage]): IO[Unit] =
+    if msgs.isEmpty then IO.unit
+    else
+      loadUiMessages(sessionId).flatMap { existing =>
+        saveUiMessages(sessionId, existing ++ msgs)
+      }
+
+  /**
+   * Get a page of UI messages for a session.
+   * Returns (messages_in_order, totalCount).
+   * Use offset/limit for forward pagination from oldest.
+   * For "load latest", pass offset = max(0, total - limit).
+   */
+  def getUiMessages(sessionId: String, offset: Int, limit: Int): IO[(List[UiMessage], Int)] =
+    loadUiMessages(sessionId).map { all =>
+      val total = all.size
+      val start = Math.min(offset, total)
+      val end = Math.min(start + limit, total)
+      (all.slice(start, end), total)
+    }
+
+  /** Delete UI messages file when session is deleted. Already called from deleteSession. */
+  def deleteUiMessages(sessionId: String): IO[Unit] =
+    IO.blocking {
+      val f = uiFile(sessionId)
+      if os.exists(f) then os.remove(f)
+    }
+
 end SessionStore
