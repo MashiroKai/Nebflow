@@ -6,10 +6,9 @@ import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
-import nebflow.agent.{SessionCommand, *}
+import nebflow.agent.*
 import nebflow.core.*
-import nebflow.service.{AgentService, ConfigService, RuntimePreferencesService, SessionService}
-import nebflow.service.{ThinkingConfig}
+import nebflow.service.*
 import nebflow.shared.*
 import nebflow.skill.SkillDiscovery
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
@@ -32,13 +31,82 @@ class WebSocketRoutes(
   reminderStateRef: Ref[IO, ReminderState],
   sessionStore: SessionStore,
   wsHub: WsHub,
-  sessionActorRef: ActorRef[SessionCommand],
+  actorSystem: ActorSystem[Nothing],
   contextWindow: Int = Defaults.ContextWindow,
   skillDiscovery: Option[SkillDiscovery] = None,
-  sharedResources: SharedResources = null,
+  sharedResources: SharedResources,
   pluginManifests: List[nebflow.plugin.PluginManifest] = Nil
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
+
+  /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
+  private val rootAgents: Ref[IO, Map[String, ActorRef[AgentCommand]]] =
+    Ref.unsafe(Map.empty)
+
+  /** Get or create a root AgentActor for the given session. Idempotent. */
+  private def ensureRootAgent(sessionId: String): IO[ActorRef[AgentCommand]] =
+    rootAgents.get.flatMap { agents =>
+      agents.get(sessionId) match
+        case Some(ref) => IO.pure(ref)
+        case None =>
+          val broadcastWsSend = (json: io.circe.Json) => wsHub.broadcast(json)
+          val agentIo = for
+            history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
+            metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
+            agentDef <- metaOpt.flatMap(_.agentName) match
+              case Some(agentName) =>
+                sharedResources.agentLibrary.get(agentName).flatMap {
+                  case Some(defn) => IO.pure(defn)
+                  case None =>
+                    sharedResources.agentLibrary.get("default").flatMap {
+                      case Some(d) => IO.pure(d)
+                      case None =>
+                        IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
+                    }
+                }
+              case None =>
+                sharedResources.agentLibrary.get("default").flatMap {
+                  case Some(d) => IO.pure(d)
+                  case None => IO.raiseError(new RuntimeException("No default agent available"))
+                }
+            readTracker <- nebflow.core.tools.ReadTracker.create
+          yield actorSystem.systemActorOf(
+            AgentActor(
+              agentDef,
+              sharedResources,
+              broadcastWsSend,
+              depth = 0,
+              parentRef = None,
+              sessionId = Some(sessionId),
+              initialMessages = history,
+              readTracker = Some(readTracker)
+            ),
+            s"agent-$sessionId"
+          )
+          agentIo.flatMap { ref =>
+            rootAgents.update(_ + (sessionId -> ref)).as(ref)
+          }
+    }
+
+  /** Stop and remove the root AgentActor for a session. */
+  private def removeRootAgent(sessionId: String): IO[Unit] =
+    rootAgents.modify { agents =>
+      agents.get(sessionId) match
+        case Some(ref) =>
+          ref ! AgentCommand.Stop(s"session $sessionId deleted")
+          (agents - sessionId, IO.unit)
+        case None => (agents, IO.unit)
+    }.flatten
+
+  /** Route a message to the root agent of the currently active session. */
+  private def withActiveAgent(f: ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
+    sessionStore.getActiveId
+      .flatMap { sessionId =>
+        ensureRootAgent(sessionId).flatMap(f)
+      }
+      .handleErrorWith { e =>
+        logger.warn(s"Failed to route message to active agent: ${e.getMessage}")
+      }
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
@@ -53,7 +121,7 @@ class WebSocketRoutes(
 
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
             case WebSocketFrame.Text(text, _) =>
-              handleMessage(text, perConnWsSend, Some(sessionActorRef))
+              handleMessage(text, perConnWsSend)
             case _ => IO.unit
           }.onFinalize(
             wsHub.unregister(hubConnId)
@@ -104,12 +172,14 @@ class WebSocketRoutes(
             "name" -> pm.name.asJson,
             "version" -> pm.version.asJson,
             "description" -> pm.description.asJson,
-            "frontend" -> pm.frontend.map { fe =>
-              io.circe.Json.obj(
-                "scripts" -> fe.scripts.asJson,
-                "styles" -> fe.styles.asJson
-              )
-            }.getOrElse(io.circe.Json.Null)
+            "frontend" -> pm.frontend
+              .map { fe =>
+                io.circe.Json.obj(
+                  "scripts" -> fe.scripts.asJson,
+                  "styles" -> fe.styles.asJson
+                )
+              }
+              .getOrElse(io.circe.Json.Null)
           )
         }.asJson
       )
@@ -118,7 +188,6 @@ class WebSocketRoutes(
     case req @ GET -> Root / "plugins" / pluginName / path =>
       val pluginDir = nebflow.plugin.PluginLoader.PluginDir / pluginName
       val filePath = pluginDir / os.RelPath(path)
-      // Security: ensure the resolved path stays within the plugin directory
       if filePath.toString.startsWith(pluginDir.toString) && os.exists(filePath) && os.isFile(filePath) then
         StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
       else NotFound()
@@ -166,25 +235,19 @@ class WebSocketRoutes(
 
   private def handleMessage(
     text: String,
-    wsSend: io.circe.Json => IO[Unit],
-    sessionRefOpt: Option[ActorRef[SessionCommand]]
+    wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
     parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
       case "askUserAnswer" =>
         parse(text).flatMap(_.hcursor.downField("answers").as[List[String]]).toOption match
           case Some(answers) =>
-            sessionRefOpt match
-              case Some(ref) => IO(ref ! SessionCommand.AskUserResponse("", answers))
-              case None => IO.unit
+            withActiveAgent(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
           case None => IO.unit
 
       case "permissionAnswer" =>
         val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
-        logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *> (
-          sessionRefOpt match
-            case Some(ref) => IO(ref ! SessionCommand.PermissionResponse("", approved))
-            case None => IO.unit
-        )
+        logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
+          withActiveAgent(ref => IO(ref ! AgentCommand.PermissionAnswered(approved)))
 
       case "setPolicy" =>
         val policyStr = parse(text).flatMap(_.hcursor.downField("policy").as[String]).getOrElse("ask")
@@ -195,9 +258,7 @@ class WebSocketRoutes(
           broadcastServerConfig
 
       case "interrupt" =>
-        logger.info("User interrupted") *> (sessionRefOpt match
-          case Some(ref) => sessionStore.getActiveId.flatMap(id => IO(ref ! SessionCommand.Interrupt(id)))
-          case None => IO.unit)
+        logger.info("User interrupted") *> withActiveAgent(ref => IO(ref ! AgentCommand.Interrupt()))
 
       case "command" =>
         val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
@@ -218,7 +279,9 @@ class WebSocketRoutes(
                   broadcastServerConfig
               case Left(err) =>
                 logger.warn(s"Invalid thinking config: $err") *>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid thinking config: $err".asJson))
+                  wsSend(
+                    io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid thinking config: $err".asJson)
+                  )
           case _ =>
             logger.info("Thinking mode disabled") *>
               runtimePrefs.setThinking(None) *>
@@ -227,29 +290,38 @@ class WebSocketRoutes(
       case "switchSession" =>
         val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
         if sessionId.nonEmpty then
-          sessionService.switchSession(sessionId).flatMap { _ =>
-            sessionService.sendSessionList(wsSend)
-          }.handleErrorWith { e =>
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-          }
+          sessionService
+            .switchSession(sessionId)
+            .flatMap { _ =>
+              sessionService.sendSessionList(wsSend)
+            }
+            .handleErrorWith { e =>
+              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+            }
         else IO.unit
 
       case "createSession" =>
         val name = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("New Session")
-        sessionService.createSession(name).flatMap { _ =>
-          sessionService.sendSessionList(wsSend)
-        }.handleErrorWith { e =>
-          wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-        }
+        sessionService
+          .createSession(name)
+          .flatMap { _ =>
+            sessionService.sendSessionList(wsSend)
+          }
+          .handleErrorWith { e =>
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+          }
 
       case "deleteSession" =>
         val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
         if sessionId.nonEmpty then
-          sessionService.deleteSession(sessionId).flatMap { _ =>
-            sessionService.sendSessionList(wsSend)
-          }.handleErrorWith { e =>
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-          }
+          removeRootAgent(sessionId) *> sessionService
+            .deleteSession(sessionId)
+            .flatMap { _ =>
+              sessionService.sendSessionList(wsSend)
+            }
+            .handleErrorWith { e =>
+              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+            }
         else IO.unit
 
       case "renameSession" =>
@@ -257,11 +329,14 @@ class WebSocketRoutes(
         val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
         val newName = json.hcursor.downField("name").as[String].getOrElse("")
         if sessionId.nonEmpty && newName.nonEmpty then
-          sessionService.renameSession(sessionId, newName).flatMap { _ =>
-            sessionService.sendSessionList(wsSend)
-          }.handleErrorWith { e =>
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-          }
+          sessionService
+            .renameSession(sessionId, newName)
+            .flatMap { _ =>
+              sessionService.sendSessionList(wsSend)
+            }
+            .handleErrorWith { e =>
+              wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+            }
         else IO.unit
 
       case "ping" => IO.unit
@@ -370,10 +445,7 @@ class WebSocketRoutes(
         val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
         val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
 
-        if content.trim == "__interrupt__" then
-          sessionRefOpt match
-            case Some(ref) => sessionStore.getActiveId.flatMap(id => IO(ref ! SessionCommand.Interrupt(id)))
-            case None => IO.unit
+        if content.trim == "__interrupt__" then withActiveAgent(ref => IO(ref ! AgentCommand.Interrupt()))
         else if content.nonEmpty || attachments.nonEmpty then
           rateLimiter.check("ws").flatMap { allowed =>
             if !allowed then
@@ -400,10 +472,8 @@ class WebSocketRoutes(
               }
 
               logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
-                logInputHistory(content, attachments) *> (sessionRefOpt match
-                  case Some(ref) =>
-                    IO(ref ! SessionCommand.UserMessage(content, blocks.toList, clientMessageId))
-                  case None => IO.unit)
+                logInputHistory(content, attachments) *>
+                withActiveAgent(ref => IO(ref ! AgentCommand.UserInput(content, None, clientMessageId)))
           }
         else IO.unit
         end if

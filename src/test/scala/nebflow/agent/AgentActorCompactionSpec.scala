@@ -4,7 +4,8 @@ import munit.FunSuite
 import nebflow.shared.{Message, MessageRole}
 import nebflow.core.compact.CompactConfig
 
-/** Lightweight state-level circuit breaker tests.
+/**
+ * Lightweight state-level circuit breaker tests.
  *  Full Pekko actor integration tests would require pekko-actor-testkit-typed
  *  dependency and extensive mocking; these tests validate the core state
  *  transition logic that the actor relies on.
@@ -25,7 +26,7 @@ class AgentActorCompactionSpec extends FunSuite:
       pendingAskUser = None,
       pendingPermission = None,
       recentToolCalls = Nil,
-      turnIdx = 0,
+      turnIdx = 0
     )
 
   test("fresh state allows compaction (failures = 0 < max = 3)") {
@@ -50,7 +51,7 @@ class AgentActorCompactionSpec extends FunSuite:
 
   test("state reset: copy with compactionFailures = 0 after success") {
     val failed = mkState(3)
-    val reset = failed.copy(compactionFailures = 0)
+    val reset = failed.withCompactionFailures(0)
     assertEquals(reset.compactionFailures, 0)
     assert(reset.compactionFailures < CompactConfig().circuitBreakerMax)
   }
@@ -58,9 +59,11 @@ class AgentActorCompactionSpec extends FunSuite:
   test("pendingCompaction field is preserved during state transitions") {
     val state = mkState(0)
     assert(state.pendingCompaction.isEmpty)
-    val withPending = state.copy(pendingCompaction = Some(
-      CompactionContext("sub-1", "full", None, None)
-    ))
+    val withPending = state.withPendingCompaction(
+      Some(
+        CompactionJob("sub-1", "full", None, None)
+      )
+    )
     assert(withPending.pendingCompaction.isDefined)
   }
 
@@ -82,14 +85,13 @@ class AgentActorCompactionSpec extends FunSuite:
       Message(MessageRole.User, Left("hello")),
       Message(MessageRole.Assistant, Left("world"))
     )
-    val state = mkState(2).copy(
-      messages = originalMsgs,
-      pendingCompaction = Some(CompactionContext("sub-1", "micro", None, None))
-    )
+    val state = mkState(2)
+      .withMessages(originalMsgs)
+      .withPendingCompaction(Some(CompactionJob("sub-1", "micro", None, None)))
     // Simulate the success branch transformations in DelegateResult
     val compactedMsgs = List(Message(MessageRole.User, Left("summary")))
-    val newState = state.copy(pendingCompaction = None, subagents = Map.empty)
-    val successState = newState.copy(messages = compactedMsgs, compactionFailures = 0)
+    val newState = state.withPendingCompaction(None).withSubagents(Map.empty)
+    val successState = newState.withMessages(compactedMsgs).withCompactionFailures(0)
 
     assert(successState.pendingCompaction.isEmpty)
     assertEquals(successState.compactionFailures, 0)
@@ -102,16 +104,16 @@ class AgentActorCompactionSpec extends FunSuite:
       Message(MessageRole.User, Left("hello")),
       Message(MessageRole.Assistant, Left("world"))
     )
-    val state = mkState(1).copy(
-      messages = originalMsgs,
-      pendingCompaction = Some(CompactionContext("sub-1", "full", None, None))
-    )
+    val state = mkState(1)
+      .withMessages(originalMsgs)
+      .withPendingCompaction(Some(CompactionJob("sub-1", "full", None, None)))
     // Simulate the failure branch transformations in DelegateResult (non-circuit-broken)
     val failures = state.compactionFailures + 1 // 2
-    val newState = state.copy(pendingCompaction = None, subagents = Map.empty)
-    val failedState = newState.copy(compactionFailures = failures)
+    val newState = state.withPendingCompaction(None).withSubagents(Map.empty)
+    val failedState = newState.withCompactionFailures(failures)
 
     assert(failedState.pendingCompaction.isEmpty)
     assertEquals(failedState.compactionFailures, 2)
     assertEquals(failedState.messages, originalMsgs) // original messages retained
   }
+end AgentActorCompactionSpec
