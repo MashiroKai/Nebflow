@@ -4,8 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.gateway.SessionStore
-import nebflow.gateway.SessionMeta
+import nebflow.gateway.{SessionMeta, SessionStore}
 import nebflow.shared.Message
 
 class SessionService(store: SessionStore):
@@ -38,10 +37,12 @@ class SessionService(store: SessionStore):
     for
       sessions <- store.listSessions
       activeId <- store.getActiveId
-      _ <- wsSend(Json.obj(
-        "type" -> "sessionList".asJson,
-        "sessions" -> sessions.asJson,
-        "activeId" -> activeId.asJson
-      ))
+      _ <- wsSend(
+        Json.obj(
+          "type" -> "sessionList".asJson,
+          "sessions" -> sessions.asJson,
+          "activeId" -> activeId.asJson
+        )
+      )
     yield ()
 end SessionService

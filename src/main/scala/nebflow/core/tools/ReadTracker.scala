@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.{IO, Ref}
+
 import java.nio.file.Path
 
 class ReadTracker private (state: Ref[IO, Set[Path]]):
@@ -9,5 +10,6 @@ class ReadTracker private (state: Ref[IO, Set[Path]]):
   def clear(): IO[Unit] = state.set(Set.empty)
 
 object ReadTracker:
+
   def create: IO[ReadTracker] =
     Ref.of[IO, Set[Path]](Set.empty).map(new ReadTracker(_))

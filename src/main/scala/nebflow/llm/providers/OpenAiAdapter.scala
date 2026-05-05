@@ -18,6 +18,17 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
+  /** Build system message from stable + dynamic parts for OpenAI's messages format. */
+  private def buildSystemMessage(params: SendMessageParams): Option[Json] =
+    val stable = params.systemStable.filter(_.nonEmpty)
+    val dynamic = params.systemDynamic.filter(_.nonEmpty)
+    val fallback = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(_.nonEmpty)
+    val text = stable.orElse(fallback) match
+      case Some(s) => if dynamic.nonEmpty then s"$s\n\n${dynamic.get}" else s
+      case None => dynamic.orNull
+    if text != null && text.nonEmpty then Some(Json.obj("role" -> "system".asJson, "content" -> text.asJson))
+    else None
+
   private def toOpenAiMessages(messages: List[Message]): List[Json] =
     messages.filterNot(_.role == MessageRole.System).map { msg =>
       val role = msg.role match
@@ -110,9 +121,12 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       }
 
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
+    val systemMsg = buildSystemMessage(params)
+    val baseMessages = toOpenAiMessages(params.messages)
+    val allMessages = systemMsg.toList ++ baseMessages
     val body = Json.obj(
       "model" -> params.model.asJson,
-      "messages" -> Json.fromValues(toOpenAiMessages(params.messages)),
+      "messages" -> Json.fromValues(allMessages),
       "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson
     )
     val bodyWithTools = params.tools.filter(_.nonEmpty) match
@@ -123,12 +137,27 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       case Some(t) if t.hcursor.get[String]("type").toOption.contains("enabled") =>
         bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> "high".asJson))
       case _ => bodyWithTools
+    val bodyWithMetadata = (params.sessionId, params.agentId) match
+      case (Some(sid), Some(aid)) =>
+        bodyWithThinking.deepMerge(
+          Json.obj(
+            "metadata" -> Json.obj(
+              "session_id" -> sid.asJson,
+              "agent_id" -> aid.asJson
+            )
+          )
+        )
+      case (Some(sid), _) =>
+        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+      case (_, Some(aid)) =>
+        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _ => bodyWithThinking
 
     val request = basicRequest
       .post(uri"$base/chat/completions")
       .header("Authorization", s"Bearer $apiKey")
       .header("content-type", "application/json")
-      .body(bodyWithThinking.noSpaces)
+      .body(bodyWithMetadata.noSpaces)
 
     backend.send(request).flatMap { response =>
       response.body match
@@ -162,9 +191,12 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
   end sendMessage
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
+    val systemMsg = buildSystemMessage(params)
+    val baseMessages = toOpenAiMessages(params.messages)
+    val allMessages = systemMsg.toList ++ baseMessages
     val body = Json.obj(
       "model" -> params.model.asJson,
-      "messages" -> Json.fromValues(toOpenAiMessages(params.messages)),
+      "messages" -> Json.fromValues(allMessages),
       "max_tokens" -> (params.maxTokens.getOrElse(Defaults.MaxTokensCompact)).asJson,
       "stream" -> true.asJson,
       "stream_options" -> Json.obj("include_usage" -> true.asJson)
@@ -177,13 +209,28 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       case Some(t) if t.hcursor.get[String]("type").toOption.contains("enabled") =>
         bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> "high".asJson))
       case _ => bodyWithTools
+    val bodyWithMetadata = (params.sessionId, params.agentId) match
+      case (Some(sid), Some(aid)) =>
+        bodyWithThinking.deepMerge(
+          Json.obj(
+            "metadata" -> Json.obj(
+              "session_id" -> sid.asJson,
+              "agent_id" -> aid.asJson
+            )
+          )
+        )
+      case (Some(sid), _) =>
+        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+      case (_, Some(aid)) =>
+        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _ => bodyWithThinking
 
     Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
       val request = basicRequest
         .post(uri"$base/chat/completions")
         .header("Authorization", s"Bearer $apiKey")
         .header("content-type", "application/json")
-        .body(bodyWithThinking.noSpaces)
+        .body(bodyWithMetadata.noSpaces)
         .response(asStreamUnsafe(Fs2Streams[IO]))
         .readTimeout(360.seconds)
 

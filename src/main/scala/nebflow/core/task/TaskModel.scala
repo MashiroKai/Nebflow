@@ -4,20 +4,23 @@ import io.circe.generic.semiauto.deriveCodec
 import io.circe.{Codec, Json}
 
 enum TaskStatus:
-  case Pending, InProgress, Completed
+  case Pending, InProgress, Completed, Failed
 
 object TaskStatus:
+
   given Codec[TaskStatus] = io.circe.Codec.from(
     io.circe.Decoder.decodeString.emap {
-      case "pending"     => Right(TaskStatus.Pending)
+      case "pending" => Right(TaskStatus.Pending)
       case "in_progress" => Right(TaskStatus.InProgress)
-      case "completed"   => Right(TaskStatus.Completed)
-      case other         => Left(s"Unknown task status: $other")
+      case "completed" => Right(TaskStatus.Completed)
+      case "failed" => Right(TaskStatus.Failed)
+      case other => Left(s"Unknown task status: $other")
     },
     io.circe.Encoder.encodeString.contramap {
-      case TaskStatus.Pending    => "pending"
+      case TaskStatus.Pending => "pending"
       case TaskStatus.InProgress => "in_progress"
-      case TaskStatus.Completed  => "completed"
+      case TaskStatus.Completed => "completed"
+      case TaskStatus.Failed => "failed"
     }
   )
 

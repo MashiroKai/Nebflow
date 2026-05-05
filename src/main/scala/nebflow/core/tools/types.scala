@@ -1,32 +1,42 @@
 package nebflow.core.tools
 
+import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
+import nebflow.agent.{AgentCommand, AgentDef, AgentLibrary}
 import nebflow.core.task.TaskStore
+import nebflow.core.{AskItem, AskOption}
 import nebflow.shared.*
+import org.apache.pekko.actor.typed.ActorRef
 
-/** 工具执行上下文 */
+/** Tool execution context — provides all dependencies a tool may need. */
 case class ToolContext(
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
-  // Access constraint: sessionStore is a persistence layer — tools should not modify
-  // messages directly. Only session-management tools (e.g. NewSessionTool) may use it.
   sessionStore: Option[nebflow.gateway.SessionStore] = None,
-  agentActorRef: Option[org.apache.pekko.actor.typed.ActorRef[nebflow.agent.AgentCommand]] = None,
+  agentActorRef: Option[ActorRef[AgentCommand]] = None,
   contextWindow: Int = Defaults.ContextWindow,
   sessionId: Option[String] = None,
   taskStore: Option[TaskStore] = None,
   wsSend: Option[Json => IO[Unit]] = None,
-  readTracker: Option[ReadTracker] = None
+  readTracker: Option[ReadTracker] = None,
+  // Agent-scoped context for formerly-synthetic tools
+  parentRef: Option[ActorRef[AgentCommand]] = None,
+  depth: Int = 0,
+  agentDef: Option[AgentDef] = None,
+  agentLibrary: Option[AgentLibrary] = None,
+  askSemaphore: Option[Semaphore[IO]] = None,
+  pekkoScheduler: Option[org.apache.pekko.actor.typed.Scheduler] = None,
+  fileLockManager: Option[FileLockManager] = None
 )
 
-/** 工具错误 */
+/** Tool error */
 case class ToolError(message: String)
 
-/** 进程执行结果 */
+/** Process execution result */
 case class ProcessResult(stdout: String, stderr: String, exitCode: Int, cwd: String)
 
-/** 工具接口 */
+/** Tool interface — all tools (built-in, synthetic, MCP) implement this trait. */
 trait Tool:
   def name: String
   def description: String

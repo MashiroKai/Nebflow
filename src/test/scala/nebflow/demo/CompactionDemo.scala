@@ -47,19 +47,25 @@ class CompactionDemo extends munit.FunSuite:
       toolResultMsg("tu-3", "src/auth.ts:42\nsrc/middleware.ts:15\nsrc/utils.ts:88"),
       textMsg(MessageRole.User, "Great find. Please consolidate them into middleware.ts."),
       textMsg(MessageRole.Assistant, "I'll refactor the JWT validation into middleware.ts."),
-      toolUseMsg("tu-4", "Edit", JsonObject.fromMap(Map(
-        "file_path" -> io.circe.Json.fromString("src/middleware.ts"),
-        "old_string" -> io.circe.Json.fromString("// authGuard stub"),
-        "new_string" -> io.circe.Json.fromString("// consolidated JWT validation")
-      ))),
-      toolResultMsg("tu-4", "[Edit successful] src/middleware.ts updated."),
+      toolUseMsg(
+        "tu-4",
+        "Edit",
+        JsonObject.fromMap(
+          Map(
+            "file_path" -> io.circe.Json.fromString("src/middleware.ts"),
+            "old_string" -> io.circe.Json.fromString("// authGuard stub"),
+            "new_string" -> io.circe.Json.fromString("// consolidated JWT validation")
+          )
+        )
+      ),
+      toolResultMsg("tu-4", "[Edit successful] src/middleware.ts updated.")
     )
 
     // Pad with filler messages to simulate a long history
     val filler = (1 to 20).flatMap { i =>
       List(
         textMsg(MessageRole.User, s"Follow-up question #$i about edge cases in auth."),
-        textMsg(MessageRole.Assistant, s"Answer #$i: handled by the new middleware."),
+        textMsg(MessageRole.Assistant, s"Answer #$i: handled by the new middleware.")
       )
     }.toList
 
@@ -205,3 +211,4 @@ src/middleware.ts
     // Always pass — this is a visual demo, not an assertion test
     assertEquals(true, true)
   }
+end CompactionDemo

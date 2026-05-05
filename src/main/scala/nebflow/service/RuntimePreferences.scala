@@ -2,10 +2,10 @@ package nebflow.service
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{PermissionPolicy, ApprovalDecision}
+import io.circe.{Decoder, Encoder, Json}
+import nebflow.core.{ApprovalDecision, PermissionPolicy}
 
 // ============================================================
 // Thinking Configuration
@@ -17,6 +17,7 @@ case class ThinkingConfig(
 )
 
 object ThinkingConfig:
+
   given Encoder[ThinkingConfig] = Encoder.instance { tc =>
     Json.obj(
       "enabled" -> tc.enabled.asJson,
@@ -55,6 +56,7 @@ case class RuntimePreferences(
 )
 
 object RuntimePreferences:
+
   given Encoder[RuntimePreferences] = Encoder.instance { rp =>
     Json.obj(
       "permissionPolicy" -> rp.permissionPolicy.asJson,
@@ -116,8 +118,7 @@ object RuntimePreferencesService:
         // Migrate from legacy permission_policy.json
         val legacyPolicy = decode[PermissionPolicy](os.read(legacyPolicyPath)).getOrElse(PermissionPolicy.default)
         RuntimePreferences(permissionPolicy = legacyPolicy)
-      else
-        RuntimePreferences.default
+      else RuntimePreferences.default
     catch case _: Exception => RuntimePreferences.default
 
   private def save(stateRef: Ref[IO, RuntimePreferences]): IO[Unit] =

@@ -16,7 +16,8 @@ class PluginLoaderSpec extends CatsEffectSuite:
     val tmp = os.temp.dir()
     val pluginDir = tmp / "test-plugin"
     os.makeDir.all(pluginDir)
-    os.write(pluginDir / "plugin.yaml",
+    os.write(
+      pluginDir / "plugin.yaml",
       """name: test-plugin
         |version: 1.2.3
         |description: A test plugin
@@ -30,36 +31,42 @@ class PluginLoaderSpec extends CatsEffectSuite:
         |    - main.js
         |  styles:
         |    - style.css
-        |""".stripMargin)
+        |""".stripMargin
+    )
 
-    PluginLoader.scan(tmp).map { manifests =>
-      assertEquals(manifests.length, 1)
-      val pm = manifests.head
-      assertEquals(pm.name, "test-plugin")
-      assertEquals(pm.version, "1.2.3")
-      assertEquals(pm.description, "A test plugin")
-      assert(pm.mcp.isDefined)
-      assert(pm.mcp.get.command.contains("npx"))
-      assert(pm.frontend.isDefined)
-      assertEquals(pm.frontend.get.scripts, List("main.js"))
-      assertEquals(pm.frontend.get.styles, List("style.css"))
-    }.guarantee(IO.blocking(os.remove.all(tmp)))
+    PluginLoader
+      .scan(tmp)
+      .map { manifests =>
+        assertEquals(manifests.length, 1)
+        val pm = manifests.head
+        assertEquals(pm.name, "test-plugin")
+        assertEquals(pm.version, "1.2.3")
+        assertEquals(pm.description, "A test plugin")
+        assert(pm.mcp.isDefined)
+        assert(pm.mcp.get.command.contains("npx"))
+        assert(pm.frontend.isDefined)
+        assertEquals(pm.frontend.get.scripts, List("main.js"))
+        assertEquals(pm.frontend.get.styles, List("style.css"))
+      }
+      .guarantee(IO.blocking(os.remove.all(tmp)))
   }
 
   test("scan parses valid plugin.json manifest") {
     val tmp = os.temp.dir()
     val pluginDir = tmp / "json-plugin"
     os.makeDir.all(pluginDir)
-    os.write(pluginDir / "plugin.json",
-      """{"name":"json-plugin","version":"0.1.0","description":"JSON manifest"}""")
+    os.write(pluginDir / "plugin.json", """{"name":"json-plugin","version":"0.1.0","description":"JSON manifest"}""")
 
-    PluginLoader.scan(tmp).map { manifests =>
-      assertEquals(manifests.length, 1)
-      val pm = manifests.head
-      assertEquals(pm.name, "json-plugin")
-      assertEquals(pm.version, "0.1.0")
-      assertEquals(pm.description, "JSON manifest")
-    }.guarantee(IO.blocking(os.remove.all(tmp)))
+    PluginLoader
+      .scan(tmp)
+      .map { manifests =>
+        assertEquals(manifests.length, 1)
+        val pm = manifests.head
+        assertEquals(pm.name, "json-plugin")
+        assertEquals(pm.version, "0.1.0")
+        assertEquals(pm.description, "JSON manifest")
+      }
+      .guarantee(IO.blocking(os.remove.all(tmp)))
   }
 
   test("scan skips directories without manifest") {
@@ -67,9 +74,12 @@ class PluginLoaderSpec extends CatsEffectSuite:
     val emptyDir = tmp / "empty-plugin"
     os.makeDir.all(emptyDir)
 
-    PluginLoader.scan(tmp).map { manifests =>
-      assertEquals(manifests, Nil)
-    }.guarantee(IO.blocking(os.remove.all(tmp)))
+    PluginLoader
+      .scan(tmp)
+      .map { manifests =>
+        assertEquals(manifests, Nil)
+      }
+      .guarantee(IO.blocking(os.remove.all(tmp)))
   }
 
   test("extractMcpConfigs prefixes serverId with plugin__") {
@@ -99,3 +109,4 @@ class PluginLoaderSpec extends CatsEffectSuite:
     assertEquals(configs("b").scripts, List("b.js"))
     assertEquals(configs("b").styles, Nil)
   }
+end PluginLoaderSpec

@@ -7,12 +7,16 @@ import nebflow.shared.*
 import nebflow.shared.given
 
 trait HistoryArchiver:
-  /** Archive messages before compaction. Returns Right(path) on success, Left(reason) on failure.
-   *  Callers should treat failure as non-blocking (log and continue). */
+  /**
+   * Archive messages before compaction. Returns Right(path) on success, Left(reason) on failure.
+   *  Callers should treat failure as non-blocking (log and continue).
+   */
   def archive(sessionId: String, messages: List[Message]): IO[Either[String, String]]
 
-  /** Archive a before/after comparison of compaction. Returns Right(path) on success.
-   *  Callers should treat failure as non-blocking (log and continue). */
+  /**
+   * Archive a before/after comparison of compaction. Returns Right(path) on success.
+   *  Callers should treat failure as non-blocking (log and continue).
+   */
   def archiveComparison(
     sessionId: String,
     mode: String,

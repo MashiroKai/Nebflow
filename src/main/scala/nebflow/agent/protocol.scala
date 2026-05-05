@@ -211,30 +211,58 @@ enum AgentStreamEvent:
           "summary" -> summary.asJson
         )
     case CompactStart(mode, inputTokens, threshold) =>
-      Json.obj(
-        "type" -> "compactStart".asJson,
-        "agentId" -> agentId.asJson,
-        "mode" -> mode.asJson,
-        "inputTokens" -> inputTokens.asJson,
-        "threshold" -> threshold.asJson
-      )
+      if isSubagent then
+        Json.obj(
+          "type" -> "agentCompactStart".asJson,
+          "agentId" -> agentId.asJson,
+          "mode" -> mode.asJson,
+          "inputTokens" -> inputTokens.asJson,
+          "threshold" -> threshold.asJson
+        )
+      else
+        Json.obj(
+          "type" -> "compactStart".asJson,
+          "sessionId" -> sessionId.asJson,
+          "mode" -> mode.asJson,
+          "inputTokens" -> inputTokens.asJson,
+          "threshold" -> threshold.asJson
+        )
     case CompactComplete(before, after, snapshotPath, comparisonPath) =>
-      val base = Json.obj(
-        "type" -> "compactComplete".asJson,
-        "agentId" -> agentId.asJson,
-        "before" -> before.asJson,
-        "after" -> after.asJson
-      )
-      val withSnapshot = snapshotPath.fold(base)(p => base.deepMerge(Json.obj("snapshotPath" -> p.asJson)))
-      comparisonPath.fold(withSnapshot)(p => withSnapshot.deepMerge(Json.obj("comparisonPath" -> p.asJson)))
+      if isSubagent then
+        val base = Json.obj(
+          "type" -> "agentCompactComplete".asJson,
+          "agentId" -> agentId.asJson,
+          "before" -> before.asJson,
+          "after" -> after.asJson
+        )
+        val withSnapshot = snapshotPath.fold(base)(p => base.deepMerge(Json.obj("snapshotPath" -> p.asJson)))
+        comparisonPath.fold(withSnapshot)(p => withSnapshot.deepMerge(Json.obj("comparisonPath" -> p.asJson)))
+      else
+        val base = Json.obj(
+          "type" -> "compactComplete".asJson,
+          "sessionId" -> sessionId.asJson,
+          "before" -> before.asJson,
+          "after" -> after.asJson
+        )
+        val withSnapshot = snapshotPath.fold(base)(p => base.deepMerge(Json.obj("snapshotPath" -> p.asJson)))
+        comparisonPath.fold(withSnapshot)(p => withSnapshot.deepMerge(Json.obj("comparisonPath" -> p.asJson)))
     case CompactFailed(reason, attempt, maxAttempts) =>
-      Json.obj(
-        "type" -> "compactFailed".asJson,
-        "agentId" -> agentId.asJson,
-        "reason" -> reason.asJson,
-        "attempt" -> attempt.asJson,
-        "maxAttempts" -> maxAttempts.asJson
-      )
+      if isSubagent then
+        Json.obj(
+          "type" -> "agentCompactFailed".asJson,
+          "agentId" -> agentId.asJson,
+          "reason" -> reason.asJson,
+          "attempt" -> attempt.asJson,
+          "maxAttempts" -> maxAttempts.asJson
+        )
+      else
+        Json.obj(
+          "type" -> "compactFailed".asJson,
+          "sessionId" -> sessionId.asJson,
+          "reason" -> reason.asJson,
+          "attempt" -> attempt.asJson,
+          "maxAttempts" -> maxAttempts.asJson
+        )
 
 end AgentStreamEvent
 
@@ -294,8 +322,8 @@ object ToolCallRecord:
     canonicalJsonObject(input).noSpaces
 
   private def canonicalJson(json: Json): Json = json match
-    case j if j.isObject => canonicalJsonObject(j.asObject.get)
-    case j if j.isArray => Json.fromValues(j.asArray.get.map(canonicalJson))
+    case j if j.isObject => j.asObject.fold(json)(canonicalJsonObject)
+    case j if j.isArray => Json.fromValues(j.asArray.fold(Seq.empty[Json])(_.map(canonicalJson)))
     case other => other
 
   private def canonicalJsonObject(obj: JsonObject): Json =
