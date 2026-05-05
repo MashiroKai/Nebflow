@@ -19,11 +19,15 @@ export default {
   activeSessionId: null,
   sessions: [],
   unreadSessions: new Set(),
+  markedUnreadSessions: new Set(safeParse(localStorage.getItem('nebflow_marked_unread'), [])),
+  pinnedSessions: new Set(safeParse(localStorage.getItem('nebflow_pinned'), [])),
+  attentionSessions: new Set(),
   legacyMigrated: false,
 
   // Chat streaming
-  busySessionId: null,
-  busyTimeoutId: null,
+  busySessionIds: new Set(),
+  sessionBusyTimeouts: {},
+  compactingSessionIds: new Set(),
   currentAiBubble: null,
   aiText: '',
 
@@ -36,6 +40,9 @@ export default {
   // Per-session streaming text buffer: sessionId -> accumulated text
   sessionTexts: {},
 
+  // Per-session turn start time: sessionId -> timestamp (ms)
+  turnStartTimes: {},
+
   // Per-session pending tool card: sessionId -> DOM row element
   sessionToolCards: {},
 
@@ -45,6 +52,11 @@ export default {
   // Agent panel
   agentsData: [],
   configText: '',
+  // Available tools (loaded from backend ToolRegistry)
+  availableTools: [],
+
+  // Per-session input drafts: sessionId -> { text, attachments }
+  sessionInputDrafts: {},
 
   // Input
   pendingAttachments: [],
@@ -55,6 +67,9 @@ export default {
   historyDraft: '',
   pendingDeleteId: null,
 
+
+  // Stage tracking: last known stage per session (for detecting stage changes)
+  lastStage: {},
   // Server config (sent on WS connect)
   streamTimeoutMs: 900000,
   serverVersion: '',
@@ -66,6 +81,12 @@ export default {
 
   // Scroll
   scrollSnapped: true,
+
+  // History pagination
+  historyOffset: 0,
+  historyTotal: 0,
+  historyHasMore: false,
+  historyLoading: false,
 
   // IME
   composing: false,

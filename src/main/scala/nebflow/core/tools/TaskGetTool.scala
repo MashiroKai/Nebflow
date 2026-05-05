@@ -50,9 +50,10 @@ object TaskGetTool extends Tool:
         store.get(sessionId, taskId).map {
           case Some(task) =>
             val status = task.status match
-              case TaskStatus.Pending    => "pending"
+              case TaskStatus.Pending => "pending"
               case TaskStatus.InProgress => "in_progress"
-              case TaskStatus.Completed  => "completed"
+              case TaskStatus.Completed => "completed"
+              case TaskStatus.Failed => "failed"
             val lines = List(
               s"Task #${task.id} [$status]",
               s"Subject: ${task.subject}",

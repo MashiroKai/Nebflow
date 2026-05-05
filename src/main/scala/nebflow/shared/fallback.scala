@@ -1,6 +1,7 @@
 package nebflow.shared
 
 enum FailoverReason:
+
   case Auth, RateLimit, Overloaded, ServerError, ModelNotFound, ProviderError, Format, ConnectionReset, Timeout,
     EmptyStream, Unknown
 
