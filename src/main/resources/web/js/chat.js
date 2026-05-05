@@ -49,15 +49,22 @@ export function clearRetryStatus() {
 
 // ---------- Busy toggle (per-session) ----------
 export function setBusy(sessionId) {
-  const { input, sendBtn, stopBtn } = state.dom;
-  state.busySessionId = sessionId;
-  const isBusy = sessionId !== null;
-  const isCurrentSession = isBusy && sessionId === state.activeSessionId;
-  input.disabled = isCurrentSession;
-  if (isCurrentSession) {
+  if (sessionId) state.busySessionIds.add(sessionId);
+  window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
+  if (sessionId === state.activeSessionId) {
+    const { input, sendBtn, stopBtn } = state.dom;
+    input.disabled = true;
     sendBtn.style.display = 'none';
     stopBtn.style.display = 'flex';
-  } else {
+  }
+}
+
+export function clearBusy(sessionId) {
+  state.busySessionIds.delete(sessionId);
+  window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
+  if (sessionId === state.activeSessionId) {
+    const { input, sendBtn, stopBtn } = state.dom;
+    input.disabled = false;
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'none';
     input.focus();
@@ -124,7 +131,7 @@ export function appendAiText(text) {
   smartScroll();
 }
 
-export function finishAi() {
+export function finishAi(durationMs) {
   if (state.currentAiBubble) {
     if (!state.aiText) {
       const row = state.currentAiBubble.closest('.row');
@@ -136,12 +143,40 @@ export function finishAi() {
     if (askBox) askBox.remove();
     state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText || '');
     if (askBox) state.currentAiBubble.appendChild(askBox);
-    const result = { type: 'ai', text: state.aiText };
+    if (durationMs != null && durationMs > 0) {
+      renderDurationBadge(state.currentAiBubble, durationMs);
+    }
+    const result = { type: 'ai', text: state.aiText, durationMs };
     state.currentAiBubble = null;
     state.aiText = '';
     return result;
   }
   return null;
+}
+
+/**
+ * Format milliseconds into a human-readable duration string.
+ * e.g. 5000 -> "5s", 93000 -> "1m 33s", 547000 -> "9m 7s"
+ */
+function formatDuration(ms) {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return totalSeconds + 's';
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes + 'm ' + seconds + 's';
+}
+
+/**
+ * Render a subtle duration badge below an AI bubble.
+ * Example: "✻ Thought for 2m 15s"
+ */
+export function renderDurationBadge(bubble, durationMs) {
+  const row = bubble.closest('.row');
+  if (!row) return;
+  const badge = document.createElement('div');
+  badge.className = 'duration-badge';
+  badge.textContent = '✻ Thought for ' + formatDuration(durationMs);
+  row.appendChild(badge);
 }
 
 // ---------- Multi-agent rendering ----------
@@ -307,17 +342,40 @@ export function renderTimeoutNotice() {
 export function renderSystemBubble(text) {
   const chat = state.dom.chat;
   const row = document.createElement('div');
-  row.className = 'row error';
+  row.className = 'row notice';
   const card = document.createElement('div');
-  card.className = 'error-card';
-  card.style.background = '#e3f2fd';
-  card.style.color = '#1565c0';
+  card.className = 'notice-card notice-info';
   card.textContent = text;
   row.appendChild(card);
   chat.appendChild(row);
   smartScroll();
   return { type: 'system', text };
 }
+
+// ---------- Stage bubble (adaptive stage transitions) ----------
+const STAGE_STYLES = {
+  Cautious:     { cls: 'notice-warn',    icon: '⚠' },
+  Conservative: { cls: 'notice-danger',  icon: '⛔' },
+  Paused:       { cls: 'notice-info',    icon: '⏸' },
+  Normal:       null,
+};
+
+export function renderStageBubble(stage, stagnationCount, turnIdx) {
+  const s = STAGE_STYLES[stage];
+  if (!s) return null;
+  const chat = state.dom.chat;
+  const row = document.createElement('div');
+  row.className = 'row notice';
+  const card = document.createElement('div');
+  card.className = 'notice-card ' + s.cls;
+  const label = stage === 'Paused' ? 'Paused' : stage;
+  card.textContent = `${s.icon} [${label}] Turn ${turnIdx} · stagnant ${stagnationCount}`;
+  row.appendChild(card);
+  chat.appendChild(row);
+  smartScroll();
+  return { type: 'stage', stage, stagnationCount, turnIdx };
+}
+
 
 // ---------- Universal Option Box ----------
 // Renders an inline option picker. Used by AskUser tool, /thinking, permission prompts.
@@ -448,7 +506,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 }
 
 // ---------- AskUser ----------
-export function renderAskUser(items) {
+export function renderAskUser(items, askSessionId) {
   console.log('[askUser] rendering', items?.length || 0, 'questions');
   if (!Array.isArray(items) || items.length === 0) {
     renderError('Waiting for question...');
@@ -463,15 +521,19 @@ export function renderAskUser(items) {
   bubble.className = 'bubble ai';
   row.appendChild(bubble);
   chat.appendChild(row);
+  // Use the sessionId from the askUser message, not the currently active session
+  const targetSid = askSessionId || state.activeSessionId;
   try {
     showOptions(bubble, items, (answers) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'askUserAnswer', answers }));
+        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers }));
       }
+      window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, 'Confirm', () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'askUserAnswer', answers: ['__cancelled__'] }));
+        state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'] }));
       }
+      window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     });
   } catch (e) {
     console.error('[askUser] render failed:', e);
@@ -481,7 +543,7 @@ export function renderAskUser(items) {
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId) {
   const chat = state.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -499,6 +561,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson) {
     else if (input.url) detail = 'URL: ' + input.url;
   } catch (e) {}
 
+  const targetSid = permSessionId || state.activeSessionId;
   const items = [{
     question: 'Allow ' + toolName + '?',
     options: [
@@ -509,12 +572,14 @@ export function renderPermissionPrompt(toolName, summary, inputJson) {
   showOptions(bubble, items, (answers) => {
     const approved = answers[0] === 'Allow';
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', approved }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved }));
     }
+    window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   }, 'Confirm', () => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', approved: false }));
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: false }));
     }
+    window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   });
   smartScroll();
 }

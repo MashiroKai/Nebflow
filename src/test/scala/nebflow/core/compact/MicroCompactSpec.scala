@@ -22,14 +22,15 @@ class MicroCompactSpec extends CatsEffectSuite:
 
   test("rebuild messages in original index order when keep covers scattered indices") {
     val messages = List(
-      textMsg(MessageRole.User,     "msg0"),
+      textMsg(MessageRole.User, "msg0"),
       textMsg(MessageRole.Assistant, "msg1"),
-      textMsg(MessageRole.User,     "msg2"),
+      textMsg(MessageRole.User, "msg2"),
       textMsg(MessageRole.Assistant, "msg3"),
-      textMsg(MessageRole.User,     "msg4"),
-      textMsg(MessageRole.Assistant, "msg5"),
+      textMsg(MessageRole.User, "msg4"),
+      textMsg(MessageRole.Assistant, "msg5")
     )
-    val llmOut = """<keep>0,2,4</keep><compact start="1" end="1">summary1</compact><compact start="3" end="3">summary2</compact><compact start="5" end="5">summary3</compact>"""
+    val llmOut =
+      """<keep>0,2,4</keep><compact start="1" end="1">summary1</compact><compact start="3" end="3">summary2</compact><compact start="5" end="5">summary3</compact>"""
     val result = MicroCompact.parseResponse(llmOut, messages)
     assert(result.isRight)
     val compacted = result.toOption.get
@@ -44,12 +45,12 @@ class MicroCompactSpec extends CatsEffectSuite:
 
   test("missing indices are inserted in ascending order, not appended at tail") {
     val messages = List(
-      textMsg(MessageRole.User,     "msg0"),
+      textMsg(MessageRole.User, "msg0"),
       textMsg(MessageRole.Assistant, "msg1"),
-      textMsg(MessageRole.User,     "msg2"),
+      textMsg(MessageRole.User, "msg2"),
       textMsg(MessageRole.Assistant, "msg3"),
-      textMsg(MessageRole.User,     "msg4"),
-      textMsg(MessageRole.Assistant, "msg5"),
+      textMsg(MessageRole.User, "msg4"),
+      textMsg(MessageRole.Assistant, "msg5")
     )
     val llmOut = """<keep>2,3</keep>"""
     val result = MicroCompact.parseResponse(llmOut, messages)
@@ -66,9 +67,9 @@ class MicroCompactSpec extends CatsEffectSuite:
 
   test("Keep indices internal disorder is tolerated") {
     val messages = List(
-      textMsg(MessageRole.User,     "msg0"),
+      textMsg(MessageRole.User, "msg0"),
       textMsg(MessageRole.Assistant, "msg1"),
-      textMsg(MessageRole.User,     "msg2"),
+      textMsg(MessageRole.User, "msg2")
     )
     val llmOut = """<keep>2,0,1</keep>"""
     val result = MicroCompact.parseResponse(llmOut, messages)
@@ -85,7 +86,7 @@ class MicroCompactSpec extends CatsEffectSuite:
   test("reject compaction that breaks tool_use/tool_result pairing") {
     val messages = List(
       toolUseMsg("tu-1", "read"),
-      toolResultMsg("tu-1", "file content"),
+      toolResultMsg("tu-1", "file content")
     )
     // Keep the assistant tool_use but compact away the user tool_result.
     // Missing indices are auto-kept, so we must explicitly compact index 1.
@@ -101,7 +102,7 @@ class MicroCompactSpec extends CatsEffectSuite:
       textMsg(MessageRole.User, "before"),
       toolUseMsg("tu-1", "read"),
       toolResultMsg("tu-1", "file content"),
-      textMsg(MessageRole.Assistant, "after"),
+      textMsg(MessageRole.Assistant, "after")
     )
     val llmOut = """<keep>0</keep><compact start="1" end="2">did tools</compact><keep>3</keep>"""
     val result = MicroCompact.parseResponse(llmOut, messages)
@@ -114,7 +115,7 @@ class MicroCompactSpec extends CatsEffectSuite:
     val messages = List(
       textMsg(MessageRole.User, "a"),
       textMsg(MessageRole.Assistant, "b"),
-      textMsg(MessageRole.User, "c"),
+      textMsg(MessageRole.User, "c")
     )
     val llmOut = "```xml\n<keep>0,1,2</keep>\n```"
     val result = MicroCompact.parseResponse(llmOut, messages)
@@ -126,7 +127,7 @@ class MicroCompactSpec extends CatsEffectSuite:
     val messages = List(
       textMsg(MessageRole.User, "a"),
       textMsg(MessageRole.Assistant, "b"),
-      textMsg(MessageRole.User, "c"),
+      textMsg(MessageRole.User, "c")
     )
     val llmOut = """<keep>0</keep><compact start='1' end='2'>summary</compact>"""
     val result = MicroCompact.parseResponse(llmOut, messages)
@@ -139,7 +140,7 @@ class MicroCompactSpec extends CatsEffectSuite:
   test("tolerate reversed attribute order") {
     val messages = List(
       textMsg(MessageRole.User, "a"),
-      textMsg(MessageRole.Assistant, "b"),
+      textMsg(MessageRole.Assistant, "b")
     )
     val llmOut = """<compact end='1' start='0'>summary</compact>"""
     val result = MicroCompact.parseResponse(llmOut, messages)
@@ -175,3 +176,4 @@ class MicroCompactSpec extends CatsEffectSuite:
     val err = result.swap.toOption.get
     assert(err.contains("out of range"))
   }
+end MicroCompactSpec

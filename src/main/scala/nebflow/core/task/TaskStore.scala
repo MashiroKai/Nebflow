@@ -37,8 +37,7 @@ object FileTaskStore extends TaskStore:
 
   private def readHighWaterMark(sessionId: String): IO[Int] = IO.blocking {
     val f = sessionDir(sessionId) / hwmFile
-    if os.exists(f) then
-      os.read(f).trim.toIntOption.getOrElse(0)
+    if os.exists(f) then os.read(f).trim.toIntOption.getOrElse(0)
     else 0
   }
 
@@ -51,7 +50,7 @@ object FileTaskStore extends TaskStore:
     if os.exists(path) then
       decode[Task](os.read(path)) match
         case Right(task) => Some(task)
-        case Left(err)   => throw new RuntimeException(s"Failed to decode task at $path: ${err.getMessage}")
+        case Left(err) => None // Skip corrupted task files silently
     else None
   }
 
@@ -107,33 +106,45 @@ object FileTaskStore extends TaskStore:
   def get(sessionId: String, taskId: String): IO[Option[Task]] =
     readTask(taskFile(sessionId, taskId))
 
-  def list(sessionId: String): IO[List[Task]] = IO.blocking {
-    val dir = sessionDir(sessionId)
-    if !os.exists(dir) then Nil
-    else
-      os.list(dir)
-        .filter(p => p.last.endsWith(".json") && !p.last.startsWith("."))
-        .toList
-        .sortBy(_.last.stripSuffix(".json").toIntOption.getOrElse(0))
-  }.flatMap { paths =>
-    // Issue #6: Don't swallow decode errors
-    paths.traverse { p =>
-      IO.blocking {
-        decode[Task](os.read(p)) match
-          case Right(task) => task
-          case Left(err)   => throw new RuntimeException(s"Failed to decode task at $p: ${err.getMessage}")
-      }
+  def list(sessionId: String): IO[List[Task]] = IO
+    .blocking {
+      val dir = sessionDir(sessionId)
+      if !os.exists(dir) then Nil
+      else
+        os.list(dir)
+          .filter(p => p.last.endsWith(".json") && !p.last.startsWith("."))
+          .toList
+          .sortBy(_.last.stripSuffix(".json").toIntOption.getOrElse(0))
     }
-  }
+    .flatMap { paths =>
+      // Issue #6: Don't swallow decode errors
+      paths
+        .traverse { p =>
+          IO.blocking {
+            decode[Task](os.read(p)) match
+              case Right(task) => task
+              case Left(err) =>
+                org.slf4j.LoggerFactory
+                  .getLogger("nebflow.task")
+                  .warn(s"Skipping corrupted task at $p: ${err.getMessage}")
+                null
+          }
+        }
+        .map(_.filter(_ != null))
+    }
 
   // Issue #2: State transition validation matrix
   private def isValidTransition(from: TaskStatus, to: TaskStatus): Boolean =
     (from, to) match
       case (TaskStatus.Pending, TaskStatus.InProgress) => true
-      case (TaskStatus.Pending, TaskStatus.Pending)    => true // no-op
+      case (TaskStatus.Pending, TaskStatus.Completed) => true
+      case (TaskStatus.Pending, TaskStatus.Failed) => true
+      case (TaskStatus.Pending, TaskStatus.Pending) => true // no-op
       case (TaskStatus.InProgress, TaskStatus.Completed) => true
+      case (TaskStatus.InProgress, TaskStatus.Failed) => true
       case (TaskStatus.InProgress, TaskStatus.InProgress) => true // no-op
-      case (TaskStatus.Completed, TaskStatus.Completed)  => true // no-op
+      case (TaskStatus.Completed, TaskStatus.Completed) => true // no-op
+      case (TaskStatus.Failed, TaskStatus.Failed) => true // no-op
       case _ => false
 
   // Issue #3: DFS cycle detection in dependency graph
@@ -166,9 +177,11 @@ object FileTaskStore extends TaskStore:
         val statusValid = updates.status.isEmpty || isValidTransition(existing.status, newStatus)
 
         if !statusValid then
-          IO.raiseError(new IllegalStateException(
-            s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
-          ))
+          IO.raiseError(
+            new IllegalStateException(
+              s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
+            )
+          )
         else
           val newBlocks = (existing.blocks ++ updates.addBlocks.getOrElse(Nil)).distinct
             .filterNot(updates.removeBlocks.getOrElse(Nil).contains)
@@ -190,12 +203,14 @@ object FileTaskStore extends TaskStore:
           list(sessionId).flatMap { allTasks =>
             val tasksForCheck = allTasks.filterNot(_.id == taskId) :+ updated
             if hasCycle(tasksForCheck) then
-              IO.raiseError(new IllegalStateException(
-                s"Dependency update for task #$taskId would create a cycle"
-              ))
-            else
-              writeTask(sessionId, updated).as(Some(updated))
+              IO.raiseError(
+                new IllegalStateException(
+                  s"Dependency update for task #$taskId would create a cycle"
+                )
+              )
+            else writeTask(sessionId, updated).as(Some(updated))
           }
+        end if
     }
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file

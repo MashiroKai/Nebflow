@@ -3,8 +3,9 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.tools.ToolError
-import nebflow.core.{AskItem, AskOption, AskUser}
+import nebflow.agent.AgentCommand
+import nebflow.core.{AskItem, AskOption}
+import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
 
 object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
@@ -76,14 +77,7 @@ Guidelines:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val questionsJson = input("questions").flatMap(_.asArray).getOrElse(Nil)
 
-    if questionsJson.isEmpty then
-      IO.pure(
-        Left(
-          ToolError(
-            "At least one question is required. For simple questions without options, ask directly in your text response."
-          )
-        )
-      )
+    if questionsJson.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))
     else
       val items = questionsJson.flatMap { q =>
         val question = q.hcursor.downField("question").as[String].getOrElse("")
@@ -96,23 +90,24 @@ Guidelines:
         Some(AskItem(question, opts))
       }.toList
 
-      // Open-ended questions (empty options) are allowed — UI shows a text input
-      ctx.agentActorRef match
-        case Some(agentRef) =>
-          // TODO: Phase 1 AskUser wiring — send AskUser to agent actor and await response
-          // For now, instruct the agent to ask the user directly in its next response
-          IO.pure(
-            Left(
-              ToolError(
-                "AskUserQuestion requires async user response support (not yet wired). " +
-                  "Please ask the user directly in your natural language response instead."
-              )
-            )
-          )
-        case None =>
-          IO.pure(
-            Left(ToolError("AskUserQuestion tool requires an agent actor. Not available in non-interactive mode."))
-          )
+      if items.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))
+      else
+        // Use Pekko Ask pattern via AskUser actor message — actor handles WS forwarding
+        // and completes replyTo when UserAnswered arrives
+        (ctx.agentActorRef, ctx.pekkoScheduler) match
+          case (Some(agentRef), Some(scheduler)) =>
+            import scala.concurrent.ExecutionContext.Implicits.global
+            implicit val sched: org.apache.pekko.actor.typed.Scheduler = scheduler
+            implicit val askTimeout: org.apache.pekko.util.Timeout =
+              org.apache.pekko.util.Timeout(scala.concurrent.duration.Duration(5, "minutes"))
+            val requestId = java.util.UUID.randomUUID().toString.take(8)
+            IO.fromFuture(IO {
+              agentRef.ask[List[String]](replyTo => AgentCommand.AskUser(requestId, items, replyTo))
+            }).map(answers => Right(answers.mkString(", ")))
+              .handleError(e => Left(ToolError(s"AskUser failed: ${e.getMessage}")))
+
+          case _ =>
+            IO.pure(Left(ToolError("AskUserQuestion requires agent actor and scheduler")))
     end if
   end call
 end AskUserQuestionTool

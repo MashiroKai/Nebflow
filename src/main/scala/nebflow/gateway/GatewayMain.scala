@@ -76,67 +76,70 @@ object GatewayMain extends IOApp.Simple:
                             cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
                               val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
                               cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
-                                val sharedResources = SharedResources(
-                                  llm = handle,
-                                  dispatcher = dispatcher,
-                                  sessionStore = sessionStore,
-                                  projectRoot = os.pwd,
-                                  runtimePrefs = runtimePrefs,
-                                  rateLimiter = rateLimiter,
-                                  fileChangeTracker = fileTracker,
-                                  reminderStateRef = reminderStateRef,
-                                  contextWindow = contextWindow,
-                                  skillDiscovery = skillDiscoveryOpt,
-                                  agentLibrary = agentLibrary,
-                                  askSemaphore = askSemaphore,
-                                  taskStore = FileTaskStore,
-                                  historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd)
-                                )
-                                val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
-                                val sessionService = new SessionService(sessionStore)
-                                val agentService = new AgentService(agentLibrary)
-                                val configService = ConfigService
-
-                                val wsHub = new WsHub()
-
-                                EmberServerBuilder
-                                  .default[IO]
-                                  .withHost(cfg.host)
-                                  .withPort(cfg.port)
-                                  .withIdleTimeout(1.hour)
-                                  .withHttpWebSocketApp { wsb =>
-                                    val wsRoutes = new WebSocketRoutes(
-                                      wsb,
-                                      sessionService,
-                                      agentService,
-                                      configService,
-                                      runtimePrefs,
-                                      rateLimiter,
-                                      token,
-                                      fileTracker,
-                                      reminderStateRef,
-                                      sessionStore,
-                                      wsHub,
-                                      actorSystem,
-                                      contextWindow,
-                                      skillDiscoveryOpt,
-                                      sharedResources,
-                                      pluginManifests
-                                    )
-                                    Router(
-                                      "/api" -> chatRoutes.routes,
-                                      "/" -> wsRoutes.routes
-                                    ).orNotFound
-                                  }
-                                  .build
-                                  .use { _ =>
-                                    openBrowser(url) *> IO.never[Unit]
-                                  }
-                                  .guarantee(
-                                    mcpManager.stopAll() *>
-                                      releaseBackend *>
-                                      IO { actorSystem.terminate() }
+                                nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
+                                  val sharedResources = SharedResources(
+                                    llm = handle,
+                                    dispatcher = dispatcher,
+                                    sessionStore = sessionStore,
+                                    projectRoot = os.pwd,
+                                    runtimePrefs = runtimePrefs,
+                                    rateLimiter = rateLimiter,
+                                    fileChangeTracker = fileTracker,
+                                    reminderStateRef = reminderStateRef,
+                                    contextWindow = contextWindow,
+                                    skillDiscovery = skillDiscoveryOpt,
+                                    agentLibrary = agentLibrary,
+                                    askSemaphore = askSemaphore,
+                                    taskStore = FileTaskStore,
+                                    historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd),
+                                    fileLockManager = fileLockMgr
                                   )
+                                  val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
+                                  val sessionService = new SessionService(sessionStore)
+                                  val agentService = new AgentService(agentLibrary)
+                                  val configService = ConfigService
+
+                                  val wsHub = new WsHub()
+
+                                  EmberServerBuilder
+                                    .default[IO]
+                                    .withHost(cfg.host)
+                                    .withPort(cfg.port)
+                                    .withIdleTimeout(1.hour)
+                                    .withHttpWebSocketApp { wsb =>
+                                      val wsRoutes = new WebSocketRoutes(
+                                        wsb,
+                                        sessionService,
+                                        agentService,
+                                        configService,
+                                        runtimePrefs,
+                                        rateLimiter,
+                                        token,
+                                        fileTracker,
+                                        reminderStateRef,
+                                        sessionStore,
+                                        wsHub,
+                                        actorSystem,
+                                        contextWindow,
+                                        skillDiscoveryOpt,
+                                        sharedResources,
+                                        pluginManifests
+                                      )
+                                      Router(
+                                        "/api" -> chatRoutes.routes,
+                                        "/" -> wsRoutes.routes
+                                      ).orNotFound
+                                    }
+                                    .build
+                                    .use { _ =>
+                                      openBrowser(url) *> IO.never[Unit]
+                                    }
+                                    .guarantee(
+                                      mcpManager.stopAll() *>
+                                        releaseBackend *>
+                                        IO { actorSystem.terminate() }
+                                    )
+                                } // end fileLockMgr
                               } // end askSemaphore
                             } // end dispatcher.use
                           } // end reminderStateRef
