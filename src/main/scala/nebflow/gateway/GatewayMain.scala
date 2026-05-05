@@ -9,7 +9,7 @@ import nebflow.core.mcp.*
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
-import nebflow.service.{AgentService, ConfigService, RuntimePreferencesService, SessionService}
+import nebflow.service.*
 import nebflow.shared.*
 import nebflow.skill.*
 import org.apache.pekko.actor.typed.ActorSystem
@@ -35,7 +35,7 @@ object GatewayMain extends IOApp.Simple:
   private def initMcpServers(config: NebflowServiceConfig): IO[(McpManager, List[nebflow.plugin.PluginManifest])] =
     McpManager.create.flatMap { manager =>
       val fromConfig = IO.pure(config.mcpServers.getOrElse(Map.empty))
-      val fromJson   = McpManager.loadMcpServersJson
+      val fromJson = McpManager.loadMcpServersJson
       nebflow.plugin.PluginLoader.scan().flatMap { manifests =>
         val fromPlugins = nebflow.plugin.PluginLoader.extractMcpConfigs(manifests)
         // Merge configs from nebflow.json, mcp-servers.json, and plugin.yaml
@@ -92,62 +92,58 @@ object GatewayMain extends IOApp.Simple:
                                   taskStore = FileTaskStore,
                                   historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd)
                                 )
-                                  val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
-                                  val sessionService = new SessionService(sessionStore)
-                                  val agentService = new AgentService(agentLibrary)
-                                  val configService = ConfigService
+                                val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
+                                val sessionService = new SessionService(sessionStore)
+                                val agentService = new AgentService(agentLibrary)
+                                val configService = ConfigService
 
-                                  val wsHub = new WsHub()
-                                  val sessionActorRef = actorSystem.systemActorOf(
-                                    SessionActor(sharedResources, wsHub),
-                                    "session-global"
-                                  )
+                                val wsHub = new WsHub()
 
-                                  EmberServerBuilder
-                                    .default[IO]
-                                    .withHost(cfg.host)
-                                    .withPort(cfg.port)
-                                    .withIdleTimeout(1.hour)
-                                    .withHttpWebSocketApp { wsb =>
-                                      val wsRoutes = new WebSocketRoutes(
-                                        wsb,
-                                        sessionService,
-                                        agentService,
-                                        configService,
-                                        runtimePrefs,
-                                        rateLimiter,
-                                        token,
-                                        fileTracker,
-                                        reminderStateRef,
-                                        sessionStore,
-                                        wsHub,
-                                        sessionActorRef,
-                                        contextWindow,
-                                        skillDiscoveryOpt,
-                                        sharedResources,
-                                        pluginManifests
-                                      )
-                                      Router(
-                                        "/api" -> chatRoutes.routes,
-                                        "/" -> wsRoutes.routes
-                                      ).orNotFound
-                                    }
-                                    .build
-                                    .use { _ =>
-                                      openBrowser(url) *> IO.never[Unit]
-                                    }
-                                    .guarantee(
-                                      mcpManager.stopAll() *>
-                                        releaseBackend *>
-                                        IO { actorSystem.terminate() }
+                                EmberServerBuilder
+                                  .default[IO]
+                                  .withHost(cfg.host)
+                                  .withPort(cfg.port)
+                                  .withIdleTimeout(1.hour)
+                                  .withHttpWebSocketApp { wsb =>
+                                    val wsRoutes = new WebSocketRoutes(
+                                      wsb,
+                                      sessionService,
+                                      agentService,
+                                      configService,
+                                      runtimePrefs,
+                                      rateLimiter,
+                                      token,
+                                      fileTracker,
+                                      reminderStateRef,
+                                      sessionStore,
+                                      wsHub,
+                                      actorSystem,
+                                      contextWindow,
+                                      skillDiscoveryOpt,
+                                      sharedResources,
+                                      pluginManifests
                                     )
-                                } // end askSemaphore
-                              } // end dispatcher.use
-                            } // end reminderStateRef
-                          } // end fileTracker
-                        } // end rateLimiter
-                      } // end runtimePrefs
-                    } // end skillDiscoveryOpt
+                                    Router(
+                                      "/api" -> chatRoutes.routes,
+                                      "/" -> wsRoutes.routes
+                                    ).orNotFound
+                                  }
+                                  .build
+                                  .use { _ =>
+                                    openBrowser(url) *> IO.never[Unit]
+                                  }
+                                  .guarantee(
+                                    mcpManager.stopAll() *>
+                                      releaseBackend *>
+                                      IO { actorSystem.terminate() }
+                                  )
+                              } // end askSemaphore
+                            } // end dispatcher.use
+                          } // end reminderStateRef
+                        } // end fileTracker
+                      } // end rateLimiter
+                    } // end runtimePrefs
+                  } // end skillDiscoveryOpt
               }
             }
           }
