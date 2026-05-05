@@ -74,7 +74,7 @@ object GatewayMain extends IOApp.Simple:
                           Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
                             // Create Dispatcher for the multi-agent runtime, then start server
                             cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
-                              val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir)
+                              val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
                               cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
                                 val sharedResources = SharedResources(
                                   llm = handle,
