@@ -4,36 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.{AskItem, ToolExecResult}
-import nebflow.gateway.SessionMeta
 import nebflow.shared.*
-
-// ============================================================
-// Session Actor Messages
-// ============================================================
-
-sealed trait SessionCommand
-
-object SessionCommand:
-  case class UserMessage(text: String, blocks: List[nebflow.shared.ContentBlock], clientMessageId: Option[String] = None) extends SessionCommand
-  case class Interrupt(sessionId: String) extends SessionCommand
-  case class AgentTerminated(agentId: String) extends SessionCommand
-  case class AskUserResponse(requestId: String, answers: List[String]) extends SessionCommand
-  case class PermissionResponse(requestId: String, approved: Boolean) extends SessionCommand
-  case class Terminate() extends SessionCommand
-
-  // Internal — agent data loaded, spawn on actor thread
-  case class SpawnAgent(
-    sessionId: String,
-    agentDef: AgentDef,
-    initialMessages: List[Message],
-    text: String,
-    replyAdapter: org.apache.pekko.actor.typed.ActorRef[AgentEvent]
-  ) extends SessionCommand
-
-  // AgentActor integration
-  case class AgentTurnCompleted(sessionId: String, messages: List[Message]) extends SessionCommand
-  case class AgentTurnFailed(sessionId: String, error: AgentError) extends SessionCommand
-end SessionCommand
 
 // ============================================================
 // Agent Actor Messages
@@ -44,8 +15,11 @@ sealed trait AgentCommand
 object AgentCommand:
 
   // User input
-  case class UserInput(text: String, replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]] = None)
-      extends AgentCommand
+  case class UserInput(
+    text: String,
+    replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]] = None,
+    clientMessageId: Option[String] = None
+  ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 
   // Sub-agent communication
@@ -113,12 +87,19 @@ object AgentCommand:
     depth: Int
   ) extends AgentCommand
 
-  // User interaction responses (forwarded from SessionActor)
+  // User interaction responses
   case class UserAnswered(answers: List[String]) extends AgentCommand
   case class PermissionAnswered(approved: Boolean) extends AgentCommand
 
   // Lifecycle
   case class Stop(reason: String) extends AgentCommand
+
+  // Peer communication (root agent to root agent via ActorRef)
+  case class MessageToAgent(
+    targetRef: org.apache.pekko.actor.typed.ActorRef[AgentCommand],
+    payload: String,
+    replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = None
+  ) extends AgentCommand
 end AgentCommand
 
 // ============================================================
@@ -154,32 +135,31 @@ enum AgentStreamEvent:
     case TextDelta(text) =>
       if isSubagent then
         Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> agentId.asJson, "delta" -> text.asJson)
-      else
-        Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
+      else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
     case ToolStart(label) =>
       if isSubagent then
         Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
-      else
-        Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
+      else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
     case ToolEnd(label, summary, content, isError, input) =>
-      val base = if isSubagent then
-        Json.obj(
-          "type" -> "agentToolEnd".asJson,
-          "agentId" -> agentId.asJson,
-          "label" -> label.asJson,
-          "summary" -> summary.asJson,
-          "content" -> content.asJson,
-          "isError" -> isError.asJson
-        )
-      else
-        Json.obj(
-          "type" -> "toolEnd".asJson,
-          "sessionId" -> sessionId.asJson,
-          "label" -> label.asJson,
-          "summary" -> summary.asJson,
-          "content" -> content.asJson,
-          "isError" -> isError.asJson
-        )
+      val base =
+        if isSubagent then
+          Json.obj(
+            "type" -> "agentToolEnd".asJson,
+            "agentId" -> agentId.asJson,
+            "label" -> label.asJson,
+            "summary" -> summary.asJson,
+            "content" -> content.asJson,
+            "isError" -> isError.asJson
+          )
+        else
+          Json.obj(
+            "type" -> "toolEnd".asJson,
+            "sessionId" -> sessionId.asJson,
+            "label" -> label.asJson,
+            "summary" -> summary.asJson,
+            "content" -> content.asJson,
+            "isError" -> isError.asJson
+          )
       input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
     case AgentStart(name, agentType) =>
       Json.obj(
@@ -191,20 +171,15 @@ enum AgentStreamEvent:
     case AgentEnd(name) =>
       Json.obj("type" -> "agentEnd".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
     case Thinking =>
-      if isSubagent then
-        Json.obj("type" -> "agentThinking".asJson, "agentId" -> agentId.asJson)
-      else
-        Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
+      if isSubagent then Json.obj("type" -> "agentThinking".asJson, "agentId" -> agentId.asJson)
+      else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
     case RetryStatus(message) =>
       if isSubagent then
         Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
-      else
-        Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
+      else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
     case Done =>
-      if isSubagent then
-        Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
-      else
-        Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
+      if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
+      else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
     case ProgressUpdate(turnIdx, stagnationCount, stage) =>
       if isSubagent then
         Json.obj(
@@ -313,48 +288,225 @@ case class ToolCallRecord(
 )
 
 object ToolCallRecord:
+
   /** Recursively sort JSON keys for deterministic hashing. */
   def canonicalHash(input: JsonObject): String =
     canonicalJsonObject(input).noSpaces
 
   private def canonicalJson(json: Json): Json = json match
     case j if j.isObject => canonicalJsonObject(j.asObject.get)
-    case j if j.isArray  => Json.fromValues(j.asArray.get.map(canonicalJson))
-    case other           => other
+    case j if j.isArray => Json.fromValues(j.asArray.get.map(canonicalJson))
+    case other => other
 
   private def canonicalJsonObject(obj: JsonObject): Json =
     Json.fromFields(obj.toList.sortBy(_._1).map((k, v) => k -> canonicalJson(v)))
 end ToolCallRecord
 
-case class CompactionContext(
+/** A pending or in-progress compaction sub-agent task. */
+case class CompactionJob(
   subagentId: String,
   mode: String,
   replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
   replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]] = None
 )
 
-case class AgentState(
-  messages: List[Message],
-  status: AgentStatus,
-  depth: Int,
-  subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]],
-  activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]],
+// ============================================================
+// AgentState sub-structures — grouped by business domain
+// ============================================================
+
+/** Session-level persistent state — survives across turns. */
+case class SessionContext(
   sessionId: Option[String] = None,
-  pendingCompaction: Option[CompactionContext] = None,
-  compactionFailures: Int = 0,
-  latestUsage: Option[TokenUsage] = None,
-  pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
-  pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
-  recentToolCalls: List[ToolCallRecord] = Nil,
-  turnIdx: Int = 0,
-  wsSend: io.circe.Json => IO[Unit] = _ => IO.unit,
-  hasInjectedAntiLoop: Boolean = false,
-  recentFilesRead: Set[String] = Set.empty, // entries are "path@offset:limit" for precise read-range tracking
-  stagnationCount: Int = 0,
-  stage: AdaptiveStage = AdaptiveStage.Normal,
-  progressStreak: Int = 0,
+  recentMessageIds: List[String] = Nil,
+  wsSend: Json => IO[Unit] = _ => IO.unit,
+  depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None
 )
+
+/** Pending user interaction deferreds. */
+case class InteractionState(
+  pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
+  pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
+  pendingAskUserReplyTo: Option[org.apache.pekko.actor.typed.ActorRef[List[String]]] = None
+)
+
+/** Per-turn execution state — reset when returning to idle. */
+case class ExecutionContext(
+  messages: List[Message] = Nil,
+  status: AgentStatus = AgentStatus.Idle,
+  turnIdx: Int = 0,
+  subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = Map.empty,
+  activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
+  interaction: Option[InteractionState] = None
+)
+
+object ExecutionContext:
+
+  /** Factory for idle state — centralizes all per-turn reset logic. */
+  def idle(messages: List[Message], turnIdx: Int = 0): ExecutionContext =
+    ExecutionContext(
+      messages = messages,
+      status = AgentStatus.Idle,
+      turnIdx = turnIdx,
+      subagents = Map.empty,
+      activeStreamFiber = None,
+      interaction = None
+    )
+end ExecutionContext
+
+/** Anti-loop and adaptive stage state. */
+case class SafetyContext(
+  recentToolCalls: List[ToolCallRecord] = Nil,
+  recentFilesRead: Set[String] = Set.empty,
+  hasInjectedAntiLoop: Boolean = false,
+  stagnationCount: Int = 0,
+  stage: AdaptiveStage = AdaptiveStage.Normal,
+  progressStreak: Int = 0
+)
+
+/** Context compression state. */
+case class CompactionState(
+  pendingJob: Option[CompactionJob] = None,
+  compactionFailures: Int = 0,
+  latestUsage: Option[TokenUsage] = None
+)
+
+/** Top-level agent state — composed of domain-specific sub-structures. */
+case class AgentState(
+  session: SessionContext,
+  execution: ExecutionContext,
+  safety: SafetyContext,
+  compaction: CompactionState
+)
+
+object AgentState:
+
+  /** Convenience constructor for common case. */
+  def apply(
+    messages: List[Message] = Nil,
+    status: AgentStatus = AgentStatus.Idle,
+    depth: Int = 0,
+    subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = Map.empty,
+    activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
+    sessionId: Option[String] = None,
+    pendingCompaction: Option[CompactionJob] = None,
+    compactionFailures: Int = 0,
+    latestUsage: Option[TokenUsage] = None,
+    pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
+    pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
+    recentToolCalls: List[ToolCallRecord] = Nil,
+    turnIdx: Int = 0,
+    wsSend: Json => IO[Unit] = _ => IO.unit,
+    hasInjectedAntiLoop: Boolean = false,
+    recentFilesRead: Set[String] = Set.empty,
+    stagnationCount: Int = 0,
+    stage: AdaptiveStage = AdaptiveStage.Normal,
+    progressStreak: Int = 0,
+    readTracker: Option[nebflow.core.tools.ReadTracker] = None,
+    recentMessageIds: List[String] = Nil
+  ): AgentState =
+    val interaction = (pendingAskUser, pendingPermission) match
+      case (None, None) => None
+      case _ => Some(InteractionState(pendingAskUser, pendingPermission))
+    new AgentState(
+      SessionContext(sessionId, recentMessageIds, wsSend, depth, readTracker),
+      ExecutionContext(messages, status, turnIdx, subagents, activeStreamFiber, interaction),
+      SafetyContext(recentToolCalls, recentFilesRead, hasInjectedAntiLoop, stagnationCount, stage, progressStreak),
+      CompactionState(pendingCompaction, compactionFailures, latestUsage)
+    )
+  end apply
+end AgentState
+
+extension (s: AgentState)
+  // Read accessors — allow existing code to read fields without sub-structure paths
+  def messages: List[Message] = s.execution.messages
+  def status: AgentStatus = s.execution.status
+  def sessionId: Option[String] = s.session.sessionId
+  def wsSend: Json => IO[Unit] = s.session.wsSend
+  def depth: Int = s.session.depth
+  def turnIdx: Int = s.execution.turnIdx
+  def subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = s.execution.subagents
+  def activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = s.execution.activeStreamFiber
+  def recentMessageIds: List[String] = s.session.recentMessageIds
+  def pendingCompaction: Option[CompactionJob] = s.compaction.pendingJob
+  def compactionFailures: Int = s.compaction.compactionFailures
+  def latestUsage: Option[TokenUsage] = s.compaction.latestUsage
+  def pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = s.execution.interaction.flatMap(_.pendingAskUser)
+
+  def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
+    s.execution.interaction.flatMap(_.pendingPermission)
+  def recentToolCalls: List[ToolCallRecord] = s.safety.recentToolCalls
+  def recentFilesRead: Set[String] = s.safety.recentFilesRead
+  def hasInjectedAntiLoop: Boolean = s.safety.hasInjectedAntiLoop
+  def stagnationCount: Int = s.safety.stagnationCount
+  def stage: AdaptiveStage = s.safety.stage
+  def progressStreak: Int = s.safety.progressStreak
+  def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
+
+  // Mutation helpers — return new AgentState with updated sub-structure
+  def withSession(session: SessionContext): AgentState = s.copy(session = session)
+  def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
+  def withSafety(safety: SafetyContext): AgentState = s.copy(safety = safety)
+  def withCompaction(compaction: CompactionState): AgentState = s.copy(compaction = compaction)
+
+  def withMessages(msgs: List[Message]): AgentState = s.copy(execution = s.execution.copy(messages = msgs))
+  def withStatus(st: AgentStatus): AgentState = s.copy(execution = s.execution.copy(status = st))
+  def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
+
+  def withSubagents(subs: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]]): AgentState =
+    s.copy(execution = s.execution.copy(subagents = subs))
+
+  def withActiveStreamFiber(fiber: Option[cats.effect.Fiber[IO, Throwable, Unit]]): AgentState =
+    s.copy(execution = s.execution.copy(activeStreamFiber = fiber))
+
+  def withInteraction(interaction: Option[InteractionState]): AgentState =
+    s.copy(execution = s.execution.copy(interaction = interaction))
+
+  def withPendingAskUser(d: Option[cats.effect.Deferred[IO, List[String]]]): AgentState =
+    s.copy(execution =
+      s.execution.copy(interaction =
+        Some(
+          s.execution.interaction.getOrElse(InteractionState()).copy(pendingAskUser = d)
+        )
+      )
+    )
+
+  def withPendingPermission(d: Option[cats.effect.Deferred[IO, Boolean]]): AgentState =
+    s.copy(execution =
+      s.execution.copy(interaction =
+        Some(
+          s.execution.interaction.getOrElse(InteractionState()).copy(pendingPermission = d)
+        )
+      )
+    )
+  def withRecentMessageIds(ids: List[String]): AgentState = s.copy(session = s.session.copy(recentMessageIds = ids))
+
+  def withPendingCompaction(job: Option[CompactionJob]): AgentState =
+    s.copy(compaction = s.compaction.copy(pendingJob = job))
+
+  def withCompactionFailures(failures: Int): AgentState =
+    s.copy(compaction = s.compaction.copy(compactionFailures = failures))
+
+  def withLatestUsage(usage: Option[TokenUsage]): AgentState =
+    s.copy(compaction = s.compaction.copy(latestUsage = usage))
+
+  def withRecentToolCalls(calls: List[ToolCallRecord]): AgentState =
+    s.copy(safety = s.safety.copy(recentToolCalls = calls))
+  def withRecentFilesRead(files: Set[String]): AgentState = s.copy(safety = s.safety.copy(recentFilesRead = files))
+  def withStagnationCount(count: Int): AgentState = s.copy(safety = s.safety.copy(stagnationCount = count))
+  def withStage(st: AdaptiveStage): AgentState = s.copy(safety = s.safety.copy(stage = st))
+  def withProgressStreak(streak: Int): AgentState = s.copy(safety = s.safety.copy(progressStreak = streak))
+
+  /** Reset execution state to idle — used by finishTurn, Interrupt, LlmFailed. */
+  def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =
+    s.copy(execution = ExecutionContext.idle(messages, turnIdx))
+
+  /** Reset execution state for interrupt — clears everything including compaction pending. */
+  def resetForInterrupt: AgentState = s.copy(
+    execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx),
+    compaction = s.compaction.copy(pendingJob = None)
+  )
+end extension
 
 // ============================================================
 // Consume Result (extracted from Repl for actor use)
