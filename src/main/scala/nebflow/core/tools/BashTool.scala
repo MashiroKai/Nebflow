@@ -3,13 +3,14 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.shared.Defaults
 
 import scala.concurrent.TimeoutException
 import scala.concurrent.duration.*
 
 object BashTool extends Tool:
   val DEFAULT_TIMEOUT = 120_000L // 2 minutes
-  val MAX_TIMEOUT = 600_000L // 10 minutes
+  val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
 
   val name = "Bash"
 

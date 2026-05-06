@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.shared.HttpUtils
+import nebflow.shared.{Defaults, HttpUtils}
 import sttp.client4.*
 import sttp.client4.httpclient.HttpClientSyncBackend
 
@@ -68,7 +68,11 @@ Usage:
     val url = input("url").flatMap(_.asString).getOrElse("")
     val method = input("method").flatMap(_.asString).getOrElse("GET").toUpperCase
     val timeoutSec =
-      input("timeout").flatMap(_.asNumber).flatMap(_.toInt).map(t => Math.min(Math.max(1, t), 300)).getOrElse(30)
+      input("timeout")
+        .flatMap(_.asNumber)
+        .flatMap(_.toInt)
+        .map(t => Math.min(Math.max(1, t), Defaults.CurlMaxTimeoutSec))
+        .getOrElse(30)
 
     try
       val parsedUrl = new java.net.URI(url)

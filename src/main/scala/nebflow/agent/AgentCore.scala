@@ -23,9 +23,7 @@ private[agent] trait AgentCore:
   protected val MaxTurns = 200
   protected val MaxRecentToolCalls = 20
   protected val DuplicateLookbackTurns = 5
-  // Direct SLF4J logger — avoids the IO-returning NebflowLogger methods that were
-  // being silently discarded when called from Unit-returning actor methods.
-  private val lifecycleLog = org.slf4j.LoggerFactory.getLogger("nebflow.agent.lifecycle")
+  private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
   protected def logAgentEvent(
     ctx: ActorContext[?],
@@ -38,7 +36,7 @@ private[agent] trait AgentCore:
     val sid = sessionId.getOrElse("-")
     val pid = ctx.self.path.parent.name
     val msg = s"agent=${ctx.self.path.name} name=${agentDef.name} depth=$depth session=$sid parent=$pid event=$event"
-    lifecycleLog.info(if detail.nonEmpty then s"$msg detail=$detail" else msg)
+    lifecycleLog.infoSync(if detail.nonEmpty then s"$msg detail=$detail" else msg)
   end logAgentEvent
 
   // ============================================================
