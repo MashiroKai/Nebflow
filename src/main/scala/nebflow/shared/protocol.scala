@@ -227,9 +227,6 @@ object UiMessage:
   case class AskUser(items: List[Json]) extends UiMessage:
     val typeName = "askUser"
 
-  case class Stage(stage: String, stagnationCount: Int, turnIdx: String) extends UiMessage:
-    val typeName = "stage"
-
   case class System(content: String) extends UiMessage:
     val typeName = "system"
 
@@ -250,7 +247,6 @@ object UiMessage:
       )
     case m: Agent => Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
     case m: AskUser => Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
-    case _: Stage => Json.obj("type" -> "stage".asJson) // backward compat: no longer produced, decode-only
     case m: System => Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
   }
 
@@ -282,12 +278,6 @@ object UiMessage:
         yield Agent(agentId, text)
       case "askUser" =>
         cursor.downField("items").as[List[Json]].map(AskUser(_))
-      case "stage" =>
-        for
-          stage <- cursor.downField("stage").as[String]
-          stagCnt <- cursor.downField("stagnationCount").as[Int]
-          turnIdx <- cursor.downField("turnIdx").as[String]
-        yield Stage(stage, stagCnt, turnIdx)
       case "system" =>
         cursor.downField("content").as[String].map(System(_))
       case other => Left(DecodingFailure(s"Unknown UiMessage type: $other", cursor.history))
