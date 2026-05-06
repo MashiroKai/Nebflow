@@ -78,4 +78,8 @@ object ToolRegistry:
 
   def registerTools(newTools: List[Tool]): Unit =
     newTools.foreach(t => tools.put(t.name, t))
+
+  /** Unregister all tools whose name starts with the given prefix (e.g. "mcp__zai__"). */
+  def unregisterToolsByPrefix(prefix: String): Unit =
+    tools.keySet.removeIf(_.startsWith(prefix))
 end ToolRegistry

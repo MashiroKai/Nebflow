@@ -50,18 +50,18 @@ object GatewayMain extends IOApp.Simple:
   /** Load MCP configs and start all servers on an existing McpManager. */
   private def startMcpServers(
     config: NebflowServiceConfig,
-    manager: McpManager
-  ): IO[List[nebflow.plugin.PluginManifest]] =
+    manager: McpManager,
+    disabledServers: Set[String]
+  ): IO[Unit] =
     val fromConfig = config.mcpServers.getOrElse(Map.empty)
     for
-      fromJson <- McpManager.loadMcpServersJson
       manifests <- nebflow.plugin.PluginLoader.scan()
       fromPlugins = nebflow.plugin.PluginLoader.extractMcpConfigs(manifests)
-      merged = fromConfig ++ fromJson ++ fromPlugins
+      merged = fromConfig ++ fromPlugins
       _ <- logger.info("Initializing MCP servers...")
-      _ <- manager.startAll(merged)
+      _ <- manager.startAll(merged, disabledServers)
       _ <- logger.info(s"MCP servers initialized (${manifests.size} plugin(s) loaded)")
-    yield manifests
+    yield ()
 
   def run: IO[Unit] =
     GatewayConfig.load.flatMap { cfg =>
@@ -78,7 +78,7 @@ object GatewayMain extends IOApp.Simple:
                   s.modelRef.flatMap(ref => registry.getCandidateForRef(ref).map(s.id -> _))
                 }.toMap
                 sessionModelOverrides.set(persisted)
-              } *> McpManager.create.flatMap { mcpManager =>
+              } *> McpManager.create().flatMap { mcpManager =>
                 // --- Fast path: only essential init before server start ---
                 val chatRoutes = new ChatRoutes(handle, token)
                 val contextWindow =
@@ -147,7 +147,8 @@ object GatewayMain extends IOApp.Simple:
                                       contextWindow,
                                       None, // skillDiscovery: initialized asynchronously
                                       sharedResources,
-                                      Nil // pluginManifests: initialized asynchronously
+                                      Nil, // pluginManifests: initialized asynchronously
+                                      mcpManager
                                     )
                                     Router(
                                       "/api" -> chatRoutes.routes,
@@ -161,7 +162,9 @@ object GatewayMain extends IOApp.Simple:
                                       _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
                                       _ <- openBrowser(url)
                                       // --- Background init: MCP servers + skill discovery ---
-                                      bgInit = startMcpServers(config, mcpManager)
+                                      bgInit = runtimePrefs.getDisabledMcpServers.flatMap { disabled =>
+                                        startMcpServers(config, mcpManager, disabled)
+                                      }
                                         .flatMap { _ =>
                                           initSkillDiscovery(config, handle)
                                         }
