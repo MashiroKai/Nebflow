@@ -103,7 +103,15 @@ Guidelines:
             val requestId = java.util.UUID.randomUUID().toString.take(8)
             IO.fromFuture(IO {
               agentRef.ask[List[String]](replyTo => AgentCommand.AskUser(requestId, items, replyTo))
-            }).map(answers => Right(answers.mkString(", ")))
+            }).map { answers =>
+              if items.size <= 1 then Right(answers.headOption.getOrElse(""))
+              else
+                val formatted = items.zipWithIndex.map { case (item, idx) =>
+                  val answer = answers.lift(idx).getOrElse("(no answer)")
+                  s"${idx + 1}. ${item.question.take(60)}\n   → $answer"
+                }.mkString("\n")
+                Right(formatted)
+            }
               .handleError(e => Left(ToolError(s"AskUser failed: ${e.getMessage}")))
 
           case _ =>

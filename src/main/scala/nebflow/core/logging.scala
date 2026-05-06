@@ -34,4 +34,16 @@ class NebflowLogger(private val logger: Logger):
 
   def debug(msg: String, kv: (String, String)*): IO[Unit] =
     IO.delay(logger.debug(s"DEBUG $name - ${withKv(msg, kv)}"))
+
+  // Sync variants — for use in Unit-returning contexts (e.g. Pekko actors)
+  def infoSync(msg: String): Unit = logger.info(fmt("INFO ", CYAN, msg))
+  def warnSync(msg: String): Unit = logger.warn(fmt("WARN ", YELLOW, msg))
+  def errorSync(msg: String): Unit = logger.error(fmt("ERROR", RED, msg))
+  def errorSync(msg: String, cause: Throwable): Unit = logger.error(fmt("ERROR", RED, msg), cause)
+
+  def infoSync(msg: String, kv: (String, String)*): Unit =
+    logger.info(fmt("INFO ", CYAN, withKv(msg, kv)))
+
+  def warnSync(msg: String, kv: (String, String)*): Unit =
+    logger.warn(fmt("WARN ", YELLOW, withKv(msg, kv)))
 end NebflowLogger

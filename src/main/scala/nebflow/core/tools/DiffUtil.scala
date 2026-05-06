@@ -1,7 +1,6 @@
 package nebflow.core.tools
 
 import com.github.difflib.DiffUtils.diff
-import com.github.difflib.patch.AbstractDelta
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
@@ -40,8 +39,6 @@ object DiffUtil:
   /**
    * Single source of truth for splitting content into lines.
    * Uses split with limit -1 so trailing empty strings are preserved.
-   * This keeps line indices, line-replace ranges, lineStats and makeDiff all
-   * in agreement with each other.
    */
   def splitLines(content: String): List[String] =
     content.split("\\r?\\n", -1).toList
@@ -66,66 +63,6 @@ object DiffUtil:
     lineStats(splitLines(oldContent), splitLines(newContent))
 
   private val ContextLines = 2
-
-  /**
-   * Produce a diff output using diff-utils (Myers algorithm).
-   * Shows context lines, removals (-), and additions (+).
-   */
-  def makeDiff(fileName: String, oldContent: String, newContent: String): String =
-    val oldLines = splitLines(oldContent)
-    val newLines = splitLines(newContent)
-    val patch = diff(oldLines.asJava, newLines.asJava)
-
-    if patch.getDeltas.isEmpty then "(no changes)"
-    else
-      val sb = new StringBuilder
-      val deltas = patch.getDeltas.asScala.toList.sortBy(_.getSource.getPosition)
-
-      // Walk through old lines, applying deltas to produce output
-      var oldIdx = 0
-      var newIdx = 0
-
-      for delta <- deltas do
-        val srcPos = delta.getSource.getPosition
-        val srcSize = delta.getSource.size()
-        val tgtPos = delta.getTarget.getPosition
-        val tgtSize = delta.getTarget.size()
-
-        // Context lines before this delta
-        val contextStart = math.max(oldIdx, srcPos - ContextLines)
-        while oldIdx < srcPos do
-          if oldIdx >= contextStart then
-            val nn = newIdx + 1
-            sb.append(f"$nn%3d |${oldLines(oldIdx)}\n")
-          oldIdx += 1
-          newIdx += 1
-
-        // Removed lines
-        val srcLines = delta.getSource.getLines.asScala
-        for i <- srcLines.indices do
-          val on = oldIdx + 1
-          sb.append(f"$on%3d |-${srcLines(i)}\n")
-          oldIdx += 1
-
-        // Added lines
-        val tgtLines = delta.getTarget.getLines.asScala
-        for i <- tgtLines.indices do
-          val nn = newIdx + 1
-          sb.append(f"$nn%3d |+${tgtLines(i)}\n")
-          newIdx += 1
-      end for
-
-      // Context lines after last delta
-      while oldIdx < oldLines.length do
-        val nn = newIdx + 1
-        if nn <= newLines.length then sb.append(f"$nn%3d |${oldLines(oldIdx)}\n")
-        oldIdx += 1
-        newIdx += 1
-
-      sb.toString().trim
-    end if
-
-  end makeDiff
 
   /**
    * Produce structured unified diff hunks using diff-utils.
@@ -195,10 +132,6 @@ object DiffUtil:
   /** Render the success string returned when a brand new file was created. */
   def renderCreatedResult(filePath: Path): String =
     s"$OkCreatedPrefix $filePath"
-
-  /** Render the success string returned when an existing file was updated. */
-  def renderUpdatedResult(fileName: String, added: Int, removed: Int, diff: String): String =
-    s"$OkUpdatedPrefix $fileName, $added added, $removed removed\n$diff"
 
   private val UpdatedStatsRegex = """OK:UPDATED\s+\S+,\s*(\d+)\s+added,\s*(\d+)\s+removed""".r
 
