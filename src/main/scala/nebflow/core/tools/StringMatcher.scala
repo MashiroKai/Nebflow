@@ -5,8 +5,8 @@ object StringMatcher:
   private val CurlyQuotes = Map(
     '\u2018' -> '\'', // '
     '\u2019' -> '\'', // '
-    '\u201C' -> '"',  // "
-    '\u201D' -> '"'   // "
+    '\u201C' -> '"', // "
+    '\u201D' -> '"' // "
   )
 
   /** Normalize curly quotes to straight quotes for comparison. */
@@ -31,10 +31,9 @@ object StringMatcher:
     else
       // Step 2: quote-normalized match
       val normContent = normalizeQuotes(content)
-      val normSearch  = normalizeQuotes(search)
+      val normSearch = normalizeQuotes(search)
       val idx = normContent.indexOf(normSearch)
-      if idx >= 0 then
-        Some(content.substring(idx, idx + search.length))
+      if idx >= 0 then Some(content.substring(idx, idx + search.length))
       else None
 
   /**
@@ -66,9 +65,9 @@ object StringMatcher:
       var doubleOpen = false
 
       // Detect initial state from ref: count opens vs closes
-      val refSingleOpens  = ref.count(_ == '\u2018')
+      val refSingleOpens = ref.count(_ == '\u2018')
       val refSingleCloses = ref.count(_ == '\u2019')
-      val refDoubleOpens  = ref.count(_ == '\u201C')
+      val refDoubleOpens = ref.count(_ == '\u201C')
       val refDoubleCloses = ref.count(_ == '\u201D')
 
       // If closes > opens, the ref likely starts mid-quote
@@ -85,5 +84,7 @@ object StringMatcher:
         else sb.append(c)
 
       sb.toString
+    end if
+  end applyCurlyQuotes
 
 end StringMatcher
