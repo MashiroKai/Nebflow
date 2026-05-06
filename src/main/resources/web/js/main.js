@@ -197,6 +197,8 @@ onMessage('thinking', (msg) => {
 
 onMessage('toolStart', (msg) => {
   resetStreamTimeout(msg.sessionId);
+  // Skip pending card for AskUser — the askUser event handles rendering directly
+  if (msg.label && msg.label.startsWith('AskUser')) return;
   if (isActive(msg)) {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();

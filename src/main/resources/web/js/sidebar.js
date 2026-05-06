@@ -391,11 +391,15 @@ export function switchSession(sessionId) {
   state.unreadSessions.delete(sessionId);
   state.markedUnreadSessions.delete(sessionId);
   persistMarkedUnread();
-  updateSessionStatus(sessionId);
   // Save draft for the session we're leaving
   saveInputDraft(state.activeSessionId);
+  const prevActiveId = state.activeSessionId;
   // Switch active session
   state.activeSessionId = sessionId;
+  // Update sidebar status for both sessions (activeSessionId has changed,
+  // so getSessionStatusClass may return different values, e.g. compacting → busy or vice versa)
+  updateSessionStatus(sessionId);
+  if (prevActiveId && prevActiveId !== sessionId) updateSessionStatus(prevActiveId);
   resetChatForActiveSession();
   // Restore input draft for the new session
   restoreInputDraft(sessionId);
@@ -414,14 +418,21 @@ export function deleteSession(sessionId) {
 }
 
 // ---------- Session status state machine ----------
-// Priority: attention > compacting > busy > marked unread > unread > idle
+// Priority: attention > compacting-bg > busy > marked unread > unread > idle
 // Only one indicator visible at a time, controlled by a single CSS class.
 // Attention takes priority over compacting so AskUser/permission prompts are visible
 // even while the session is still technically compacting.
+//
+// Compact logic:
+//   - Active session compacting: green compact info shown in chat area status bar;
+//     sidebar shows 'busy' (falls through).
+//   - Non-active session compacting: sidebar shows 'compacting' spinner.
 
 function getSessionStatusClass(sessionId) {
   if (state.attentionSessions.has(sessionId)) return 'attention';
-  if (state.compactingSessionIds.has(sessionId)) return 'compacting';
+  // Only show 'compacting' spinner in sidebar for non-active sessions.
+  // Active session shows compact info in the chat area status bar instead.
+  if (state.compactingSessionIds.has(sessionId) && sessionId !== state.activeSessionId) return 'compacting';
   if (state.busySessionIds.has(sessionId)) return 'busy';
   if (state.markedUnreadSessions.has(sessionId) || state.unreadSessions.has(sessionId)) return 'unread';
   return '';

@@ -102,7 +102,7 @@ object AgentActor extends AgentCore with AgentSession:
             depth,
             state.sessionId,
             "start",
-            s"text=${text.take(40)} msgs=${state.messages.size}"
+            s"msgs=${state.messages.size}"
           )
           // Auto-detect language on first user message (root agent only, one-time)
           if depth == 0 && parentRef.isEmpty && dedupedState.messages.isEmpty then
@@ -128,7 +128,7 @@ object AgentActor extends AgentCore with AgentSession:
             resources,
             depth,
             parentRef,
-            dedupedState.withMessages(newMessages).withRecentFilesRead(Set.empty),
+            dedupedState.withMessages(newMessages),
             stash,
             ctx,
             replyTo
@@ -735,7 +735,7 @@ object AgentActor extends AgentCore with AgentSession:
           depth,
           state.sessionId,
           "turn-complete",
-          s"msgs=${state.messages.size} text=${text.take(40)}"
+          s"msgs=${state.messages.size}"
         )
         val assistantContent = (thinking, text) match
           case (None, _) => Left(text)
@@ -743,8 +743,7 @@ object AgentActor extends AgentCore with AgentSession:
           case (Some(t), txt) => Right(List(ContentBlock.Thinking(t), ContentBlock.Text(txt)))
         val newMessages = state.messages :+ Message(MessageRole.Assistant, assistantContent)
         val updatedState = state.copy(
-          execution = ExecutionContext.idle(newMessages, state.execution.turnIdx),
-          safety = state.safety.copy(recentFilesRead = Set.empty)
+          execution = ExecutionContext.idle(newMessages, state.execution.turnIdx)
         )
 
         // Root agent: persist to SessionStore and emit sessionBusy=false

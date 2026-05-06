@@ -21,9 +21,14 @@ private[agent] trait AgentCore:
 
   protected val MaxDepth = 5
   protected val MaxTurns = 200
-  protected val MaxRecentToolCalls = 20
-  protected val DuplicateLookbackTurns = 5
+
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
+
+  /** Shorten UUID to first 8 hex chars. */
+  private def shortUuid(id: String): String =
+    if id.startsWith("agent-") then id.drop(6).take(8)
+    else if id == "-" || id == "system" then id
+    else id.take(8)
 
   protected def logAgentEvent(
     ctx: ActorContext[?],
@@ -33,9 +38,9 @@ private[agent] trait AgentCore:
     event: String,
     detail: String = ""
   ): Unit =
-    val sid = sessionId.getOrElse("-")
-    val pid = ctx.self.path.parent.name
-    val msg = s"agent=${ctx.self.path.name} name=${agentDef.name} depth=$depth session=$sid parent=$pid event=$event"
+    val sid = shortUuid(sessionId.getOrElse("-"))
+    val who = if depth == 0 then s"${agentDef.name}-${shortUuid(ctx.self.path.name)}" else s"subagent-${agentDef.name}"
+    val msg = s"agent=$who session=$sid event=$event"
     lifecycleLog.infoSync(if detail.nonEmpty then s"$msg detail=$detail" else msg)
   end logAgentEvent
 
@@ -335,46 +340,7 @@ private[agent] trait AgentCore:
     val allowedTools = buildAllowedToolSet(agentDef, depth, parentRef.isDefined)
     val filteredCalls = result.toolCalls.filter(tc => allowedTools.contains(tc.name))
 
-    // Deduplication: detect repetitive tool calls within recent turns
     val nextTurnIdx = state.turnIdx + 1
-    val (freshCalls, duplicateResults) = filteredCalls.foldLeft(
-      (List.empty[ToolCall], List.empty[(ToolCall, ToolExecResult)])
-    ) { case ((fresh, dups), call) =>
-      val inputHash = ToolCallRecord.canonicalHash(call.input)
-      val dupRecord = state.recentToolCalls.find { r =>
-        r.name == call.name && r.inputHash == inputHash && (nextTurnIdx - r.turnIdx) <= DuplicateLookbackTurns
-      }
-      val isDup = dupRecord.isDefined
-      val readSignature =
-        if call.name == "Read" then
-          for
-            path <- call.input("file_path").flatMap(_.asString)
-            offset = call.input("offset").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
-            limit = call.input("limit").flatMap(_.asNumber).flatMap(_.toInt)
-          yield limit match
-            case Some(l) => s"$path@$offset:$l"
-            case None => s"$path@full"
-        else None
-      val isSameFileReRead = readSignature.exists(state.recentFilesRead.contains)
-      if isDup || isSameFileReRead then
-        val lastTurn = dupRecord.map(_.turnIdx).getOrElse(0)
-        val (warningText, reasonDetail) = if isSameFileReRead then
-          val sig = readSignature.getOrElse("")
-          (
-            s"[Loop detection] You already read this file at the same position earlier. Do not read it again unless the user explicitly asks. Synthesize what you know.",
-            s"reason=same-file sig=$sig"
-          )
-        else
-          (
-            s"[Loop detection] You already called ${call.name} with the same parameters at turn $lastTurn and received the result. " +
-              "Do not repeat the same call. Synthesize your findings instead.",
-            s"reason=duplicate tool=${call.name} lastTurn=$lastTurn"
-          )
-        logAgentEvent(ctx, agentDef, depth, state.sessionId, "tool-dedup", s"$reasonDetail turn=$nextTurnIdx")
-        val warning = ToolExecResult(warningText, isError = false)
-        (fresh, dups :+ (call, warning))
-      else (fresh :+ call, dups)
-    }
 
     // Track deferreds created for Permission so they can be saved to state
     // (Using Ref instead of var to avoid race condition in concurrent traverse)
@@ -384,7 +350,7 @@ private[agent] trait AgentCore:
     val sessionIdOpt = state.sessionId
 
     // Separate ContextManage from real tool calls — it triggers TriggerCompaction
-    val (contextManageCalls, realToolCalls) = freshCalls.partition(_.name == "ContextManage")
+    val (contextManageCalls, realToolCalls) = filteredCalls.partition(_.name == "ContextManage")
 
     // Build ToolContext with full agent-scoped context
     val toolCtx = ToolContext(
@@ -409,13 +375,17 @@ private[agent] trait AgentCore:
 
     val io = realToolCalls
       .traverse { call =>
-        emitStreamIO(
-          state.wsSend,
-          ctx,
-          AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
-          isSubagent,
-          sessionIdOpt
-        ) *>
+        // AskUserQuestion renders its own UI via askUser event — skip generic toolStart/End
+        val skipStreaming = call.name == "AskUserQuestion"
+        (if !skipStreaming then
+          emitStreamIO(
+            state.wsSend,
+            ctx,
+            AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
+            isSubagent,
+            sessionIdOpt
+          )
+        else IO.unit) *>
           (ToolRisk.classify(call.name) match
             case ToolRisk.Safe =>
               executeTool(call, toolCtx)
@@ -464,20 +434,23 @@ private[agent] trait AgentCore:
               case Left(e) => (call, ToolExecResult(s"Tool error: ${e.getMessage}", isError = true))
             }
             .flatTap { (call, r) =>
-              val summary = summarizeToolResult(call, r.content)
-              emitStreamIO(
-                state.wsSend,
-                ctx,
-                AgentStreamEvent.ToolEnd(
-                  nebflow.core.summarizeToolCall(call),
-                  summary,
-                  r.content,
-                  r.isError,
-                  input = Some(call.input)
-                ),
-                isSubagent,
-                sessionIdOpt
-              )
+              // AskUserQuestion renders its own UI — skip generic toolEnd
+              if call.name != "AskUserQuestion" then
+                val summary = summarizeToolResult(call, r.content)
+                emitStreamIO(
+                  state.wsSend,
+                  ctx,
+                  AgentStreamEvent.ToolEnd(
+                    nebflow.core.summarizeToolCall(call),
+                    summary,
+                    r.content,
+                    r.isError,
+                    input = Some(call.input)
+                  ),
+                  isSubagent,
+                  sessionIdOpt
+                )
+              else IO.unit
             }
       }
       .flatMap { freshResults =>
@@ -490,7 +463,7 @@ private[agent] trait AgentCore:
           val mode = call.input("mode").flatMap(_.asString).getOrElse("full")
           (call, ToolExecResult(s"[ContextManage] Triggered $mode compaction", isError = false))
         }
-        val allResults = freshResults ++ contextManageResults ++ duplicateResults
+        val allResults = freshResults ++ contextManageResults
 
         val hasRead = freshResults.exists { case (call, result) => call.name == "Read" && !result.isError }
         val writeCount = freshResults.count { case (call, result) =>
@@ -524,36 +497,13 @@ private[agent] trait AgentCore:
       }
     )
 
-    val newRecords = filteredCalls.map { call =>
-      ToolCallRecord(call.name, ToolCallRecord.canonicalHash(call.input), nextTurnIdx)
-    }
-    val prunedRecent = (state.recentToolCalls ++ newRecords).sortBy(-_.turnIdx).take(MaxRecentToolCalls)
-
-    val newRecentFilesRead = freshCalls
-      .filter(_.name == "Read")
-      .flatMap { call =>
-        for
-          path <- call.input("file_path").flatMap(_.asString)
-          offset = call.input("offset").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
-          limit = call.input("limit").flatMap(_.asNumber).flatMap(_.toInt)
-        yield limit match
-          case Some(l) => s"$path@$offset:$l"
-          case None => s"$path@full"
-      }
-      .toSet ++ state.recentFilesRead
-
     val permDeferredOpt = resources.dispatcher.unsafeRunSync(permissionDeferredRef.get)
     val updatedInteraction = permDeferredOpt.orElse(state.pendingPermission) match
       case None => None
       case d => Some(InteractionState(None, d))
 
     val updatedState = state.copy(
-      execution = state.execution.copy(turnIdx = nextTurnIdx, interaction = updatedInteraction),
-      safety = SafetyContext(
-        recentToolCalls = prunedRecent,
-        recentFilesRead = newRecentFilesRead,
-        hasInjectedAntiLoop = state.safety.hasInjectedAntiLoop
-      )
+      execution = state.execution.copy(turnIdx = nextTurnIdx, interaction = updatedInteraction)
     )
     processing(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
   end pipeToolExecutions
@@ -653,7 +603,7 @@ private[agent] trait AgentCore:
             if isSubagent then AgentStreamEvent.Thinking.toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
           wsSend(json)
-        case StreamChunk.ToolCallChunk(tc) =>
+        case StreamChunk.ToolCallChunk(tc) if tc.name != "AskUserQuestion" =>
           val json =
             if isSubagent then
               AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(tc)).toJson(ctx.self.path.name, true, None)

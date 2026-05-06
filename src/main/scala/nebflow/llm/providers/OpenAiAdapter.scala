@@ -232,7 +232,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         .header("content-type", "application/json")
         .body(bodyWithMetadata.noSpaces)
         .response(asStreamUnsafe(Fs2Streams[IO]))
-        .readTimeout(360.seconds)
+        .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 
       Stream.eval(backend.send(request)).flatMap { response =>
         response.body match
