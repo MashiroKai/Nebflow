@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.shared.HttpUtils
+import nebflow.shared.{Defaults, HttpUtils}
 import sttp.client4.*
 import sttp.client4.httpclient.HttpClientSyncBackend
 
@@ -13,7 +13,7 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 object WebFetchTool extends Tool:
-  val FETCH_TIMEOUT = 30_000
+  val FETCH_TIMEOUT = Defaults.WebFetchTimeoutMs
   val DEFAULT_MAX_CHARS = 20_000
   val DEFAULT_MAX_BYTES = 750_000
 
