@@ -18,13 +18,13 @@ object ToolResultGuard:
   val DefaultMaxChars: Int = 50_000
 
   private val ToolLimits: Map[String, Int] = Map(
-    "Bash"  -> 80_000,  // build logs, test output — tends to be verbose
-    "Read"  -> 60_000,  // source files — can be long but usually structured
-    "Grep"  -> 50_000,  // search results
-    "Glob"  -> 30_000,  // file listings
-    "Curl"  -> 50_000,  // HTTP responses (tool already limits to 100k)
+    "Bash" -> 80_000, // build logs, test output — tends to be verbose
+    "Read" -> 60_000, // source files — can be long but usually structured
+    "Grep" -> 50_000, // search results
+    "Glob" -> 30_000, // file listings
+    "Curl" -> 50_000, // HTTP responses (tool already limits to 100k)
     "WebSearch" -> 50_000,
-    "WebFetch"  -> 50_000
+    "WebFetch" -> 50_000
   )
 
   /** Maximum chars for a given tool name. */

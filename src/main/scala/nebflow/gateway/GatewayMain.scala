@@ -47,18 +47,21 @@ object GatewayMain extends IOApp.Simple:
         else waitForQuit
     }
 
-  private def initMcpServers(config: NebflowServiceConfig): IO[(McpManager, List[nebflow.plugin.PluginManifest])] =
-    McpManager.create.flatMap { manager =>
-      val fromConfig = IO.pure(config.mcpServers.getOrElse(Map.empty))
-      val fromJson = McpManager.loadMcpServersJson
-      nebflow.plugin.PluginLoader.scan().flatMap { manifests =>
-        val fromPlugins = nebflow.plugin.PluginLoader.extractMcpConfigs(manifests)
-        // Merge configs from nebflow.json, mcp-servers.json, and plugin.yaml
-        // Priority: plugins override mcp-servers.json overrides nebflow.json
-        val merged = (fromConfig, fromJson, IO.pure(fromPlugins)).mapN { (a, b, c) => a ++ b ++ c }
-        merged.flatMap(manager.startAll).as((manager, manifests))
-      }
-    }
+  /** Load MCP configs and start all servers on an existing McpManager. */
+  private def startMcpServers(
+    config: NebflowServiceConfig,
+    manager: McpManager
+  ): IO[List[nebflow.plugin.PluginManifest]] =
+    val fromConfig = config.mcpServers.getOrElse(Map.empty)
+    for
+      fromJson <- McpManager.loadMcpServersJson
+      manifests <- nebflow.plugin.PluginLoader.scan()
+      fromPlugins = nebflow.plugin.PluginLoader.extractMcpConfigs(manifests)
+      merged = fromConfig ++ fromJson ++ fromPlugins
+      _ <- logger.info("Initializing MCP servers...")
+      _ <- manager.startAll(merged)
+      _ <- logger.info(s"MCP servers initialized (${manifests.size} plugin(s) loaded)")
+    yield manifests
 
   def run: IO[Unit] =
     GatewayConfig.load.flatMap { cfg =>
@@ -75,9 +78,9 @@ object GatewayMain extends IOApp.Simple:
                   s.modelRef.flatMap(ref => registry.getCandidateForRef(ref).map(s.id -> _))
                 }.toMap
                 sessionModelOverrides.set(persisted)
-              } *> initMcpServers(config).flatMap { case (mcpManager, pluginManifests) =>
+              } *> McpManager.create.flatMap { mcpManager =>
+                // --- Fast path: only essential init before server start ---
                 val chatRoutes = new ChatRoutes(handle, token)
-                // Read contextWindow from config for the primary model
                 val contextWindow =
                   val (providerId, modelId) = Config.parseModelRef(config.llm.model.primary)
                   val provider = config.llm.providers
@@ -87,104 +90,115 @@ object GatewayMain extends IOApp.Simple:
                 val url = s"$baseUrl?token=$token"
 
                 logger.info(s"nebflow v${nebflow.Version.string}") *>
-                  logger.info(s"gateway listening on ${cfg.host}:${cfg.port}") *>
-                  logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)") *>
-                  initSkillDiscovery(config, handle).flatMap { skillDiscoveryOpt =>
-                    RuntimePreferencesService.create.flatMap { runtimePrefs =>
-                      RateLimiter.create().flatMap { rateLimiter =>
-                        FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
-                          Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
-                            // Create Dispatcher for the multi-agent runtime, then start server
-                            cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
-                              val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
-                              cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
-                                nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
-                                  val sharedResources = SharedResources(
-                                    llm = handle,
-                                    dispatcher = dispatcher,
-                                    sessionStore = sessionStore,
-                                    projectRoot = os.pwd,
-                                    runtimePrefs = runtimePrefs,
-                                    rateLimiter = rateLimiter,
-                                    fileChangeTracker = fileTracker,
-                                    reminderStateRef = reminderStateRef,
-                                    contextWindow = contextWindow,
-                                    skillDiscovery = skillDiscoveryOpt,
-                                    agentLibrary = agentLibrary,
-                                    askSemaphore = askSemaphore,
-                                    taskStore = FileTaskStore,
-                                    historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd),
-                                    fileLockManager = fileLockMgr,
-                                    sessionModelOverrides = sessionModelOverrides,
-                                    providerRegistry = registry
-                                  )
-                                  val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
-                                  val sessionService = new SessionService(sessionStore)
-                                  val agentService = new AgentService(agentLibrary)
-                                  val configService = ConfigService
+                  RuntimePreferencesService.create.flatMap { runtimePrefs =>
+                    RateLimiter.create().flatMap { rateLimiter =>
+                      FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
+                        Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
+                          // Create Dispatcher for the multi-agent runtime, then start server
+                          cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
+                            val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
+                            cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
+                              nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
+                                val sharedResources = SharedResources(
+                                  llm = handle,
+                                  dispatcher = dispatcher,
+                                  sessionStore = sessionStore,
+                                  projectRoot = os.pwd,
+                                  runtimePrefs = runtimePrefs,
+                                  rateLimiter = rateLimiter,
+                                  fileChangeTracker = fileTracker,
+                                  reminderStateRef = reminderStateRef,
+                                  contextWindow = contextWindow,
+                                  skillDiscovery = None, // initialized asynchronously
+                                  agentLibrary = agentLibrary,
+                                  askSemaphore = askSemaphore,
+                                  taskStore = FileTaskStore,
+                                  historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd),
+                                  fileLockManager = fileLockMgr,
+                                  sessionModelOverrides = sessionModelOverrides,
+                                  providerRegistry = registry
+                                )
+                                val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
+                                val sessionService = new SessionService(sessionStore)
+                                val agentService = new AgentService(agentLibrary)
+                                val configService = ConfigService
 
-                                  val wsHub = new WsHub()
+                                val wsHub = new WsHub()
 
-                                  EmberServerBuilder
-                                    .default[IO]
-                                    .withHost(cfg.host)
-                                    .withPort(cfg.port)
-                                    .withIdleTimeout(1.hour)
-                                    .withHttpWebSocketApp { wsb =>
-                                      val wsRoutes = new WebSocketRoutes(
-                                        wsb,
-                                        sessionService,
-                                        agentService,
-                                        configService,
-                                        runtimePrefs,
-                                        rateLimiter,
-                                        token,
-                                        fileTracker,
-                                        reminderStateRef,
-                                        sessionStore,
-                                        wsHub,
-                                        actorSystem,
-                                        contextWindow,
-                                        skillDiscoveryOpt,
-                                        sharedResources,
-                                        pluginManifests
-                                      )
-                                      Router(
-                                        "/api" -> chatRoutes.routes,
-                                        "/" -> wsRoutes.routes
-                                      ).orNotFound
-                                    }
-                                    .build
-                                    .use { _ =>
-                                      openBrowser(url) *>
-                                        logger.info("Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop") *>
-                                        waitForQuit
-                                    }
-                                    .guarantee(
-                                      logger.info("shutting down...") *>
-                                        mcpManager.stopAll() *>
-                                        releaseBackend *>
-                                        IO.fromFuture(IO {
-                                          actorSystem.terminate()
-                                          actorSystem.whenTerminated
-                                        }).void
+                                EmberServerBuilder
+                                  .default[IO]
+                                  .withHost(cfg.host)
+                                  .withPort(cfg.port)
+                                  .withIdleTimeout(1.hour)
+                                  .withHttpWebSocketApp { wsb =>
+                                    val wsRoutes = new WebSocketRoutes(
+                                      wsb,
+                                      sessionService,
+                                      agentService,
+                                      configService,
+                                      runtimePrefs,
+                                      rateLimiter,
+                                      token,
+                                      fileTracker,
+                                      reminderStateRef,
+                                      sessionStore,
+                                      wsHub,
+                                      actorSystem,
+                                      contextWindow,
+                                      None, // skillDiscovery: initialized asynchronously
+                                      sharedResources,
+                                      Nil // pluginManifests: initialized asynchronously
                                     )
-                                } // end fileLockMgr
-                              } // end askSemaphore
-                            } // end dispatcher.use
-                          } // end reminderStateRef
-                        } // end fileTracker
-                      } // end rateLimiter
-                    } // end runtimePrefs
-                  } // end skillDiscoveryOpt
-              }
+                                    Router(
+                                      "/api" -> chatRoutes.routes,
+                                      "/" -> wsRoutes.routes
+                                    ).orNotFound
+                                  }
+                                  .build
+                                  .use { _ =>
+                                    for
+                                      _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
+                                      _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
+                                      _ <- openBrowser(url)
+                                      // --- Background init: MCP servers + skill discovery ---
+                                      bgInit = startMcpServers(config, mcpManager)
+                                        .flatMap { _ =>
+                                          initSkillDiscovery(config, handle)
+                                        }
+                                        .handleErrorWith { e =>
+                                          logger.warn(s"Background init failed: ${e.getMessage}")
+                                        }
+                                      _ <- bgInit.background.use { _ =>
+                                        logger.info(
+                                          "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
+                                        ) *> waitForQuit
+                                      }
+                                    yield ()
+                                  }
+                                  .guarantee(
+                                    logger.info("shutting down...") *>
+                                      mcpManager.stopAll() *>
+                                      releaseBackend *>
+                                      IO.fromFuture(IO {
+                                        actorSystem.terminate()
+                                        actorSystem.whenTerminated
+                                      }).void
+                                  )
+                              } // end fileLockMgr
+                            } // end askSemaphore
+                          } // end dispatcher.use
+                        } // end reminderStateRef
+                      } // end fileTracker
+                    } // end rateLimiter
+                  } // end runtimePrefs
+              } // end mcpManager
             }
           }
-        }
-      } // end config flatMap
+        } // end config flatMap
+      }
     }
 
-  private def initSkillDiscovery(config: NebflowServiceConfig, llm: LlmHandle[IO]): IO[Option[SkillDiscovery]] =
+  private def initSkillDiscovery(config: NebflowServiceConfig, llm: LlmHandle[IO]): IO[Unit] =
     config.vectorInjection match
       case Some(viConfig) if viConfig.enable =>
         val skillsDir = Config.NebflowHome / "skills"
@@ -199,13 +213,14 @@ object GatewayMain extends IOApp.Simple:
           case m if m.contains("embedding") => 1536
           case _ => 1024
 
-        (for
-          _ <- qdrant.ensureCollection(viConfig.collection, vectorSize)
-          _ <- indexer.indexIncremental(skillsDir, llm)
-        yield Some(new SkillDiscovery(qdrant, embedding, viConfig)))
-          .handleErrorWith { e =>
-            logger.warn(s"Skill system init failed, continuing without: ${e.getMessage}") *> IO.pure(None)
+        logger.info("Initializing skill discovery...") *>
+          (for
+            _ <- qdrant.ensureCollection(viConfig.collection, vectorSize)
+            _ <- indexer.indexIncremental(skillsDir, llm)
+            _ <- logger.info("Skill discovery initialized")
+          yield ()).handleErrorWith { e =>
+            logger.warn(s"Skill system init failed, continuing without: ${e.getMessage}")
           }
       case _ =>
-        IO.pure(None)
+        IO.unit
 end GatewayMain
