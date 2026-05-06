@@ -100,21 +100,32 @@ export function esc(s) {
   return d.innerHTML;
 }
 
-// === Diff formatting ===
+// === Diff formatting (unified diff) ===
 export function formatDiff(content) {
   if (!content) return null;
   const lines = content.split('\n');
-  // Single-line-number diff: "lineno |content" or "lineno |-content" or "lineno |+content"
-  const isLineDiff = lines.some(l => /^\s*\d+\s*\|[+-]?/.test(l));
-  if (!isLineDiff) return null;
+  // Detect unified diff: must contain at least one @@ ... @@ hunk header
+  const isUnified = lines.some(l => /^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@/.test(l));
+  if (!isUnified) return null;
   const html = lines.map(line => {
-    const m = line.match(/^(\s*\d+)\s*\|(.*)$/);
-    if (!m) return '<div class="diff-line"><span class="diff-lineno"></span><span class="diff-content">' + esc(line) + '</span></div>';
-    let cls = 'diff-content';
-    const text = m[2];
-    if (text.startsWith('-')) cls = 'diff-content diff-del';
-    else if (text.startsWith('+')) cls = 'diff-content diff-add';
-    return '<div class="diff-line"><span class="diff-lineno">' + esc(m[1].trim()) + '</span><span class="' + cls + '">' + esc(text) + '</span></div>';
+    // Hunk header: @@ -oldStart,oldCount +newStart,newCount @@
+    if (/^@@/.test(line)) {
+      return '<div class="diff-hunk-header">' + esc(line) + '</div>';
+    }
+    // Added line
+    if (line.startsWith('+')) {
+      return '<div class="diff-line"><span class="diff-content diff-add">' + esc(line) + '</span></div>';
+    }
+    // Removed line
+    if (line.startsWith('-')) {
+      return '<div class="diff-line"><span class="diff-content diff-del">' + esc(line) + '</span></div>';
+    }
+    // Context line (space prefix)
+    if (line.startsWith(' ')) {
+      return '<div class="diff-line"><span class="diff-content">' + esc(line) + '</span></div>';
+    }
+    // Fallback: plain line
+    return '<div class="diff-line"><span class="diff-content">' + esc(line) + '</span></div>';
   }).join('');
   return '<pre>' + html + '</pre>';
 }

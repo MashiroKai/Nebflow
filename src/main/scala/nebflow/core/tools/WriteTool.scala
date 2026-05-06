@@ -114,14 +114,26 @@ Usage:
                 // Compute the diff/stats before re-checking mtime so any work
                 // between read and write is bracketed by the mtime guard.
                 val short = filePath.getFileName.toString
-                val (added, removed) = DiffUtil.lineStats(original, content)
-                val diff = DiffUtil.makeDiff(short, original, content)
+                val hunks = DiffUtil.makeUnifiedDiff(original, content)
+                val editResult = EditResult(
+                  filePath = filePath.toString,
+                  addedLines = hunks.map(_.lines.count(_.startsWith("+"))).sum,
+                  removedLines = hunks.map(_.lines.count(_.startsWith("-"))).sum,
+                  hunks = hunks,
+                  diffText = EditResult.renderHunks(hunks)
+                )
 
                 if Files.getLastModifiedTime(filePath) != mtime then
-                  Left(ToolError("File was modified externally between read and write. Please re-check and retry."))
+                  // mtime changed — only fail if content actually differs
+                  val current = DiffUtil.readFile(filePath)
+                  if current != original then
+                    Left(ToolError("File was modified externally between read and write. Please re-check and retry."))
+                  else
+                    DiffUtil.writeFile(filePath, content, lineSep)
+                    Right(editResult.toResultString)
                 else
                   DiffUtil.writeFile(filePath, content, lineSep)
-                  Right(DiffUtil.renderUpdatedResult(short, added, removed, diff))
+                  Right(editResult.toResultString)
             catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
           }
           val lockedWrite = ctx.fileLockManager match

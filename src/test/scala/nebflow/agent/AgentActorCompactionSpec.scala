@@ -25,7 +25,6 @@ class AgentActorCompactionSpec extends FunSuite:
       latestUsage = None,
       pendingAskUser = None,
       pendingPermission = None,
-      recentToolCalls = Nil,
       turnIdx = 0
     )
 
