@@ -89,6 +89,10 @@ export function renderSettings() {
           <label class="policy-option"><input type="radio" name="policy" value="block"> Block Dangerous</label>
         </div>
       </div>
+      <div class="settings-row">
+        <span class="settings-label">Language</span>
+        <input type="text" id="language-input" class="settings-text-input" placeholder="Auto-detect" value="${state.language || ''}" />
+      </div>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">Configuration</div>
@@ -122,6 +126,12 @@ export function renderSettings() {
       state.currentPolicy = r.value;
       sendWs({type: 'setPolicy', policy: r.value});
     });
+  });
+  // Language input — send on change
+  document.getElementById('language-input')?.addEventListener('change', function() {
+    const val = this.value.trim() || null;
+    state.language = val;
+    sendWs({type: 'setLanguage', language: val});
   });
   // Config save — validate JSON before sending
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
@@ -313,11 +323,18 @@ function restoreInputDraft(sessionId) {
 function resetChatForActiveSession() {
   state.aiText = '';
   state.currentAiBubble = null;
+  state.agentBubbles = {};
+  state.activeAgentId = null;
   Object.keys(state.sessionToolCards).forEach(sid => {
     if (state.sessionToolCards[sid]) state.sessionToolCards[sid].remove();
   });
   state.sessionToolCards = {};
+  state.historyOffset = 0;
+  state.historyHasMore = false;
+  state.historyLoading = false;
   state.dom.chat.innerHTML = '';
+  // Clear any history loader/end indicators (they live in chat, but belt-and-suspenders)
+  state.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
   smartScroll();
 
   const sid = state.activeSessionId;

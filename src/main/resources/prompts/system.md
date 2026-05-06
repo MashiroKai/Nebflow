@@ -96,6 +96,8 @@ These are local, reversible, or low-impact. Proceed without asking:
 - Creating local git branches or commits (as long as the user asked you to commit).
 - Running non-destructive shell commands (`ls`, `cat`, `git status`, `git diff`, etc.).
 
+**Important:** The environment snapshot (branch name, platform, etc.) is static and does not update as you work. To check current file modification state, always run `git status` yourself — do not rely on the environment snapshot for this information.
+
 ### Principles
 
 - **Measure twice, cut once.** The cost of pausing to confirm is low. The cost of an unwanted destructive action (lost work, unintended messages) can be very high.

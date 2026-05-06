@@ -131,7 +131,7 @@ export function appendAiText(text) {
   smartScroll();
 }
 
-export function finishAi(durationMs) {
+export function finishAi(durationMs, model) {
   if (state.currentAiBubble) {
     if (!state.aiText) {
       const row = state.currentAiBubble.closest('.row');
@@ -144,9 +144,9 @@ export function finishAi(durationMs) {
     state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText || '');
     if (askBox) state.currentAiBubble.appendChild(askBox);
     if (durationMs != null && durationMs > 0) {
-      renderDurationBadge(state.currentAiBubble, durationMs);
+      renderDurationBadge(state.currentAiBubble, durationMs, model);
     }
-    const result = { type: 'ai', text: state.aiText, durationMs };
+    const result = { type: 'ai', text: state.aiText, durationMs, model };
     state.currentAiBubble = null;
     state.aiText = '';
     return result;
@@ -159,10 +159,12 @@ export function finishAi(durationMs) {
  * e.g. 5000 -> "5s", 93000 -> "1m 33s", 547000 -> "9m 7s"
  */
 function formatDuration(ms) {
-  const totalSeconds = Math.round(ms / 1000);
-  if (totalSeconds < 60) return totalSeconds + 's';
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 1) return '< 1s';
+  const rounded = Math.round(totalSeconds);
+  if (rounded < 60) return rounded + 's';
+  const minutes = Math.floor(rounded / 60);
+  const seconds = rounded % 60;
   return minutes + 'm ' + seconds + 's';
 }
 
@@ -170,12 +172,15 @@ function formatDuration(ms) {
  * Render a subtle duration badge below an AI bubble.
  * Example: "✻ Thought for 2m 15s"
  */
-export function renderDurationBadge(bubble, durationMs) {
+export function renderDurationBadge(bubble, durationMs, model) {
+  if (!bubble) return;
   const row = bubble.closest('.row');
   if (!row) return;
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
-  badge.textContent = '✻ Thought for ' + formatDuration(durationMs);
+  let text = '✻ Thought for ' + formatDuration(durationMs);
+  if (model) text += ' · ' + model;
+  badge.textContent = text;
   row.appendChild(badge);
 }
 
@@ -350,30 +355,6 @@ export function renderSystemBubble(text) {
   chat.appendChild(row);
   smartScroll();
   return { type: 'system', text };
-}
-
-// ---------- Stage bubble (adaptive stage transitions) ----------
-const STAGE_STYLES = {
-  Cautious:     { cls: 'notice-warn',    icon: '⚠' },
-  Conservative: { cls: 'notice-danger',  icon: '⛔' },
-  Paused:       { cls: 'notice-info',    icon: '⏸' },
-  Normal:       null,
-};
-
-export function renderStageBubble(stage, stagnationCount, turnIdx) {
-  const s = STAGE_STYLES[stage];
-  if (!s) return null;
-  const chat = state.dom.chat;
-  const row = document.createElement('div');
-  row.className = 'row notice';
-  const card = document.createElement('div');
-  card.className = 'notice-card ' + s.cls;
-  const label = stage === 'Paused' ? 'Paused' : stage;
-  card.textContent = `${s.icon} [${label}] Turn ${turnIdx} · stagnant ${stagnationCount}`;
-  row.appendChild(card);
-  chat.appendChild(row);
-  smartScroll();
-  return { type: 'stage', stage, stagnationCount, turnIdx };
 }
 
 
@@ -623,3 +604,71 @@ export function renderAttachmentPreview() {
     }
   });
 }
+
+// ---------- /ask bubble rendering ----------
+export function renderAskBubble(question) {
+  const chat = state.dom.chat;
+  const row = document.createElement('div');
+  row.className = 'row user ask-question-row';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble user ask-question-bubble';
+  const label = document.createElement('div');
+  label.className = 'ask-label';
+  label.textContent = 'Ask';
+  const q = document.createElement('div');
+  q.textContent = question;
+  bubble.appendChild(label);
+  bubble.appendChild(q);
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  smartScroll();
+}
+
+export function appendAskAnswer(delta) {
+  const chat = state.dom.chat;
+  state.askAnswerText += delta;
+  if (!state.currentAskBubble) {
+    const row = document.createElement('div');
+    row.className = 'row ai ask-answer-row';
+    state.currentAskBubble = document.createElement('div');
+    state.currentAskBubble.className = 'bubble ai ask-answer-bubble';
+    const label = document.createElement('div');
+    label.className = 'ask-label';
+    label.textContent = 'Ask';
+    const content = document.createElement('div');
+    content.className = 'ask-content';
+    state.currentAskBubble.appendChild(label);
+    state.currentAskBubble.appendChild(content);
+    row.appendChild(state.currentAskBubble);
+    chat.appendChild(row);
+  }
+  const contentEl = state.currentAskBubble.querySelector('.ask-content');
+  if (contentEl) {
+    const cursor = '<span class="cursor"></span>';
+    contentEl.innerHTML = renderMarkdownWithMath(state.askAnswerText || '') + cursor;
+  }
+  smartScroll();
+}
+
+export function finishAskAnswer() {
+  if (state.currentAskBubble) {
+    const contentEl = state.currentAskBubble.querySelector('.ask-content');
+    if (contentEl) {
+      contentEl.innerHTML = renderMarkdownWithMath(state.askAnswerText || '');
+    }
+    state.currentAskBubble = null;
+    state.askAnswerText = '';
+  }
+}
+
+export function renderAskError(msg) {
+  // Clean up any in-progress ask bubble
+  if (state.currentAskBubble) {
+    const row = state.currentAskBubble.closest('.row');
+    if (row) row.remove();
+    state.currentAskBubble = null;
+    state.askAnswerText = '';
+  }
+  renderError(msg || 'Ask failed');
+}
+

@@ -331,6 +331,26 @@
   font-size: 12px;
   color: var(--color-text-muted);
 }
+
+/* Text input for settings */
+.settings-text-input {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 12px;
+  padding: 4px 8px;
+  width: 140px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.settings-text-input:focus {
+  border-color: var(--color-primary);
+}
+.settings-text-input::placeholder {
+  color: #666;
+}
+
 /* Toggle switch */
 .toggle {
   width: 36px;

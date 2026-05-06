@@ -68,13 +68,12 @@ export default {
   pendingDeleteId: null,
 
 
-  // Stage tracking: last known stage per session (for detecting stage changes)
-  lastStage: {},
   // Server config (sent on WS connect)
-  streamTimeoutMs: 900000,
+  streamTimeoutMs: 600000,
   serverVersion: '',
   currentPolicy: 'ask',
   serverThinking: null,
+  language: null,
 
   // Send lock (prevents rapid double-send)
   isSending: false,
@@ -90,6 +89,10 @@ export default {
 
   // IME
   composing: false,
+
+  // /ask command
+  currentAskBubble: null,
+  askAnswerText: '',
 
   // Slash autocomplete
   slashSelectedIndex: 0,

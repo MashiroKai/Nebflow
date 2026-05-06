@@ -8,6 +8,18 @@ import { renderWithRegistry } from './cardRegistry.js';
 
 const MAX_MSGS_PER_SESSION = 200;
 
+// ---------- Duration formatting (mirrors chat.js formatDuration) ----------
+function formatDurationPersisted(ms) {
+  const totalSeconds = ms / 1000;
+  if (totalSeconds < 1) return '< 1s';
+  const rounded = Math.round(totalSeconds);
+  if (rounded < 60) return rounded + 's';
+  const minutes = Math.floor(rounded / 60);
+  const seconds = rounded % 60;
+  return minutes + 'm ' + seconds + 's';
+}
+
+
 // ---------- Safe localStorage write with quota handling ----------
 function safeSetItem(key, value) {
   try {
@@ -97,6 +109,14 @@ export function restoreFromStorage() {
       bubble.className = 'bubble ai';
       bubble.innerHTML = renderMarkdownWithMath(m.text || '');
       row.appendChild(bubble);
+      if (m.durationMs != null && m.durationMs > 0) {
+        const badge = document.createElement('div');
+        badge.className = 'duration-badge';
+        let text = '✻ Thought for ' + formatDurationPersisted(m.durationMs);
+        if (m.model) text += ' · ' + m.model;
+        badge.textContent = text;
+        row.appendChild(badge);
+      }
       chat.appendChild(row);
     } else if (m.type === 'tool') {
       // Inline render to avoid triggering saveMsg again
@@ -188,26 +208,6 @@ export function restoreFromStorage() {
       card.textContent = m.content;
       row.appendChild(card);
       chat.appendChild(row);
-    } else if (m.type === 'stage') {
-      const STAGE_STYLES = {
-        Cautious:     { bg: 'rgba(217,165,65,0.15)',  border: '#D6B656', color: '#b8941e', icon: '⚠' },
-        Conservative: { bg: 'rgba(199,84,80,0.15)',    border: '#c75450', color: '#c75450', icon: '⛔' },
-        Paused:       { bg: 'rgba(108,142,191,0.18)',  border: '#6C8EBF', color: '#6C8EBF', icon: '⏸' },
-      };
-      const s = STAGE_STYLES[m.stage];
-      if (s) {
-        const row = document.createElement('div');
-        row.className = 'row error';
-        const card = document.createElement('div');
-        card.className = 'error-card';
-        card.style.background = s.bg;
-        card.style.borderLeft = `3px solid ${s.border}`;
-        card.style.color = s.color;
-        card.style.paddingLeft = '14px';
-        card.textContent = `${s.icon} [${m.stage}] Turn ${m.turnIdx} · stagnant ${m.stagnationCount}`;
-        row.appendChild(card);
-        chat.appendChild(row);
-      }
     }
   });
   chat.scrollTop = chat.scrollHeight;
@@ -256,6 +256,14 @@ export function restoreFromBackendHistory(msgs) {
       bubble.className = 'bubble ai';
       bubble.innerHTML = renderMarkdownWithMath(m.text || '');
       row.appendChild(bubble);
+      if (m.durationMs != null && m.durationMs > 0) {
+        const badge = document.createElement('div');
+        badge.className = 'duration-badge';
+        let text = '✻ Thought for ' + formatDurationPersisted(m.durationMs);
+        if (m.model) text += ' · ' + m.model;
+        badge.textContent = text;
+        row.appendChild(badge);
+      }
       chat.appendChild(row);
     } else if (m.type === 'tool') {
       const row = document.createElement('div');
@@ -344,26 +352,6 @@ export function restoreFromBackendHistory(msgs) {
       card.textContent = m.content;
       row.appendChild(card);
       chat.appendChild(row);
-    } else if (m.type === 'stage') {
-      const STAGE_STYLES = {
-        Cautious:     { bg: 'rgba(217,165,65,0.15)',  border: '#D6B656', color: '#b8941e', icon: '⚠' },
-        Conservative: { bg: 'rgba(199,84,80,0.15)',    border: '#c75450', color: '#c75450', icon: '⛔' },
-        Paused:       { bg: 'rgba(108,142,191,0.18)',  border: '#6C8EBF', color: '#6C8EBF', icon: '⏸' },
-      };
-      const s = STAGE_STYLES[m.stage];
-      if (s) {
-        const row = document.createElement('div');
-        row.className = 'row error';
-        const card = document.createElement('div');
-        card.className = 'error-card';
-        card.style.background = s.bg;
-        card.style.borderLeft = `3px solid ${s.border}`;
-        card.style.color = s.color;
-        card.style.paddingLeft = '14px';
-        card.textContent = `${s.icon} [${m.stage}] Turn ${m.turnIdx} · stagnant ${m.stagnationCount}`;
-        row.appendChild(card);
-        chat.appendChild(row);
-      }
     }
   });
   chat.scrollTop = chat.scrollHeight;
