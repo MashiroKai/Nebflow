@@ -272,27 +272,6 @@ enum AgentStatus:
 
 case class CompactionResult(before: Int, after: Int)
 
-// Record of a tool call for loop detection
-case class ToolCallRecord(
-  name: String,
-  inputHash: String,
-  turnIdx: Int
-)
-
-object ToolCallRecord:
-
-  /** Recursively sort JSON keys for deterministic hashing. */
-  def canonicalHash(input: JsonObject): String =
-    canonicalJsonObject(input).noSpaces
-
-  private def canonicalJson(json: Json): Json = json match
-    case j if j.isObject => j.asObject.fold(json)(canonicalJsonObject)
-    case j if j.isArray => Json.fromValues(j.asArray.fold(Seq.empty[Json])(_.map(canonicalJson)))
-    case other => other
-
-  private def canonicalJsonObject(obj: JsonObject): Json =
-    Json.fromFields(obj.toList.sortBy(_._1).map((k, v) => k -> canonicalJson(v)))
-end ToolCallRecord
 
 /** A pending or in-progress compaction sub-agent task. */
 case class CompactionJob(
@@ -346,12 +325,6 @@ object ExecutionContext:
     )
 end ExecutionContext
 
-/** Anti-loop tracking state. */
-case class SafetyContext(
-  recentToolCalls: List[ToolCallRecord] = Nil,
-  recentFilesRead: Set[String] = Set.empty,
-  hasInjectedAntiLoop: Boolean = false
-)
 
 /** Context compression state. */
 case class CompactionState(
@@ -364,7 +337,6 @@ case class CompactionState(
 case class AgentState(
   session: SessionContext,
   execution: ExecutionContext,
-  safety: SafetyContext,
   compaction: CompactionState
 )
 
@@ -383,11 +355,8 @@ object AgentState:
     latestUsage: Option[TokenUsage] = None,
     pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
     pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
-    recentToolCalls: List[ToolCallRecord] = Nil,
     turnIdx: Int = 0,
     wsSend: Json => IO[Unit] = _ => IO.unit,
-    hasInjectedAntiLoop: Boolean = false,
-    recentFilesRead: Set[String] = Set.empty,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     recentMessageIds: List[String] = Nil
   ): AgentState =
@@ -397,7 +366,6 @@ object AgentState:
     new AgentState(
       SessionContext(sessionId, recentMessageIds, wsSend, depth, readTracker),
       ExecutionContext(messages, status, turnIdx, subagents, activeStreamFiber, interaction),
-      SafetyContext(recentToolCalls, recentFilesRead, hasInjectedAntiLoop),
       CompactionState(pendingCompaction, compactionFailures, latestUsage)
     )
   end apply
@@ -421,15 +389,11 @@ extension (s: AgentState)
 
   def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
     s.execution.interaction.flatMap(_.pendingPermission)
-  def recentToolCalls: List[ToolCallRecord] = s.safety.recentToolCalls
-  def recentFilesRead: Set[String] = s.safety.recentFilesRead
-  def hasInjectedAntiLoop: Boolean = s.safety.hasInjectedAntiLoop
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
-  def withSafety(safety: SafetyContext): AgentState = s.copy(safety = safety)
   def withCompaction(compaction: CompactionState): AgentState = s.copy(compaction = compaction)
 
   def withMessages(msgs: List[Message]): AgentState = s.copy(execution = s.execution.copy(messages = msgs))
@@ -472,10 +436,6 @@ extension (s: AgentState)
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
-
-  def withRecentToolCalls(calls: List[ToolCallRecord]): AgentState =
-    s.copy(safety = s.safety.copy(recentToolCalls = calls))
-  def withRecentFilesRead(files: Set[String]): AgentState = s.copy(safety = s.safety.copy(recentFilesRead = files))
 
   /** Reset execution state to idle — used by finishTurn, Interrupt, LlmFailed. */
   def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =

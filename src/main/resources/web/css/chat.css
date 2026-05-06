@@ -257,7 +257,7 @@
 }
 .tool-card .body .diff-line { display: flex; gap: 6px; }
 .tool-card .body .diff-line:hover { background: rgba(0,0,0,0.03); }
-.tool-card .body .diff-lineno { color: #999; min-width: 28px; text-align: right; user-select: none; }
+.tool-card .body .diff-hunk-header { color: #6a1b9a; background: rgba(106,27,154,0.06); font-weight: 600; padding: 1px 4px; border-radius: 3px; }
 .tool-card .body .diff-add { color: #2e7d32; background: #e8f5e9; }
 .tool-card .body .diff-del { color: #c62828; background: #ffebee; }
 .tool-card .body .diff-content { flex: 1; }
