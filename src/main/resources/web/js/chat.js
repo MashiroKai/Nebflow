@@ -265,7 +265,7 @@ export function finishAgent(agentId) {
 }
 
 // ---------- Tool rendering ----------
-export function renderTool(label, summary, content, isError, inputJson, sessionId) {
+export function renderTool(label, summary, content, isError, inputJson, sessionId, truncated) {
   const sid = sessionId || state.activeSessionId;
   // Guard: do not render into a different session's chat
   if (sid && sid !== state.activeSessionId) return null;
@@ -289,6 +289,11 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     return { type: 'tool', label, summary, content, isError, input: inputJson };
   }
 
+  // Truncation warning badge
+  const truncBadge = truncated
+    ? '<span class="truncated-badge" title="Output was too large and has been truncated to prevent context overflow">Truncated</span>'
+    : '';
+
   // Fallback to default rendering
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -298,14 +303,14 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
   const hasBody = !!bodyHtml;
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-    '<div class="content"><div class="label">' + escapeHtml(label) + ' &mdash; ' + escapeHtml(summary) + '</div>' +
+    '<div class="content"><div class="label">' + escapeHtml(label) + ' &mdash; ' + escapeHtml(summary) + truncBadge + '</div>' +
     (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
   row.appendChild(card);
   chat.appendChild(row);
   smartScroll();
 
   if (hasBody) attachToolClick(card);
-  return { type: 'tool', label, summary, content, isError, input: inputJson };
+  return { type: 'tool', label, summary, content, isError, input: inputJson, truncated: !!truncated };
 }
 
 export function renderToolPending(label, sessionId) {

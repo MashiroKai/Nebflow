@@ -4,9 +4,13 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.core.NebflowLogger
 import nebflow.core.tools.{Tool, ToolContext, ToolRegistry}
 
-class McpClient(transport: McpTransport):
+import scala.concurrent.duration.*
+
+class McpClient(serverId: String, transport: McpTransport):
+  private val logger = NebflowLogger.forName(s"nebflow.mcp.client.$serverId")
   private val counter = new java.util.concurrent.atomic.AtomicInteger(0)
 
   private def nextId: Json = Json.fromInt(counter.incrementAndGet())
@@ -18,18 +22,22 @@ class McpClient(transport: McpTransport):
       params = Some(
         JsonObject.fromIterable(
           List(
-            "protocolVersion" -> "2025-11-25".asJson,
+            "protocolVersion" -> "2025-11-05".asJson,
             "capabilities" -> Json.obj(),
             "clientInfo" -> Json.obj("name" -> "nebflow".asJson, "version" -> "1.0.0".asJson)
           )
         )
       )
     )
-    transport.send(request).flatMap { response =>
-      response.error match
+    for
+      response <- transport.send(request)
+      _ <- response.error match
         case Some(err) => IO.raiseError(new RuntimeException(s"MCP initialize failed: ${err.message}"))
         case None => IO.unit
-    }
+      // Complete handshake per MCP spec: send initialized notification
+      _ <- transport.sendNotification(JsonRpcNotification(method = "notifications/initialized"))
+      _ <- logger.info(s"Handshake complete")
+    yield ()
 
   def listTools(): IO[List[McpTool]] =
     val request = JsonRpcRequest(
@@ -37,14 +45,17 @@ class McpClient(transport: McpTransport):
       method = "tools/list",
       params = Some(JsonObject.empty)
     )
-    transport.send(request).map { response =>
+    transport.send(request).timeout(30.seconds).map { response =>
       response.result match
         case Some(result) =>
           result.hcursor.downField("tools").as[List[Json]].getOrElse(Nil).flatMap { t =>
             val name = t.hcursor.downField("name").as[String].getOrElse("")
             val desc = t.hcursor.downField("description").as[String].toOption
             val schema = t.hcursor.downField("inputSchema").as[JsonObject].getOrElse(JsonObject.empty)
-            if name.nonEmpty then Some(McpTool(name, desc, schema)) else None
+            if name.nonEmpty then Some(McpTool(name, desc, schema))
+            else
+              logger.warn(s"Skipping malformed tool from server '$serverId': missing 'name' field")
+              None
           }
         case None => Nil
     }
@@ -62,26 +73,29 @@ class McpClient(transport: McpTransport):
         )
       )
     )
-    transport.send(request).map { response =>
-      response.result match
-        case Some(result) =>
-          val content = result.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
-          content
-            .flatMap { c =>
-              c.hcursor
-                .downField("text")
-                .as[String]
-                .toOption
-                .orElse(
-                  c.hcursor.downField("data").as[String].toOption
-                )
-            }
-            .mkString("\n")
-        case None =>
-          response.error match
-            case Some(err) => s"Error: ${err.message}"
-            case None => ""
-    }
+    transport
+      .send(request)
+      .timeout(120.seconds)
+      .map { response =>
+        response.result match
+          case Some(result) =>
+            val content = result.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
+            content
+              .flatMap { c =>
+                c.hcursor
+                  .downField("text")
+                  .as[String]
+                  .toOption
+                  .orElse(
+                    c.hcursor.downField("data").as[String].toOption
+                  )
+              }
+              .mkString("\n")
+          case None =>
+            response.error match
+              case Some(err) => s"[MCP Error ${err.code}] ${err.message}"
+              case None => ""
+      }
   end callTool
 
   def close(): IO[Unit] = transport.close()

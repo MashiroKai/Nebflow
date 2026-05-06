@@ -2,6 +2,7 @@
 export const LS_KEY = 'nebflow_v3';
 export const LS_SESSIONS_KEY = 'nebflow_sessions';
 export const LS_HISTORY_KEY = 'nebflow_input_history';
+export const LS_DRAFTS_KEY = 'nebflow_input_drafts';
 export const MAX_FILE_SIZE = 500 * 1024;
 export const AGENT_PALETTE = ['#6C8EBF', '#D4A574', '#82B366', '#B5739D', '#9678B6', '#D6B656'];
 
@@ -56,7 +57,7 @@ export default {
   availableTools: [],
 
   // Per-session input drafts: sessionId -> { text, attachments }
-  sessionInputDrafts: {},
+  sessionInputDrafts: safeParse(localStorage.getItem('nebflow_input_drafts'), {}),
 
   // Input
   pendingAttachments: [],

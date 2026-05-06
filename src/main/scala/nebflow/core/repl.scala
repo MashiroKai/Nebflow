@@ -95,7 +95,11 @@ object Repl:
         catch case _: Exception => ""
       case None => ""
 
-  def buildEnvInfo(projectRoot: String): String = // public for AgentActor
+  /**
+   * Static environment info — injected once into system prompt, never updated per-turn.
+   * Git state is intentionally omitted; agents should use Bash to run git commands on demand.
+   */
+  def buildEnvInfo(projectRoot: String): String =
     val sb = new StringBuilder
     sb.append("## Environment\n\n")
     sb.append("| Property | Value |\n")
@@ -105,53 +109,6 @@ object Repl:
     sb.append(s"| Shell | ${sys.env.getOrElse("SHELL", "unknown")} |\n")
     sb.append(s"| OS Version | ${sys.props.getOrElse("os.name", "")} ${sys.props.getOrElse("os.version", "")} |\n")
     sb.append(s"| Nebflow version | v${nebflow.Version.string} |\n")
-    sb.append("\n")
-
-    // Git info
-    try
-      val dir = new java.io.File(projectRoot)
-      val isGitRepo = new java.io.File(dir, ".git").exists()
-      if isGitRepo then
-        sb.append("## Git Status\n\n")
-        def gitCmd(args: String): String =
-          val proc = Runtime.getRuntime.exec(s"git $args".split(" "), null, dir)
-          val out = scala.io.Source.fromInputStream(proc.getInputStream).mkString.trim
-          proc.waitFor()
-          out
-
-        val branch = gitCmd("rev-parse --abbrev-ref HEAD")
-        sb.append(s"| Property | Value |\n")
-        sb.append("|----------|-------|\n")
-        sb.append(s"| Current branch | `$branch` |\n")
-
-        val mainBranch = Seq("main", "master")
-          .find(b =>
-            val p = Runtime.getRuntime.exec(Array("git", "rev-parse", "--verify", b), null, dir)
-            p.waitFor() == 0
-          )
-          .getOrElse("main")
-        sb.append(s"| Main branch | `$mainBranch` |\n")
-
-        val gitUser = gitCmd("config user.name")
-        if gitUser.nonEmpty then sb.append(s"| Git user | $gitUser |\n")
-
-        // Intentionally omit modified files — this snapshot is static and becomes stale
-        // as the agent works. Agents should run `git status` directly for current state.
-
-        val log = gitCmd("log --oneline -5")
-        if log.nonEmpty then
-          sb.append("\n### Recent Commits\n\n")
-          sb.append("| Commit | Message |\n")
-          sb.append("|--------|--------|\n")
-          log.linesIterator.foreach { line =>
-            val parts = line.split(" ", 2)
-            if parts.length == 2 then sb.append(s"| `${parts(0)}` | ${parts(1)} |\n")
-          }
-        sb.append("\n")
-      end if
-    catch case _: Exception => ()
-    end try
-
     sb.toString
   end buildEnvInfo
 end Repl

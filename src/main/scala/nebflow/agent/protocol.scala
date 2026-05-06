@@ -116,7 +116,15 @@ object AgentEvent:
 enum AgentStreamEvent:
   case TextDelta(text: String)
   case ToolStart(label: String)
-  case ToolEnd(label: String, summary: String, content: String, isError: Boolean, input: Option[JsonObject] = None)
+
+  case ToolEnd(
+    label: String,
+    summary: String,
+    content: String,
+    isError: Boolean,
+    input: Option[JsonObject] = None,
+    truncated: Boolean = false
+  )
   case AgentStart(agentName: String, agentType: String)
   case AgentEnd(agentName: String)
   case Thinking
@@ -135,7 +143,7 @@ enum AgentStreamEvent:
       if isSubagent then
         Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
       else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
-    case ToolEnd(label, summary, content, isError, input) =>
+    case ToolEnd(label, summary, content, isError, input, truncated) =>
       val base =
         if isSubagent then
           Json.obj(
@@ -155,7 +163,8 @@ enum AgentStreamEvent:
             "content" -> content.asJson,
             "isError" -> isError.asJson
           )
-      input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
+      val withInput = input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
+      if truncated then withInput.deepMerge(Json.obj("truncated" -> true.asJson)) else withInput
     case AgentStart(name, agentType) =>
       Json.obj(
         "type" -> "agentStart".asJson,
@@ -272,7 +281,6 @@ enum AgentStatus:
 
 case class CompactionResult(before: Int, after: Int)
 
-
 /** A pending or in-progress compaction sub-agent task. */
 case class CompactionJob(
   subagentId: String,
@@ -288,6 +296,7 @@ case class CompactionJob(
 /** Session-level persistent state — survives across turns. */
 case class SessionContext(
   sessionId: Option[String] = None,
+  sessionName: Option[String] = None,
   recentMessageIds: List[String] = Nil,
   wsSend: Json => IO[Unit] = _ => IO.unit,
   depth: Int = 0,
@@ -325,7 +334,6 @@ object ExecutionContext:
     )
 end ExecutionContext
 
-
 /** Context compression state. */
 case class CompactionState(
   pendingJob: Option[CompactionJob] = None,
@@ -350,6 +358,7 @@ object AgentState:
     subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = Map.empty,
     activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
     sessionId: Option[String] = None,
+    sessionName: Option[String] = None,
     pendingCompaction: Option[CompactionJob] = None,
     compactionFailures: Int = 0,
     latestUsage: Option[TokenUsage] = None,
@@ -364,7 +373,7 @@ object AgentState:
       case (None, None) => None
       case _ => Some(InteractionState(pendingAskUser, pendingPermission))
     new AgentState(
-      SessionContext(sessionId, recentMessageIds, wsSend, depth, readTracker),
+      SessionContext(sessionId, sessionName, recentMessageIds, wsSend, depth, readTracker),
       ExecutionContext(messages, status, turnIdx, subagents, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, latestUsage)
     )
@@ -376,6 +385,7 @@ extension (s: AgentState)
   def messages: List[Message] = s.execution.messages
   def status: AgentStatus = s.execution.status
   def sessionId: Option[String] = s.session.sessionId
+  def sessionName: Option[String] = s.session.sessionName
   def wsSend: Json => IO[Unit] = s.session.wsSend
   def depth: Int = s.session.depth
   def turnIdx: Int = s.execution.turnIdx
