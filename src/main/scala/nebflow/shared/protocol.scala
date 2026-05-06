@@ -209,7 +209,7 @@ object UiMessage:
   case class User(text: String, attachments: List[Json] = Nil) extends UiMessage:
     val typeName = "user"
 
-  case class Ai(text: String) extends UiMessage:
+  case class Ai(text: String, durationMs: Option[Long] = None, model: Option[String] = None) extends UiMessage:
     val typeName = "ai"
 
   case class Tool(
@@ -235,7 +235,10 @@ object UiMessage:
 
   given Encoder[UiMessage] = Encoder.instance {
     case m: User => Json.obj("type" -> "user".asJson, "text" -> m.text.asJson, "attachments" -> m.attachments.asJson)
-    case m: Ai => Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
+    case m: Ai =>
+      val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
+      val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
+      m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
     case m: Tool =>
       Json.obj(
         "type" -> "tool".asJson,
@@ -247,13 +250,7 @@ object UiMessage:
       )
     case m: Agent => Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
     case m: AskUser => Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
-    case m: Stage =>
-      Json.obj(
-        "type" -> "stage".asJson,
-        "stage" -> m.stage.asJson,
-        "stagnationCount" -> m.stagnationCount.asJson,
-        "turnIdx" -> m.turnIdx.asJson
-      )
+    case _: Stage => Json.obj("type" -> "stage".asJson) // backward compat: no longer produced, decode-only
     case m: System => Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
   }
 
@@ -265,7 +262,11 @@ object UiMessage:
           atts <- cursor.downField("attachments").as[Option[List[Json]]]
         yield User(text, atts.getOrElse(Nil))
       case "ai" =>
-        cursor.downField("text").as[String].map(Ai(_))
+        for
+          text <- cursor.downField("text").as[String]
+          durationMs <- cursor.downField("durationMs").as[Option[Long]]
+          model <- cursor.downField("model").as[Option[String]]
+        yield Ai(text, durationMs, model)
       case "tool" =>
         for
           label <- cursor.downField("label").as[String]

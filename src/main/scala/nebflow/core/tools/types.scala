@@ -5,7 +5,7 @@ import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
 import nebflow.agent.{AgentCommand, AgentDef, AgentLibrary}
 import nebflow.core.task.TaskStore
-import nebflow.core.{AskItem, AskOption}
+import nebflow.core.{AskItem, AskOption, FileChangeTracker}
 import nebflow.shared.*
 import org.apache.pekko.actor.typed.ActorRef
 
@@ -27,7 +27,8 @@ case class ToolContext(
   agentLibrary: Option[AgentLibrary] = None,
   askSemaphore: Option[Semaphore[IO]] = None,
   pekkoScheduler: Option[org.apache.pekko.actor.typed.Scheduler] = None,
-  fileLockManager: Option[FileLockManager] = None
+  fileLockManager: Option[FileLockManager] = None,
+  fileChangeTracker: Option[FileChangeTracker] = None
 )
 
 /** Tool error */
