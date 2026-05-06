@@ -7,7 +7,7 @@ import io.circe.syntax.*
 import nebflow.agent.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
-import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.core.tools.{ToolContext, ToolRegistry, ToolResultGuard}
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
@@ -35,12 +35,14 @@ private[agent] trait AgentCore:
     agentDef: AgentDef,
     depth: Int,
     sessionId: Option[String],
+    sessionName: Option[String],
     event: String,
     detail: String = ""
   ): Unit =
     val sid = shortUuid(sessionId.getOrElse("-"))
+    val sname = sessionName.getOrElse("-")
     val who = if depth == 0 then s"${agentDef.name}-${shortUuid(ctx.self.path.name)}" else s"subagent-${agentDef.name}"
-    val msg = s"agent=$who session=$sid event=$event"
+    val msg = s"agent=$who session=$sname/$sid event=$event"
     lifecycleLog.infoSync(if detail.nonEmpty then s"$msg detail=$detail" else msg)
   end logAgentEvent
 
@@ -88,6 +90,7 @@ private[agent] trait AgentCore:
         agentDef,
         depth,
         state.sessionId,
+        state.sessionName,
         "auto-compact-skipped",
         s"circuitBreakerOpen failures=${state.compactionFailures} max=${CompactConfig().circuitBreakerMax}"
       )
@@ -102,6 +105,7 @@ private[agent] trait AgentCore:
             agentDef,
             depth,
             state.sessionId,
+            state.sessionName,
             "auto-compact-trigger",
             s"inputTokens=$inputTokens threshold=$threshold"
           )
@@ -173,7 +177,7 @@ private[agent] trait AgentCore:
     if state.turnIdx >= MaxTurns then
       val warningMsg = s"[Turn limit reached] Agent has exceeded the maximum of $MaxTurns turns. " +
         "Stopping now. Please synthesize a final answer based on the information gathered so far."
-      logAgentEvent(ctx, agentDef, depth, state.sessionId, "turn-limit", s"turnIdx=${state.turnIdx}")
+      logAgentEvent(ctx, agentDef, depth, state.sessionId, state.sessionName, "turn-limit", s"turnIdx=${state.turnIdx}")
       finishTurn(
         agentDef,
         resources,
@@ -204,12 +208,13 @@ private[agent] trait AgentCore:
             )
 
           // Cache-optimal layout for Anthropic prompt caching (prefix order: system -> tools -> messages):
-          //   system[0]: stable system prompt  <- cache breakpoint (rarely changes)
-          //   tools:     tool definitions       <- cache breakpoint (stable, no dynamic content between)
-          //   messages:  [dynamic context] + actual conversation (dynamic context not persisted)
+          //   system[0]: stable system prompt + static env info  <- cache breakpoint (never changes)
+          //   tools:     tool definitions                          <- cache breakpoint (stable)
+          //   messages:  [per-turn reminders] + actual conversation (dynamic, not persisted)
+          // Env info is baked into system prompt once — git state is omitted; agent uses Bash on demand.
           val baseSystemStable =
             if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
-            else Repl.loadSystemPrompt()
+            else Repl.loadSystemPrompt() + "\n\n" + Repl.buildEnvInfo(resources.projectRoot.toString)
           val tools = buildToolList(agentDef, depth, parentRef.isDefined)
 
           val isSubagent = depth > 0
@@ -220,35 +225,21 @@ private[agent] trait AgentCore:
             emitStreamIO(state.wsSend, ctx, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
 
           val io = for
-            // --- reminders (previously sync, now async) ---
+            // --- reminders (async) ---
             fileChangesOpt <- resources.fileChangeTracker.checkChanges()
-            currentPolicy <- resources.runtimePrefs.getPolicy
-            userInput = state.messages.reverseIterator
-              .collectFirst {
-                case m if m.role == MessageRole.User => m.textContent
-              }
-              .getOrElse("")
-            skillMatchOpt <- resources.skillDiscovery match
-              case Some(sd) => sd.findRelevantSkill(userInput)
-              case None => IO.pure(None)
+            // isUserTurn: last message is from user (not tool results)
+            isUserTurn = state.messages.lastOption.exists(_.role == MessageRole.User)
             reminders <- SystemReminders.collectAll(
               resources.reminderStateRef,
               state.latestUsage,
               agentDef.contextWindow,
               fileChangesOpt,
-              currentPolicy,
-              skillMatchOpt
+              isUserTurn
             )
             remindersText = SystemReminder.renderAll(reminders)
-            // Build dynamic context: env info + per-turn reminders (appended to messages, not prepended)
-            envInfo =
-              if agentDef.systemPrompt.nonEmpty then ""
-              else Repl.buildEnvInfo(resources.projectRoot.toString)
-            dynamicParts = List(envInfo, remindersText).filter(_.nonEmpty)
-            // Append dynamic context as the last user message — preserves messages prefix for caching.
-            // Not stored in state.messages, only in the API request.
+            // Per-turn dynamic context: only reminders (env info is now in system prompt)
             dynamicMsg =
-              if dynamicParts.nonEmpty then List(Message(MessageRole.User, Left(dynamicParts.mkString("\n\n"))))
+              if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
               else Nil
             // --- LLM call ---
             thinkingOpt <- resources.runtimePrefs.getThinking
@@ -378,14 +369,14 @@ private[agent] trait AgentCore:
         // AskUserQuestion renders its own UI via askUser event — skip generic toolStart/End
         val skipStreaming = call.name == "AskUserQuestion"
         (if !skipStreaming then
-          emitStreamIO(
-            state.wsSend,
-            ctx,
-            AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
-            isSubagent,
-            sessionIdOpt
-          )
-        else IO.unit) *>
+           emitStreamIO(
+             state.wsSend,
+             ctx,
+             AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
+             isSubagent,
+             sessionIdOpt
+           )
+         else IO.unit) *>
           (ToolRisk.classify(call.name) match
             case ToolRisk.Safe =>
               executeTool(call, toolCtx)
@@ -445,7 +436,8 @@ private[agent] trait AgentCore:
                     summary,
                     r.content,
                     r.isError,
-                    input = Some(call.input)
+                    input = Some(call.input),
+                    truncated = r.truncated
                   ),
                   isSubagent,
                   sessionIdOpt
@@ -465,16 +457,30 @@ private[agent] trait AgentCore:
         }
         val allResults = freshResults ++ contextManageResults
 
-        val hasRead = freshResults.exists { case (call, result) => call.name == "Read" && !result.isError }
-        val writeCount = freshResults.count { case (call, result) =>
-          Set("Write", "Edit").contains(call.name) && !result.isError
-        }
-        if hasRead || writeCount > 0 then
+        // Track per-file write count since last read
+        val readFiles = freshResults
+          .collect {
+            case (call, result) if call.name == "Read" && !result.isError =>
+              call.input("file_path").flatMap(_.asString).getOrElse("")
+          }
+          .filter(_.nonEmpty)
+          .toSet
+        val writtenFiles = freshResults
+          .collect {
+            case (call, result) if Set("Write", "Edit").contains(call.name) && !result.isError =>
+              call.input("file_path").flatMap(_.asString).getOrElse("")
+          }
+          .filter(_.nonEmpty)
+        if readFiles.nonEmpty || writtenFiles.nonEmpty then
           resources.dispatcher.unsafeRunAndForget(
             resources.reminderStateRef
               .update { rs =>
-                if hasRead then rs.copy(writesWithoutRead = 0)
-                else rs.copy(writesWithoutRead = rs.writesWithoutRead + writeCount)
+                // Reset counter for read files, increment for written files
+                val cleared = rs.writesSinceLastRead -- readFiles
+                val updated = writtenFiles.foldLeft(cleared) { (m, f) =>
+                  m.updated(f, m.getOrElse(f, 0) + 1)
+                }
+                rs.copy(writesSinceLastRead = updated)
               }
               .handleErrorWith(_ => IO.unit)
           )
@@ -523,7 +529,11 @@ private[agent] trait AgentCore:
               .call(call.input, ctx)
               .map {
                 case Left(err) => ToolExecResult(err.message, isError = true)
-                case Right(result) => ToolExecResult(result)
+                case Right(result) =>
+                  val (guarded, wasTruncated) = ToolResultGuard.guard(result, call.name)
+                  if wasTruncated then
+                    logger.warn(s"Tool $summary result truncated: ${result.length} -> ${guarded.length} chars")
+                  ToolExecResult(guarded, truncated = wasTruncated)
               }
               .handleErrorWith {
                 case _: UserAbort => IO.raiseError(new UserAbort())
@@ -532,7 +542,7 @@ private[agent] trait AgentCore:
               .flatTap { result =>
                 val elapsed = (System.nanoTime() - start) / 1_000_000
                 if result.isError then logger.warn(s"Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
-                else logger.info(s"Tool $summary OK (${elapsed}ms)")
+                else logger.info(s"Tool $summary OK (${elapsed}ms)" + (if result.truncated then " [truncated]" else ""))
               }
         }
       case None =>

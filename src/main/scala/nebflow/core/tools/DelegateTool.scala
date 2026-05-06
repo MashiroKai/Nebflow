@@ -54,9 +54,7 @@ If the agent name is not recognized, the call will fail with a list of available
       case (None, _) | (_, None) =>
         IO.pure(Left(ToolError("Delegate requires agent definition and actor reference")))
       case (Some(agentDef), Some(selfRef)) =>
-        if ctx.depth > 0 then
-          IO.pure(Left(ToolError("Sub-agents cannot delegate to further sub-agents")))
-        else if ctx.depth >= 5 then IO.pure(maxDepthError(5))
+        if ctx.depth > 0 then IO.pure(Left(ToolError("Sub-agents cannot delegate to further sub-agents")))
         else
           agentDef.subagents.find(_.name == agentName) match
             case None =>

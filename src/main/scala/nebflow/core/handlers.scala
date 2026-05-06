@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import nebflow.core.tools.*
 import nebflow.shared.*
 
-case class ToolExecResult(content: String, isError: Boolean = false)
+case class ToolExecResult(content: String, isError: Boolean = false, truncated: Boolean = false)
 
 // NOTE: executeTool has been consolidated into AgentCore.executeTool.
 // This file retains ToolExecResult, summarizeToolCall, and summarizeToolResult

@@ -106,16 +106,18 @@ Guidelines:
             }).map { answers =>
               if items.size <= 1 then Right(answers.headOption.getOrElse(""))
               else
-                val formatted = items.zipWithIndex.map { case (item, idx) =>
-                  val answer = answers.lift(idx).getOrElse("(no answer)")
-                  s"${idx + 1}. ${item.question.take(60)}\n   → $answer"
-                }.mkString("\n")
+                val formatted = items.zipWithIndex
+                  .map { case (item, idx) =>
+                    val answer = answers.lift(idx).getOrElse("(no answer)")
+                    s"${idx + 1}. ${item.question.take(60)}\n   → $answer"
+                  }
+                  .mkString("\n")
                 Right(formatted)
-            }
-              .handleError(e => Left(ToolError(s"AskUser failed: ${e.getMessage}")))
+            }.handleError(e => Left(ToolError(s"AskUser failed: ${e.getMessage}")))
 
           case _ =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor and scheduler")))
+      end if
     end if
   end call
 end AskUserQuestionTool

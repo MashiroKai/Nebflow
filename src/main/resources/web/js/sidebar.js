@@ -1,6 +1,6 @@
 // sidebar.js — Left panel management: nav tabs, agent list, settings, session sidebar
 
-import state, { LS_SESSIONS_KEY } from './state.js';
+import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs } from './ws.js';
 import { showAgentModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll } from './utils.js';
@@ -182,15 +182,21 @@ export function renderSessionSidebar(sessionData, activeId) {
   }
 
   // Clean up localStorage for deleted sessions
+  const currentIds = new Set((sessionData || []).map(s => s.id));
   try {
     const all = (() => { try { return JSON.parse(localStorage.getItem(LS_SESSIONS_KEY) || '{}'); } catch(e) { return {}; } })();
-    const currentIds = new Set((sessionData || []).map(s => s.id));
     let changed = false;
     for (const key of Object.keys(all)) {
       if (!currentIds.has(key)) { delete all[key]; changed = true; }
     }
     if (changed) { try { localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all)); } catch(e) {} }
   } catch(e) {}
+  // Clean up drafts for deleted sessions
+  let draftsChanged = false;
+  for (const sid of Object.keys(state.sessionInputDrafts)) {
+    if (!currentIds.has(sid)) { delete state.sessionInputDrafts[sid]; draftsChanged = true; }
+  }
+  if (draftsChanged) persistDrafts();
 
   const sessionList = state.dom.sessionList;
   sessionList.innerHTML = '';
@@ -218,10 +224,14 @@ export function renderSessionSidebar(sessionData, activeId) {
       + (state.pinnedSessions.has(s.id) ? ' pinned' : '');
     item.dataset.id = s.id;
     const statusCls = getSessionStatusClass(s.id);
+    const draft = state.sessionInputDrafts[s.id];
+    const draftHtml = draft && draft.text
+      ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
+      : '';
     item.innerHTML =
       '<div class="session-info">' +
       '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
-      '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>' +
+      (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
       '</div>' +
       '<div class="session-status ' + statusCls + '">' +
       '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
@@ -285,8 +295,13 @@ export function renderSessionSidebar(sessionData, activeId) {
   }
 }
 
+// Persist sessionInputDrafts to localStorage
+function persistDrafts() {
+  try { localStorage.setItem(LS_DRAFTS_KEY, JSON.stringify(state.sessionInputDrafts)); } catch(e) {}
+}
+
 // Save current input box content as draft for the given session
-function saveInputDraft(sessionId) {
+export function saveInputDraft(sessionId) {
   if (!sessionId || !state.dom.input) return;
   const text = state.dom.input.value;
   const attachments = state.pendingAttachments;
@@ -295,6 +310,7 @@ function saveInputDraft(sessionId) {
   } else {
     delete state.sessionInputDrafts[sessionId];
   }
+  persistDrafts();
 }
 
 // Restore input box content from draft for the given session
@@ -414,6 +430,7 @@ export function deleteSession(sessionId) {
   state.pinnedSessions.delete(sessionId);
   persistMarkedUnread();
   persistPinned();
+  persistDrafts();
   sendWs({type: 'deleteSession', sessionId});
 }
 

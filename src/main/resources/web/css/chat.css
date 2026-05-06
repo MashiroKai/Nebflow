@@ -236,6 +236,19 @@
 @keyframes spin { to { transform: rotate(360deg); } }
 .tool-card .content { flex: 1; min-width: 0; }
 .tool-card .label { color: #555; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.truncated-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 3px;
+  vertical-align: middle;
+  cursor: help;
+}
 .tool-card .body {
   color: #333;
   font-size: 11px;
@@ -257,7 +270,7 @@
 }
 .tool-card .body .diff-line { display: flex; gap: 6px; }
 .tool-card .body .diff-line:hover { background: rgba(0,0,0,0.03); }
-.tool-card .body .diff-hunk-header { color: #6a1b9a; background: rgba(106,27,154,0.06); font-weight: 600; padding: 1px 4px; border-radius: 3px; }
+.tool-card .body .diff-lineno { color: #999; min-width: 28px; text-align: right; user-select: none; }
 .tool-card .body .diff-add { color: #2e7d32; background: #e8f5e9; }
 .tool-card .body .diff-del { color: #c62828; background: #ffebee; }
 .tool-card .body .diff-content { flex: 1; }

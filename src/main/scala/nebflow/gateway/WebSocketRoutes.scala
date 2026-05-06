@@ -80,6 +80,7 @@ class WebSocketRoutes(
               depth = 0,
               parentRef = None,
               sessionId = Some(sessionId),
+              sessionName = metaOpt.map(_.name),
               initialMessages = history,
               readTracker = Some(readTracker)
             ),
@@ -289,7 +290,6 @@ class WebSocketRoutes(
           val policy = PermissionPolicy.fromString(policyStr)
           logger.info(s"Permission policy changed to: $policyStr") *>
             runtimePrefs.setPolicy(policy) *>
-            reminderStateRef.update(_.copy(policyReminderPending = true)) *>
             broadcastServerConfig
 
         case "interrupt" =>
@@ -300,7 +300,7 @@ class WebSocketRoutes(
           command match
             case "clear" =>
               logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
-                reminderStateRef.update(_.copy(sessionStarted = false, highestPressureLevel = 0))
+                reminderStateRef.update(_.copy(highestPressureLevel = 0, writesSinceLastRead = Map.empty))
             case _ => IO.unit
 
         case "setThinking" =>
@@ -328,6 +328,48 @@ class WebSocketRoutes(
           logger.info(s"Language preference changed to: $langOpt") *>
             runtimePrefs.setLanguage(langOpt) *>
             broadcastServerConfig
+
+        case "getModelOptions" =>
+          val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+          val models = sharedResources.providerRegistry.getAllModels()
+          sharedResources.sessionModelOverrides.get.flatMap { overrides =>
+            val current = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}").orNull
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "modelOptions".asJson,
+                "models" -> models.map { case (ref, label) =>
+                  io.circe.Json.obj("ref" -> ref.asJson, "label" -> label.asJson)
+                }.asJson,
+                "current" -> (current: String).asJson
+              )
+            )
+          }
+
+        case "setSessionModel" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val modelRef = json.hcursor.downField("modelRef").as[Option[String]].getOrElse(None)
+          if sessionId.nonEmpty then
+            (modelRef match
+              case Some(ref) =>
+                sharedResources.providerRegistry.getCandidateForRef(ref) match
+                  case Some(candidate) =>
+                    sharedResources.sessionModelOverrides.update(_ + (sessionId -> candidate)) *>
+                      sessionStore
+                        .updateSessionModel(sessionId, Some(ref))
+                        .as(Right(s"${candidate.providerId}/${candidate.model}"))
+                  case None =>
+                    IO.pure(Left(s"Unknown model: $ref"))
+              case None =>
+                sharedResources.sessionModelOverrides.update(_ - sessionId) *>
+                  sessionStore.updateSessionModel(sessionId, None).as(Right("default"))
+            ).flatMap {
+              case Right(ref) =>
+                wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
+              case Left(err) =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+            }
+          else IO.unit
 
         case "switchSession" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
@@ -704,9 +746,10 @@ class WebSocketRoutes(
         val content = hc.downField("content").as[String].getOrElse("")
         val isError = hc.downField("isError").as[Boolean].getOrElse(false)
         val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
+        val truncated = hc.downField("truncated").as[Boolean].getOrElse(false)
         sharedResources.sessionStore.appendUiMessages(
           sessionId,
-          List(UiMessage.Tool(label, summary, content, isError, input))
+          List(UiMessage.Tool(label, summary, content, isError, input, truncated))
         )
 
       case "agentEnd" =>
