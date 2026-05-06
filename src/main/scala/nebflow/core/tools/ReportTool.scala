@@ -14,16 +14,18 @@ object ReportTool extends Tool:
 Use this when you have completed your assigned task and want to send findings to the parent.
 Only available when this agent was spawned as a sub-agent (has a parent)."""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> io.circe.Json.obj(
-      "message" -> io.circe.Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "The result or message to report".asJson
-      )
-    ),
-    "required" -> io.circe.Json.arr("message".asJson)
-  ))
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> io.circe.Json.obj(
+        "message" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The result or message to report".asJson
+        )
+      ),
+      "required" -> io.circe.Json.arr("message".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val msg = input("message").flatMap(_.asString).getOrElse("")
@@ -42,3 +44,4 @@ Only available when this agent was spawned as a sub-agent (has a parent)."""
         IO.pure(Left(ToolError("Cannot report: no parent agent")))
       case _ =>
         IO.pure(Left(ToolError("Report requires agent actor reference")))
+end ReportTool

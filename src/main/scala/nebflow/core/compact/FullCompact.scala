@@ -23,15 +23,24 @@ object FullCompact:
     else
       val (summaryText, filePaths) = extractFiles(text)
 
-      val summaryMessage = Message(
+      val filePathsSection =
+        if filePaths.isEmpty then ""
+        else
+          val absolutePaths = filePaths
+            .map { p =>
+              if p.startsWith("/") then p else s"$projectRoot/$p"
+            }
+            .filter(isWithinProject(_, projectRoot))
+          if absolutePaths.isEmpty then ""
+          else "\n\nRestored files after compaction:\n\n" + absolutePaths.map(p => s"- `$p`").mkString("\n")
+
+      val message = Message(
         MessageRole.User,
         Left(
-          s"<context-compact mode=\"full\">Compressed ${originalMessages.size} messages.\n\n$summaryText</context-compact>"
+          s"<context-compact mode=\"full\">Compressed ${originalMessages.size} messages.\n\n$summaryText$filePathsSection</context-compact>"
         )
       )
-
-      val fileRestoreMessage = buildFileRestoreMessage(filePaths, projectRoot)
-      Right(List(summaryMessage) ++ fileRestoreMessage.toList)
+      Right(List(message))
   end parseResponse
 
   /**

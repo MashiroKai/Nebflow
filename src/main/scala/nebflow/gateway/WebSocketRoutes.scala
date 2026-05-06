@@ -144,7 +144,8 @@ class WebSocketRoutes(
                   "version" -> nebflow.Version.string.asJson,
                   "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
                   "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
-                  "tools" -> toolsList.asJson
+                  "tools" -> toolsList.asJson,
+                  "language" -> prefs.language.asJson
                 )
                 .noSpaces
             )
@@ -238,7 +239,8 @@ class WebSocketRoutes(
           "version" -> nebflow.Version.string.asJson,
           "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
           "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
-          "tools" -> toolsList.asJson
+          "tools" -> toolsList.asJson,
+          "language" -> prefs.language.asJson
         )
       )
     }
@@ -320,6 +322,13 @@ class WebSocketRoutes(
                 runtimePrefs.setThinking(None) *>
                 broadcastServerConfig
 
+        case "setLanguage" =>
+          val langOpt =
+            parse(text).flatMap(_.hcursor.downField("language").as[Option[String]]).toOption.flatten.filter(_.nonEmpty)
+          logger.info(s"Language preference changed to: $langOpt") *>
+            runtimePrefs.setLanguage(langOpt) *>
+            broadcastServerConfig
+
         case "switchSession" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if sessionId.nonEmpty then
@@ -372,6 +381,23 @@ class WebSocketRoutes(
               }
           else IO.unit
 
+        case "ask" =>
+          val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val question = askJson.hcursor.downField("question").as[String].getOrElse("")
+          val askSessionId = askJson.hcursor.downField("sessionId").as[String].getOrElse("")
+          if question.nonEmpty && askSessionId.nonEmpty then
+            executeAsk(askSessionId, question, wsSend).handleErrorWith { e =>
+              logger.warn(s"Ask failed for session $askSessionId: ${e.getMessage}")
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "askError".asJson,
+                  "sessionId" -> askSessionId.asJson,
+                  "message" -> s"Ask failed: ${e.getMessage.take(200)}".asJson
+                )
+              )
+            }
+          else IO.unit
+
         case "ping" => IO.unit
 
         case "getHistory" =>
@@ -417,7 +443,18 @@ class WebSocketRoutes(
                             )
                           )
                       }
-                case Left(_) => IO.unit
+                case Left(_) =>
+                  // Send empty historyPage so the frontend doesn't get stuck
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "historyPage".asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "messages" -> List.empty[io.circe.Json].asJson,
+                      "total" -> 0.asJson,
+                      "offset" -> 0.asJson,
+                      "hasMore" -> false.asJson
+                    )
+                  )
               })
               .handleErrorWith { e =>
                 wsSend(
@@ -599,6 +636,10 @@ class WebSocketRoutes(
   private val sessionTextBuffers: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
+  /** Per-session turn start time — set on first streaming event, consumed on done. */
+  private val sessionTurnStarts: Ref[IO, Map[String, Long]] =
+    Ref.unsafe[IO, Map[String, Long]](Map.empty)
+
   private def makeRecordingWsSend(
     sessionId: String,
     underlying: io.circe.Json => IO[Unit]
@@ -610,19 +651,38 @@ class WebSocketRoutes(
         // Accumulate text for this session
         val delta = hc.downField("delta").as[String].getOrElse("")
         if delta.nonEmpty then
+          sessionTurnStarts
+            .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
           sessionTextBuffers.update(m => m.updatedWith(sessionId)(_.map(_ + delta).orElse(Some(delta))))
         else IO.unit
 
+      case "thinking" =>
+        sessionTurnStarts
+          .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
+
+      case "toolStart" =>
+        sessionTurnStarts
+          .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
+
       case "done" =>
-        // Flush accumulated AI text as a UiMessage
-        sessionTextBuffers
+        val model = hc.downField("model").as[Option[String]].getOrElse(None)
+        sessionTurnStarts
           .modify { m =>
-            val text = m.getOrElse(sessionId, "")
-            (m - sessionId, text)
+            val start = m.getOrElse(sessionId, 0L)
+            (m - sessionId, start)
           }
-          .flatMap { text =>
-            if text.nonEmpty then sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text)))
-            else IO.unit
+          .flatMap { startTime =>
+            val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
+            sessionTextBuffers
+              .modify { m =>
+                val text = m.getOrElse(sessionId, "")
+                (m - sessionId, text)
+              }
+              .flatMap { text =>
+                if text.nonEmpty then
+                  sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text, durationMs, model)))
+                else IO.unit
+              }
           }
 
       case "toolEnd" =>
@@ -648,24 +708,76 @@ class WebSocketRoutes(
         val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
         sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items)))
 
-      case "progressUpdate" =>
-        val stage = hc.downField("stage").as[String].getOrElse("")
-        val stagCnt = hc.downField("stagnationCount").as[Int].getOrElse(0)
-        val turnIdx = hc.downField("turnIdx").as[Int].getOrElse(0)
-        if stage != "Normal" then
-          sharedResources.sessionStore.appendUiMessages(
-            sessionId,
-            List(UiMessage.Stage(stage, stagCnt, turnIdx.toString))
-          )
-        else IO.unit
-
-      case "paused" =>
-        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.Stage("Paused", 9, "?")))
-
       case _ => IO.unit
 
     record.handleErrorWith(e =>
       IO(logger.warn(s"Failed to record UI message for session $sessionId: ${e.getMessage}"))
     ) *> underlying(json)
+
+  // ============================================================
+  // /ask — isolated LLM Q&A (does not affect agent context)
+  // ============================================================
+
+  private def executeAsk(
+    sessionId: String,
+    question: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    sharedResources.askSemaphore.tryAcquire.flatMap { acquired =>
+      if !acquired then
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "askError".asJson,
+            "sessionId" -> sessionId.asJson,
+            "message" -> "Another ask is in progress, please wait".asJson
+          )
+        )
+      else
+        (for
+          messages <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
+          lastAssistantMsg = messages.reverseIterator
+            .find(_.role == MessageRole.Assistant)
+            .map(_.textContent)
+            .getOrElse("")
+          systemPrompt = "You are a helpful assistant. Answer the user's question about the provided content concisely."
+          userContent =
+            if lastAssistantMsg.nonEmpty then
+              s"--- Latest assistant response ---\n$lastAssistantMsg\n\n--- End ---\n\nQuestion: $question"
+            else s"Question: $question"
+          request = LlmRequest(
+            messages = List(
+              Message(MessageRole.System, Left(systemPrompt)),
+              Message(MessageRole.User, Left(userContent))
+            ),
+            sessionId = sessionId,
+            agentId = "ask",
+            tools = None,
+            maxTokens = Some(2048)
+          )
+          _ <- sharedResources.llm
+            .sendStream(request)
+            .evalMap {
+              case StreamChunk.TextDelta(delta) =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "askTextDelta".asJson,
+                    "sessionId" -> sessionId.asJson,
+                    "delta" -> delta.asJson
+                  )
+                )
+              case StreamChunk.Done(_, _, _) =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "askDone".asJson,
+                    "sessionId" -> sessionId.asJson
+                  )
+                )
+              case _ => IO.unit
+            }
+            .compile
+            .drain
+        yield ())
+          .guarantee(sharedResources.askSemaphore.release)
+    }
 
 end WebSocketRoutes

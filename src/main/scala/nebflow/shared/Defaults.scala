@@ -11,8 +11,11 @@ object Defaults:
   val MaxTokens = 16384
   val MaxTokensCompact = 4096
 
-  /** Overall REPL stream timeout (covers LLM generation + all tool executions). */
-  val StreamTimeoutSec: Int = 900
+  /**
+   * Stream inactivity timeout — resets on every stream event (text/tool/compaction).
+   *  Long tasks with ongoing activity will not be killed; only truly stuck streams time out.
+   */
+  val StreamTimeoutSec: Int = 600
 
   /** Per-provider LLM request timeout. */
   val LlmTimeoutMs: Long = 300_000L

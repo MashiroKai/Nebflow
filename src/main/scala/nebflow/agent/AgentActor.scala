@@ -104,6 +104,23 @@ object AgentActor extends AgentCore with AgentSession:
             "start",
             s"text=${text.take(40)} msgs=${state.messages.size}"
           )
+          // Auto-detect language on first user message (root agent only, one-time)
+          if depth == 0 && parentRef.isEmpty && dedupedState.messages.isEmpty then
+            LanguageDetector.detect(text).foreach { lang =>
+              resources.dispatcher.unsafeRunAndForget(
+                resources.runtimePrefs.getLanguage.flatMap {
+                  case None =>
+                    resources.runtimePrefs.setLanguage(Some(lang)) *>
+                      NebflowLogger.forName("nebflow.agent").info(s"Auto-detected language: $lang") *>
+                      state
+                        .wsSend(io.circe.Json.obj("type" -> "serverConfig".asJson, "language" -> lang.asJson))
+                        .handleErrorWith(_ => IO.unit)
+                  case Some(_) => IO.unit
+                }
+              )
+            }
+          end if
+
           val userMsg = Message(MessageRole.User, Left(text))
           val newMessages = dedupedState.messages :+ userMsg
           pipeLlmCall(
@@ -116,6 +133,7 @@ object AgentActor extends AgentCore with AgentSession:
             ctx,
             replyTo
           )
+        end if
 
       case AgentCommand.Stop(_) =>
         logAgentEvent(ctx, agentDef, depth, state.sessionId, "stop", "reason=user")
@@ -162,7 +180,8 @@ object AgentActor extends AgentCore with AgentSession:
             result.text,
             replyTo,
             result.thinking,
-            textAlreadyStreamed = true
+            textAlreadyStreamed = true,
+            result.model
           )
         else pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
 
@@ -189,7 +208,7 @@ object AgentActor extends AgentCore with AgentSession:
               resources.dispatcher,
               state.wsSend,
               ctx,
-              AgentStreamEvent.Done,
+              AgentStreamEvent.Done(None),
               isSubagent = false,
               state.sessionId
             )
@@ -215,12 +234,7 @@ object AgentActor extends AgentCore with AgentSession:
         val newMessages = baseMessages ++ List(assistantMsg, resultMsg)
 
         val updatedState = state.copy(
-          execution = state.execution.copy(messages = newMessages, interaction = None),
-          safety = state.safety.copy(
-            stagnationCount = tc.nextStagnationCount.getOrElse(state.stagnationCount),
-            stage = tc.nextStage.getOrElse(state.stage),
-            progressStreak = tc.nextProgressStreak.getOrElse(state.progressStreak)
-          )
+          execution = state.execution.copy(messages = newMessages, interaction = None)
         )
         resources.dispatcher.unsafeRunAndForget(
           persistIfSession(resources, updatedState)
@@ -366,7 +380,7 @@ object AgentActor extends AgentCore with AgentSession:
                         resources.dispatcher,
                         state.wsSend,
                         ctx,
-                        AgentStreamEvent.Done,
+                        AgentStreamEvent.Done(None),
                         isSubagent = false,
                         state.sessionId
                       )
@@ -502,7 +516,7 @@ object AgentActor extends AgentCore with AgentSession:
         state.pendingPermission.foreach(d =>
           resources.dispatcher.unsafeRunAndForget(d.complete(false).handleErrorWith(_ => IO.unit))
         )
-        emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.Done)
+        emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.Done(None))
         // Root agent: emit sessionBusy=false on interrupt
         if depth == 0 && parentRef.isEmpty then
           state.sessionId.foreach { sid =>
@@ -572,13 +586,34 @@ object AgentActor extends AgentCore with AgentSession:
                   ctx
                 )
               case None =>
-                NebflowLogger.forName("nebflow.agent").warn("context-manage agent not found, skipping compaction")
+                val reason = "context-manage agent not found"
+                NebflowLogger.forName("nebflow.agent").warn(s"$reason, skipping compaction")
                 pending.replyDeferred.foreach { d =>
                   resources.dispatcher.unsafeRunAndForget(
-                    d.complete(Left("context-manage agent not found")).handleErrorWith(_ => IO.unit)
+                    d.complete(Left(reason)).handleErrorWith(_ => IO.unit)
                   )
                 }
-                processing(agentDef, resources, depth, parentRef, state.withPendingCompaction(None), stash, ctx)
+                resources.dispatcher.unsafeRunAndForget(
+                  emitStreamIO(
+                    state.wsSend,
+                    ctx,
+                    AgentStreamEvent.CompactFailed(reason, state.compactionFailures, CompactConfig().circuitBreakerMax),
+                    isSubagent = depth > 0,
+                    state.sessionId
+                  )
+                    .handleErrorWith(_ => IO.unit)
+                )
+                // No sub-agent spawned — pipe next LLM call to avoid deadlock
+                pipeLlmCall(
+                  agentDef,
+                  resources,
+                  depth,
+                  parentRef,
+                  state.withPendingCompaction(None),
+                  stash,
+                  ctx,
+                  pending.replyTo
+                )
           case None => Behaviors.same
 
       // --- Manual compaction trigger ---
@@ -669,7 +704,8 @@ object AgentActor extends AgentCore with AgentSession:
     text: String,
     replyTo: Option[ActorRef[AgentEvent]],
     thinking: Option[String] = None,
-    textAlreadyStreamed: Boolean = false
+    textAlreadyStreamed: Boolean = false,
+    model: Option[String] = None
   ): Behavior[AgentCommand] =
     if !textAlreadyStreamed && text.nonEmpty then
       emitStream(
@@ -684,7 +720,7 @@ object AgentActor extends AgentCore with AgentSession:
       resources.dispatcher,
       state.wsSend,
       ctx,
-      AgentStreamEvent.Done,
+      AgentStreamEvent.Done(model),
       isSubagent = parentRef.isDefined,
       state.sessionId
     )
@@ -752,8 +788,8 @@ object AgentActor extends AgentCore with AgentSession:
       ctx,
       replyTo,
       processing = (ad, r, d, p, s, st, c) => processing(ad, r, d, p, s, st, c),
-      finishTurn =
-        (ad, r, d, p, s, st, c, t, rep, th, streamed) => finishTurn(ad, r, d, p, s, st, c, t, rep, th, streamed)
+      finishTurn = (ad, r, d, p, s, st, c, t, rep, th, streamed, model) =>
+        finishTurn(ad, r, d, p, s, st, c, t, rep, th, streamed, model)
     )
 
   private def pipeToolExecutions(
@@ -779,8 +815,8 @@ object AgentActor extends AgentCore with AgentSession:
       replyTo,
       processing = (ad, r, d, p, s, st, c) => processing(ad, r, d, p, s, st, c),
       pipeLlmCallFn = (ad, r, d, p, s, st, c, rep) => pipeLlmCall(ad, r, d, p, s, st, c, rep),
-      finishTurnFn =
-        (ad, r, d, p, s, st, c, t, rep, th, streamed) => finishTurn(ad, r, d, p, s, st, c, t, rep, th, streamed)
+      finishTurnFn = (ad, r, d, p, s, st, c, t, rep, th, streamed, model) =>
+        finishTurn(ad, r, d, p, s, st, c, t, rep, th, streamed, model)
     )
 
   private def handleTriggerCompaction(
@@ -795,11 +831,22 @@ object AgentActor extends AgentCore with AgentSession:
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]]
   ): Behavior[AgentCommand] =
     if state.pendingCompaction.isDefined then
+      val reason = "Compaction already in progress"
       replyDeferred.foreach { d =>
         resources.dispatcher.unsafeRunAndForget(
-          d.complete(Left("Compaction already in progress")).handleErrorWith(_ => IO.unit)
+          d.complete(Left(reason)).handleErrorWith(_ => IO.unit)
         )
       }
+      resources.dispatcher.unsafeRunAndForget(
+        emitStreamIO(
+          state.wsSend,
+          ctx,
+          AgentStreamEvent.CompactFailed(reason, state.compactionFailures, CompactConfig().circuitBreakerMax),
+          isSubagent = depth > 0,
+          state.sessionId
+        )
+          .handleErrorWith(_ => IO.unit)
+      )
       Behaviors.same
     else if state.compactionFailures >= CompactConfig().circuitBreakerMax then
       val err = s"Compaction circuit breaker open after ${state.compactionFailures} attempts"

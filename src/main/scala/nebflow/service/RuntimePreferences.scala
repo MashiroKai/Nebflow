@@ -52,7 +52,8 @@ end ThinkingConfig
 
 case class RuntimePreferences(
   permissionPolicy: PermissionPolicy = PermissionPolicy.default,
-  thinkingConfig: Option[ThinkingConfig] = None
+  thinkingConfig: Option[ThinkingConfig] = None,
+  language: Option[String] = None
 )
 
 object RuntimePreferences:
@@ -60,7 +61,8 @@ object RuntimePreferences:
   given Encoder[RuntimePreferences] = Encoder.instance { rp =>
     Json.obj(
       "permissionPolicy" -> rp.permissionPolicy.asJson,
-      "thinkingConfig" -> rp.thinkingConfig.asJson
+      "thinkingConfig" -> rp.thinkingConfig.asJson,
+      "language" -> rp.language.asJson
     )
   }
 
@@ -68,7 +70,8 @@ object RuntimePreferences:
     for
       policy <- c.downField("permissionPolicy").as[Option[PermissionPolicy]].map(_.getOrElse(PermissionPolicy.default))
       thinking <- c.downField("thinkingConfig").as[Option[ThinkingConfig]]
-    yield RuntimePreferences(policy, thinking)
+      language <- c.downField("language").as[Option[String]]
+    yield RuntimePreferences(policy, thinking, language)
   }
 
   val default: RuntimePreferences = RuntimePreferences()
@@ -94,6 +97,12 @@ class RuntimePreferencesService private (
 
   def setThinking(tc: Option[ThinkingConfig]): IO[Unit] =
     stateRef.update(_.copy(thinkingConfig = tc)) *>
+      RuntimePreferencesService.save(stateRef)
+
+  def getLanguage: IO[Option[String]] = stateRef.get.map(_.language)
+
+  def setLanguage(lang: Option[String]): IO[Unit] =
+    stateRef.update(_.copy(language = lang)) *>
       RuntimePreferencesService.save(stateRef)
 
   def shouldApprove(toolName: String): IO[ApprovalDecision] =

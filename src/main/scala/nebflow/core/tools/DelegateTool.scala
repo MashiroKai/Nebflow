@@ -18,20 +18,22 @@ object DelegateTool extends Tool:
 Provide the agent name and a clear task description. Available sub-agents are defined in your agent configuration.
 If the agent name is not recognized, the call will fail with a list of available agents."""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> io.circe.Json.obj(
-      "agent" -> io.circe.Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "Name of the sub-agent to delegate to".asJson
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> io.circe.Json.obj(
+        "agent" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Name of the sub-agent to delegate to".asJson
+        ),
+        "task" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The task description to delegate".asJson
+        )
       ),
-      "task" -> io.circe.Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "The task description to delegate".asJson
-      )
-    ),
-    "required" -> io.circe.Json.arr("agent".asJson, "task".asJson)
-  ))
+      "required" -> io.circe.Json.arr("agent".asJson, "task".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val agent = input("agent").flatMap(_.asString).getOrElse("?")
@@ -52,23 +54,37 @@ If the agent name is not recognized, the call will fail with a list of available
       case (None, _) | (_, None) =>
         IO.pure(Left(ToolError("Delegate requires agent definition and actor reference")))
       case (Some(agentDef), Some(selfRef)) =>
-        if ctx.depth >= 5 then
-          IO.pure(maxDepthError(5))
+        if ctx.depth >= 5 then IO.pure(maxDepthError(5))
         else
           agentDef.subagents.find(_.name == agentName) match
             case None =>
               val available = agentDef.subagents.map(_.name).mkString(", ")
-              IO.pure(Left(ToolError(
-                s"Unknown subagent: '$agentName'. Available: $available"
-              )))
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"Unknown subagent: '$agentName'. Available: $available"
+                  )
+                )
+              )
             case Some(slot) =>
               ctx.agentLibrary match
                 case None =>
                   IO.pure(Left(ToolError("Delegate requires agent library access")))
                 case Some(library) =>
-                  library.get(slot.agent).flatMap { defnOpt =>
-                    IO(selfRef ! AgentCommand.SubagentDefLoaded(
-                      ToolCall(java.util.UUID.randomUUID().toString, "delegate", input),
-                      agentName, task, defnOpt, ctx.depth + 1
-                    ))
-                  }.as(Right(s"Delegated to $agentName: ${task.take(100)}"))
+                  library
+                    .get(slot.agent)
+                    .flatMap { defnOpt =>
+                      IO(
+                        selfRef ! AgentCommand.SubagentDefLoaded(
+                          ToolCall(java.util.UUID.randomUUID().toString, "delegate", input),
+                          agentName,
+                          task,
+                          defnOpt,
+                          ctx.depth + 1
+                        )
+                      )
+                    }
+                    .as(Right(s"Delegated to $agentName: ${task.take(100)}"))
+    end match
+  end call
+end DelegateTool

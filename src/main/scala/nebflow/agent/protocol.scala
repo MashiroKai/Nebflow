@@ -61,10 +61,7 @@ object AgentCommand:
     originalText: String,
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]],
     compactedMessages: Option[List[Message]] = None,
-    thinking: Option[String] = None,
-    nextStagnationCount: Option[Int] = None,
-    nextStage: Option[AdaptiveStage] = None,
-    nextProgressStreak: Option[Int] = None
+    thinking: Option[String] = None
   ) extends AgentCommand
 
   // Internal — compaction agent definition loaded, ready to spawn on actor thread
@@ -124,9 +121,7 @@ enum AgentStreamEvent:
   case AgentEnd(agentName: String)
   case Thinking
   case RetryStatus(message: String)
-  case Done
-  case ProgressUpdate(turnIdx: Int, stagnationCount: Int, stage: String)
-  case Paused(summary: String)
+  case Done(model: Option[String] = None)
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   case CompactComplete(before: Int, after: Int, snapshotPath: Option[String], comparisonPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
@@ -177,39 +172,11 @@ enum AgentStreamEvent:
       if isSubagent then
         Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
       else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
-    case Done =>
-      if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
-      else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
-    case ProgressUpdate(turnIdx, stagnationCount, stage) =>
-      if isSubagent then
-        Json.obj(
-          "type" -> "agentProgressUpdate".asJson,
-          "agentId" -> agentId.asJson,
-          "turnIdx" -> turnIdx.asJson,
-          "stagnationCount" -> stagnationCount.asJson,
-          "stage" -> stage.asJson
-        )
-      else
-        Json.obj(
-          "type" -> "progressUpdate".asJson,
-          "sessionId" -> sessionId.asJson,
-          "turnIdx" -> turnIdx.asJson,
-          "stagnationCount" -> stagnationCount.asJson,
-          "stage" -> stage.asJson
-        )
-    case Paused(summary) =>
-      if isSubagent then
-        Json.obj(
-          "type" -> "agentPaused".asJson,
-          "agentId" -> agentId.asJson,
-          "summary" -> summary.asJson
-        )
-      else
-        Json.obj(
-          "type" -> "paused".asJson,
-          "sessionId" -> sessionId.asJson,
-          "summary" -> summary.asJson
-        )
+    case Done(model) =>
+      val base =
+        if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
+        else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
+      model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
     case CompactStart(mode, inputTokens, threshold) =>
       if isSubagent then
         Json.obj(
@@ -299,9 +266,6 @@ enum AgentStatus:
   case WaitingForUser
   case Error(msg: String)
 
-enum AdaptiveStage:
-  case Normal, Cautious, Conservative, Paused
-
 // ============================================================
 // Agent Runtime State (behavior closure parameter, not Ref[IO])
 // ============================================================
@@ -382,14 +346,11 @@ object ExecutionContext:
     )
 end ExecutionContext
 
-/** Anti-loop and adaptive stage state. */
+/** Anti-loop tracking state. */
 case class SafetyContext(
   recentToolCalls: List[ToolCallRecord] = Nil,
   recentFilesRead: Set[String] = Set.empty,
-  hasInjectedAntiLoop: Boolean = false,
-  stagnationCount: Int = 0,
-  stage: AdaptiveStage = AdaptiveStage.Normal,
-  progressStreak: Int = 0
+  hasInjectedAntiLoop: Boolean = false
 )
 
 /** Context compression state. */
@@ -427,9 +388,6 @@ object AgentState:
     wsSend: Json => IO[Unit] = _ => IO.unit,
     hasInjectedAntiLoop: Boolean = false,
     recentFilesRead: Set[String] = Set.empty,
-    stagnationCount: Int = 0,
-    stage: AdaptiveStage = AdaptiveStage.Normal,
-    progressStreak: Int = 0,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     recentMessageIds: List[String] = Nil
   ): AgentState =
@@ -439,7 +397,7 @@ object AgentState:
     new AgentState(
       SessionContext(sessionId, recentMessageIds, wsSend, depth, readTracker),
       ExecutionContext(messages, status, turnIdx, subagents, activeStreamFiber, interaction),
-      SafetyContext(recentToolCalls, recentFilesRead, hasInjectedAntiLoop, stagnationCount, stage, progressStreak),
+      SafetyContext(recentToolCalls, recentFilesRead, hasInjectedAntiLoop),
       CompactionState(pendingCompaction, compactionFailures, latestUsage)
     )
   end apply
@@ -466,9 +424,6 @@ extension (s: AgentState)
   def recentToolCalls: List[ToolCallRecord] = s.safety.recentToolCalls
   def recentFilesRead: Set[String] = s.safety.recentFilesRead
   def hasInjectedAntiLoop: Boolean = s.safety.hasInjectedAntiLoop
-  def stagnationCount: Int = s.safety.stagnationCount
-  def stage: AdaptiveStage = s.safety.stage
-  def progressStreak: Int = s.safety.progressStreak
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
 
   // Mutation helpers — return new AgentState with updated sub-structure
@@ -521,9 +476,6 @@ extension (s: AgentState)
   def withRecentToolCalls(calls: List[ToolCallRecord]): AgentState =
     s.copy(safety = s.safety.copy(recentToolCalls = calls))
   def withRecentFilesRead(files: Set[String]): AgentState = s.copy(safety = s.safety.copy(recentFilesRead = files))
-  def withStagnationCount(count: Int): AgentState = s.copy(safety = s.safety.copy(stagnationCount = count))
-  def withStage(st: AdaptiveStage): AgentState = s.copy(safety = s.safety.copy(stage = st))
-  def withProgressStreak(streak: Int): AgentState = s.copy(safety = s.safety.copy(progressStreak = streak))
 
   /** Reset execution state to idle — used by finishTurn, Interrupt, LlmFailed. */
   def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =
@@ -546,5 +498,6 @@ case class ConsumeResult(
   results: List[(ToolCall, ToolExecResult)],
   stopReason: Option[String],
   usage: Option[TokenUsage] = None,
-  thinking: Option[String] = None
+  thinking: Option[String] = None,
+  model: Option[String] = None
 )
