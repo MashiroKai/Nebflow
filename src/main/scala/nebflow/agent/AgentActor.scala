@@ -92,7 +92,7 @@ object AgentActor extends AgentCore with AgentSession:
     ctx: ActorContext[AgentCommand]
   ): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
-      case AgentCommand.UserInput(text, replyTo, clientMessageId) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks) =>
         // Dedup check (root agent session management)
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
@@ -125,7 +125,9 @@ object AgentActor extends AgentCore with AgentSession:
             }
           end if
 
-          val userMsg = Message(MessageRole.User, Left(text))
+          val userMsg = blocks.filter(_.nonEmpty) match
+            case Some(bl) => Message(MessageRole.User, Right(bl))
+            case None     => Message(MessageRole.User, Left(text))
           val newMessages = dedupedState.messages :+ userMsg
           pipeLlmCall(
             agentDef,
@@ -523,7 +525,7 @@ object AgentActor extends AgentCore with AgentSession:
             Behaviors.same
 
       // --- Busy signal for root agents ---
-      case AgentCommand.UserInput(_, _, _) if depth == 0 && parentRef.isEmpty =>
+      case AgentCommand.UserInput(_, _, _, _) if depth == 0 && parentRef.isEmpty =>
         state.sessionId.foreach { sid =>
           resources.dispatcher.unsafeRunAndForget(
             emitSessionBusy(state.wsSend, sid, busy = true).handleErrorWith(_ => IO.unit)
@@ -766,7 +768,7 @@ object AgentActor extends AgentCore with AgentSession:
           state.sessionId,
           state.sessionName,
           "turn-complete",
-          s"msgs=${state.messages.size}"
+          s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textAlreadyStreamed thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
         )
         val assistantContent = (thinking, text) match
           case (None, _) => Left(text)

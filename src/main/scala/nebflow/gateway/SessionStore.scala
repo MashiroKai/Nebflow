@@ -214,7 +214,7 @@ class SessionStore(sessionsDir: os.Path):
   def createSession(name: String, initialMsgs: List[Message] = Nil, agentName: Option[String] = None): IO[SessionMeta] =
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
-    val meta = SessionMeta(id, name, now, now, hasUnread = true, agentName = agentName)
+    val meta = SessionMeta(id, name, now, now, hasUnread = false, agentName = agentName)
     indexRef.get.flatMap { case (activeId, sessions) =>
       saveSessionMessages(id, initialMsgs) *>
         indexRef.set((activeId, meta :: sessions)) *> saveIndex *> meta.pure[IO]
@@ -301,4 +301,82 @@ class SessionStore(sessionsDir: os.Path):
       if os.exists(f) then os.remove(f)
     }
 
+  /**
+   * Search across all sessions' UI messages for a query string.
+   * Returns results grouped by session, limited to `maxResults` total matches.
+   * Each result includes: sessionId, sessionName, messageIndex, snippet (context around match), messageType.
+   */
+  def searchHistory(query: String, maxResults: Int = 50): IO[List[SearchHit]] =
+    if query.trim.isEmpty then IO.pure(Nil)
+    else
+      IO.blocking {
+        val q = query.toLowerCase
+        val results = scala.collection.mutable.ListBuffer.empty[SearchHit]
+        val sessions =
+          try
+            val raw = os.read(indexFile)
+            val json = decode[Json](raw).getOrElse(Json.obj())
+            json.hcursor.downField("sessions").as[List[SessionMeta]].getOrElse(Nil)
+          catch case _: Exception => Nil
+
+        var stop = false
+        sessions.takeWhile(_ => !stop).foreach { meta =>
+          if results.size >= maxResults then stop = true
+          if !stop then
+            val f = uiFile(meta.id)
+            if os.exists(f) then
+              try
+                val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
+                msgs.zipWithIndex.takeWhile(_ => !stop).foreach { case (msg, idx) =>
+                  if results.size >= maxResults then { stop = true }
+                  if !stop then
+                    msg match
+                      case UiMessage.User(text, _) if text.toLowerCase.contains(q) =>
+                        results += SearchHit(meta.id, meta.name, idx, snippet(text, q), "user")
+                      case UiMessage.Ai(text, _, _) if text.toLowerCase.contains(q) =>
+                        results += SearchHit(meta.id, meta.name, idx, snippet(text, q), "ai")
+                      case UiMessage.Agent(_, text) if text.toLowerCase.contains(q) =>
+                        results += SearchHit(meta.id, meta.name, idx, snippet(text, q), "agent")
+                      case UiMessage.Tool(label, summary, content, _, _, _) =>
+                        val combined = s"$label $summary $content"
+                        if combined.toLowerCase.contains(q) then
+                          results += SearchHit(meta.id, meta.name, idx, snippet(combined, q), "tool")
+                      case _ => ()
+                }
+              catch case _: Exception => ()
+        }
+        results.toList
+      }
+
+  /** Extract a short snippet around the first match occurrence. */
+  private def snippet(text: String, queryLower: String, contextLen: Int = 60): String =
+    val textLower = text.toLowerCase
+    val idx = textLower.indexOf(queryLower)
+    if idx < 0 then text.take(120)
+    else
+      val start = Math.max(0, idx - contextLen)
+      val end = Math.min(text.length, idx + queryLower.length + contextLen)
+      val prefix = if start > 0 then "..." else ""
+      val suffix = if end < text.length then "..." else ""
+      prefix + text.substring(start, end) + suffix
+
 end SessionStore
+
+case class SearchHit(
+  sessionId: String,
+  sessionName: String,
+  messageIndex: Int,
+  snippet: String,
+  messageType: String
+)
+
+object SearchHit:
+  given Encoder[SearchHit] = Encoder.instance { h =>
+    Json.obj(
+      "sessionId" -> h.sessionId.asJson,
+      "sessionName" -> h.sessionName.asJson,
+      "messageIndex" -> h.messageIndex.asJson,
+      "snippet" -> h.snippet.asJson,
+      "messageType" -> h.messageType.asJson
+    )
+  }
