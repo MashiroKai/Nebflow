@@ -7,6 +7,7 @@ import nebflow.core.task.TaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{FileChangeTracker, ReminderState}
 import nebflow.gateway.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderRegistry}
 import nebflow.service.RuntimePreferencesService
 import nebflow.shared.*
 
@@ -31,5 +32,7 @@ case class SharedResources(
   askSemaphore: Semaphore[IO],
   taskStore: TaskStore,
   historyArchiver: HistoryArchiver,
-  fileLockManager: FileLockManager
+  fileLockManager: FileLockManager,
+  sessionModelOverrides: cats.effect.Ref[IO, Map[String, ModelCandidate]],
+  providerRegistry: ProviderRegistry
 )

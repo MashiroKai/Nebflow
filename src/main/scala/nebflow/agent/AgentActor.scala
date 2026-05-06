@@ -33,6 +33,7 @@ object AgentActor extends AgentCore with AgentSession:
     depth: Int,
     parentRef: Option[ActorRef[AgentCommand]] = None,
     sessionId: Option[String] = None,
+    sessionName: Option[String] = None,
     initialMessages: List[Message] = Nil,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None
   ): Behavior[AgentCommand] =
@@ -45,6 +46,7 @@ object AgentActor extends AgentCore with AgentSession:
               agentDef,
               depth,
               sessionId,
+              sessionName,
               "spawn",
               s"parent=${parentRef.map(_.path.name).getOrElse("-")} msgs=${initialMessages.size}"
             )
@@ -60,6 +62,7 @@ object AgentActor extends AgentCore with AgentSession:
                 subagents = Map.empty,
                 activeStreamFiber = None,
                 sessionId = sessionId,
+                sessionName = sessionName,
                 pendingCompaction = None,
                 latestUsage = None,
                 pendingAskUser = None,
@@ -101,6 +104,7 @@ object AgentActor extends AgentCore with AgentSession:
             agentDef,
             depth,
             state.sessionId,
+            state.sessionName,
             "start",
             s"msgs=${state.messages.size}"
           )
@@ -136,7 +140,7 @@ object AgentActor extends AgentCore with AgentSession:
         end if
 
       case AgentCommand.Stop(_) =>
-        logAgentEvent(ctx, agentDef, depth, state.sessionId, "stop", "reason=user")
+        logAgentEvent(ctx, agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
         state.activeStreamFiber.foreach(f =>
           resources.dispatcher.unsafeRunAndForget(f.cancel.handleErrorWith(_ => IO.unit))
         )
@@ -186,7 +190,15 @@ object AgentActor extends AgentCore with AgentSession:
         else pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
 
       case LlmFailed(error, replyTo) =>
-        logAgentEvent(ctx, agentDef, depth, state.sessionId, "llm-fail", s"err=${error.getMessage.take(80)}")
+        logAgentEvent(
+          ctx,
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "llm-fail",
+          s"err=${error.getMessage.take(80)}"
+        )
         val agentError =
           AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
         parentRef match
@@ -199,7 +211,7 @@ object AgentActor extends AgentCore with AgentSession:
                   io.circe.Json.obj(
                     "type" -> "error".asJson,
                     "sessionId" -> state.sessionId.asJson,
-                    "message" -> s"LLM request failed: ${error.getMessage.take(200)}".asJson
+                    "message" -> s"LLM request failed: ${error.getClass.getSimpleName}".asJson
                   )
                 )
                 .handleErrorWith(_ => IO.unit)
@@ -260,6 +272,7 @@ object AgentActor extends AgentCore with AgentSession:
             agentDef,
             depth,
             state.sessionId,
+            state.sessionName,
             "compact-sub-stream",
             s"subId=$subId event=${event.getClass.getSimpleName}"
           )
@@ -291,6 +304,7 @@ object AgentActor extends AgentCore with AgentSession:
                   agentDef,
                   depth,
                   state.sessionId,
+                  state.sessionName,
                   "compaction-complete",
                   s"subId=$subId mode=${pending.mode} before=${state.messages.size} after=${compacted.size}"
                 )
@@ -326,6 +340,10 @@ object AgentActor extends AgentCore with AgentSession:
                       .handleErrorWith(_ => IO.unit)
                   )
                 }
+                // Reset pressure level — compaction freed tokens, allow re-notification at lower levels
+                resources.dispatcher.unsafeRunAndForget(
+                  resources.reminderStateRef.update(_.copy(highestPressureLevel = 0))
+                )
                 pipeLlmCall(
                   agentDef,
                   resources,
@@ -348,6 +366,7 @@ object AgentActor extends AgentCore with AgentSession:
                   agentDef,
                   depth,
                   state.sessionId,
+                  state.sessionName,
                   "compaction-fail",
                   s"subId=$subId mode=${pending.mode} err=${err.take(60)} failures=$failures"
                 )
@@ -411,13 +430,22 @@ object AgentActor extends AgentCore with AgentSession:
               case Left(err) => s"[Subagent $subId failed]: ${err.message}"
             result match
               case Right(_) =>
-                logAgentEvent(ctx, agentDef, depth, state.sessionId, "subagent-complete", s"subId=$subId")
+                logAgentEvent(
+                  ctx,
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "subagent-complete",
+                  s"subId=$subId"
+                )
               case Left(err) =>
                 logAgentEvent(
                   ctx,
                   agentDef,
                   depth,
                   state.sessionId,
+                  state.sessionName,
                   "subagent-fail",
                   s"subId=$subId err=${err.message.take(60)}"
                 )
@@ -545,6 +573,7 @@ object AgentActor extends AgentCore with AgentSession:
                   agentDef,
                   depth,
                   state.sessionId,
+                  state.sessionName,
                   "subagent-spawn",
                   s"subId=$subId subName=${subDef.name} mode=${pending.mode} msgs=${state.messages.size}"
                 )
@@ -630,6 +659,7 @@ object AgentActor extends AgentCore with AgentSession:
               agentDef,
               depth,
               state.sessionId,
+              state.sessionName,
               "subagent-spawn",
               s"subId=$subId subName=${subDef.name} task=${task.take(40)}"
             )
@@ -678,7 +708,7 @@ object AgentActor extends AgentCore with AgentSession:
             Behaviors.same
 
       case AgentCommand.Stop(_) =>
-        logAgentEvent(ctx, agentDef, depth, state.sessionId, "stop", "reason=user")
+        logAgentEvent(ctx, agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
         state.activeStreamFiber.foreach(f =>
           resources.dispatcher.unsafeRunAndForget(f.cancel.handleErrorWith(_ => IO.unit))
         )
@@ -734,6 +764,7 @@ object AgentActor extends AgentCore with AgentSession:
           agentDef,
           depth,
           state.sessionId,
+          state.sessionName,
           "turn-complete",
           s"msgs=${state.messages.size}"
         )

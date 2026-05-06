@@ -24,6 +24,13 @@ case class JsonRpcError(
   data: Option[Json] = None
 )
 
+/** JSON-RPC 2.0 notification — no id, no response expected. */
+case class JsonRpcNotification(
+  jsonrpc: String = "2.0",
+  method: String,
+  params: Option[JsonObject] = None
+)
+
 case class McpTool(
   name: String,
   description: Option[String] = None,
