@@ -85,7 +85,6 @@ const slashCommands = {
     desc: 'Select model for this session',
     run: () => {
       sendWs({type: 'getModelOptions', sessionId: state.activeSessionId});
-      renderSystemBubble('Loading models...');
     }
   }
 };

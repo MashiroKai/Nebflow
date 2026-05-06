@@ -53,7 +53,8 @@ end ThinkingConfig
 case class RuntimePreferences(
   permissionPolicy: PermissionPolicy = PermissionPolicy.default,
   thinkingConfig: Option[ThinkingConfig] = None,
-  language: Option[String] = None
+  language: Option[String] = None,
+  disabledMcpServers: Set[String] = Set.empty
 )
 
 object RuntimePreferences:
@@ -62,7 +63,8 @@ object RuntimePreferences:
     Json.obj(
       "permissionPolicy" -> rp.permissionPolicy.asJson,
       "thinkingConfig" -> rp.thinkingConfig.asJson,
-      "language" -> rp.language.asJson
+      "language" -> rp.language.asJson,
+      "disabledMcpServers" -> rp.disabledMcpServers.asJson
     )
   }
 
@@ -71,7 +73,8 @@ object RuntimePreferences:
       policy <- c.downField("permissionPolicy").as[Option[PermissionPolicy]].map(_.getOrElse(PermissionPolicy.default))
       thinking <- c.downField("thinkingConfig").as[Option[ThinkingConfig]]
       language <- c.downField("language").as[Option[String]]
-    yield RuntimePreferences(policy, thinking, language)
+      disabledMcp <- c.downField("disabledMcpServers").as[Option[Set[String]]].map(_.getOrElse(Set.empty))
+    yield RuntimePreferences(policy, thinking, language, disabledMcp)
   }
 
   val default: RuntimePreferences = RuntimePreferences()
@@ -104,6 +107,14 @@ class RuntimePreferencesService private (
   def setLanguage(lang: Option[String]): IO[Unit] =
     stateRef.update(_.copy(language = lang)) *>
       RuntimePreferencesService.save(stateRef)
+
+  def getDisabledMcpServers: IO[Set[String]] = stateRef.get.map(_.disabledMcpServers)
+
+  def setMcpServerEnabled(serverId: String, enabled: Boolean): IO[Unit] =
+    stateRef.update { rp =>
+      val updated = if enabled then rp.disabledMcpServers - serverId else rp.disabledMcpServers + serverId
+      rp.copy(disabledMcpServers = updated)
+    } *> RuntimePreferencesService.save(stateRef)
 
   def shouldApprove(toolName: String): IO[ApprovalDecision] =
     for p <- getPolicy
