@@ -80,6 +80,13 @@ const slashCommands = {
     desc: 'Create a new session',
     // Will be wired up from session module in main.js
     run: null
+  },
+  '/model': {
+    desc: 'Select model for this session',
+    run: () => {
+      sendWs({type: 'getModelOptions', sessionId: state.activeSessionId});
+      renderSystemBubble('Loading models...');
+    }
   }
 };
 

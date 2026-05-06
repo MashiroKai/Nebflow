@@ -213,10 +213,10 @@ onMessage('toolEnd', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.label && msg.label.startsWith('AskUser')) return;
   if (isActive(msg)) {
-    const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
+    const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId, msg.truncated);
     if (data) saveMsg(data, msg.sessionId);
   } else {
-    saveMsg({type: 'tool', label: msg.label, summary: msg.summary, content: msg.content, isError: msg.isError, input: msg.input}, msg.sessionId);
+    saveMsg({type: 'tool', label: msg.label, summary: msg.summary, content: msg.content, isError: msg.isError, input: msg.input, truncated: msg.truncated}, msg.sessionId);
   }
 });
 
@@ -333,6 +333,12 @@ onMessage('askPermission', (msg) => {
 // --- Session list (global) ---
 let restoredSessionId = null;
 onMessage('sessionList', (msg) => {
+  // Restore unread state from server-persisted hasUnread field
+  (msg.sessions || []).forEach(s => {
+    if (s.hasUnread && !state.unreadSessions.has(s.id) && !state.markedUnreadSessions.has(s.id)) {
+      state.unreadSessions.add(s.id);
+    }
+  });
   renderSessionSidebar(msg.sessions, msg.activeId);
   // Only restore messages on first load (before any session was active)
   if (!restoredSessionId && msg.activeId) {
@@ -478,7 +484,7 @@ onMessage('agentToolStart', (msg) => { resetStreamTimeout(msg.sessionId); if (is
 onMessage('agentToolEnd', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
-  const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
+  const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId, msg.truncated);
   if (data) saveMsg(data, msg.sessionId);
 });
 onMessage('agentEnd', (msg) => {
@@ -616,6 +622,48 @@ onMessage('configData', (msg) => {
 
 onMessage('configUpdated', (msg) => {
   if (!msg.success) renderError('Config update failed');
+
+// --- Model selection ---
+onMessage('modelOptions', (msg) => {
+  const models = msg.models || [];
+  const current = msg.current || null;
+  if (models.length === 0) {
+    renderSystemBubble('No models available');
+    return;
+  }
+  // Remove the "Loading models..." bubble
+  const lastRow = state.dom.chat.querySelector('.row.ai:last-child');
+  if (lastRow) {
+    const bubble = lastRow.querySelector('.bubble.ai');
+    if (bubble && bubble.textContent.includes('Loading models')) lastRow.remove();
+  }
+  if (!state.currentAiBubble) {
+    const row = document.createElement('div');
+    row.className = 'row ai';
+    state.currentAiBubble = document.createElement('div');
+    state.currentAiBubble.className = 'bubble ai';
+    row.appendChild(state.currentAiBubble);
+    state.dom.chat.appendChild(row);
+  }
+  const options = models.map(m => {
+    const isCurrent = current && m.ref === current;
+    return {label: m.label + (isCurrent ? ' ✓' : ''), desc: m.ref, ref: m.ref};
+  });
+  // Add "Default" option to reset
+  options.unshift({label: 'Default', desc: 'Use config default model chain', ref: null});
+  import('./chat.js').then(({ showOptions }) => {
+    showOptions(state.currentAiBubble, [
+      {question: 'Select model for this session', options: options.map(o => ({label: o.label, desc: o.desc}))}
+    ], (answers) => {
+      const selected = options.find(o => o.label === answers[0]);
+      const modelRef = selected ? selected.ref : null;
+      sendWs({type: 'setSessionModel', sessionId: state.activeSessionId, modelRef: modelRef});
+      renderSystemBubble('Model: ' + (answers[0] === 'Default' ? 'default' : answers[0].replace(' ✓', '')));
+    }, 'Apply');
+  });
+});
+
+onMessage('sessionModelSet', (msg) => {
 });
 
 // --- Retry / fallback status ---

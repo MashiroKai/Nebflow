@@ -139,8 +139,9 @@ export function restoreFromStorage() {
         const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
         const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
+        const truncBadge = m.truncated ? '<span class="truncated-badge" title="Output was too large and has been truncated to prevent context overflow">Truncated</span>' : '';
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + '</div>' +
+          '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + truncBadge + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
         chat.appendChild(row);
@@ -286,8 +287,9 @@ export function restoreFromBackendHistory(msgs) {
         const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
         const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
+        const truncBadge = m.truncated ? '<span class="truncated-badge" title="Output was too large and has been truncated to prevent context overflow">Truncated</span>' : '';
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + '</div>' +
+          '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + truncBadge + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
         chat.appendChild(row);

@@ -12,11 +12,13 @@ import scala.concurrent.duration.*
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
 
-  def createLlm(options: Option[LlmOptions] = None): IO[(LlmHandle[IO], IO[Unit])] =
+  def createLlm(
+    sessionOverrides: Ref[IO, Map[String, ModelCandidate]],
+    options: Option[LlmOptions] = None
+  ): IO[(LlmHandle[IO], ProviderRegistry, IO[Unit])] =
     HttpClientFs2Backend.resource[IO]().allocated.map { case (backend, release) =>
       val config = Config.loadServiceConfig(options.flatMap(_.configPath))
       val registry = ProviderRegistry(config, backend)
-      val sessionOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
 
       val handle = new LlmHandle[IO]:
         def send(req: LlmRequest): IO[LlmResponse] =
@@ -205,6 +207,6 @@ object LlmInterface:
           }
         end sendStream
 
-      (handle, release)
+      (handle, registry, release)
     }
 end LlmInterface

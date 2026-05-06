@@ -217,7 +217,8 @@ object UiMessage:
     summary: String,
     content: String = "",
     isError: Boolean = false,
-    input: String = ""
+    input: String = "",
+    truncated: Boolean = false
   ) extends UiMessage:
     val typeName = "tool"
 
@@ -237,7 +238,7 @@ object UiMessage:
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
     case m: Tool =>
-      Json.obj(
+      val base = Json.obj(
         "type" -> "tool".asJson,
         "label" -> m.label.asJson,
         "summary" -> m.summary.asJson,
@@ -245,6 +246,7 @@ object UiMessage:
         "isError" -> m.isError.asJson,
         "input" -> m.input.asJson
       )
+      if m.truncated then base.deepMerge(Json.obj("truncated" -> true.asJson)) else base
     case m: Agent => Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
     case m: AskUser => Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
     case m: System => Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
@@ -270,7 +272,15 @@ object UiMessage:
           content <- cursor.downField("content").as[Option[String]]
           isError <- cursor.downField("isError").as[Option[Boolean]]
           input <- cursor.downField("input").as[Option[String]]
-        yield Tool(label, summary, content.getOrElse(""), isError.getOrElse(false), input.getOrElse(""))
+          truncated <- cursor.downField("truncated").as[Option[Boolean]]
+        yield Tool(
+          label,
+          summary,
+          content.getOrElse(""),
+          isError.getOrElse(false),
+          input.getOrElse(""),
+          truncated.getOrElse(false)
+        )
       case "agent" =>
         for
           agentId <- cursor.downField("agentId").as[String]

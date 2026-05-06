@@ -15,7 +15,8 @@ case class SessionMeta(
   createdAt: Long,
   updatedAt: Long,
   hasUnread: Boolean,
-  agentName: Option[String] = None
+  agentName: Option[String] = None,
+  modelRef: Option[String] = None
 )
 
 object SessionMeta:
@@ -28,7 +29,8 @@ object SessionMeta:
       "updatedAt" -> m.updatedAt.asJson,
       "hasUnread" -> m.hasUnread.asJson
     )
-    m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
+    val withAgent = m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
+    m.modelRef.fold(withAgent)(r => withAgent.deepMerge(Json.obj("modelRef" -> r.asJson)))
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -39,8 +41,11 @@ object SessionMeta:
       updatedAt <- c.downField("updatedAt").as[Long]
       hasUnread <- c.downField("hasUnread").as[Option[Boolean]].map(_.getOrElse(false))
       agentName <- c.downField("agentName").as[Option[String]]
-    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName)
+      modelRef <- c.downField("modelRef").as[Option[String]]
+    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef)
   }
+
+end SessionMeta
 
 class SessionStore(sessionsDir: os.Path):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.session")
@@ -242,6 +247,12 @@ class SessionStore(sessionsDir: os.Path):
   def renameSession(id: String, newName: String): IO[Unit] =
     indexRef.update { case (activeId, sessions) =>
       val updated = sessions.map(s => if s.id == id then s.copy(name = newName) else s)
+      (activeId, updated)
+    } *> saveIndex
+
+  def updateSessionModel(id: String, modelRef: Option[String]): IO[Unit] =
+    indexRef.update { case (activeId, sessions) =>
+      val updated = sessions.map(s => if s.id == id then s.copy(modelRef = modelRef) else s)
       (activeId, updated)
     } *> saveIndex
 
