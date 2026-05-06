@@ -20,7 +20,7 @@ object LanguageDetector:
 
   private def detectNonEmpty(trimmed: String): Option[String] =
     // Count characters by Unicode category
-    var cjkUnified = 0   // CJK Unified Ideographs (Chinese/Japanese kanji)
+    var cjkUnified = 0 // CJK Unified Ideographs (Chinese/Japanese kanji)
     var hiragana = 0
     var katakana = 0
     var hangul = 0
@@ -33,7 +33,7 @@ object LanguageDetector:
     val len = trimmed.length
     while i < len do
       val cp = trimmed.codePointAt(i)
-      if cp <= 0xFFFF then
+      if cp <= 0xffff then
         val ch = cp.toChar
         // CJK Unified Ideographs
         if ch >= '\u4E00' && ch <= '\u9FFF' then cjkUnified += 1
@@ -58,23 +58,16 @@ object LanguageDetector:
     end while
 
     // Japanese: CJK + Hiragana/Katakana. If hiragana or katakana present, it's Japanese.
-    if (hiragana + katakana) >= MinChars then
-      Some("Japanese")
-    else if hangul >= MinChars then
-      Some("Korean")
+    if (hiragana + katakana) >= MinChars then Some("Japanese")
+    else if hangul >= MinChars then Some("Korean")
     else if cjkUnified >= MinChars then
       // Pure CJK with no kana — treat as Chinese
       Some("Chinese")
-    else if arabic >= MinChars then
-      Some("Arabic")
-    else if cyrillic >= MinChars then
-      Some("Russian")
-    else if thai >= MinChars then
-      Some("Thai")
-    else if devanagari >= MinChars then
-      Some("Hindi")
-    else
-      None
+    else if arabic >= MinChars then Some("Arabic")
+    else if cyrillic >= MinChars then Some("Russian")
+    else if thai >= MinChars then Some("Thai")
+    else if devanagari >= MinChars then Some("Hindi")
+    else None
   end detectNonEmpty
 
 end LanguageDetector
