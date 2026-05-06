@@ -101,3 +101,26 @@ Which PR would you like reviewed? Please provide a PR number, or approve `gh pr 
 [Nebflow QC] Launching automated quality review...
 需要 PR 编号。请提供要 review 的 PR 号，或批准 `gh pr list` 让我列出开放的 PR。
 [Nebflow QC] Review complete. See .nebflow-qc.log for details.
+[Nebflow QC] Merge to main detected at 2026-05-05 09:39:00
+[Nebflow QC] Launching automated quality review...
+没有给 PR 号。要我列出开放的 PR 还是直接给个编号？
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.
+[Nebflow QC] Merge to main detected at 2026-05-05 18:46:34
+[Nebflow QC] Launching automated quality review...
+What would you like me to review? I'm having trouble running `gh pr list` — it needs your approval. Options:
+
+1. **Uncommitted changes** — review the ~45 modified files in your working tree
+2. **Recent commits** — review the diff of the last few commits on main
+3. **Specific PR** — tell me the PR number and I'll fetch it
+
+Which would you prefer?
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.
+[Nebflow QC] Merge to main detected at 2026-05-05 23:43:43
+[Nebflow QC] Launching automated quality review...
+It seems `gh` commands are being blocked by your permission settings. Could you either:
+
+1. **Provide a PR number** — if you know which PR you want reviewed
+2. **Approve the `gh` command** — I need permission to run `gh pr list` and `gh pr diff` to review PRs
+
+You can also try running `gh pr list` yourself and paste the output here.
+[Nebflow QC] Review complete. See .nebflow-qc.log for details.

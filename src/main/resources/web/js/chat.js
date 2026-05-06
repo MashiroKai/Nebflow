@@ -158,7 +158,7 @@ export function finishAi(durationMs, model) {
  * Format milliseconds into a human-readable duration string.
  * e.g. 5000 -> "5s", 93000 -> "1m 33s", 547000 -> "9m 7s"
  */
-function formatDuration(ms) {
+export function formatDuration(ms) {
   const totalSeconds = ms / 1000;
   if (totalSeconds < 1) return '< 1s';
   const rounded = Math.round(totalSeconds);
@@ -168,9 +168,48 @@ function formatDuration(ms) {
   return minutes + 'm ' + seconds + 's';
 }
 
+
+/**
+ * Cosmology-themed thinking phrases. {d} is replaced with the formatted duration.
+ */
+const THINKING_PHRASES = [
+  'Thought for {d}',
+  'Observed for {d}',
+  'Traversed the cosmos for {d}',
+  'Charted the stars for {d}',
+  'Navigated for {d}',
+  'Explored for {d}',
+  'Scanned the deep field for {d}',
+  'Computed for {d}',
+  'Surveyed the void for {d}',
+  'Drifted through space for {d}',
+  'Pondered for {d}',
+  'Illuminated for {d}',
+  'Wandered the cosmos for {d}',
+  'Gazed into the deep for {d}',
+  'Mapped the nebula for {d}',
+  'Orbited the problem for {d}',
+  'Aligned the constellations for {d}',
+  'Reached for the light for {d}',
+  'Probed the darkness for {d}',
+  'Sailed the stellar winds for {d}',
+];
+
+/**
+ * Pick a cosmology-themed thinking phrase.
+ * @param {number} durationMs - Duration in milliseconds.
+ * @param {number} [seed] - Optional seed for deterministic selection.
+ * @returns {string} The full badge text including the ✻ prefix.
+ */
+export function pickThinkingPhrase(durationMs, seed) {
+  const idx = seed != null
+    ? ((seed % THINKING_PHRASES.length) + THINKING_PHRASES.length) % THINKING_PHRASES.length
+    : Math.floor(Math.random() * THINKING_PHRASES.length);
+  return '✻ ' + THINKING_PHRASES[idx].replace('{d}', formatDuration(durationMs));
+}
+
 /**
  * Render a subtle duration badge below an AI bubble.
- * Example: "✻ Thought for 2m 15s"
  */
 export function renderDurationBadge(bubble, durationMs, model) {
   if (!bubble) return;
@@ -178,7 +217,7 @@ export function renderDurationBadge(bubble, durationMs, model) {
   if (!row) return;
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
-  let text = '✻ Thought for ' + formatDuration(durationMs);
+  let text = pickThinkingPhrase(durationMs);
   if (model) text += ' · ' + model;
   badge.textContent = text;
   row.appendChild(badge);
@@ -609,9 +648,9 @@ export function renderAttachmentPreview() {
 export function renderAskBubble(question) {
   const chat = state.dom.chat;
   const row = document.createElement('div');
-  row.className = 'row user ask-question-row';
+  row.className = 'row user';
   const bubble = document.createElement('div');
-  bubble.className = 'bubble user ask-question-bubble';
+  bubble.className = 'bubble user';
   const label = document.createElement('div');
   label.className = 'ask-label';
   label.textContent = 'Ask';
@@ -629,20 +668,19 @@ export function appendAskAnswer(delta) {
   state.askAnswerText += delta;
   if (!state.currentAskBubble) {
     const row = document.createElement('div');
-    row.className = 'row ai ask-answer-row';
+    row.className = 'row ai';
     state.currentAskBubble = document.createElement('div');
-    state.currentAskBubble.className = 'bubble ai ask-answer-bubble';
+    state.currentAskBubble.className = 'bubble ai';
     const label = document.createElement('div');
     label.className = 'ask-label';
     label.textContent = 'Ask';
     const content = document.createElement('div');
-    content.className = 'ask-content';
     state.currentAskBubble.appendChild(label);
     state.currentAskBubble.appendChild(content);
     row.appendChild(state.currentAskBubble);
     chat.appendChild(row);
   }
-  const contentEl = state.currentAskBubble.querySelector('.ask-content');
+  const contentEl = state.currentAskBubble.querySelector('div:not(.ask-label)');
   if (contentEl) {
     const cursor = '<span class="cursor"></span>';
     contentEl.innerHTML = renderMarkdownWithMath(state.askAnswerText || '') + cursor;
@@ -652,7 +690,7 @@ export function appendAskAnswer(delta) {
 
 export function finishAskAnswer() {
   if (state.currentAskBubble) {
-    const contentEl = state.currentAskBubble.querySelector('.ask-content');
+    const contentEl = state.currentAskBubble.querySelector('div:not(.ask-label)');
     if (contentEl) {
       contentEl.innerHTML = renderMarkdownWithMath(state.askAnswerText || '');
     }
