@@ -8,7 +8,7 @@ import nebflow.core.*
 import nebflow.core.mcp.*
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
-import nebflow.llm.{Config, LlmInterface, NebflowServiceConfig}
+import nebflow.llm.*
 import nebflow.service.*
 import nebflow.shared.*
 import nebflow.skill.*
@@ -66,9 +66,16 @@ object GatewayMain extends IOApp.Simple:
         Auth.loadOrCreateToken.flatMap { token =>
           // Global session state shared across all connections
           val sessionStore = new SessionStore(os.home / ".nebflow" / "sessions")
+          val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
           sessionStore.load.flatMap { _ =>
-            LlmInterface.createLlm().flatMap { case (handle, releaseBackend) =>
-              initMcpServers(config).flatMap { case (mcpManager, pluginManifests) =>
+            LlmInterface.createLlm(sessionModelOverrides).flatMap { case (handle, registry, releaseBackend) =>
+              // Load persisted session model overrides
+              sessionStore.listSessions.flatMap { sessions =>
+                val persisted = sessions.flatMap { s =>
+                  s.modelRef.flatMap(ref => registry.getCandidateForRef(ref).map(s.id -> _))
+                }.toMap
+                sessionModelOverrides.set(persisted)
+              } *> initMcpServers(config).flatMap { case (mcpManager, pluginManifests) =>
                 val chatRoutes = new ChatRoutes(handle, token)
                 // Read contextWindow from config for the primary model
                 val contextWindow =
@@ -107,7 +114,9 @@ object GatewayMain extends IOApp.Simple:
                                     askSemaphore = askSemaphore,
                                     taskStore = FileTaskStore,
                                     historyArchiver = nebflow.core.compact.HistoryArchiver.fileSystem(os.pwd),
-                                    fileLockManager = fileLockMgr
+                                    fileLockManager = fileLockMgr,
+                                    sessionModelOverrides = sessionModelOverrides,
+                                    providerRegistry = registry
                                   )
                                   val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
                                   val sessionService = new SessionService(sessionStore)

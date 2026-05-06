@@ -107,26 +107,26 @@ export function formatDiff(content) {
   // Detect unified diff: must contain at least one @@ ... @@ hunk header
   const isUnified = lines.some(l => /^@@\s+-\d+(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@/.test(l));
   if (!isUnified) return null;
+
+  let oldLine = 0, newLine = 0;
   const html = lines.map(line => {
-    // Hunk header: @@ -oldStart,oldCount +newStart,newCount @@
-    if (/^@@/.test(line)) {
-      return '<div class="diff-hunk-header">' + esc(line) + '</div>';
-    }
-    // Added line
+    // Parse hunk header to reset line counters (don't render it)
+    const hm = line.match(/^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+    if (hm) { oldLine = +hm[1]; newLine = +hm[2]; return ''; }
+    // Added line — uses new file line number
     if (line.startsWith('+')) {
-      return '<div class="diff-line"><span class="diff-content diff-add">' + esc(line) + '</span></div>';
+      const n = newLine++;
+      return '<div class="diff-line"><span class="diff-lineno">' + n + '</span><span class="diff-content diff-add">' + esc(line) + '</span></div>';
     }
-    // Removed line
+    // Removed line — uses old file line number
     if (line.startsWith('-')) {
-      return '<div class="diff-line"><span class="diff-content diff-del">' + esc(line) + '</span></div>';
+      const n = oldLine++;
+      return '<div class="diff-line"><span class="diff-lineno">' + n + '</span><span class="diff-content diff-del">' + esc(line) + '</span></div>';
     }
-    // Context line (space prefix)
-    if (line.startsWith(' ')) {
-      return '<div class="diff-line"><span class="diff-content">' + esc(line) + '</span></div>';
-    }
-    // Fallback: plain line
-    return '<div class="diff-line"><span class="diff-content">' + esc(line) + '</span></div>';
-  }).join('');
+    // Context line (space prefix) — both counters advance
+    oldLine++; newLine++;
+    return '<div class="diff-line"><span class="diff-lineno">' + (oldLine - 1) + '</span><span class="diff-content">' + esc(line) + '</span></div>';
+  }).filter(Boolean).join('');
   return '<pre>' + html + '</pre>';
 }
 

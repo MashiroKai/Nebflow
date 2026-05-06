@@ -134,6 +134,7 @@ Usage:
                 else
                   DiffUtil.writeFile(filePath, content, lineSep)
                   Right(editResult.toResultString)
+              end if
             catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
           }
           val lockedWrite = ctx.fileLockManager match
