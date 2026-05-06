@@ -27,12 +27,6 @@ private[agent] trait AgentCore:
   // being silently discarded when called from Unit-returning actor methods.
   private val lifecycleLog = org.slf4j.LoggerFactory.getLogger("nebflow.agent.lifecycle")
 
-  protected def stageConstraints(stage: AdaptiveStage): Set[String] = stage match
-    case AdaptiveStage.Normal => Set.empty
-    case AdaptiveStage.Cautious => Set.empty
-    case AdaptiveStage.Conservative => Set("Write", "Edit", "Bash")
-    case AdaptiveStage.Paused => Set("*")
-
   protected def logAgentEvent(
     ctx: ActorContext[?],
     agentDef: AgentDef,
@@ -58,14 +52,6 @@ private[agent] trait AgentCore:
     state.sessionId match
       case Some(sid) => resources.sessionStore.saveMessagesForSession(sid, state.messages)
       case None => IO.unit
-
-  protected def evaluateProgress(
-    freshCalls: List[ToolCall],
-    state: AgentState
-  ): Boolean =
-    val declaredWait = freshCalls.exists(_.name == "declareWait")
-    if declaredWait then true
-    else freshCalls.nonEmpty
 
   // ============================================================
   // Auto-compaction check
@@ -177,7 +163,8 @@ private[agent] trait AgentCore:
       String,
       Option[ActorRef[AgentEvent]],
       Option[String],
-      Boolean
+      Boolean,
+      Option[String]
     ) => Behavior[AgentCommand]
   ): Behavior[AgentCommand] =
     if state.turnIdx >= MaxTurns then
@@ -196,7 +183,8 @@ private[agent] trait AgentCore:
           "Here's what I was able to determine from the work done so far: [synthesize findings]",
         replyTo,
         None,
-        false
+        false,
+        None
       )
     else
       maybeAutoCompact(agentDef, resources, depth, parentRef, state, stash, ctx, replyTo, processing) match
@@ -212,11 +200,11 @@ private[agent] trait AgentCore:
               state.sessionId
             )
 
-          // Cache-optimal layout for Anthropic prompt caching (prefix order: system → tools → messages):
-          //   system[0]: stable system prompt  ← cache breakpoint (rarely changes)
-          //   tools:     tool definitions       ← cache breakpoint (stable, no dynamic content between)
+          // Cache-optimal layout for Anthropic prompt caching (prefix order: system -> tools -> messages):
+          //   system[0]: stable system prompt  <- cache breakpoint (rarely changes)
+          //   tools:     tool definitions       <- cache breakpoint (stable, no dynamic content between)
           //   messages:  [dynamic context] + actual conversation (dynamic context not persisted)
-          val systemStable =
+          val baseSystemStable =
             if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
             else Repl.loadSystemPrompt()
           val tools = buildToolList(agentDef, depth, parentRef.isDefined)
@@ -261,6 +249,10 @@ private[agent] trait AgentCore:
               else Nil
             // --- LLM call ---
             thinkingOpt <- resources.runtimePrefs.getThinking
+            languageOpt <- resources.runtimePrefs.getLanguage
+            systemStable = baseSystemStable + languageOpt
+              .map(l => s"\n\n# Language\nAlways respond in $l.")
+              .getOrElse("")
             request = LlmRequest(
               messages = state.messages ++ dynamicMsg,
               sessionId = state.sessionId.getOrElse(ctx.self.path.name),
@@ -337,31 +329,17 @@ private[agent] trait AgentCore:
       String,
       Option[ActorRef[AgentEvent]],
       Option[String],
-      Boolean
+      Boolean,
+      Option[String]
     ) => Behavior[AgentCommand]
   ): Behavior[AgentCommand] =
     // Build the full allowed tool set: whitelist + always-available + context-dependent
     val allowedTools = buildAllowedToolSet(agentDef, depth, parentRef.isDefined)
     val filteredCalls = result.toolCalls.filter(tc => allowedTools.contains(tc.name))
 
-    // Stage-based tool blocking
-    val blockedTools = stageConstraints(state.stage)
-    val (stageBlocked, stageAllowed) = filteredCalls.partition { c =>
-      blockedTools.contains("*") || blockedTools.contains(c.name)
-    }
-    val stageBlockedResults = stageBlocked.map { call =>
-      val warning = state.stage match
-        case AdaptiveStage.Conservative =>
-          s"[Stage: Conservative] ${call.name} is disabled. Synthesize your findings without further modifications."
-        case AdaptiveStage.Paused =>
-          "[Stage: Paused] All tools are disabled. Synthesize what you know and respond with your current best answer."
-        case _ => s"[Stage: ${state.stage}] ${call.name} is temporarily disabled."
-      (call, ToolExecResult(warning, isError = false))
-    }
-
     // Deduplication: detect repetitive tool calls within recent turns
     val nextTurnIdx = state.turnIdx + 1
-    val (freshCalls, duplicateResults) = stageAllowed.foldLeft(
+    val (freshCalls, duplicateResults) = filteredCalls.foldLeft(
       (List.empty[ToolCall], List.empty[(ToolCall, ToolExecResult)])
     ) { case ((fresh, dups), call) =>
       val inputHash = ToolCallRecord.canonicalHash(call.input)
@@ -407,48 +385,8 @@ private[agent] trait AgentCore:
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
 
-    val (limitedFreshCalls, cappedCalls) = state.stage match
-      case AdaptiveStage.Cautious if freshCalls.size > 3 =>
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          "tool-limit",
-          s"capped parallel calls from ${freshCalls.size} to 3"
-        )
-        (freshCalls.take(3), freshCalls.drop(3))
-      case _ => (freshCalls, List.empty[ToolCall])
-
-    val cappedResults = cappedCalls.map { call =>
-      (
-        call,
-        ToolExecResult(
-          s"[Stage: Cautious] Parallel call limit reached (max 3). ${call.name} was not executed. Prioritize your most important calls.",
-          isError = false
-        )
-      )
-    }
-
     // Separate ContextManage from real tool calls — it triggers TriggerCompaction
-    val (contextManageCalls, realToolCalls) = limitedFreshCalls.partition(_.name == "ContextManage")
-
-    // Progress tracking
-    val hadProgress =
-      if limitedFreshCalls.isEmpty && duplicateResults.isEmpty && stageBlocked.isEmpty then true
-      else evaluateProgress(limitedFreshCalls, state)
-    val newStagnationCount = if hadProgress then 0 else state.stagnationCount + 1
-    val newProgressStreak = if hadProgress then state.progressStreak + 1 else 0
-    val targetStage = newStagnationCount match
-      case n if n >= 9 => AdaptiveStage.Paused
-      case n if n >= 6 => AdaptiveStage.Conservative
-      case n if n >= 3 => AdaptiveStage.Cautious
-      case _ => AdaptiveStage.Normal
-    val newStage =
-      if targetStage.ordinal > state.stage.ordinal then targetStage
-      else if newProgressStreak >= 2 && targetStage.ordinal < state.stage.ordinal then
-        AdaptiveStage.fromOrdinal(state.stage.ordinal - 1)
-      else state.stage
+    val (contextManageCalls, realToolCalls) = freshCalls.partition(_.name == "ContextManage")
 
     // Build ToolContext with full agent-scoped context
     val toolCtx = ToolContext(
@@ -467,7 +405,8 @@ private[agent] trait AgentCore:
       agentLibrary = Some(resources.agentLibrary),
       askSemaphore = Some(resources.askSemaphore),
       pekkoScheduler = Some(ctx.system.scheduler),
-      fileLockManager = Some(resources.fileLockManager)
+      fileLockManager = Some(resources.fileLockManager),
+      fileChangeTracker = Some(resources.fileChangeTracker)
     )
 
     val io = realToolCalls
@@ -553,8 +492,7 @@ private[agent] trait AgentCore:
           val mode = call.input("mode").flatMap(_.asString).getOrElse("full")
           (call, ToolExecResult(s"[ContextManage] Triggered $mode compaction", isError = false))
         }
-        val allResults =
-          freshResults ++ contextManageResults ++ stageBlockedResults ++ duplicateResults ++ cappedResults
+        val allResults = freshResults ++ contextManageResults ++ duplicateResults
 
         val hasRead = freshResults.exists { case (call, result) => call.name == "Read" && !result.isError }
         val writeCount = freshResults.count { case (call, result) =>
@@ -570,35 +508,13 @@ private[agent] trait AgentCore:
               .handleErrorWith(_ => IO.unit)
           )
 
-        if newStage != state.stage || newStagnationCount != state.stagnationCount then
-          emitStream(
-            resources.dispatcher,
-            state.wsSend,
-            ctx,
-            AgentStreamEvent.ProgressUpdate(nextTurnIdx, newStagnationCount, newStage.toString),
-            isSubagent = depth > 0,
-            state.sessionId
-          )
-        if newStage == AdaptiveStage.Paused && state.stage != AdaptiveStage.Paused then
-          emitStream(
-            resources.dispatcher,
-            state.wsSend,
-            ctx,
-            AgentStreamEvent.Paused("Agent has paused after detecting stagnation. Providing best-effort summary..."),
-            isSubagent = depth > 0,
-            state.sessionId
-          )
-
         IO(
           ctx.self ! ToolsComplete(
             allResults,
             result.text,
             replyTo,
             None,
-            result.thinking,
-            Some(newStagnationCount),
-            Some(newStage),
-            Some(newProgressStreak)
+            result.thinking
           )
         )
       }
@@ -638,10 +554,7 @@ private[agent] trait AgentCore:
       safety = SafetyContext(
         recentToolCalls = prunedRecent,
         recentFilesRead = newRecentFilesRead,
-        hasInjectedAntiLoop = state.safety.hasInjectedAntiLoop,
-        stagnationCount = newStagnationCount,
-        stage = newStage,
-        progressStreak = newProgressStreak
+        hasInjectedAntiLoop = state.safety.hasInjectedAntiLoop
       )
     )
     processing(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
@@ -762,7 +675,8 @@ private[agent] trait AgentCore:
     val toolCalls = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }
     val usage = chunks.collectFirst { case StreamChunk.Done(_, u, _) => u }.flatten
     val stopReason = chunks.collectFirst { case StreamChunk.Done(sr, _, _) => sr }.flatten
-    ConsumeResult(text, toolCalls, Nil, stopReason, usage, Option.when(thinking.nonEmpty)(thinking))
+    val model = chunks.collectFirst { case StreamChunk.Done(_, _, Some(meta)) => meta.model }
+    ConsumeResult(text, toolCalls, Nil, stopReason, usage, Option.when(thinking.nonEmpty)(thinking), model)
 
   // ============================================================
   // Prompt / tool helpers

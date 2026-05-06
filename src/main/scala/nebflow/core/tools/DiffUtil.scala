@@ -127,6 +127,65 @@ object DiffUtil:
 
   end makeDiff
 
+  /**
+   * Produce structured unified diff hunks using diff-utils.
+   * Each hunk contains line-level detail with " "/"-""+" prefixed lines.
+   */
+  def makeUnifiedDiff(fileName: String, oldContent: String, newContent: String): List[DiffHunk] =
+    val oldLines = splitLines(oldContent)
+    val newLines = splitLines(newContent)
+    val patch = diff(oldLines.asJava, newLines.asJava)
+
+    if patch.getDeltas.isEmpty then Nil
+    else
+      val deltas = patch.getDeltas.asScala.toList.sortBy(_.getSource.getPosition)
+      val hunks = List.newBuilder[DiffHunk]
+
+      var oldIdx = 0
+      var newIdx = 0
+
+      for delta <- deltas do
+        val srcPos = delta.getSource.getPosition
+        val tgtPos = delta.getTarget.getPosition
+        val lines = List.newBuilder[String]
+
+        // Context lines before this delta
+        val ctxStart = math.max(oldIdx, srcPos - ContextLines)
+        while oldIdx < srcPos do
+          if oldIdx >= ctxStart then lines += (" " + oldLines(oldIdx))
+          oldIdx += 1
+          newIdx += 1
+
+        // Removed lines
+        for line <- delta.getSource.getLines.asScala do lines += ("-" + line)
+        oldIdx += delta.getSource.size()
+
+        // Added lines
+        for line <- delta.getTarget.getLines.asScala do lines += ("+" + line)
+
+        // Context lines after delta (up to ContextLines)
+        var ctxCount = 0
+        while oldIdx < oldLines.length && ctxCount < ContextLines do
+          lines += (" " + oldLines(oldIdx))
+          oldIdx += 1
+          ctxCount += 1
+
+        hunks += DiffHunk(
+          oldStart = srcPos + 1, // 1-based
+          oldLines = delta.getSource.size(),
+          newStart = tgtPos + 1, // 1-based
+          newLines = delta.getTarget.size(),
+          lines = lines.result()
+        )
+
+        newIdx += delta.getTarget.size()
+      end for
+
+      hunks.result()
+    end if
+
+  end makeUnifiedDiff
+
   // ---------------------------------------------------------------------------
   // Result format contract — single source of truth for OK:CREATED / OK:UPDATED
   // strings produced by EditTool and WriteTool, plus the matching parser used

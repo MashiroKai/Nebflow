@@ -27,9 +27,7 @@ class FileChangeTracker private (
         .filter { p =>
           val rel = rootPath.relativize(p).toString
           val segments = rel.split(java.io.File.separator)
-          // Exclude files in excluded directories (any depth)
           !segments.exists(FileChangeTracker.ExcludedDirs.contains) &&
-          // Exclude specific filenames
           !FileChangeTracker.ExcludedFiles.contains(segments.last)
         }
         .map { p =>
@@ -42,32 +40,58 @@ class FileChangeTracker private (
         .toMap
     finally stream.close()
 
+  /** Stat only files present in the previous snapshot. O(n) where n = snapshot size. */
+  private def statKnown(known: Map[String, Long]): Map[String, Long] =
+    known.flatMap { case (rel, _) =>
+      val abs = rootPath.resolve(rel)
+      try
+        val mtime = Files.getLastModifiedTime(abs).toMillis
+        Some(rel -> mtime)
+      catch case _: Exception => None // deleted or unreadable
+    }
+
+  /**
+   * Quick scan: stat only files from the previous snapshot.
+   * Detects modifications and deletions, but NOT new files.
+   * Much faster than full walk for large projects.
+   */
+  private def quickScan(known: Map[String, Long]): Map[String, Long] =
+    statKnown(known)
+
   def checkChanges(): IO[Option[SystemReminder]] =
     for
       lastCheck <- lastCheckRef.get
       now <- IO(System.currentTimeMillis())
-      // Debounce: skip scan if checked within last 5 seconds
       result <-
         if now - lastCheck < DebounceMs then IO.pure(None)
         else
           for
             oldSnapshot <- snapshotRef.get
-            agentMods <- modifiedByAgent.get
-            newSnapshot <- IO.blocking(scanFiles())
-            _ <- snapshotRef.set(newSnapshot)
-            _ <- modifiedByAgent.set(Set.empty)
+            // Bug 2 fix: atomically drain agentMods
+            agentMods <- modifiedByAgent.getAndSet(Set.empty)
+            // Bug 3 fix: stat only known files instead of full walk
+            newSnapshot <- IO.blocking(statKnown(oldSnapshot))
+            // Detect new files: files that appeared on disk but weren't in oldSnapshot.
+            // Only do a full walk occasionally (every 60s) to keep this cheap.
+            fullScanNeeded = oldSnapshot.nonEmpty &&
+              now - lastCheck > 60 * 1000L
+            updatedSnapshot <-
+              if fullScanNeeded then IO.blocking(scanFiles())
+              else IO.pure(newSnapshot)
+            _ <- snapshotRef.set(updatedSnapshot)
             _ <- lastCheckRef.set(now)
 
-            agentPaths = agentMods.map(_._1)
+            // Bug 4 fix: filter by (path, mtime) pair, not just path
+            agentEntries = agentMods
 
-            changed = (newSnapshot.toSet -- oldSnapshot.toSet)
-              .filter { case (path, _) => !agentPaths.contains(path) }
+            changed = (updatedSnapshot.toSet -- oldSnapshot.toSet)
+              .filter { entry => !agentEntries.contains(entry) }
               .map(_._1)
               .toList
               .sorted
 
-            deleted = (oldSnapshot.keySet -- newSnapshot.keySet)
-              .filterNot(agentPaths.contains)
+            deleted = (oldSnapshot.keySet -- updatedSnapshot.keySet)
+              .filterNot(path => agentEntries.exists(_._1 == path))
               .toList
               .sorted
           yield

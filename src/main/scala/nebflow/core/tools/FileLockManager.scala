@@ -32,5 +32,6 @@ class FileLockManager private (locks: Ref[IO, Map[Path, Semaphore[IO]]]):
     }
 
 object FileLockManager:
+
   def create: IO[FileLockManager] =
     Ref.of[IO, Map[Path, Semaphore[IO]]](Map.empty).map(new FileLockManager(_))

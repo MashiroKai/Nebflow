@@ -59,6 +59,7 @@ lazy val root = (project in file("."))
     ),
 
     run / fork := true,
+    run / connectInput := true,
 
     // Java options
     javaOptions ++= Seq(
