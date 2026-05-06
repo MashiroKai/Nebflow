@@ -63,6 +63,9 @@ export function connect() {
     try {
       const msg = JSON.parse(e.data);
       const handler = handlers[msg.type];
+      if (msg.type === 'done' || msg.type === 'error') {
+        console.log(`[ws] ${msg.type} received`, { sessionId: msg.sessionId, activeSessionId: state.activeSessionId, hasHandler: !!handler });
+      }
       if (handler) handler(msg);
     } catch (err) {
       console.error('[ws] message parse error:', err);

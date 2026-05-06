@@ -12,6 +12,7 @@ import nebflow.core.tools.ToolRegistry
 import nebflow.service.*
 import nebflow.shared.*
 import nebflow.skill.SkillDiscovery
+import nebflow.core.mcp.McpManager
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -36,7 +37,8 @@ class WebSocketRoutes(
   contextWindow: Int = Defaults.ContextWindow,
   skillDiscovery: Option[SkillDiscovery] = None,
   sharedResources: SharedResources,
-  pluginManifests: List[nebflow.plugin.PluginManifest] = Nil
+  pluginManifests: List[nebflow.plugin.PluginManifest] = Nil,
+  mcpManager: McpManager
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
 
@@ -136,6 +138,9 @@ class WebSocketRoutes(
           toolsList = ToolRegistry.userConfigurableTools.map(t =>
             io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
           )
+          mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
+            io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+          })
           _ <- outbound.offer(
             WebSocketFrame.Text(
               io.circe.Json
@@ -146,7 +151,8 @@ class WebSocketRoutes(
                   "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
                   "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
                   "tools" -> toolsList.asJson,
-                  "language" -> prefs.language.asJson
+                  "language" -> prefs.language.asJson,
+                  "mcpServers" -> mcpServers.asJson
                 )
                 .noSpaces
             )
@@ -232,8 +238,12 @@ class WebSocketRoutes(
     val toolsList = ToolRegistry.userConfigurableTools.map(t =>
       io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
     )
-    runtimePrefs.getAll.flatMap { prefs =>
-      wsHub.broadcast(
+    for
+      prefs <- runtimePrefs.getAll
+      mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
+        io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+      })
+      _ <- wsHub.broadcast(
         io.circe.Json.obj(
           "type" -> "serverConfig".asJson,
           "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
@@ -241,10 +251,11 @@ class WebSocketRoutes(
           "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
           "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
           "tools" -> toolsList.asJson,
-          "language" -> prefs.language.asJson
+          "language" -> prefs.language.asJson,
+          "mcpServers" -> mcpServers.asJson
         )
       )
-    }
+    yield ()
 
   private val MaxMessageSize = 1024 * 1024 // 1MB
 
@@ -328,6 +339,17 @@ class WebSocketRoutes(
           logger.info(s"Language preference changed to: $langOpt") *>
             runtimePrefs.setLanguage(langOpt) *>
             broadcastServerConfig
+
+        case "setMcpEnabled" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val serverId = json.hcursor.downField("serverId").as[String].getOrElse("")
+          val enabled = json.hcursor.downField("enabled").as[Boolean].getOrElse(true)
+          if serverId.nonEmpty then
+            logger.info(s"MCP server '$serverId' ${if enabled then "enabled" else "disabled"}") *>
+              runtimePrefs.setMcpServerEnabled(serverId, enabled) *>
+              mcpManager.setEnabled(serverId, enabled) *>
+              broadcastServerConfig
+          else IO.unit
 
         case "getModelOptions" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
@@ -439,6 +461,27 @@ class WebSocketRoutes(
               )
             }
           else IO.unit
+
+        case "searchHistory" =>
+          val query = parse(text).flatMap(_.hcursor.downField("query").as[String]).getOrElse("")
+          if query.trim.nonEmpty then
+            sessionStore.searchHistory(query).flatMap { hits =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "searchResults".asJson,
+                  "query" -> query.asJson,
+                  "results" -> hits.asJson
+                )
+              )
+            }
+          else
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "searchResults".asJson,
+                "query" -> "".asJson,
+                "results" -> List.empty[SearchHit].asJson
+              )
+            )
 
         case "ping" => IO.unit
 
@@ -662,8 +705,10 @@ class WebSocketRoutes(
                         .appendUiMessages(sid, List(UiMessage.User(content, attJson)))
                         .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
                     else IO.unit
-                  } *>
-                  withActiveAgent(ref => IO(ref ! AgentCommand.UserInput(content, None, clientMessageId)))
+                  } *> {
+                    val blocksList = blocks.toList
+                    withActiveAgent(ref => IO(ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty))))
+                  }
             }
           else IO.unit
           end if

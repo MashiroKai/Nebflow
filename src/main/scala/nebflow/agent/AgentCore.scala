@@ -20,7 +20,6 @@ import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 private[agent] trait AgentCore:
 
   protected val MaxDepth = 5
-  protected val MaxTurns = 200
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
@@ -174,27 +173,7 @@ private[agent] trait AgentCore:
       Option[String]
     ) => Behavior[AgentCommand]
   ): Behavior[AgentCommand] =
-    if state.turnIdx >= MaxTurns then
-      val warningMsg = s"[Turn limit reached] Agent has exceeded the maximum of $MaxTurns turns. " +
-        "Stopping now. Please synthesize a final answer based on the information gathered so far."
-      logAgentEvent(ctx, agentDef, depth, state.sessionId, state.sessionName, "turn-limit", s"turnIdx=${state.turnIdx}")
-      finishTurn(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        state.withMessages(state.messages :+ Message(MessageRole.User, Left(warningMsg))),
-        stash,
-        ctx,
-        "I apologize, but I've reached the maximum number of turns for this session. " +
-          "Here's what I was able to determine from the work done so far: [synthesize findings]",
-        replyTo,
-        None,
-        false,
-        None
-      )
-    else
-      maybeAutoCompact(agentDef, resources, depth, parentRef, state, stash, ctx, replyTo, processing) match
+    maybeAutoCompact(agentDef, resources, depth, parentRef, state, stash, ctx, replyTo, processing) match
         case Some(behavior) => behavior
         case None =>
           if depth > 0 then
@@ -227,8 +206,10 @@ private[agent] trait AgentCore:
           val io = for
             // --- reminders (async) ---
             fileChangesOpt <- resources.fileChangeTracker.checkChanges()
-            // isUserTurn: last message is from user (not tool results)
-            isUserTurn = state.messages.lastOption.exists(_.role == MessageRole.User)
+            // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
+            isUserTurn = state.messages.lastOption.exists(m =>
+              m.role == MessageRole.User && m.content.isLeft
+            )
             reminders <- SystemReminders.collectAll(
               resources.reminderStateRef,
               state.latestUsage,
@@ -275,8 +256,7 @@ private[agent] trait AgentCore:
             }
           )
           processing(agentDef, resources, depth, parentRef, state, stash, ctx)
-      end match
-    end if
+    end match
   end pipeLlmCall
 
   // ============================================================
@@ -581,9 +561,13 @@ private[agent] trait AgentCore:
     isSubagent: Boolean = true,
     sessionId: Option[String] = None
   ): Unit =
+    val eventName = event.getClass.getSimpleName
+    val json = event.toJson(ctx.self.path.name, isSubagent, sessionId)
     dispatcher.unsafeRunAndForget(
-      wsSend(event.toJson(ctx.self.path.name, isSubagent, sessionId))
-        .handleErrorWith(_ => IO.unit)
+      wsSend(json)
+        .handleErrorWith(e =>
+          IO(NebflowLogger.forName("nebflow.agent").warn(s"emitStream($eventName) failed: ${e.getMessage}"))
+        )
     )
 
   protected def emitStreamIO(

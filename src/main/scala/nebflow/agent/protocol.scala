@@ -18,7 +18,8 @@ object AgentCommand:
   case class UserInput(
     text: String,
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]] = None,
-    clientMessageId: Option[String] = None
+    clientMessageId: Option[String] = None,
+    blocks: Option[List[ContentBlock]] = None
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 

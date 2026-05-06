@@ -94,6 +94,15 @@ export function renderSettings() {
         <input type="text" id="language-input" class="settings-text-input" placeholder="Auto-detect" value="${state.language || ''}" />
       </div>
     </div>
+    ${state.mcpServers && state.mcpServers.length > 0 ? `
+    <div class="settings-section">
+      <div class="settings-section-title">MCP Servers</div>
+      ${state.mcpServers.map(s => `
+      <div class="settings-row">
+        <span class="settings-label">${escapeHtml(s.id)}</span>
+        <div class="toggle ${s.enabled ? 'on' : ''}" data-mcp-id="${escapeHtml(s.id)}"></div>
+      </div>`).join('')}
+    </div>` : ''}
     <div class="settings-section">
       <div class="settings-section-title">Configuration</div>
       <div class="config-editor-wrap">
@@ -132,6 +141,18 @@ export function renderSettings() {
     const val = this.value.trim() || null;
     state.language = val;
     sendWs({type: 'setLanguage', language: val});
+  });
+  // MCP server toggles
+  content.querySelectorAll('[data-mcp-id]').forEach(toggle => {
+    toggle.addEventListener('click', function() {
+      this.classList.toggle('on');
+      const serverId = this.dataset.mcpId;
+      const enabled = this.classList.contains('on');
+      // Update local state
+      const server = state.mcpServers.find(s => s.id === serverId);
+      if (server) server.enabled = enabled;
+      sendWs({type: 'setMcpEnabled', serverId, enabled});
+    });
   });
   // Config save — validate JSON before sending
   document.getElementById('btn-save-config')?.addEventListener('click', () => {

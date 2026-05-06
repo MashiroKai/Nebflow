@@ -75,6 +75,7 @@ export default {
   currentPolicy: 'ask',
   serverThinking: null,
   language: null,
+  mcpServers: [],
 
   // Send lock (prevents rapid double-send)
   isSending: false,
@@ -98,6 +99,9 @@ export default {
   // Slash autocomplete
   slashSelectedIndex: 0,
   slashMatches: [],
+
+  // Search navigation target: { sessionId, messageIndex } or null
+  searchNavigateTarget: null,
 
   // DOM refs (populated in main.js)
   dom: {}

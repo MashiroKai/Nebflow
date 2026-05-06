@@ -27,6 +27,7 @@ import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migra
 import { renderTaskList } from './taskList.js';
 import { registerCardRenderer, renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
+import { initSearch, renderSearchResults } from './search.js';
 
 // ---------- 1. Populate DOM refs ----------
 state.dom = {
@@ -227,6 +228,7 @@ onMessage('done', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   const durationMs = consumeTurnDuration(sid);
+  console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length });
   // Flush any remaining buffered text for this session
   if (msg.sessionId && state.sessionTexts[msg.sessionId]) {
     if (!isActive(msg)) {
@@ -418,6 +420,21 @@ onMessage('historyPage', (msg) => {
 
     if (!state.historyHasMore && msg.messages.length > 0) showHistoryEnd();
     smartScroll();
+
+    // Handle search navigation: scroll to a specific message after history loads
+    if (state.searchNavigateTarget && state.searchNavigateTarget.sessionId === sid) {
+      const target = state.searchNavigateTarget;
+      state.searchNavigateTarget = null;
+      const msgIdx = target.messageIndex;
+      const rows = state.dom.chat.querySelectorAll('.row');
+      if (msgIdx < rows.length) {
+        const targetRow = rows[msgIdx];
+        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetRow.style.transition = 'background 0.3s';
+        targetRow.style.background = 'rgba(7,193,96,0.15)';
+        setTimeout(() => { targetRow.style.background = ''; }, 2000);
+      }
+    }
   } else {
     // Scroll-up pagination — prepend older messages
     const chat = state.dom.chat;
@@ -612,6 +629,9 @@ onMessage('serverConfig', (msg) => {
   if (msg.language !== undefined) {
     state.language = msg.language || null;
   }
+  if (msg.mcpServers) {
+    state.mcpServers = msg.mcpServers;
+  }
 });
 
 onMessage('configData', (msg) => {
@@ -622,6 +642,7 @@ onMessage('configData', (msg) => {
 
 onMessage('configUpdated', (msg) => {
   if (!msg.success) renderError('Config update failed');
+});
 
 // --- Model selection ---
 onMessage('modelOptions', (msg) => {
@@ -630,12 +651,6 @@ onMessage('modelOptions', (msg) => {
   if (models.length === 0) {
     renderSystemBubble('No models available');
     return;
-  }
-  // Remove the "Loading models..." bubble
-  const lastRow = state.dom.chat.querySelector('.row.ai:last-child');
-  if (lastRow) {
-    const bubble = lastRow.querySelector('.bubble.ai');
-    if (bubble && bubble.textContent.includes('Loading models')) lastRow.remove();
   }
   if (!state.currentAiBubble) {
     const row = document.createElement('div');
@@ -699,6 +714,12 @@ onMessage('askError', (msg) => {
 });
 
 
+// --- Search results ---
+onMessage('searchResults', (msg) => {
+  renderSearchResults(msg.query, msg.results || []);
+});
+
+
 // ---------- 4. Cross-module wiring ----------
 setNewSessionHandler(() => startInlineNewSession());
 window.__showDeleteModal = showDeleteModal;
@@ -708,6 +729,7 @@ console.log('[main] initializing modules...');
 initNavTabs();
 initModals();
 initInput();
+initSearch();
 console.log('[main] modules initialized, connecting ws...');
 
 // Scroll listener
