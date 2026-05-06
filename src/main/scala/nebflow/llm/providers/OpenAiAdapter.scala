@@ -239,7 +239,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           case Left(error) =>
             Stream.eval(IO.raiseError(new RuntimeException(s"OpenAI API error: $error")))
           case Right(byteStream) =>
-            parseOpenAiSseIncrementally(byteStream, toolCallState)
+            parseOpenAiSseIncrementally(byteStream, toolCallState, params)
       }
     }
 
@@ -247,7 +247,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
   private def parseOpenAiSseIncrementally(
     byteStream: Stream[IO, Byte],
-    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
+    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
+    params: SendMessageParams
   ): Stream[IO, StreamChunk] =
     byteStream
       .through(fs2.text.utf8.decode)
@@ -257,15 +258,23 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         if line.startsWith("data:") then
           val data = line.drop(5).trim
           if data == "[DONE]" then IO.pure(Nil)
-          else processOpenAiData(data, toolCallState)
+          else processOpenAiData(data, toolCallState, params)
         else IO.pure(Nil)
       }
       .flatMap(cs => if cs.nonEmpty then Stream.emits(cs) else Stream.empty)
 
   private def processOpenAiData(
     data: String,
-    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]]
+    toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
+    params: SendMessageParams
   ): IO[List[StreamChunk]] =
+    def makeMeta: LlmMeta = LlmMeta(
+      sessionId = params.sessionId.getOrElse(""),
+      agentId = params.agentId.getOrElse(""),
+      providerId = "openai",
+      model = params.model,
+      durationMs = 0
+    )
     parse(data) match
       case Left(_) => IO.pure(Nil)
       case Right(json) =>
@@ -277,7 +286,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           )
         }
         val choicesEmpty = json.hcursor.downField("choices").as[List[Json]].toOption.exists(_.isEmpty)
-        if usageOpt.isDefined && choicesEmpty then IO.pure(List(StreamChunk.Done(None, usageOpt)))
+        if usageOpt.isDefined && choicesEmpty then IO.pure(List(StreamChunk.Done(None, usageOpt, Some(makeMeta))))
         else
           val delta = json.hcursor.downField("choices").downN(0).downField("delta").as[Json].toOption
           val finishReason = json.hcursor.downField("choices").downN(0).downField("finish_reason").as[String].toOption
@@ -321,13 +330,17 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                             StreamChunk.ToolCallChunk(ToolCall(id, name, input))
                           }
                         }
-                      else if finishReason.isDefined then IO.pure(acc :+ StreamChunk.Done(finishReason, None))
+                      else if finishReason.isDefined then
+                        IO.pure(acc :+ StreamChunk.Done(finishReason, None, Some(makeMeta)))
                       else IO.pure(textDeltas ++ acc)
                     }
                 case None =>
-                  if finishReason.isDefined then IO.pure(textDeltas :+ StreamChunk.Done(finishReason, None))
+                  if finishReason.isDefined then
+                    IO.pure(textDeltas :+ StreamChunk.Done(finishReason, None, Some(makeMeta)))
                   else IO.pure(textDeltas)
               end match
           end match
         end if
+    end match
+  end processOpenAiData
 end OpenAiAdapter

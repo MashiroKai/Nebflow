@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import com.github.difflib.DiffUtils.diff
-import com.github.difflib.patch.{AbstractDelta, DeltaType}
+import com.github.difflib.patch.AbstractDelta
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
@@ -129,56 +129,53 @@ object DiffUtil:
 
   /**
    * Produce structured unified diff hunks using diff-utils.
-   * Each hunk contains line-level detail with " "/"-""+" prefixed lines.
+   * Each DiffHunk.oldCount/newCount reflects the total lines in the hunk
+   * (context + changed), matching standard unified diff @@ header semantics.
    */
-  def makeUnifiedDiff(fileName: String, oldContent: String, newContent: String): List[DiffHunk] =
+  def makeUnifiedDiff(oldContent: String, newContent: String): List[DiffHunk] =
     val oldLines = splitLines(oldContent)
-    val newLines = splitLines(newContent)
-    val patch = diff(oldLines.asJava, newLines.asJava)
+    val patch = diff(oldLines.asJava, splitLines(newContent).asJava)
 
     if patch.getDeltas.isEmpty then Nil
     else
       val deltas = patch.getDeltas.asScala.toList.sortBy(_.getSource.getPosition)
       val hunks = List.newBuilder[DiffHunk]
-
       var oldIdx = 0
-      var newIdx = 0
 
       for delta <- deltas do
         val srcPos = delta.getSource.getPosition
         val tgtPos = delta.getTarget.getPosition
-        val lines = List.newBuilder[String]
+        val hunkLines = List.newBuilder[String]
 
         // Context lines before this delta
         val ctxStart = math.max(oldIdx, srcPos - ContextLines)
+        val ctxBeforeCount = srcPos - ctxStart
         while oldIdx < srcPos do
-          if oldIdx >= ctxStart then lines += (" " + oldLines(oldIdx))
+          if oldIdx >= ctxStart then hunkLines += (" " + oldLines(oldIdx))
           oldIdx += 1
-          newIdx += 1
 
         // Removed lines
-        for line <- delta.getSource.getLines.asScala do lines += ("-" + line)
+        for line <- delta.getSource.getLines.asScala do hunkLines += ("-" + line)
         oldIdx += delta.getSource.size()
 
         // Added lines
-        for line <- delta.getTarget.getLines.asScala do lines += ("+" + line)
+        for line <- delta.getTarget.getLines.asScala do hunkLines += ("+" + line)
 
         // Context lines after delta (up to ContextLines)
         var ctxCount = 0
         while oldIdx < oldLines.length && ctxCount < ContextLines do
-          lines += (" " + oldLines(oldIdx))
+          hunkLines += (" " + oldLines(oldIdx))
           oldIdx += 1
           ctxCount += 1
 
+        val result = hunkLines.result()
         hunks += DiffHunk(
-          oldStart = srcPos + 1, // 1-based
-          oldLines = delta.getSource.size(),
-          newStart = tgtPos + 1, // 1-based
-          newLines = delta.getTarget.size(),
-          lines = lines.result()
+          oldStart = ctxStart + 1, // 1-based, includes context
+          oldCount = result.count(l => l.startsWith(" ") || l.startsWith("-")),
+          newStart = tgtPos - ctxBeforeCount + 1, // 1-based, accounts for context
+          newCount = result.count(l => l.startsWith(" ") || l.startsWith("+")),
+          lines = result
         )
-
-        newIdx += delta.getTarget.size()
       end for
 
       hunks.result()

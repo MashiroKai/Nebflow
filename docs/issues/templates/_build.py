@@ -15,6 +15,7 @@ Issue 模板构建与校验脚本。
 import argparse
 import re
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 
@@ -550,7 +551,17 @@ def inject_blocks(template_path: Path, blocks: Dict[str, str]) -> str:
         block_name = match.group(1)
         return blocks.get(block_name, match.group(0))
 
-    return re.sub(r"<!--\s*INJECT:\s*(\w+)\s*-->", replacer, content)
+    result = re.sub(r"<!--\s*INJECT:\s*(\w+)\s*-->", replacer, content)
+
+    # 将创建日期的 YYYY-MM-DD 占位符替换为当天日期
+    today = date.today().isoformat()
+    result = re.sub(
+        r"(\|\s*创建日期\s*\|\s*)YYYY-MM-DD(\s*\|)",
+        rf"\g<1>{today}\2",
+        result,
+    )
+
+    return result
 
 
 def check_issue_placeholders(issues_dir: Path) -> List[str]:

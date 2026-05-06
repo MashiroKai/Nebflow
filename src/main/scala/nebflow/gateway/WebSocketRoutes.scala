@@ -663,6 +663,19 @@ class WebSocketRoutes(
       case "toolStart" =>
         sessionTurnStarts
           .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
+        // Flush accumulated text before tool execution, matching frontend finishAi() behavior.
+        // Without this, text output before a tool call stays in the in-memory buffer and is lost
+        // when the user switches sessions before the final "done" event.
+          *> sessionTextBuffers
+            .modify { m =>
+              val text = m.getOrElse(sessionId, "")
+              (m - sessionId, text)
+            }
+            .flatMap { text =>
+              if text.nonEmpty then
+                sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text, None, None)))
+              else IO.unit
+            }
 
       case "done" =>
         val model = hc.downField("model").as[Option[String]].getOrElse(None)
@@ -735,20 +748,16 @@ class WebSocketRoutes(
       else
         (for
           messages <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
-          lastAssistantMsg = messages.reverseIterator
-            .find(_.role == MessageRole.Assistant)
-            .map(_.textContent)
-            .getOrElse("")
-          systemPrompt = "You are a helpful assistant. Answer the user's question about the provided content concisely."
-          userContent =
-            if lastAssistantMsg.nonEmpty then
-              s"--- Latest assistant response ---\n$lastAssistantMsg\n\n--- End ---\n\nQuestion: $question"
-            else s"Question: $question"
+          history = messages.filter(m => m.role == MessageRole.User || m.role == MessageRole.Assistant)
+          systemMsg = Message(
+            MessageRole.System,
+            Left(
+              "You are a helpful assistant. The user is asking a follow-up question about an ongoing conversation. Use the provided conversation context to answer concisely. Your response will NOT be saved to the conversation history."
+            )
+          )
+          askMsg = Message(MessageRole.User, Left(question))
           request = LlmRequest(
-            messages = List(
-              Message(MessageRole.System, Left(systemPrompt)),
-              Message(MessageRole.User, Left(userContent))
-            ),
+            messages = systemMsg :: history ::: List(askMsg),
             sessionId = sessionId,
             agentId = "ask",
             tools = None,

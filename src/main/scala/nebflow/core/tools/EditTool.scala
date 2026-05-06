@@ -1,11 +1,15 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.core.NebflowLogger
 
 import java.nio.file.{Files, Path, Paths}
+
+private val logger = NebflowLogger.forName("nebflow.edit")
 
 object EditTool extends Tool:
   val name = "Edit"
@@ -83,6 +87,7 @@ Edit patterns:
     if filePath.toString.endsWith(".ipynb") then
       Left(ToolError("File is a Jupyter Notebook. Use the NotebookEdit tool to edit this file."))
     else if oldString.isEmpty && replaceAll then Left(ToolError("replace_all cannot be used with empty old_string."))
+    else if oldString.isEmpty && newString.isEmpty then Left(ToolError("Cannot create file with empty content."))
     else if oldString == newString then Left(ToolError("old_string and new_string are identical — no change needed."))
     else Right(())
 
@@ -91,8 +96,8 @@ Edit patterns:
   // ---------------------------------------------------------------------------
 
   private def validateInLock(filePath: Path, content: String, oldString: String): Either[ToolError, Unit] =
-    if Files.size(filePath) > MaxEditFileSize then
-      val size = Files.size(filePath)
+    val size = Files.size(filePath)
+    if size > MaxEditFileSize then
       Left(ToolError(s"File too large to edit (${formatSize(size)}). Maximum is ${formatSize(MaxEditFileSize)}."))
     else if oldString.isEmpty && content.trim.nonEmpty then
       Left(ToolError("Cannot create new file — file already exists and has content. Use the Write tool to overwrite."))
@@ -167,16 +172,13 @@ Edit patterns:
       // --- New file creation branch ---
       if oldString.isEmpty then
         if Files.exists(filePath) then
-          // File exists — only allow if empty
           val content = DiffUtil.readFile(filePath)
           validateInLock(filePath, content, oldString) match
             case Left(err) => Left(err)
             case Right(()) =>
-              // File is empty (trim check passed in validateInLock), write new content
               DiffUtil.writeFile(filePath, newString, "\n")
               Right(DiffUtil.renderCreatedResult(filePath))
         else
-          // File doesn't exist — create it
           val parent = filePath.getParent
           if parent != null && !Files.exists(parent) then Files.createDirectories(parent)
           DiffUtil.writeFile(filePath, newString, "\n")
@@ -186,12 +188,9 @@ Edit patterns:
         if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
         else
           // File size check BEFORE reading content
-          if Files.size(filePath) > MaxEditFileSize then
-            Left(
-              ToolError(
-                s"File too large to edit (${formatSize(Files.size(filePath))}). Maximum is ${formatSize(MaxEditFileSize)}."
-              )
-            )
+          val size = Files.size(filePath)
+          if size > MaxEditFileSize then
+            Left(ToolError(s"File too large to edit (${formatSize(size)}). Maximum is ${formatSize(MaxEditFileSize)}."))
           else
             val content = DiffUtil.readFile(filePath)
             val lineSep = DiffUtil.detectLineSep(content)
@@ -226,15 +225,17 @@ Edit patterns:
                     val currentContent = DiffUtil.readFile(filePath)
                     if currentContent != content then
                       Left(ToolError("File was modified externally. Please re-read and retry."))
-                    else
-                      // mtime changed but content identical — proceed
-                      performReplace(filePath, content, actualOld, effectiveNew, replaceAll, lineSep)
-                  else performReplace(filePath, content, actualOld, effectiveNew, replaceAll, lineSep)
+                    else performReplace(filePath.toString, content, actualOld, effectiveNew, replaceAll, lineSep)
+                  else performReplace(filePath.toString, content, actualOld, effectiveNew, replaceAll, lineSep)
             end match
-    catch case e: Exception => Left(ToolError(s"Error editing file: ${e.getMessage}"))
+          end if
+    catch
+      case e: Exception =>
+        logger.warn(s"Error editing file ${filePath}: ${e.getClass.getSimpleName}: ${e.getMessage}").unsafeRunSync()
+        Left(ToolError(s"Error editing file: ${e.getMessage}"))
 
   private def performReplace(
-    filePath: Path,
+    filePathStr: String,
     content: String,
     actualOld: String,
     newString: String,
@@ -248,11 +249,19 @@ Edit patterns:
           java.util.regex.Pattern.quote(actualOld),
           java.util.regex.Matcher.quoteReplacement(newString)
         )
-    DiffUtil.writeFile(filePath, updated, lineSep)
 
-    val short = filePath.getFileName.toString
+    DiffUtil.writeFile(Paths.get(filePathStr), updated, lineSep)
+
     val (added, removed) = DiffUtil.lineStats(content, updated)
-    val diff = DiffUtil.makeDiff(short, content, updated)
-    Right(DiffUtil.renderUpdatedResult(short, added, removed, diff))
+    val hunks = DiffUtil.makeUnifiedDiff(content, updated)
+    val editResult = EditResult(
+      filePath = filePathStr,
+      addedLines = added,
+      removedLines = removed,
+      hunks = hunks,
+      diffText = EditResult.renderHunks(hunks)
+    )
+    Right(editResult.toResultString)
+  end performReplace
 
 end EditTool
