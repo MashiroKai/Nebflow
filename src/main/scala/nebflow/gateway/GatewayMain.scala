@@ -32,6 +32,21 @@ object GatewayMain extends IOApp.Simple:
     catch case _: Exception => ()
   }
 
+  private val QuitCommands: Set[String] = Set("quit", "exit", "q")
+
+  /**
+   * Block until user types a quit command on stdin.
+   * If stdin is closed (EOF — common under sbt run / non-interactive shells), wait
+   * forever instead of exiting, so the server is only killed by SIGINT/SIGTERM.
+   */
+  private def waitForQuit: IO[Unit] =
+    IO.blocking(Option(scala.io.StdIn.readLine())).flatMap {
+      case None => IO.never // stdin closed — keep running until cancelled
+      case Some(line) =>
+        if QuitCommands.contains(line.trim.toLowerCase) then IO.unit
+        else waitForQuit
+    }
+
   private def initMcpServers(config: NebflowServiceConfig): IO[(McpManager, List[nebflow.plugin.PluginManifest])] =
     McpManager.create.flatMap { manager =>
       val fromConfig = IO.pure(config.mcpServers.getOrElse(Map.empty))
@@ -132,12 +147,18 @@ object GatewayMain extends IOApp.Simple:
                                     }
                                     .build
                                     .use { _ =>
-                                      openBrowser(url) *> IO.never[Unit]
+                                      openBrowser(url) *>
+                                        logger.info("Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop") *>
+                                        waitForQuit
                                     }
                                     .guarantee(
-                                      mcpManager.stopAll() *>
+                                      logger.info("shutting down...") *>
+                                        mcpManager.stopAll() *>
                                         releaseBackend *>
-                                        IO { actorSystem.terminate() }
+                                        IO.fromFuture(IO {
+                                          actorSystem.terminate()
+                                          actorSystem.whenTerminated
+                                        }).void
                                     )
                                 } // end fileLockMgr
                               } // end askSemaphore

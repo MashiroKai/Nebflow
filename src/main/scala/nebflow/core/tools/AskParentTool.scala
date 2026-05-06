@@ -16,16 +16,18 @@ object AskParentTool extends Tool:
 Use this when you need clarification or information from the parent agent that delegated to you.
 This blocks until the parent responds. Only available when this agent was spawned as a sub-agent."""
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> io.circe.Json.obj(
-      "question" -> io.circe.Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "The question to ask the parent".asJson
-      )
-    ),
-    "required" -> io.circe.Json.arr("question".asJson)
-  ))
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> io.circe.Json.obj(
+        "question" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "The question to ask the parent".asJson
+        )
+      ),
+      "required" -> io.circe.Json.arr("question".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val q = input("question").flatMap(_.asString).getOrElse("")
@@ -43,9 +45,7 @@ This blocks until the parent responds. Only available when this agent was spawne
         implicit val askTimeout: org.apache.pekko.util.Timeout =
           org.apache.pekko.util.Timeout(scala.concurrent.duration.Duration(60, "seconds"))
         IO.fromFuture(IO {
-          parent.ask[ParentAnswer](replyTo =>
-            AgentCommand.SubagentQuestion(selfRef.path.name, question, replyTo)
-          )
+          parent.ask[ParentAnswer](replyTo => AgentCommand.SubagentQuestion(selfRef.path.name, question, replyTo))
         }).map(answer => Right(answer.answer))
           .handleError(e => Left(ToolError(s"Ask parent failed: ${e.getMessage}")))
       case (None, _, _) =>
@@ -54,3 +54,4 @@ This blocks until the parent responds. Only available when this agent was spawne
         IO.pure(Left(ToolError("ask_parent requires a Pekko scheduler")))
       case _ =>
         IO.pure(Left(ToolError("ask_parent requires agent actor reference")))
+end AskParentTool

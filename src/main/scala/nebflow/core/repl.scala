@@ -135,11 +135,8 @@ object Repl:
         val gitUser = gitCmd("config user.name")
         if gitUser.nonEmpty then sb.append(s"| Git user | $gitUser |\n")
 
-        val status = gitCmd("status --porcelain")
-        if status.nonEmpty then
-          val lines = status.linesIterator.take(10).toList
-          val formatted = lines.map(_.trim).mkString("`", "`<br>`", "`")
-          sb.append(s"| Modified | $formatted |\n")
+        // Intentionally omit modified files — this snapshot is static and becomes stale
+        // as the agent works. Agents should run `git status` directly for current state.
 
         val log = gitCmd("log --oneline -5")
         if log.nonEmpty then

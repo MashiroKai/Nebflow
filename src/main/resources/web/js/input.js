@@ -3,7 +3,7 @@
 
 import state, { LS_HISTORY_KEY } from './state.js';
 import { sendWs } from './ws.js';
-import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview } from './chat.js';
+import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble } from './chat.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 
@@ -68,6 +68,12 @@ const slashCommands = {
           renderSystemBubble('Policy: ' + answers[0]);
         }, 'Apply');
       });
+    }
+  },
+  '/ask': {
+    desc: 'Ask a question about the latest response (does not affect context)',
+    run: () => {
+      renderSystemBubble('Usage: /ask <your question>');
     }
   },
   '/new': {
@@ -194,6 +200,17 @@ export function send() {
     return;
   }
   state.isSending = true;
+  // Intercept /ask <question> before normal slash handling
+  if (text.startsWith('/ask ')) {
+    const question = text.slice(5).trim();
+    if (question) {
+      sendWs({ type: 'ask', question, sessionId: state.activeSessionId });
+      renderAskBubble(question);
+    }
+    input.value = '';
+    setTimeout(() => { state.isSending = false; }, 300);
+    return;
+  }
   if (handleSlash(text)) {
     input.value = '';
     // Debounce: keep lock briefly to prevent accidental double-trigger of slash commands
@@ -229,6 +246,8 @@ export function send() {
   state.pendingAttachments = [];
   state.dom.attPreview.innerHTML = '';
   setBusy(state.activeSessionId);
+  // Start turn timer (for "✻ Thought for X" badge)
+  state.turnStartTimes[state.activeSessionId] = Date.now();
   // Release send lock after a short debounce to prevent double-click / rapid Enter
   setTimeout(() => { state.isSending = false; }, 300);
   // Clean up any orphaned thinking placeholders from previous incomplete streams
