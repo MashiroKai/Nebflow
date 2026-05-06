@@ -17,6 +17,18 @@ object Defaults:
    */
   val StreamTimeoutSec: Int = 600
 
-  /** Per-provider LLM request timeout. */
-  val LlmTimeoutMs: Long = 300_000L
+  /** Per-provider LLM request timeout (covers streaming generation). */
+  val LlmTimeoutMs: Long = 600_000L
+
+  /** HTTP readTimeout for LLM provider connections (must be >= LlmTimeoutMs). */
+  val LlmReadTimeoutSec: Int = 600
+
+  /** Bash tool max timeout in ms. */
+  val BashMaxTimeoutMs: Long = 3_600_000L
+
+  /** Curl tool max timeout in seconds. */
+  val CurlMaxTimeoutSec: Int = 120
+
+  /** WebFetch tool timeout in ms. */
+  val WebFetchTimeoutMs: Int = 120_000
 end Defaults
