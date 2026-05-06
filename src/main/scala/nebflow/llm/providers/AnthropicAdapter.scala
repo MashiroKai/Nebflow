@@ -237,7 +237,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
             case Left(error) =>
               Stream.eval(IO.raiseError(new RuntimeException(s"Anthropic API error: $error")))
             case Right(byteStream) =>
-              parseSseIncrementally(byteStream, toolCallState, inputTokensRef)
+              parseSseIncrementally(byteStream, toolCallState, inputTokensRef, params)
         }
       }
     }
@@ -247,7 +247,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
   private def parseSseIncrementally(
     byteStream: Stream[IO, Byte],
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
-    inputTokensRef: Ref[IO, Int]
+    inputTokensRef: Ref[IO, Int],
+    params: SendMessageParams
   ): Stream[IO, StreamChunk] =
     Stream.eval(IO.ref(Option.empty[String])).flatMap { eventTypeRef =>
       byteStream
@@ -259,8 +260,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
           else if line.startsWith("data:") then
             val data = line.drop(5).trim
             eventTypeRef.getAndSet(None).flatMap {
-              case Some(et) => processAnthropicEvent(et, data, toolCallState, inputTokensRef)
-              case None => processAnthropicEvent("", data, toolCallState, inputTokensRef)
+              case Some(et) => processAnthropicEvent(et, data, toolCallState, inputTokensRef, params)
+              case None => processAnthropicEvent("", data, toolCallState, inputTokensRef, params)
             }
           else IO.pure(Nil)
         }
@@ -271,7 +272,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     eventType: String,
     data: String,
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
-    inputTokensRef: Ref[IO, Int]
+    inputTokensRef: Ref[IO, Int],
+    params: SendMessageParams
   ): IO[List[StreamChunk]] =
     if data == "[DONE]" then IO.pure(Nil)
     else
@@ -330,7 +332,14 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
               val outputTokens = json.hcursor.downField("usage").downField("output_tokens").as[Int].getOrElse(0)
               inputTokensRef.get.map { inputTokens =>
                 val usage = Some(TokenUsage(inputTokens = inputTokens, outputTokens = outputTokens))
-                List(StreamChunk.Done(stopReason, usage))
+                val meta = LlmMeta(
+                  sessionId = params.sessionId.getOrElse(""),
+                  agentId = params.agentId.getOrElse(""),
+                  providerId = "anthropic",
+                  model = params.model,
+                  durationMs = 0
+                )
+                List(StreamChunk.Done(stopReason, usage, Some(meta)))
               }
             case _ => IO.pure(Nil)
 end AnthropicAdapter
