@@ -5,6 +5,7 @@
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, formatDiff, buildToolDetail, attachToolClick, esc } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
+import { pickThinkingPhrase } from './chat.js';
 
 const MAX_MSGS_PER_SESSION = 200;
 
@@ -70,7 +71,7 @@ export function loadMsgs() {
 export function restoreFromStorage() {
   const chat = state.dom.chat;
   const msgs = loadMsgs();
-  msgs.forEach(m => {
+  msgs.forEach((m, i) => {
     if (m.type === 'user') {
       const row = document.createElement('div');
       row.className = 'row user';
@@ -112,7 +113,7 @@ export function restoreFromStorage() {
       if (m.durationMs != null && m.durationMs > 0) {
         const badge = document.createElement('div');
         badge.className = 'duration-badge';
-        let text = '✻ Thought for ' + formatDurationPersisted(m.durationMs);
+        let text = pickThinkingPhrase(m.durationMs, i);
         if (m.model) text += ' · ' + m.model;
         badge.textContent = text;
         row.appendChild(badge);
@@ -217,7 +218,7 @@ export function restoreFromStorage() {
 // Same logic as restoreFromStorage but takes messages array directly (from backend).
 export function restoreFromBackendHistory(msgs) {
   const chat = state.dom.chat;
-  msgs.forEach(m => {
+  msgs.forEach((m, i) => {
     if (m.type === 'user') {
       const row = document.createElement('div');
       row.className = 'row user';
@@ -259,7 +260,7 @@ export function restoreFromBackendHistory(msgs) {
       if (m.durationMs != null && m.durationMs > 0) {
         const badge = document.createElement('div');
         badge.className = 'duration-badge';
-        let text = '✻ Thought for ' + formatDurationPersisted(m.durationMs);
+        let text = pickThinkingPhrase(m.durationMs, i);
         if (m.model) text += ' · ' + m.model;
         badge.textContent = text;
         row.appendChild(badge);
