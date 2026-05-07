@@ -169,7 +169,8 @@ object LlmInterface:
                                 Some(classification.permanence),
                                 0,
                                 maxRetries - retriesLeft,
-                                java.time.Instant.now().toString
+                                java.time.Instant.now().toString,
+                                classification.message.orElse(Option(err.getMessage))
                               )
                               val notify = onAttempt.traverse_(_.apply(attempt))
 

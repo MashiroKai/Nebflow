@@ -228,7 +228,8 @@ object UiMessage:
   case class AskUser(items: List[Json]) extends UiMessage:
     val typeName = "askUser"
 
-  case class Ask(question: String, answer: String, durationMs: Option[Long] = None, model: Option[String] = None) extends UiMessage:
+  case class Ask(question: String, answer: String, durationMs: Option[Long] = None, model: Option[String] = None)
+      extends UiMessage:
     val typeName = "ask"
 
   case class System(content: String) extends UiMessage:

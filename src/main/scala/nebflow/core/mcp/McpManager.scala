@@ -89,11 +89,12 @@ class McpManager private (
       _ <- client.initialize()
       tools <- client.listTools()
       wrapped = tools.map(t => createMcpToolWrapper(id, t, client))
-      _ <- if skipRegister then
-        logger.info(s"MCP server '$id' connected, ${wrapped.size} tools discovered (disabled, not registered)")
-      else
-        IO.delay(ToolRegistry.registerTools(wrapped)) *>
-          logger.info(s"MCP server '$id' connected, ${wrapped.size} tools registered")
+      _ <-
+        if skipRegister then
+          logger.info(s"MCP server '$id' connected, ${wrapped.size} tools discovered (disabled, not registered)")
+        else
+          IO.delay(ToolRegistry.registerTools(wrapped)) *>
+            logger.info(s"MCP server '$id' connected, ${wrapped.size} tools registered")
       // Register notification handler for tools/list_changed
       _ <- transport.onNotification { notification =>
         if notification.method == "notifications/tools/list_changed" then refreshServerTools(id, client)

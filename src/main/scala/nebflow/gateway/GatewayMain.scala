@@ -162,9 +162,10 @@ object GatewayMain extends IOApp.Simple:
                                       _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
                                       _ <- openBrowser(url)
                                       // --- Background init: MCP servers + skill discovery ---
-                                      bgInit = runtimePrefs.getDisabledMcpServers.flatMap { disabled =>
-                                        startMcpServers(config, mcpManager, disabled)
-                                      }
+                                      bgInit = runtimePrefs.getDisabledMcpServers
+                                        .flatMap { disabled =>
+                                          startMcpServers(config, mcpManager, disabled)
+                                        }
                                         .flatMap { _ =>
                                           initSkillDiscovery(config, handle)
                                         }
