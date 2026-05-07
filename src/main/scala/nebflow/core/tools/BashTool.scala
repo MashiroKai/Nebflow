@@ -252,14 +252,14 @@ Git safety:
       commandFiber <- (for
         r <- shell.execute(command, timeout).attempt
         _ <- resultRef.set(Some(r))
-        _ <- signal.complete(()).void  // no-op if threshold already completed it
+        _ <- signal.complete(()).void // no-op if threshold already completed it
       yield ()).start
 
       // Start the threshold timer
       _ <- (for
         _ <- IO.sleep(threshold)
         _ <- thresholdWon.set(true)
-        _ <- signal.complete(()).void  // no-op if command already completed it
+        _ <- signal.complete(()).void // no-op if command already completed it
       yield ()).start
 
       // Block until either command finishes or threshold expires
@@ -267,16 +267,17 @@ Git safety:
       didThresholdWin <- thresholdWon.get
       resultOpt <- resultRef.get
       // If threshold won, start a background fiber that waits for command completion and notifies agent
-      _ <- if didThresholdWin then
-        val onComplete = makeNotifyCallback(command, desc, ctx)
-        onComplete.fold(IO.unit) { cb =>
-          (for
-            _ <- commandFiber.joinWithNever
-            r <- resultRef.get
-            _ <- cb(r.getOrElse(Left(new Exception("No result after fiber completed"))))
-          yield ()).start.void
-        }
-      else IO.unit
+      _ <-
+        if didThresholdWin then
+          val onComplete = makeNotifyCallback(command, desc, ctx)
+          onComplete.fold(IO.unit) { cb =>
+            (for
+              _ <- commandFiber.joinWithNever
+              r <- resultRef.get
+              _ <- cb(r.getOrElse(Left(new Exception("No result after fiber completed"))))
+            yield ()).start.void
+          }
+        else IO.unit
     yield
       if !didThresholdWin then
         resultOpt match
@@ -290,6 +291,8 @@ Git safety:
             s"The result will be delivered automatically when the command finishes."
         )
     end for
+
+  end executeForegroundWithAutoBackground
 
   private def formatResult(
     result: ProcessResult,
@@ -310,27 +313,26 @@ Git safety:
     desc: Option[String],
     ctx: ToolContext
   ): Option[Either[Throwable, ProcessResult] => IO[Unit]] =
-    ctx.agentActorRef.map { ref =>
-      (result: Either[Throwable, ProcessResult]) =>
-        val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
-        val description = desc.getOrElse(firstLine)
-        val notification = result match
-          case Right(pr) =>
-            val output = pr.stdout + (if pr.stderr.nonEmpty then s"\n[stderr]:\n${pr.stderr}" else "")
-            AgentCommand.BackgroundTaskNotification(
-              taskId = "",
-              description = description,
-              status = "completed",
-              output = output,
-              exitCode = Some(pr.exitCode)
-            )
-          case Left(e) =>
-            AgentCommand.BackgroundTaskNotification(
-              taskId = "",
-              description = description,
-              status = "failed",
-              output = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-            )
-        IO(ref ! notification)
+    ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
+      val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+      val description = desc.getOrElse(firstLine)
+      val notification = result match
+        case Right(pr) =>
+          val output = pr.stdout + (if pr.stderr.nonEmpty then s"\n[stderr]:\n${pr.stderr}" else "")
+          AgentCommand.BackgroundTaskNotification(
+            taskId = "",
+            description = description,
+            status = "completed",
+            output = output,
+            exitCode = Some(pr.exitCode)
+          )
+        case Left(e) =>
+          AgentCommand.BackgroundTaskNotification(
+            taskId = "",
+            description = description,
+            status = "failed",
+            output = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+          )
+      IO(ref ! notification)
     }
 end BashTool

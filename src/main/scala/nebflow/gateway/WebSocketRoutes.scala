@@ -37,7 +37,6 @@ class WebSocketRoutes(
   contextWindow: Int = Defaults.ContextWindow,
   skillDiscovery: Option[SkillDiscovery] = None,
   sharedResources: SharedResources,
-  pluginManifests: List[nebflow.plugin.PluginManifest] = Nil,
   mcpManager: McpManager
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
@@ -179,30 +178,33 @@ class WebSocketRoutes(
       if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
       else NotFound()
 
-    case req @ GET -> Root / "plugins" / "manifest.json" =>
-      val json = io.circe.Json.obj(
-        "plugins" -> pluginManifests.map { pm =>
-          io.circe.Json.obj(
-            "name" -> pm.name.asJson,
-            "version" -> pm.version.asJson,
-            "description" -> pm.description.asJson,
-            "frontend" -> pm.frontend
-              .map { fe =>
-                io.circe.Json.obj(
-                  "scripts" -> fe.scripts.asJson,
-                  "styles" -> fe.styles.asJson
-                )
-              }
-              .getOrElse(io.circe.Json.Null)
-          )
-        }.asJson
-      )
-      Ok(json.noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+    case req @ GET -> Root / "agents" / "manifest.json" =>
+      sharedResources.agentLibrary.loadAll().flatMap { agents =>
+        val json = io.circe.Json.obj(
+          "agents" -> agents.values.toList.map { a =>
+            io.circe.Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "displayName" -> a.displayName.getOrElse(a.name).asJson,
+              "avatar" -> a.avatar.asJson,
+              "frontend" -> a.frontend
+                .map { fe =>
+                  io.circe.Json.obj(
+                    "scripts" -> fe.scripts.asJson,
+                    "styles" -> fe.styles.asJson
+                  )
+                }
+                .getOrElse(io.circe.Json.Null)
+            )
+          }.asJson
+        )
+        Ok(json.noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+      }
 
-    case req @ GET -> Root / "plugins" / pluginName / path =>
-      val pluginDir = nebflow.plugin.PluginLoader.PluginDir / pluginName
-      val filePath = pluginDir / os.RelPath(path)
-      if filePath.toString.startsWith(pluginDir.toString) && os.exists(filePath) && os.isFile(filePath) then
+    case req @ GET -> Root / "agents" / agentName / path =>
+      val agentDir = AgentLibrary.defaultDir / agentName
+      val filePath = agentDir / os.RelPath(path)
+      if filePath.toString.startsWith(agentDir.toString) && os.exists(filePath) && os.isFile(filePath) then
         StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
       else NotFound()
   }
@@ -553,10 +555,15 @@ class WebSocketRoutes(
               val userTools = (a.tools.toSet ++ subagentTools).filterNot(_ == "*").toList.sorted
               // User tools + always-available (always-available sent separately for UI distinction)
               val allTools = (userTools ++ always).sorted
+              // Include MCP tool names for this agent
+              val mcpPrefix = s"mcp__agent__${a.name}__"
+              val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(_.startsWith(mcpPrefix)).toList
               io.circe.Json.obj(
                 "name" -> a.name.asJson,
                 "description" -> a.description.asJson,
-                "tools" -> allTools.asJson,
+                "displayName" -> a.displayName.getOrElse(a.name).asJson,
+                "avatar" -> a.avatar.asJson,
+                "tools" -> (allTools ++ mcpTools).asJson,
                 "builtInTools" -> always.asJson,
                 "subagents" -> a.subagents.asJson
               )
@@ -568,6 +575,20 @@ class WebSocketRoutes(
               )
             )
           }
+
+        case "listAgentSessions" =>
+          val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+          if agentName.nonEmpty then
+            sessionStore.listSessionsByAgent(agentName).flatMap { sessions =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "agentSessionList".asJson,
+                  "agentName" -> agentName.asJson,
+                  "sessions" -> sessions.asJson
+                )
+              )
+            }
+          else IO.unit
 
         case "getAgentConfig" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
@@ -620,7 +641,10 @@ class WebSocketRoutes(
             (for
               defnOpt <- sharedResources.agentLibrary.get(agentName)
               defn <- IO.fromOption(defnOpt)(new RuntimeException(s"Agent not found: $agentName"))
-              meta <- sessionService.createSession(s"Agent: ${defn.name}", agentName = Some(agentName))
+              meta <- sessionService.createSession(
+                s"Agent: ${defn.displayName.getOrElse(defn.name)}",
+                agentName = Some(agentName)
+              )
               _ <- sessionService.switchSession(meta.id)
               _ <- sessionService.sendSessionList(wsSend)
             yield ()).handleErrorWith { e =>

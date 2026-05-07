@@ -16,7 +16,7 @@ class AgentService(library: AgentLibrary):
       .map(
         _.values.toList
           .map { d =>
-            AgentInfo(d.name, d.description, d.tools, d.subagents.map(_.name))
+            AgentInfo(d.name, d.description, d.tools, d.subagents.map(_.name), d.displayName, d.avatar)
           }
           .sortBy(_.name)
       )

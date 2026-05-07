@@ -50,7 +50,8 @@ object CompactUtils:
 
     // If we removed enough, stop here
     if phase1.size <= keepAtEnd * 2 then
-      val desc = if p1Freed > 0
+      val desc =
+        if p1Freed > 0
         then s"Stripped ${countToolResults(phase1)} tool results, kept all ${phase1.size} messages"
         else s"No tool results to strip, ${phase1.size} messages kept"
       return (ensureHeadUser(phase1, messages.size), desc)
@@ -104,12 +105,15 @@ object CompactUtils:
     val removableIndices = toolResultIndices.filter(_ < safeEnd).toSet
 
     // Build a set of tool_use IDs being removed so we can also remove the corresponding ToolUse blocks
-    val removedToolUseIds = messages.zipWithIndex.collect {
-      case (msg, idx) if removableIndices.contains(idx) =>
-        msg.content.toOption.toList.flatten.collect {
-          case ContentBlock.ToolResult(id, _, _) => id
-        }
-    }.flatten.toSet
+    val removedToolUseIds = messages.zipWithIndex
+      .collect {
+        case (msg, idx) if removableIndices.contains(idx) =>
+          msg.content.toOption.toList.flatten.collect { case ContentBlock.ToolResult(id, _, _) =>
+            id
+          }
+      }
+      .flatten
+      .toSet
 
     // Filter: remove tool-result messages, and strip matching ToolUse blocks from assistant messages
     messages.zipWithIndex.flatMap { case (msg, idx) =>
@@ -141,7 +145,8 @@ object CompactUtils:
       case _ => false
 
   private def countToolResults(messages: List[Message]): Int =
-    messages.flatMap(_.content.toOption.toList.flatten)
+    messages
+      .flatMap(_.content.toOption.toList.flatten)
       .count(_.isInstanceOf[ContentBlock.ToolResult])
 
   /** Rough char estimate of message list. */
@@ -149,13 +154,14 @@ object CompactUtils:
     messages.map { msg =>
       msg.content match
         case Left(text) => text.length
-        case Right(blocks) => blocks.map {
-          case ContentBlock.Text(t) => t.length
-          case ContentBlock.ToolResult(_, content, _) => content.length
-          case ContentBlock.ToolUse(_, _, input) => input.asJson.noSpaces.length
-          case ContentBlock.Thinking(t, _) => t.length
-          case ContentBlock.Image(_, _) => 100 // rough
-        }.sum
+        case Right(blocks) =>
+          blocks.map {
+            case ContentBlock.Text(t) => t.length
+            case ContentBlock.ToolResult(_, content, _) => content.length
+            case ContentBlock.ToolUse(_, _, input) => input.asJson.noSpaces.length
+            case ContentBlock.Thinking(t, _) => t.length
+            case ContentBlock.Image(_, _) => 100 // rough
+          }.sum
     }.sum
 
   /**
@@ -166,9 +172,12 @@ object CompactUtils:
     messages.headOption match
       case Some(head) if head.role == MessageRole.User => messages
       case _ =>
-        val marker = Message(MessageRole.User, Left(
-          s"[System: Context was cleaned to free space. Reduced from $originalSize to ${messages.size} messages.]"
-        ))
+        val marker = Message(
+          MessageRole.User,
+          Left(
+            s"[System: Context was cleaned to free space. Reduced from $originalSize to ${messages.size} messages.]"
+          )
+        )
         marker +: messages
 
 end CompactUtils

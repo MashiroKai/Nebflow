@@ -51,16 +51,26 @@ object GatewayMain extends IOApp.Simple:
   private def startMcpServers(
     config: NebflowServiceConfig,
     manager: McpManager,
+    agentLibrary: AgentLibrary,
     disabledServers: Set[String]
   ): IO[Unit] =
     val fromConfig = config.mcpServers.getOrElse(Map.empty)
     for
-      manifests <- nebflow.plugin.PluginLoader.scan()
-      fromPlugins = nebflow.plugin.PluginLoader.extractMcpConfigs(manifests)
-      merged = fromConfig ++ fromPlugins
-      _ <- logger.info("Initializing MCP servers...")
-      _ <- manager.startAll(merged, disabledServers)
-      _ <- logger.info(s"MCP servers initialized (${manifests.size} plugin(s) loaded)")
+      // Load agents (which triggers agent MCP connections internally)
+      _ <- agentLibrary.loadAll()
+      _ <- logger.info("Initializing global MCP servers...")
+      _ <- manager.startAll(fromConfig, disabledServers)
+      _ <- logger.info("MCP servers initialized")
+      // Warn about deprecated plugins directory
+      _ <- IO.blocking {
+        val pluginDir = os.home / ".nebflow" / "plugins"
+        if os.exists(pluginDir) && os.isDir(pluginDir) then
+          logger.warn(
+            "DEPRECATED: ~/.nebflow/plugins/ detected. Please migrate to ~/.nebflow/agents/. " +
+              "Move plugin.yaml → agent.json and update MCP tool prefixes from mcp__plugin__ to mcp__agent__."
+          )
+        else ()
+      }.void
     yield ()
 
   def run: IO[Unit] =
@@ -96,7 +106,7 @@ object GatewayMain extends IOApp.Simple:
                         Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
                           // Create Dispatcher for the multi-agent runtime, then start server
                           cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
-                            val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
+                            val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config), Some(mcpManager))
                             cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
                               nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                 val sharedResources = SharedResources(
@@ -147,7 +157,6 @@ object GatewayMain extends IOApp.Simple:
                                       contextWindow,
                                       None, // skillDiscovery: initialized asynchronously
                                       sharedResources,
-                                      Nil, // pluginManifests: initialized asynchronously
                                       mcpManager
                                     )
                                     Router(
@@ -164,7 +173,7 @@ object GatewayMain extends IOApp.Simple:
                                       // --- Background init: MCP servers + skill discovery ---
                                       bgInit = runtimePrefs.getDisabledMcpServers
                                         .flatMap { disabled =>
-                                          startMcpServers(config, mcpManager, disabled)
+                                          startMcpServers(config, mcpManager, agentLibrary, disabled)
                                         }
                                         .flatMap { _ =>
                                           initSkillDiscovery(config, handle)

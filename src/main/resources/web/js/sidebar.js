@@ -17,7 +17,7 @@ export function initNavTabs() {
       item.classList.add('active');
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
       document.getElementById('panel-' + tab).classList.add('active');
-      if (tab === 'agents') {
+      if (tab === 'main') {
         sendWs({type: 'listAgents'});
       }
       if (tab === 'settings') {
@@ -34,41 +34,55 @@ export function renderAgentList() {
   list.innerHTML = '';
   state.agentsData.forEach(a => {
     const card = document.createElement('div');
-    card.className = 'agent-card';
+    const isActive = state.selectedAgent === a.name;
+    card.className = 'agent-item' + (isActive ? ' active' : '');
+    const displayName = a.displayName || a.name;
+    const avatar = a.avatar || '';
     const escName = escapeHtml(a.name);
+    const escDisplay = escapeHtml(displayName);
     const escDesc = escapeHtml(a.description || '');
-    const builtInSet = new Set(a.builtInTools || []);
-    const tools = (a.tools || []).filter(t => t !== '*');
-    const toolsHtml = tools.slice(0, 5).map(t => {
-      const isBuiltIn = builtInSet.has(t);
-      return `<span class="agent-tool-tag${isBuiltIn ? ' builtin' : ''}">${escapeHtml(t)}</span>`;
-    }).join('');
-    const moreTools = tools.length > 5 ? `<span class="agent-tool-tag">+${tools.length - 5}</span>` : '';
-    const subsHtml = (a.subagents && a.subagents.length > 0)
-      ? `<div class="agent-card-subs">↳ ${a.subagents.map(s => escapeHtml(s)).join(', ')}</div>` : '';
+    card.dataset.name = a.name;
     card.innerHTML = `
-      <div class="agent-card-name">${escName}</div>
-      <div class="agent-card-desc">${escDesc}</div>
-      <div class="agent-card-tools">${toolsHtml}${moreTools}</div>
-      ${subsHtml}
-      <div class="agent-card-actions">
-        <button class="btn-activate" data-name="${escName}">Chat</button>
-        <button class="btn-edit" data-name="${escName}">Edit</button>
+      <div class="agent-item-avatar">${avatar ? escapeHtml(avatar) : '<i data-lucide="bot" style="width:18px;height:18px;color:#888"></i>'}</div>
+      <div class="agent-item-info">
+        <div class="agent-item-name">${escDisplay}</div>
+        ${escDesc ? `<div class="agent-item-desc">${escDesc}</div>` : ''}
       </div>`;
+    card.addEventListener('click', () => selectAgent(a.name));
+    // Context menu for edit
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      sendWs({type: 'getAgentConfig', name: a.name});
+    });
     list.appendChild(card);
   });
-  // Wire buttons
-  list.querySelectorAll('.btn-activate').forEach(btn => {
-    btn.addEventListener('click', () => {
-      sendWs({type: 'createAgentSession', name: btn.dataset.name});
-    });
-  });
-  list.querySelectorAll('.btn-edit').forEach(btn => {
-    btn.addEventListener('click', () => {
-      sendWs({type: 'getAgentConfig', name: btn.dataset.name});
-    });
-  });
   lucide.createIcons();
+}
+
+/** Select an agent and load its sessions. */
+export function selectAgent(agentName) {
+  if (state.selectedAgent === agentName) return;
+  state.selectedAgent = agentName;
+  // Update agent list active state
+  document.querySelectorAll('#agent-list .agent-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.name === agentName);
+  });
+  // Load sessions for this agent
+  sendWs({type: 'listAgentSessions', name: agentName});
+  // Update header brand
+  updateHeaderBrand(agentName);
+}
+
+/** Update header brand to show agent display name. */
+export function updateHeaderBrand(agentName) {
+  const brandEl = document.querySelector('.header-brand');
+  if (!brandEl) return;
+  const agent = state.agentsData.find(a => a.name === agentName);
+  if (agent && agent.name !== 'Nebula') {
+    brandEl.textContent = agent.displayName || agent.name;
+  } else {
+    brandEl.textContent = 'nebflow';
+  }
 }
 
 // ---------- Settings Panel ----------

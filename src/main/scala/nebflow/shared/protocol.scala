@@ -116,6 +116,9 @@ sealed trait StreamChunk
 object StreamChunk:
   case class TextDelta(delta: String) extends StreamChunk
   case class ThinkingDelta(delta: String) extends StreamChunk
+
+  /** Emitted as soon as the LLM starts streaming a tool_use block (name known, input still streaming). */
+  case class ToolCallStart(name: String) extends StreamChunk
   case class ToolCallChunk(toolCall: ToolCall) extends StreamChunk
 
   case class Done(stopReason: Option[String], usage: Option[TokenUsage], meta: Option[LlmMeta] = None)

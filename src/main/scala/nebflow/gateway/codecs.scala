@@ -46,6 +46,11 @@ object GatewayCodecs:
         "type" -> "thinkingDelta".asJson,
         "delta" -> delta.asJson
       )
+    case StreamChunk.ToolCallStart(name) =>
+      Json.obj(
+        "type" -> "toolCallStart".asJson,
+        "name" -> name.asJson
+      )
     case StreamChunk.ToolCallChunk(toolCall) =>
       Json.obj(
         "type" -> "toolCall".asJson,

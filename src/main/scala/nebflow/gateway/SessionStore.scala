@@ -176,6 +176,17 @@ class SessionStore(sessionsDir: os.Path):
   def listSessions: IO[List[SessionMeta]] =
     indexRef.get.map { case (_, sessions) => sessions.sortBy(-_.updatedAt) }
 
+  /** List sessions filtered by agentName. Sessions without agentName match "Nebula". */
+  def listSessionsByAgent(agentName: String): IO[List[SessionMeta]] =
+    indexRef.get.map { case (_, sessions) =>
+      sessions
+        .filter { s =>
+          val effective = s.agentName.getOrElse("Nebula")
+          effective == agentName
+        }
+        .sortBy(-_.updatedAt)
+    }
+
   def getActiveId: IO[String] = indexRef.get.map(_._1)
 
   def getActiveMeta: IO[Option[SessionMeta]] =
