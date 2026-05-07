@@ -234,6 +234,7 @@
 }
 /* Inner elements: hidden by default, shown by parent state class */
 .session-status .status-spinner,
+.session-status .status-compact-spinner,
 .session-status .status-dot { display: none; }
 
 /* State: busy — lucide spinner icon */
@@ -247,11 +248,21 @@
   height: 14px;
 }
 
-/* State: compacting — lucide spinner icon (same as busy, different semantic priority) */
-.session-status.compacting .status-spinner {
+/* State: compacting — dedicated compress icon with pulse animation */
+.session-status .status-compact-spinner { display: none; }
+.session-status.compacting .status-compact-spinner {
   display: flex;
   color: var(--color-primary, #07c160);
-  animation: spin 1.5s linear infinite;
+  animation: compactPulse 1.2s ease-in-out infinite;
+}
+.session-status .status-compact-spinner svg {
+  width: 14px;
+  height: 14px;
+}
+
+@keyframes compactPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
 }
 
 /* State: attention — pulsing amber dot */

@@ -568,7 +568,8 @@ private[agent] trait AgentCore:
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
-    val always = ToolRegistry.AlwaysAvailable
+    val always = if agentDef.name == "context-manage" then ToolRegistry.AlwaysAvailable
+                 else ToolRegistry.AlwaysAvailableNonCompact
     val subagentTools = if agentDef.subagents.nonEmpty then ToolRegistry.SubagentTools else Set.empty[String]
     val parentTools = if hasParent then ToolRegistry.ParentTools else Set.empty[String]
     base ++ always ++ subagentTools ++ parentTools
