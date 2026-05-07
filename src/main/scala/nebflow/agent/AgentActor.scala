@@ -349,7 +349,7 @@ object AgentActor extends AgentCore with AgentSession:
                     AgentStreamEvent.CompactStart(
                       "full",
                       result.usage.map(_.inputTokens),
-                      Some(agentDef.contextWindow - CompactConfig().bufferTokens)
+                      Some(resources.contextWindow - CompactConfig().bufferTokens)
                     ),
                     isSubagent = depth > 0,
                     state.sessionId
@@ -583,9 +583,7 @@ object AgentActor extends AgentCore with AgentSession:
           case Some(pending) if pending.subagentId == subId =>
             val compactedMessages = result match
               case Right(text) =>
-                pending.mode match
-                  case "micro" => MicroCompact.parseResponse(text, state.messages)
-                  case _ => FullCompact.parseResponse(text, state.messages, resources.projectRoot.toString)
+                FullCompact.parseResponse(text, state.messages, resources.projectRoot.toString)
               case Left(err) =>
                 NebflowLogger.forName("nebflow.agent").warn(s"Compaction agent failed: ${err.message}")
                 Left(err.message)
@@ -645,12 +643,37 @@ object AgentActor extends AgentCore with AgentSession:
                 )
                 // Reset latestUsage so maybeAutoCompact won't re-trigger on stale token counts.
                 // Fresh usage data will be populated by the next LLM call.
+
+                // Post-compact file restoration from ReadTracker: supplement the <files> section
+                // with files the agent recently read but weren't listed by the compaction agent.
+                val config = CompactConfig()
+                val restoreMsgs = state.readTracker.toSeq.flatMap { tracker =>
+                  val paths = resources.dispatcher.unsafeRunSync(tracker.recentFiles(config.postCompactMaxFiles))
+                  if paths.isEmpty then Nil
+                  else
+                    val sb = new StringBuilder("<context-compact>Restored recently read files:\n")
+                    var usedChars = 0
+                    val budget = config.postCompactTokenBudget * 4
+                    for path <- paths if usedChars < budget do
+                      val content = CompactUtils.restoreFileContent(path.toString, config.postCompactMaxCharsPerFile)
+                      if content.nonEmpty then
+                        val section = s"\n### `$path`\n```\n$content\n```\n"
+                        if usedChars + section.length <= budget then
+                          sb.append(section)
+                          usedChars += section.length
+                    if usedChars > 0 then
+                      sb.append("\n</context-compact>")
+                      List(Message(MessageRole.User, Left(sb.toString)))
+                    else Nil
+                }
+                val finalMessages = compacted ++ restoreMsgs
+
                 pipeLlmCall(
                   agentDef,
                   resources,
                   depth,
                   parentRef,
-                  newState.withMessages(compacted).withCompactionFailures(0).withLatestUsage(None),
+                  newState.withMessages(finalMessages).withCompactionFailures(0).withLatestUsage(None),
                   stash,
                   ctx,
                   pending.replyTo
@@ -910,10 +933,7 @@ object AgentActor extends AgentCore with AgentSession:
           case Some(pending) =>
             defnOpt match
               case Some(subDefBase) =>
-                val prompt = pending.mode match
-                  case "micro" => CompactPrompts.micro
-                  case _ => CompactPrompts.full
-                val subDef = subDefBase.copy(systemPrompt = prompt)
+                val subDef = subDefBase
                 val subId = pending.subagentId
                 val cleaned = nebflow.core.compact.CompactUtils.stripImages(state.messages)
                 val capped = if cleaned.size > 500 then cleaned.takeRight(500) else cleaned
@@ -1068,6 +1088,29 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.ClearReadTracker =>
         state.readTracker.foreach(t => resources.dispatcher.unsafeRunAndForget(t.clear()))
         Behaviors.same
+
+      // --- ReplaceToolResults: agent-driven context management ---
+      case AgentCommand.ReplaceToolResults(rounds, summary, replyTo) =>
+        val result = replaceToolResults(state.messages, rounds, summary)
+        result match
+          case Right((updatedMessages, count)) =>
+            resources.dispatcher.unsafeRunAndForget(
+              replyTo.complete(Right(count)).handleErrorWith(_ => IO.unit)
+            )
+            processing(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.withMessages(updatedMessages),
+              stash,
+              ctx
+            )
+          case Left(err) =>
+            resources.dispatcher.unsafeRunAndForget(
+              replyTo.complete(Left(err)).handleErrorWith(_ => IO.unit)
+            )
+            Behaviors.same
 
       // --- Background task notification while processing: queue for injection after current turn ---
       case AgentCommand.BackgroundTaskNotification(taskId, description, status, output, exitCode) =>
@@ -1373,5 +1416,45 @@ object AgentActor extends AgentCore with AgentSession:
           .handleErrorWith(_ => IO.unit)
       )
       processing(agentDef, resources, depth, parentRef, state.withPendingCompaction(Some(pending)), stash, ctx)
+
+  /**
+   * Replace tool_result content for the last N rounds of tool calls with a summary.
+   * A "round" = one tool_use (in assistant msg) + its corresponding tool_result (in user msg).
+   * Rounds are counted from the END of the conversation (1 = most recent).
+   *
+   * @return Right((updatedMessages, countReplaced)) or Left(errorMessage)
+   */
+  private def replaceToolResults(
+    messages: List[Message],
+    rounds: Int,
+    summary: String
+  ): Either[String, (List[Message], Int)] =
+    // Collect all tool_use IDs in reverse order (most recent first)
+    val allToolUseIds = messages.flatMap {
+      case Message(MessageRole.Assistant, Right(blocks), _) =>
+        blocks.collect { case ContentBlock.ToolUse(id, _, _) => id }
+      case _ => Nil
+    }.reverse
+
+    if allToolUseIds.isEmpty then Left("No tool call results found in conversation")
+    else
+      val selectedIds = allToolUseIds.take(rounds).toSet
+      if selectedIds.isEmpty then Left("Selected rounds exceed available tool calls")
+      else
+        var count = 0
+        val updated = messages.map {
+          case msg @ Message(MessageRole.User, Right(blocks), _) =>
+            val newBlocks = blocks.map {
+              case tr: ContentBlock.ToolResult if selectedIds.contains(tr.toolUseId) =>
+                count += 1
+                tr.copy(content = s"[Summarized] $summary")
+              case other => other
+            }
+            msg.copy(content = Right(newBlocks))
+          case other => other
+        }
+        if count == 0 then Left("No matching tool results found")
+        else Right((updated, count))
+  end replaceToolResults
 
 end AgentActor

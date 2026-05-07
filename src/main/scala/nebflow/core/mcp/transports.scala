@@ -21,69 +21,71 @@ trait McpTransport:
   def close(): IO[Unit]
 
 /** Stdio transport — communicates with MCP server via subprocess stdin/stdout. */
-class StdioTransport(command: String, args: List[String], env: Map[String, String]) extends McpTransport:
+class StdioTransport private (
+  command: String,
+  args: List[String],
+  env: Map[String, String],
+  proc: Process,
+  stdin: PrintWriter,
+  stdout: BufferedReader
+) extends McpTransport:
 
   private val logger = NebflowLogger.forName("nebflow.mcp.stdio")
 
-  // Explicit redirect per stream — no inheritIO()
-  private val processBuilder = new ProcessBuilder((command :: args)*)
-    .redirectInput(ProcessBuilder.Redirect.PIPE)
-    .redirectOutput(ProcessBuilder.Redirect.PIPE)
-    .redirectError(ProcessBuilder.Redirect.PIPE)
-  env.foreach { case (k, v) => processBuilder.environment().put(k, v) }
-  private val proc = processBuilder.start()
-  private val stdin = new PrintWriter(proc.getOutputStream, true)
-  private val stdout = new BufferedReader(new InputStreamReader(proc.getInputStream))
   private val counter = new atomic.AtomicInteger(0)
   private val pending = new ConcurrentHashMap[String, Promise[JsonRpcResponse]]()
   private val notificationHandlers = new java.util.concurrent.CopyOnWriteArrayList[JsonRpcNotification => IO[Unit]]()
   @volatile private var running = true
 
-  // stderr reader thread — logs server stderr through nebflow logger
-  private val stderrThread = new Thread(
-    () =>
-      try
-        val errReader = new BufferedReader(new InputStreamReader(proc.getErrorStream))
-        var line: String = null
-        while running do
-          line = errReader.readLine()
-          if line != null then logger.info(s"[stderr] $line")
-          else running = false
-      catch case _: Exception => () // stderr closed, that's fine
-    ,
-    "mcp-stderr-reader"
-  )
-  stderrThread.setDaemon(true)
-  stderrThread.start()
+  /** Called by factory after construction to start reader threads. */
+  private[mcp] def startReaderThreads(): Unit =
+    // stderr reader thread — logs server stderr through nebflow logger
+    val stderrThread = new Thread(
+      () =>
+        try
+          val errReader = new BufferedReader(new InputStreamReader(proc.getErrorStream))
+          var line: String = null
+          while running do
+            line = errReader.readLine()
+            if line != null then logger.info(s"[stderr] $line")
+            else running = false
+        catch case _: Exception => () // stderr closed, that's fine
+      ,
+      "mcp-stderr-reader"
+    )
+    stderrThread.setDaemon(true)
+    stderrThread.start()
 
-  // stdout reader thread — dispatches responses and notifications
-  private val readerThread = new Thread(
-    () =>
-      try
-        while running do
-          val line = stdout.readLine()
-          if line != null then
-            parser.parse(line) match
-              case Left(err) =>
-                logger.warn(s"Failed to parse MCP message: ${err.message}")
-              case Right(json) =>
-                // Distinguish: messages with "id" are responses, without are notifications
-                val hasId = json.hcursor.downField("id").as[Json].toOption.exists(_ != Json.Null)
-                if hasId then dispatchResponse(json) else dispatchNotification(json)
-          else running = false
-      catch
-        case _: InterruptedException => () // normal shutdown
-        case e: Exception =>
-          running = false
-          // Notify all pending promises so callers don't hang forever
-          val remaining = new java.util.ArrayList(pending.values())
-          pending.clear()
-          remaining.forEach(_.failure(e))
-    ,
-    "mcp-stdout-reader"
-  )
-  readerThread.setDaemon(true)
-  readerThread.start()
+    // stdout reader thread — dispatches responses and notifications
+    val readerThread = new Thread(
+      () =>
+        try
+          while running do
+            val line = stdout.readLine()
+            if line != null then
+              parser.parse(line) match
+                case Left(err) =>
+                  logger.warn(s"Failed to parse MCP message: ${err.message}")
+                case Right(json) =>
+                  // Distinguish: messages with "id" are responses, without are notifications
+                  val hasId = json.hcursor.downField("id").as[Json].toOption.exists(_ != Json.Null)
+                  if hasId then dispatchResponse(json) else dispatchNotification(json)
+            else running = false
+        catch
+          case _: InterruptedException => () // normal shutdown
+          case e: Exception =>
+            running = false
+            // Notify all pending promises so callers don't hang forever
+            val remaining = new java.util.ArrayList(pending.values())
+            pending.clear()
+            remaining.forEach(_.failure(e))
+      ,
+      "mcp-stdout-reader"
+    )
+    readerThread.setDaemon(true)
+    readerThread.start()
+
+  end startReaderThreads
 
   private def dispatchResponse(json: Json): Unit =
     val id = json.hcursor.downField("id").as[Json].getOrElse(Json.Null)
@@ -158,6 +160,26 @@ class StdioTransport(command: String, args: List[String], env: Map[String, Strin
     remaining.forEach(_.failure(new RuntimeException("MCP transport closed")))
   }
 
+end StdioTransport
+
+object StdioTransport:
+
+  /** Factory method — creates process inside IO for proper error handling. */
+  def apply(command: String, args: List[String], env: Map[String, String]): IO[StdioTransport] =
+    IO.blocking {
+      val processBuilder = new ProcessBuilder((command :: args)*)
+        .redirectInput(ProcessBuilder.Redirect.PIPE)
+        .redirectOutput(ProcessBuilder.Redirect.PIPE)
+        .redirectError(ProcessBuilder.Redirect.PIPE)
+      env.foreach { case (k, v) => processBuilder.environment().put(k, v) }
+      val proc = processBuilder.start()
+      val stdin = new PrintWriter(proc.getOutputStream, true)
+      val stdout = new BufferedReader(new InputStreamReader(proc.getInputStream))
+      new StdioTransport(command, args, env, proc, stdin, stdout)
+    }.flatTap { transport =>
+      // Start reader threads after construction
+      IO(transport.startReaderThreads())
+    }
 end StdioTransport
 
 /** HTTP transport — communicates with MCP server via HTTP POST. */

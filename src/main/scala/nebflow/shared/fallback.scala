@@ -25,9 +25,3 @@ case class FallbackAttempt(
   timestamp: String,
   message: Option[String] = None
 )
-
-case class FallbackResult[T](
-  data: T,
-  attempts: List[FallbackAttempt],
-  usedCandidate: nebflow.llm.ModelCandidate
-)
