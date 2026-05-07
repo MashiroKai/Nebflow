@@ -67,6 +67,8 @@ state.dom = {
   agentSystemInput: document.getElementById('agent-system-input'),
   agentModalCancel: document.getElementById('agent-modal-cancel'),
   agentModalSave: document.getElementById('agent-modal-save'),
+  bgTasksEl: document.getElementById('bg-tasks'),
+  bgTasksCount: document.getElementById('bg-tasks')?.querySelector('.bg-task-count'),
 };
 
 // ---------- 2. Init libraries ----------
@@ -100,7 +102,30 @@ function markSessionUnread(sessionId) {
   if (state.unreadSessions.has(sessionId)) return;
   state.unreadSessions.add(sessionId);
   persistUnread();
+  // Update agent-level unread count
+  const agentName = state.sessionAgentMap[sessionId];
+  if (agentName && agentName !== state.selectedAgent) {
+    state.agentUnreadCounts[agentName] = (state.agentUnreadCounts[agentName] || 0) + 1;
+    updateAgentNotificationDot(agentName);
+  }
   window.dispatchEvent(new CustomEvent('session-unread', { detail: { sessionId } }));
+}
+
+// Show/hide notification dot on an agent avatar
+function updateAgentNotificationDot(agentName) {
+  const el = document.querySelector(`#nav-agent-list .nav-agent[data-name="${agentName}"]`);
+  if (!el) return;
+  const count = state.agentUnreadCounts[agentName] || 0;
+  let dot = el.querySelector('.agent-notif-dot');
+  if (count > 0) {
+    if (!dot) {
+      dot = document.createElement('div');
+      dot.className = 'agent-notif-dot';
+      el.appendChild(dot);
+    }
+  } else if (dot) {
+    dot.remove();
+  }
 }
 
 // Helper: is this event for the currently active session?
@@ -367,6 +392,8 @@ onMessage('sessionList', (msg) => {
     sendWs({ type: 'getHistory', sessionId: msg.activeId, limit: 100 });
   }
   migrateLegacyIfNeeded();
+  // Request agent list on first connect (no tab to trigger it now)
+  if (!state.selectedAgent) sendWs({ type: 'listAgents' });
 });
 
 // --- History pagination indicators ---
@@ -417,7 +444,6 @@ onMessage('historyPage', (msg) => {
     restoreFromBackendHistory(msg.messages);
 
     // Re-create streaming state if this session is still busy.
-    // Note: interactive askUser is ONLY created by the real-time 'askUser' WS event, never from history.
     if (state.busySessionIds.has(sid)) {
       if (state.sessionTexts[sid]) {
         state.aiText = state.sessionTexts[sid];
@@ -450,6 +476,23 @@ onMessage('historyPage', (msg) => {
       // Re-create pending tool card if this session has an in-progress tool
       if (state.sessionPendingTools[sid]) {
         renderToolPending(state.sessionPendingTools[sid].label, sid);
+      }
+    }
+
+    // Re-create interactive AskUser if the last history message is an unanswered askUser.
+    // Must be OUTSIDE the busySessionIds check — a non-active session that received
+    // AskUser was never added to busySessionIds (setBusy only runs for the active session).
+    // Use attentionSessions (set for ALL sessions on askUser) as the pending indicator.
+    if (state.attentionSessions.has(sid)) {
+      const histMsgs = msg.messages;
+      const lastMsg = histMsgs && histMsgs[histMsgs.length - 1];
+      if (lastMsg && lastMsg.type === 'askUser' && Array.isArray(lastMsg.items) && lastMsg.items.length > 0) {
+        const rows = state.dom.chat.querySelectorAll('.row.ai');
+        const lastAiRow = rows[rows.length - 1];
+        if (lastAiRow && lastAiRow.querySelector('.option-box')) {
+          lastAiRow.remove();
+        }
+        renderAskUser(lastMsg.items, sid);
       }
     }
 
@@ -656,6 +699,8 @@ onMessage('compactFailed', (msg) => {
 // --- Agent panel events (global) ---
 onMessage('agentList', (msg) => {
   state.agentsData = msg.agents || [];
+  if (msg.availableTools) state.agentAvailableTools = msg.availableTools;
+  if (msg.autoTools) state.agentAutoTools = msg.autoTools;
   renderAgentList();
   // Auto-select first agent if none selected
   if (!state.selectedAgent && state.agentsData.length > 0) {
@@ -671,6 +716,8 @@ onMessage('agentSessionList', (msg) => {
   // Render sessions for the selected agent
   const agentName = msg.agentName;
   const sessions = msg.sessions || [];
+  // Build sessionId -> agentName mapping
+  sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
   // Find active session for this agent
   const activeId = state.activeSessionId;
   renderSessionSidebar(sessions, sessions.find(s => s.id === activeId) ? activeId : (sessions[0]?.id || null));
@@ -766,6 +813,43 @@ onMessage('taskListUpdate', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
   if (isActive(msg)) renderTaskList(msg.tasks);
+});
+
+// --- Background task indicator in header ---
+function updateBgTasksUI() {
+  const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+  const running = tasks.filter(t => t.status === 'running');
+  const el = state.dom.bgTasksEl;
+  const countEl = state.dom.bgTasksCount;
+  if (!el || !countEl) return;
+  if (running.length > 0) {
+    el.classList.remove('hidden');
+    countEl.textContent = running.length;
+  } else {
+    el.classList.add('hidden');
+  }
+}
+state.updateBgTasksUI = updateBgTasksUI;
+
+onMessage('backgroundTaskUpdate', (msg) => {
+  const sid = msg.sessionId;
+  if (!sid) return;
+  if (!state.sessionBgTasks[sid]) state.sessionBgTasks[sid] = [];
+  const tasks = state.sessionBgTasks[sid];
+  const idx = tasks.findIndex(t => t.taskId === msg.taskId);
+  if (idx >= 0) {
+    tasks[idx].status = msg.status;
+  } else {
+    tasks.push({ taskId: msg.taskId, description: msg.description, status: msg.status });
+  }
+  // Remove completed/failed tasks after a brief delay so user sees the count update
+  if (msg.status === 'completed' || msg.status === 'failed') {
+    setTimeout(() => {
+      state.sessionBgTasks[sid] = state.sessionBgTasks[sid].filter(t => t.status === 'running');
+      updateBgTasksUI();
+    }, 3000);
+  }
+  updateBgTasksUI();
 });
 
 // --- /ask command ---

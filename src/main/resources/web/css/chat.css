@@ -33,6 +33,31 @@
   background: var(--color-success);
 }
 #header .conn.off { background: var(--color-error); }
+/* Background task indicator */
+#bg-tasks {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: #ccc;
+  cursor: default;
+  transition: opacity 0.3s;
+}
+#bg-tasks.hidden { display: none; }
+.bg-task-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #f0ad4e;
+  animation: bg-pulse 1.5s ease-in-out infinite;
+}
+@keyframes bg-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.bg-task-count { font-weight: 600; }
 #chat {
   flex: 1;
   overflow-y: auto;

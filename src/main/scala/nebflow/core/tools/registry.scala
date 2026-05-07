@@ -37,6 +37,7 @@ object ToolRegistry:
       // Agent lifecycle — always available, no tool whitelist filtering
       "declareWait" -> DeclareWaitTool,
       "ContextManage" -> ContextManageTool,
+      "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Agent communication — injected conditionally by buildToolList
       "delegate" -> DelegateTool,
       "report" -> ReportTool,
@@ -55,7 +56,7 @@ object ToolRegistry:
   val AlwaysAvailable: Set[String] = Set("declareWait")
 
   /** Tools always available except on the compaction agent itself (to prevent recursion). */
-  val AlwaysAvailableNonCompact: Set[String] = Set("declareWait", "ContextManage")
+  val AlwaysAvailableNonCompact: Set[String] = Set("declareWait", "ContextManage", "RemoveUnnecessary")
 
   /** Tools only available when agent has subagents. */
   val SubagentTools: Set[String] = Set("delegate")
