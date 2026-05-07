@@ -1,7 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.IO
-import cats.effect.Deferred
+import cats.effect.{Deferred, IO}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
@@ -115,6 +114,22 @@ Git safety:
     """fork\s+bomb""".r
   )
 
+  // Interactive command patterns: commands that require terminal interaction.
+  // These cannot work in this environment because stdin is /dev/null and there is no tty.
+  private val InteractivePatterns = List(
+    ("""^\s*top\b(?!.*-b)""".r, "`top` is interactive. Use `top -b -n 1` for batch output."),
+    ("""^\s*(htop|btop|atop)\b""".r, "Interactive system monitor. Use `ps aux` or `top -b -n 1` instead."),
+    ("""^\s*(less|more)\b""".r, "Interactive pager. Use Read tool, `cat`, `head`, or `tail` instead."),
+    ("""^\s*(vim?|nano|emacs|pico)\b""".r, "Interactive text editor. Use Edit or Write tool instead."),
+    ("""^\s*(tmux|screen)\b""".r, "Terminal multiplexer. Run this command manually in your terminal."),
+    ("""^\s*(gdb|lldb)\b""".r, "Interactive debugger. Run this command manually in your terminal."),
+    ("""^\s*passwd\b""".r, "`passwd` requires interactive terminal. Run manually in your terminal."),
+    ("""^\s*su\b""".r, "`su` requires interactive terminal. Run manually in your terminal."),
+    ("""crontab\s+-e\b""".r, "`crontab -e` opens an editor. Use `crontab <file>` instead."),
+    ("""git\s+rebase\s+-i\b""".r, "Interactive rebase. Use non-interactive git commands."),
+    ("""git\s+add\s+-i\b""".r, "Interactive staging. Use `git add <file>` instead.")
+  )
+
   // Injection patterns: default block, bypass with dangerouslyDisableSandbox
   private val InjectionPatterns = List(
     ("""\$\(\s*.*?\brm\b""".r, "Command substitution containing rm detected"),
@@ -128,6 +143,11 @@ Git safety:
 
   def checkInjection(command: String): Option[String] =
     InjectionPatterns.collectFirst {
+      case (pattern, msg) if pattern.findFirstIn(command).isDefined => msg
+    }
+
+  def checkInteractive(command: String): Option[String] =
+    InteractivePatterns.collectFirst {
       case (pattern, msg) if pattern.findFirstIn(command).isDefined => msg
     }
 
@@ -145,6 +165,7 @@ Git safety:
   def summarizeResult(input: JsonObject, result: String): String =
     if result.contains("[Command timed out") then "Timed out"
     else if result.startsWith("[Blocked by sandbox") then "Blocked"
+    else if result.startsWith("[Interactive command]") then "Interactive blocked"
     else if result.startsWith("[Background job") then "Background"
     else if result.startsWith("[Sandbox bypassed]") then "Sandbox bypassed"
     else if result.startsWith("[moved to background]") then "Auto-background"
@@ -206,22 +227,37 @@ Git safety:
             )
           )
         else
-          val injectionWarning = checkInjection(command)
-          (injectionWarning, bypass) match
-            case (Some(warning), false) =>
-              IO.pure(Left(ToolError(s"[Blocked by sandbox] Injection detected: $warning")))
-            case _ =>
-              val sandboxMark = injectionWarning.map(_ => "[Sandbox bypassed] ").getOrElse("")
-              ShellSession.forSession(sessionId).flatMap { shell =>
-                if background then
-                  val onComplete = makeNotifyCallback(command, desc, ctx)
-                  shell.executeBackground(command, timeoutDuration, desc, onComplete).map { jobId =>
-                    Right(s"$sandboxMark[Background job started] Job ID: $jobId\nUse this ID to check status later.")
-                  }
-                else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, sandboxMark, ctx)
-              }
-          end match
-        end if
+          val interactiveWarning = checkInteractive(command)
+          if interactiveWarning.isDefined then
+            IO.pure(
+              Left(
+                ToolError(
+                  s"[Interactive command] ${interactiveWarning.get}\nThis command cannot run in the agent environment (no terminal available). Please execute it manually in your terminal."
+                )
+              )
+            )
+          else
+            val injectionWarning = checkInjection(command)
+            (injectionWarning, bypass) match
+              case (Some(warning), false) =>
+                IO.pure(Left(ToolError(s"[Blocked by sandbox] Injection detected: $warning")))
+              case _ =>
+                val sandboxMark = injectionWarning.map(_ => "[Sandbox bypassed] ").getOrElse("")
+                ShellSession.forSession(sessionId).flatMap { shell =>
+                  if background then
+                    val onComplete = makeNotifyCallback(command, desc, ctx)
+                    val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+                    val bgDescription = desc.getOrElse(firstLine)
+                    for
+                      jobId <- shell.executeBackground(command, timeoutDuration, desc, onComplete)
+                      _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
+                    yield Right(
+                      s"$sandboxMark[Background job started] Job ID: $jobId\nUse this ID to check status later."
+                    )
+                  else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, sandboxMark, ctx)
+                }
+            end match
+          end if
     end match
   end call
 
@@ -270,13 +306,16 @@ Git safety:
       _ <-
         if didThresholdWin then
           val onComplete = makeNotifyCallback(command, desc, ctx)
-          onComplete.fold(IO.unit) { cb =>
-            (for
-              _ <- commandFiber.joinWithNever
-              r <- resultRef.get
-              _ <- cb(r.getOrElse(Left(new Exception("No result after fiber completed"))))
-            yield ()).start.void
-          }
+          val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+          val bgDescription = desc.getOrElse(firstLine)
+          emitBgTaskStarted(ctx, "auto-bg", bgDescription) *>
+            onComplete.fold(IO.unit) { cb =>
+              (for
+                _ <- commandFiber.joinWithNever
+                r <- resultRef.get
+                _ <- cb(r.getOrElse(Left(new Exception("No result after fiber completed"))))
+              yield ()).start.void
+            }
         else IO.unit
     yield
       if !didThresholdWin then
@@ -335,4 +374,19 @@ Git safety:
           )
       IO(ref ! notification)
     }
+
+  /** Emit a WS event so the frontend shows the background task indicator. */
+  private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
+    ctx.wsSend.fold(IO.unit) { send =>
+      send(
+        io.circe.Json.obj(
+          "type" -> "backgroundTaskUpdate".asJson,
+          "sessionId" -> ctx.sessionId.asJson,
+          "taskId" -> jobId.asJson,
+          "description" -> description.asJson,
+          "status" -> "running".asJson
+        )
+      ).handleErrorWith(_ => IO.unit)
+    }
+
 end BashTool

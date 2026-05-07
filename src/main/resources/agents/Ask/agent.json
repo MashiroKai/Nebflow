@@ -1,0 +1,5 @@
+{
+  "name": "Ask",
+  "description": "Quick follow-up Q&A with read and web search tools",
+  "tools": ["Read", "Glob", "Grep", "WebSearch", "WebFetch", "Curl"]
+}

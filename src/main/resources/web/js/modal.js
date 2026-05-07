@@ -22,13 +22,12 @@ export function confirmNewSession() {
   const name = modalInput.value.trim();
   hideModals();
   if (!name) return;
-  sendWs({type: 'createSession', name});
+  sendWs({type: 'createSession', name, agentName: state.selectedAgent || 'Nebula'});
 }
 
 // ---------- Inline New Session ----------
 export function startInlineNewSession() {
   const sessionList = state.dom.sessionList;
-  // Don't create duplicate input
   if (sessionList.querySelector('.new-session-input')) return;
   const wrapper = document.createElement('div');
   wrapper.className = 'session-item';
@@ -43,7 +42,7 @@ export function startInlineNewSession() {
   const finish = () => {
     const name = input.value.trim();
     wrapper.remove();
-    if (name) sendWs({type: 'createSession', name});
+    if (name) sendWs({type: 'createSession', name, agentName: state.selectedAgent || 'Nebula'});
   };
   input.addEventListener('blur', finish);
   input.addEventListener('keydown', (e) => {
@@ -60,7 +59,7 @@ export function showDeleteModal(sessionId, sessionName) {
   const { modalBox, deleteBox, deleteMsg, modalOverlay } = state.dom;
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
-  deleteMsg.textContent = 'Delete session "' + sessionName + '"?';
+  deleteMsg.textContent = 'Delete session "' + sessionName + '"';
   state.pendingDeleteId = sessionId;
   modalOverlay.classList.add('on');
 }
@@ -77,21 +76,15 @@ function deleteSession(sessionId) {
 }
 
 // ---------- Agent Modal ----------
-// Tools are loaded dynamically from backend ToolRegistry via serverConfig
 
-function getAvailableTools() {
-  return state.availableTools.map(t => typeof t === 'string' ? t : t.name);
-}
-
-function buildConfigJson(name, desc, modelRoute, tools) {
-  return JSON.stringify({
+function buildConfigJson(name, desc, tools, mcpServers) {
+  const obj = {
     name: name,
     description: desc || '',
-    modelRoute: modelRoute || 'default',
-    tools: tools,
-    subagents: [],
-    keepAlive: false
-  }, null, 2);
+    tools: tools
+  };
+  if (mcpServers && mcpServers.length > 0) obj.mcpServers = mcpServers;
+  return JSON.stringify(obj, null, 2);
 }
 
 export function showAgentModal(name, configJson, systemMd) {
@@ -107,76 +100,98 @@ export function showAgentModal(name, configJson, systemMd) {
   document.getElementById('agent-desc-input').value = fields.description || '';
   document.getElementById('agent-system-input').value = systemMd || '';
 
-  // Build model select options from config
-  const modelSelect = document.getElementById('agent-model-input');
-  const currentModel = fields.modelRoute || 'default';
-  const existingValues = new Set();
-  // Collect existing option values
-  Array.from(modelSelect.options).forEach(opt => existingValues.add(opt.value));
-  // Parse config to discover available models
-  try {
-    const cfg = JSON.parse(state.configText || '{}');
-    const providers = cfg.llm && cfg.llm.providers ? cfg.llm.providers : {};
-    for (const [pid, prov] of Object.entries(providers)) {
-      if (prov.models && Array.isArray(prov.models)) {
-        for (const m of prov.models) {
-          const ref = `${pid}/${m.id}`;
-          if (!existingValues.has(ref)) {
-            const opt = document.createElement('option');
-            opt.value = ref;
-            opt.textContent = ref;
-            modelSelect.appendChild(opt);
-            existingValues.add(ref);
-          }
-        }
-      }
-    }
-  } catch (_) {}
-  modelSelect.value = existingValues.has(currentModel) ? currentModel : 'default';
-
-  // Build tool checkboxes from backend-provided tool list
   const selectedTools = Array.isArray(fields.tools) ? fields.tools : [];
+  const isWildcard = selectedTools.length === 1 && selectedTools[0] === '*';
+  const selectedMcp = Array.isArray(fields.mcpServers) ? fields.mcpServers : [];
+
+  // Build tool checkboxes from tool library
   const grid = document.getElementById('agent-tools-grid');
   grid.innerHTML = '';
-  const toolNames = getAvailableTools();
-  if (toolNames.length === 0) {
+  const allTools = state.agentAvailableTools || [];
+  const autoTools = new Set(state.agentAutoTools || []);
+
+  if (allTools.length === 0) {
     grid.innerHTML = '<div style="color:#999;font-size:12px;">Loading tools...</div>';
     return;
   }
-  toolNames.forEach(tool => {
-    const label = document.createElement('label');
-    label.className = 'agent-tool-check' + (selectedTools.includes(tool) ? ' checked' : '');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = tool;
-    cb.checked = selectedTools.includes(tool);
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(tool));
-    label.onclick = () => {
-      cb.checked = !cb.checked;
-      label.classList.toggle('checked', cb.checked);
-    };
-    grid.appendChild(label);
-  });
 
-  // Built-in tools section (always included, non-editable)
-  const builtIn = ['ContextManage', 'declareWait', 'finish'];
-  const builtInLabel = document.createElement('div');
-  builtInLabel.className = 'agent-built-in-label';
-  builtInLabel.textContent = 'Built-in';
-  grid.appendChild(builtInLabel);
-  builtIn.forEach(tool => {
-    const label = document.createElement('label');
-    label.className = 'agent-tool-check checked builtin';
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.value = tool;
-    cb.checked = true;
-    cb.disabled = true;
-    label.appendChild(cb);
-    label.appendChild(document.createTextNode(tool));
-    grid.appendChild(label);
-  });
+  // Auto-injected tools (non-editable, always present)
+  const autoToolsArr = [...autoTools].sort();
+  if (autoToolsArr.length > 0) {
+    const sectionLabel = document.createElement('div');
+    sectionLabel.className = 'agent-built-in-label';
+    sectionLabel.textContent = 'Auto-included';
+    grid.appendChild(sectionLabel);
+    autoToolsArr.forEach(tool => {
+      const label = document.createElement('label');
+      label.className = 'agent-tool-check checked builtin';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = tool;
+      cb.checked = true;
+      cb.disabled = true;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(tool));
+      grid.appendChild(label);
+    });
+  }
+
+  // Configurable tools
+  const configurableTools = allTools.filter(t => !autoTools.has(t));
+  if (configurableTools.length > 0) {
+    const sectionLabel = document.createElement('div');
+    sectionLabel.className = 'agent-built-in-label';
+    sectionLabel.textContent = 'Configurable';
+    grid.appendChild(sectionLabel);
+    configurableTools.forEach(tool => {
+      const label = document.createElement('label');
+      const checked = isWildcard || selectedTools.includes(tool);
+      label.className = 'agent-tool-check' + (checked ? ' checked' : '');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = tool;
+      cb.checked = checked;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(tool));
+      label.onclick = () => {
+        cb.checked = !cb.checked;
+        label.classList.toggle('checked', cb.checked);
+      };
+      grid.appendChild(label);
+    });
+  }
+
+  // MCP servers section
+  const mcpSection = document.getElementById('agent-mcp-grid');
+  if (mcpSection) {
+    mcpSection.innerHTML = '';
+    const mcpServers = state.mcpServers || [];
+    if (mcpServers.length === 0) {
+      mcpSection.innerHTML = '<div style="color:#666;font-size:12px;">No MCP servers configured</div>';
+    } else {
+      mcpServers.forEach(server => {
+        const id = server.id || server;
+        const enabled = server.enabled !== false;
+        const label = document.createElement('label');
+        const checked = selectedMcp.includes(id);
+        label.className = 'agent-tool-check' + (checked ? ' checked' : '');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = id;
+        cb.checked = checked;
+        if (!enabled) cb.disabled = true;
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(id));
+        if (!enabled) label.style.opacity = '0.4';
+        label.onclick = () => {
+          if (cb.disabled) return;
+          cb.checked = !cb.checked;
+          label.classList.toggle('checked', cb.checked);
+        };
+        mcpSection.appendChild(label);
+      });
+    }
+  }
 }
 
 export function hideAgentModal() {
@@ -227,16 +242,25 @@ export function initModals() {
   document.getElementById('agent-modal-save')?.addEventListener('click', () => {
     const name = document.getElementById('agent-name-input').value.trim();
     const desc = document.getElementById('agent-desc-input').value.trim();
-    const modelRoute = document.getElementById('agent-model-input').value.trim();
     const systemMd = document.getElementById('agent-system-input').value;
     if (!name) return;
-    // Gather checked tools (exclude built-in tools — they're always included at runtime)
-    const builtInSet = new Set(['ContextManage', 'declareWait', 'finish']);
+
+    // Gather checked configurable tools (exclude auto-injected/disabled ones)
     const tools = [];
-    document.querySelectorAll('#agent-tools-grid input[type=checkbox]:checked').forEach(cb => {
-      if (!builtInSet.has(cb.value)) tools.push(cb.value);
+    document.querySelectorAll('#agent-tools-grid input[type=checkbox]:checked:not(:disabled)').forEach(cb => {
+      tools.push(cb.value);
     });
-    const configJson = buildConfigJson(name, desc, modelRoute, tools);
+
+    // Gather checked MCP servers
+    const mcpServers = [];
+    const mcpGrid = document.getElementById('agent-mcp-grid');
+    if (mcpGrid) {
+      mcpGrid.querySelectorAll('input[type=checkbox]:checked').forEach(cb => {
+        mcpServers.push(cb.value);
+      });
+    }
+
+    const configJson = buildConfigJson(name, desc, tools, mcpServers);
     const isNew = !document.getElementById('agent-name-input').disabled;
     sendWs({type: isNew ? 'createAgent' : 'updateAgent', name, configJson, systemMd});
     hideAgentModal();

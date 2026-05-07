@@ -11,7 +11,7 @@ object CompactUtils:
   /** Replace Image blocks with placeholder text to avoid sending base64 to SubAgent. */
   def stripImages(messages: List[Message]): List[Message] =
     messages.map {
-      case msg @ Message(_, Right(blocks)) =>
+      case msg @ Message(_, Right(blocks), _) =>
         val stripped = blocks.map {
           case ContentBlock.Image(_, mediaType) => ContentBlock.Text(s"[image: $mediaType]")
           case other => other
@@ -54,32 +54,34 @@ object CompactUtils:
         if p1Freed > 0
         then s"Stripped ${countToolResults(phase1)} tool results, kept all ${phase1.size} messages"
         else s"No tool results to strip, ${phase1.size} messages kept"
-      return (ensureHeadUser(phase1, messages.size), desc)
-    end if
+      (ensureHeadUser(phase1, messages.size), desc)
+    else
+      // Phase 2: Remove oldest tool-result message pairs (user messages containing ToolResult blocks)
+      val phase2 = removeOldToolResultMessages(phase1, keepAtEnd)
+      val p2Removed = phase1.size - phase2.size
+      if p2Removed > 0 then
+        logger.info(
+          s"Emergency clean phase 2: removed $p2Removed oldest tool-result messages, ${phase2.size} remaining"
+        )
+      end if
 
-    // Phase 2: Remove oldest tool-result message pairs (user messages containing ToolResult blocks)
-    val phase2 = removeOldToolResultMessages(phase1, keepAtEnd)
-    val p2Removed = phase1.size - phase2.size
-    if p2Removed > 0 then
-      logger.info(s"Emergency clean phase 2: removed $p2Removed oldest tool-result messages, ${phase2.size} remaining")
+      if phase2.size <= keepAtEnd * 2 then
+        val desc = s"Stripped tool results + removed $p2Removed oldest tool-result messages, ${phase2.size} remaining"
+        (ensureHeadUser(phase2, messages.size), desc)
+      else
+        // Phase 3: Keep only last N messages
+        val phase3 = phase2.takeRight(keepAtEnd)
+        logger.info(s"Emergency clean phase 3: truncated to last $keepAtEnd messages")
+        val desc = s"Stripped tool results + removed old messages, kept last $keepAtEnd of ${messages.size}"
+        (ensureHeadUser(phase3, messages.size), desc)
+      end if
     end if
-
-    if phase2.size <= keepAtEnd * 2 then
-      val desc = s"Stripped tool results + removed $p2Removed oldest tool-result messages, ${phase2.size} remaining"
-      return (ensureHeadUser(phase2, messages.size), desc)
-    end if
-
-    // Phase 3: Keep only last N messages
-    val phase3 = phase2.takeRight(keepAtEnd)
-    logger.info(s"Emergency clean phase 3: truncated to last $keepAtEnd messages")
-    val desc = s"Stripped tool results + removed old messages, kept last $keepAtEnd of ${messages.size}"
-    (ensureHeadUser(phase3, messages.size), desc)
   end emergencyClean
 
   /** Replace all ToolResult block content with a short placeholder. */
   private def stripToolResults(messages: List[Message]): List[Message] =
     messages.map {
-      case msg @ Message(_, Right(blocks)) =>
+      case msg @ Message(_, Right(blocks), _) =>
         val stripped = blocks.map {
           case tr: ContentBlock.ToolResult =>
             tr.copy(content = ToolResultPlaceholder)
@@ -179,5 +181,19 @@ object CompactUtils:
           )
         )
         marker +: messages
+
+  /**
+   * Read a file's content for post-compact restoration, truncated to maxChars.
+   * Returns empty string if the file doesn't exist or can't be read.
+   */
+  def restoreFileContent(path: String, maxChars: Int): String =
+    try
+      val file = java.nio.file.Paths.get(path.replaceFirst("^~", sys.props("user.home")))
+      if !java.nio.file.Files.exists(file) || !java.nio.file.Files.isRegularFile(file) then ""
+      else
+        val content = new String(java.nio.file.Files.readAllBytes(file), "UTF-8")
+        if content.length <= maxChars then content
+        else content.take(maxChars) + s"\n... [truncated, ${content.length - maxChars} more chars]"
+    catch case _: Exception => ""
 
 end CompactUtils

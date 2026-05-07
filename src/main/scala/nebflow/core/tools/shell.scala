@@ -45,6 +45,10 @@ final class ShellSession private (
       last <- lastAccessed.get
     yield now - last > SessionTTL
 
+  /** Cancel the cleanup fiber to prevent leaks when the session is evicted. */
+  private[tools] def cancelCleanupFiber(): IO[Unit] =
+    cleanupFiber.cancel.handleErrorWith(_ => IO.unit)
+
   private def checkAlive: IO[Unit] =
     isAlive.get.flatMap {
       case true => IO.unit
@@ -247,7 +251,8 @@ object ShellSession:
         case Some(s) =>
           s.isStale.flatMap {
             case true =>
-              s.kill() *> sessions.update(_ - sessionId) *>
+              // Cancel the old cleanup fiber before killing the session to prevent fiber leak
+              s.cancelCleanupFiber() *> s.kill() *> sessions.update(_ - sessionId) *>
                 ShellSession.create(sessionId).flatMap { newS =>
                   sessions.update(_ + (sessionId -> newS)).as(newS)
                 }

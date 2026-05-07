@@ -14,46 +14,31 @@
   <link rel="stylesheet" href="css/taskList.css">
 </head>
 <body>
-  <!-- Nav Bar (54px icon strip) -->
+  <!-- Nav Bar — agent icons + settings at bottom -->
   <div id="nav-bar">
-    <div class="nav-item active" data-tab="main" title="Sessions">
-      <i data-lucide="message-square"></i>
-    </div>
+    <div id="nav-agent-list"></div>
+    <button id="new-agent-btn" title="New Agent" class="nav-add-btn">+</button>
+    <div class="nav-spacer"></div>
     <div class="nav-item" data-tab="settings" title="Settings">
       <i data-lucide="settings"></i>
     </div>
-    <div class="nav-spacer"></div>
-    <div class="nav-item nav-brand" title="Nebflow">
-      <span class="nav-logo">N</span>
-    </div>
   </div>
 
-  <!-- Sidebar Panel (280px, split: agent list + session list) -->
+  <!-- Sidebar — session list for selected agent -->
   <div id="sidebar-panel">
-    <!-- Main Panel: Agent → Session two-level -->
-    <div id="panel-main" class="panel active">
-      <div id="sidebar-agent-col">
-        <div class="panel-header">
-          <span class="panel-title">Agents</span>
-          <button id="new-agent-btn" title="New Agent">+</button>
-        </div>
-        <div id="agent-list"></div>
+    <div id="panel-sessions" class="panel active">
+      <div class="panel-header">
+        <span class="panel-title">Sessions</span>
+        <button id="new-session-btn" title="New Session">+</button>
       </div>
-      <div id="sidebar-session-col">
-        <div class="panel-header">
-          <span class="panel-title">Sessions</span>
-          <button id="new-session-btn" title="New Session">+</button>
-        </div>
-        <div id="search-bar">
-          <i data-lucide="search"></i>
-          <input id="search-input" type="text" placeholder="搜索聊天记录" autocomplete="off">
-          <button id="search-clear" title="Clear">&times;</button>
-        </div>
-        <div id="search-results"></div>
-        <div id="session-list"></div>
+      <div id="search-bar">
+        <i data-lucide="search"></i>
+        <input id="search-input" type="text" placeholder="搜索聊天记录" autocomplete="off">
+        <button id="search-clear" title="Clear">&times;</button>
       </div>
+      <div id="search-results"></div>
+      <div id="session-list"></div>
     </div>
-    <!-- Settings Panel -->
     <div id="panel-settings" class="panel">
       <div class="panel-header">
         <span class="panel-title">Settings</span>
@@ -66,8 +51,12 @@
   <div id="main">
     <div id="header">
       <div class="header-left"><span class="header-brand">nebflow</span></div>
-	      <div class="header-center"><span id="session-name"></span></div>
+      <div class="header-center"><span id="session-name"></span></div>
       <div class="header-right">
+        <div id="bg-tasks" class="hidden">
+          <span class="bg-task-dot"></span>
+          <span class="bg-task-count">0</span>
+        </div>
         <div class="conn off" id="conn"></div>
       </div>
     </div>
@@ -123,12 +112,10 @@
         <input id="agent-name-input" type="text" placeholder="Agent name" autocomplete="off">
         <div class="agent-field-label">Description</div>
         <textarea id="agent-desc-input" placeholder="What does this agent do?" rows="3" spellcheck="false"></textarea>
-        <div class="agent-field-label">Model</div>
-        <select id="agent-model-input">
-          <option value="default">default</option>
-        </select>
         <div class="agent-field-label">Tools</div>
         <div id="agent-tools-grid"></div>
+        <div class="agent-field-label">MCP Servers</div>
+        <div id="agent-mcp-grid"></div>
         <div class="agent-field-label">System Prompt</div>
         <textarea id="agent-system-input" placeholder="System prompt (Markdown)" rows="8" spellcheck="false"></textarea>
       </div>

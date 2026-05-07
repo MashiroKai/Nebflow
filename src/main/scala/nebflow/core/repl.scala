@@ -88,7 +88,7 @@ object Repl:
   }
 
   def loadSystemPrompt(): String = // public for AgentActor
-    val resource = Option(getClass.getResourceAsStream("/prompts/system.md"))
+    val resource = Option(getClass.getResourceAsStream("/agents/Nebula/system.md"))
     resource match
       case Some(is) =>
         try Source.fromInputStream(is).mkString
