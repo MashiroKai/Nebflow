@@ -48,7 +48,7 @@ Usage:
   def summarize(input: JsonObject): String =
     val path = input("file_path").flatMap(_.asString).getOrElse("")
     val short = path.split("/").lastOption.getOrElse(path)
-    s"""Write($short, "$path")"""
+    s"""Write($short)\n  ("$path")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith(DiffUtil.OkCreatedPrefix) then "File created"

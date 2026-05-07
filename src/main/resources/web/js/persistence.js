@@ -141,8 +141,11 @@ export function restoreFromStorage() {
         const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
         const truncBadge = m.truncated ? '<span class="truncated-badge" title="Output was too large and has been truncated to prevent context overflow">Truncated</span>' : '';
+        const lParts = m.label.split('\n', 2);
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(m.summary) + truncBadge
+          + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + truncBadge + '</div>' +
+          '<div class="content"><div class="label">' + lHtml + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
         chat.appendChild(row);
@@ -336,8 +339,11 @@ export function restoreFromBackendHistory(msgs, skipLastAskUser = false) {
         const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
         const truncBadge = m.truncated ? '<span class="truncated-badge" title="Output was too large and has been truncated to prevent context overflow">Truncated</span>' : '';
+        const lParts = m.label.split('\n', 2);
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(m.summary) + truncBadge
+          + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + esc(m.label) + ' &mdash; ' + esc(m.summary) + truncBadge + '</div>' +
+          '<div class="content"><div class="label">' + lHtml + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
         chat.appendChild(row);

@@ -156,6 +156,48 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
         handleTriggerCompaction(agentDef, resources, depth, parentRef, state, stash, ctx, mode, replyDeferred)
 
+      // --- Background task notification while idle: queue for next turn ---
+      case AgentCommand.BackgroundTaskNotification(taskId, description, status, output, exitCode) =>
+        logAgentEvent(
+          ctx,
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "background-task-notification",
+          s"taskId=$taskId status=$status"
+        )
+        // Emit WebSocket update so UI can update task pill
+        emitStream(
+          resources.dispatcher,
+          state.wsSend,
+          ctx,
+          AgentStreamEvent.BackgroundTaskUpdate(taskId, description, status),
+          isSubagent = depth > 0,
+          state.sessionId
+        )
+        // No pending LLM call — inject notification as user message and start a new turn
+        val notificationText = status match
+          case "completed" =>
+            val exitInfo = exitCode.map(c => s" (exit code $c)").getOrElse("")
+            s"[Background task completed] \"$description\" (id: $taskId)$exitInfo:\n$output"
+          case "failed" =>
+            s"[Background task failed] \"$description\" (id: $taskId):\n$output"
+          case _ =>
+            s"[Background task stopped] \"$description\" (id: $taskId)"
+        val userMsg = Message(MessageRole.User, Left(notificationText))
+        val newMessages = state.messages :+ userMsg
+        pipeLlmCall(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state.withMessages(newMessages),
+          stash,
+          ctx,
+          None
+        )
+
       case msg =>
         stash.stash(msg)
         Behaviors.same
@@ -175,65 +217,87 @@ object AgentActor extends AgentCore with AgentSession:
   ): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      // --- LLM completed ---
-      case LlmComplete(result, replyTo) =>
-        val updatedState = state.withLatestUsage(result.usage.orElse(state.latestUsage))
-        if result.toolCalls.isEmpty then
-          finishTurn(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            updatedState,
-            stash,
-            ctx,
-            result.text,
-            replyTo,
-            result.thinking,
-            textAlreadyStreamed = true,
-            result.model
-          )
-        else pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
+      // --- Stream fiber registered (for Interrupt cancellation) ---
+      case AgentCommand.StreamFiberStarted(fiber) =>
+        processing(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(Some(fiber)), stash, ctx)
 
-      case LlmFailed(error, replyTo) =>
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "llm-fail",
-          s"err=${error.getMessage.take(80)}"
-        )
-        val agentError =
-          AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
-        parentRef match
-          case Some(p) => p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(agentError))
-          case None =>
-            // Emit error to frontend so the user knows what happened, then Done to clear the spinner
-            resources.dispatcher.unsafeRunAndForget(
-              state
-                .wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "error".asJson,
-                    "sessionId" -> state.sessionId.asJson,
-                    "message" -> s"LLM request failed: ${error.getClass.getSimpleName}".asJson
-                  )
-                )
-                .handleErrorWith(_ => IO.unit)
-            )
-            emitStream(
-              resources.dispatcher,
-              state.wsSend,
+      // --- LLM completed ---
+      case LlmComplete(result, replyTo, turnId) =>
+        // Discard stale results from a previous (interrupted) turn
+        if turnId != state.currentTurnId then
+          logAgentEvent(
+            ctx, agentDef, depth, state.sessionId, state.sessionName,
+            "stale-llm-complete-discarded", s"turnId=$turnId current=${state.currentTurnId}"
+          )
+          Behaviors.same
+        else
+          val updatedState = state.withLatestUsage(result.usage.orElse(state.latestUsage))
+          if result.toolCalls.isEmpty then
+            finishTurn(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              updatedState,
+              stash,
               ctx,
-              AgentStreamEvent.Done(None),
-              isSubagent = false,
-              state.sessionId
+              result.text,
+              replyTo,
+              result.thinking,
+              textAlreadyStreamed = true,
+              result.model
             )
-        replyTo.foreach(_ ! AgentEvent.Failed(state.sessionId.getOrElse(""), agentError))
-        stash.unstashAll(
-          idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Error(error.getMessage)), stash, ctx)
-        )
+          else pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
+      end if
+
+      case LlmFailed(error, replyTo, turnId) =>
+        // Discard stale errors from a previous (interrupted) turn
+        if turnId != state.currentTurnId then
+          logAgentEvent(
+            ctx, agentDef, depth, state.sessionId, state.sessionName,
+            "stale-llm-failed-discarded", s"turnId=$turnId current=${state.currentTurnId}"
+          )
+          Behaviors.same
+        else
+          logAgentEvent(
+            ctx,
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "llm-fail",
+            s"err=${error.getMessage.take(80)}"
+          )
+          val agentError =
+            AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
+          parentRef match
+            case Some(p) => p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(agentError))
+            case None =>
+              // Emit error to frontend so the user knows what happened, then Done to clear the spinner
+              resources.dispatcher.unsafeRunAndForget(
+                state
+                  .wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "error".asJson,
+                      "sessionId" -> state.sessionId.asJson,
+                      "message" -> s"LLM request failed: ${error.getClass.getSimpleName}".asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+              )
+              emitStream(
+                resources.dispatcher,
+                state.wsSend,
+                ctx,
+                AgentStreamEvent.Done(None),
+                isSubagent = false,
+                state.sessionId
+              )
+          replyTo.foreach(_ ! AgentEvent.Failed(state.sessionId.getOrElse(""), agentError))
+          stash.unstashAll(
+            idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Error(error.getMessage)), stash, ctx)
+          )
+        end if
 
       // --- Tools completed ---
       case tc: ToolsComplete =>
@@ -725,6 +789,32 @@ object AgentActor extends AgentCore with AgentSession:
         state.readTracker.foreach(t => resources.dispatcher.unsafeRunAndForget(t.clear()))
         Behaviors.same
 
+      // --- Background task notification while processing: queue for injection after current turn ---
+      case AgentCommand.BackgroundTaskNotification(taskId, description, status, output, exitCode) =>
+        logAgentEvent(
+          ctx,
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "background-task-notification-queued",
+          s"taskId=$taskId status=$status"
+        )
+        // Emit WebSocket update so UI can update task pill immediately
+        emitStream(
+          resources.dispatcher,
+          state.wsSend,
+          ctx,
+          AgentStreamEvent.BackgroundTaskUpdate(taskId, description, status),
+          isSubagent = depth > 0,
+          state.sessionId
+        )
+        val notification = AgentCommand.BackgroundTaskNotification(taskId, description, status, output, exitCode)
+        val updatedExec = state.execution.copy(
+          pendingNotifications = state.execution.pendingNotifications :+ notification
+        )
+        processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), stash, ctx)
+
       case msg =>
         stash.stash(msg)
         Behaviors.same
@@ -747,23 +837,38 @@ object AgentActor extends AgentCore with AgentSession:
     textAlreadyStreamed: Boolean = false,
     model: Option[String] = None
   ): Behavior[AgentCommand] =
+    val isSubagent = parentRef.isDefined
     if !textAlreadyStreamed && text.nonEmpty then
       emitStream(
         resources.dispatcher,
         state.wsSend,
         ctx,
         AgentStreamEvent.TextDelta(text),
-        isSubagent = parentRef.isDefined,
+        isSubagent = isSubagent,
         state.sessionId
       )
-    emitStream(
-      resources.dispatcher,
-      state.wsSend,
-      ctx,
-      AgentStreamEvent.Done(model),
-      isSubagent = parentRef.isDefined,
-      state.sessionId
-    )
+    // For root agent: await Done event delivery to guarantee frontend receives it
+    // For sub-agent: fire-and-forget (parent handles the done signal)
+    if isSubagent then
+      emitStream(
+        resources.dispatcher,
+        state.wsSend,
+        ctx,
+        AgentStreamEvent.Done(model),
+        isSubagent = true,
+        state.sessionId
+      )
+    else
+      val doneJson = AgentStreamEvent.Done(model).toJson(ctx.self.path.name, false, state.sessionId)
+      NebflowLogger.forName("nebflow.agent").info(s"finishTurn: sending Done sessionId=${state.sessionId.getOrElse("-")} jsonLen=${doneJson.noSpaces.length}")
+      resources.dispatcher.unsafeRunAndForget(
+        state.wsSend(doneJson)
+          .handleErrorWith(e =>
+            IO(NebflowLogger.forName("nebflow.agent").warn(s"finishTurn: Done event delivery failed: ${e.getMessage}"))
+          ) *> IO {
+            NebflowLogger.forName("nebflow.agent").info(s"finishTurn: Done event delivered sessionId=${state.sessionId.getOrElse("-")}")
+          }
+      )
     parentRef match
       case Some(parent) =>
         parent ! AgentCommand.DelegateResult(ctx.self.path.name, Right(text))
@@ -783,24 +888,77 @@ object AgentActor extends AgentCore with AgentSession:
           case (Some(t), "") => Right(List(ContentBlock.Thinking(t)))
           case (Some(t), txt) => Right(List(ContentBlock.Thinking(t), ContentBlock.Text(txt)))
         val newMessages = state.messages :+ Message(MessageRole.Assistant, assistantContent)
-        val updatedState = state.copy(
-          execution = ExecutionContext.idle(newMessages, state.execution.turnIdx)
-        )
 
-        // Root agent: persist to SessionStore and emit sessionBusy=false
-        state.sessionId.foreach { sid =>
-          resources.dispatcher.unsafeRunAndForget(
-            (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
-              resources.sessionStore.flushIndex *>
-              emitSessionBusy(state.wsSend, sid, busy = false))
-              .handleErrorWith(e =>
-                IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
-              )
+        // If there are queued background task notifications, inject them as user messages
+        // and immediately start a new LLM turn instead of going idle.
+        val queuedNotifications = state.execution.pendingNotifications
+        if queuedNotifications.nonEmpty && depth == 0 then
+          val notificationMessages = queuedNotifications.map { n =>
+            val notificationText = n.status match
+              case "completed" =>
+                val exitInfo = n.exitCode.map(c => s" (exit code $c)").getOrElse("")
+                s"[Background task completed] \"${n.description}\" (id: ${n.taskId})$exitInfo:\n${n.output}"
+              case "failed" =>
+                s"[Background task failed] \"${n.description}\" (id: ${n.taskId}):\n${n.output}"
+              case _ =>
+                s"[Background task stopped] \"${n.description}\" (id: ${n.taskId})"
+            Message(MessageRole.User, Left(notificationText))
+          }
+          val messagesWithNotifications = newMessages ++ notificationMessages
+          logAgentEvent(
+            ctx,
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "background-notifications-injected",
+            s"count=${queuedNotifications.size}"
           )
-        }
+          val updatedState = state.copy(
+            execution = ExecutionContext.idle(messagesWithNotifications, state.execution.turnIdx)
+          )
+          // Persist and start new LLM call with injected notifications
+          state.sessionId.foreach { sid =>
+            resources.dispatcher.unsafeRunAndForget(
+              (resources.sessionStore.saveMessagesForSession(sid, messagesWithNotifications) *>
+                resources.sessionStore.flushIndex *>
+                emitSessionBusy(state.wsSend, sid, busy = true))
+                .handleErrorWith(e =>
+                  IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+                )
+            )
+          }
+          replyTo.foreach(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithNotifications))
+          pipeLlmCall(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            updatedState,
+            stash,
+            ctx,
+            None
+          )
+        else
+          val updatedState = state.copy(
+            execution = ExecutionContext.idle(newMessages, state.execution.turnIdx)
+          )
 
-        replyTo.foreach(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
-        stash.unstashAll(idle(agentDef, resources, depth, parentRef, updatedState, stash, ctx))
+          // Root agent: persist to SessionStore and emit sessionBusy=false
+          state.sessionId.foreach { sid =>
+            resources.dispatcher.unsafeRunAndForget(
+              (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
+                resources.sessionStore.flushIndex *>
+                emitSessionBusy(state.wsSend, sid, busy = false))
+                .handleErrorWith(e =>
+                  IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+                )
+            )
+          }
+
+          replyTo.foreach(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
+          stash.unstashAll(idle(agentDef, resources, depth, parentRef, updatedState, stash, ctx))
+        end if
     end match
   end finishTurn
 
