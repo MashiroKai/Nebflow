@@ -1,19 +1,118 @@
-/* ---------- Nav Bar (54px icon strip) ---------- */
+/* ---------- Nav Bar — agent icon strip ---------- */
 #nav-bar {
   width: 54px;
   background: var(--color-nav-bg);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding-top: 12px;
+  padding-top: 8px;
   flex-shrink: 0;
   height: 100vh;
   border-right: 1px solid #222;
+  overflow: hidden;
 }
+/* Agent icon container — scrollable */
+#nav-agent-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  scrollbar-width: none;
+}
+#nav-agent-list::-webkit-scrollbar { display: none; }
+
+/* Agent icon in nav bar */
+.nav-agent {
+  width: 44px;
+  padding: 4px 0;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  margin-bottom: 2px;
+  background: transparent;
+  transition: background 0.15s;
+  position: relative;
+  gap: 2px;
+}
+.nav-agent:hover { background: #1f1f1f; }
+.nav-agent.active { background: #2a2a2a; }
+.nav-agent.active::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-primary);
+}
+.nav-agent-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+.nav-agent-icon svg {
+  width: 20px;
+  height: 20px;
+}
+.nav-agent-label {
+  font-size: 9px;
+  color: #888;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 40px;
+  text-align: center;
+  line-height: 1;
+}
+.nav-agent.active .nav-agent-label {
+  color: var(--color-primary);
+}
+
+/* Notification dot on agent avatar */
+.nav-agent {
+  position: relative;
+}
+.agent-notif-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  pointer-events: none;
+}
+
+/* + button for new agent */
+.nav-add-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 18px;
+  background: transparent;
+  border: 1px dashed #444;
+  color: #555;
+  margin-bottom: 4px;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.nav-add-btn:hover { border-color: #666; color: #aaa; background: #1f1f1f; }
+
+.nav-spacer { flex-shrink: 0; height: 8px; }
 .nav-item {
   width: 40px;
   height: 40px;
-  border-radius: 8px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -21,27 +120,9 @@
   color: #666;
   margin-bottom: 4px;
   position: relative;
+  flex-shrink: 0;
   transition: color 0.15s, background 0.15s;
 }
 .nav-item:hover { color: #aaa; background: #1f1f1f; }
 .nav-item.active { color: #fff; background: #2a2a2a; }
-.nav-item.active::before {
-  content: '';
-  position: absolute;
-  left: -7px;
-  top: 8px;
-  bottom: 8px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: var(--color-primary);
-}
 .nav-item svg { width: 20px; height: 20px; }
-.nav-spacer { flex: 1; }
-.nav-brand {
-  margin-bottom: 12px;
-}
-.nav-logo {
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--color-primary);
-}

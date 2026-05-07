@@ -1,7 +1,7 @@
 package nebflow.demo
 
 import nebflow.shared.{ContentBlock, Message, MessageRole}
-import nebflow.core.compact.{CompactConfig, FullCompact, HistoryArchiver, MicroCompact, TokenEstimator}
+import nebflow.core.compact.{CompactConfig, FullCompact, HistoryArchiver, TokenEstimator, FastMicroCompact}
 import io.circe.JsonObject
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
@@ -62,10 +62,11 @@ class CompactionDemo extends munit.FunSuite:
     )
 
     // Pad with filler messages to simulate a long history
+    // Use old timestamps (0L) to ensure FastMicroCompact fires
     val filler = (1 to 20).flatMap { i =>
       List(
-        textMsg(MessageRole.User, s"Follow-up question #$i about edge cases in auth."),
-        textMsg(MessageRole.Assistant, s"Answer #$i: handled by the new middleware.")
+        Message(MessageRole.User, Left(s"Follow-up question #$i about edge cases in auth."), 0L),
+        Message(MessageRole.Assistant, Left(s"Answer #$i: handled by the new middleware."), 0L)
       )
     }.toList
 
@@ -90,77 +91,71 @@ class CompactionDemo extends munit.FunSuite:
     println(s"Would auto-compact trigger? ${if estimatedTokens > threshold then "YES" else "NO"}")
 
     // ----------------------------------------------------------
-    // 3. Simulate Micro-compaction (SubAgent output)
+    // 3. FastMicroCompact (rule-driven, no LLM)
     // ----------------------------------------------------------
-    banner("3. MICRO mode compaction")
+    banner("3. FastMicroCompact (rule-driven, cache-cold only)")
 
-    val microLlmOutput = """
-<plan>
-Messages 0-3: User request + assistant reading auth.ts -> keep for context.
-Messages 4-7: Route reading and grep results -> already utilized, compress.
-Messages 8-11: Edit operation -> keep as active work.
-Messages 12-51: Filler follow-ups -> compress as resolved Q&A.
-Messages 52-53: Most recent -> keep.
-</plan>
-
-<keep>0, 1, 2, 3</keep>
-<compact start="4" end="7">Read routes.ts and grepped jwt.verify occurrences (auth.ts:42, middleware.ts:15, utils.ts:88)</compact>
-<keep>8, 9, 10, 11</keep>
-<compact start="12" end="51">20 rounds of follow-up Q&A about auth edge cases, all resolved by new middleware.</compact>
-<keep>52, 53</keep>
-""".trim
-
-    MicroCompact.parseResponse(microLlmOutput, messages) match
-      case Right(compacted) =>
+    FastMicroCompact(messages, cacheTtlMinutes = 0, keepRecent = 2) match
+      case Some(compacted) =>
         println(s"  BEFORE: ${messages.size} messages")
-        println(s"  AFTER:  ${compacted.size} messages")
-        println(s"  Reduction: ${messages.size - compacted.size} messages compressed")
-        println("\n  --- Compact result dump ---")
-        compacted.zipWithIndex.foreach { case (m, i) =>
-          val preview = m.content match
-            case Left(t) => if t.length > 120 then t.take(117) + "..." else t
-            case Right(blocks) => blocks.map(_.getClass.getSimpleName).mkString(", ")
-          println(s"  [$i] ${m.role}: $preview")
+        println(s"  AFTER:  ${compacted.size} messages (tool results replaced with placeholders)")
+        val toolResults = compacted.flatMap {
+          case Message(_, Right(blocks), _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
+          case _ => Nil
         }
-      case Left(err) =>
-        println(s"  MICRO compaction FAILED: $err")
+        val replaced = toolResults.count(_.content == "[Output removed to free context space]")
+        val kept = toolResults.size - replaced
+        println(s"  Tool results replaced: $replaced, kept: $kept")
+      case None =>
+        println(s"  Skipped (cache hot or nothing to compact)")
 
     // ----------------------------------------------------------
-    // 4. Simulate Full-compaction (SubAgent output)
+    // 4. Full-compaction (SubAgent output)
     // ----------------------------------------------------------
     banner("4. FULL mode compaction")
 
-    val fullLlmOutput = """
-## Primary Request and Intent
-Refactor the authentication module to consolidate duplicated JWT validation.
-
-## Key Technical Concepts
-JWT validation was duplicated across auth.ts, middleware.ts, and utils.ts.
-
-## Files and Code Sections
-- `src/auth.ts` (line 42-89): Original JWT validation, now delegated to middleware
-- `src/middleware.ts` (line 15-30): New consolidated authGuard() function
-- `src/routes.ts` (line 10-30): 3 endpoints - login, logout, refresh
-
-## Errors and Fixes
-None. Edit applied successfully.
-
-## Problem Solving Progress
-Completed: identified duplication via grep, consolidated into middleware.
-
-## Pending Tasks
-None. User confirmed the refactor is complete.
-
-## Current Work Focus
-Wrapping up the auth refactor.
-
-## Next Step
-Confirm completion with user.
-
-<files>
-src/middleware.ts
-</files>
-""".trim
+    val fullLlmOutput =
+      """<analysis>
+        |The conversation involves refactoring auth module - JWT validation duplicated.
+        |User asked to consolidate into middleware.ts.
+        |</analysis>
+        |
+        |<summary>
+        |1. Primary Request and Intent:
+        |   Refactor the authentication module to consolidate duplicated JWT validation.
+        |
+        |2. Key Technical Concepts:
+        |   - JWT validation was duplicated across auth.ts, middleware.ts, and utils.ts
+        |
+        |3. Files and Code Sections:
+        |   - `src/auth.ts` (line 42-89): Original JWT validation, now delegated to middleware
+        |   - `src/middleware.ts` (line 15-30): New consolidated authGuard() function
+        |   - `src/routes.ts` (line 10-30): 3 endpoints - login, logout, refresh
+        |
+        |4. Errors and Fixes:
+        |   - None. Edit applied successfully.
+        |
+        |5. Problem Solving:
+        |   Completed: identified duplication via grep, consolidated into middleware.
+        |
+        |6. All User Messages:
+        |   - "Please help me refactor the authentication module."
+        |   - "Great find. Please consolidate them into middleware.ts."
+        |
+        |7. Pending Tasks:
+        |   - None. User confirmed the refactor is complete.
+        |
+        |8. Current Work:
+        |   Wrapping up the auth refactor.
+        |
+        |9. Optional Next Step:
+        |   Confirm completion with user.
+        |</summary>
+        |
+        |<files>
+        |src/middleware.ts
+        |</files>
+        |""".stripMargin
 
     val projectRoot = System.getProperty("user.dir")
     FullCompact.parseResponse(fullLlmOutput, messages, projectRoot) match
@@ -189,7 +184,6 @@ src/middleware.ts
         println(s"  Snapshot written to: $path")
         val sizeBytes = os.size(os.Path(path))
         println(s"  File size: $sizeBytes bytes")
-        println(s"  (This is what gets saved BEFORE messages are replaced in memory)")
       case Left(err) =>
         println(s"  Archive failed (non-blocking): $err")
 
@@ -201,10 +195,9 @@ src/middleware.ts
     println(s"  Estimated tokens  : $estimatedTokens")
     println(s"  Auto-trigger      : ${estimatedTokens > threshold}")
     println(s"  Archive location  : target/demo-archives/archives/demo-session/")
-    println("  Modes demonstrated: micro (selective) + full (complete summary)")
+    println("  Modes demonstrated: FastMicroCompact (rule-driven) + Full (LLM summary)")
     println("\n  All compaction safeguards active:")
     println("    - Message order preserved")
-    println("    - tool_use/tool_result pairing validated")
     println("    - History snapshotted before replacement")
     println("    - Circuit breaker at 3 failures")
 

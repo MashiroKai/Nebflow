@@ -12,7 +12,7 @@ const slashCommands = {
   '/clear': {
     desc: 'Clear LLM context (keeps chat history)',
     run: () => {
-      sendWs({type:'command', command:'clear'});
+      sendWs({type:'command', command:'clear', sessionId: state.activeSessionId});
       renderSystemBubble('Context cleared. LLM memory reset.');
     }
   },
@@ -150,24 +150,64 @@ function pickSlashCommand(index) {
   if (slashCommands[cmd] && slashCommands[cmd].run) slashCommands[cmd].run();
 }
 
-// ---------- File Attachment ----------
-export function addFileAttachment(file, callback) {
-  if (file.type.startsWith('image/')) {
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (file.size > 5 * 1024 * 1024) {
-        alert('Image too large (max 5MB): ' + file.name);
-        return;
+// ---------- Image Compression ----------
+function compressImage(file, opts = {}) {
+  const maxDim = opts.maxDim || 1920;
+  const quality = opts.quality || 0.8;
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(img.src);
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        const scale = maxDim / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
       }
-      state.pendingAttachments.push({
-        type: 'image', mimeType: file.type,
-        data: reader.result.split(',')[1],
-        name: file.name, preview: reader.result
-      });
-      renderAttachmentPreview();
-      if (callback) callback();
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/jpeg', quality);
+      resolve({ dataUrl, w, h });
     };
-    reader.readAsDataURL(file);
+    img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Image load failed')); };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// ---------- File Attachment ----------
+export async function addFileAttachment(file, callback) {
+  if (file.type.startsWith('image/')) {
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Image too large (max 10MB): ' + file.name);
+      return;
+    }
+    try {
+      const { dataUrl, w, h } = await compressImage(file);
+      state.pendingAttachments.push({
+        type: 'image', mimeType: 'image/jpeg',
+        data: dataUrl.split(',')[1],
+        name: file.name, preview: dataUrl
+      });
+    } catch (e) {
+      console.warn('[input] image compression failed, using original:', e);
+      // Fallback to original
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.pendingAttachments.push({
+          type: 'image', mimeType: file.type,
+          data: reader.result.split(',')[1],
+          name: file.name, preview: reader.result
+        });
+        renderAttachmentPreview();
+        if (callback) callback();
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+    renderAttachmentPreview();
+    if (callback) callback();
   } else {
     // Non-image: check size
     const MAX_FILE_SIZE = 500 * 1024;
@@ -243,7 +283,8 @@ export function send() {
       attachments: state.pendingAttachments.map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name
       })),
-      clientMessageId
+      clientMessageId,
+      sessionId: state.activeSessionId
     });
   } catch (e) {
     console.error('WebSocket send failed:', e);
@@ -310,7 +351,7 @@ export function initInput() {
   // Stop button — send interrupt with sessionId, reset UI immediately
   stopBtn.onclick = () => {
     const sid = state.activeSessionId;
-    sendWs({content: '__interrupt__', sessionId: sid});
+    sendWs({type: 'interrupt', sessionId: sid});
     if (sid && state.sessionBusyTimeouts[sid]) {
       clearTimeout(state.sessionBusyTimeouts[sid]);
       delete state.sessionBusyTimeouts[sid];

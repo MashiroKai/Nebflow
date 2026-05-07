@@ -60,8 +60,15 @@ export default {
   agentsData: [],
   selectedAgent: null,
   configText: '',
-  // Available tools (loaded from backend ToolRegistry)
+  // Available tools (loaded from backend ToolRegistry via serverConfig)
   availableTools: [],
+  // Agent-configurable tools + auto-tools (from agentList)
+  agentAvailableTools: [],
+  agentAutoTools: [],
+  // Per-agent unread count: { agentName: count }
+  agentUnreadCounts: {},
+  // sessionId -> agentName mapping (across all agents)
+  sessionAgentMap: {},
 
   // Per-session input drafts: sessionId -> { text, attachments }
   sessionInputDrafts: safeParse(localStorage.getItem('nebflow_input_drafts'), {}),
@@ -110,6 +117,12 @@ export default {
   // Search navigation target: { sessionId, messageIndex } or null
   searchNavigateTarget: null,
 
+  // Per-session background tasks: sessionId -> [{ taskId, description, status }]
+  sessionBgTasks: {},
+
   // DOM refs (populated in main.js)
-  dom: {}
+  dom: {},
+
+  // Background tasks update helper
+  updateBgTasksUI: null,
 };

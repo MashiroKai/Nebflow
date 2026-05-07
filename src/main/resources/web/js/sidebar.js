@@ -17,44 +17,40 @@ export function initNavTabs() {
       item.classList.add('active');
       document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
       document.getElementById('panel-' + tab).classList.add('active');
-      if (tab === 'main') {
-        sendWs({type: 'listAgents'});
-      }
       if (tab === 'settings') {
         sendWs({type: 'getConfig'});
         renderSettings();
+      } else {
+        // Returning to sessions from settings — switch back
+        document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
       }
     });
   });
 }
 
-// ---------- Agent Panel ----------
+// ---------- Agent icons in Nav Bar ----------
 export function renderAgentList() {
-  const list = document.getElementById('agent-list');
+  const list = document.getElementById('nav-agent-list');
+  if (!list) return;
   list.innerHTML = '';
   state.agentsData.forEach(a => {
-    const card = document.createElement('div');
+    const el = document.createElement('div');
     const isActive = state.selectedAgent === a.name;
-    card.className = 'agent-item' + (isActive ? ' active' : '');
-    const displayName = a.displayName || a.name;
+    el.className = 'nav-agent' + (isActive ? ' active' : '');
     const avatar = a.avatar || '';
-    const escName = escapeHtml(a.name);
-    const escDisplay = escapeHtml(displayName);
-    const escDesc = escapeHtml(a.description || '');
-    card.dataset.name = a.name;
-    card.innerHTML = `
-      <div class="agent-item-avatar">${avatar ? escapeHtml(avatar) : '<i data-lucide="bot" style="width:18px;height:18px;color:#888"></i>'}</div>
-      <div class="agent-item-info">
-        <div class="agent-item-name">${escDisplay}</div>
-        ${escDesc ? `<div class="agent-item-desc">${escDesc}</div>` : ''}
-      </div>`;
-    card.addEventListener('click', () => selectAgent(a.name));
-    // Context menu for edit
-    card.addEventListener('contextmenu', (e) => {
+    const displayName = a.displayName || a.name;
+    el.dataset.name = a.name;
+    el.title = displayName;
+    const iconHtml = avatar
+      ? `<span class="nav-agent-icon">${escapeHtml(avatar)}</span>`
+      : '<i data-lucide="bot" class="nav-agent-icon" style="color:#888"></i>';
+    el.innerHTML = `${iconHtml}<span class="nav-agent-label">${escapeHtml(displayName.slice(0, 5))}</span>`;
+    el.addEventListener('click', () => selectAgent(a.name));
+    el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       sendWs({type: 'getAgentConfig', name: a.name});
     });
-    list.appendChild(card);
+    list.appendChild(el);
   });
   lucide.createIcons();
 }
@@ -62,15 +58,26 @@ export function renderAgentList() {
 /** Select an agent and load its sessions. */
 export function selectAgent(agentName) {
   if (state.selectedAgent === agentName) return;
+  // Save current input draft before switching agent tabs
+  saveInputDraft(state.activeSessionId);
   state.selectedAgent = agentName;
-  // Update agent list active state
-  document.querySelectorAll('#agent-list .agent-item').forEach(el => {
+  // Clear unread count for this agent
+  const prevCount = state.agentUnreadCounts[agentName] || 0;
+  if (prevCount > 0) {
+    state.agentUnreadCounts[agentName] = 0;
+    const el = document.querySelector(`#nav-agent-list .nav-agent[data-name="${agentName}"]`);
+    if (el) { const dot = el.querySelector('.agent-notif-dot'); if (dot) dot.remove(); }
+  }
+  // Switch back to sessions panel if on settings
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-sessions').classList.add('active');
+  document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
+  // Update nav bar active state
+  document.querySelectorAll('#nav-agent-list .nav-agent').forEach(el => {
     el.classList.toggle('active', el.dataset.name === agentName);
   });
   // Load sessions for this agent
   sendWs({type: 'listAgentSessions', name: agentName});
-  // Update header brand
-  updateHeaderBrand(agentName);
 }
 
 /** Update header brand to show agent display name. */
@@ -78,7 +85,7 @@ export function updateHeaderBrand(agentName) {
   const brandEl = document.querySelector('.header-brand');
   if (!brandEl) return;
   const agent = state.agentsData.find(a => a.name === agentName);
-  if (agent && agent.name !== 'Nebula') {
+  if (agent) {
     brandEl.textContent = agent.displayName || agent.name;
   } else {
     brandEl.textContent = 'nebflow';
@@ -104,15 +111,6 @@ export function renderSettings() {
         </div>
       </div>
     </div>
-    ${state.mcpServers && state.mcpServers.length > 0 ? `
-    <div class="settings-section">
-      <div class="settings-section-title">MCP Servers</div>
-      ${state.mcpServers.map(s => `
-      <div class="settings-row">
-        <span class="settings-label">${escapeHtml(s.id)}</span>
-        <div class="toggle ${s.enabled ? 'on' : ''}" data-mcp-id="${escapeHtml(s.id)}"></div>
-      </div>`).join('')}
-    </div>` : ''}
     <div class="settings-section">
       <div class="settings-section-title">Configuration</div>
       <div class="config-editor-wrap">
@@ -147,18 +145,6 @@ export function renderSettings() {
     });
   });
 
-  // MCP server toggles
-  content.querySelectorAll('[data-mcp-id]').forEach(toggle => {
-    toggle.addEventListener('click', function() {
-      this.classList.toggle('on');
-      const serverId = this.dataset.mcpId;
-      const enabled = this.classList.contains('on');
-      // Update local state
-      const server = state.mcpServers.find(s => s.id === serverId);
-      if (server) server.enabled = enabled;
-      sendWs({type: 'setMcpEnabled', serverId, enabled});
-    });
-  });
   // Config save — validate JSON before sending
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
     const cfg = document.getElementById('config-editor').value;
@@ -310,12 +296,15 @@ export function renderSessionSidebar(sessionData, activeId) {
     sessionList.appendChild(item);
   });
   if (typeof lucide !== 'undefined') lucide.createIcons();
-  // Update header session name
+  // Update header session name + brand
   const sessionNameEl = state.dom.sessionNameEl;
   const active = state.sessions.find(s => s.id === state.activeSessionId);
   if (active) {
     sessionNameEl.textContent = active.name;
     sessionNameEl.style.display = '';
+    // Update header brand based on session's agent
+    const agentName = active.agentName || 'Nebula';
+    updateHeaderBrand(agentName);
   } else {
     sessionNameEl.textContent = '';
     sessionNameEl.style.display = 'none';
@@ -574,6 +563,31 @@ export function setSessionAttention(sessionId, attention) {
   if (attention) state.attentionSessions.add(sessionId);
   else state.attentionSessions.delete(sessionId);
   updateSessionStatus(sessionId);
+  // Also update agent notification dot for attention (yellow dot for askUser)
+  const agentName = state.sessionAgentMap[sessionId];
+  if (agentName && agentName !== state.selectedAgent) {
+    if (attention) {
+      state.agentUnreadCounts[agentName] = (state.agentUnreadCounts[agentName] || 0) + 1;
+    }
+    updateAgentNotificationDotExternal(agentName);
+  }
+}
+
+// Update agent notification dot (callable from other modules)
+function updateAgentNotificationDotExternal(agentName) {
+  const el = document.querySelector(`#nav-agent-list .nav-agent[data-name="${agentName}"]`);
+  if (!el) return;
+  const count = state.agentUnreadCounts[agentName] || 0;
+  let dot = el.querySelector('.agent-notif-dot');
+  if (count > 0) {
+    if (!dot) {
+      dot = document.createElement('div');
+      dot.className = 'agent-notif-dot';
+      el.appendChild(dot);
+    }
+  } else if (dot) {
+    dot.remove();
+  }
 }
 
 /** Move a session item to the top of the non-pinned group in the sidebar (like WeChat). */

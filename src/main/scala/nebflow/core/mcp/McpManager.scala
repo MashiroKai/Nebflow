@@ -79,8 +79,8 @@ class McpManager private (
   private def connectServer(id: String, cfg: McpServerConfig, skipRegister: Boolean): IO[Unit] =
     (cfg.command, cfg.url) match
       case (Some(cmd), _) =>
-        val transport = new StdioTransport(cmd, cfg.args.getOrElse(Nil), cfg.env.getOrElse(Map.empty))
-        connectWithTransport(id, transport, skipRegister)
+        StdioTransport(cmd, cfg.args.getOrElse(Nil), cfg.env.getOrElse(Map.empty))
+          .flatMap(transport => connectWithTransport(id, transport, skipRegister))
       case (_, Some(url)) =>
         val transport = new HttpTransport(url, cfg.headers.getOrElse(Map.empty))
         connectWithTransport(id, transport, skipRegister)

@@ -54,7 +54,7 @@ Guidelines:
                 )
               )
             ),
-            "required" -> io.circe.Json.arr("question".asJson, "options".asJson)
+            "required" -> io.circe.Json.arr("question".asJson)
           )
         )
       ),

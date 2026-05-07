@@ -23,13 +23,16 @@ class FileLockManager private (locks: Ref[IO, Map[Path, Semaphore[IO]]]):
     yield a
 
   private def getOrCreate(path: Path): IO[Semaphore[IO]] =
-    locks.get.map(_.get(path)).flatMap {
-      case Some(sem) => IO.pure(sem)
-      case None =>
-        Semaphore[IO](1).flatTap { sem =>
-          locks.update(_.updated(path, sem))
-        }
-    }
+    // Speculatively create, then atomically check-and-insert.
+    // If another fiber won the race, we use theirs and discard ours.
+    for
+      sem <- Semaphore[IO](1)
+      existing <- locks.modify { m =>
+        m.get(path) match
+          case Some(existing) => (m, Some(existing))
+          case None => (m.updated(path, sem), None)
+      }
+    yield existing.getOrElse(sem)
 
 object FileLockManager:
 

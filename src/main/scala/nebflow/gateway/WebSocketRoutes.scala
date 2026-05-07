@@ -8,11 +8,11 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.core.*
+import nebflow.core.mcp.McpManager
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.service.*
 import nebflow.shared.*
 import nebflow.skill.SkillDiscovery
-import nebflow.core.mcp.McpManager
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -102,15 +102,13 @@ class WebSocketRoutes(
         case None => (agents, IO.unit)
     }.flatten
 
-  /** Route a message to the root agent of the currently active session. */
-  private def withActiveAgent(f: ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
-    sessionStore.getActiveId
-      .flatMap { sessionId =>
-        ensureRootAgent(sessionId).flatMap(f)
+  /** Route a message to the root agent of a specific session. Discards if sessionId is empty. */
+  private def routeToAgent(sessionId: String)(f: ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
+    if sessionId.nonEmpty then
+      ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
+        logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
       }
-      .handleErrorWith { e =>
-        logger.warn(s"Failed to route message to active agent: ${e.getMessage}")
-      }
+    else logger.warn("Dropping message: no sessionId provided") *> IO.unit
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
@@ -259,7 +257,7 @@ class WebSocketRoutes(
       )
     yield ()
 
-  private val MaxMessageSize = 1024 * 1024 // 1MB
+  private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
 
   private def handleMessage(
     text: String,
@@ -271,32 +269,15 @@ class WebSocketRoutes(
         case "askUserAnswer" =>
           parse(text).flatMap(_.hcursor.downField("answers").as[List[String]]).toOption match
             case Some(answers) =>
-              // Route to the session that asked the question, not the currently active session
-              val askSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption
-              askSessionId match
-                case Some(sid) =>
-                  ensureRootAgent(sid)
-                    .flatMap(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
-                    .handleErrorWith(e =>
-                      logger.warn(s"Failed to route askUserAnswer to session $sid: ${e.getMessage}")
-                    )
-                case None =>
-                  withActiveAgent(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
+              val askSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+              routeToAgent(askSessionId)(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
             case None => IO.unit
 
         case "permissionAnswer" =>
           val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
-          val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption
+          val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
           logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-            (permSessionId match
-              case Some(sid) =>
-                ensureRootAgent(sid)
-                  .flatMap(ref => IO(ref ! AgentCommand.PermissionAnswered(approved)))
-                  .handleErrorWith(e =>
-                    logger.warn(s"Failed to route permissionAnswer to session $sid: ${e.getMessage}")
-                  )
-              case None =>
-                withActiveAgent(ref => IO(ref ! AgentCommand.PermissionAnswered(approved))))
+            routeToAgent(permSessionId)(ref => IO(ref ! AgentCommand.PermissionAnswered(approved)))
 
         case "setPolicy" =>
           val policyStr = parse(text).flatMap(_.hcursor.downField("policy").as[String]).getOrElse("ask")
@@ -306,15 +287,18 @@ class WebSocketRoutes(
             broadcastServerConfig
 
         case "interrupt" =>
-          logger.info("User interrupted") *> withActiveAgent(ref => IO(ref ! AgentCommand.Interrupt()))
+          val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+          logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => IO(ref ! AgentCommand.Interrupt()))
 
         case "command" =>
           val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
           command match
             case "clear" =>
+              val clearSessionId =
+                parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
               logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
                 reminderStateRef.update(_.copy(highestPressureLevel = 0, writesSinceLastRead = Map.empty)) *>
-                withActiveAgent(ref => IO(ref ! AgentCommand.ClearReadTracker))
+                routeToAgent(clearSessionId)(ref => IO(ref ! AgentCommand.ClearReadTracker))
             case _ => IO.unit
 
         case "setThinking" =>
@@ -403,11 +387,26 @@ class WebSocketRoutes(
           else IO.unit
 
         case "createSession" =>
-          val name = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("New Session")
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val name = json.hcursor.downField("name").as[String].getOrElse("New Session")
+          val agentName = json.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
           sessionService
-            .createSession(name)
+            .createSession(name, agentName = agentName)
             .flatMap { _ =>
-              sessionService.sendSessionList(wsSend)
+              // Send filtered session list for the agent tab
+              agentName match
+                case Some(an) =>
+                  sessionStore.listSessionsByAgent(an).flatMap { sessions =>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "agentSessionList".asJson,
+                        "agentName" -> an.asJson,
+                        "sessions" -> sessions.asJson
+                      )
+                    )
+                  }
+                case None =>
+                  sessionService.sendSessionList(wsSend)
             }
             .handleErrorWith { e =>
               wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -547,31 +546,26 @@ class WebSocketRoutes(
 
         case "listAgents" =>
           agentService.listAgents.flatMap { agents =>
-            val always = ToolRegistry.AlwaysAvailable.toList.sorted
+            // All configurable tools from the tool library
+            val allToolNames = ToolRegistry.TOOL_MAP.keys.toList.sorted
+            // Always-auto-injected tools (not user-configurable)
+            val autoTools = ToolRegistry.AlwaysAvailableNonCompact.toList.sorted
             val agentsJson = agents.map { a =>
-              // Resolve actual tools: user-configured + auto-injected
-              val subagentTools = if a.subagents.nonEmpty then ToolRegistry.SubagentTools else Set.empty[String]
-              // Filter out wildcard "*" — it's a runtime marker, not a real tool name
-              val userTools = (a.tools.toSet ++ subagentTools).filterNot(_ == "*").toList.sorted
-              // User tools + always-available (always-available sent separately for UI distinction)
-              val allTools = (userTools ++ always).sorted
-              // Include MCP tool names for this agent
-              val mcpPrefix = s"mcp__agent__${a.name}__"
-              val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(_.startsWith(mcpPrefix)).toList
               io.circe.Json.obj(
                 "name" -> a.name.asJson,
                 "description" -> a.description.asJson,
                 "displayName" -> a.displayName.getOrElse(a.name).asJson,
                 "avatar" -> a.avatar.asJson,
-                "tools" -> (allTools ++ mcpTools).asJson,
-                "builtInTools" -> always.asJson,
-                "subagents" -> a.subagents.asJson
+                "tools" -> a.tools.asJson,
+                "mcpServers" -> a.mcpServers.asJson
               )
             }
             wsSend(
               io.circe.Json.obj(
                 "type" -> "agentList".asJson,
-                "agents" -> agentsJson.asJson
+                "agents" -> agentsJson.asJson,
+                "availableTools" -> allToolNames.asJson,
+                "autoTools" -> autoTools.asJson
               )
             )
           }
@@ -678,9 +672,9 @@ class WebSocketRoutes(
           val content = json.hcursor.downField("content").as[String].getOrElse("")
           val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
           val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
+          val msgSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
 
-          if content.trim == "__interrupt__" then withActiveAgent(ref => IO(ref ! AgentCommand.Interrupt()))
-          else if content.nonEmpty || attachments.nonEmpty then
+          if content.nonEmpty || attachments.nonEmpty then
             rateLimiter.check("ws").flatMap { allowed =>
               if !allowed then
                 logger.warn("Rate limit exceeded") *>
@@ -706,29 +700,27 @@ class WebSocketRoutes(
                       blocks += ContentBlock.Text(s"[file: $name] (文件过大，已截断前 ${maxChars} 字符)\n${data.take(maxChars)}")
                 }
 
-                sessionStore.getActiveMeta.flatMap { metaOpt =>
+                sessionStore.getSessionMeta(msgSessionId).flatMap { metaOpt =>
                   val sessionName = metaOpt.map(_.name).getOrElse("-")
                   logger.info(s"${logger.hl(sessionName)} User message: ${content
                       .take(60)}${if content.length > 60 then "..." else ""}") *>
                     logInputHistory(content, attachments) *>
                     // Record user message as UiMessage for history
-                    sessionStore.getActiveId.flatMap { sid =>
-                      if sid.nonEmpty then
-                        val attJson = attachments.map { att =>
-                          val name = att.hcursor.downField("name").as[String].getOrElse("")
-                          val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                          io.circe.Json.obj(
-                            "name" -> name.asJson,
-                            "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson
-                          )
-                        }
-                        sharedResources.sessionStore
-                          .appendUiMessages(sid, List(UiMessage.User(content, attJson)))
-                          .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
-                      else IO.unit
-                    } *> {
+                    (if msgSessionId.nonEmpty then
+                       val attJson = attachments.map { att =>
+                         val name = att.hcursor.downField("name").as[String].getOrElse("")
+                         val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                         io.circe.Json.obj(
+                           "name" -> name.asJson,
+                           "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson
+                         )
+                       }
+                       sharedResources.sessionStore
+                         .appendUiMessages(msgSessionId, List(UiMessage.User(content, attJson)))
+                         .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
+                     else IO.unit) *> {
                       val blocksList = blocks.toList
-                      withActiveAgent(ref =>
+                      routeToAgent(msgSessionId)(ref =>
                         IO(
                           ref ! AgentCommand
                             .UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty))
@@ -927,7 +919,7 @@ class WebSocketRoutes(
           sessionId = sessionId,
           agentId = "ask",
           tools = toolDefs,
-          maxTokens = Some(askDef.maxTokens),
+          maxTokens = Some(sharedResources.agentLibrary.globalMaxTokens),
           systemStable = Some(askDef.systemPrompt)
         )
         for

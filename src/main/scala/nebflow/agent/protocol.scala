@@ -88,6 +88,13 @@ object AgentCommand:
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None
   ) extends AgentCommand
 
+  // Internal — ReplaceToolResults from RemoveUnnecessaryTool
+  case class ReplaceToolResults(
+    rounds: Int,
+    summary: String,
+    replyTo: cats.effect.Deferred[IO, Either[String, Int]]
+  ) extends AgentCommand
+
   // Internal — subagent definition loaded, ready to spawn on actor thread
   case class SubagentDefLoaded(
     call: ToolCall,
@@ -287,9 +294,9 @@ case class AgentInfo(
   name: String,
   description: String,
   tools: List[String],
-  subagents: List[String],
   displayName: Option[String] = None,
-  avatar: Option[String] = None
+  avatar: Option[String] = None,
+  mcpServers: List[String] = Nil
 )
 
 // ============================================================

@@ -86,7 +86,7 @@ class AgentActorCompactionSpec extends FunSuite:
     )
     val state = mkState(2)
       .withMessages(originalMsgs)
-      .withPendingCompaction(Some(CompactionJob("sub-1", "micro", None, None)))
+      .withPendingCompaction(Some(CompactionJob("sub-1", "full", None, None)))
     // Simulate the success branch transformations in DelegateResult
     val compactedMsgs = List(Message(MessageRole.User, Left("summary")))
     val newState = state.withPendingCompaction(None).withSubagents(Map.empty)
