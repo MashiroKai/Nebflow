@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import cats.effect.IO
+import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.llm.{Config, NebflowServiceConfig}
 import nebflow.shared.Defaults
@@ -16,7 +17,11 @@ import nebflow.shared.Defaults
  *       agent.json
  *       system.md
  */
-class AgentLibrary(agentsDir: os.Path, serviceConfig: Option[NebflowServiceConfig] = None):
+class AgentLibrary(
+  agentsDir: os.Path,
+  serviceConfig: Option[NebflowServiceConfig] = None,
+  mcpManager: Option[nebflow.core.mcp.McpManager] = None
+):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
   private def resolveContextWindow(current: Int): Int =
@@ -94,11 +99,36 @@ class AgentLibrary(agentsDir: os.Path, serviceConfig: Option[NebflowServiceConfi
           }
           .toMap ++ builtins
     }.flatTap { defs =>
-      IO(logger.info(s"Loaded ${defs.size} agent definitions from $agentsDir: ${defs.keys.mkString(", ")}"))
+      // Connect MCP servers for agents that declare them
+      val mcpAgents = defs.values.filter(_.mcp.isDefined).toList
+      mcpAgents.traverse_ { defn =>
+        val cfg = defn.mcp.get
+        val serverId = s"agent__${defn.name}"
+        val mcpCfg = AgentMcpConfig.toMcpServerConfig(cfg)
+        mcpManager match
+          case Some(mgr) =>
+            mgr
+              .startServer(serverId, mcpCfg)
+              .timeout(scala.concurrent.duration.Duration(5, "s"))
+              .handleErrorWith { e =>
+                IO(logger.warn(s"MCP for agent '${defn.name}' failed: ${e.getMessage}"))
+              }
+          case None => IO.unit
+      } *> IO(logger.info(s"Loaded ${defs.size} agent definitions from $agentsDir: ${defs.keys.mkString(", ")}"))
     }
 
   def get(name: String): IO[Option[AgentDef]] =
     loadAll().map(_.get(name).orElse(builtins.get(name)))
+
+  /** Returns frontend configs from agents that declare them. */
+  def frontendConfigs(): IO[Map[String, FrontendConfig]] =
+    loadAll().map(
+      _.values
+        .flatMap { defn =>
+          defn.frontend.map(defn.name -> _)
+        }
+        .toMap
+    )
 
   /** Resolved context window from nebflow.json primary model config. */
   def resolvedContextWindow: Int = resolveContextWindow(Defaults.ContextWindow)

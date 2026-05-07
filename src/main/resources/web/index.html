@@ -16,11 +16,8 @@
 <body>
   <!-- Nav Bar (54px icon strip) -->
   <div id="nav-bar">
-    <div class="nav-item active" data-tab="sessions" title="Sessions">
+    <div class="nav-item active" data-tab="main" title="Sessions">
       <i data-lucide="message-square"></i>
-    </div>
-    <div class="nav-item" data-tab="agents" title="Agents">
-      <i data-lucide="bot"></i>
     </div>
     <div class="nav-item" data-tab="settings" title="Settings">
       <i data-lucide="settings"></i>
@@ -31,29 +28,30 @@
     </div>
   </div>
 
-  <!-- Sidebar Panel (220px, content changes by active tab) -->
+  <!-- Sidebar Panel (280px, split: agent list + session list) -->
   <div id="sidebar-panel">
-    <!-- Sessions Panel -->
-    <div id="panel-sessions" class="panel active">
-      <div class="panel-header">
-        <span class="panel-title">Sessions</span>
-        <button id="new-session-btn" title="New Session">+</button>
+    <!-- Main Panel: Agent → Session two-level -->
+    <div id="panel-main" class="panel active">
+      <div id="sidebar-agent-col">
+        <div class="panel-header">
+          <span class="panel-title">Agents</span>
+          <button id="new-agent-btn" title="New Agent">+</button>
+        </div>
+        <div id="agent-list"></div>
       </div>
-      <div id="search-bar">
-        <i data-lucide="search"></i>
-        <input id="search-input" type="text" placeholder="搜索聊天记录" autocomplete="off">
-        <button id="search-clear" title="Clear">&times;</button>
+      <div id="sidebar-session-col">
+        <div class="panel-header">
+          <span class="panel-title">Sessions</span>
+          <button id="new-session-btn" title="New Session">+</button>
+        </div>
+        <div id="search-bar">
+          <i data-lucide="search"></i>
+          <input id="search-input" type="text" placeholder="搜索聊天记录" autocomplete="off">
+          <button id="search-clear" title="Clear">&times;</button>
+        </div>
+        <div id="search-results"></div>
+        <div id="session-list"></div>
       </div>
-      <div id="search-results"></div>
-      <div id="session-list"></div>
-    </div>
-    <!-- Agents Panel -->
-    <div id="panel-agents" class="panel">
-      <div class="panel-header">
-        <span class="panel-title">Agents</span>
-        <button id="new-agent-btn" title="New Agent">+</button>
-      </div>
-      <div id="agent-list"></div>
     </div>
     <!-- Settings Panel -->
     <div id="panel-settings" class="panel">
