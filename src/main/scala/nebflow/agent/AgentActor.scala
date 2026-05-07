@@ -7,6 +7,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.agent.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
+import nebflow.llm.FallbackExhaustedError
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
@@ -127,7 +128,7 @@ object AgentActor extends AgentCore with AgentSession:
 
           val userMsg = blocks.filter(_.nonEmpty) match
             case Some(bl) => Message(MessageRole.User, Right(bl))
-            case None     => Message(MessageRole.User, Left(text))
+            case None => Message(MessageRole.User, Left(text))
           val newMessages = dedupedState.messages :+ userMsg
           pipeLlmCall(
             agentDef,
@@ -226,13 +227,21 @@ object AgentActor extends AgentCore with AgentSession:
         // Discard stale results from a previous (interrupted) turn
         if turnId != state.currentTurnId then
           logAgentEvent(
-            ctx, agentDef, depth, state.sessionId, state.sessionName,
-            "stale-llm-complete-discarded", s"turnId=$turnId current=${state.currentTurnId}"
+            ctx,
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "stale-llm-complete-discarded",
+            s"turnId=$turnId current=${state.currentTurnId}"
           )
           Behaviors.same
         else
           val updatedState = state.withLatestUsage(result.usage.orElse(state.latestUsage))
-          if result.toolCalls.isEmpty then
+          if result.toolCalls.nonEmpty then
+            pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
+          // Has text or thinking content — normal completion
+          else if result.text.nonEmpty || result.thinking.nonEmpty then
             finishTurn(
               agentDef,
               resources,
@@ -247,15 +256,181 @@ object AgentActor extends AgentCore with AgentSession:
               textAlreadyStreamed = true,
               result.model
             )
-          else pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
-      end if
+          // Empty response — something went wrong, check stopReason
+          else
+            val stopReason = result.stopReason.getOrElse("")
+            val isContextError = stopReason.toLowerCase.contains("context") ||
+              stopReason.toLowerCase.contains("exceeded") ||
+              stopReason.toLowerCase.contains("limit") ||
+              stopReason.toLowerCase.contains("too long") ||
+              stopReason.toLowerCase.contains("too_long")
+            val isMaxTokens = stopReason.equalsIgnoreCase("max_tokens") ||
+              stopReason.equalsIgnoreCase("length")
+
+            if isContextError then
+              // Context window exceeded — trigger compaction if not already compacting
+              logAgentEvent(
+                ctx,
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "context-exceeded",
+                s"stopReason=$stopReason"
+              )
+              if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax then
+                // Compaction already in progress or circuit breaker open — report error
+                val msg = "Context window exceeded and compaction is unavailable. " +
+                  "Please start a new session or use /clear to reset."
+                finishTurn(
+                  agentDef,
+                  resources,
+                  depth,
+                  parentRef,
+                  updatedState,
+                  stash,
+                  ctx,
+                  msg,
+                  replyTo,
+                  None,
+                  textAlreadyStreamed = false,
+                  result.model
+                )
+              else
+                // Trigger compaction, then retry
+                val subId = s"context-manage-${java.util.UUID.randomUUID().toString.take(8)}"
+                val io = resources.agentLibrary.get("context-manage").flatMap { defnOpt =>
+                  IO(ctx.self ! AgentCommand.CompactionDefLoaded(defnOpt))
+                }
+                resources.dispatcher.unsafeRunAndForget(
+                  io.handleErrorWith { e =>
+                    IO(
+                      NebflowLogger.forName("nebflow.agent").warn(s"CompactionDefLoaded lookup failed: ${e.getMessage}")
+                    ) *>
+                      IO(ctx.self ! AgentCommand.CompactionDefLoaded(None))
+                  }
+                )
+                val pending = CompactionJob(subId, "full", None, replyTo)
+                resources.dispatcher.unsafeRunAndForget(
+                  emitStreamIO(
+                    state.wsSend,
+                    ctx,
+                    AgentStreamEvent.CompactStart(
+                      "full",
+                      result.usage.map(_.inputTokens),
+                      Some(agentDef.contextWindow - CompactConfig().bufferTokens)
+                    ),
+                    isSubagent = depth > 0,
+                    state.sessionId
+                  ).handleErrorWith(_ => IO.unit)
+                )
+                processing(
+                  agentDef,
+                  resources,
+                  depth,
+                  parentRef,
+                  updatedState.withPendingCompaction(Some(pending)),
+                  stash,
+                  ctx
+                )
+              end if
+            else if isMaxTokens then
+              // Max tokens reached — notify frontend and finish turn
+              logAgentEvent(
+                ctx,
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "max-tokens",
+                s"stopReason=$stopReason"
+              )
+              resources.dispatcher.unsafeRunAndForget(
+                state
+                  .wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "maxTokens".asJson,
+                      "sessionId" -> state.sessionId.asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+              )
+              finishTurn(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                updatedState,
+                stash,
+                ctx,
+                "[Response truncated: max output tokens reached]",
+                replyTo,
+                None,
+                textAlreadyStreamed = false,
+                result.model
+              )
+            else
+              // Unknown empty response — treat as error
+              logAgentEvent(
+                ctx,
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "empty-response",
+                s"stopReason=$stopReason usage=${result.usage.map(u => s"in=${u.inputTokens} out=${u.outputTokens}").getOrElse("none")}"
+              )
+              val errMsg =
+                if stopReason.nonEmpty then s"LLM returned empty response (stopReason: $stopReason)"
+                else "LLM returned empty response with no content"
+              parentRef match
+                case Some(p) =>
+                  p ! AgentCommand.DelegateResult(
+                    ctx.self.path.name,
+                    Left(
+                      AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, errMsg)
+                    )
+                  )
+                  Behaviors.stopped
+                case None =>
+                  resources.dispatcher.unsafeRunAndForget(
+                    state
+                      .wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "error".asJson,
+                          "sessionId" -> state.sessionId.asJson,
+                          "message" -> errMsg.asJson
+                        )
+                      )
+                      .handleErrorWith(_ => IO.unit)
+                  )
+                  emitStream(
+                    resources.dispatcher,
+                    state.wsSend,
+                    ctx,
+                    AgentStreamEvent.Done(result.model),
+                    isSubagent = false,
+                    state.sessionId
+                  )
+                  stash.unstashAll(
+                    idle(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
+                  )
+              end match
+            end if
+          end if
+        end if
 
       case LlmFailed(error, replyTo, turnId) =>
         // Discard stale errors from a previous (interrupted) turn
         if turnId != state.currentTurnId then
           logAgentEvent(
-            ctx, agentDef, depth, state.sessionId, state.sessionName,
-            "stale-llm-failed-discarded", s"turnId=$turnId current=${state.currentTurnId}"
+            ctx,
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "stale-llm-failed-discarded",
+            s"turnId=$turnId current=${state.currentTurnId}"
           )
           Behaviors.same
         else
@@ -274,13 +449,27 @@ object AgentActor extends AgentCore with AgentSession:
             case Some(p) => p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(agentError))
             case None =>
               // Emit error to frontend so the user knows what happened, then Done to clear the spinner
+              val errMsg = error match
+                case e: FallbackExhaustedError =>
+                  val attempts = e.attempts
+                    .map { a =>
+                      val detail = a.message.getOrElse(a.reason.map(_.toString).getOrElse("unknown"))
+                      s"${a.providerId}/${a.model}: $detail"
+                    }
+                    .mkString("; ")
+                  s"All providers failed: $attempts"
+                case _ =>
+                  Option(error.getMessage)
+                    .filter(_.nonEmpty)
+                    .map(m => s"LLM request failed: ${m.take(200)}")
+                    .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
               resources.dispatcher.unsafeRunAndForget(
                 state
                   .wsSend(
                     io.circe.Json.obj(
                       "type" -> "error".asJson,
                       "sessionId" -> state.sessionId.asJson,
-                      "message" -> s"LLM request failed: ${error.getClass.getSimpleName}".asJson
+                      "message" -> errMsg.asJson
                     )
                   )
                   .handleErrorWith(_ => IO.unit)
@@ -293,9 +482,18 @@ object AgentActor extends AgentCore with AgentSession:
                 isSubagent = false,
                 state.sessionId
               )
+          end match
           replyTo.foreach(_ ! AgentEvent.Failed(state.sessionId.getOrElse(""), agentError))
           stash.unstashAll(
-            idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Error(error.getMessage)), stash, ctx)
+            idle(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state.withStatus(AgentStatus.Error(error.getMessage)),
+              stash,
+              ctx
+            )
           )
         end if
 
@@ -860,15 +1058,23 @@ object AgentActor extends AgentCore with AgentSession:
       )
     else
       val doneJson = AgentStreamEvent.Done(model).toJson(ctx.self.path.name, false, state.sessionId)
-      NebflowLogger.forName("nebflow.agent").info(s"finishTurn: sending Done sessionId=${state.sessionId.getOrElse("-")} jsonLen=${doneJson.noSpaces.length}")
+      NebflowLogger
+        .forName("nebflow.agent")
+        .info(
+          s"finishTurn: sending Done sessionId=${state.sessionId.getOrElse("-")} jsonLen=${doneJson.noSpaces.length}"
+        )
       resources.dispatcher.unsafeRunAndForget(
-        state.wsSend(doneJson)
+        state
+          .wsSend(doneJson)
           .handleErrorWith(e =>
             IO(NebflowLogger.forName("nebflow.agent").warn(s"finishTurn: Done event delivery failed: ${e.getMessage}"))
           ) *> IO {
-            NebflowLogger.forName("nebflow.agent").info(s"finishTurn: Done event delivered sessionId=${state.sessionId.getOrElse("-")}")
-          }
+          NebflowLogger
+            .forName("nebflow.agent")
+            .info(s"finishTurn: Done event delivered sessionId=${state.sessionId.getOrElse("-")}")
+        }
       )
+    end if
     parentRef match
       case Some(parent) =>
         parent ! AgentCommand.DelegateResult(ctx.self.path.name, Right(text))

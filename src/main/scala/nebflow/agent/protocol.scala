@@ -54,11 +54,17 @@ object AgentCommand:
   case class StreamFiberStarted(fiber: cats.effect.Fiber[IO, Throwable, Unit]) extends AgentCommand
 
   // Internal — piped IO results (used by AgentActor)
-  case class LlmComplete(result: ConsumeResult, replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]], turnId: Long)
-      extends AgentCommand
+  case class LlmComplete(
+    result: ConsumeResult,
+    replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]],
+    turnId: Long
+  ) extends AgentCommand
 
-  case class LlmFailed(error: Throwable, replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]], turnId: Long)
-      extends AgentCommand
+  case class LlmFailed(
+    error: Throwable,
+    replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]],
+    turnId: Long
+  ) extends AgentCommand
 
   case class ToolsComplete(
     results: List[(ToolCall, ToolExecResult)],
@@ -107,7 +113,7 @@ object AgentCommand:
   case class BackgroundTaskNotification(
     taskId: String,
     description: String,
-    status: String,        // "completed" | "failed" | "killed"
+    status: String, // "completed" | "failed" | "killed"
     output: String,
     exitCode: Option[Int] = None
   ) extends AgentCommand
