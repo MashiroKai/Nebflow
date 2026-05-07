@@ -52,9 +52,28 @@ class AgentLibrary(agentsDir: os.Path, serviceConfig: Option[NebflowServiceConfi
       subagents = Nil,
       systemPrompt = ""
     )
+    val askAgent = AgentDef(
+      name = "Ask",
+      description = "Quick follow-up Q&A agent with read and web search tools",
+      modelRoute = "default",
+      contextWindow = Defaults.ContextWindow,
+      maxTokens = 4096,
+      tools = List("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Curl"),
+      subagents = Nil,
+      systemPrompt =
+        """You are a helpful assistant answering a quick follow-up question about an ongoing conversation.
+          |You have access to file reading, code search, and web search tools to help answer accurately.
+          |
+          |Rules:
+          |- Answer the user's question directly and concisely.
+          |- Use tools when needed to find accurate information.
+          |- Your response will NOT be saved to the conversation history.
+          |- This is a single exchange: answer the question, then stop.""".stripMargin
+    )
     Map(
       "context-manage" -> ctxManage,
-      "Nebula" -> defaultAgent.copy(contextWindow = resolveContextWindow(defaultAgent.contextWindow))
+      "Nebula" -> defaultAgent.copy(contextWindow = resolveContextWindow(defaultAgent.contextWindow)),
+      "Ask" -> askAgent.copy(contextWindow = resolveContextWindow(askAgent.contextWindow))
     )
 
   end builtins
