@@ -328,7 +328,7 @@ class SessionStore(sessionsDir: os.Path):
               try
                 val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
                 msgs.zipWithIndex.takeWhile(_ => !stop).foreach { case (msg, idx) =>
-                  if results.size >= maxResults then { stop = true }
+                  if results.size >= maxResults then stop = true
                   if !stop then
                     msg match
                       case UiMessage.User(text, _) if text.toLowerCase.contains(q) =>
@@ -348,6 +348,7 @@ class SessionStore(sessionsDir: os.Path):
                       case _ => ()
                 }
               catch case _: Exception => ()
+          end if
         }
         results.toList
       }
@@ -375,6 +376,7 @@ case class SearchHit(
 )
 
 object SearchHit:
+
   given Encoder[SearchHit] = Encoder.instance { h =>
     Json.obj(
       "sessionId" -> h.sessionId.asJson,

@@ -129,7 +129,8 @@ object Fallback:
             Some(classification.permanence),
             durationMs,
             maxRetries - retriesLeft,
-            java.time.Instant.now().toString
+            java.time.Instant.now().toString,
+            classification.message.orElse(Option(error.getMessage))
           )
           onAttempt.traverse_(_.apply(failAttempt))
           val allFailures = priorFailures :+ failAttempt
