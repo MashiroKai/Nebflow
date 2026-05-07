@@ -1,8 +1,10 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.effect.Deferred
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.agent.AgentCommand
 import nebflow.shared.Defaults
 
 import scala.concurrent.TimeoutException
@@ -11,6 +13,8 @@ import scala.concurrent.duration.*
 object BashTool extends Tool:
   val DEFAULT_TIMEOUT = 120_000L // 2 minutes
   val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
+  /** Foreground commands running longer than this are automatically moved to background. */
+  val AutoBackgroundThresholdMs = 30_000L
 
   val name = "Bash"
 
@@ -21,6 +25,7 @@ Usage:
 - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd.
 - You may specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). By default, your command will timeout after 120000ms (2 minutes).
 - Use run_in_background for long-running commands. Retrieve results later with the returned job ID.
+- Foreground commands exceeding 30s are automatically moved to background.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -142,6 +147,7 @@ Git safety:
     else if result.startsWith("[Blocked by sandbox") then "Blocked"
     else if result.startsWith("[Background job") then "Background"
     else if result.startsWith("[Sandbox bypassed]") then "Sandbox bypassed"
+    else if result.startsWith("[moved to background]") then "Auto-background"
     else if result.startsWith("[Command executed successfully with no output]") then "No output"
     else
       val lines = result.split('\n').filter(_.trim.nonEmpty)
@@ -208,36 +214,123 @@ Git safety:
               val sandboxMark = injectionWarning.map(_ => "[Sandbox bypassed] ").getOrElse("")
               ShellSession.forSession(sessionId).flatMap { shell =>
                 if background then
-                  shell.executeBackground(command, timeoutDuration).map { jobId =>
+                  val onComplete = makeNotifyCallback(command, desc, ctx)
+                  shell.executeBackground(command, timeoutDuration, desc, onComplete).map { jobId =>
                     Right(s"$sandboxMark[Background job started] Job ID: $jobId\nUse this ID to check status later.")
                   }
-                else executeAndFormat(shell, command, timeoutDuration, desc, sandboxMark)
+                else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, sandboxMark, ctx)
               }
           end match
         end if
     end match
   end call
 
-  private def executeAndFormat(
+  /**
+   * Execute a command in the foreground with an auto-background threshold.
+   * If the command completes within the threshold, return result directly.
+   * If the threshold expires first, the command continues running in the background
+   * and its result will be delivered via BackgroundTaskNotification when it finishes.
+   */
+  private def executeForegroundWithAutoBackground(
     shell: ShellSession,
     command: String,
     timeout: FiniteDuration,
     desc: Option[String],
-    sandboxMark: String
+    sandboxMark: String,
+    ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    shell
-      .execute(command, timeout)
-      .map { result =>
-        val prefix = desc.map(d => s"[$d]\n").getOrElse("")
-        val dirLine = s"(cwd: ${result.cwd})\n"
-        val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
-        val output = result.stdout + errLine
-        val full = sandboxMark + prefix + dirLine + output
-        if full.trim.isEmpty then Right(sandboxMark + "[Command executed successfully with no output]")
-        else Right(full)
-      }
-      .handleErrorWith {
-        case _: TimeoutException => IO.pure(Left(ToolError(s"[Command timed out after ${timeout.toMillis}ms]")))
-        case e => IO.pure(Left(ToolError(s"Error: ${e.getMessage}")))
-      }
+    val threshold = AutoBackgroundThresholdMs.millis
+    for
+      // Ref to store command result when it finishes
+      resultRef <- IO.ref[Option[Either[Throwable, ProcessResult]]](None)
+      // Deferred signals "something happened" (either command done or threshold expired)
+      signal <- Deferred[IO, Unit]
+      // Flag to distinguish which side won
+      thresholdWon <- IO.ref(false)
+
+      // Start the actual command — runs to completion, never cancelled
+      commandFiber <- (for
+        r <- shell.execute(command, timeout).attempt
+        _ <- resultRef.set(Some(r))
+        _ <- signal.complete(()).void  // no-op if threshold already completed it
+      yield ()).start
+
+      // Start the threshold timer
+      _ <- (for
+        _ <- IO.sleep(threshold)
+        _ <- thresholdWon.set(true)
+        _ <- signal.complete(()).void  // no-op if command already completed it
+      yield ()).start
+
+      // Block until either command finishes or threshold expires
+      _ <- signal.get
+      didThresholdWin <- thresholdWon.get
+      resultOpt <- resultRef.get
+      // If threshold won, start a background fiber that waits for command completion and notifies agent
+      _ <- if didThresholdWin then
+        val onComplete = makeNotifyCallback(command, desc, ctx)
+        onComplete.fold(IO.unit) { cb =>
+          (for
+            _ <- commandFiber.joinWithNever
+            r <- resultRef.get
+            _ <- cb(r.getOrElse(Left(new Exception("No result after fiber completed"))))
+          yield ()).start.void
+        }
+      else IO.unit
+    yield
+      if !didThresholdWin then
+        resultOpt match
+          case Some(Right(pr)) => formatResult(pr, desc, sandboxMark)
+          case Some(Left(_: TimeoutException)) => Left(ToolError(s"[Command timed out after ${timeout.toMillis}ms]"))
+          case Some(Left(e)) => Left(ToolError(s"Error: ${e.getMessage}"))
+          case None => Left(ToolError("[Unexpected: no result from foreground command]"))
+      else
+        Right(
+          s"$sandboxMark[moved to background] Command is taking longer than ${threshold.toSeconds}s.\n" +
+            s"The result will be delivered automatically when the command finishes."
+        )
+    end for
+
+  private def formatResult(
+    result: ProcessResult,
+    desc: Option[String],
+    sandboxMark: String
+  ): Either[ToolError, String] =
+    val prefix = desc.map(d => s"[$d]\n").getOrElse("")
+    val dirLine = s"(cwd: ${result.cwd})\n"
+    val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
+    val output = result.stdout + errLine
+    val full = sandboxMark + prefix + dirLine + output
+    if full.trim.isEmpty then Right(sandboxMark + "[Command executed successfully with no output]")
+    else Right(full)
+
+  /** Build an on_complete callback that sends BackgroundTaskNotification to the agent actor. */
+  private def makeNotifyCallback(
+    command: String,
+    desc: Option[String],
+    ctx: ToolContext
+  ): Option[Either[Throwable, ProcessResult] => IO[Unit]] =
+    ctx.agentActorRef.map { ref =>
+      (result: Either[Throwable, ProcessResult]) =>
+        val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+        val description = desc.getOrElse(firstLine)
+        val notification = result match
+          case Right(pr) =>
+            val output = pr.stdout + (if pr.stderr.nonEmpty then s"\n[stderr]:\n${pr.stderr}" else "")
+            AgentCommand.BackgroundTaskNotification(
+              taskId = "",
+              description = description,
+              status = "completed",
+              output = output,
+              exitCode = Some(pr.exitCode)
+            )
+          case Left(e) =>
+            AgentCommand.BackgroundTaskNotification(
+              taskId = "",
+              description = description,
+              status = "failed",
+              output = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+            )
+        IO(ref ! notification)
+    }
 end BashTool
