@@ -19,7 +19,7 @@ export default {
   // Session
   activeSessionId: null,
   sessions: [],
-  unreadSessions: new Set(),
+  unreadSessions: new Set(safeParse(localStorage.getItem('nebflow_unread'), [])),
   markedUnreadSessions: new Set(safeParse(localStorage.getItem('nebflow_marked_unread'), [])),
   pinnedSessions: new Set(safeParse(localStorage.getItem('nebflow_pinned'), [])),
   attentionSessions: new Set(),
@@ -95,6 +95,7 @@ export default {
   // /ask command
   currentAskBubble: null,
   askAnswerText: '',
+  pendingAskQuestion: '',
 
   // Slash autocomplete
   slashSelectedIndex: 0,

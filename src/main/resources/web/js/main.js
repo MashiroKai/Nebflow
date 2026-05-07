@@ -14,7 +14,8 @@ import {
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
-  switchSession, deleteSession, formatSessionTime, setSessionAttention
+  switchSession, deleteSession, formatSessionTime, setSessionAttention,
+  persistUnread
 } from './sidebar.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
@@ -98,6 +99,7 @@ if (typeof lucide !== 'undefined') lucide.createIcons();
 function markSessionUnread(sessionId) {
   if (state.unreadSessions.has(sessionId)) return;
   state.unreadSessions.add(sessionId);
+  persistUnread();
   window.dispatchEvent(new CustomEvent('session-unread', { detail: { sessionId } }));
 }
 
@@ -335,12 +337,6 @@ onMessage('askPermission', (msg) => {
 // --- Session list (global) ---
 let restoredSessionId = null;
 onMessage('sessionList', (msg) => {
-  // Restore unread state from server-persisted hasUnread field
-  (msg.sessions || []).forEach(s => {
-    if (s.hasUnread && !state.unreadSessions.has(s.id) && !state.markedUnreadSessions.has(s.id)) {
-      state.unreadSessions.add(s.id);
-    }
-  });
   renderSessionSidebar(msg.sessions, msg.activeId);
   // Only restore messages on first load (before any session was active)
   if (!restoredSessionId && msg.activeId) {
@@ -396,11 +392,13 @@ onMessage('historyPage', (msg) => {
     state.historyTotal = msg.total;
     state.historyHasMore = msg.hasMore;
     state.dom.chat.innerHTML = '';
-    restoreFromBackendHistory(msg.messages);
+    // If session is busy with a pending askUser, skip the last one in history — it will be rendered interactively below
+    const hasPendingAskUser = state.busySessionIds.has(sid) && [...msg.messages].reverse().find(m => m.type === 'askUser');
+    restoreFromBackendHistory(msg.messages, !!hasPendingAskUser);
 
     // Re-render interactive AskUser if session is still busy with a pending one
     if (state.busySessionIds.has(sid)) {
-      const lastAskUser = [...msg.messages].reverse().find(m => m.type === 'askUser');
+      const lastAskUser = hasPendingAskUser;
       if (lastAskUser && lastAskUser.items) {
         renderAskUser(lastAskUser.items, sid);
       }
@@ -425,10 +423,11 @@ onMessage('historyPage', (msg) => {
     if (state.searchNavigateTarget && state.searchNavigateTarget.sessionId === sid) {
       const target = state.searchNavigateTarget;
       state.searchNavigateTarget = null;
-      const msgIdx = target.messageIndex;
+      // messageIndex is in the full array; adjust by the loaded page offset
+      const domIdx = target.messageIndex - msg.offset;
       const rows = state.dom.chat.querySelectorAll('.row');
-      if (msgIdx < rows.length) {
-        const targetRow = rows[msgIdx];
+      if (domIdx >= 0 && domIdx < rows.length) {
+        const targetRow = rows[domIdx];
         targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
         targetRow.style.transition = 'background 0.3s';
         targetRow.style.background = 'rgba(7,193,96,0.15)';
@@ -704,10 +703,22 @@ onMessage('taskListUpdate', (msg) => {
 
 // --- /ask command ---
 onMessage('askTextDelta', (msg) => {
+  const sid = msg.sessionId || state.activeSessionId;
+  if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   if (isActive(msg)) appendAskAnswer(msg.delta);
 });
 onMessage('askDone', (msg) => {
-  if (isActive(msg)) finishAskAnswer();
+  const sid = msg.sessionId || state.activeSessionId;
+  const durationMs = consumeTurnDuration(sid) || msg.durationMs;
+  if (isActive(msg)) {
+    const answer = state.askAnswerText || '';
+    const question = state.pendingAskQuestion || '';
+    finishAskAnswer(durationMs, msg.model);
+    if (question || answer) {
+      saveMsg({ type: 'ask', question, answer, durationMs, model: msg.model }, msg.sessionId);
+    }
+    state.pendingAskQuestion = '';
+  }
 });
 onMessage('askError', (msg) => {
   if (isActive(msg)) renderAskError(msg.message);

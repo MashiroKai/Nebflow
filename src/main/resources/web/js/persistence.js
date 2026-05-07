@@ -85,19 +85,20 @@ export function restoreFromStorage() {
       }
       (m.attachments || []).forEach(att => {
         const bubble = document.createElement('div');
-        bubble.className = 'bubble user';
+        bubble.className = 'bubble user att-bubble';
         if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
           const img = document.createElement('img');
           img.src = att.preview;
-          img.style.maxWidth = '180px';
-          img.style.maxHeight = '180px';
-          img.style.borderRadius = '8px';
+          img.className = 'att-img';
           bubble.appendChild(img);
-        } else {
-          bubble.style.fontSize = '13px';
           const tag = document.createElement('span');
-          tag.className = 'file-tag';
-          tag.textContent = (att.name || 'file');
+          tag.className = 'att-file-tag';
+          tag.textContent = '[image' + (att.name ? ': ' + att.name : '') + ']';
+          bubble.appendChild(tag);
+        } else {
+          const tag = document.createElement('span');
+          tag.className = 'att-file-tag';
+          tag.textContent = '[file' + (att.name ? ': ' + att.name : '') + ']';
           bubble.appendChild(tag);
         }
         row.appendChild(bubble);
@@ -176,6 +177,45 @@ export function restoreFromStorage() {
         box.appendChild(optsDiv);
       });
       bubble.appendChild(box);
+    } else if (m.type === 'ask') {
+      // Ask question (user side)
+      const qRow = document.createElement('div');
+      qRow.className = 'row user';
+      const qBubble = document.createElement('div');
+      qBubble.className = 'bubble user';
+      const qLabel = document.createElement('div');
+      qLabel.className = 'ask-label';
+      qLabel.textContent = 'Ask';
+      const qText = document.createElement('div');
+      qText.textContent = m.question || '';
+      qBubble.appendChild(qLabel);
+      qBubble.appendChild(qText);
+      qRow.appendChild(qBubble);
+      chat.appendChild(qRow);
+      // Ask answer (AI side)
+      if (m.answer) {
+        const aRow = document.createElement('div');
+        aRow.className = 'row ai';
+        const aBubble = document.createElement('div');
+        aBubble.className = 'bubble ai';
+        const aLabel = document.createElement('div');
+        aLabel.className = 'ask-label';
+        aLabel.textContent = 'Ask';
+        const aContent = document.createElement('div');
+        aContent.innerHTML = renderMarkdownWithMath(m.answer);
+        aBubble.appendChild(aLabel);
+        aBubble.appendChild(aContent);
+        aRow.appendChild(aBubble);
+        if (m.durationMs != null && m.durationMs > 0) {
+          const badge = document.createElement('div');
+          badge.className = 'duration-badge';
+          let text = pickThinkingPhrase(m.durationMs, i);
+          if (m.model) text += ' · ' + m.model;
+          badge.textContent = text;
+          aRow.appendChild(badge);
+        }
+        chat.appendChild(aRow);
+      }
     } else if (m.type === 'agent') {
       const row = document.createElement('div');
       row.className = 'row ai agent-row';
@@ -217,8 +257,15 @@ export function restoreFromStorage() {
 
 // ---------- Replay backend history messages into the DOM ----------
 // Same logic as restoreFromStorage but takes messages array directly (from backend).
-export function restoreFromBackendHistory(msgs) {
+export function restoreFromBackendHistory(msgs, skipLastAskUser = false) {
   const chat = state.dom.chat;
+  // Find the index of the last askUser message so we can skip it if needed
+  let lastAskUserIdx = -1;
+  if (skipLastAskUser) {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].type === 'askUser') { lastAskUserIdx = i; break; }
+    }
+  }
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
       const row = document.createElement('div');
@@ -233,19 +280,20 @@ export function restoreFromBackendHistory(msgs) {
       }
       (m.attachments || []).forEach(att => {
         const bubble = document.createElement('div');
-        bubble.className = 'bubble user';
+        bubble.className = 'bubble user att-bubble';
         if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
           const img = document.createElement('img');
           img.src = att.preview;
-          img.style.maxWidth = '180px';
-          img.style.maxHeight = '180px';
-          img.style.borderRadius = '8px';
+          img.className = 'att-img';
           bubble.appendChild(img);
-        } else {
-          bubble.style.fontSize = '13px';
           const tag = document.createElement('span');
-          tag.className = 'file-tag';
-          tag.textContent = (att.name || 'file');
+          tag.className = 'att-file-tag';
+          tag.textContent = '[image' + (att.name ? ': ' + att.name : '') + ']';
+          bubble.appendChild(tag);
+        } else {
+          const tag = document.createElement('span');
+          tag.className = 'att-file-tag';
+          tag.textContent = '[file' + (att.name ? ': ' + att.name : '') + ']';
           bubble.appendChild(tag);
         }
         row.appendChild(bubble);
@@ -296,6 +344,7 @@ export function restoreFromBackendHistory(msgs) {
         if (hasBody) attachToolClick(card);
       }
     } else if (m.type === 'askUser') {
+      if (i === lastAskUserIdx) return; // Skip — will be rendered interactively
       const row = document.createElement('div');
       row.className = 'row ai';
       const bubble = document.createElement('div');
@@ -323,6 +372,45 @@ export function restoreFromBackendHistory(msgs) {
         box.appendChild(optsDiv);
       });
       bubble.appendChild(box);
+    } else if (m.type === 'ask') {
+      // Ask question (user side)
+      const qRow = document.createElement('div');
+      qRow.className = 'row user';
+      const qBubble = document.createElement('div');
+      qBubble.className = 'bubble user';
+      const qLabel = document.createElement('div');
+      qLabel.className = 'ask-label';
+      qLabel.textContent = 'Ask';
+      const qText = document.createElement('div');
+      qText.textContent = m.question || '';
+      qBubble.appendChild(qLabel);
+      qBubble.appendChild(qText);
+      qRow.appendChild(qBubble);
+      chat.appendChild(qRow);
+      // Ask answer (AI side)
+      if (m.answer) {
+        const aRow = document.createElement('div');
+        aRow.className = 'row ai';
+        const aBubble = document.createElement('div');
+        aBubble.className = 'bubble ai';
+        const aLabel = document.createElement('div');
+        aLabel.className = 'ask-label';
+        aLabel.textContent = 'Ask';
+        const aContent = document.createElement('div');
+        aContent.innerHTML = renderMarkdownWithMath(m.answer);
+        aBubble.appendChild(aLabel);
+        aBubble.appendChild(aContent);
+        aRow.appendChild(aBubble);
+        if (m.durationMs != null && m.durationMs > 0) {
+          const badge = document.createElement('div');
+          badge.className = 'duration-badge';
+          let text = pickThinkingPhrase(m.durationMs, i);
+          if (m.model) text += ' · ' + m.model;
+          badge.textContent = text;
+          aRow.appendChild(badge);
+        }
+        chat.appendChild(aRow);
+      }
     } else if (m.type === 'agent') {
       const row = document.createElement('div');
       row.className = 'row ai agent-row';

@@ -4,7 +4,7 @@ import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs } from './ws.js';
 import { showAgentModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll } from './utils.js';
-import { finishAgent, renderAskUser, setStatus } from './chat.js';
+import { finishAgent, setStatus } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 
@@ -89,10 +89,6 @@ export function renderSettings() {
           <label class="policy-option"><input type="radio" name="policy" value="block"> Block Dangerous</label>
         </div>
       </div>
-      <div class="settings-row">
-        <span class="settings-label">Language</span>
-        <input type="text" id="language-input" class="settings-text-input" placeholder="Auto-detect" value="${state.language || ''}" />
-      </div>
     </div>
     ${state.mcpServers && state.mcpServers.length > 0 ? `
     <div class="settings-section">
@@ -136,12 +132,7 @@ export function renderSettings() {
       sendWs({type: 'setPolicy', policy: r.value});
     });
   });
-  // Language input — send on change
-  document.getElementById('language-input')?.addEventListener('change', function() {
-    const val = this.value.trim() || null;
-    state.language = val;
-    sendWs({type: 'setLanguage', language: val});
-  });
+
   // MCP server toggles
   content.querySelectorAll('[data-mcp-id]').forEach(toggle => {
     toggle.addEventListener('click', function() {
@@ -379,7 +370,16 @@ function resetChatForActiveSession() {
 
   // Request history from backend (historyPage handler in main.js will render it)
   if (sid) {
-    sendWs({ type: 'getHistory', sessionId: sid, limit: 100 });
+    if (state.searchNavigateTarget && state.searchNavigateTarget.sessionId === sid) {
+      // Search navigation: request a page that includes the target message
+      const targetIdx = state.searchNavigateTarget.messageIndex;
+      const limit = 100;
+      // Center the target message in the loaded page
+      const beforeIndex = targetIdx + Math.floor(limit / 2);
+      sendWs({ type: 'getHistory', sessionId: sid, limit, beforeIndex });
+    } else {
+      sendWs({ type: 'getHistory', sessionId: sid, limit: 100 });
+    }
   }
 
   // If this session is streaming, restore buffered text
@@ -396,14 +396,7 @@ function resetChatForActiveSession() {
     smartScroll();
   }
 
-  // If the session is busy and has a pending askUser, re-render it interactively
-  if (isStreaming) {
-    const msgs = loadMsgs();
-    const lastAskUser = [...msgs].reverse().find(m => m.type === 'askUser');
-    if (lastAskUser && lastAskUser.items) {
-      renderAskUser(lastAskUser.items, sid);
-    }
-  }
+  // Interactive AskUser is re-rendered in the historyPage handler (main.js) after history loads
 
   // Update busy UI
   const isBusy = isStreaming;
@@ -427,6 +420,7 @@ export function switchSession(sessionId) {
   // Clear unread + marked unread for this session
   state.unreadSessions.delete(sessionId);
   state.markedUnreadSessions.delete(sessionId);
+  persistUnread();
   persistMarkedUnread();
   // Save draft for the session we're leaving
   saveInputDraft(state.activeSessionId);
@@ -447,8 +441,10 @@ export function switchSession(sessionId) {
 
 export function deleteSession(sessionId) {
   delete state.sessionInputDrafts[sessionId];
+  state.unreadSessions.delete(sessionId);
   state.markedUnreadSessions.delete(sessionId);
   state.pinnedSessions.delete(sessionId);
+  persistUnread();
   persistMarkedUnread();
   persistPinned();
   persistDrafts();
@@ -482,6 +478,14 @@ function persistMarkedUnread() {
   } catch(e) {}
 }
 
+function persistUnread() {
+  try {
+    localStorage.setItem('nebflow_unread', JSON.stringify([...state.unreadSessions]));
+  } catch(e) {}
+}
+
+export { persistUnread };
+
 function persistPinned() {
   try {
     localStorage.setItem('nebflow_pinned', JSON.stringify([...state.pinnedSessions]));
@@ -511,6 +515,7 @@ function showSessionCtxMenu(x, y, sessionId) {
   menu.querySelector('[data-action="mark-unread"]').addEventListener('click', () => {
     state.markedUnreadSessions.add(sessionId);
     state.unreadSessions.delete(sessionId);
+    persistUnread();
     persistMarkedUnread();
     updateSessionStatus(sessionId);
     dismissCtxMenu();

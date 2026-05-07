@@ -10,6 +10,7 @@ import java.nio.file.{Files, Path, Paths}
 object ReadTool extends Tool:
   val MAX_LINE_COUNT = 2000
   val MAX_FILE_BYTES = 512 * 1024 // 512KB — approx 128k tokens, well within context
+  // Context pressure check is handled centrally by ToolResultGuard in executeTool
 
   val name = "Read"
 
@@ -41,7 +42,7 @@ Usage:
   def summarize(input: JsonObject): String =
     val path = input("file_path").flatMap(_.asString).getOrElse("")
     val short = path.split("/").lastOption.getOrElse(path)
-    s"Read($short)"
+    s"""Read($short, "$path")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith("File does not exist") || result.startsWith("Error") then result
