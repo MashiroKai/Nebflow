@@ -90,8 +90,8 @@ Usage:
   def summarize(input: JsonObject): String =
     val query = input("query").flatMap(_.asString).getOrElse("")
     val engine = input("engine").flatMap(_.asString).getOrElse("Bing INT")
-    val short = if query.length > 50 then query.take(47) + "..." else query
-    s"WebSearch($engine): $short"
+    val short = if query.length > 120 then query.take(117) + "..." else query
+    s"""WebSearch("$short", engine=$engine)"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     result.split("\n").headOption.getOrElse("done")

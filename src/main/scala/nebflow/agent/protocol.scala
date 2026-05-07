@@ -91,6 +91,7 @@ object AgentCommand:
 
   // Lifecycle
   case class Stop(reason: String) extends AgentCommand
+  case object ClearReadTracker extends AgentCommand
 
   // Peer communication (root agent to root agent via ActorRef)
   case class MessageToAgent(

@@ -311,7 +311,8 @@ class WebSocketRoutes(
           command match
             case "clear" =>
               logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
-                reminderStateRef.update(_.copy(highestPressureLevel = 0, writesSinceLastRead = Map.empty))
+                reminderStateRef.update(_.copy(highestPressureLevel = 0, writesSinceLastRead = Map.empty)) *>
+                withActiveAgent(ref => IO(ref ! AgentCommand.ClearReadTracker))
             case _ => IO.unit
 
         case "setThinking" =>
@@ -333,13 +334,6 @@ class WebSocketRoutes(
                 runtimePrefs.setThinking(None) *>
                 broadcastServerConfig
 
-        case "setLanguage" =>
-          val langOpt =
-            parse(text).flatMap(_.hcursor.downField("language").as[Option[String]]).toOption.flatten.filter(_.nonEmpty)
-          logger.info(s"Language preference changed to: $langOpt") *>
-            runtimePrefs.setLanguage(langOpt) *>
-            broadcastServerConfig
-
         case "setMcpEnabled" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val serverId = json.hcursor.downField("serverId").as[String].getOrElse("")
@@ -355,14 +349,14 @@ class WebSocketRoutes(
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           val models = sharedResources.providerRegistry.getAllModels()
           sharedResources.sessionModelOverrides.get.flatMap { overrides =>
-            val current = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}").orNull
+            val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
             wsSend(
               io.circe.Json.obj(
                 "type" -> "modelOptions".asJson,
                 "models" -> models.map { case (ref, label) =>
                   io.circe.Json.obj("ref" -> ref.asJson, "label" -> label.asJson)
                 }.asJson,
-                "current" -> (current: String).asJson
+                "current" -> currentOpt.asJson
               )
             )
           }
@@ -851,10 +845,13 @@ class WebSocketRoutes(
             tools = None,
             maxTokens = Some(2048)
           )
+          answerRef <- IO.ref("")
+          metaRef <- IO.ref(Option.empty[LlmMeta])
           _ <- sharedResources.llm
             .sendStream(request)
             .evalMap {
               case StreamChunk.TextDelta(delta) =>
+                answerRef.update(_ + delta) *>
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "askTextDelta".asJson,
@@ -862,17 +859,25 @@ class WebSocketRoutes(
                     "delta" -> delta.asJson
                   )
                 )
-              case StreamChunk.Done(_, _, _) =>
+              case StreamChunk.Done(_, _, meta) =>
+                metaRef.set(meta) *>
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "askDone".asJson,
-                    "sessionId" -> sessionId.asJson
+                    "sessionId" -> sessionId.asJson,
+                    "durationMs" -> meta.map(_.durationMs).getOrElse(0L).asJson,
+                    "model" -> meta.map(_.model).getOrElse("").asJson
                   )
                 )
               case _ => IO.unit
             }
             .compile
             .drain
+          answer <- answerRef.get
+          meta <- metaRef.get
+          _ <- sharedResources.sessionStore
+            .appendUiMessages(sessionId, List(UiMessage.Ask(question, answer, meta.map(_.durationMs), meta.map(_.model))))
+            .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}")))
         yield ())
           .guarantee(sharedResources.askSemaphore.release)
     }

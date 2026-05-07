@@ -693,11 +693,14 @@ export function appendAskAnswer(delta) {
   smartScroll();
 }
 
-export function finishAskAnswer() {
+export function finishAskAnswer(durationMs, model) {
   if (state.currentAskBubble) {
     const contentEl = state.currentAskBubble.querySelector('div:not(.ask-label)');
     if (contentEl) {
       contentEl.innerHTML = renderMarkdownWithMath(state.askAnswerText || '');
+    }
+    if (durationMs != null && durationMs > 0) {
+      renderDurationBadge(state.currentAskBubble, durationMs, model);
     }
     state.currentAskBubble = null;
     state.askAnswerText = '';

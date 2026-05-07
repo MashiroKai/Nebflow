@@ -54,8 +54,7 @@ Usage:
 
   def summarize(input: JsonObject): String =
     val url = input("url").flatMap(_.asString).getOrElse("")
-    val short = if url.length > 60 then url.take(57) + "..." else url
-    s"WebFetch($short)"
+    s"""WebFetch("$url")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith("Error") || result.startsWith("[Binary") then result.split("\n").headOption.getOrElse(result)
