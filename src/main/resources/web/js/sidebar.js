@@ -3,7 +3,7 @@
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs } from './ws.js';
 import { showAgentModal } from './modal.js';
-import { renderMarkdownWithMath, smartScroll } from './utils.js';
+import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
 import { finishAgent, setStatus } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
@@ -247,6 +247,7 @@ export function renderSessionSidebar(sessionData, activeId) {
       '</div>' +
       '<div class="session-status ' + statusCls + '">' +
       '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
+      '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
       '<div class="status-dot"></div>' +
       '</div>' +
       '<button class="session-delete" title="Delete"><i data-lucide="x"></i></button>';
@@ -411,6 +412,10 @@ function resetChatForActiveSession() {
   if (state.compactingSessionIds.has(sid)) {
     statusWrap.classList.add('compacting');
     setStatus('Compacting context...');
+  } else {
+    // Clear residual status from previous session
+    statusWrap.classList.remove('on');
+    stopSpinner();
   }
 
   if (!isBusy) input.focus();
