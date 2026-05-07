@@ -41,8 +41,8 @@ private[agent] trait AgentCore:
     val sid = shortUuid(sessionId.getOrElse("-"))
     val sname = sessionName.getOrElse("-")
     val who = if depth == 0 then s"${agentDef.name}-${shortUuid(ctx.self.path.name)}" else s"subagent-${agentDef.name}"
-    val msg = s"agent=$who session=$sname/$sid event=$event"
-    lifecycleLog.infoSync(if detail.nonEmpty then s"$msg detail=$detail" else msg)
+    val logCtx = lifecycleLog.ctxPrefix(who, s"$sname/$sid")
+    lifecycleLog.infoSync(if detail.nonEmpty then s"$logCtx event=$event detail=$detail" else s"$logCtx event=$event")
   end logAgentEvent
 
   // ============================================================
@@ -203,16 +203,21 @@ private[agent] trait AgentCore:
             val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
             emitStreamIO(state.wsSend, ctx, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
 
+          // Assign a monotonically increasing turnId so stale LlmComplete/LlmFailed from
+          // a cancelled (interrupted) turn can be detected and discarded.
+          val turnId = state.currentTurnId + 1
+          val stateForTurn = state.withCurrentTurnId(turnId)
+
           val io = for
             // --- reminders (async) ---
             fileChangesOpt <- resources.fileChangeTracker.checkChanges()
             // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
-            isUserTurn = state.messages.lastOption.exists(m =>
+            isUserTurn = stateForTurn.messages.lastOption.exists(m =>
               m.role == MessageRole.User && m.content.isLeft
             )
             reminders <- SystemReminders.collectAll(
               resources.reminderStateRef,
-              state.latestUsage,
+              stateForTurn.latestUsage,
               agentDef.contextWindow,
               fileChangesOpt,
               isUserTurn
@@ -229,8 +234,8 @@ private[agent] trait AgentCore:
               .map(l => s"\n\n# Language\nAlways respond in $l.")
               .getOrElse("")
             request = LlmRequest(
-              messages = state.messages ++ dynamicMsg,
-              sessionId = state.sessionId.getOrElse(ctx.self.path.name),
+              messages = stateForTurn.messages ++ dynamicMsg,
+              sessionId = stateForTurn.sessionId.getOrElse(ctx.self.path.name),
               agentId = agentDef.name,
               tools = tools,
               maxTokens = Some(agentDef.maxTokens),
@@ -239,23 +244,27 @@ private[agent] trait AgentCore:
             )
             result <- resources.llm
               .sendStream(request, onAttempt = Some(onAttemptCb))
-              .through(streamEmitter(state.wsSend, ctx, isSubagent, sessionIdOpt))
+              .through(streamEmitter(stateForTurn.wsSend, ctx, isSubagent, sessionIdOpt))
               .compile
               .toList
               .map(aggregateChunks)
               .attempt
             _ <- result match
-              case Right(r) => IO(ctx.self ! LlmComplete(r, replyTo))
-              case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo))
+              case Right(r) => IO(ctx.self ! LlmComplete(r, replyTo, turnId))
+              case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo, turnId))
           yield ()
 
+          // Start the IO fiber and immediately send the fiber reference back to the actor
+          // so that Interrupt can cancel it. io.start forks immediately; StreamFiberStarted
+          // is queued in the actor mailbox before any LlmComplete can arrive.
+          val startIo = io.start.handleErrorWith { e =>
+            IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
+              IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.start
+          }
           resources.dispatcher.unsafeRunAndForget(
-            io.handleErrorWith { e =>
-              IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
-                IO(ctx.self ! LlmFailed(e, replyTo))
-            }
+            startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
           )
-          processing(agentDef, resources, depth, parentRef, state, stash, ctx)
+          processing(agentDef, resources, depth, parentRef, stateForTurn, stash, ctx)
     end match
   end pipeLlmCall
 
@@ -309,7 +318,10 @@ private[agent] trait AgentCore:
   ): Behavior[AgentCommand] =
     // Build the full allowed tool set: whitelist + always-available + context-dependent
     val allowedTools = buildAllowedToolSet(agentDef, depth, parentRef.isDefined)
-    val filteredCalls = result.toolCalls.filter(tc => allowedTools.contains(tc.name))
+    val (filteredCalls, droppedCalls) = result.toolCalls.partition(tc => allowedTools.contains(tc.name))
+    if droppedCalls.nonEmpty then
+      val dropped = droppedCalls.map(_.name).distinct.mkString(", ")
+      NebflowLogger.forName("nebflow.agent").warn(s"Tool calls filtered (not in allowed set): $dropped")
 
     val nextTurnIdx = state.turnIdx + 1
 
@@ -331,6 +343,7 @@ private[agent] trait AgentCore:
       agentActorRef = Some(ctx.self),
       contextWindow = agentDef.contextWindow,
       sessionId = state.sessionId,
+      sessionName = state.sessionName,
       taskStore = Some(resources.taskStore),
       wsSend = Some(state.wsSend),
       readTracker = state.readTracker,
@@ -437,6 +450,10 @@ private[agent] trait AgentCore:
           (call, ToolExecResult(s"[ContextManage] Triggered $mode compaction", isError = false))
         }
         val allResults = freshResults ++ contextManageResults
+        // Include filtered-out tool calls as errors so the assistant message stays consistent
+        val droppedResults = droppedCalls.map { call =>
+          (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
+        }
 
         // Track per-file write count since last read
         val readFiles = freshResults
@@ -468,7 +485,7 @@ private[agent] trait AgentCore:
 
         IO(
           ctx.self ! ToolsComplete(
-            allResults,
+            allResults ++ droppedResults,
             result.text,
             replyTo,
             None,
@@ -480,7 +497,7 @@ private[agent] trait AgentCore:
     resources.dispatcher.unsafeRunAndForget(
       io.handleErrorWith { e =>
         IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed: ${e.getMessage}")) *>
-          IO(ctx.self ! LlmFailed(new RuntimeException(s"Tool execution pipeline failed: ${e.getMessage}"), replyTo))
+          IO(ctx.self ! LlmFailed(new RuntimeException(s"Tool execution pipeline failed: ${e.getMessage}"), replyTo, state.currentTurnId))
       }
     )
 
@@ -504,8 +521,11 @@ private[agent] trait AgentCore:
       case Some(tool) =>
         val summary = tool.summarize(call.input)
         val logger = NebflowLogger.forName("nebflow.handlers")
+        val agentName = ctx.agentDef.map(_.name).getOrElse("-")
+        val sessionName = ctx.sessionName.getOrElse("-")
+        val logCtx = logger.ctxPrefix(agentName, sessionName)
         IO.delay(System.nanoTime()).flatMap { start =>
-          logger.debug(s"Executing tool: $summary") *>
+          logger.debug(s"$logCtx Executing tool: $summary") *>
             tool
               .call(call.input, ctx)
               .map {
@@ -514,7 +534,7 @@ private[agent] trait AgentCore:
                   ToolResultGuard.guard(result, call.name, ctx) match
                     case ToolResultGuard.Ok(content) => ToolExecResult(content)
                     case ToolResultGuard.Rejected(msg) =>
-                      logger.warn(s"Tool $summary result rejected: $msg")
+                      logger.warn(s"$logCtx Tool $summary result rejected: $msg")
                       ToolExecResult(msg, isError = true)
               }
               .handleErrorWith {
@@ -523,8 +543,8 @@ private[agent] trait AgentCore:
               }
               .flatTap { result =>
                 val elapsed = (System.nanoTime() - start) / 1_000_000
-                if result.isError then logger.warn(s"Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
-                else logger.info(s"Tool $summary OK (${elapsed}ms)" + (if result.truncated then " [truncated]" else ""))
+                if result.isError then logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
+                else logger.info(s"$logCtx Tool $summary OK (${elapsed}ms)" + (if result.truncated then " [truncated]" else ""))
               }
         }
       case None =>

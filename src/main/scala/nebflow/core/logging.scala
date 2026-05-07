@@ -12,10 +12,19 @@ class NebflowLogger(private val logger: Logger):
   private val CYAN = "\u001B[36m"
   private val YELLOW = "\u001B[33m"
   private val RED = "\u001B[31m"
+  private val MAGENTA = "\u001B[35m"
+  private val GREEN = "\u001B[32m"
   private val name = logger.getName
 
   private def fmt(level: String, color: String, msg: String): String =
     s"$color$level$RESET $name - $msg"
+
+  /** Highlight a value with the given color for log messages. */
+  def hl(value: String, color: String = MAGENTA): String = s"$color$value$RESET"
+
+  /** Format session/agent context prefix for tool logs. */
+  def ctxPrefix(agentName: String, sessionName: String): String =
+    s"${hl(agentName, GREEN)} ${hl(sessionName, MAGENTA)}"
 
   private def withKv(msg: String, kv: Seq[(String, String)]): String =
     if kv.isEmpty then msg else s"$msg ${kv.map((k, v) => s"$k=$v").mkString(" ")}"

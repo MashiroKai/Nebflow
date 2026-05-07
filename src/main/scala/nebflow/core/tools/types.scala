@@ -18,6 +18,7 @@ case class ToolContext(
   contextWindow: Int = Defaults.ContextWindow,
   inputTokens: Option[Int] = None,
   sessionId: Option[String] = None,
+  sessionName: Option[String] = None,
   taskStore: Option[TaskStore] = None,
   wsSend: Option[Json => IO[Unit]] = None,
   readTracker: Option[ReadTracker] = None,

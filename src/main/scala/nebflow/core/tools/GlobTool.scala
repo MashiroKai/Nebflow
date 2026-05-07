@@ -41,7 +41,7 @@ object GlobTool extends Tool:
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
     val path = input("path").flatMap(_.asString)
     path match
-      case Some(p) => s"""Glob("$pattern", path="$p")"""
+      case Some(p) => s"""Glob("$pattern")\n  (path="$p")"""
       case None => s"""Glob("$pattern")"""
 
   def summarizeResult(input: JsonObject, result: String): String =

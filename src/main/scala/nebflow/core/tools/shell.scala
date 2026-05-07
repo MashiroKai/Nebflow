@@ -15,7 +15,9 @@ import scala.util.Using
 private case class BackgroundJob(
   fiber: Fiber[IO, Throwable, Unit],
   deferred: Deferred[IO, Either[Throwable, ProcessResult]],
-  command: String
+  command: String,
+  description: Option[String] = None,
+  on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None
 ):
   def isComplete: IO[Boolean] = deferred.tryGet.map(_.isDefined)
 
@@ -66,14 +68,19 @@ final class ShellSession private (
     yield result.copy(cwd = newCwd)
 
   /** Start a background job and return its job ID */
-  def executeBackground(command: String, timeout: FiniteDuration): IO[String] =
+  def executeBackground(
+    command: String,
+    timeout: FiniteDuration,
+    description: Option[String] = None,
+    on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None
+  ): IO[String] =
     lifecycleMutex.lock.surround {
       for
         _ <- checkAlive *> touch
         jobId <- IO.randomUUID.map(_.toString.take(8))
         deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
-        fiber <- backgroundExecute(command, timeout, deferred).start
-        job = BackgroundJob(fiber, deferred, command)
+        fiber <- backgroundExecute(command, timeout, deferred, on_complete).start
+        job = BackgroundJob(fiber, deferred, command, description, on_complete)
         _ <- backgroundJobs.update(_ + (jobId -> job))
       yield jobId
     }
@@ -185,9 +192,12 @@ final class ShellSession private (
   private def backgroundExecute(
     command: String,
     timeout: FiniteDuration,
-    deferred: Deferred[IO, Either[Throwable, ProcessResult]]
+    deferred: Deferred[IO, Either[Throwable, ProcessResult]],
+    on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None
   ): IO[Unit] =
-    execute(command, timeout).attempt.flatMap(deferred.complete(_).void)
+    execute(command, timeout).attempt.flatMap { result =>
+      deferred.complete(result).void *> on_complete.fold(IO.unit)(cb => cb(result).handleErrorWith(_ => IO.unit))
+    }
 
   private def readStream(is: java.io.InputStream): String =
     Using.resource(new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) { reader =>
