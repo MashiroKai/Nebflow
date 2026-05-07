@@ -268,7 +268,7 @@ object AgentActor extends AgentCore with AgentSession:
               stopReason.equalsIgnoreCase("length")
 
             if isContextError then
-              // Context window exceeded — trigger compaction if not already compacting
+              // Context window exceeded
               logAgentEvent(
                 ctx,
                 agentDef,
@@ -278,7 +278,23 @@ object AgentActor extends AgentCore with AgentSession:
                 "context-exceeded",
                 s"stopReason=$stopReason"
               )
-              if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax then
+              // Only root agent triggers compaction; sub-agents (including context-manage itself)
+              // must propagate the error upward to avoid infinite sub-agent recursion.
+              if depth > 0 then
+                val errMsg = s"Context window exceeded (stopReason: $stopReason)"
+                parentRef match
+                  case Some(p) =>
+                    p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(
+                      AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, errMsg)
+                    ))
+                    Behaviors.stopped
+                  case None =>
+                    // Should not happen (depth > 0 implies parentRef.isDefined), but handle gracefully
+                    finishTurn(
+                      agentDef, resources, depth, parentRef, updatedState, stash, ctx,
+                      errMsg, replyTo, None, textAlreadyStreamed = false, result.model
+                    )
+              else if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax then
                 // Compaction already in progress or circuit breaker open — report error
                 val msg = "Context window exceeded and compaction is unavailable. " +
                   "Please start a new session or use /clear to reset."
@@ -612,12 +628,14 @@ object AgentActor extends AgentCore with AgentSession:
                 resources.dispatcher.unsafeRunAndForget(
                   resources.reminderStateRef.update(_.copy(highestPressureLevel = 0))
                 )
+                // Reset latestUsage so maybeAutoCompact won't re-trigger on stale token counts.
+                // Fresh usage data will be populated by the next LLM call.
                 pipeLlmCall(
                   agentDef,
                   resources,
                   depth,
                   parentRef,
-                  newState.withMessages(compacted).withCompactionFailures(0),
+                  newState.withMessages(compacted).withCompactionFailures(0).withLatestUsage(None),
                   stash,
                   ctx,
                   pending.replyTo
@@ -653,16 +671,51 @@ object AgentActor extends AgentCore with AgentSession:
                 }
                 val failedState = newState.withCompactionFailures(failures)
                 if failures >= maxFailures then
-                  val agentError = AgentError(
-                    ctx.self.path.name,
-                    agentDef.name,
+                  // Emergency cleanup: progressively strip tool results, remove old tool messages, then truncate
+                  val keep = CompactConfig().emergencyKeepMessages
+                  val (cleanedMessages, cleanDesc) = CompactUtils.emergencyClean(state.messages, keep)
+                  NebflowLogger
+                    .forName("nebflow.agent")
+                    .warn(s"Emergency cleanup after compaction failed $failures times: $cleanDesc")
+
+                  logAgentEvent(
+                    ctx,
+                    agentDef,
                     depth,
-                    AgentErrorType.ToolFailed,
-                    s"Compaction circuit breaker open after $failures attempts"
+                    state.sessionId,
+                    state.sessionName,
+                    "emergency-cleanup",
+                    s"before=${state.messages.size} after=${cleanedMessages.size} detail=$cleanDesc"
                   )
+
+                  // Reset compaction failures so future compaction can be attempted
+                  val recoveredState = failedState
+                    .copy(
+                      execution = state.execution.copy(messages = cleanedMessages),
+                      compaction = state.compaction.copy(pendingJob = None, compactionFailures = 0)
+                    )
+
                   parentRef match
-                    case Some(p) => p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(agentError))
+                    case Some(p) =>
+                      p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(
+                        AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.ToolFailed,
+                          s"Compaction failed $failures times. $cleanDesc")
+                      ))
+                      Behaviors.stopped
                     case None =>
+                      resources.dispatcher.unsafeRunAndForget(
+                        persistIfSession(resources, recoveredState).handleErrorWith(e =>
+                          IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist after emergency cleanup failed: ${e.getMessage}"))
+                        )
+                      )
+                      // Notify frontend
+                      resources.dispatcher.unsafeRunAndForget(
+                        state.wsSend(io.circe.Json.obj(
+                          "type" -> "error".asJson,
+                          "sessionId" -> state.sessionId.asJson,
+                          "message" -> s"Context pressure relief: $cleanDesc".asJson
+                        )).handleErrorWith(_ => IO.unit)
+                      )
                       emitStream(
                         resources.dispatcher,
                         state.wsSend,
@@ -671,20 +724,9 @@ object AgentActor extends AgentCore with AgentSession:
                         isSubagent = false,
                         state.sessionId
                       )
-                  pending.replyTo.foreach(_ ! AgentEvent.Failed(state.sessionId.getOrElse(""), agentError))
-                  stash.unstashAll(
-                    idle(
-                      agentDef,
-                      resources,
-                      depth,
-                      parentRef,
-                      failedState.withStatus(
-                        AgentStatus.Error(s"Compaction circuit breaker open after $failures attempts")
-                      ),
-                      stash,
-                      ctx
-                    )
-                  )
+                      stash.unstashAll(
+                        idle(agentDef, resources, depth, parentRef, recoveredState, stash, ctx)
+                      )
                 else pipeLlmCall(agentDef, resources, depth, parentRef, failedState, stash, ctx, pending.replyTo)
                 end if
             end match

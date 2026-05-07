@@ -229,7 +229,6 @@ onMessage('toolEnd', (msg) => {
 onMessage('done', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
-  if (sid) state.answeredAskUsers.delete(sid);
   const durationMs = consumeTurnDuration(sid);
   console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length });
   // Flush any remaining buffered text for this session

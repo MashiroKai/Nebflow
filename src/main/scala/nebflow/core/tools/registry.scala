@@ -52,7 +52,10 @@ object ToolRegistry:
   }.toList
 
   /** Tools that are always included regardless of agent tool whitelist. */
-  val AlwaysAvailable: Set[String] = Set("declareWait", "ContextManage")
+  val AlwaysAvailable: Set[String] = Set("declareWait")
+
+  /** Tools always available except on the compaction agent itself (to prevent recursion). */
+  val AlwaysAvailableNonCompact: Set[String] = Set("declareWait", "ContextManage")
 
   /** Tools only available when agent has subagents. */
   val SubagentTools: Set[String] = Set("delegate")
@@ -64,7 +67,7 @@ object ToolRegistry:
    * Tools that users can select in agent configuration UI.
    *  Excludes lifecycle/communication tools that are auto-injected.
    */
-  val UserConfigurable: Set[String] = AlwaysAvailable ++ SubagentTools ++ ParentTools
+  val UserConfigurable: Set[String] = AlwaysAvailableNonCompact ++ SubagentTools ++ ParentTools
 
   /** Tool definitions for the user-configurable set (sent to frontend). */
   def userConfigurableTools: List[ToolDefinition] =
