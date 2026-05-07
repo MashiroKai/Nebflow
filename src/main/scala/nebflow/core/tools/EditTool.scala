@@ -59,8 +59,8 @@ Edit patterns:
     val path = input("file_path").flatMap(_.asString).getOrElse("")
     val short = path.split("/").lastOption.getOrElse(path)
     input("replace_all").flatMap(_.asBoolean).getOrElse(false) match
-      case true => s"Edit($short, replace_all)"
-      case false => s"Edit($short)"
+      case true => s"""Edit($short, "$path", replace_all)"""
+      case false => s"""Edit($short, "$path")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith(DiffUtil.OkUpdatedPrefix) then

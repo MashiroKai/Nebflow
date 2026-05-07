@@ -57,8 +57,7 @@ Usage:
   def summarize(input: JsonObject): String =
     val method = input("method").flatMap(_.asString).getOrElse("GET").toUpperCase
     val url = input("url").flatMap(_.asString).getOrElse("")
-    val short = if url.length > 50 then url.take(47) + "..." else url
-    s"Curl($method $short)"
+    s"""Curl($method "$url")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith("Error") then result.split("\n").headOption.getOrElse(result)
