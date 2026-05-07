@@ -341,6 +341,10 @@ class SessionStore(sessionsDir: os.Path):
                         val combined = s"$label $summary $content"
                         if combined.toLowerCase.contains(q) then
                           results += SearchHit(meta.id, meta.name, idx, snippet(combined, q), "tool")
+                      case UiMessage.Ask(question, answer, _, _) =>
+                        val combined = s"$question $answer"
+                        if combined.toLowerCase.contains(q) then
+                          results += SearchHit(meta.id, meta.name, idx, snippet(combined, q), "ask")
                       case _ => ()
                 }
               catch case _: Exception => ()

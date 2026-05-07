@@ -211,6 +211,7 @@ export function send() {
     const question = text.slice(5).trim();
     if (question) {
       sendWs({ type: 'ask', question, sessionId: state.activeSessionId });
+      state.pendingAskQuestion = question;
       renderAskBubble(question);
     }
     input.value = '';

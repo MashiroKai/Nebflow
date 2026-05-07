@@ -49,7 +49,10 @@ Usage:
 
   def summarize(input: JsonObject): String =
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
-    s"Grep($pattern)"
+    val path = input("path").flatMap(_.asString)
+    path match
+      case Some(p) => s"""Grep("$pattern", path="$p")"""
+      case None => s"""Grep("$pattern")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result == "No matches found." then "No matches"

@@ -127,16 +127,14 @@ Git safety:
     }
 
   def summarize(input: JsonObject): String =
-    val desc = input("description").flatMap(_.asString)
+    val cmd = input("command").flatMap(_.asString).getOrElse("").trim
     val bgJobId = input("background_job_id").flatMap(_.asString)
-    (desc, bgJobId) match
-      case (Some(d), _) => s"Bash($d)"
-      case (_, Some(id)) => s"Bash(query job $id)"
+    bgJobId match
+      case Some(id) => s"Bash(query job $id)"
       case _ =>
-        val cmd = input("command").flatMap(_.asString).getOrElse("").trim
         val firstLine = cmd.split('\n').headOption.getOrElse(cmd)
         if firstLine.isEmpty then "Bash(empty)"
-        else if firstLine.length > 50 then s"Bash(${firstLine.take(47)}...)"
+        else if firstLine.length > 120 then s"Bash(${firstLine.take(117)}...)"
         else s"Bash($firstLine)"
 
   def summarizeResult(input: JsonObject, result: String): String =

@@ -149,6 +149,10 @@ object AgentActor extends AgentCore with AgentSession:
         state.subagents.values.foreach(ctx.stop)
         Behaviors.stopped
 
+      case AgentCommand.ClearReadTracker =>
+        state.readTracker.foreach(t => resources.dispatcher.unsafeRunAndForget(t.clear()))
+        Behaviors.same
+
       case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
         handleTriggerCompaction(agentDef, resources, depth, parentRef, state, stash, ctx, mode, replyDeferred)
 
@@ -716,6 +720,10 @@ object AgentActor extends AgentCore with AgentSession:
         )
         state.subagents.values.foreach(ctx.stop)
         Behaviors.stopped
+
+      case AgentCommand.ClearReadTracker =>
+        state.readTracker.foreach(t => resources.dispatcher.unsafeRunAndForget(t.clear()))
+        Behaviors.same
 
       case msg =>
         stash.stash(msg)
