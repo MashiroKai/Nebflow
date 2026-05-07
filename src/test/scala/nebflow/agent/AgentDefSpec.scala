@@ -3,27 +3,15 @@ package nebflow.agent
 import cats.effect.unsafe.implicits.global
 import io.circe.parser.decode
 import munit.CatsEffectSuite
-import nebflow.shared.Defaults
 
 class AgentDefSpec extends CatsEffectSuite:
 
-  test("AgentDef decodes with all new fields") {
+  test("AgentDef decodes with all fields") {
     val json = """{
       "name": "db-assistant",
       "description": "Database helper",
-      "modelRoute": "default",
-      "contextWindow": 128000,
-      "maxTokens": 16384,
       "tools": [],
-      "subagents": [],
-      "keepAlive": false,
-      "systemPrompt": "",
-      "configPath": "",
-      "mcp": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-postgres"],
-        "env": { "DATABASE_URL": "postgresql://localhost/test" }
-      },
+      "mcpServers": ["postgres", "redis"],
       "frontend": {
         "scripts": ["frontend/card.js"],
         "styles": ["frontend/card.css"]
@@ -35,10 +23,7 @@ class AgentDefSpec extends CatsEffectSuite:
     assert(result.isRight, s"decode failed: $result")
     val defn = result.toOption.get
     assertEquals(defn.name, "db-assistant")
-    assert(defn.mcp.isDefined)
-    assertEquals(defn.mcp.get.command, Some("npx"))
-    assertEquals(defn.mcp.get.args, Some(List("-y", "@modelcontextprotocol/server-postgres")))
-    assertEquals(defn.mcp.get.env, Some(Map("DATABASE_URL" -> "postgresql://localhost/test")))
+    assertEquals(defn.mcpServers, List("postgres", "redis"))
     assert(defn.frontend.isDefined)
     assertEquals(defn.frontend.get.scripts, List("frontend/card.js"))
     assertEquals(defn.frontend.get.styles, List("frontend/card.css"))
@@ -46,44 +31,18 @@ class AgentDefSpec extends CatsEffectSuite:
     assertEquals(defn.displayName, Some("DB Assistant"))
   }
 
-  test("AgentDef decodes without new optional fields") {
-    val json = """{"name":"simple","description":"Simple agent","modelRoute":"default","contextWindow":128000,"maxTokens":16384,"tools":["Read"],"subagents":[],"keepAlive":false,"systemPrompt":"","configPath":""}"""
+  test("AgentDef decodes with minimal fields") {
+    val json = """{"name":"simple","description":"Simple agent","tools":["Read"]}"""
     val result = decode[AgentDef](json)
     assert(result.isRight, s"decode failed: $result")
     val defn = result.toOption.get
     assertEquals(defn.name, "simple")
     assertEquals(defn.tools, List("Read"))
-    assertEquals(defn.mcp, None)
+    assertEquals(defn.mcpServers, Nil)
     assertEquals(defn.frontend, None)
     assertEquals(defn.avatar, None)
     assertEquals(defn.displayName, None)
-  }
-
-  test("AgentMcpConfig converts to McpServerConfig") {
-    val cfg = AgentMcpConfig(
-      command = Some("node"),
-      args = Some(List("server.js")),
-      env = Some(Map("KEY" -> "val")),
-      url = None,
-      headers = None
-    )
-    val serverCfg = AgentMcpConfig.toMcpServerConfig(cfg)
-    assertEquals(serverCfg.command, Some("node"))
-    assertEquals(serverCfg.args, Some(List("server.js")))
-    assertEquals(serverCfg.env, Some(Map("KEY" -> "val")))
-    assertEquals(serverCfg.url, None)
-    assertEquals(serverCfg.headers, None)
-  }
-
-  test("AgentMcpConfig with url-based transport") {
-    val cfg = AgentMcpConfig(
-      url = Some("http://localhost:8080/mcp"),
-      headers = Some(Map("Authorization" -> "Bearer token"))
-    )
-    val serverCfg = AgentMcpConfig.toMcpServerConfig(cfg)
-    assertEquals(serverCfg.url, Some("http://localhost:8080/mcp"))
-    assertEquals(serverCfg.headers, Some(Map("Authorization" -> "Bearer token")))
-    assertEquals(serverCfg.command, None)
+    // contextWindow / maxTokens are not in AgentDef — resolved at runtime from nebflow.json
   }
 
   test("FrontendConfig decodes correctly") {
@@ -95,26 +54,25 @@ class AgentDefSpec extends CatsEffectSuite:
     assertEquals(fe.styles, List("c.css"))
   }
 
-  test("AgentLibrary.loadAll works with no agents directory") {
+  test("AgentLibrary.loadAll loads builtins from classpath") {
     val tmpDir = os.temp.dir()
-    val lib = new AgentLibrary(tmpDir, None, None)
+    val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
-    assertEquals(result.keySet, Set("context-manage", "Nebula", "Ask"))
+    assert(result.keySet.contains("Nebula"), s"Should contain Nebula: ${result.keySet}")
+    assert(result.keySet.contains("context-manage"), s"Should contain context-manage: ${result.keySet}")
+    assert(result.keySet.contains("Ask"), s"Should contain Ask: ${result.keySet}")
   }
 
   test("AgentLibrary.loadAll loads agent with mcp config from disk") {
     val dir = os.temp.dir()
     val agentDir = dir / "test-agent"
     os.makeDir.all(agentDir)
-    // agent.json must include all non-Option fields for circe decode to succeed
-    os.write(agentDir / "agent.json",
-      """{"name":"test-agent","description":"Test","modelRoute":"default","contextWindow":128000,"maxTokens":16384,"tools":[],"subagents":[],"keepAlive":false,"systemPrompt":"","configPath":"","mcp":{"command":"echo"}}""")
+    os.write(agentDir / "agent.json", """{"name":"test-agent","description":"Test","tools":[],"mcpServers":["echo"]}""")
     os.write(agentDir / "system.md", "You are a test agent.")
-    val lib = new AgentLibrary(dir, None, None)
+    val lib = new AgentLibrary(dir, None)
     val result = lib.loadAll().unsafeRunSync()
     assert(result.keySet.contains("test-agent"), s"keys: ${result.keySet}")
-    assert(result("test-agent").mcp.isDefined, "mcp should be defined")
-    assertEquals(result("test-agent").mcp.get.command, Some("echo"))
+    assertEquals(result("test-agent").mcpServers, List("echo"))
     assertEquals(result("test-agent").systemPrompt, "You are a test agent.")
   }
 

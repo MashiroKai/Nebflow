@@ -43,7 +43,11 @@ object MessageRole:
     case "assistant" => Some(Assistant)
     case _ => None
 
-case class Message(role: MessageRole, content: Either[String, List[ContentBlock]]):
+case class Message(
+  role: MessageRole,
+  content: Either[String, List[ContentBlock]],
+  timestamp: Long = System.currentTimeMillis()
+):
 
   def textContent: String = content match
     case Left(text) => text
@@ -184,9 +188,10 @@ given Decoder[ContentBlock] = Decoder.instance { cursor =>
 }
 
 given Encoder[Message] = Encoder.instance { msg =>
-  msg.content match
+  val base = msg.content match
     case Left(text) => Json.obj("role" -> msg.role.name.asJson, "content" -> text.asJson)
     case Right(blocks) => Json.obj("role" -> msg.role.name.asJson, "content" -> blocks.asJson, "blocks" -> true.asJson)
+  if msg.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> msg.timestamp.asJson)) else base
 }
 
 given Decoder[Message] = Decoder.instance { cursor =>
@@ -199,7 +204,8 @@ given Decoder[Message] = Decoder.instance { cursor =>
     content <- isBlocks match
       case Some(true) => cursor.downField("content").as[List[ContentBlock]].map(Right(_))
       case _ => cursor.downField("content").as[String].map(Left(_))
-  yield Message(role, content)
+    ts <- cursor.downField("timestamp").as[Option[Long]]
+  yield Message(role, content, ts.getOrElse(0L))
 }
 
 // ===== UI Messages (for frontend rendering) =====

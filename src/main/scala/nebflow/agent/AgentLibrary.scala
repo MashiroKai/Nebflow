@@ -1,137 +1,141 @@
 package nebflow.agent
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.llm.{Config, NebflowServiceConfig}
 import nebflow.shared.Defaults
 
 /**
- * Loads agent definitions from ~/.nebflow/agents/ directory.
- * Directory structure:
- *   ~/.nebflow/agents/
- *     arch/
- *       agent.json
- *       system.md
- *     tina/
- *       agent.json
- *       system.md
+ * Loads agent definitions from two sources:
+ *
+ *  1. Builtin agents — classpath:/agents/<name>/  (src/main/resources/agents/)
+ *  2. External agents — ~/.nebflow/agents/<name>/  (user-created)
+ *
+ * External agents with the same name override builtins.
+ * contextWindow / maxTokens are NOT in agent.json — resolved at runtime from nebflow.json.
  */
 class AgentLibrary(
   agentsDir: os.Path,
-  serviceConfig: Option[NebflowServiceConfig] = None,
-  mcpManager: Option[nebflow.core.mcp.McpManager] = None
+  serviceConfig: Option[NebflowServiceConfig] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
-  private def resolveContextWindow(current: Int): Int =
-    if current != Defaults.ContextWindow then current
-    else
-      serviceConfig match
-        case None => Defaults.ContextWindow
-        case Some(cfg) =>
-          val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.primary)
-          val provider = cfg.llm.providers
-            .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
-          provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
+  /** In-memory cache — populated on first loadAll(), cleared by refresh(). */
+  private val cache: Ref[IO, Map[String, AgentDef]] = Ref.unsafe(Map.empty)
 
-  // Built-in agents that don't require filesystem definitions
-  private val builtins: Map[String, AgentDef] =
-    val ctxManage = AgentDef(
-      name = "context-manage",
-      description = "Compress conversation history to free up context window space",
-      modelRoute = "default",
-      contextWindow = 60000,
-      maxTokens = 8192,
-      tools = List(),
-      subagents = Nil,
-      systemPrompt = nebflow.core.compact.CompactPrompts.full
-    )
-    val defaultAgent = AgentDef(
-      name = "Nebula",
-      description = "Default chat agent for general-purpose conversations",
-      modelRoute = "default",
-      contextWindow = Defaults.ContextWindow,
-      maxTokens = Defaults.MaxTokens,
-      tools = List("*"),
-      subagents = Nil,
-      systemPrompt = ""
-    )
-    val askAgent = AgentDef(
-      name = "Ask",
-      description = "Quick follow-up Q&A agent with read and web search tools",
-      modelRoute = "default",
-      contextWindow = Defaults.ContextWindow,
-      maxTokens = 4096,
-      tools = List("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Curl"),
-      subagents = Nil,
-      systemPrompt = """You are a helpful assistant answering a quick follow-up question about an ongoing conversation.
-          |You have access to file reading, code search, and web search tools to help answer accurately.
-          |
-          |Rules:
-          |- Answer the user's question directly and concisely.
-          |- Use tools when needed to find accurate information.
-          |- Your response will NOT be saved to the conversation history.
-          |- This is a single exchange: answer the question, then stop.""".stripMargin
-    )
-    Map(
-      "context-manage" -> ctxManage,
-      "Nebula" -> defaultAgent.copy(contextWindow = resolveContextWindow(defaultAgent.contextWindow)),
-      "Ask" -> askAgent.copy(contextWindow = resolveContextWindow(askAgent.contextWindow))
-    )
+  /** Resolve context window from nebflow.json primary model config. */
+  def globalContextWindow: Int =
+    serviceConfig match
+      case None => Defaults.ContextWindow
+      case Some(cfg) =>
+        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.primary)
+        val provider = cfg.llm.providers
+          .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
+        provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
 
-  end builtins
+  /** Resolve maxTokens from nebflow.json primary model config. */
+  def globalMaxTokens: Int =
+    serviceConfig match
+      case None => Defaults.MaxTokens
+      case Some(cfg) =>
+        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.primary)
+        val provider = cfg.llm.providers
+          .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
+        provider.models.find(_.id == modelId).map(_.maxTokens).getOrElse(Defaults.MaxTokens)
 
-  def loadAll(): IO[Map[String, AgentDef]] =
-    IO.blocking {
-      if !os.exists(agentsDir) then Map.empty
-      else
-        os.list(agentsDir)
-          .filter(os.isDir)
-          .flatMap { dir =>
-            val jsonPath = dir / "agent.json"
-            if os.exists(jsonPath) then
-              val json = os.read(jsonPath)
-              val defn = AgentDef.parseJson(json, dir)
-              val resolved = defn.copy(contextWindow = resolveContextWindow(defn.contextWindow))
-              Some(resolved.name -> resolved)
-            else None
-          }
-          .toMap ++ builtins
-    }.flatTap { defs =>
-      // Connect MCP servers for agents that declare them
-      val mcpAgents = defs.values.filter(_.mcp.isDefined).toList
-      mcpAgents.traverse_ { defn =>
-        val cfg = defn.mcp.get
-        val serverId = s"agent__${defn.name}"
-        val mcpCfg = AgentMcpConfig.toMcpServerConfig(cfg)
-        mcpManager match
-          case Some(mgr) =>
-            mgr
-              .startServer(serverId, mcpCfg)
-              .timeout(scala.concurrent.duration.Duration(5, "s"))
-              .handleErrorWith { e =>
-                IO(logger.warn(s"MCP for agent '${defn.name}' failed: ${e.getMessage}"))
-              }
-          case None => IO.unit
-      } *> IO(logger.info(s"Loaded ${defs.size} agent definitions from $agentsDir: ${defs.keys.mkString(", ")}"))
+  // ============================================================
+  // Builtin agents from classpath
+  // ============================================================
+
+  /** List agent directories on the classpath under /agents/. */
+  private def listClasspathAgents(): List[(String, String)] =
+    val builtins = List("Nebula", "context-manage", "Ask")
+    builtins.flatMap { name =>
+      Option(getClass.getResourceAsStream(s"/agents/$name/agent.json")).map { jsonStream =>
+        val json =
+          try scala.io.Source.fromInputStream(jsonStream).mkString
+          finally jsonStream.close()
+        name -> json
+      }
     }
 
+  /** Load system.md for a builtin agent from classpath. */
+  private def loadClasspathSystemMd(name: String): String =
+    Option(getClass.getResourceAsStream(s"/agents/$name/system.md")) match
+      case Some(is) =>
+        try scala.io.Source.fromInputStream(is).mkString
+        finally is.close()
+      case None => ""
+
+  // ============================================================
+  // External agents from filesystem
+  // ============================================================
+
+  private def loadExternalAgents(): Map[String, AgentDef] =
+    if !os.exists(agentsDir) then Map.empty
+    else
+      os.list(agentsDir)
+        .filter(os.isDir)
+        .flatMap { dir =>
+          val jsonPath = dir / "agent.json"
+          if os.exists(jsonPath) then
+            val defn = AgentDef.parseJson(os.read(jsonPath), dir)
+            Some(defn.name -> defn)
+          else None
+        }
+        .toMap
+
+  // ============================================================
+  // Loading with cache
+  // ============================================================
+
+  /** Load all agent definitions. Uses cache if available. */
+  def loadAll(): IO[Map[String, AgentDef]] =
+    cache.get.flatMap { cached =>
+      if cached.nonEmpty then IO.pure(cached)
+      else forceReload()
+    }
+
+  /** Force rescan from classpath + filesystem and update cache. */
+  def forceReload(): IO[Map[String, AgentDef]] =
+    IO.blocking {
+      val builtins = listClasspathAgents().map { case (name, json) =>
+        val defn = io.circe.parser
+          .decode[AgentDef](json)
+          .getOrElse(AgentDef(name = name, description = ""))
+          .copy(systemPrompt = loadClasspathSystemMd(name))
+        defn.name -> defn
+      }.toMap
+
+      val externals = loadExternalAgents()
+
+      // Warn and skip external agents that shadow builtins
+      val builtinNames = builtins.keySet
+      val (conflicts, valid) = externals.partition { (name, _) => builtinNames.contains(name) }
+      conflicts.foreach { (name, _) =>
+        logger.warn(
+          s"External agent '$name' conflicts with builtin — ignored. Remove it from ${agentsDir}/$name/ to use the builtin."
+        )
+      }
+
+      builtins ++ valid
+    }.flatTap { defs =>
+      cache.set(defs) *> IO(logger.info(s"Loaded ${defs.size} agents: ${defs.keys.mkString(", ")}"))
+    }
+
+  /** Get a single agent by name. Uses cache. */
   def get(name: String): IO[Option[AgentDef]] =
-    loadAll().map(_.get(name).orElse(builtins.get(name)))
+    loadAll().map(_.get(name))
+
+  /** Clear cache — next loadAll() will rescan. Call after create/update operations. */
+  def refresh(): IO[Unit] = cache.set(Map.empty)
 
   /** Returns frontend configs from agents that declare them. */
   def frontendConfigs(): IO[Map[String, FrontendConfig]] =
     loadAll().map(
-      _.values
-        .flatMap { defn =>
-          defn.frontend.map(defn.name -> _)
-        }
-        .toMap
+      _.values.flatMap { defn => defn.frontend.map(defn.name -> _) }.toMap
     )
-
-  /** Resolved context window from nebflow.json primary model config. */
-  def resolvedContextWindow: Int = resolveContextWindow(Defaults.ContextWindow)
 
 end AgentLibrary
 

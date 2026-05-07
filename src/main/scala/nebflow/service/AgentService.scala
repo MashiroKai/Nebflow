@@ -2,11 +2,9 @@ package nebflow.service
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.parser.parse
-import io.circe.syntax.*
-import nebflow.agent.{AgentInfo, AgentLibrary}
-import nebflow.core.Repl
-import nebflow.shared.Defaults
+import io.circe.parser.decode
+import nebflow.agent.{AgentDef, AgentInfo, AgentLibrary}
+import nebflow.core.tools.ToolRegistry
 
 class AgentService(library: AgentLibrary):
 
@@ -16,7 +14,7 @@ class AgentService(library: AgentLibrary):
       .map(
         _.values.toList
           .map { d =>
-            AgentInfo(d.name, d.description, d.tools, d.subagents.map(_.name), d.displayName, d.avatar)
+            AgentInfo(d.name, d.description, d.tools, d.displayName, d.avatar, d.mcpServers)
           }
           .sortBy(_.name)
       )
@@ -28,52 +26,69 @@ class AgentService(library: AgentLibrary):
         val rawJson =
           if defn.configPath.nonEmpty && os.exists(os.Path(defn.configPath) / "agent.json")
           then os.read(os.Path(defn.configPath) / "agent.json")
-          else ""
-        val resolvedJson = replaceDefaultContextWindow(rawJson)
-        // For the "Nebula" builtin, load the actual system prompt from resources
-        val systemMd =
-          if defn.systemPrompt.nonEmpty then defn.systemPrompt
-          else if defn.name == "Nebula" then Repl.loadSystemPrompt()
-          else ""
-        AgentConfig(defn.name, resolvedJson, systemMd)
+          else
+            // Builtin agent — reconstruct JSON from the definition
+            import io.circe.syntax.*
+            import io.circe.Json
+            val fields = List(
+              Some("name" -> defn.name.asJson),
+              Some("description" -> defn.description.asJson),
+              if defn.tools.nonEmpty then Some("tools" -> defn.tools.asJson) else None,
+              if defn.mcpServers.nonEmpty then Some("mcpServers" -> defn.mcpServers.asJson) else None,
+              defn.displayName.map(v => "displayName" -> v.asJson),
+              defn.avatar.map(v => "avatar" -> v.asJson)
+            ).flatten
+            Json.obj(fields*).noSpaces
+        AgentConfig(defn.name, rawJson, defn.systemPrompt)
       })
 
   def createAgent(name: String, configJson: String, systemMd: String): IO[Either[String, Unit]] =
-    validateName(name) match
-      case Left(err) => IO.pure(Left(err))
-      case Right(_) =>
+    val nameErr: Option[String] = validateName(name).left.toOption
+    val toolErr: Option[String] = validateTools(configJson)
+    val error = nameErr.orElse(toolErr)
+    error match
+      case Some(err) => IO.pure(Left(err))
+      case None =>
         IO.blocking {
           val dir = AgentLibrary.defaultDir / name
           os.makeDir.all(dir)
-          val resolved = replaceDefaultContextWindow(configJson)
-          os.write.over(dir / "agent.json", resolved)
+          os.write.over(dir / "agent.json", configJson)
           os.write.over(dir / "system.md", systemMd)
         }.attempt
           .map(_.leftMap(_.getMessage))
+          .flatTap {
+            case Right(_) => library.refresh()
+            case Left(_) => IO.unit
+          }
 
   def updateAgent(name: String, configJson: String, systemMd: String): IO[Either[String, Unit]] =
-    validateName(name) match
-      case Left(err) => IO.pure(Left(err))
-      case Right(_) =>
+    val toolResult = validateTools(configJson)
+    toolResult match
+      case Some(err) => IO.pure(Left(err))
+      case None =>
         IO.blocking {
           val dir = AgentLibrary.defaultDir / name
           if !os.exists(dir) then throw new RuntimeException(s"Agent not found: $name")
-          val resolved = replaceDefaultContextWindow(configJson)
-          os.write.over(dir / "agent.json", resolved)
+          os.write.over(dir / "agent.json", configJson)
           os.write.over(dir / "system.md", systemMd)
         }.attempt
           .map(_.leftMap(_.getMessage))
+          .flatTap {
+            case Right(_) => library.refresh()
+            case Left(_) => IO.unit
+          }
 
-  /** Replace hardcoded default contextWindow in agent JSON with the resolved value from nebflow.json. */
-  private def replaceDefaultContextWindow(jsonStr: String): String =
-    parse(jsonStr) match
-      case Left(_) => jsonStr
-      case Right(json) =>
-        val cw = json.hcursor.downField("contextWindow").as[Int].getOrElse(Defaults.ContextWindow)
-        if cw == Defaults.ContextWindow then
-          val resolved = library.resolvedContextWindow
-          json.deepMerge(io.circe.Json.obj("contextWindow" -> resolved.asJson)).noSpaces
-        else jsonStr
+  /** Validate tool names in agent JSON against ToolRegistry. */
+  private def validateTools(configJson: String): Option[String] =
+    decode[AgentDef](configJson) match
+      case Left(err) => Some(s"Invalid JSON: ${err.getMessage}")
+      case Right(defn) =>
+        if defn.tools == List("*") then None // wildcard — allowed for all agents
+        else
+          val known = ToolRegistry.TOOL_MAP.keySet
+          val unknown = defn.tools.filterNot(known.contains)
+          if unknown.isEmpty then None
+          else Some(s"Unknown tools: ${unknown.mkString(", ")}")
 
   private val AgentNameRegex = "[a-zA-Z0-9_-]+".r
 

@@ -1,5 +1,6 @@
 package nebflow.gateway
 
+import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, IOApp, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
@@ -56,21 +57,10 @@ object GatewayMain extends IOApp.Simple:
   ): IO[Unit] =
     val fromConfig = config.mcpServers.getOrElse(Map.empty)
     for
-      // Load agents (which triggers agent MCP connections internally)
       _ <- agentLibrary.loadAll()
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig, disabledServers)
       _ <- logger.info("MCP servers initialized")
-      // Warn about deprecated plugins directory
-      _ <- IO.blocking {
-        val pluginDir = os.home / ".nebflow" / "plugins"
-        if os.exists(pluginDir) && os.isDir(pluginDir) then
-          logger.warn(
-            "DEPRECATED: ~/.nebflow/plugins/ detected. Please migrate to ~/.nebflow/agents/. " +
-              "Move plugin.yaml → agent.json and update MCP tool prefixes from mcp__plugin__ to mcp__agent__."
-          )
-        else ()
-      }.void
     yield ()
 
   def run: IO[Unit] =
@@ -106,7 +96,7 @@ object GatewayMain extends IOApp.Simple:
                         Ref.of[IO, ReminderState](ReminderState()).flatMap { reminderStateRef =>
                           // Create Dispatcher for the multi-agent runtime, then start server
                           cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
-                            val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config), Some(mcpManager))
+                            val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
                             cats.effect.std.Semaphore[IO](1).flatMap { askSemaphore =>
                               nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                 val sharedResources = SharedResources(

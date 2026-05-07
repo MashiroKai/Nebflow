@@ -17,6 +17,12 @@ class FallbackExhaustedError(val attempts: List[FallbackAttempt]) extends Except
       .mkString("\n")
     s"All providers failed:\n$summary"
 
+case class FallbackResult[T](
+  data: T,
+  attempts: List[FallbackAttempt],
+  usedCandidate: ModelCandidate
+)
+
 object Fallback:
   private val JitterMinMs = 1000
   private val JitterMaxMs = 3000
@@ -87,14 +93,14 @@ object Fallback:
     action: ModelCandidate => IO[T],
     maxRetries: Int = MaxRetries,
     onAttempt: Option[FallbackAttempt => IO[Unit]] = None
-  ): IO[nebflow.shared.FallbackResult[T]] =
+  ): IO[FallbackResult[T]] =
 
     def tryWithRetry(
       candidate: ModelCandidate,
       retriesLeft: Int,
       backoffMs: Long,
       priorFailures: List[FallbackAttempt]
-    )(fallback: List[FallbackAttempt] => IO[nebflow.shared.FallbackResult[T]]): IO[nebflow.shared.FallbackResult[T]] =
+    )(fallback: List[FallbackAttempt] => IO[FallbackResult[T]]): IO[FallbackResult[T]] =
       val start = System.currentTimeMillis()
       withTimeoutIO(action(candidate), DefaultTimeoutMs).attempt.flatMap {
         case Right(result) =>
@@ -118,7 +124,7 @@ object Fallback:
                 )
               )
             else IO.unit
-          successNotify *> IO.pure(nebflow.shared.FallbackResult(result, priorFailures :+ attempt, candidate))
+          successNotify *> IO.pure(FallbackResult(result, priorFailures :+ attempt, candidate))
         case Left(error) =>
           val classification = classifyError(error)
           val durationMs = System.currentTimeMillis() - start
@@ -145,7 +151,7 @@ object Fallback:
       }
     end tryWithRetry
 
-    def loop(remaining: List[ModelCandidate], attempts: List[FallbackAttempt]): IO[nebflow.shared.FallbackResult[T]] =
+    def loop(remaining: List[ModelCandidate], attempts: List[FallbackAttempt]): IO[FallbackResult[T]] =
       remaining match
         case Nil =>
           IO.raiseError(new FallbackExhaustedError(attempts))

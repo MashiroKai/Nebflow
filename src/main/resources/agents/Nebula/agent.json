@@ -1,0 +1,6 @@
+{
+  "name": "Nebula",
+  "displayName": "Nebula",
+  "description": "AI coding assistant with full tool access",
+  "tools": ["*"]
+}

@@ -96,7 +96,7 @@ private[agent] trait AgentCore:
       None
     else
       val inputTokensOpt = state.latestUsage.map(_.inputTokens)
-      val threshold = agentDef.contextWindow - CompactConfig().bufferTokens
+      val threshold = resources.contextWindow - CompactConfig().bufferTokens
       inputTokensOpt match
         case Some(inputTokens) if inputTokens > threshold =>
           logAgentEvent(
@@ -206,7 +206,27 @@ private[agent] trait AgentCore:
         // Assign a monotonically increasing turnId so stale LlmComplete/LlmFailed from
         // a cancelled (interrupted) turn can be detected and discarded.
         val turnId = state.currentTurnId + 1
-        val stateForTurn = state.withCurrentTurnId(turnId)
+
+        // FastMicroCompact: rule-driven tool result cleanup when cache is cold.
+        // Must write back to state so subsequent turns see the compacted messages.
+        val microResult = FastMicroCompact(state.messages)
+        val stateAfterMicro = microResult match
+          case Some(compacted) =>
+            logAgentEvent(
+              ctx,
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "fast-micro-compact",
+              s"before=${state.messages.size} after=${compacted.size}"
+            )
+            state
+              .copy(execution = state.execution.copy(messages = compacted))
+              .withCurrentTurnId(turnId)
+          case None =>
+            state.withCurrentTurnId(turnId)
+        val stateForTurn = stateAfterMicro
 
         val io = for
           // --- reminders (async) ---
@@ -216,7 +236,7 @@ private[agent] trait AgentCore:
           reminders <- SystemReminders.collectAll(
             resources.reminderStateRef,
             stateForTurn.latestUsage,
-            agentDef.contextWindow,
+            resources.contextWindow,
             fileChangesOpt,
             isUserTurn
           )
@@ -236,7 +256,7 @@ private[agent] trait AgentCore:
             sessionId = stateForTurn.sessionId.getOrElse(ctx.self.path.name),
             agentId = agentDef.name,
             tools = tools,
-            maxTokens = Some(agentDef.maxTokens),
+            maxTokens = Some(resources.agentLibrary.globalMaxTokens),
             thinking = thinkingOpt.map(nebflow.service.ThinkingConfig.toLlmJson),
             systemStable = Some(systemStable)
           )
@@ -257,7 +277,7 @@ private[agent] trait AgentCore:
         // is queued in the actor mailbox before any LlmComplete can arrive.
         val startIo = io.start.handleErrorWith { e =>
           IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
-            IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.start
+            IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.void.start
         }
         resources.dispatcher.unsafeRunAndForget(
           startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
@@ -338,7 +358,7 @@ private[agent] trait AgentCore:
       llm = Some(resources.llm),
       sessionStore = Some(resources.sessionStore),
       agentActorRef = Some(ctx.self),
-      contextWindow = agentDef.contextWindow,
+      contextWindow = resources.contextWindow,
       sessionId = state.sessionId,
       sessionName = state.sessionName,
       taskStore = Some(resources.taskStore),
@@ -391,24 +411,24 @@ private[agent] trait AgentCore:
                       permissionDeferredRef.set(Some(deferred)) *>
                         // Notify actor to save the deferred in its state before we wait on it
                         IO(ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
-                          (IO {
-                            val summary = nebflow.core.summarizeToolCall(call)
-                            Json.obj(
-                              "type" -> "askPermission".asJson,
-                              "sessionId" -> state.sessionId.asJson,
-                              "toolName" -> call.name.asJson,
-                              "summary" -> summary.asJson,
-                              "input" -> call.input.asJson
-                            )
-                          }).flatMap { permJson =>
-                            for
-                              _ <- state.wsSend(permJson)
-                              approved <- deferred.get
-                              result <-
-                                if approved then executeTool(call, toolCtx)
-                                else IO.pure(ToolExecResult("Permission denied by user", isError = true))
-                            yield result
-                          }
+                        (IO {
+                          val summary = nebflow.core.summarizeToolCall(call)
+                          Json.obj(
+                            "type" -> "askPermission".asJson,
+                            "sessionId" -> state.sessionId.asJson,
+                            "toolName" -> call.name.asJson,
+                            "summary" -> summary.asJson,
+                            "input" -> call.input.asJson
+                          )
+                        }).flatMap { permJson =>
+                          for
+                            _ <- state.wsSend(permJson)
+                            approved <- deferred.get
+                            result <-
+                              if approved then executeTool(call, toolCtx)
+                              else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+                          yield result
+                        }
                   }
               }
           ).map(r => (call, r))
@@ -566,15 +586,20 @@ private[agent] trait AgentCore:
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
-    // Auto-include MCP tools registered for this agent (mcp__agent__{name}__ prefix)
-    val mcpPrefix = s"mcp__agent__${agentDef.name}__"
-    val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(_.startsWith(mcpPrefix)).toSet
+    // Include MCP tools enabled by this agent via mcpServers config.
+    // Each serverId maps to tools registered as mcp__{serverId}__{toolName}
+    val mcpToolNames = ToolRegistry.ALL_TOOLS.map(_.name)
+    val mcpTools = agentDef.mcpServers.flatMap { serverId =>
+      val prefix = s"mcp__${serverId}__"
+      mcpToolNames.filter(_.startsWith(prefix))
+    }.toSet
     val always =
       if agentDef.name == "context-manage" then ToolRegistry.AlwaysAvailable
       else ToolRegistry.AlwaysAvailableNonCompact
-    val subagentTools = if agentDef.subagents.nonEmpty then ToolRegistry.SubagentTools else Set.empty[String]
+    // Delegate tool is always available for root agents (depth=0)
+    val delegateTools = if depth == 0 && !hasParent then ToolRegistry.SubagentTools else Set.empty[String]
     val parentTools = if hasParent then ToolRegistry.ParentTools else Set.empty[String]
-    base ++ mcpTools ++ always ++ subagentTools ++ parentTools
+    base ++ mcpTools ++ always ++ delegateTools ++ parentTools
 
   protected def buildToolList(agentDef: AgentDef, depth: Int, hasParent: Boolean): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(agentDef, depth, hasParent)
