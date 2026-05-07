@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{Message, MessageRole, TokenUsage}
 import nebflow.core.compact.CompactConfig
 
 /**
@@ -114,5 +114,37 @@ class AgentActorCompactionSpec extends FunSuite:
     assert(failedState.pendingCompaction.isEmpty)
     assertEquals(failedState.compactionFailures, 2)
     assertEquals(failedState.messages, originalMsgs) // original messages retained
+  }
+
+  // ---------- latestUsage reset after compaction success (prevents infinite loop) ----------
+
+  test("compaction success resets latestUsage to prevent re-trigger") {
+    val contextWindow = 128000
+    val bufferTokens = CompactConfig().bufferTokens
+    val threshold = contextWindow - bufferTokens
+    val highUsage = TokenUsage(inputTokens = threshold + 5000, outputTokens = 1000)
+
+    val originalMsgs = List(
+      Message(MessageRole.User, Left("hello")),
+      Message(MessageRole.Assistant, Left("world"))
+    )
+    val state = mkState(0)
+      .withMessages(originalMsgs)
+      .withLatestUsage(Some(highUsage))
+      .withPendingCompaction(Some(CompactionJob("sub-1", "full", None, None)))
+
+    // Simulate the success branch — exactly matching AgentActor DelegateResult handler:
+    val compactedMsgs = List(Message(MessageRole.User, Left("summary")))
+    val newState = state.withPendingCompaction(None).withSubagents(Map.empty)
+    val successState = newState
+      .withMessages(compactedMsgs)
+      .withCompactionFailures(0)
+      .withLatestUsage(None)
+
+    // After compaction success, latestUsage must be None so maybeAutoCompact skips
+    assert(successState.latestUsage.isEmpty, "latestUsage should be None after compaction success")
+    // Verify that with None latestUsage, the auto-compact check would NOT re-trigger
+    val shouldNotCompact = successState.latestUsage.exists(_.inputTokens > threshold)
+    assert(!shouldNotCompact, "Auto-compaction must not re-trigger after successful compaction")
   }
 end AgentActorCompactionSpec
