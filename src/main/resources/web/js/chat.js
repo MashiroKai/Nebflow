@@ -302,8 +302,11 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const bodyText = diffHtml ? '' : (content ? escapeHtml(content.length > 120 ? content.slice(0,120) + '...' : content) : '');
   const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
   const hasBody = !!bodyHtml;
+  const labelParts = label.split('\n', 2);
+  const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(summary) + truncBadge
+    + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-    '<div class="content"><div class="label">' + escapeHtml(label) + ' &mdash; ' + escapeHtml(summary) + truncBadge + '</div>' +
+    '<div class="content"><div class="label">' + labelHtml + '</div>' +
     (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
   row.appendChild(card);
   chat.appendChild(row);
@@ -331,8 +334,11 @@ export function renderToolPending(label, sessionId) {
   const card = document.createElement('div');
   card.className = 'tool-card';
   card.style.background = '#e8e8e8';
+  const labelParts = label.split('\n', 2);
+  const labelHtml = escapeHtml(labelParts[0])
+    + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon"><span class="spinner"></span></span>' +
-    '<div class="content"><div class="label">' + escapeHtml(label) + '</div></div>';
+    '<div class="content"><div class="label">' + labelHtml + '</div></div>';
   row.appendChild(card);
   chat.appendChild(row);
   smartScroll();
@@ -550,11 +556,13 @@ export function renderAskUser(items, askSessionId) {
   const targetSid = askSessionId || state.activeSessionId;
   try {
     showOptions(bubble, items, (answers) => {
+      state.answeredAskUsers.add(targetSid);
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers }));
       }
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, 'Confirm', () => {
+      state.answeredAskUsers.add(targetSid);
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'] }));
       }

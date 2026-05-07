@@ -557,6 +557,49 @@ export function setSessionAttention(sessionId, attention) {
   updateSessionStatus(sessionId);
 }
 
+/** Move a session item to the top of the non-pinned group in the sidebar (like WeChat). */
+function reorderSessionToTop(sessionId) {
+  // Don't reorder if session is busy (in progress)
+  if (state.busySessionIds.has(sessionId)) return;
+
+  // Update updatedAt in state.sessions so future renders stay sorted
+  const session = state.sessions.find(s => s.id === sessionId);
+  if (!session) return;
+  session.updatedAt = Date.now();
+
+  const sessionList = state.dom.sessionList;
+  const item = sessionList.querySelector(`.session-item[data-id="${sessionId}"]`);
+  if (!item) return;
+
+  const isPinned = state.pinnedSessions.has(sessionId);
+
+  if (isPinned) {
+    // Pinned items stay in their group; just move to top of pinned group
+    const firstItem = sessionList.querySelector('.session-item.pinned');
+    if (firstItem && firstItem !== item) {
+      sessionList.insertBefore(item, firstItem);
+    }
+  } else {
+    // Find insertion point: after divider (start of non-pinned group) or top of list
+    const divider = sessionList.querySelector('.session-divider');
+    if (divider) {
+      const nextSibling = divider.nextSibling;
+      if (nextSibling !== item) {
+        sessionList.insertBefore(item, nextSibling);
+      }
+    } else {
+      // No pinned sessions — insert at the very top
+      if (sessionList.firstChild !== item) {
+        sessionList.insertBefore(item, sessionList.firstChild);
+      }
+    }
+  }
+
+  // Update the time display to reflect the new activity
+  const timeEl = item.querySelector('.session-time');
+  if (timeEl) timeEl.textContent = formatSessionTime(session.updatedAt);
+}
+
 // Listen for state changes from other modules (dispatched via CustomEvent)
 window.addEventListener('session-busy', (e) => {
   updateSessionStatus(e.detail.sessionId);
@@ -568,6 +611,7 @@ window.addEventListener('session-attention', (e) => {
 
 window.addEventListener('session-unread', (e) => {
   updateSessionStatus(e.detail.sessionId);
+  reorderSessionToTop(e.detail.sessionId);
 });
 
 window.addEventListener('session-compacting', (e) => {

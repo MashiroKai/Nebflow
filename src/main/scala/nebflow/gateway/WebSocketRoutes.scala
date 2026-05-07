@@ -8,7 +8,7 @@ import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.core.*
-import nebflow.core.tools.ToolRegistry
+import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.service.*
 import nebflow.shared.*
 import nebflow.skill.SkillDiscovery
@@ -829,57 +829,148 @@ class WebSocketRoutes(
         )
       else
         (for
+          askDef <- sharedResources.agentLibrary.get("Ask").flatMap {
+            case Some(d) => IO.pure(d)
+            case None => IO.raiseError(new RuntimeException("Ask agent not found"))
+          }
+          allowedTools = askDef.tools match
+            case Nil => Set.empty[String]
+            case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
+            case names => names.toSet
+          toolDefs = Some(ToolRegistry.ALL_TOOLS.filter(t => allowedTools.contains(t.name)))
+          toolContext = ToolContext(
+            projectRoot = sharedResources.projectRoot.toString,
+            sessionId = Some(sessionId),
+            depth = 0,
+            agentDef = Some(askDef)
+          )
           messages <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
           history = messages.filter(m => m.role == MessageRole.User || m.role == MessageRole.Assistant)
-          systemMsg = Message(
-            MessageRole.System,
-            Left(
-              "You are a helpful assistant. The user is asking a follow-up question about an ongoing conversation. Use the provided conversation context to answer concisely. Your response will NOT be saved to the conversation history."
-            )
-          )
           askMsg = Message(MessageRole.User, Left(question))
-          request = LlmRequest(
-            messages = systemMsg :: history ::: List(askMsg),
-            sessionId = sessionId,
-            agentId = "ask",
-            tools = None,
-            maxTokens = Some(2048)
-          )
-          answerRef <- IO.ref("")
-          metaRef <- IO.ref(Option.empty[LlmMeta])
-          _ <- sharedResources.llm
+          allMsgs = history :+ askMsg
+          finalResult <- askLoop(askDef, allMsgs, toolDefs, toolContext, sessionId, wsSend)
+          _ <- sharedResources.sessionStore
+            .appendUiMessages(sessionId, List(UiMessage.Ask(question, finalResult.text, Some(finalResult.durationMs), finalResult.model)))
+            .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}")))
+        yield ())
+          .handleErrorWith { e =>
+            logger.warn(s"Ask failed for session $sessionId: ${e.getMessage}") *>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "askError".asJson,
+                  "sessionId" -> sessionId.asJson,
+                  "message" -> s"Ask failed: ${e.getMessage.take(200)}".asJson
+                )
+              )
+          }
+          .guarantee(sharedResources.askSemaphore.release)
+    }
+
+  /** Single-round result from askLoop */
+  private case class AskResult(text: String, durationMs: Long, model: Option[String])
+
+  /**
+   * Agent loop for /ask: LLM -> tools -> LLM -> ... -> final text answer.
+   * Streams text deltas to frontend. Returns the final answer text.
+   */
+  private def askLoop(
+    askDef: AgentDef,
+    initialMsgs: List[Message],
+    toolDefs: Option[List[ToolDefinition]],
+    toolContext: ToolContext,
+    sessionId: String,
+    wsSend: io.circe.Json => IO[Unit],
+    maxRounds: Int = 20
+  ): IO[AskResult] =
+    def go(msgs: List[Message], round: Int, startTime: Long): IO[AskResult] =
+      if round > maxRounds then
+        IO.pure(AskResult("(Ask reached maximum tool rounds)", System.currentTimeMillis() - startTime, None))
+      else
+        val request = LlmRequest(
+          messages = msgs,
+          sessionId = sessionId,
+          agentId = "ask",
+          tools = toolDefs,
+          maxTokens = Some(askDef.maxTokens),
+          systemStable = Some(askDef.systemPrompt)
+        )
+        for
+          chunks <- sharedResources.llm
             .sendStream(request)
-            .evalMap {
+            .evalTap {
               case StreamChunk.TextDelta(delta) =>
-                answerRef.update(_ + delta) *>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "askTextDelta".asJson,
-                    "sessionId" -> sessionId.asJson,
-                    "delta" -> delta.asJson
-                  )
-                )
-              case StreamChunk.Done(_, _, meta) =>
-                metaRef.set(meta) *>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "askDone".asJson,
-                    "sessionId" -> sessionId.asJson,
-                    "durationMs" -> meta.map(_.durationMs).getOrElse(0L).asJson,
-                    "model" -> meta.map(_.model).getOrElse("").asJson
-                  )
-                )
+                wsSend(io.circe.Json.obj(
+                  "type" -> "askTextDelta".asJson,
+                  "sessionId" -> sessionId.asJson,
+                  "delta" -> delta.asJson
+                ))
               case _ => IO.unit
             }
             .compile
-            .drain
-          answer <- answerRef.get
-          meta <- metaRef.get
-          _ <- sharedResources.sessionStore
-            .appendUiMessages(sessionId, List(UiMessage.Ask(question, answer, meta.map(_.durationMs), meta.map(_.model))))
-            .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}")))
-        yield ())
-          .guarantee(sharedResources.askSemaphore.release)
+            .toList
+          text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
+          toolCalls = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }
+          meta = chunks.collectFirst { case StreamChunk.Done(_, _, Some(m)) => m }
+          result <-
+            if toolCalls.isEmpty then
+              // No more tool calls — send askDone and return
+              val durationMs = System.currentTimeMillis() - startTime
+              wsSend(io.circe.Json.obj(
+                "type" -> "askDone".asJson,
+                "sessionId" -> sessionId.asJson,
+                "durationMs" -> durationMs.asJson,
+                "model" -> meta.map(_.model).getOrElse("").asJson
+              )) *> IO.pure(AskResult(text, durationMs, meta.map(_.model)))
+            else
+              // Execute tools, build updated messages, and loop
+              executeAskTools(toolCalls, toolContext, sessionId, wsSend).flatMap { toolResults =>
+                val assistantBlocks = (if text.nonEmpty then List(ContentBlock.Text(text)) else Nil) ++
+                  toolCalls.map(c => ContentBlock.ToolUse(c.id, c.name, c.input))
+                val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks))
+                val resultBlocks = toolResults.map { (call, r) =>
+                  ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
+                }
+                val resultMsg = Message(MessageRole.User, Right(resultBlocks))
+                val newMsgs = msgs ++ List(assistantMsg, resultMsg)
+                go(newMsgs, round + 1, startTime)
+              }
+        yield result
+    end go
+    go(initialMsgs, 0, System.currentTimeMillis())
+  end askLoop
+
+  /** Execute a batch of tool calls for the ask agent, emitting toolStart/toolEnd events. */
+  private def executeAskTools(
+    calls: List[ToolCall],
+    toolContext: ToolContext,
+    sessionId: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[List[(ToolCall, ToolExecResult)]] =
+    calls.traverse { call =>
+      val summary = ToolRegistry.TOOL_MAP.get(call.name).map(_.summarize(call.input)).getOrElse(call.name)
+      val execResult: IO[ToolExecResult] = ToolRegistry.TOOL_MAP.get(call.name) match
+        case Some(tool) =>
+          tool.call(call.input, toolContext).map {
+            case Left(err) => ToolExecResult(err.message, isError = true)
+            case Right(result) => ToolExecResult(result)
+          }.handleErrorWith(e => IO.pure(ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)))
+        case None =>
+          IO.pure(ToolExecResult(s"Unknown tool: ${call.name}", isError = true))
+      wsSend(io.circe.Json.obj(
+        "type" -> "toolStart".asJson,
+        "sessionId" -> sessionId.asJson,
+        "label" -> summary.asJson
+      )) *> (execResult.flatMap { result =>
+        wsSend(io.circe.Json.obj(
+          "type" -> "toolEnd".asJson,
+          "sessionId" -> sessionId.asJson,
+          "label" -> summary.asJson,
+          "summary" -> nebflow.core.summarizeToolResult(call, result.content).asJson,
+          "content" -> result.content.asJson,
+          "isError" -> result.isError.asJson,
+          "input" -> call.input.asJson.spaces2.asJson
+        )).as(call -> result)
+      })
     }
 
 end WebSocketRoutes

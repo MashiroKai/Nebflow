@@ -229,6 +229,7 @@ onMessage('toolEnd', (msg) => {
 onMessage('done', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
+  if (sid) state.answeredAskUsers.delete(sid);
   const durationMs = consumeTurnDuration(sid);
   console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length });
   // Flush any remaining buffered text for this session
@@ -318,7 +319,10 @@ onMessage('maxTokens', (msg) => {
 // --- AskUser / Permission ---
 onMessage('askUser', (msg) => {
   const sid = msg.sessionId;
-  if (sid) setSessionAttention(sid, true);
+  if (sid) {
+    setSessionAttention(sid, true);
+    state.answeredAskUsers.delete(sid);
+  }
   if (isActive(msg)) {
     const data = renderAskUser(msg.items, msg.sessionId);
     if (data) saveMsg(data, msg.sessionId);
@@ -392,13 +396,13 @@ onMessage('historyPage', (msg) => {
     state.historyTotal = msg.total;
     state.historyHasMore = msg.hasMore;
     state.dom.chat.innerHTML = '';
-    // If session is busy with a pending askUser, skip the last one in history — it will be rendered interactively below
-    const hasPendingAskUser = state.busySessionIds.has(sid) && [...msg.messages].reverse().find(m => m.type === 'askUser');
-    restoreFromBackendHistory(msg.messages, !!hasPendingAskUser);
+    // If session is busy with a pending (unanswered) askUser, skip the last one in history — it will be rendered interactively below
+    const askUserMsg = state.busySessionIds.has(sid) && !state.answeredAskUsers.has(sid) && [...msg.messages].reverse().find(m => m.type === 'askUser');
+    restoreFromBackendHistory(msg.messages, !!askUserMsg);
 
-    // Re-render interactive AskUser if session is still busy with a pending one
-    if (state.busySessionIds.has(sid)) {
-      const lastAskUser = hasPendingAskUser;
+    // Re-render interactive AskUser only if session is busy and askUser hasn't been answered yet
+    if (state.busySessionIds.has(sid) && !state.answeredAskUsers.has(sid)) {
+      const lastAskUser = askUserMsg;
       if (lastAskUser && lastAskUser.items) {
         renderAskUser(lastAskUser.items, sid);
       }
@@ -412,6 +416,25 @@ onMessage('historyPage', (msg) => {
         state.currentAiBubble.className = 'bubble ai';
         state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText) + '<span class="cursor"></span>';
         row.appendChild(state.currentAiBubble);
+        chat.appendChild(row);
+      }
+      // Re-create streaming ask bubble if this session has a buffered ask
+      const askBuf = state.sessionAskBuffers[sid];
+      if (askBuf && askBuf.answer) {
+        state.askAnswerText = askBuf.answer;
+        const chat = state.dom.chat;
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        state.currentAskBubble = document.createElement('div');
+        state.currentAskBubble.className = 'bubble ai';
+        const label = document.createElement('div');
+        label.className = 'ask-label';
+        label.textContent = 'Ask';
+        const content = document.createElement('div');
+        content.innerHTML = renderMarkdownWithMath(state.askAnswerText) + '<span class="cursor"></span>';
+        state.currentAskBubble.appendChild(label);
+        state.currentAskBubble.appendChild(content);
+        row.appendChild(state.currentAskBubble);
         chat.appendChild(row);
       }
     }
@@ -705,22 +728,33 @@ onMessage('taskListUpdate', (msg) => {
 onMessage('askTextDelta', (msg) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+  // Accumulate ask text for ALL sessions
+  if (sid) {
+    if (!state.sessionAskBuffers[sid]) state.sessionAskBuffers[sid] = { question: '', answer: '' };
+    state.sessionAskBuffers[sid].answer = (state.sessionAskBuffers[sid].answer || '') + msg.delta;
+  }
   if (isActive(msg)) appendAskAnswer(msg.delta);
 });
 onMessage('askDone', (msg) => {
   const sid = msg.sessionId || state.activeSessionId;
   const durationMs = consumeTurnDuration(sid) || msg.durationMs;
+  const buf = sid ? state.sessionAskBuffers[sid] : null;
   if (isActive(msg)) {
-    const answer = state.askAnswerText || '';
-    const question = state.pendingAskQuestion || '';
+    const answer = state.askAnswerText || (buf ? buf.answer : '') || '';
+    const question = buf ? buf.question : '';
     finishAskAnswer(durationMs, msg.model);
     if (question || answer) {
       saveMsg({ type: 'ask', question, answer, durationMs, model: msg.model }, msg.sessionId);
     }
-    state.pendingAskQuestion = '';
+  } else if (buf && (buf.question || buf.answer)) {
+    // Non-active session: save buffered ask to localStorage
+    saveMsg({ type: 'ask', question: buf.question, answer: buf.answer, durationMs, model: msg.model }, sid);
   }
+  if (sid) delete state.sessionAskBuffers[sid];
 });
 onMessage('askError', (msg) => {
+  const sid = msg.sessionId || state.activeSessionId;
+  if (sid) delete state.sessionAskBuffers[sid];
   if (isActive(msg)) renderAskError(msg.message);
 });
 

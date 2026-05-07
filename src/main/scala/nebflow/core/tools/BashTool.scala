@@ -134,8 +134,8 @@ Git safety:
       case _ =>
         val firstLine = cmd.split('\n').headOption.getOrElse(cmd)
         if firstLine.isEmpty then "Bash(empty)"
-        else if firstLine.length > 120 then s"Bash(${firstLine.take(117)}...)"
-        else s"Bash($firstLine)"
+        else if firstLine.length > 120 then s"Bash\n  (${firstLine.take(117)}...)"
+        else s"Bash\n  ($firstLine)"
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.contains("[Command timed out") then "Timed out"
