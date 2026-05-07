@@ -324,7 +324,6 @@ private[agent] trait AgentCore:
     val nextTurnIdx = state.turnIdx + 1
 
     // Track deferreds created for Permission so they can be saved to state
-    // (Using Ref instead of var to avoid race condition in concurrent traverse)
     val permissionDeferredRef = cats.effect.Ref.unsafe[IO, Option[cats.effect.Deferred[IO, Boolean]]](None)
 
     val isSubagent = depth > 0
@@ -390,24 +389,26 @@ private[agent] trait AgentCore:
                     case None =>
                       val deferred = cats.effect.Deferred.unsafe[IO, Boolean]
                       permissionDeferredRef.set(Some(deferred)) *>
-                        (IO {
-                          val summary = nebflow.core.summarizeToolCall(call)
-                          Json.obj(
-                            "type" -> "askPermission".asJson,
-                            "sessionId" -> state.sessionId.asJson,
-                            "toolName" -> call.name.asJson,
-                            "summary" -> summary.asJson,
-                            "input" -> call.input.asJson
-                          )
-                        }).flatMap { permJson =>
-                          for
-                            _ <- state.wsSend(permJson)
-                            approved <- deferred.get
-                            result <-
-                              if approved then executeTool(call, toolCtx)
-                              else IO.pure(ToolExecResult("Permission denied by user", isError = true))
-                          yield result
-                        }
+                        // Notify actor to save the deferred in its state before we wait on it
+                        IO(ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
+                          (IO {
+                            val summary = nebflow.core.summarizeToolCall(call)
+                            Json.obj(
+                              "type" -> "askPermission".asJson,
+                              "sessionId" -> state.sessionId.asJson,
+                              "toolName" -> call.name.asJson,
+                              "summary" -> summary.asJson,
+                              "input" -> call.input.asJson
+                            )
+                          }).flatMap { permJson =>
+                            for
+                              _ <- state.wsSend(permJson)
+                              approved <- deferred.get
+                              result <-
+                                if approved then executeTool(call, toolCtx)
+                                else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+                            yield result
+                          }
                   }
               }
           ).map(r => (call, r))
@@ -505,13 +506,10 @@ private[agent] trait AgentCore:
       }
     )
 
-    val permDeferredOpt = resources.dispatcher.unsafeRunSync(permissionDeferredRef.get)
-    val updatedInteraction = permDeferredOpt.orElse(state.pendingPermission) match
-      case None => None
-      case d => Some(InteractionState(None, d))
-
+    // Permission deferred is now managed via SetPermissionDeferred actor message,
+    // so we don't need to read permissionDeferredRef here.
     val updatedState = state.copy(
-      execution = state.execution.copy(turnIdx = nextTurnIdx, interaction = updatedInteraction)
+      execution = state.execution.copy(turnIdx = nextTurnIdx)
     )
     processing(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
   end pipeToolExecutions
@@ -568,11 +566,15 @@ private[agent] trait AgentCore:
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
-    val always = if agentDef.name == "context-manage" then ToolRegistry.AlwaysAvailable
-                 else ToolRegistry.AlwaysAvailableNonCompact
+    // Auto-include MCP tools registered for this agent (mcp__agent__{name}__ prefix)
+    val mcpPrefix = s"mcp__agent__${agentDef.name}__"
+    val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(_.startsWith(mcpPrefix)).toSet
+    val always =
+      if agentDef.name == "context-manage" then ToolRegistry.AlwaysAvailable
+      else ToolRegistry.AlwaysAvailableNonCompact
     val subagentTools = if agentDef.subagents.nonEmpty then ToolRegistry.SubagentTools else Set.empty[String]
     val parentTools = if hasParent then ToolRegistry.ParentTools else Set.empty[String]
-    base ++ always ++ subagentTools ++ parentTools
+    base ++ mcpTools ++ always ++ subagentTools ++ parentTools
 
   protected def buildToolList(agentDef: AgentDef, depth: Int, hasParent: Boolean): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(agentDef, depth, hasParent)
@@ -627,6 +629,11 @@ private[agent] trait AgentCore:
           val json =
             if isSubagent then AgentStreamEvent.Thinking.toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
+          wsSend(json)
+        case StreamChunk.ToolCallStart(name) if name != "AskUserQuestion" =>
+          val json =
+            if isSubagent then AgentStreamEvent.ToolCallDetected(name).toJson(ctx.self.path.name, true, None)
+            else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
           wsSend(json)
         case StreamChunk.ToolCallChunk(tc) if tc.name != "AskUserQuestion" =>
           val json =

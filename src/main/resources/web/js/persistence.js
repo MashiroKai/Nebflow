@@ -260,15 +260,8 @@ export function restoreFromStorage() {
 
 // ---------- Replay backend history messages into the DOM ----------
 // Same logic as restoreFromStorage but takes messages array directly (from backend).
-export function restoreFromBackendHistory(msgs, skipLastAskUser = false) {
+export function restoreFromBackendHistory(msgs) {
   const chat = state.dom.chat;
-  // Find the index of the last askUser message so we can skip it if needed
-  let lastAskUserIdx = -1;
-  if (skipLastAskUser) {
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].type === 'askUser') { lastAskUserIdx = i; break; }
-    }
-  }
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
       const row = document.createElement('div');
@@ -350,7 +343,6 @@ export function restoreFromBackendHistory(msgs, skipLastAskUser = false) {
         if (hasBody) attachToolClick(card);
       }
     } else if (m.type === 'askUser') {
-      if (i === lastAskUserIdx) return; // Skip — will be rendered interactively
       const row = document.createElement('div');
       row.className = 'row ai';
       const bubble = document.createElement('div');

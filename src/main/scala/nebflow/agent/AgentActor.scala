@@ -284,17 +284,32 @@ object AgentActor extends AgentCore with AgentSession:
                 val errMsg = s"Context window exceeded (stopReason: $stopReason)"
                 parentRef match
                   case Some(p) =>
-                    p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(
-                      AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, errMsg)
-                    ))
+                    p ! AgentCommand.DelegateResult(
+                      ctx.self.path.name,
+                      Left(
+                        AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, errMsg)
+                      )
+                    )
                     Behaviors.stopped
                   case None =>
                     // Should not happen (depth > 0 implies parentRef.isDefined), but handle gracefully
                     finishTurn(
-                      agentDef, resources, depth, parentRef, updatedState, stash, ctx,
-                      errMsg, replyTo, None, textAlreadyStreamed = false, result.model
+                      agentDef,
+                      resources,
+                      depth,
+                      parentRef,
+                      updatedState,
+                      stash,
+                      ctx,
+                      errMsg,
+                      replyTo,
+                      None,
+                      textAlreadyStreamed = false,
+                      result.model
                     )
-              else if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax then
+                end match
+              else if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax
+              then
                 // Compaction already in progress or circuit breaker open — report error
                 val msg = "Context window exceeded and compaction is unavailable. " +
                   "Please start a new session or use /clear to reset."
@@ -697,24 +712,40 @@ object AgentActor extends AgentCore with AgentSession:
 
                   parentRef match
                     case Some(p) =>
-                      p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(
-                        AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.ToolFailed,
-                          s"Compaction failed $failures times. $cleanDesc")
-                      ))
+                      p ! AgentCommand.DelegateResult(
+                        ctx.self.path.name,
+                        Left(
+                          AgentError(
+                            ctx.self.path.name,
+                            agentDef.name,
+                            depth,
+                            AgentErrorType.ToolFailed,
+                            s"Compaction failed $failures times. $cleanDesc"
+                          )
+                        )
+                      )
                       Behaviors.stopped
                     case None =>
                       resources.dispatcher.unsafeRunAndForget(
                         persistIfSession(resources, recoveredState).handleErrorWith(e =>
-                          IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist after emergency cleanup failed: ${e.getMessage}"))
+                          IO(
+                            NebflowLogger
+                              .forName("nebflow.agent")
+                              .warn(s"Persist after emergency cleanup failed: ${e.getMessage}")
+                          )
                         )
                       )
                       // Notify frontend
                       resources.dispatcher.unsafeRunAndForget(
-                        state.wsSend(io.circe.Json.obj(
-                          "type" -> "error".asJson,
-                          "sessionId" -> state.sessionId.asJson,
-                          "message" -> s"Context pressure relief: $cleanDesc".asJson
-                        )).handleErrorWith(_ => IO.unit)
+                        state
+                          .wsSend(
+                            io.circe.Json.obj(
+                              "type" -> "error".asJson,
+                              "sessionId" -> state.sessionId.asJson,
+                              "message" -> s"Context pressure relief: $cleanDesc".asJson
+                            )
+                          )
+                          .handleErrorWith(_ => IO.unit)
                       )
                       emitStream(
                         resources.dispatcher,
@@ -727,6 +758,7 @@ object AgentActor extends AgentCore with AgentSession:
                       stash.unstashAll(
                         idle(agentDef, resources, depth, parentRef, recoveredState, stash, ctx)
                       )
+                  end match
                 else pipeLlmCall(agentDef, resources, depth, parentRef, failedState, stash, ctx, pending.replyTo)
                 end if
             end match
@@ -821,6 +853,14 @@ object AgentActor extends AgentCore with AgentSession:
             // Not for us — forward to sub-agents (a sub-agent may have a pending AskUser)
             state.subagents.values.foreach(_ ! AgentCommand.UserAnswered(answers))
             Behaviors.same
+
+      // --- IO thread saves permission deferred for later PermissionAnswered handling ---
+      case AgentCommand.SetPermissionDeferred(deferred) =>
+        val updatedInteraction = Some(InteractionState(None, Some(deferred)))
+        val updatedState = state.copy(
+          execution = state.execution.copy(interaction = updatedInteraction)
+        )
+        processing(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
 
       case AgentCommand.PermissionAnswered(approved) =>
         state.pendingPermission match

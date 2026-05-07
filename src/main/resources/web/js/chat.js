@@ -556,13 +556,11 @@ export function renderAskUser(items, askSessionId) {
   const targetSid = askSessionId || state.activeSessionId;
   try {
     showOptions(bubble, items, (answers) => {
-      state.answeredAskUsers.add(targetSid);
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers }));
       }
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, 'Confirm', () => {
-      state.answeredAskUsers.add(targetSid);
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'] }));
       }
