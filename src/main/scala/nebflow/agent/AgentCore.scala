@@ -341,7 +341,8 @@ private[agent] trait AgentCore:
       askSemaphore = Some(resources.askSemaphore),
       pekkoScheduler = Some(ctx.system.scheduler),
       fileLockManager = Some(resources.fileLockManager),
-      fileChangeTracker = Some(resources.fileChangeTracker)
+      fileChangeTracker = Some(resources.fileChangeTracker),
+      inputTokens = state.latestUsage.map(_.inputTokens)
     )
 
     val io = realToolCalls
@@ -510,10 +511,11 @@ private[agent] trait AgentCore:
               .map {
                 case Left(err) => ToolExecResult(err.message, isError = true)
                 case Right(result) =>
-                  val (guarded, wasTruncated) = ToolResultGuard.guard(result, call.name)
-                  if wasTruncated then
-                    logger.warn(s"Tool $summary result truncated: ${result.length} -> ${guarded.length} chars")
-                  ToolExecResult(guarded, truncated = wasTruncated)
+                  ToolResultGuard.guard(result, call.name, ctx) match
+                    case ToolResultGuard.Ok(content) => ToolExecResult(content)
+                    case ToolResultGuard.Rejected(msg) =>
+                      logger.warn(s"Tool $summary result rejected: $msg")
+                      ToolExecResult(msg, isError = true)
               }
               .handleErrorWith {
                 case _: UserAbort => IO.raiseError(new UserAbort())

@@ -39,7 +39,10 @@ object GlobTool extends Tool:
 
   def summarize(input: JsonObject): String =
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
-    s"Glob($pattern)"
+    val path = input("path").flatMap(_.asString)
+    path match
+      case Some(p) => s"""Glob("$pattern", path="$p")"""
+      case None => s"""Glob("$pattern")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result == "No files found matching the pattern." then "No files found"

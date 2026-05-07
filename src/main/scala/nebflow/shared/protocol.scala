@@ -228,6 +228,9 @@ object UiMessage:
   case class AskUser(items: List[Json]) extends UiMessage:
     val typeName = "askUser"
 
+  case class Ask(question: String, answer: String, durationMs: Option[Long] = None, model: Option[String] = None) extends UiMessage:
+    val typeName = "ask"
+
   case class System(content: String) extends UiMessage:
     val typeName = "system"
 
@@ -249,6 +252,10 @@ object UiMessage:
       if m.truncated then base.deepMerge(Json.obj("truncated" -> true.asJson)) else base
     case m: Agent => Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
     case m: AskUser => Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
+    case m: Ask =>
+      val base = Json.obj("type" -> "ask".asJson, "question" -> m.question.asJson, "answer" -> m.answer.asJson)
+      val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
+      m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
     case m: System => Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
   }
 
@@ -288,6 +295,13 @@ object UiMessage:
         yield Agent(agentId, text)
       case "askUser" =>
         cursor.downField("items").as[List[Json]].map(AskUser(_))
+      case "ask" =>
+        for
+          question <- cursor.downField("question").as[String]
+          answer <- cursor.downField("answer").as[String]
+          durationMs <- cursor.downField("durationMs").as[Option[Long]]
+          model <- cursor.downField("model").as[Option[String]]
+        yield Ask(question, answer, durationMs, model)
       case "system" =>
         cursor.downField("content").as[String].map(System(_))
       case other => Left(DecodingFailure(s"Unknown UiMessage type: $other", cursor.history))

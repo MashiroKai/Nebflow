@@ -3,7 +3,6 @@
 import state from './state.js';
 import { sendWs } from './ws.js';
 import { switchSession } from './sidebar.js';
-
 let searchTimeout = null;
 
 export function initSearch() {
@@ -114,21 +113,30 @@ export function renderSearchResults(query, hits) {
 
 function navigateToMessage(sessionId, messageIndex) {
   if (sessionId === state.activeSessionId) {
-    scrollToMessage(messageIndex);
+    // Same session: check if message is in the currently loaded page
+    const domIdx = messageIndex - state.historyOffset;
+    if (domIdx >= 0 && domIdx < state.dom.chat.querySelectorAll('.row').length) {
+      scrollToRow(domIdx);
+    } else {
+      // Message not in current page — reload with target centered
+      state.searchNavigateTarget = { sessionId, messageIndex };
+      state.dom.chat.innerHTML = '';
+      state.historyOffset = 0;
+      const limit = 100;
+      const beforeIndex = messageIndex + Math.floor(limit / 2);
+      sendWs({ type: 'getHistory', sessionId, limit, beforeIndex });
+    }
   } else {
-    // Set target so main.js historyPage handler scrolls after loading
+    // Different session: set target and switch (resetChatForActiveSession handles the rest)
     state.searchNavigateTarget = { sessionId, messageIndex };
     switchSession(sessionId);
   }
 }
 
-function scrollToMessage(messageIndex) {
-  const chat = state.dom.chat;
-  const rows = chat.querySelectorAll('.row');
-  const messageRows = Array.from(rows).filter(r => r.classList.contains('row'));
-
-  if (messageIndex < messageRows.length) {
-    const targetRow = messageRows[messageIndex];
+function scrollToRow(domIdx) {
+  const rows = state.dom.chat.querySelectorAll('.row');
+  if (domIdx >= 0 && domIdx < rows.length) {
+    const targetRow = rows[domIdx];
     targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
     targetRow.style.transition = 'background 0.3s';
     targetRow.style.background = 'rgba(7,193,96,0.15)';

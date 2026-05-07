@@ -1,48 +1,46 @@
 package nebflow.core.tools
 
+import nebflow.core.compact.CompactConfig
+
 /**
- * Centralized guard that truncates oversized tool results before they enter
- * the LLM message history.  Without this, a single huge Bash output or file
- * read can exceed the model's context window and crash the API call.
- *
- * Each tool type has its own char budget.  When the budget is exceeded the
- * content is truncated and a clear marker is appended so the LLM (and the
- * user via the frontend) knows data was cut.
+ * Centralized guard that checks tool results against context window pressure.
+ * Instead of truncating, results that would overflow the context budget are
+ * rejected with a clear error message so the AI can adjust (compact, narrow
+ * the query, use offset/limit, etc.).
  */
 object ToolResultGuard:
 
-  // --- Per-tool char budgets ---
-  // Rough rule: 1 token ≈ 4 chars (English), so 50k chars ≈ 12.5k tokens.
+  // Rough token estimation: 1 token ≈ 4 chars
+  private val CharsPerToken = 4
+  // Context pressure threshold — reject if projected usage exceeds this fraction
+  private val PressureLimit = 0.8
 
-  /** Default budget for tools without a specific override. */
-  val DefaultMaxChars: Int = 50_000
-
-  private val ToolLimits: Map[String, Int] = Map(
-    "Bash" -> 80_000, // build logs, test output — tends to be verbose
-    "Read" -> 60_000, // source files — can be long but usually structured
-    "Grep" -> 50_000, // search results
-    "Glob" -> 30_000, // file listings
-    "Curl" -> 50_000, // HTTP responses (tool already limits to 100k)
-    "WebSearch" -> 50_000,
-    "WebFetch" -> 50_000
-  )
-
-  /** Maximum chars for a given tool name. */
-  def maxCharsFor(toolName: String): Int =
-    ToolLimits.getOrElse(toolName, DefaultMaxChars)
+  sealed trait GuardResult
+  case class Ok(content: String) extends GuardResult
+  case class Rejected(message: String) extends GuardResult
 
   /**
-   * Truncate content if it exceeds the budget for the given tool.
-   * Returns (truncatedContent, wasTruncated).
+   * Check if adding this tool result to the context would exceed the pressure limit.
+   * Returns Ok(content) if fine, or Rejected(errorMessage) if it would overflow.
    */
-  def guard(content: String, toolName: String): (String, Boolean) =
-    val limit = maxCharsFor(toolName)
-    if content.length <= limit then (content, false)
+  def guard(content: String, toolName: String, ctx: ToolContext): GuardResult =
+    val currentTokens = ctx.inputTokens.getOrElse(0)
+    val resultTokens = estimateTokens(content.length)
+    val threshold = (ctx.contextWindow * PressureLimit).toInt
+    val projected = currentTokens + resultTokens
+
+    if projected <= threshold then Ok(content)
     else
-      val originalSize = content.length
-      val truncated = content.take(limit) +
-        s"\n\n[Output truncated: showing ${limit} of $originalSize chars. " +
-        "Use more specific queries or pagination to get smaller results.]"
-      (truncated, true)
+      val overBy = projected - threshold
+      val availableTokens = math.max(0, threshold - currentTokens)
+      val availableChars = availableTokens * CharsPerToken
+      Rejected(
+        s"Tool output too large for remaining context capacity " +
+          s"(current: ${currentTokens / 1000}k + output: ~${resultTokens / 1000}k tokens would exceed ${(threshold / 1000)}k limit). " +
+          s"Available: ~${availableChars / 1000}k chars. " +
+          s"Use ContextManage to compact, or narrow the query to get smaller output."
+      )
+
+  private def estimateTokens(chars: Int): Int = (chars + CharsPerToken - 1) / CharsPerToken
 
 end ToolResultGuard
