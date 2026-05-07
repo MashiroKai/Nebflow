@@ -66,6 +66,9 @@ object AgentCommand:
     turnId: Long
   ) extends AgentCommand
 
+  // Internal — IO thread notifies actor that a permission deferred needs to be tracked in state
+  case class SetPermissionDeferred(deferred: cats.effect.Deferred[IO, Boolean]) extends AgentCommand
+
   case class ToolsComplete(
     results: List[(ToolCall, ToolExecResult)],
     originalText: String,
@@ -148,6 +151,7 @@ enum AgentStreamEvent:
   case AgentStart(agentName: String, agentType: String)
   case AgentEnd(agentName: String)
   case Thinking
+  case ToolCallDetected(name: String)
   case RetryStatus(message: String)
   case Done(model: Option[String] = None)
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
@@ -198,6 +202,10 @@ enum AgentStreamEvent:
     case Thinking =>
       if isSubagent then Json.obj("type" -> "agentThinking".asJson, "agentId" -> agentId.asJson)
       else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
+    case ToolCallDetected(name) =>
+      if isSubagent then
+        Json.obj("type" -> "agentToolCallDetected".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
+      else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
     case RetryStatus(message) =>
       if isSubagent then
         Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
@@ -275,7 +283,14 @@ end AgentStreamEvent
 // Shared response types
 // ============================================================
 
-case class AgentInfo(name: String, description: String, tools: List[String], subagents: List[String])
+case class AgentInfo(
+  name: String,
+  description: String,
+  tools: List[String],
+  subagents: List[String],
+  displayName: Option[String] = None,
+  avatar: Option[String] = None
+)
 
 // ============================================================
 // Agent Error

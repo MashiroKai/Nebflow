@@ -310,7 +310,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                         case (Some(toolId), Some(toolName)) =>
                           toolCallState
                             .update(_ + (index -> (toolId, toolName, new StringBuilder(args.getOrElse("")))))
-                            .as(acc)
+                            .as(acc :+ StreamChunk.ToolCallStart(toolName))
                         case _ =>
                           toolCallState
                             .modify { m =>
