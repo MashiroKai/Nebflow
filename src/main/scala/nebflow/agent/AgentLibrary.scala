@@ -60,8 +60,7 @@ class AgentLibrary(agentsDir: os.Path, serviceConfig: Option[NebflowServiceConfi
       maxTokens = 4096,
       tools = List("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Curl"),
       subagents = Nil,
-      systemPrompt =
-        """You are a helpful assistant answering a quick follow-up question about an ongoing conversation.
+      systemPrompt = """You are a helpful assistant answering a quick follow-up question about an ongoing conversation.
           |You have access to file reading, code search, and web search tools to help answer accurately.
           |
           |Rules:

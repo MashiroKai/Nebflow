@@ -682,27 +682,36 @@ class WebSocketRoutes(
                       blocks += ContentBlock.Text(s"[file: $name] (文件过大，已截断前 ${maxChars} 字符)\n${data.take(maxChars)}")
                 }
 
-                logger.info(s"User message: ${content.take(60)}${if content.length > 60 then "..." else ""}") *>
-                  logInputHistory(content, attachments) *>
-                  // Record user message as UiMessage for history
-                  sessionStore.getActiveId.flatMap { sid =>
-                    if sid.nonEmpty then
-                      val attJson = attachments.map { att =>
-                        val name = att.hcursor.downField("name").as[String].getOrElse("")
-                        val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                        io.circe.Json.obj(
-                          "name" -> name.asJson,
-                          "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson
+                sessionStore.getActiveMeta.flatMap { metaOpt =>
+                  val sessionName = metaOpt.map(_.name).getOrElse("-")
+                  logger.info(s"${logger.hl(sessionName)} User message: ${content
+                      .take(60)}${if content.length > 60 then "..." else ""}") *>
+                    logInputHistory(content, attachments) *>
+                    // Record user message as UiMessage for history
+                    sessionStore.getActiveId.flatMap { sid =>
+                      if sid.nonEmpty then
+                        val attJson = attachments.map { att =>
+                          val name = att.hcursor.downField("name").as[String].getOrElse("")
+                          val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                          io.circe.Json.obj(
+                            "name" -> name.asJson,
+                            "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson
+                          )
+                        }
+                        sharedResources.sessionStore
+                          .appendUiMessages(sid, List(UiMessage.User(content, attJson)))
+                          .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
+                      else IO.unit
+                    } *> {
+                      val blocksList = blocks.toList
+                      withActiveAgent(ref =>
+                        IO(
+                          ref ! AgentCommand
+                            .UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty))
                         )
-                      }
-                      sharedResources.sessionStore
-                        .appendUiMessages(sid, List(UiMessage.User(content, attJson)))
-                        .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
-                    else IO.unit
-                  } *> {
-                    val blocksList = blocks.toList
-                    withActiveAgent(ref => IO(ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty))))
-                  }
+                      )
+                    }
+                }
             }
           else IO.unit
           end if
@@ -850,7 +859,10 @@ class WebSocketRoutes(
           allMsgs = history :+ askMsg
           finalResult <- askLoop(askDef, allMsgs, toolDefs, toolContext, sessionId, wsSend)
           _ <- sharedResources.sessionStore
-            .appendUiMessages(sessionId, List(UiMessage.Ask(question, finalResult.text, Some(finalResult.durationMs), finalResult.model)))
+            .appendUiMessages(
+              sessionId,
+              List(UiMessage.Ask(question, finalResult.text, Some(finalResult.durationMs), finalResult.model))
+            )
             .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}")))
         yield ())
           .handleErrorWith { e =>
@@ -899,11 +911,13 @@ class WebSocketRoutes(
             .sendStream(request)
             .evalTap {
               case StreamChunk.TextDelta(delta) =>
-                wsSend(io.circe.Json.obj(
-                  "type" -> "askTextDelta".asJson,
-                  "sessionId" -> sessionId.asJson,
-                  "delta" -> delta.asJson
-                ))
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "askTextDelta".asJson,
+                    "sessionId" -> sessionId.asJson,
+                    "delta" -> delta.asJson
+                  )
+                )
               case _ => IO.unit
             }
             .compile
@@ -915,12 +929,14 @@ class WebSocketRoutes(
             if toolCalls.isEmpty then
               // No more tool calls — send askDone and return
               val durationMs = System.currentTimeMillis() - startTime
-              wsSend(io.circe.Json.obj(
-                "type" -> "askDone".asJson,
-                "sessionId" -> sessionId.asJson,
-                "durationMs" -> durationMs.asJson,
-                "model" -> meta.map(_.model).getOrElse("").asJson
-              )) *> IO.pure(AskResult(text, durationMs, meta.map(_.model)))
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "askDone".asJson,
+                  "sessionId" -> sessionId.asJson,
+                  "durationMs" -> durationMs.asJson,
+                  "model" -> meta.map(_.model).getOrElse("").asJson
+                )
+              ) *> IO.pure(AskResult(text, durationMs, meta.map(_.model)))
             else
               // Execute tools, build updated messages, and loop
               executeAskTools(toolCalls, toolContext, sessionId, wsSend).flatMap { toolResults =>
@@ -935,6 +951,7 @@ class WebSocketRoutes(
                 go(newMsgs, round + 1, startTime)
               }
         yield result
+        end for
     end go
     go(initialMsgs, 0, System.currentTimeMillis())
   end askLoop
@@ -950,26 +967,33 @@ class WebSocketRoutes(
       val summary = ToolRegistry.TOOL_MAP.get(call.name).map(_.summarize(call.input)).getOrElse(call.name)
       val execResult: IO[ToolExecResult] = ToolRegistry.TOOL_MAP.get(call.name) match
         case Some(tool) =>
-          tool.call(call.input, toolContext).map {
-            case Left(err) => ToolExecResult(err.message, isError = true)
-            case Right(result) => ToolExecResult(result)
-          }.handleErrorWith(e => IO.pure(ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)))
+          tool
+            .call(call.input, toolContext)
+            .map {
+              case Left(err) => ToolExecResult(err.message, isError = true)
+              case Right(result) => ToolExecResult(result)
+            }
+            .handleErrorWith(e => IO.pure(ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)))
         case None =>
           IO.pure(ToolExecResult(s"Unknown tool: ${call.name}", isError = true))
-      wsSend(io.circe.Json.obj(
-        "type" -> "toolStart".asJson,
-        "sessionId" -> sessionId.asJson,
-        "label" -> summary.asJson
-      )) *> (execResult.flatMap { result =>
-        wsSend(io.circe.Json.obj(
-          "type" -> "toolEnd".asJson,
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "toolStart".asJson,
           "sessionId" -> sessionId.asJson,
-          "label" -> summary.asJson,
-          "summary" -> nebflow.core.summarizeToolResult(call, result.content).asJson,
-          "content" -> result.content.asJson,
-          "isError" -> result.isError.asJson,
-          "input" -> call.input.asJson.spaces2.asJson
-        )).as(call -> result)
+          "label" -> summary.asJson
+        )
+      ) *> (execResult.flatMap { result =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "toolEnd".asJson,
+            "sessionId" -> sessionId.asJson,
+            "label" -> summary.asJson,
+            "summary" -> nebflow.core.summarizeToolResult(call, result.content).asJson,
+            "content" -> result.content.asJson,
+            "isError" -> result.isError.asJson,
+            "input" -> call.input.asJson.spaces2.asJson
+          )
+        ).as(call -> result)
       })
     }
 

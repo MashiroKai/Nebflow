@@ -174,97 +174,95 @@ private[agent] trait AgentCore:
     ) => Behavior[AgentCommand]
   ): Behavior[AgentCommand] =
     maybeAutoCompact(agentDef, resources, depth, parentRef, state, stash, ctx, replyTo, processing) match
-        case Some(behavior) => behavior
-        case None =>
-          if depth > 0 then
-            emitStream(
-              resources.dispatcher,
-              state.wsSend,
-              ctx,
-              AgentStreamEvent.AgentStart(agentDef.name, agentDef.description),
-              isSubagent = true,
-              state.sessionId
-            )
-
-          // Cache-optimal layout for Anthropic prompt caching (prefix order: system -> tools -> messages):
-          //   system[0]: stable system prompt + static env info  <- cache breakpoint (never changes)
-          //   tools:     tool definitions                          <- cache breakpoint (stable)
-          //   messages:  [per-turn reminders] + actual conversation (dynamic, not persisted)
-          // Env info is baked into system prompt once — git state is omitted; agent uses Bash on demand.
-          val baseSystemStable =
-            if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
-            else Repl.loadSystemPrompt() + "\n\n" + Repl.buildEnvInfo(resources.projectRoot.toString)
-          val tools = buildToolList(agentDef, depth, parentRef.isDefined)
-
-          val isSubagent = depth > 0
-          val sessionIdOpt = state.sessionId
-
-          val onAttemptCb: FallbackAttempt => IO[Unit] = attempt =>
-            val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
-            emitStreamIO(state.wsSend, ctx, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
-
-          // Assign a monotonically increasing turnId so stale LlmComplete/LlmFailed from
-          // a cancelled (interrupted) turn can be detected and discarded.
-          val turnId = state.currentTurnId + 1
-          val stateForTurn = state.withCurrentTurnId(turnId)
-
-          val io = for
-            // --- reminders (async) ---
-            fileChangesOpt <- resources.fileChangeTracker.checkChanges()
-            // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
-            isUserTurn = stateForTurn.messages.lastOption.exists(m =>
-              m.role == MessageRole.User && m.content.isLeft
-            )
-            reminders <- SystemReminders.collectAll(
-              resources.reminderStateRef,
-              stateForTurn.latestUsage,
-              agentDef.contextWindow,
-              fileChangesOpt,
-              isUserTurn
-            )
-            remindersText = SystemReminder.renderAll(reminders)
-            // Per-turn dynamic context: only reminders (env info is now in system prompt)
-            dynamicMsg =
-              if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
-              else Nil
-            // --- LLM call ---
-            thinkingOpt <- resources.runtimePrefs.getThinking
-            languageOpt <- resources.runtimePrefs.getLanguage
-            systemStable = baseSystemStable + languageOpt
-              .map(l => s"\n\n# Language\nAlways respond in $l.")
-              .getOrElse("")
-            request = LlmRequest(
-              messages = stateForTurn.messages ++ dynamicMsg,
-              sessionId = stateForTurn.sessionId.getOrElse(ctx.self.path.name),
-              agentId = agentDef.name,
-              tools = tools,
-              maxTokens = Some(agentDef.maxTokens),
-              thinking = thinkingOpt.map(nebflow.service.ThinkingConfig.toLlmJson),
-              systemStable = Some(systemStable)
-            )
-            result <- resources.llm
-              .sendStream(request, onAttempt = Some(onAttemptCb))
-              .through(streamEmitter(stateForTurn.wsSend, ctx, isSubagent, sessionIdOpt))
-              .compile
-              .toList
-              .map(aggregateChunks)
-              .attempt
-            _ <- result match
-              case Right(r) => IO(ctx.self ! LlmComplete(r, replyTo, turnId))
-              case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo, turnId))
-          yield ()
-
-          // Start the IO fiber and immediately send the fiber reference back to the actor
-          // so that Interrupt can cancel it. io.start forks immediately; StreamFiberStarted
-          // is queued in the actor mailbox before any LlmComplete can arrive.
-          val startIo = io.start.handleErrorWith { e =>
-            IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
-              IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.start
-          }
-          resources.dispatcher.unsafeRunAndForget(
-            startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
+      case Some(behavior) => behavior
+      case None =>
+        if depth > 0 then
+          emitStream(
+            resources.dispatcher,
+            state.wsSend,
+            ctx,
+            AgentStreamEvent.AgentStart(agentDef.name, agentDef.description),
+            isSubagent = true,
+            state.sessionId
           )
-          processing(agentDef, resources, depth, parentRef, stateForTurn, stash, ctx)
+
+        // Cache-optimal layout for Anthropic prompt caching (prefix order: system -> tools -> messages):
+        //   system[0]: stable system prompt + static env info  <- cache breakpoint (never changes)
+        //   tools:     tool definitions                          <- cache breakpoint (stable)
+        //   messages:  [per-turn reminders] + actual conversation (dynamic, not persisted)
+        // Env info is baked into system prompt once — git state is omitted; agent uses Bash on demand.
+        val baseSystemStable =
+          if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
+          else Repl.loadSystemPrompt() + "\n\n" + Repl.buildEnvInfo(resources.projectRoot.toString)
+        val tools = buildToolList(agentDef, depth, parentRef.isDefined)
+
+        val isSubagent = depth > 0
+        val sessionIdOpt = state.sessionId
+
+        val onAttemptCb: FallbackAttempt => IO[Unit] = attempt =>
+          val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
+          emitStreamIO(state.wsSend, ctx, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
+
+        // Assign a monotonically increasing turnId so stale LlmComplete/LlmFailed from
+        // a cancelled (interrupted) turn can be detected and discarded.
+        val turnId = state.currentTurnId + 1
+        val stateForTurn = state.withCurrentTurnId(turnId)
+
+        val io = for
+          // --- reminders (async) ---
+          fileChangesOpt <- resources.fileChangeTracker.checkChanges()
+          // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
+          isUserTurn = stateForTurn.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
+          reminders <- SystemReminders.collectAll(
+            resources.reminderStateRef,
+            stateForTurn.latestUsage,
+            agentDef.contextWindow,
+            fileChangesOpt,
+            isUserTurn
+          )
+          remindersText = SystemReminder.renderAll(reminders)
+          // Per-turn dynamic context: only reminders (env info is now in system prompt)
+          dynamicMsg =
+            if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
+            else Nil
+          // --- LLM call ---
+          thinkingOpt <- resources.runtimePrefs.getThinking
+          languageOpt <- resources.runtimePrefs.getLanguage
+          systemStable = baseSystemStable + languageOpt
+            .map(l => s"\n\n# Language\nAlways respond in $l.")
+            .getOrElse("")
+          request = LlmRequest(
+            messages = stateForTurn.messages ++ dynamicMsg,
+            sessionId = stateForTurn.sessionId.getOrElse(ctx.self.path.name),
+            agentId = agentDef.name,
+            tools = tools,
+            maxTokens = Some(agentDef.maxTokens),
+            thinking = thinkingOpt.map(nebflow.service.ThinkingConfig.toLlmJson),
+            systemStable = Some(systemStable)
+          )
+          result <- resources.llm
+            .sendStream(request, onAttempt = Some(onAttemptCb))
+            .through(streamEmitter(stateForTurn.wsSend, ctx, isSubagent, sessionIdOpt))
+            .compile
+            .toList
+            .map(aggregateChunks)
+            .attempt
+          _ <- result match
+            case Right(r) => IO(ctx.self ! LlmComplete(r, replyTo, turnId))
+            case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo, turnId))
+        yield ()
+
+        // Start the IO fiber and immediately send the fiber reference back to the actor
+        // so that Interrupt can cancel it. io.start forks immediately; StreamFiberStarted
+        // is queued in the actor mailbox before any LlmComplete can arrive.
+        val startIo = io.start.handleErrorWith { e =>
+          IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
+            IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.start
+        }
+        resources.dispatcher.unsafeRunAndForget(
+          startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
+        )
+        processing(agentDef, resources, depth, parentRef, stateForTurn, stash, ctx)
     end match
   end pipeLlmCall
 
@@ -497,7 +495,13 @@ private[agent] trait AgentCore:
     resources.dispatcher.unsafeRunAndForget(
       io.handleErrorWith { e =>
         IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed: ${e.getMessage}")) *>
-          IO(ctx.self ! LlmFailed(new RuntimeException(s"Tool execution pipeline failed: ${e.getMessage}"), replyTo, state.currentTurnId))
+          IO(
+            ctx.self ! LlmFailed(
+              new RuntimeException(s"Tool execution pipeline failed: ${e.getMessage}"),
+              replyTo,
+              state.currentTurnId
+            )
+          )
       }
     )
 
@@ -543,8 +547,12 @@ private[agent] trait AgentCore:
               }
               .flatTap { result =>
                 val elapsed = (System.nanoTime() - start) / 1_000_000
-                if result.isError then logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
-                else logger.info(s"$logCtx Tool $summary OK (${elapsed}ms)" + (if result.truncated then " [truncated]" else ""))
+                if result.isError then
+                  logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
+                else
+                  logger.info(
+                    s"$logCtx Tool $summary OK (${elapsed}ms)" + (if result.truncated then " [truncated]" else "")
+                  )
               }
         }
       case None =>
