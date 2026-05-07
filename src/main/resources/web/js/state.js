@@ -50,14 +50,15 @@ export default {
   // Per-session pending tool card: sessionId -> DOM row element
   sessionToolCards: {},
 
-  // Sessions whose last askUser has been answered — used to avoid re-rendering interactive askUser on session switch
-  answeredAskUsers: new Set(),
+  // Per-session pending tool metadata: sessionId -> { label } (persists across session switches)
+  sessionPendingTools: {},
 
   // Task list cache per session
   sessionTasks: {},
 
   // Agent panel
   agentsData: [],
+  selectedAgent: null,
   configText: '',
   // Available tools (loaded from backend ToolRegistry)
   availableTools: [],

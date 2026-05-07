@@ -4,6 +4,36 @@ import io.circe.*
 import io.circe.generic.semiauto.*
 import nebflow.shared.Defaults
 
+/** MCP server configuration embedded in an agent definition. */
+case class AgentMcpConfig(
+  command: Option[String] = None,
+  args: Option[List[String]] = None,
+  env: Option[Map[String, String]] = None,
+  url: Option[String] = None,
+  headers: Option[Map[String, String]] = None
+)
+
+object AgentMcpConfig:
+  given Codec[AgentMcpConfig] = deriveCodec
+
+  def toMcpServerConfig(cfg: AgentMcpConfig): nebflow.llm.McpServerConfig =
+    nebflow.llm.McpServerConfig(
+      command = cfg.command,
+      args = cfg.args,
+      env = cfg.env,
+      url = cfg.url,
+      headers = cfg.headers
+    )
+
+/** Frontend asset configuration for an agent. */
+case class FrontendConfig(
+  scripts: List[String] = Nil,
+  styles: List[String] = Nil
+)
+
+object FrontendConfig:
+  given Codec[FrontendConfig] = deriveCodec
+
 /** Static definition of an agent, loaded from ~/.nebflow/agents/<name>/agent.json */
 case class AgentDef(
   name: String,
@@ -15,7 +45,11 @@ case class AgentDef(
   subagents: List[SubagentSlot] = Nil,
   keepAlive: Boolean = false,
   systemPrompt: String = "",
-  configPath: String = ""
+  configPath: String = "",
+  mcp: Option[AgentMcpConfig] = None,
+  frontend: Option[FrontendConfig] = None,
+  avatar: Option[String] = None,
+  displayName: Option[String] = None
 )
 
 case class SubagentSlot(

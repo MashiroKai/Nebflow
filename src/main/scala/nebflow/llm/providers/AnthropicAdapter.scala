@@ -316,7 +316,9 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                   val id = json.hcursor.downField("content_block").downField("id").as[String].getOrElse("")
                   val name = json.hcursor.downField("content_block").downField("name").as[String].getOrElse("")
                   val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
-                  toolCallState.update(_ + (idx -> (id, name, new StringBuilder))).as(Nil)
+                  toolCallState
+                    .update(_ + (idx -> (id, name, new StringBuilder)))
+                    .as(List(StreamChunk.ToolCallStart(name)))
                 case _ => IO.pure(Nil)
             case "content_block_stop" =>
               val idx = json.hcursor.downField("index").as[Int].getOrElse(0)

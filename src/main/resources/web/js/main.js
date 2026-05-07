@@ -198,10 +198,26 @@ onMessage('thinking', (msg) => {
   }
 });
 
+onMessage('toolCallDetected', (msg) => {
+  resetStreamTimeout(msg.sessionId);
+  if (msg.name === 'AskUserQuestion') return;
+  const sid = msg.sessionId;
+  if (sid && !state.sessionPendingTools[sid]) state.sessionPendingTools[sid] = { label: msg.name };
+  if (isActive(msg)) {
+    if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
+    clearRetryStatus();
+    const prevData = finishAi();
+    if (prevData) saveMsg(prevData, msg.sessionId);
+    renderToolPending(msg.name, msg.sessionId);
+  }
+});
+
 onMessage('toolStart', (msg) => {
   resetStreamTimeout(msg.sessionId);
   // Skip pending card for AskUser — the askUser event handles rendering directly
   if (msg.label && msg.label.startsWith('AskUser')) return;
+  const toolStartSid = msg.sessionId;
+  if (toolStartSid) state.sessionPendingTools[toolStartSid] = { label: msg.label };
   if (isActive(msg)) {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
@@ -215,6 +231,8 @@ onMessage('toolStart', (msg) => {
 onMessage('toolEnd', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.label && msg.label.startsWith('AskUser')) return;
+  const toolEndSid = msg.sessionId;
+  if (toolEndSid) delete state.sessionPendingTools[toolEndSid];
   if (isActive(msg)) {
     const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId, msg.truncated);
     if (data) saveMsg(data, msg.sessionId);
@@ -230,6 +248,7 @@ onMessage('done', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   const durationMs = consumeTurnDuration(sid);
+  delete state.sessionPendingTools[sid];
   console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length });
   // Flush any remaining buffered text for this session
   if (msg.sessionId && state.sessionTexts[msg.sessionId]) {
@@ -257,6 +276,7 @@ onMessage('done', (msg) => {
 
 onMessage('error', (msg) => {
   clearBusyFor(msg);
+  delete state.sessionPendingTools[msg.sessionId || state.activeSessionId];
   // Reset history loading state — backend may fail mid-pagination
   state.historyLoading = false;
   hideHistoryLoader();
@@ -277,6 +297,7 @@ onMessage('error', (msg) => {
 
 onMessage('interrupted', (msg) => {
   clearBusyFor(msg);
+  delete state.sessionPendingTools[msg.sessionId || state.activeSessionId];
   if (isActive(msg)) {
     const sid = msg.sessionId || state.activeSessionId;
     if (sid && state.sessionToolCards[sid]) {
@@ -301,6 +322,7 @@ onMessage('timeout', (msg) => {
 
 onMessage('maxTokens', (msg) => {
   clearBusyFor(msg);
+  delete state.sessionPendingTools[msg.sessionId || state.activeSessionId];
   if (isActive(msg)) {
     const sid = msg.sessionId || state.activeSessionId;
     if (sid && state.sessionToolCards[sid]) {
@@ -318,10 +340,7 @@ onMessage('maxTokens', (msg) => {
 // --- AskUser / Permission ---
 onMessage('askUser', (msg) => {
   const sid = msg.sessionId;
-  if (sid) {
-    setSessionAttention(sid, true);
-    state.answeredAskUsers.delete(sid);
-  }
+  if (sid) setSessionAttention(sid, true);
   if (isActive(msg)) {
     const data = renderAskUser(msg.items, msg.sessionId);
     if (data) saveMsg(data, msg.sessionId);
@@ -395,17 +414,11 @@ onMessage('historyPage', (msg) => {
     state.historyTotal = msg.total;
     state.historyHasMore = msg.hasMore;
     state.dom.chat.innerHTML = '';
-    // If session is busy with a pending (unanswered) askUser, skip the last one in history — it will be rendered interactively below
-    const askUserMsg = state.busySessionIds.has(sid) && !state.answeredAskUsers.has(sid) && [...msg.messages].reverse().find(m => m.type === 'askUser');
-    restoreFromBackendHistory(msg.messages, !!askUserMsg);
+    restoreFromBackendHistory(msg.messages);
 
-    // Re-render interactive AskUser only if session is busy and askUser hasn't been answered yet
-    if (state.busySessionIds.has(sid) && !state.answeredAskUsers.has(sid)) {
-      const lastAskUser = askUserMsg;
-      if (lastAskUser && lastAskUser.items) {
-        renderAskUser(lastAskUser.items, sid);
-      }
-      // Re-create streaming bubble if this session has buffered text
+    // Re-create streaming state if this session is still busy.
+    // Note: interactive askUser is ONLY created by the real-time 'askUser' WS event, never from history.
+    if (state.busySessionIds.has(sid)) {
       if (state.sessionTexts[sid]) {
         state.aiText = state.sessionTexts[sid];
         const chat = state.dom.chat;
@@ -417,13 +430,11 @@ onMessage('historyPage', (msg) => {
         row.appendChild(state.currentAiBubble);
         chat.appendChild(row);
       }
-      // Re-create streaming ask bubble if this session has a buffered ask
       const askBuf = state.sessionAskBuffers[sid];
       if (askBuf && askBuf.answer) {
         state.askAnswerText = askBuf.answer;
         const chat = state.dom.chat;
         const row = document.createElement('div');
-        row.className = 'row ai';
         state.currentAskBubble = document.createElement('div');
         state.currentAskBubble.className = 'bubble ai';
         const label = document.createElement('div');
@@ -435,6 +446,10 @@ onMessage('historyPage', (msg) => {
         state.currentAskBubble.appendChild(content);
         row.appendChild(state.currentAskBubble);
         chat.appendChild(row);
+      }
+      // Re-create pending tool card if this session has an in-progress tool
+      if (state.sessionPendingTools[sid]) {
+        renderToolPending(state.sessionPendingTools[sid].label, sid);
       }
     }
 
@@ -518,9 +533,22 @@ onMessage('agentStart', (msg) => {
 });
 
 onMessage('agentTextDelta', (msg) => { resetStreamTimeout(msg.sessionId); if (isActive(msg)) appendAgentText(msg.agentId || state.activeAgentId, msg.delta); });
-onMessage('agentToolStart', (msg) => { resetStreamTimeout(msg.sessionId); if (isActive(msg)) renderToolPending(msg.label, msg.sessionId); });
+onMessage('agentToolCallDetected', (msg) => { 
+  resetStreamTimeout(msg.sessionId); 
+  const aSid = msg.sessionId;
+  if (aSid && !state.sessionPendingTools[aSid]) state.sessionPendingTools[aSid] = { label: msg.name };
+  if (isActive(msg)) renderToolPending(msg.name, msg.sessionId); 
+});
+onMessage('agentToolStart', (msg) => { 
+  resetStreamTimeout(msg.sessionId); 
+  const aSid2 = msg.sessionId;
+  if (aSid2) state.sessionPendingTools[aSid2] = { label: msg.label };
+  if (isActive(msg)) renderToolPending(msg.label, msg.sessionId); 
+});
 onMessage('agentToolEnd', (msg) => {
   resetStreamTimeout(msg.sessionId);
+  const aSid3 = msg.sessionId;
+  if (aSid3) delete state.sessionPendingTools[aSid3];
   if (!isActive(msg)) return;
   const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId, msg.truncated);
   if (data) saveMsg(data, msg.sessionId);
@@ -629,6 +657,23 @@ onMessage('compactFailed', (msg) => {
 onMessage('agentList', (msg) => {
   state.agentsData = msg.agents || [];
   renderAgentList();
+  // Auto-select first agent if none selected
+  if (!state.selectedAgent && state.agentsData.length > 0) {
+    import('./sidebar.js').then(({ selectAgent }) => {
+      // Default to Nebula if present, otherwise first agent
+      const nebula = state.agentsData.find(a => a.name === 'Nebula');
+      selectAgent(nebula ? 'Nebula' : state.agentsData[0].name);
+    });
+  }
+});
+
+onMessage('agentSessionList', (msg) => {
+  // Render sessions for the selected agent
+  const agentName = msg.agentName;
+  const sessions = msg.sessions || [];
+  // Find active session for this agent
+  const activeId = state.activeSessionId;
+  renderSessionSidebar(sessions, sessions.find(s => s.id === activeId) ? activeId : (sessions[0]?.id || null));
 });
 
 onMessage('agentConfig', (msg) => showAgentModal(msg.name, msg.configJson || '', msg.systemMd || ''));
@@ -794,41 +839,44 @@ window.Nebflow = {
   get state() { return state; },
 };
 
-// ---------- 7. Load plugins ----------
-async function loadPlugins() {
+// ---------- 7. Load agent frontend assets ----------
+async function loadAgentFrontends() {
   try {
-    const res = await fetch('/plugins/manifest.json');
+    const res = await fetch('/agents/manifest.json');
     if (!res.ok) return;
     const data = await res.json();
-    const plugins = data.plugins || [];
-    for (const plugin of plugins) {
+    const agents = data.agents || [];
+    let loaded = 0;
+    for (const agent of agents) {
+      if (!agent.frontend) continue;
       // Load CSS first
-      for (const cssPath of (plugin.frontend?.styles || [])) {
+      for (const cssPath of (agent.frontend.styles || [])) {
         const link = document.createElement('link');
         link.rel = 'stylesheet';
-        link.href = `/plugins/${plugin.name}/${cssPath}`;
+        link.href = `/agents/${agent.name}/${cssPath}`;
         document.head.appendChild(link);
       }
       // Load JS in order
-      for (const jsPath of (plugin.frontend?.scripts || [])) {
-        await new Promise((resolve, reject) => {
+      for (const jsPath of (agent.frontend.scripts || [])) {
+        await new Promise((resolve) => {
           const script = document.createElement('script');
-          script.src = `/plugins/${plugin.name}/${jsPath}`;
+          script.src = `/agents/${agent.name}/${jsPath}`;
           script.onload = resolve;
           script.onerror = () => {
-            console.warn(`[plugin] Failed to load ${plugin.name}/${jsPath}`);
-            resolve(); // continue loading other plugins
+            console.warn(`[agent-frontend] Failed to load ${agent.name}/${jsPath}`);
+            resolve(); // continue loading other agents
           };
           document.head.appendChild(script);
         });
       }
+      loaded++;
     }
-    console.log(`[plugin] Loaded ${plugins.length} plugin(s)`);
+    if (loaded > 0) console.log(`[agent-frontend] Loaded frontend assets for ${loaded} agent(s)`);
   } catch (e) {
-    console.warn('[plugin] Failed to load plugins:', e);
+    console.warn('[agent-frontend] Failed to load agent frontends:', e);
   }
 }
-loadPlugins();
+loadAgentFrontends();
 
 // ---------- 8. Start ----------
 connect();

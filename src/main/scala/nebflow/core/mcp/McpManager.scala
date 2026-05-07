@@ -72,6 +72,10 @@ class McpManager private (
         _ <- logger.info(s"MCP server '$serverId' disabled, tools unregistered")
       yield ()
 
+  /** Connect a single MCP server and register its tools. Public for AgentLibrary use. */
+  def startServer(id: String, cfg: McpServerConfig, skipRegister: Boolean = false): IO[Unit] =
+    connectServer(id, cfg, skipRegister)
+
   private def connectServer(id: String, cfg: McpServerConfig, skipRegister: Boolean): IO[Unit] =
     (cfg.command, cfg.url) match
       case (Some(cmd), _) =>
