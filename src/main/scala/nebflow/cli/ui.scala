@@ -56,12 +56,16 @@ class NebflowUI(store: UiStore):
   }
 
   def printToolStart(label: String): IO[Unit] = IO.blocking {
-    println(s"$Dim▸ $label...$Reset")
+    val parts = label.split("\n", 2)
+    println(s"$Dim▸ ${parts(0)}...$Reset")
+    if parts.length > 1 then println(s"$Dim  ${parts(1)}$Reset")
   }
 
   def printToolEnd(label: String, summary: String, isError: Boolean): IO[Unit] = IO.blocking {
     val icon = if isError then s"${Red}✗$Reset" else s"${Green}✓$Reset"
-    println(s"$icon $label - $summary")
+    val parts = label.split("\n", 2)
+    println(s"$icon ${parts(0)} - $summary")
+    if parts.length > 1 then println(s"  ${parts(1)}")
   }
 
   def printError(msg: String): IO[Unit] = IO.blocking {

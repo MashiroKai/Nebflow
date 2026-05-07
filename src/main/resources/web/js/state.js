@@ -41,11 +41,17 @@ export default {
   // Per-session streaming text buffer: sessionId -> accumulated text
   sessionTexts: {},
 
+  // Per-session ask streaming buffer: sessionId -> { question, answer, model }
+  sessionAskBuffers: {},
+
   // Per-session turn start time: sessionId -> timestamp (ms)
   turnStartTimes: {},
 
   // Per-session pending tool card: sessionId -> DOM row element
   sessionToolCards: {},
+
+  // Sessions whose last askUser has been answered — used to avoid re-rendering interactive askUser on session switch
+  answeredAskUsers: new Set(),
 
   // Task list cache per session
   sessionTasks: {},
@@ -95,7 +101,6 @@ export default {
   // /ask command
   currentAskBubble: null,
   askAnswerText: '',
-  pendingAskQuestion: '',
 
   // Slash autocomplete
   slashSelectedIndex: 0,

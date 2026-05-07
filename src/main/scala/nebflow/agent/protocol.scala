@@ -50,11 +50,14 @@ object AgentCommand:
     replyTo: org.apache.pekko.actor.typed.ActorRef[Boolean]
   ) extends AgentCommand
 
+  // Internal — fiber reference for in-flight LLM stream (sent immediately after io.start)
+  case class StreamFiberStarted(fiber: cats.effect.Fiber[IO, Throwable, Unit]) extends AgentCommand
+
   // Internal — piped IO results (used by AgentActor)
-  case class LlmComplete(result: ConsumeResult, replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]])
+  case class LlmComplete(result: ConsumeResult, replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]], turnId: Long)
       extends AgentCommand
 
-  case class LlmFailed(error: Throwable, replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]])
+  case class LlmFailed(error: Throwable, replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]], turnId: Long)
       extends AgentCommand
 
   case class ToolsComplete(
@@ -99,6 +102,15 @@ object AgentCommand:
     payload: String,
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = None
   ) extends AgentCommand
+
+  /** Background task completed — inject result into message history and resume. */
+  case class BackgroundTaskNotification(
+    taskId: String,
+    description: String,
+    status: String,        // "completed" | "failed" | "killed"
+    output: String,
+    exitCode: Option[Int] = None
+  ) extends AgentCommand
 end AgentCommand
 
 // ============================================================
@@ -135,6 +147,7 @@ enum AgentStreamEvent:
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   case CompactComplete(before: Int, after: Int, snapshotPath: Option[String], comparisonPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
+  case BackgroundTaskUpdate(taskId: String, description: String, status: String)
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
     case TextDelta(text) =>
@@ -241,6 +254,14 @@ enum AgentStreamEvent:
           "attempt" -> attempt.asJson,
           "maxAttempts" -> maxAttempts.asJson
         )
+    case BackgroundTaskUpdate(taskId, description, status) =>
+      Json.obj(
+        "type" -> "backgroundTaskUpdate".asJson,
+        "taskId" -> taskId.asJson,
+        "description" -> description.asJson,
+        "status" -> status.asJson,
+        "sessionId" -> sessionId.asJson
+      )
 
 end AgentStreamEvent
 
@@ -317,22 +338,26 @@ case class ExecutionContext(
   messages: List[Message] = Nil,
   status: AgentStatus = AgentStatus.Idle,
   turnIdx: Int = 0,
+  currentTurnId: Long = 0L,
   subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = Map.empty,
   activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
-  interaction: Option[InteractionState] = None
+  interaction: Option[InteractionState] = None,
+  pendingNotifications: List[AgentCommand.BackgroundTaskNotification] = Nil
 )
 
 object ExecutionContext:
 
   /** Factory for idle state — centralizes all per-turn reset logic. */
-  def idle(messages: List[Message], turnIdx: Int = 0): ExecutionContext =
+  def idle(messages: List[Message], turnIdx: Int = 0, currentTurnId: Long = 0L): ExecutionContext =
     ExecutionContext(
       messages = messages,
       status = AgentStatus.Idle,
       turnIdx = turnIdx,
+      currentTurnId = currentTurnId,
       subagents = Map.empty,
       activeStreamFiber = None,
-      interaction = None
+      interaction = None,
+      pendingNotifications = Nil
     )
 end ExecutionContext
 
@@ -376,7 +401,7 @@ object AgentState:
       case _ => Some(InteractionState(pendingAskUser, pendingPermission))
     new AgentState(
       SessionContext(sessionId, sessionName, recentMessageIds, wsSend, depth, readTracker),
-      ExecutionContext(messages, status, turnIdx, subagents, activeStreamFiber, interaction),
+      ExecutionContext(messages, status, turnIdx, 0L, subagents, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, latestUsage)
     )
   end apply
@@ -391,6 +416,7 @@ extension (s: AgentState)
   def wsSend: Json => IO[Unit] = s.session.wsSend
   def depth: Int = s.session.depth
   def turnIdx: Int = s.execution.turnIdx
+  def currentTurnId: Long = s.execution.currentTurnId
   def subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = s.execution.subagents
   def activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = s.execution.activeStreamFiber
   def recentMessageIds: List[String] = s.session.recentMessageIds
@@ -411,6 +437,8 @@ extension (s: AgentState)
   def withMessages(msgs: List[Message]): AgentState = s.copy(execution = s.execution.copy(messages = msgs))
   def withStatus(st: AgentStatus): AgentState = s.copy(execution = s.execution.copy(status = st))
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
+
+  def withCurrentTurnId(id: Long): AgentState = s.copy(execution = s.execution.copy(currentTurnId = id))
 
   def withSubagents(subs: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]]): AgentState =
     s.copy(execution = s.execution.copy(subagents = subs))
@@ -451,11 +479,11 @@ extension (s: AgentState)
 
   /** Reset execution state to idle — used by finishTurn, Interrupt, LlmFailed. */
   def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =
-    s.copy(execution = ExecutionContext.idle(messages, turnIdx))
+    s.copy(execution = ExecutionContext.idle(messages, turnIdx, s.execution.currentTurnId))
 
   /** Reset execution state for interrupt — clears everything including compaction pending. */
   def resetForInterrupt: AgentState = s.copy(
-    execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx),
+    execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId),
     compaction = s.compaction.copy(pendingJob = None)
   )
 end extension

@@ -42,7 +42,14 @@ Usage:
   def summarize(input: JsonObject): String =
     val path = input("file_path").flatMap(_.asString).getOrElse("")
     val short = path.split("/").lastOption.getOrElse(path)
-    s"""Read($short, "$path")"""
+    val offset = input("offset").flatMap(_.asNumber).flatMap(_.toInt)
+    val limit = input("limit").flatMap(_.asNumber).flatMap(_.toInt)
+    val params = List(
+      offset.map(o => s"offset=$o"),
+      limit.map(l => s"limit=$l")
+    ).flatten.mkString(", ")
+    val paramStr = if params.nonEmpty then s", $params" else ""
+    s"""Read($short$paramStr)\n  ("$path")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.startsWith("File does not exist") || result.startsWith("Error") then result

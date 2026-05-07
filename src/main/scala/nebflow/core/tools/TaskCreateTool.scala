@@ -70,7 +70,8 @@ All tasks are created with status `pending`.
     s"TaskCreate($subject)"
 
   def summarizeResult(input: JsonObject, result: String): String =
-    if result.length > 120 then result.take(117) + "..." else result
+    val m = "Task #(\\d+)".r.findFirstMatchIn(result)
+    m.map(m => s"Task #${m.group(1)} created").getOrElse("created")
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     (ctx.taskStore, ctx.sessionId) match

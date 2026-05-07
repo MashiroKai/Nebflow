@@ -83,9 +83,11 @@ class UiStore(stateRef: Ref[IO, UiState]) extends ReplUi:
     inputJson: Option[String] = None
   ): IO[Unit] =
     stateRef.get.flatMap { s =>
+      val parts = label.split("\n", 2)
+      val displayLabel = parts(0)
       val round = CompletedRound(
         roundCounter.incrementAndGet(),
-        s"$label - $summary",
+        s"$displayLabel - $summary",
         if isError then "tool-error" else "tool-success",
         detail = Some(content),
         detailType = Some(if content.contains("@@") then "diff" else "text"),

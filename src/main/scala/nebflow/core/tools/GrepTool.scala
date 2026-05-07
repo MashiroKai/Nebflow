@@ -51,7 +51,7 @@ Usage:
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
     val path = input("path").flatMap(_.asString)
     path match
-      case Some(p) => s"""Grep("$pattern", path="$p")"""
+      case Some(p) => s"""Grep("$pattern")\n  (path="$p")"""
       case None => s"""Grep("$pattern")"""
 
   def summarizeResult(input: JsonObject, result: String): String =
