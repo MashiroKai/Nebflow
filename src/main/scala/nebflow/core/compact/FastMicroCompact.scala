@@ -17,8 +17,15 @@ object FastMicroCompact:
   private val Placeholder = "[Output removed to free context space]"
 
   private val CompactableTools = Set(
-    "Read", "Bash", "Grep", "Glob", "WebSearch", "WebFetch", "Curl",
-    "Edit", "Write"
+    "Read",
+    "Bash",
+    "Grep",
+    "Glob",
+    "WebSearch",
+    "WebFetch",
+    "Curl",
+    "Edit",
+    "Write"
   )
 
   /**

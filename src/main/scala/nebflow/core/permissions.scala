@@ -17,7 +17,6 @@ object ToolRisk:
     "WebFetch" -> Safe,
     "AskUserQuestion" -> Safe,
     "ContextManage" -> Safe,
-    "declareWait" -> Safe,
     "delegate" -> Safe,
     "report" -> Safe,
     "ask_parent" -> Safe,
