@@ -35,7 +35,6 @@ object ToolRegistry:
       // Multi-agent
       "NewSession" -> NewSessionTool,
       // Agent lifecycle — always available, no tool whitelist filtering
-      "declareWait" -> DeclareWaitTool,
       "ContextManage" -> ContextManageTool,
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Agent communication — injected conditionally by buildToolList
@@ -53,10 +52,10 @@ object ToolRegistry:
   }.toList
 
   /** Tools that are always included regardless of agent tool whitelist. */
-  val AlwaysAvailable: Set[String] = Set("declareWait")
+  val AlwaysAvailable: Set[String] = Set.empty[String]
 
   /** Tools always available except on the compaction agent itself (to prevent recursion). */
-  val AlwaysAvailableNonCompact: Set[String] = Set("declareWait", "ContextManage", "RemoveUnnecessary")
+  val AlwaysAvailableNonCompact: Set[String] = Set("ContextManage", "RemoveUnnecessary")
 
   /** Tools only available when agent has subagents. */
   val SubagentTools: Set[String] = Set("delegate")

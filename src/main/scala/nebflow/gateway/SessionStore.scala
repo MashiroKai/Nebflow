@@ -9,6 +9,10 @@ import nebflow.shared.{Message, UiMessage, given}
 
 import java.util.UUID
 
+// ===== Per-session bridge binding config =====
+// Generic: each platform stores its config as a Json object.
+// e.g. bridges = { "feishu": { "chatId": "oc_xxx", ... }, "telegram": { "chatId": -123 } }
+
 case class SessionMeta(
   id: String,
   name: String,
@@ -16,7 +20,8 @@ case class SessionMeta(
   updatedAt: Long,
   hasUnread: Boolean,
   agentName: Option[String] = None,
-  modelRef: Option[String] = None
+  modelRef: Option[String] = None,
+  bridges: Map[String, Json] = Map.empty
 )
 
 object SessionMeta:
@@ -30,7 +35,12 @@ object SessionMeta:
       "hasUnread" -> m.hasUnread.asJson
     )
     val withAgent = m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
-    m.modelRef.fold(withAgent)(r => withAgent.deepMerge(Json.obj("modelRef" -> r.asJson)))
+    val withModel = m.modelRef.fold(withAgent)(r => withAgent.deepMerge(Json.obj("modelRef" -> r.asJson)))
+    // Legacy: read/write "feishu" field as bridges("feishu") for backward compat
+    val withBridges =
+      if m.bridges.nonEmpty then withModel.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withModel
+    val feishuLegacy = m.bridges.get("feishu").fold(withBridges)(f => withBridges.deepMerge(Json.obj("feishu" -> f)))
+    feishuLegacy
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -42,7 +52,12 @@ object SessionMeta:
       hasUnread <- c.downField("hasUnread").as[Option[Boolean]].map(_.getOrElse(false))
       agentName <- c.downField("agentName").as[Option[String]]
       modelRef <- c.downField("modelRef").as[Option[String]]
-    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef)
+      bridges <- c.downField("bridges").as[Option[Map[String, Json]]].map(_.getOrElse(Map.empty))
+      // Legacy: if "bridges" is empty but "feishu" exists, migrate it
+      feishuLegacy <- c.downField("feishu").as[Option[Json]]
+    yield
+      val migrated = if bridges.isEmpty && feishuLegacy.nonEmpty then Map("feishu" -> feishuLegacy.get) else bridges
+      SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, migrated)
   }
 
 end SessionMeta
@@ -266,6 +281,23 @@ class SessionStore(sessionsDir: os.Path):
       val updated = sessions.map(s => if s.id == id then s.copy(modelRef = modelRef) else s)
       (activeId, updated)
     } *> saveIndex
+
+  def updateSessionBridge(id: String, platform: String, config: Option[Json]): IO[Unit] =
+    indexRef.update { case (activeId, sessions) =>
+      val updated = sessions.map { s =>
+        if s.id == id then
+          val newBridges = config match
+            case Some(c) => s.bridges.updated(platform, c)
+            case None => s.bridges - platform
+          s.copy(bridges = newBridges)
+        else s
+      }
+      (activeId, updated)
+    } *> saveIndex
+
+  /** Legacy alias for backward compat with WS messages. */
+  def updateSessionFeishu(id: String, config: Option[Json]): IO[Unit] =
+    updateSessionBridge(id, "feishu", config)
 
   // ============================================================
   // UI Messages (frontend rendering history)

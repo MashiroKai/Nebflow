@@ -4,10 +4,12 @@ import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
+import io.circe.Json
 import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.core.*
+import nebflow.core.ask.AskService
 import nebflow.core.mcp.McpManager
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.service.*
@@ -109,6 +111,36 @@ class WebSocketRoutes(
         logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
       }
     else logger.warn("Dropping message: no sessionId provided") *> IO.unit
+
+  /**
+   * Public API for external sources (e.g. Feishu bridge) to inject a user message
+   * into a session's agent. Reuses the same logic as WebSocket user messages:
+   * rate limiting, UiMessage recording, agent routing.
+   */
+  def handleBridgeMessage(sessionId: String, content: String, senderId: Option[String] = None): IO[Unit] =
+    if content.isEmpty || sessionId.isEmpty then IO.unit
+    else
+      rateLimiter.check("bridge").flatMap { allowed =>
+        if !allowed then logger.warn("Bridge rate limit exceeded")
+        else
+          val source = senderId.map(id => s" [via bridge:$id]").getOrElse(" [via bridge]")
+          logger.info(s"Bridge message for session $sessionId: ${content.take(60)}...$source") *>
+            // Record as UiMessage
+            sharedResources.sessionStore
+              .appendUiMessages(sessionId, List(UiMessage.User(content, Nil)))
+              .handleErrorWith(e => IO(logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}"))) *>
+            routeToAgent(sessionId)(ref =>
+              IO(ref ! AgentCommand.UserInput(content, None, None, Some(List(ContentBlock.Text(content)))))
+            )
+      }
+
+  /**
+   * Public API for bridge card-action callbacks to send specific AgentCommands
+   * (e.g. PermissionAnswered, UserAnswered) to a session's agent.
+   */
+  def handleBridgeAgentCommand(sessionId: String, command: AgentCommand): IO[Unit] =
+    if sessionId.isEmpty then IO.unit
+    else routeToAgent(sessionId)(ref => IO(ref ! command))
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
@@ -257,6 +289,48 @@ class WebSocketRoutes(
       )
     yield ()
 
+  /** Send agent-filtered session list by looking up the session's agent name. */
+  private def sendAgentSessionList(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
+    sessionStore.getSessionMeta(sessionId).flatMap { metaOpt =>
+      val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      sendAgentSessionListByName(wsSend, agentName)
+    }
+
+  /** Send agent-filtered session list for a known agent name. */
+  private def sendAgentSessionListByName(wsSend: io.circe.Json => IO[Unit], agentName: String): IO[Unit] =
+    sessionStore.listSessionsByAgent(agentName).flatMap { sessions =>
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "agentSessionList".asJson,
+          "agentName" -> agentName.asJson,
+          "sessions" -> sessions.asJson
+        )
+      )
+    }
+
+  /** Push memory status for the current session to the frontend. */
+  private def sendMemoryStatus(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
+    sessionStore.getSessionMeta(sessionId).flatMap { metaOpt =>
+      val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "memoryStatus".asJson,
+          "user" -> io.circe.Json.obj(
+            "exists" -> MemoryStore.userExists.asJson,
+            "preview" -> MemoryStore.userPreview.asJson
+          ),
+          "agent" -> io.circe.Json.obj(
+            "exists" -> MemoryStore.agentExists(agentName).asJson,
+            "preview" -> MemoryStore.agentPreview(agentName).asJson
+          ),
+          "session" -> io.circe.Json.obj(
+            "exists" -> MemoryStore.sessionExists(sessionId).asJson,
+            "preview" -> MemoryStore.sessionPreview(sessionId).asJson
+          )
+        )
+      )
+    }
+
   private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
 
   private def handleMessage(
@@ -297,7 +371,7 @@ class WebSocketRoutes(
               val clearSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
               logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
-                reminderStateRef.update(_.copy(highestPressureLevel = 0, writesSinceLastRead = Map.empty)) *>
+                reminderStateRef.update(_.copy(highestPressureLevel = 0)) *>
                 routeToAgent(clearSessionId)(ref => IO(ref ! AgentCommand.ClearReadTracker))
             case _ => IO.unit
 
@@ -379,7 +453,8 @@ class WebSocketRoutes(
             sessionService
               .switchSession(sessionId)
               .flatMap { _ =>
-                sessionService.sendSessionList(wsSend)
+                sendAgentSessionList(wsSend, sessionId) *>
+                  sendMemoryStatus(wsSend, sessionId)
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -415,10 +490,16 @@ class WebSocketRoutes(
         case "deleteSession" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if sessionId.nonEmpty then
-            removeRootAgent(sessionId) *> sessionService
-              .deleteSession(sessionId)
-              .flatMap { _ =>
-                sessionService.sendSessionList(wsSend)
+            // Get agent name before deleting so we can send filtered list
+            sessionStore
+              .getSessionMeta(sessionId)
+              .flatMap { metaOpt =>
+                val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                removeRootAgent(sessionId) *> sessionService
+                  .deleteSession(sessionId)
+                  .flatMap { _ =>
+                    sendAgentSessionListByName(wsSend, agentName)
+                  }
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -433,12 +514,66 @@ class WebSocketRoutes(
             sessionService
               .renameSession(sessionId, newName)
               .flatMap { _ =>
-                sessionService.sendSessionList(wsSend)
+                sendAgentSessionList(wsSend, sessionId)
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
               }
           else IO.unit
+
+        case "updateSessionFeishu" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val sessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val chatId = hc.downField("chatId").as[String].getOrElse("")
+          if sessionId.isEmpty then IO.unit
+          else if chatId.isEmpty then
+            // Clear feishu config
+            sessionStore.updateSessionFeishu(sessionId, None).flatMap { _ =>
+              sendAgentSessionList(wsSend, sessionId)
+            }
+          else
+            val enabled = hc.downField("enabled").as[Option[Boolean]].toOption.flatten.getOrElse(true)
+            val chatType = hc.downField("chatType").as[Option[String]].toOption.flatten.getOrElse("p2p")
+            val notifyEvents = hc
+              .downField("notifyEvents")
+              .as[Option[List[String]]]
+              .toOption
+              .flatten
+              .getOrElse(List("aiResponse", "askUser", "permissionRequest"))
+            val syncMessages = hc.downField("syncMessages").as[Option[Boolean]].toOption.flatten.getOrElse(true)
+            val cfgJson = Json.obj(
+              "enabled" -> enabled.asJson,
+              "chatId" -> chatId.asJson,
+              "chatType" -> chatType.asJson,
+              "notifyEvents" -> notifyEvents.asJson,
+              "syncMessages" -> syncMessages.asJson
+            )
+            sessionStore.updateSessionFeishu(sessionId, Some(cfgJson)).flatMap { _ =>
+              sendAgentSessionList(wsSend, sessionId)
+            }
+          end if
+
+        case "getFeishuGlobalConfig" =>
+          // Check if global feishu config exists (without exposing secrets)
+          import nebflow.bridge.FeishuGlobalConfig
+          FeishuGlobalConfig.load.flatMap {
+            case Some(cfg) =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "feishuGlobalConfig".asJson,
+                  "configured" -> true.asJson,
+                  "appId" -> cfg.appId.take(6).asJson // Show prefix for verification
+                )
+              )
+            case None =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "feishuGlobalConfig".asJson,
+                  "configured" -> false.asJson
+                )
+              )
+          }
 
         case "ask" =>
           val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -479,6 +614,32 @@ class WebSocketRoutes(
             )
 
         case "ping" => IO.unit
+
+        case "cancelBackgroundJob" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val jobId = json.hcursor.downField("jobId").as[String].getOrElse("")
+          if cancelSessionId.nonEmpty && jobId.nonEmpty then
+            nebflow.core.tools.ShellSession
+              .forSession(cancelSessionId)
+              .flatMap { shell =>
+                shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "backgroundTaskUpdate".asJson,
+                      "sessionId" -> cancelSessionId.asJson,
+                      "taskId" -> jobId.asJson,
+                      "description" -> "".asJson,
+                      "status" -> (if cancelled then "completed" else "running").asJson
+                    )
+                  )
+                }
+              }
+              .handleErrorWith { e =>
+                logger.warn(s"cancelBackgroundJob failed: ${e.getMessage}")
+                IO.unit
+              }
+          else IO.unit
 
         case "getHistory" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -546,10 +707,15 @@ class WebSocketRoutes(
 
         case "listAgents" =>
           agentService.listAgents.flatMap { agents =>
-            // All configurable tools from the tool library
-            val allToolNames = ToolRegistry.TOOL_MAP.keys.toList.sorted
-            // Always-auto-injected tools (not user-configurable)
-            val autoTools = ToolRegistry.AlwaysAvailableNonCompact.toList.sorted
+            // Configurable builtin tools — exclude MCP tools (controlled via mcpServers) and auto-injected tools
+            val isMcpTool = (name: String) => name.startsWith("mcp__")
+            val autoInjected =
+              ToolRegistry.AlwaysAvailableNonCompact ++ ToolRegistry.SubagentTools ++ ToolRegistry.ParentTools
+            val configurableTools = ToolRegistry.TOOL_MAP.keys
+              .filterNot(n => isMcpTool(n) || autoInjected.contains(n))
+              .toList
+              .sorted
+            val autoTools = autoInjected.toList.sorted
             val agentsJson = agents.map { a =>
               io.circe.Json.obj(
                 "name" -> a.name.asJson,
@@ -564,7 +730,7 @@ class WebSocketRoutes(
               io.circe.Json.obj(
                 "type" -> "agentList".asJson,
                 "agents" -> agentsJson.asJson,
-                "availableTools" -> allToolNames.asJson,
+                "availableTools" -> configurableTools.asJson,
                 "autoTools" -> autoTools.asJson
               )
             )
@@ -645,6 +811,69 @@ class WebSocketRoutes(
               wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
             }
           else IO.unit
+
+        case "getMemory" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
+          // Determine agentName and sessionId from active session
+          sessionStore.getActiveMeta.flatMap { metaOpt =>
+            val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+            val sessionId = metaOpt.map(_.id).getOrElse("")
+            val content = scope match
+              case "user" => MemoryStore.loadUserMemory.getOrElse("")
+              case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
+              case "session" =>
+                if sessionId.nonEmpty then MemoryStore.loadSessionMemory(sessionId).getOrElse("") else ""
+              case _ => ""
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "memoryData".asJson,
+                "scope" -> scope.asJson,
+                "content" -> content.asJson
+              )
+            )
+          }
+
+        case "saveMemory" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
+          val content = json.hcursor.downField("content").as[String].getOrElse("")
+          if content.nonEmpty then
+            sessionStore.getActiveMeta.flatMap { metaOpt =>
+              val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+              val sessionId = metaOpt.map(_.id).getOrElse("")
+              val save = scope match
+                case "user" => MemoryStore.saveUserMemory(content)
+                case "agent" => MemoryStore.saveAgentMemory(agentName, content)
+                case "session" =>
+                  if sessionId.nonEmpty then MemoryStore.saveSessionMemory(sessionId, content) else IO.unit
+                case _ => IO.unit
+              save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
+            }
+          else IO.unit
+
+        case "memoryStatus" =>
+          sessionStore.getActiveMeta.flatMap { metaOpt =>
+            val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+            val sessionId = metaOpt.map(_.id).getOrElse("")
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "memoryStatus".asJson,
+                "user" -> io.circe.Json.obj(
+                  "exists" -> MemoryStore.userExists.asJson,
+                  "preview" -> MemoryStore.userPreview.asJson
+                ),
+                "agent" -> io.circe.Json.obj(
+                  "exists" -> MemoryStore.agentExists(agentName).asJson,
+                  "preview" -> MemoryStore.agentPreview(agentName).asJson
+                ),
+                "session" -> io.circe.Json.obj(
+                  "exists" -> (sessionId.nonEmpty && MemoryStore.sessionExists(sessionId)).asJson,
+                  "preview" -> (if sessionId.nonEmpty then MemoryStore.sessionPreview(sessionId) else None).asJson
+                )
+              )
+            )
+          }
 
         case "getConfig" =>
           configService.getConfig.flatMap { cfg =>
@@ -853,27 +1082,16 @@ class WebSocketRoutes(
           )
         )
       else
+        val toolContext = ToolContext(
+          projectRoot = sharedResources.projectRoot.toString,
+          sessionId = Some(sessionId),
+          depth = 0,
+          agentDef = None
+        )
         (for
-          askDef <- sharedResources.agentLibrary.get("Ask").flatMap {
-            case Some(d) => IO.pure(d)
-            case None => IO.raiseError(new RuntimeException("Ask agent not found"))
-          }
-          allowedTools = askDef.tools match
-            case Nil => Set.empty[String]
-            case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
-            case names => names.toSet
-          toolDefs = Some(ToolRegistry.ALL_TOOLS.filter(t => allowedTools.contains(t.name)))
-          toolContext = ToolContext(
-            projectRoot = sharedResources.projectRoot.toString,
-            sessionId = Some(sessionId),
-            depth = 0,
-            agentDef = Some(askDef)
-          )
           messages <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
           history = messages.filter(m => m.role == MessageRole.User || m.role == MessageRole.Assistant)
-          askMsg = Message(MessageRole.User, Left(question))
-          allMsgs = history :+ askMsg
-          finalResult <- askLoop(askDef, allMsgs, toolDefs, toolContext, sessionId, wsSend)
+          finalResult <- AskService.ask(question, history, toolContext, sharedResources, sessionId, wsSend)
           _ <- sharedResources.sessionStore
             .appendUiMessages(
               sessionId,
@@ -892,125 +1110,6 @@ class WebSocketRoutes(
               )
           }
           .guarantee(sharedResources.askSemaphore.release)
-    }
-
-  /** Single-round result from askLoop */
-  private case class AskResult(text: String, durationMs: Long, model: Option[String])
-
-  /**
-   * Agent loop for /ask: LLM -> tools -> LLM -> ... -> final text answer.
-   * Streams text deltas to frontend. Returns the final answer text.
-   */
-  private def askLoop(
-    askDef: AgentDef,
-    initialMsgs: List[Message],
-    toolDefs: Option[List[ToolDefinition]],
-    toolContext: ToolContext,
-    sessionId: String,
-    wsSend: io.circe.Json => IO[Unit],
-    maxRounds: Int = 20
-  ): IO[AskResult] =
-    def go(msgs: List[Message], round: Int, startTime: Long): IO[AskResult] =
-      if round > maxRounds then
-        IO.pure(AskResult("(Ask reached maximum tool rounds)", System.currentTimeMillis() - startTime, None))
-      else
-        val request = LlmRequest(
-          messages = msgs,
-          sessionId = sessionId,
-          agentId = "ask",
-          tools = toolDefs,
-          maxTokens = Some(sharedResources.agentLibrary.globalMaxTokens),
-          systemStable = Some(askDef.systemPrompt)
-        )
-        for
-          chunks <- sharedResources.llm
-            .sendStream(request)
-            .evalTap {
-              case StreamChunk.TextDelta(delta) =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "askTextDelta".asJson,
-                    "sessionId" -> sessionId.asJson,
-                    "delta" -> delta.asJson
-                  )
-                )
-              case _ => IO.unit
-            }
-            .compile
-            .toList
-          text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
-          toolCalls = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }
-          meta = chunks.collectFirst { case StreamChunk.Done(_, _, Some(m)) => m }
-          result <-
-            if toolCalls.isEmpty then
-              // No more tool calls — send askDone and return
-              val durationMs = System.currentTimeMillis() - startTime
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "askDone".asJson,
-                  "sessionId" -> sessionId.asJson,
-                  "durationMs" -> durationMs.asJson,
-                  "model" -> meta.map(_.model).getOrElse("").asJson
-                )
-              ) *> IO.pure(AskResult(text, durationMs, meta.map(_.model)))
-            else
-              // Execute tools, build updated messages, and loop
-              executeAskTools(toolCalls, toolContext, sessionId, wsSend).flatMap { toolResults =>
-                val assistantBlocks = (if text.nonEmpty then List(ContentBlock.Text(text)) else Nil) ++
-                  toolCalls.map(c => ContentBlock.ToolUse(c.id, c.name, c.input))
-                val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks))
-                val resultBlocks = toolResults.map { (call, r) =>
-                  ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
-                }
-                val resultMsg = Message(MessageRole.User, Right(resultBlocks))
-                val newMsgs = msgs ++ List(assistantMsg, resultMsg)
-                go(newMsgs, round + 1, startTime)
-              }
-        yield result
-        end for
-    end go
-    go(initialMsgs, 0, System.currentTimeMillis())
-  end askLoop
-
-  /** Execute a batch of tool calls for the ask agent, emitting toolStart/toolEnd events. */
-  private def executeAskTools(
-    calls: List[ToolCall],
-    toolContext: ToolContext,
-    sessionId: String,
-    wsSend: io.circe.Json => IO[Unit]
-  ): IO[List[(ToolCall, ToolExecResult)]] =
-    calls.traverse { call =>
-      val summary = ToolRegistry.TOOL_MAP.get(call.name).map(_.summarize(call.input)).getOrElse(call.name)
-      val execResult: IO[ToolExecResult] = ToolRegistry.TOOL_MAP.get(call.name) match
-        case Some(tool) =>
-          tool
-            .call(call.input, toolContext)
-            .map {
-              case Left(err) => ToolExecResult(err.message, isError = true)
-              case Right(result) => ToolExecResult(result)
-            }
-            .handleErrorWith(e => IO.pure(ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)))
-        case None =>
-          IO.pure(ToolExecResult(s"Unknown tool: ${call.name}", isError = true))
-      wsSend(
-        io.circe.Json.obj(
-          "type" -> "toolStart".asJson,
-          "sessionId" -> sessionId.asJson,
-          "label" -> summary.asJson
-        )
-      ) *> (execResult.flatMap { result =>
-        wsSend(
-          io.circe.Json.obj(
-            "type" -> "toolEnd".asJson,
-            "sessionId" -> sessionId.asJson,
-            "label" -> summary.asJson,
-            "summary" -> nebflow.core.summarizeToolResult(call, result.content).asJson,
-            "content" -> result.content.asJson,
-            "isError" -> result.isError.asJson,
-            "input" -> call.input.asJson.spaces2.asJson
-          )
-        ).as(call -> result)
-      })
     }
 
 end WebSocketRoutes

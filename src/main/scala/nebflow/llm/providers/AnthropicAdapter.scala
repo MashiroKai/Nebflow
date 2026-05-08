@@ -19,7 +19,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
   private val base = baseUrl.replaceAll("/+$", "")
 
   private def toAnthropicMessages(messages: List[Message]): List[Json] =
-    messages.filterNot(_.role == MessageRole.System).map { msg =>
+    mergeConsecutive(messages.filterNot(_.role == MessageRole.System)).map { msg =>
       val role = msg.role match
         case MessageRole.User => "user"
         case MessageRole.Assistant => "assistant"
@@ -65,6 +65,30 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
           Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(content))
       end match
     }
+
+  /** Merge consecutive messages of the same role to prevent tool_use/tool_result pairing issues. */
+  private def mergeConsecutive(messages: List[Message]): List[Message] =
+    if messages.isEmpty then Nil
+    else
+      messages.tail.foldLeft(List(messages.head)) { (acc, msg) =>
+        val last = acc.last
+        if last.role == msg.role then
+          val merged = mergeMessages(last, msg)
+          acc.init :+ merged
+        else acc :+ msg
+      }
+
+  private def mergeMessages(a: Message, b: Message): Message =
+    val mergedContent = (a.content, b.content) match
+      case (Left(aText), Left(bText)) =>
+        Left(aText + "\n" + bText)
+      case (Right(aBlocks), Right(bBlocks)) =>
+        Right(aBlocks ++ bBlocks)
+      case (Left(text), Right(blocks)) =>
+        Right(ContentBlock.Text(text) +: blocks)
+      case (Right(blocks), Left(text)) =>
+        Right(blocks :+ ContentBlock.Text(text))
+    Message(a.role, mergedContent, math.max(a.timestamp, b.timestamp))
 
   private def toAnthropicTools(tools: List[ToolDefinition]): Json =
     val toolJsons = tools.map { t =>
