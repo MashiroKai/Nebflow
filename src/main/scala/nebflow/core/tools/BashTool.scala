@@ -13,7 +13,7 @@ object BashTool extends Tool:
   val DEFAULT_TIMEOUT = 120_000L // 2 minutes
   val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
   /** Foreground commands running longer than this are automatically moved to background. */
-  val AutoBackgroundThresholdMs = 30_000L
+  val AutoBackgroundThresholdMs = 120_000L
 
   val name = "Bash"
 
@@ -23,11 +23,17 @@ Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
 - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd.
 - You may specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). By default, your command will timeout after 120000ms (2 minutes).
-- Use run_in_background for long-running commands. Retrieve results later with the returned job ID.
-- Foreground commands exceeding 30s are automatically moved to background.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
+
+Background execution (run_in_background):
+- Use this for commands that take a long time (builds, tests, training, etc.).
+- When you start a background job, the command is running — it will complete on its own.
+- You do NOT need to wait for it. You can either continue with other tasks in this turn, or finish your turn.
+- When the background job finishes, you will be automatically notified with the result. You do not need to poll or re-run the command.
+- This means starting a background job is a valid way to complete a step — you have not abandoned the task.
+- NEVER call run_in_background again for the same command. The job is already running.
 
 Do not use Bash when a dedicated tool exists:
 | Task | Use | Not Bash |
@@ -62,7 +68,7 @@ Git safety:
         ),
         "run_in_background" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "If true, run the command in the background and return a job ID immediately".asJson
+          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you.".asJson
         ),
         "dangerouslyDisableSandbox" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
@@ -203,17 +209,33 @@ Git safety:
               else Right(s"[Background job not found] Job ID: $jobId")
             }
           else
-            shell.getBackgroundResult(jobId).map {
-              case None => Right(s"[Background job pending] Job ID: $jobId")
+            shell.getBackgroundResult(jobId).flatMap {
+              case None =>
+                // Job still running — fetch health info for the agent
+                shell.getBackgroundJobHealth(jobId).map {
+                  case Some(h) =>
+                    val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
+                    val isStuck = h.idleMs > stuckThreshold
+                    val idleInfo = if h.idleMs > 60000 then s" | idle ${h.idleMs / 1000}s" else ""
+                    val stuckWarning =
+                      if isStuck then
+                        s"\n⚠ No output for ${h.idleMs / 1000}s — process may be stuck. Use cancel_background_job: true to kill it."
+                      else ""
+                    Right(
+                      s"[Background job running] Job ID: $jobId\n  ${h.runningMs / 1000}s running | ${h.outputLineCount} lines output | alive: ${h.isAlive}$idleInfo$stuckWarning"
+                    )
+                  case None =>
+                    Right(s"[Background job pending] Job ID: $jobId")
+                }
               case Some(Left(e)) =>
                 val errMsg = e match
                   case _: TimeoutException => "[Command timed out]"
                   case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                Right(s"[Background job failed] Job ID: $jobId\n$errMsg")
+                IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
               case Some(Right(result)) =>
                 val out = result.stdout
                 val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
-                Right(s"[Background job completed] Job ID: $jobId\n$out$errLine")
+                IO.pure(Right(s"[Background job completed] Job ID: $jobId\n$out$errLine"))
             }
         }
       case None =>
@@ -245,14 +267,17 @@ Git safety:
                 val sandboxMark = injectionWarning.map(_ => "[Sandbox bypassed] ").getOrElse("")
                 ShellSession.forSession(sessionId).flatMap { shell =>
                   if background then
-                    val onComplete = makeNotifyCallback(command, desc, ctx)
+                    val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
                     val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
                     val bgDescription = desc.getOrElse(firstLine)
                     for
-                      jobId <- shell.executeBackground(command, timeoutDuration, desc, onComplete)
+                      // generate jobId first so we can pass it to the notify callback
+                      jobId <- IO.randomUUID.map(_.toString.take(8))
+                      onComplete = makeNotifyCallback(command, desc, ctx, jobId)
+                      _ <- shell.executeBackground(command, timeoutDuration, desc, onComplete, onHeartbeat, Some(jobId))
                       _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
                     yield Right(
-                      s"$sandboxMark[Background job started] Job ID: $jobId\nUse this ID to check status later."
+                      s"$sandboxMark[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
                     )
                   else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, sandboxMark, ctx)
                 }
@@ -276,6 +301,7 @@ Git safety:
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     val threshold = AutoBackgroundThresholdMs.millis
+    val health = new JobHealth()
     for
       // Ref to store command result when it finishes
       resultRef <- IO.ref[Option[Either[Throwable, ProcessResult]]](None)
@@ -283,10 +309,11 @@ Git safety:
       signal <- Deferred[IO, Unit]
       // Flag to distinguish which side won
       thresholdWon <- IO.ref(false)
+      autoBgJobId <- IO.randomUUID.map(_.toString.take(8))
 
       // Start the actual command — runs to completion, never cancelled
       commandFiber <- (for
-        r <- shell.execute(command, timeout).attempt
+        r <- shell.execute(command, timeout, Some(health)).attempt
         _ <- resultRef.set(Some(r))
         _ <- signal.complete(()).void // no-op if threshold already completed it
       yield ()).start
@@ -305,10 +332,12 @@ Git safety:
       // If threshold won, start a background fiber that waits for command completion and notifies agent
       _ <-
         if didThresholdWin then
-          val onComplete = makeNotifyCallback(command, desc, ctx)
+          val onComplete = makeNotifyCallback(command, desc, ctx, autoBgJobId)
+          val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
           val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
           val bgDescription = desc.getOrElse(firstLine)
-          emitBgTaskStarted(ctx, "auto-bg", bgDescription) *>
+          emitBgTaskStarted(ctx, autoBgJobId, bgDescription) *>
+            startAutoBgHeartbeat(autoBgJobId, health, resultRef, onHeartbeat) *>
             onComplete.fold(IO.unit) { cb =>
               (for
                 _ <- commandFiber.joinWithNever
@@ -326,8 +355,7 @@ Git safety:
           case None => Left(ToolError("[Unexpected: no result from foreground command]"))
       else
         Right(
-          s"$sandboxMark[moved to background] Command is taking longer than ${threshold.toSeconds}s.\n" +
-            s"The result will be delivered automatically when the command finishes."
+          s"$sandboxMark[Command moved to background] It has been running for over ${threshold.toSeconds}s and will continue in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
         )
     end for
 
@@ -346,33 +374,61 @@ Git safety:
     if full.trim.isEmpty then Right(sandboxMark + "[Command executed successfully with no output]")
     else Right(full)
 
-  /** Build an on_complete callback that sends BackgroundTaskNotification to the agent actor. */
+  /** Build an on_complete callback that sends ExternalEvent to the agent actor. */
   private def makeNotifyCallback(
     command: String,
     desc: Option[String],
-    ctx: ToolContext
+    ctx: ToolContext,
+    jobId: String
   ): Option[Either[Throwable, ProcessResult] => IO[Unit]] =
     ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       val description = desc.getOrElse(firstLine)
-      val notification = result match
+      val (eventType, payload, metadata) = result match
         case Right(pr) =>
           val output = pr.stdout + (if pr.stderr.nonEmpty then s"\n[stderr]:\n${pr.stderr}" else "")
-          AgentCommand.BackgroundTaskNotification(
-            taskId = "",
-            description = description,
-            status = "completed",
-            output = output,
-            exitCode = Some(pr.exitCode)
+          val exitInfo = if pr.exitCode != 0 then s" (exit code ${pr.exitCode})" else ""
+          (
+            "completed",
+            s"[Background task completed] \"$description\"$exitInfo:\n$output",
+            JsonObject(
+              "description" -> description.asJson,
+              "exitCode" -> pr.exitCode.asJson,
+              "output" -> output.asJson
+            )
           )
         case Left(e) =>
-          AgentCommand.BackgroundTaskNotification(
-            taskId = "",
-            description = description,
-            status = "failed",
-            output = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+          (
+            "failed",
+            s"[Background task failed] \"$description\":\n${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
+            JsonObject(
+              "description" -> description.asJson
+            )
           )
-      IO(ref ! notification)
+
+      val notifyAgent = IO(
+        ref ! AgentCommand.ExternalEvent(
+          source = "background-task",
+          eventType = eventType,
+          payload = payload,
+          metadata = metadata
+        )
+      )
+
+      // Notify frontend via WS so the indicator dismisses
+      val notifyFrontend = ctx.wsSend.fold(IO.unit) { send =>
+        send(
+          io.circe.Json.obj(
+            "type" -> "backgroundTaskUpdate".asJson,
+            "sessionId" -> ctx.sessionId.asJson,
+            "taskId" -> jobId.asJson,
+            "description" -> description.asJson,
+            "status" -> eventType.asJson
+          )
+        ).handleErrorWith(_ => IO.unit)
+      }
+
+      notifyFrontend *> notifyAgent
     }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
@@ -384,9 +440,96 @@ Git safety:
           "sessionId" -> ctx.sessionId.asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
-          "status" -> "running".asJson
+          "status" -> "running".asJson,
+          "startedAt" -> System.currentTimeMillis().asJson
         )
       ).handleErrorWith(_ => IO.unit)
     }
+
+  /** Build a heartbeat callback that sends WS updates to frontend and stuck notifications to agent. */
+  private def makeHeartbeatCallback(
+    command: String,
+    desc: Option[String],
+    ctx: ToolContext
+  ): Option[(String, JobHealth) => IO[Unit]] =
+    // Only create callback if there's a way to report (WS or agent actor)
+    ctx.wsSend.orElse(ctx.agentActorRef).map { _ => (jobId: String, health: JobHealth) =>
+      val proc = health.processRef.get()
+      val alive = proc != null && proc.isAlive
+      val now = System.currentTimeMillis()
+      val idleMs = now - health.lastActivityMs.get()
+      val runningMs = now - health.startedAtMs.get()
+      val lines = health.outputLineCount.get()
+
+      // Send WS heartbeat to frontend
+      val wsUpdate = ctx.wsSend.fold(IO.unit) { send =>
+        send(
+          io.circe.Json.obj(
+            "type" -> "backgroundTaskUpdate".asJson,
+            "sessionId" -> ctx.sessionId.asJson,
+            "taskId" -> jobId.asJson,
+            "status" -> "running".asJson,
+            "heartbeat" -> io.circe.Json.obj(
+              "alive" -> alive.asJson,
+              "outputLines" -> lines.asJson,
+              "idleMs" -> idleMs.asJson,
+              "runningMs" -> runningMs.asJson
+            )
+          )
+        ).handleErrorWith(_ => IO.unit)
+      }
+
+      // If idle beyond threshold, notify agent (once only)
+      val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
+      val stuckNotify =
+        if alive && idleMs > stuckThreshold && !health.stuckNotified.get() then
+          IO(health.stuckNotified.set(true)) *>
+            ctx.agentActorRef.fold(IO.unit) { ref =>
+              val stuckMsg =
+                s"Process has produced no output for ${idleMs / 1000}s (running ${runningMs / 1000}s, $lines lines output). Process alive: $alive. Consider cancelling if the command is stuck. Use cancel_background_job: true to kill it."
+              IO(
+                ref ! AgentCommand.ExternalEvent(
+                  source = "background-task",
+                  eventType = "stuck",
+                  payload = s"[Background task may be stuck] \"${desc.getOrElse(command.take(80))}\":\n$stuckMsg",
+                  metadata = JsonObject(
+                    "taskId" -> jobId.asJson,
+                    "idleMs" -> idleMs.asJson,
+                    "runningMs" -> runningMs.asJson
+                  ),
+                  correlationId = Some(jobId)
+                )
+              )
+            }
+        else IO.unit
+
+      wsUpdate *> stuckNotify
+    }
+
+  /**
+   * Heartbeat fiber for auto-backgrounded commands (not managed by ShellSession).
+   *  Uses the same backoff logic as ShellSession.startHeartbeat.
+   */
+  private def startAutoBgHeartbeat(
+    jobId: String,
+    health: JobHealth,
+    resultRef: cats.effect.Ref[IO, Option[Either[Throwable, ProcessResult]]],
+    onHeartbeat: Option[(String, JobHealth) => IO[Unit]]
+  ): IO[Unit] =
+    onHeartbeat match
+      case None => IO.unit
+      case Some(cb) =>
+        val baseSec = Defaults.BgHeartbeatIntervalSec
+        def nextInterval: FiniteDuration =
+          val idleSec = (System.currentTimeMillis() - health.lastActivityMs.get()) / 1000
+          if idleSec < 120 then baseSec.seconds
+          else if idleSec < 600 then 60.seconds
+          else 120.seconds
+        def loop: IO[Unit] = IO.sleep(nextInterval) *>
+          resultRef.get.flatMap {
+            case Some(_) => IO.unit
+            case None => cb(jobId, health).handleErrorWith(_ => IO.unit) *> loop
+          }
+        loop.start.void
 
 end BashTool
