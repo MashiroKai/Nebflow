@@ -31,4 +31,10 @@ object Defaults:
 
   /** WebFetch tool timeout in ms. */
   val WebFetchTimeoutMs: Int = 120_000
+
+  /** Background job heartbeat interval in seconds. */
+  val BgHeartbeatIntervalSec: Int = 30
+
+  /** Background job idle threshold (no output) before flagging as stuck, in seconds. */
+  val BgStuckThresholdSec: Int = 600
 end Defaults

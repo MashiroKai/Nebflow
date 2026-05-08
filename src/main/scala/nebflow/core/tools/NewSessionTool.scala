@@ -54,7 +54,7 @@ Parameters:
       ctx.sessionStore match
         case Some(store) =>
           for
-            meta <- store.createSession(suggestedName)
+            meta <- store.createSession(suggestedName, agentName = ctx.agentDef.map(_.name))
             _ <- store.switchSession(meta.id)
           yield Right(s"New session \"$suggestedName\" created and switched to.")
         case None =>

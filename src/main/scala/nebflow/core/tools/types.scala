@@ -4,6 +4,7 @@ import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
 import nebflow.agent.{AgentCommand, AgentDef, AgentLibrary}
+import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
 import nebflow.core.{AskItem, AskOption, FileChangeTracker}
 import nebflow.shared.*
@@ -30,7 +31,10 @@ case class ToolContext(
   askSemaphore: Option[Semaphore[IO]] = None,
   pekkoScheduler: Option[org.apache.pekko.actor.typed.Scheduler] = None,
   fileLockManager: Option[FileLockManager] = None,
-  fileChangeTracker: Option[FileChangeTracker] = None
+  fileChangeTracker: Option[FileChangeTracker] = None,
+  // Hook system
+  hookEngine: HookEngine = HookEngine.noop,
+  hookContext: HookContext = HookContext(None, "", "")
 )
 
 /** Tool error */

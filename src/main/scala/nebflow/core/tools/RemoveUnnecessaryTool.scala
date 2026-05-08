@@ -61,10 +61,8 @@ Example: rounds=3 means summarize the last 3 rounds of tool call results."""
     val rounds = input("rounds").flatMap(_.as[Int].toOption).getOrElse(1)
     val summary = input("summary").flatMap(_.asString).getOrElse("")
 
-    if summary.isEmpty then
-      IO.pure(Left(ToolError("summary is required")))
-    else if rounds < 1 || rounds > 10 then
-      IO.pure(Left(ToolError("rounds must be between 1 and 10")))
+    if summary.isEmpty then IO.pure(Left(ToolError("summary is required")))
+    else if rounds < 1 || rounds > 10 then IO.pure(Left(ToolError("rounds must be between 1 and 10")))
     else
       ctx.agentActorRef match
         case Some(ref) =>

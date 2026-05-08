@@ -7,7 +7,9 @@ import io.circe.syntax.*
 import nebflow.agent.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
+import nebflow.core.hooks.*
 import nebflow.core.tools.{ToolContext, ToolRegistry, ToolResultGuard}
+import nebflow.service.MemoryStore
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
@@ -81,60 +83,133 @@ private[agent] trait AgentCore:
       ActorContext[AgentCommand]
     ) => Behavior[AgentCommand]
   ): Option[Behavior[AgentCommand]] =
-    if agentDef.name == "context-manage" then None
-    else if state.pendingCompaction.isDefined then None
-    else if state.compactionFailures >= CompactConfig().circuitBreakerMax then
-      logAgentEvent(
-        ctx,
-        agentDef,
-        depth,
-        state.sessionId,
-        state.sessionName,
-        "auto-compact-skipped",
-        s"circuitBreakerOpen failures=${state.compactionFailures} max=${CompactConfig().circuitBreakerMax}"
-      )
-      None
+    if state.pendingCompaction.isDefined then None
     else
-      val inputTokensOpt = state.latestUsage.map(_.inputTokens)
-      val threshold = resources.contextWindow - CompactConfig().bufferTokens
-      inputTokensOpt match
-        case Some(inputTokens) if inputTokens > threshold =>
-          logAgentEvent(
-            ctx,
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "auto-compact-trigger",
-            s"inputTokens=$inputTokens threshold=$threshold"
-          )
-          val subId = s"context-manage-${java.util.UUID.randomUUID().toString.take(8)}"
-          val io = resources.agentLibrary.get("context-manage").flatMap { defnOpt =>
-            IO(ctx.self ! AgentCommand.CompactionDefLoaded(defnOpt))
-          }
-          resources.dispatcher.unsafeRunAndForget(
-            io.handleErrorWith { e =>
-              IO(NebflowLogger.forName("nebflow.agent").warn(s"CompactionDefLoaded lookup failed: ${e.getMessage}")) *>
-                IO(ctx.self ! AgentCommand.CompactionDefLoaded(None))
-            }
-          )
-          val pending = CompactionJob(subId, "full", None, replyTo)
-          resources.dispatcher.unsafeRunAndForget(
-            emitStreamIO(
-              state.wsSend,
+      val config = CompactConfig()
+      // Check retry backoff before anything else
+      val backoffOk =
+        if state.compactionFailures == 0 then true
+        else
+          val backoff = config.compactionRetryDelayMs * math.pow(2, state.compactionFailures - 1).toLong
+          val elapsed = System.currentTimeMillis() - state.lastCompactionFailureAt
+          val ok = elapsed >= backoff
+          if !ok then
+            logAgentEvent(
               ctx,
-              AgentStreamEvent.CompactStart("full", Some(inputTokens), Some(threshold)),
-              isSubagent = depth > 0,
-              state.sessionId
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "auto-compact-skipped",
+              s"backoff=${backoff}ms elapsed=${elapsed}ms failures=${state.compactionFailures}"
             )
-              .handleErrorWith(_ => IO.unit)
-          )
-          Some(
-            processing(agentDef, resources, depth, parentRef, state.withPendingCompaction(Some(pending)), stash, ctx)
-          )
-        case _ => None
-      end match
+          ok
+
+      if !backoffOk then None
+      else if state.compactionFailures >= config.circuitBreakerMax then
+        logAgentEvent(
+          ctx,
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "auto-compact-skipped",
+          s"circuitBreakerOpen failures=${state.compactionFailures} max=${config.circuitBreakerMax}"
+        )
+        None
+      else
+        val inputTokensOpt = state.latestUsage.map(_.inputTokens)
+        val threshold = resources.contextWindow - config.bufferTokens
+        inputTokensOpt match
+          case Some(inputTokens) if inputTokens > threshold =>
+            logAgentEvent(
+              ctx,
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "auto-compact-trigger",
+              s"inputTokens=$inputTokens threshold=$threshold"
+            )
+            Some(
+              startDirectCompaction(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                state,
+                stash,
+                ctx,
+                replyTo,
+                processing,
+                "full"
+              )
+            )
+          case _ => None
+        end match
+      end if
   end maybeAutoCompact
+
+  /**
+   * Start a direct compaction via CompactService (no sub-agent).
+   * Returns the processing behavior with a pending compaction job.
+   */
+  protected def startDirectCompaction(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    stash: StashBuffer[AgentCommand],
+    ctx: ActorContext[AgentCommand],
+    replyTo: Option[ActorRef[AgentEvent]],
+    processing: (
+      AgentDef,
+      SharedResources,
+      Int,
+      Option[ActorRef[AgentCommand]],
+      AgentState,
+      StashBuffer[AgentCommand],
+      ActorContext[AgentCommand]
+    ) => Behavior[AgentCommand],
+    mode: String
+  ): Behavior[AgentCommand] =
+    val jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
+    val pending = CompactionJob(jobId, mode, None, replyTo)
+
+    // Fire-and-forget CompactService call
+    val io = CompactService
+      .compact(
+        state.messages,
+        resources,
+        state.sessionId.getOrElse(ctx.self.path.name)
+      )
+      .map { result =>
+        ctx.self ! AgentCommand.CompactionComplete(result)
+      }
+    resources.dispatcher.unsafeRunAndForget(
+      io.handleError { e =>
+        NebflowLogger.forName("nebflow.agent").warn(s"CompactService failed: ${e.getMessage}")
+        ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage))
+      }
+    )
+
+    resources.dispatcher.unsafeRunAndForget(
+      emitStreamIO(
+        state.wsSend,
+        ctx,
+        AgentStreamEvent.CompactStart(
+          mode,
+          state.latestUsage.map(_.inputTokens),
+          Some(resources.contextWindow - CompactConfig().bufferTokens)
+        ),
+        isSubagent = depth > 0,
+        state.sessionId
+      ).handleErrorWith(_ => IO.unit)
+    )
+
+    processing(agentDef, resources, depth, parentRef, state.withPendingCompaction(Some(pending)), stash, ctx)
+  end startDirectCompaction
 
   // ============================================================
   // Start LLM call -> pipe result back to self
@@ -228,19 +303,48 @@ private[agent] trait AgentCore:
             state.withCurrentTurnId(turnId)
         val stateForTurn = stateAfterMicro
 
+        // --- Memory injection (synchronous file reads) ---
+        val userMemory = MemoryStore.loadUserMemory
+        val agentMemory = MemoryStore.loadAgentMemory(agentDef.name)
+        val sessionMemory = stateForTurn.sessionId.flatMap(MemoryStore.loadSessionMemory)
+        val memorySections = List(
+          userMemory.map(c => s"# Memory — User Preferences\n$c"),
+          agentMemory.map(c => s"# Memory — Agent\n$c"),
+          sessionMemory.map(c => s"# Memory — Session Context\n$c")
+        ).flatten
+        val memoryHint = stateForTurn.sessionId match
+          case Some(sid) =>
+            s"""|# Memory Files
+                |You can edit these memory files using the Edit/Write tools:
+                |- User preferences (requires approval): ${MemoryStore.userMemoryPath}
+                |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
+                |- Session context (auto-approved): ${MemoryStore.sessionMemoryPath(sid)}""".stripMargin
+          case None =>
+            s"""|# Memory Files
+                |You can edit these memory files using the Edit/Write tools:
+                |- User preferences (requires approval): ${MemoryStore.userMemoryPath}
+                |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}""".stripMargin
+        val memoryBlock = (memorySections :+ memoryHint).mkString("\n\n")
+
+        // Compute verification reminder from per-agent write tracker (pure, no IO needed)
+        val (verificationOpt, updatedWriteTracker) =
+          SystemReminders.computeVerificationReminder(stateForTurn.writesSinceLastRead)
+        val stateForLlm = stateForTurn.withWritesSinceLastRead(updatedWriteTracker)
+
         val io = for
           // --- reminders (async) ---
           fileChangesOpt <- resources.fileChangeTracker.checkChanges()
           // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
-          isUserTurn = stateForTurn.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
+          isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
           reminders <- SystemReminders.collectAll(
             resources.reminderStateRef,
-            stateForTurn.latestUsage,
+            stateForLlm.latestUsage,
             resources.contextWindow,
             fileChangesOpt,
             isUserTurn
           )
-          remindersText = SystemReminder.renderAll(reminders)
+          allReminders = verificationOpt.toList ++ reminders
+          remindersText = SystemReminder.renderAll(allReminders)
           // Per-turn dynamic context: only reminders (env info is now in system prompt)
           dynamicMsg =
             if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
@@ -248,12 +352,12 @@ private[agent] trait AgentCore:
           // --- LLM call ---
           thinkingOpt <- resources.runtimePrefs.getThinking
           languageOpt <- resources.runtimePrefs.getLanguage
-          systemStable = baseSystemStable + languageOpt
-            .map(l => s"\n\n# Language\nAlways respond in $l.")
-            .getOrElse("")
+          systemStable = baseSystemStable +
+            (if memoryBlock.nonEmpty then s"\n\n$memoryBlock" else "") +
+            languageOpt.map(l => s"\n\n# Language\nAlways respond in $l.").getOrElse("")
           request = LlmRequest(
-            messages = stateForTurn.messages ++ dynamicMsg,
-            sessionId = stateForTurn.sessionId.getOrElse(ctx.self.path.name),
+            messages = stateForLlm.messages ++ dynamicMsg,
+            sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = agentDef.name,
             tools = tools,
             maxTokens = Some(resources.agentLibrary.globalMaxTokens),
@@ -262,7 +366,7 @@ private[agent] trait AgentCore:
           )
           result <- resources.llm
             .sendStream(request, onAttempt = Some(onAttemptCb))
-            .through(streamEmitter(stateForTurn.wsSend, ctx, isSubagent, sessionIdOpt))
+            .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt))
             .compile
             .toList
             .map(aggregateChunks)
@@ -282,7 +386,7 @@ private[agent] trait AgentCore:
         resources.dispatcher.unsafeRunAndForget(
           startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
         )
-        processing(agentDef, resources, depth, parentRef, stateForTurn, stash, ctx)
+        processing(agentDef, resources, depth, parentRef, stateForLlm, stash, ctx)
     end match
   end pipeLlmCall
 
@@ -372,7 +476,13 @@ private[agent] trait AgentCore:
       pekkoScheduler = Some(ctx.system.scheduler),
       fileLockManager = Some(resources.fileLockManager),
       fileChangeTracker = Some(resources.fileChangeTracker),
-      inputTokens = state.latestUsage.map(_.inputTokens)
+      inputTokens = state.latestUsage.map(_.inputTokens),
+      hookEngine = resources.hookEngine,
+      hookContext = HookContext(
+        sessionId = state.sessionId,
+        projectRoot = resources.projectRoot.toString,
+        cwd = resources.projectRoot.toString
+      )
     )
 
     val io = realToolCalls
@@ -390,6 +500,9 @@ private[agent] trait AgentCore:
          else IO.unit) *>
           (ToolRisk.classify(call.name) match
             case ToolRisk.Safe =>
+              executeTool(call, toolCtx)
+            case ToolRisk.NeedsApproval if isSessionMemoryFile(call, state, agentDef) =>
+              // Session memory files: auto-approve (agent can edit freely)
               executeTool(call, toolCtx)
             case ToolRisk.NeedsApproval =>
               resources.runtimePrefs.shouldApprove(call.name).flatMap {
@@ -474,7 +587,7 @@ private[agent] trait AgentCore:
           (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
         }
 
-        // Track per-file write count since last read
+        // Track per-file write count since last read (per-agent, pure computation)
         val readFiles = freshResults
           .collect {
             case (call, result) if call.name == "Read" && !result.isError =>
@@ -488,19 +601,11 @@ private[agent] trait AgentCore:
               call.input("file_path").flatMap(_.asString).getOrElse("")
           }
           .filter(_.nonEmpty)
-        if readFiles.nonEmpty || writtenFiles.nonEmpty then
-          resources.dispatcher.unsafeRunAndForget(
-            resources.reminderStateRef
-              .update { rs =>
-                // Reset counter for read files, increment for written files
-                val cleared = rs.writesSinceLastRead -- readFiles
-                val updated = writtenFiles.foldLeft(cleared) { (m, f) =>
-                  m.updated(f, m.getOrElse(f, 0) + 1)
-                }
-                rs.copy(writesSinceLastRead = updated)
-              }
-              .handleErrorWith(_ => IO.unit)
-          )
+        val updatedWriteTracker = SystemReminders.updateWriteTracker(
+          state.writesSinceLastRead,
+          readFiles,
+          writtenFiles
+        )
 
         IO(
           ctx.self ! ToolsComplete(
@@ -508,7 +613,8 @@ private[agent] trait AgentCore:
             result.text,
             replyTo,
             None,
-            result.thinking
+            result.thinking,
+            updatedWriteTracker
           )
         )
       }
@@ -546,32 +652,68 @@ private[agent] trait AgentCore:
         val agentName = ctx.agentDef.map(_.name).getOrElse("-")
         val sessionName = ctx.sessionName.getOrElse("-")
         val logCtx = logger.ctxPrefix(agentName, sessionName)
+        val hookEngine = ctx.hookEngine
+        val hookCtx = ctx.hookContext
+
         IO.delay(System.nanoTime()).flatMap { start =>
-          logger.debug(s"$logCtx Executing tool: $summary") *>
-            tool
-              .call(call.input, ctx)
-              .map {
-                case Left(err) => ToolExecResult(err.message, isError = true)
-                case Right(result) =>
-                  ToolResultGuard.guard(result, call.name, ctx) match
-                    case ToolResultGuard.Ok(content) => ToolExecResult(content)
-                    case ToolResultGuard.Rejected(msg) =>
-                      logger.warn(s"$logCtx Tool $summary result rejected: $msg")
-                      ToolExecResult(msg, isError = true)
-              }
-              .handleErrorWith {
-                case _: UserAbort => IO.raiseError(new UserAbort())
-                case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
-              }
-              .flatTap { result =>
-                val elapsed = (System.nanoTime() - start) / 1_000_000
-                if result.isError then
-                  logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
-                else
-                  logger.info(
-                    s"$logCtx Tool $summary OK (${elapsed}ms)" + (if result.truncated then " [truncated]" else "")
-                  )
-              }
+          // --- PreToolUse hook ---
+          hookEngine
+            .beforeTool(call.name, call.input, hookCtx)
+            .flatMap { preResult =>
+              if preResult.decision == HookDecision.Block then
+                val blockMsg = preResult.reason.getOrElse(s"Tool ${call.name} blocked by hook")
+                logger.info(s"$logCtx Hook blocked $summary: $blockMsg")
+                IO.pure(ToolExecResult(blockMsg, isError = true))
+              else
+                // Merge updatedInput if provided
+                val finalInput = preResult.updatedInput.getOrElse(call.input)
+
+                // --- Execute tool ---
+                tool
+                  .call(finalInput, ctx)
+                  .flatMap {
+                    case Left(err) =>
+                      // --- PostToolUseFailure hook ---
+                      hookEngine
+                        .afterToolFailure(call.name, finalInput, err.message, hookCtx)
+                        .map { postResult =>
+                          val appended = postResult.additionalContext match
+                            case Some(ctx) => s"${err.message}\n\n$ctx"
+                            case None => err.message
+                          ToolExecResult(appended, isError = true)
+                        }
+                    case Right(result) =>
+                      val guarded = ToolResultGuard.guard(result, call.name, ctx)
+                      guarded match
+                        case ToolResultGuard.Rejected(msg) =>
+                          logger.warn(s"$logCtx Tool $summary result rejected: $msg")
+                          IO.pure(ToolExecResult(msg, isError = true))
+                        case ToolResultGuard.Ok(content) =>
+                          // --- PostToolUse hook ---
+                          hookEngine
+                            .afterTool(call.name, finalInput, content, true, hookCtx)
+                            .map { postResult =>
+                              val finalContent = postResult.additionalContext match
+                                case Some(ctx) => s"$content\n\n$ctx"
+                                case None => content
+                              ToolExecResult(finalContent)
+                            }
+                  }
+                  .handleErrorWith {
+                    case _: UserAbort => IO.raiseError(new UserAbort())
+                    case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
+                  }
+              end if
+            }
+            .flatTap { result =>
+              val elapsed = (System.nanoTime() - start) / 1_000_000
+              if result.isError then
+                logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
+              else
+                logger.info(
+                  s"$logCtx Tool $summary OK (${elapsed}ms)" + (if result.truncated then " [truncated]" else "")
+                )
+            }
         }
       case None =>
         IO.pure(ToolExecResult(s"No such tool available: ${call.name}", isError = true))
@@ -582,17 +724,22 @@ private[agent] trait AgentCore:
 
   /** Build the set of allowed tool names for filtering tool call results. */
   protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int, hasParent: Boolean): Set[String] =
+    val isMcpTool = (name: String) => name.startsWith("mcp__")
     val base = agentDef.tools match
       case Nil => Set.empty[String]
-      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
+      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(isMcpTool).toSet
       case names => names.toSet
     // Include MCP tools enabled by this agent via mcpServers config.
     // Each serverId maps to tools registered as mcp__{serverId}__{toolName}
-    val mcpToolNames = ToolRegistry.ALL_TOOLS.map(_.name)
-    val mcpTools = agentDef.mcpServers.flatMap { serverId =>
-      val prefix = s"mcp__${serverId}__"
-      mcpToolNames.filter(_.startsWith(prefix))
-    }.toSet
+    // mcpServers: ["*"] means all MCP tools; specific serverIds filter by prefix.
+    val mcpToolNames = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool)
+    val mcpTools =
+      if agentDef.mcpServers == List("*") then mcpToolNames.toSet
+      else
+        agentDef.mcpServers.flatMap { serverId =>
+          val prefix = s"mcp__${serverId}__"
+          mcpToolNames.filter(_.startsWith(prefix))
+        }.toSet
     val always =
       if agentDef.name == "context-manage" then ToolRegistry.AlwaysAvailable
       else ToolRegistry.AlwaysAvailableNonCompact
@@ -693,5 +840,14 @@ private[agent] trait AgentCore:
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
+
+  /** Check if an Edit/Write call targets the current session's memory file. */
+  private def isSessionMemoryFile(call: ToolCall, state: AgentState, agentDef: AgentDef): Boolean =
+    val pathOpt = call.input("file_path").flatMap(_.asString)
+    (call.name == "Edit" || call.name == "Write") && pathOpt.exists { path =>
+      path.endsWith(".memory.md") && state.sessionId.exists { sid =>
+        path == MemoryStore.sessionMemoryPath(sid).toString
+      }
+    }
 
 end AgentCore

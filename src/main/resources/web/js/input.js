@@ -323,6 +323,77 @@ export function send() {
   }, state.streamTimeoutMs + 30000);
 }
 
+// ---------- Inject User Message (for plugin card interactions) ----------
+export function injectUserMessage(text, options = {}) {
+  /**
+   * Inject a user message into the conversation as if the user typed it.
+   * Used by agent frontend cards (e.g., Pulsar waveform confirm/modify buttons).
+   *
+   * @param {string} text - The message text to inject
+   * @param {object} options - Optional: { sessionId, silent }
+   *   - sessionId: target session (defaults to active)
+   *   - silent: if true, don't render user bubble (for programmatic confirmations)
+   */
+  const sessionId = options.sessionId || state.activeSessionId;
+  if (!text || !text.trim()) {
+    console.warn('[injectUserMessage] empty text');
+    return false;
+  }
+  if (!sessionId) {
+    console.warn('[injectUserMessage] no active session');
+    return false;
+  }
+  const isBusy = state.busySessionIds.has(sessionId);
+  if (isBusy) {
+    console.warn('[injectUserMessage] session is busy:', sessionId);
+    return false;
+  }
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    console.warn('[injectUserMessage] ws not open');
+    return false;
+  }
+
+  const trimmed = text.trim();
+
+  // Render user bubble (unless silent)
+  if (!options.silent) {
+    renderUserBubble(trimmed, []);
+  }
+
+  // Save to persistence
+  saveMsg({ type: 'user', text: trimmed, injected: true });
+
+  // Send via WebSocket (same format as normal send)
+  const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  sendWs({
+    content: trimmed,
+    attachments: [],
+    clientMessageId,
+    sessionId
+  });
+
+  // Mark session as busy
+  setBusy(sessionId);
+  state.turnStartTimes[sessionId] = Date.now();
+
+  // Safety timeout (same as normal send)
+  if (state.sessionBusyTimeouts[sessionId]) {
+    clearTimeout(state.sessionBusyTimeouts[sessionId]);
+    delete state.sessionBusyTimeouts[sessionId];
+  }
+  state.sessionBusyTimeouts[sessionId] = setTimeout(() => {
+    if (state.busySessionIds.has(sessionId)) {
+      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
+        if (sessionId === state.activeSessionId) renderTimeoutNotice();
+        clearBusy(sessionId);
+        clearStatus();
+      });
+    }
+  }, state.streamTimeoutMs + 30000);
+
+  return true;
+}
+
 // ---------- Wire up /new to session module (called from main.js) ----------
 export function setNewSessionHandler(fn) {
   slashCommands['/new'].run = fn;

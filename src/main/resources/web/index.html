@@ -51,11 +51,15 @@
   <div id="main">
     <div id="header">
       <div class="header-left"><span class="header-brand">nebflow</span></div>
-      <div class="header-center"><span id="session-name"></span></div>
+      <div class="header-center"><span id="session-name"></span><div id="memory-tags" style="display:none"><span class="memory-tag" data-scope="user">User</span><span class="memory-tag" data-scope="agent">Agent</span><span class="memory-tag" data-scope="session">Session</span></div></div>
       <div class="header-right">
-        <div id="bg-tasks" class="hidden">
-          <span class="bg-task-dot"></span>
-          <span class="bg-task-count">0</span>
+        <div id="bg-indicator" class="hidden">
+          <span class="bg-dot"></span>
+          <span class="bg-count">0</span>
+        </div>
+        <div id="bg-dropdown" class="hidden">
+          <div class="bg-dropdown-header">Background tasks</div>
+          <div class="bg-dropdown-list"></div>
         </div>
         <div class="conn off" id="conn"></div>
       </div>
@@ -122,6 +126,20 @@
       <div id="agent-modal-actions">
         <button id="agent-modal-cancel">Cancel</button>
         <button id="agent-modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+  <!-- Memory Editor Modal (separate overlay, reuses agent-modal styling) -->
+  <div id="memory-overlay">
+    <div id="memory-modal">
+      <div id="memory-modal-title">Memory</div>
+      <div id="memory-modal-body">
+        <div class="agent-field-label">Content (Markdown)</div>
+        <textarea id="memory-content-input" placeholder="# Memory&#10;&#10;Key facts, decisions, context..." rows="12" spellcheck="false"></textarea>
+      </div>
+      <div id="memory-modal-actions">
+        <button id="memory-modal-cancel">Cancel</button>
+        <button id="memory-modal-save">Save</button>
       </div>
     </div>
   </div>

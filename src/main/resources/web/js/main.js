@@ -15,7 +15,7 @@ import {
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   switchSession, deleteSession, formatSessionTime, setSessionAttention,
-  persistUnread
+  persistUnread, initFeishuPanel
 } from './sidebar.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
@@ -23,12 +23,13 @@ import {
   showAgentModal, hideAgentModal, initModals,
   startInlineNewSession
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, setNewSessionHandler } from './input.js';
+import { send, handleSlash, addFileAttachment, initInput, setNewSessionHandler, injectUserMessage } from './input.js';
 import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { registerCardRenderer, renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
 import { initSearch, renderSearchResults } from './search.js';
+import { renderMemoryTags, handleMemoryData, initMemory } from './memory.js';
 
 // ---------- 1. Populate DOM refs ----------
 state.dom = {
@@ -67,8 +68,10 @@ state.dom = {
   agentSystemInput: document.getElementById('agent-system-input'),
   agentModalCancel: document.getElementById('agent-modal-cancel'),
   agentModalSave: document.getElementById('agent-modal-save'),
-  bgTasksEl: document.getElementById('bg-tasks'),
-  bgTasksCount: document.getElementById('bg-tasks')?.querySelector('.bg-task-count'),
+  bgIndicatorEl: document.getElementById('bg-indicator'),
+  bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
+  bgDropdownEl: document.getElementById('bg-dropdown'),
+  bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
 };
 
 // ---------- 2. Init libraries ----------
@@ -384,12 +387,32 @@ onMessage('askPermission', (msg) => {
 // --- Session list (global) ---
 let restoredSessionId = null;
 onMessage('sessionList', (msg) => {
-  renderSessionSidebar(msg.sessions, msg.activeId);
+  // Build sessionAgentMap from ALL sessions
+  const allSessions = msg.sessions || [];
+  allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
+
+  // Filter by selected agent if one is active (safety net — backend should send agentSessionList)
+  let sessionsToShow = allSessions;
+  if (state.selectedAgent) {
+    sessionsToShow = allSessions.filter(s => (s.agentName || 'Nebula') === state.selectedAgent);
+  }
+
+  // Determine activeId: only use it if it belongs to the filtered (shown) sessions
+  let activeId = msg.activeId;
+  if (state.selectedAgent && activeId) {
+    const activeAgent = state.sessionAgentMap[activeId];
+    if (activeAgent !== state.selectedAgent) {
+      // activeId belongs to a different agent — don't switch away from current agent's session
+      activeId = state.activeSessionId;
+    }
+  }
+
+  renderSessionSidebar(sessionsToShow, activeId);
   // Only restore messages on first load (before any session was active)
-  if (!restoredSessionId && msg.activeId) {
-    restoredSessionId = msg.activeId;
+  if (!restoredSessionId && activeId) {
+    restoredSessionId = activeId;
     // Try backend history first; fall back to localStorage
-    sendWs({ type: 'getHistory', sessionId: msg.activeId, limit: 100 });
+    sendWs({ type: 'getHistory', sessionId: activeId, limit: 100 });
   }
   migrateLegacyIfNeeded();
   // Request agent list on first connect (no tab to trigger it now)
@@ -443,8 +466,20 @@ onMessage('historyPage', (msg) => {
     state.dom.chat.innerHTML = '';
     restoreFromBackendHistory(msg.messages);
 
+    // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
+    const histMsgs = msg.messages;
+    const lastHistMsg = histMsgs && histMsgs[histMsgs.length - 1];
+    const isAskUserPending = lastHistMsg && lastHistMsg.type === 'askUser'
+      && Array.isArray(lastHistMsg.items) && lastHistMsg.items.length > 0;
+
+    if (isAskUserPending) {
+      // Agent is blocked on AskUser — clear stale sessionTexts so we don't create
+      // a phantom streaming bubble for text that's already in history.
+      delete state.sessionTexts[sid];
+    }
+
     // Re-create streaming state if this session is still busy.
-    if (state.busySessionIds.has(sid)) {
+    if (state.busySessionIds.has(sid) && !isAskUserPending) {
       if (state.sessionTexts[sid]) {
         state.aiText = state.sessionTexts[sid];
         const chat = state.dom.chat;
@@ -482,18 +517,14 @@ onMessage('historyPage', (msg) => {
     // Re-create interactive AskUser if the last history message is an unanswered askUser.
     // Must be OUTSIDE the busySessionIds check — a non-active session that received
     // AskUser was never added to busySessionIds (setBusy only runs for the active session).
-    // Use attentionSessions (set for ALL sessions on askUser) as the pending indicator.
-    if (state.attentionSessions.has(sid)) {
-      const histMsgs = msg.messages;
-      const lastMsg = histMsgs && histMsgs[histMsgs.length - 1];
-      if (lastMsg && lastMsg.type === 'askUser' && Array.isArray(lastMsg.items) && lastMsg.items.length > 0) {
-        const rows = state.dom.chat.querySelectorAll('.row.ai');
-        const lastAiRow = rows[rows.length - 1];
-        if (lastAiRow && lastAiRow.querySelector('.option-box')) {
-          lastAiRow.remove();
-        }
-        renderAskUser(lastMsg.items, sid);
-      }
+    // Simply check if the last history message is askUser with items — if already answered,
+    // there would be subsequent Ai/Tool messages after it, so it wouldn't be the last message.
+    if (isAskUserPending) {
+      // Remove ALL disabled askUser rows (restored by restoreFromBackendHistory).
+      state.dom.chat.querySelectorAll('.row.ai').forEach(row => {
+        if (row.querySelector('.option-box')) row.remove();
+      });
+      renderAskUser(lastHistMsg.items, sid);
     }
 
     if (!state.historyHasMore && msg.messages.length > 0) showHistoryEnd();
@@ -747,6 +778,11 @@ onMessage('serverConfig', (msg) => {
   }
 });
 
+// MCP server list updated (after background init completes)
+onMessage('mcpServersUpdate', (msg) => {
+  if (msg.mcpServers) state.mcpServers = msg.mcpServers;
+});
+
 onMessage('configData', (msg) => {
   state.configText = msg.config || '';
   const editor = document.getElementById('config-editor');
@@ -816,20 +852,147 @@ onMessage('taskListUpdate', (msg) => {
 });
 
 // --- Background task indicator in header ---
+let _bgTimer = null;
+
+function formatDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function renderBgDropdown() {
+  const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+  const listEl = state.dom.bgDropdownListEl;
+  const dropdown = state.dom.bgDropdownEl;
+  if (!listEl || !dropdown) return;
+  listEl.innerHTML = '';
+  const running = tasks.filter(t => t.status === 'running');
+  if (running.length === 0) {
+    dropdown.classList.add('hidden');
+    stopBgTimer();
+    return;
+  }
+  const now = Date.now();
+  running.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'bg-task-row';
+    const info = document.createElement('div');
+    info.className = 'bg-task-info';
+    const desc = document.createElement('span');
+    desc.className = 'bg-task-desc';
+    desc.textContent = t.description || t.taskId;
+    const meta = document.createElement('div');
+    meta.className = 'bg-task-meta';
+    const idSpan = document.createElement('span');
+    idSpan.className = 'bg-task-id';
+    idSpan.textContent = t.taskId;
+    const durationSpan = document.createElement('span');
+    durationSpan.className = 'bg-task-duration';
+    durationSpan.dataset.taskId = t.taskId;
+    if (t.startedAt) durationSpan.textContent = formatDuration(now - t.startedAt);
+
+    // Heartbeat status indicator
+    const hb = t.heartbeat;
+    let statusDot = null;
+    let linesSpan = null;
+    if (hb) {
+      const idleClass = hb.idleMs > 600000 ? 'bg-status-stuck' : (hb.idleMs > 120000 ? 'bg-status-idle' : 'bg-status-active');
+      statusDot = document.createElement('span');
+      statusDot.className = `bg-task-status ${idleClass}`;
+      statusDot.title = hb.alive ? (hb.idleMs > 600000 ? 'No output for 10+ min' : 'Running') : 'Process ended';
+      linesSpan = document.createElement('span');
+      linesSpan.className = 'bg-task-lines';
+      linesSpan.textContent = `${hb.outputLines} lines`;
+    }
+
+    meta.appendChild(idSpan);
+    if (statusDot) meta.appendChild(statusDot);
+    meta.appendChild(durationSpan);
+    if (linesSpan) meta.appendChild(linesSpan);
+    info.appendChild(desc);
+    info.appendChild(meta);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'bg-task-cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.onclick = (e) => {
+      e.stopPropagation();
+      sendWs({ type: 'cancelBackgroundJob', sessionId: state.activeSessionId, jobId: t.taskId });
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = '...';
+    };
+    row.appendChild(info);
+    row.appendChild(cancelBtn);
+    listEl.appendChild(row);
+  });
+}
+
+function startBgTimer() {
+  if (_bgTimer) return;
+  _bgTimer = setInterval(() => {
+    const dropdown = state.dom.bgDropdownEl;
+    if (!dropdown || dropdown.classList.contains('hidden')) { stopBgTimer(); return; }
+    const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+    const now = Date.now();
+    dropdown.querySelectorAll('.bg-task-duration').forEach(el => {
+      const t = tasks.find(t => t.taskId === el.dataset.taskId);
+      if (t && t.startedAt) el.textContent = formatDuration(now - t.startedAt);
+    });
+  }, 1000);
+}
+
+function stopBgTimer() {
+  if (_bgTimer) { clearInterval(_bgTimer); _bgTimer = null; }
+}
+
 function updateBgTasksUI() {
   const tasks = state.sessionBgTasks[state.activeSessionId] || [];
   const running = tasks.filter(t => t.status === 'running');
-  const el = state.dom.bgTasksEl;
-  const countEl = state.dom.bgTasksCount;
+  const el = state.dom.bgIndicatorEl;
+  const countEl = state.dom.bgCountEl;
+  const dropdown = state.dom.bgDropdownEl;
   if (!el || !countEl) return;
   if (running.length > 0) {
     el.classList.remove('hidden');
     countEl.textContent = running.length;
   } else {
     el.classList.add('hidden');
+    if (dropdown) dropdown.classList.add('hidden');
+    stopBgTimer();
+  }
+  if (dropdown && !dropdown.classList.contains('hidden')) {
+    renderBgDropdown();
+    startBgTimer();
   }
 }
 state.updateBgTasksUI = updateBgTasksUI;
+
+// Toggle dropdown on indicator click
+document.getElementById('bg-indicator')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const dropdown = state.dom.bgDropdownEl;
+  if (!dropdown) return;
+  if (dropdown.classList.contains('hidden')) {
+    renderBgDropdown();
+    dropdown.classList.remove('hidden');
+    startBgTimer();
+  } else {
+    dropdown.classList.add('hidden');
+    stopBgTimer();
+  }
+});
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const dropdown = state.dom.bgDropdownEl;
+  const indicator = state.dom.bgIndicatorEl;
+  if (dropdown && !dropdown.contains(e.target) && !indicator?.contains(e.target)) {
+    dropdown.classList.add('hidden');
+    stopBgTimer();
+  }
+});
 
 onMessage('backgroundTaskUpdate', (msg) => {
   const sid = msg.sessionId;
@@ -839,8 +1002,15 @@ onMessage('backgroundTaskUpdate', (msg) => {
   const idx = tasks.findIndex(t => t.taskId === msg.taskId);
   if (idx >= 0) {
     tasks[idx].status = msg.status;
+    if (msg.heartbeat) tasks[idx].heartbeat = msg.heartbeat;
   } else {
-    tasks.push({ taskId: msg.taskId, description: msg.description, status: msg.status });
+    tasks.push({
+      taskId: msg.taskId,
+      description: msg.description,
+      status: msg.status,
+      startedAt: msg.startedAt || Date.now(),
+      heartbeat: msg.heartbeat || null
+    });
   }
   // Remove completed/failed tasks after a brief delay so user sees the count update
   if (msg.status === 'completed' || msg.status === 'failed') {
@@ -887,6 +1057,11 @@ onMessage('askError', (msg) => {
 });
 
 
+// --- Memory ---
+onMessage('memoryData', (msg) => handleMemoryData(msg));
+onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
+onMessage('memoryStatus', (msg) => renderMemoryTags(msg));
+
 // --- Search results ---
 onMessage('searchResults', (msg) => {
   renderSearchResults(msg.query, msg.results || []);
@@ -903,6 +1078,8 @@ initNavTabs();
 initModals();
 initInput();
 initSearch();
+initFeishuPanel();
+initMemory();
 console.log('[main] modules initialized, connecting ws...');
 
 // Scroll listener
@@ -920,6 +1097,7 @@ state.dom.chat.addEventListener('scroll', () => {
 window.Nebflow = {
   registerCardRenderer,
   escapeHtml,
+  injectUserMessage,
   get state() { return state; },
 };
 
@@ -964,4 +1142,5 @@ loadAgentFrontends();
 
 // ---------- 8. Start ----------
 connect();
+sendWs({ type: 'memoryStatus' });
 state.dom.input.focus();

@@ -1,7 +1,7 @@
 // sidebar.js — Left panel management: nav tabs, agent list, settings, session sidebar
 
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
-import { sendWs } from './ws.js';
+import { sendWs, onMessage } from './ws.js';
 import { showAgentModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
 import { finishAgent, setStatus } from './chat.js';
@@ -302,6 +302,9 @@ export function renderSessionSidebar(sessionData, activeId) {
   if (active) {
     sessionNameEl.textContent = active.name;
     sessionNameEl.style.display = '';
+    // Show feishu indicator if session has feishu config
+    const feishuActive = active.bridges?.feishu?.enabled;
+    sessionNameEl.classList.toggle('feishu-linked', !!feishuActive);
     // Update header brand based on session's agent
     const agentName = active.agentName || 'Nebula';
     updateHeaderBrand(agentName);
@@ -422,6 +425,11 @@ function resetChatForActiveSession() {
   }
 
   if (!isBusy) input.focus();
+
+  // Restore cached task list for this session (or clear if none)
+  renderTaskList(state.sessionTasks[sid] || []);
+  // Restore background task indicator for this session
+  if (state.updateBgTasksUI) state.updateBgTasksUI();
 }
 
 export function switchSession(sessionId) {
@@ -442,8 +450,7 @@ export function switchSession(sessionId) {
   resetChatForActiveSession();
   // Restore input draft for the new session
   restoreInputDraft(sessionId);
-  // Restore cached task list for this session (or clear if none)
-  renderTaskList(state.sessionTasks[sessionId] || []);
+  // Task list and bg task indicator are restored inside resetChatForActiveSession()
   sendWs({type: 'switchSession', sessionId});
 }
 
@@ -650,4 +657,115 @@ window.addEventListener('session-unread', (e) => {
 window.addEventListener('session-compacting', (e) => {
   updateSessionStatus(e.detail.sessionId);
 });
+
+// ===== Feishu Config Panel =====
+// Click header session-name to open feishu config
+
+let feishuPanelEl = null;
+
+function openFeishuPanel() {
+  if (feishuPanelEl) return; // already open
+  const active = state.sessions.find(s => s.id === state.activeSessionId);
+  if (!active) return;
+
+  const panel = document.createElement('div');
+  panel.id = 'feishu-panel';
+  panel.innerHTML = buildFeishuPanelHtml(active);
+  document.body.appendChild(panel);
+  feishuPanelEl = panel;
+
+  // Close on overlay click
+  panel.querySelector('.feishu-overlay').addEventListener('click', closeFeishuPanel);
+
+  // Bind form events
+  const form = panel.querySelector('.feishu-form');
+  const chatIdInput = form.querySelector('[name="chatId"]');
+  const enabledCheck = form.querySelector('[name="enabled"]');
+
+  // Save on submit or chatId blur
+  form.addEventListener('submit', (e) => { e.preventDefault(); saveFeishuConfig(active.id); });
+  form.querySelector('.feishu-save').addEventListener('click', () => saveFeishuConfig(active.id));
+  form.querySelector('.feishu-cancel').addEventListener('click', closeFeishuPanel);
+  form.querySelector('.feishu-clear').addEventListener('click', () => {
+    sendWs({type: 'updateSessionFeishu', sessionId: active.id, chatId: ''});
+    closeFeishuPanel();
+  });
+
+  // Request global config status
+  sendWs({type: 'getFeishuGlobalConfig'});
+}
+
+function buildFeishuPanelHtml(session) {
+  const feishu = (session.bridges && session.bridges.feishu) || {};
+  const chatId = feishu.chatId || '';
+  const isLinked = !!chatId;
+
+  return `
+    <div class="feishu-overlay"></div>
+    <div class="feishu-panel-content">
+      <div class="feishu-header">
+        <span class="feishu-title">绑定飞书群聊</span>
+        <span class="feishu-session-name">${escapeHtml(session.name)}</span>
+      </div>
+      <div class="feishu-status" id="feishu-global-status">检查全局配置...</div>
+      <form class="feishu-form">
+        <label>
+          <span class="feishu-label">群聊 Chat ID</span>
+          <input type="text" name="chatId" value="${escapeHtml(chatId)}" placeholder="oc_xxx" />
+          <span class="feishu-hint">在飞书群设置里找到群的 chat_id，以 oc_ 开头</span>
+        </label>
+        <div class="feishu-actions">
+          <button type="button" class="feishu-clear" ${!isLinked ? 'style="display:none"' : ''}>解除绑定</button>
+          <button type="button" class="feishu-cancel">取消</button>
+          <button type="button" class="feishu-save">绑定</button>
+        </div>
+      </form>
+    </div>`;
+}
+
+function saveFeishuConfig(sessionId) {
+  if (!feishuPanelEl) return;
+  const form = feishuPanelEl.querySelector('.feishu-form');
+  const chatId = form.querySelector('[name="chatId"]').value.trim();
+  sendWs({
+    type: 'updateSessionFeishu',
+    sessionId,
+    chatId,
+    chatType: 'group',
+    enabled: true,
+    syncMessages: true,
+    notifyEvents: ['aiResponse', 'askUser', 'permissionRequest']
+  });
+  closeFeishuPanel();
+}
+
+function closeFeishuPanel() {
+  if (feishuPanelEl) {
+    feishuPanelEl.remove();
+    feishuPanelEl = null;
+  }
+}
+
+// Handle global feishu config response
+onMessage('feishuGlobalConfig', (data) => {
+  if (!feishuPanelEl) return;
+  const statusEl = feishuPanelEl.querySelector('#feishu-global-status');
+  if (data.configured) {
+    statusEl.className = 'feishu-status ok';
+    statusEl.textContent = '全局配置 ✓ (appId: ' + data.appId + '...)';
+  } else {
+    statusEl.className = 'feishu-status warn';
+    statusEl.innerHTML = '全局配置未设置 — 请创建 <code>~/.nebflow/feishu.json</code>（含 appId/appSecret）';
+  }
+});
+
+// Bind click on header session name (called from main.js after DOM refs are set)
+export function initFeishuPanel() {
+  if (!state.dom.sessionNameEl) return;
+  state.dom.sessionNameEl.style.cursor = 'pointer';
+  state.dom.sessionNameEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openFeishuPanel();
+  });
+}
 

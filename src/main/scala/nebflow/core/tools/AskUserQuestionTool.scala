@@ -5,7 +5,6 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
 import nebflow.core.{AskItem, AskOption}
-import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
 
 object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
@@ -26,7 +25,13 @@ Guidelines:
 - For open-ended questions, omit options so the user gets a free-text input.
 - Do not use this tool for trivial confirmations you can decide yourself.
 - The UI always provides an "Other..." option so the user can type freely even for multiple-choice.
-- Supports multiple questions in one call — ask everything you need at once."""
+- Supports multiple questions in one call — ask everything you need at once.
+
+Non-blocking behavior:
+- When you call this tool, the question is sent to the user immediately.
+- You do NOT need to wait for the answer. You can continue with other tasks in this turn, or finish your turn.
+- When the user responds, you will be automatically notified with their answer. You do not need to poll or re-ask.
+- This means calling AskUserQuestion is a valid way to complete a step — you have not abandoned the task."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -92,32 +97,30 @@ Guidelines:
 
       if items.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))
       else
-        // Use Pekko Ask pattern via AskUser actor message — actor handles WS forwarding
-        // and completes replyTo when UserAnswered arrives
-        (ctx.agentActorRef, ctx.pekkoScheduler) match
-          case (Some(agentRef), Some(scheduler)) =>
-            import scala.concurrent.ExecutionContext.Implicits.global
-            implicit val sched: org.apache.pekko.actor.typed.Scheduler = scheduler
-            implicit val askTimeout: org.apache.pekko.util.Timeout =
-              org.apache.pekko.util.Timeout(scala.concurrent.duration.Duration(5, "minutes"))
+        // Fire-and-forget: send AskUser to actor without replyTo
+        ctx.agentActorRef match
+          case Some(agentRef) =>
             val requestId = java.util.UUID.randomUUID().toString.take(8)
-            IO.fromFuture(IO {
-              agentRef.ask[List[String]](replyTo => AgentCommand.AskUser(requestId, items, replyTo))
-            }).map { answers =>
-              if items.size <= 1 then Right(answers.headOption.getOrElse(""))
-              else
-                val formatted = items.zipWithIndex
-                  .map { case (item, idx) =>
-                    val answer = answers.lift(idx).getOrElse("(no answer)")
-                    s"${idx + 1}. ${item.question.take(60)}\n   → $answer"
-                  }
-                  .mkString("\n")
-                Right(formatted)
-            }.handleError(e => Left(ToolError(s"AskUser failed: ${e.getMessage}")))
-
-          case _ =>
-            IO.pure(Left(ToolError("AskUserQuestion requires agent actor and scheduler")))
+            IO(agentRef ! AgentCommand.AskUser(requestId, items, None)) *>
+              IO.pure(
+                Right(
+                  "[Question sent to user] You will be automatically notified when they respond — continue with other work or finish your turn."
+                )
+              )
+          case None =>
+            IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
       end if
     end if
   end call
+
+  /** Format user answers for injection as a user message (used by AgentActor). */
+  def formatAnswer(items: List[AskItem], answers: List[String]): String =
+    if items.size <= 1 then answers.headOption.getOrElse("")
+    else
+      items.zipWithIndex
+        .map { case (item, idx) =>
+          val answer = answers.lift(idx).getOrElse("(no answer)")
+          s"${idx + 1}. ${item.question.take(60)}\n   → $answer"
+        }
+        .mkString("\n")
 end AskUserQuestionTool
