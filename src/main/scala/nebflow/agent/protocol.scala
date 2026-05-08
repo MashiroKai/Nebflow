@@ -29,7 +29,8 @@ object AgentCommand:
   case class SubagentQuestion(
     subagentId: String,
     question: String,
-    replyTo: org.apache.pekko.actor.typed.ActorRef[ParentAnswer]
+    replyTo: Option[org.apache.pekko.actor.typed.ActorRef[ParentAnswer]] = None,
+    subagentRef: Option[org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = None
   ) extends AgentCommand
   case class ParentAnswer(answer: String) extends AgentCommand
 
@@ -40,7 +41,7 @@ object AgentCommand:
   case class AskUser(
     requestId: String,
     items: List[AskItem],
-    replyTo: org.apache.pekko.actor.typed.ActorRef[List[String]]
+    replyTo: Option[org.apache.pekko.actor.typed.ActorRef[List[String]]] = None
   ) extends AgentCommand
 
   case class AskPermission(
@@ -74,12 +75,13 @@ object AgentCommand:
     originalText: String,
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]],
     compactedMessages: Option[List[Message]] = None,
-    thinking: Option[String] = None
+    thinking: Option[String] = None,
+    updatedWriteTracker: Map[String, WriteTrackerEntry] = Map.empty
   ) extends AgentCommand
 
-  // Internal — compaction agent definition loaded, ready to spawn on actor thread
-  case class CompactionDefLoaded(
-    defn: Option[AgentDef]
+  // Internal — direct compaction result from CompactService IO fiber
+  case class CompactionComplete(
+    result: Either[String, List[Message]]
   ) extends AgentCommand
 
   // Internal — manual compaction trigger from ContextManageTool
@@ -119,13 +121,49 @@ object AgentCommand:
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = None
   ) extends AgentCommand
 
-  /** Background task completed — inject result into message history and resume. */
+  /**
+   * Background task completed — inject result into message history and resume.
+   *  Retained as a convenience during the Phase 1 coexistence period; internally
+   *  converted to [[ExternalEvent]] before processing.
+   */
   case class BackgroundTaskNotification(
     taskId: String,
     description: String,
-    status: String, // "completed" | "failed" | "killed"
+    status: String, // "completed" | "failed" | "killed" | "stuck"
     output: String,
     exitCode: Option[Int] = None
+  ) extends AgentCommand:
+
+    /** Convert to the new ExternalEvent format. */
+    def toExternalEvent: ExternalEvent = ExternalEvent(
+      source = "background-task",
+      eventType = status,
+      payload = status match
+        case "completed" =>
+          val exitInfo = exitCode.filter(_ != 0).map(c => s" (exit code $c)").getOrElse("")
+          s"[Background task completed] \"$description\"$exitInfo:\n$output"
+        case "failed" =>
+          s"[Background task failed] \"$description\":\n$output"
+        case _ =>
+          s"[Background task stopped] \"$description\"",
+      metadata = JsonObject(
+        "taskId" -> taskId.asJson,
+        "description" -> description.asJson,
+        "status" -> status.asJson,
+        "output" -> output.asJson,
+        "exitCode" -> exitCode.asJson
+      ),
+      correlationId = Option(taskId).filter(_.nonEmpty)
+    )
+  end BackgroundTaskNotification
+
+  /** Universal agent wake-up message. Any external system can send this to activate the agent. */
+  case class ExternalEvent(
+    source: String, // Event source identifier (e.g. "background-task", "webhook", "im")
+    eventType: String, // Event type within the source
+    payload: String, // Human-readable content — injected as User Message
+    metadata: JsonObject = JsonObject.empty, // Structured data for programmatic use
+    correlationId: Option[String] = None // For tracking request/response chains
   ) extends AgentCommand
 end AgentCommand
 
@@ -165,6 +203,12 @@ enum AgentStreamEvent:
   case CompactComplete(before: Int, after: Int, snapshotPath: Option[String], comparisonPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
   case BackgroundTaskUpdate(taskId: String, description: String, status: String)
+
+  case ExternalEventReceived(
+    source: String,
+    eventType: String,
+    correlationId: Option[String]
+  )
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
     case TextDelta(text) =>
@@ -283,6 +327,16 @@ enum AgentStreamEvent:
         "status" -> status.asJson,
         "sessionId" -> sessionId.asJson
       )
+    case ExternalEventReceived(source, eventType, correlationId) =>
+      val base = Json.obj(
+        "type" -> "externalEventReceived".asJson,
+        "source" -> source.asJson,
+        "eventType" -> eventType.asJson
+      )
+      val withSession =
+        if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
+        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+      correlationId.fold(withSession)(id => withSession.deepMerge(Json.obj("correlationId" -> id.asJson)))
 
 end AgentStreamEvent
 
@@ -344,6 +398,9 @@ case class CompactionJob(
 // AgentState sub-structures — grouped by business domain
 // ============================================================
 
+/** Per-file write tracking entry for verification reminders. */
+case class WriteTrackerEntry(writeCount: Int, remindCount: Int)
+
 /** Session-level persistent state — survives across turns. */
 case class SessionContext(
   sessionId: Option[String] = None,
@@ -351,7 +408,11 @@ case class SessionContext(
   recentMessageIds: List[String] = Nil,
   wsSend: Json => IO[Unit] = _ => IO.unit,
   depth: Int = 0,
-  readTracker: Option[nebflow.core.tools.ReadTracker] = None
+  readTracker: Option[nebflow.core.tools.ReadTracker] = None,
+  /** Questions from the latest AskUserQuestion call — survives across turns until answered. */
+  pendingAskItems: List[AskItem] = Nil,
+  /** Per-file write tracking for verification reminders — scoped to this agent/session. */
+  writesSinceLastRead: Map[String, WriteTrackerEntry] = Map.empty
 )
 
 /** Pending user interaction deferreds. */
@@ -370,7 +431,10 @@ case class ExecutionContext(
   subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = Map.empty,
   activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
   interaction: Option[InteractionState] = None,
-  pendingNotifications: List[AgentCommand.BackgroundTaskNotification] = Nil
+  /** Queued external events to inject after turn (replaces pendingNotifications). */
+  pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
+  /** Queued async responses (from AskUserQuestion, ask_parent) to inject after turn. */
+  pendingResponses: List[String] = Nil
 )
 
 object ExecutionContext:
@@ -385,7 +449,8 @@ object ExecutionContext:
       subagents = Map.empty,
       activeStreamFiber = None,
       interaction = None,
-      pendingNotifications = Nil
+      pendingEvents = Nil,
+      pendingResponses = Nil
     )
 end ExecutionContext
 
@@ -393,6 +458,8 @@ end ExecutionContext
 case class CompactionState(
   pendingJob: Option[CompactionJob] = None,
   compactionFailures: Int = 0,
+  /** Timestamp of the last compaction failure (epoch ms) — used for retry backoff. */
+  lastCompactionFailureAt: Long = 0L,
   latestUsage: Option[TokenUsage] = None
 )
 
@@ -430,7 +497,7 @@ object AgentState:
     new AgentState(
       SessionContext(sessionId, sessionName, recentMessageIds, wsSend, depth, readTracker),
       ExecutionContext(messages, status, turnIdx, 0L, subagents, activeStreamFiber, interaction),
-      CompactionState(pendingCompaction, compactionFailures, latestUsage)
+      CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
     )
   end apply
 end AgentState
@@ -450,12 +517,15 @@ extension (s: AgentState)
   def recentMessageIds: List[String] = s.session.recentMessageIds
   def pendingCompaction: Option[CompactionJob] = s.compaction.pendingJob
   def compactionFailures: Int = s.compaction.compactionFailures
+  def lastCompactionFailureAt: Long = s.compaction.lastCompactionFailureAt
   def latestUsage: Option[TokenUsage] = s.compaction.latestUsage
   def pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = s.execution.interaction.flatMap(_.pendingAskUser)
 
   def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
     s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
+  def pendingAskItems: List[AskItem] = s.session.pendingAskItems
+  def writesSinceLastRead: Map[String, WriteTrackerEntry] = s.session.writesSinceLastRead
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
@@ -495,12 +565,19 @@ extension (s: AgentState)
       )
     )
   def withRecentMessageIds(ids: List[String]): AgentState = s.copy(session = s.session.copy(recentMessageIds = ids))
+  def withPendingAskItems(items: List[AskItem]): AgentState = s.copy(session = s.session.copy(pendingAskItems = items))
+
+  def withWritesSinceLastRead(tracker: Map[String, WriteTrackerEntry]): AgentState =
+    s.copy(session = s.session.copy(writesSinceLastRead = tracker))
 
   def withPendingCompaction(job: Option[CompactionJob]): AgentState =
     s.copy(compaction = s.compaction.copy(pendingJob = job))
 
   def withCompactionFailures(failures: Int): AgentState =
     s.copy(compaction = s.compaction.copy(compactionFailures = failures))
+
+  def withLastCompactionFailureAt(ts: Long): AgentState =
+    s.copy(compaction = s.compaction.copy(lastCompactionFailureAt = ts))
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))

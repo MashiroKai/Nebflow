@@ -171,7 +171,7 @@ export function showAgentModal(name, configJson, systemMd) {
     } else {
       mcpServers.forEach(server => {
         const id = server.id || server;
-        const enabled = server.enabled !== false;
+        const globallyEnabled = server.enabled !== false;
         const label = document.createElement('label');
         const checked = selectedMcp.includes(id);
         label.className = 'agent-tool-check' + (checked ? ' checked' : '');
@@ -179,12 +179,17 @@ export function showAgentModal(name, configJson, systemMd) {
         cb.type = 'checkbox';
         cb.value = id;
         cb.checked = checked;
-        if (!enabled) cb.disabled = true;
+        // Always allow toggling — per-agent MCP selection is independent of global enabled state
+        if (!globallyEnabled) label.style.opacity = '0.5';
         label.appendChild(cb);
         label.appendChild(document.createTextNode(id));
-        if (!enabled) label.style.opacity = '0.4';
+        if (!globallyEnabled) {
+          const hint = document.createElement('span');
+          hint.textContent = ' (offline)';
+          hint.style.cssText = 'font-size:10px;color:#888;margin-left:2px;';
+          label.appendChild(hint);
+        }
         label.onclick = () => {
-          if (cb.disabled) return;
           cb.checked = !cb.checked;
           label.classList.toggle('checked', cb.checked);
         };
@@ -247,9 +252,14 @@ export function initModals() {
 
     // Gather checked configurable tools (exclude auto-injected/disabled ones)
     const tools = [];
-    document.querySelectorAll('#agent-tools-grid input[type=checkbox]:checked:not(:disabled)').forEach(cb => {
-      tools.push(cb.value);
+    const allConfigurable = document.querySelectorAll('#agent-tools-grid input[type=checkbox]:not(:disabled)');
+    allConfigurable.forEach(cb => {
+      if (cb.checked) tools.push(cb.value);
     });
+
+    // Use wildcard if all configurable tools are checked
+    const allChecked = tools.length === allConfigurable.length && allConfigurable.length > 0;
+    const finalTools = allChecked ? ['*'] : tools;
 
     // Gather checked MCP servers
     const mcpServers = [];
@@ -260,7 +270,7 @@ export function initModals() {
       });
     }
 
-    const configJson = buildConfigJson(name, desc, tools, mcpServers);
+    const configJson = buildConfigJson(name, desc, finalTools, mcpServers);
     const isNew = !document.getElementById('agent-name-input').disabled;
     sendWs({type: isNew ? 'createAgent' : 'updateAgent', name, configJson, systemMd});
     hideAgentModal();

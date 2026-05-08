@@ -2,10 +2,11 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.effect.std.{Dispatcher, Semaphore}
+import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
+import nebflow.core.hooks.{HookEngine, HooksConfig}
 import nebflow.core.task.TaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.core.{FileChangeTracker, ReminderState}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderRegistry}
 import nebflow.service.RuntimePreferencesService
@@ -25,7 +26,7 @@ case class SharedResources(
   runtimePrefs: RuntimePreferencesService,
   rateLimiter: RateLimiter,
   fileChangeTracker: FileChangeTracker,
-  reminderStateRef: cats.effect.Ref[IO, ReminderState],
+  reminderStateRef: cats.effect.Ref[IO, nebflow.core.ReminderState],
   contextWindow: Int,
   skillDiscovery: Option[nebflow.skill.SkillDiscovery],
   agentLibrary: AgentLibrary,
@@ -34,5 +35,6 @@ case class SharedResources(
   historyArchiver: HistoryArchiver,
   fileLockManager: FileLockManager,
   sessionModelOverrides: cats.effect.Ref[IO, Map[String, ModelCandidate]],
-  providerRegistry: ProviderRegistry
+  providerRegistry: ProviderRegistry,
+  hookEngine: HookEngine = HookEngine.noop
 )

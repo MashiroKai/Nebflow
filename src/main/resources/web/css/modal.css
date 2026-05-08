@@ -261,3 +261,239 @@
   transition: all 0.15s;
 }
 #delete-confirm:hover { background: #e5515; }
+
+/* ---------- Feishu Config Panel ---------- */
+#session-name.feishu-linked::after {
+  content: '';
+  display: inline-block;
+  width: 7px; height: 7px;
+  background: #3370ff;
+  border-radius: 50%;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+#feishu-panel .feishu-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  z-index: 310;
+}
+.feishu-panel-content {
+  position: fixed;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: #1e1e1e;
+  border-radius: 16px;
+  padding: 24px;
+  width: 380px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  animation: modalIn 0.15s ease;
+  z-index: 311;
+}
+.feishu-header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.feishu-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+.feishu-session-name {
+  font-size: 12px;
+  color: #666;
+}
+.feishu-status {
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  background: #111;
+  color: #888;
+}
+.feishu-status.ok {
+  color: #07c160;
+  background: #07c16010;
+}
+.feishu-status.warn {
+  color: #e6a23c;
+  background: #e6a23c10;
+}
+.feishu-status code {
+  background: #252525;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.feishu-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.feishu-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.feishu-form .feishu-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #aaa;
+  cursor: pointer;
+}
+.feishu-label {
+  font-size: 11px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.feishu-form input[type="text"] {
+  width: 100%;
+  background: #111;
+  color: #ccc;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.feishu-form input[type="text"]:focus { border-color: #555; }
+.feishu-hint {
+  font-size: 11px;
+  color: #555;
+}
+.feishu-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.feishu-actions button {
+  font-size: 12px;
+  padding: 6px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid #444;
+  background: none;
+  color: #aaa;
+  transition: all 0.15s;
+}
+.feishu-actions button:hover { background: #2a2a2a; color: #fff; }
+.feishu-actions .feishu-save {
+  border-color: #3370ff !important;
+  color: #3370ff !important;
+}
+.feishu-actions .feishu-save:hover { background: #3370ff15 !important; }
+.feishu-actions .feishu-clear {
+  margin-right: auto;
+  border-color: #e55 !important;
+  color: #e55 !important;
+}
+.feishu-actions .feishu-clear:hover { background: #e5515 !important; }
+
+/* ---------- Memory Tags (header pills) ---------- */
+#memory-tags {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+  align-items: center;
+}
+.memory-tag {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px dashed #444;
+  color: #666;
+  transition: all 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+.memory-tag:hover {
+  border-color: #888;
+  color: #bbb;
+}
+.memory-tag.has-content {
+  border-style: solid;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: #07c16010;
+}
+
+/* ---------- Memory Modal (reuse agent-modal styling) ---------- */
+#memory-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 310;
+}
+#memory-overlay.on { display: flex; }
+#memory-modal {
+  display: none;
+  background: #1e1e1e;
+  border-radius: 12px;
+  padding: 20px;
+  width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+#memory-modal.show { display: block; }
+#memory-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #e0e0e0;
+  margin-bottom: 14px;
+}
+#memory-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#memory-content-input {
+  width: 100%;
+  background: #111;
+  color: #ccc;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+}
+#memory-content-input:focus {
+  outline: none;
+  border-color: #555;
+}
+#memory-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+#memory-modal-actions button {
+  font-size: 12px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid #444;
+  background: none;
+  color: #aaa;
+  transition: all 0.15s;
+}
+#memory-modal-actions button:hover { background: #2a2a2a; color: #fff; }
+#memory-modal-save { border-color: var(--color-primary) !important; color: var(--color-primary) !important; }
+#memory-modal-save:hover { background: #07c16020 !important; }
