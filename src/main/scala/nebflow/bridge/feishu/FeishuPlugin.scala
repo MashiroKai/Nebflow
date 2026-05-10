@@ -138,19 +138,30 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
         .onP2MessageReceiveV1(
           new ImService.P2MessageReceiveV1Handler:
             def handle(event: P2MessageReceiveV1): Unit =
-              val senderId = event.getEvent.getSender.getSenderId.getOpenId
-              val senderType = event.getEvent.getSender.getSenderType
-              val chatId = event.getEvent.getMessage.getChatId
-              val chatType = event.getEvent.getMessage.getChatType
-              val msgType = event.getEvent.getMessage.getMessageType
-              val content = event.getEvent.getMessage.getContent
+              // Null-safe access: SDK may dispatch events with missing fields for
+              // unrecognized subtypes or during reconnect replays.
+              val eventBody = Option(event).flatMap(e => Option(e.getEvent))
+              val senderOpt = eventBody.flatMap(e => Option(e.getSender))
+              val senderId = senderOpt.flatMap(s => Option(s.getSenderId)).map(_.getOpenId).getOrElse("")
+              val senderType = senderOpt.map(_.getSenderType).orNull
+              val msgOpt = eventBody.flatMap(e => Option(e.getMessage))
+              val chatId = msgOpt.map(_.getChatId).getOrElse("")
+              val chatType = msgOpt.map(_.getChatType).orNull
+              val msgType = msgOpt.map(_.getMessageType).orNull
+              val content = msgOpt.map(_.getContent).getOrElse("")
+              val messageId = msgOpt.map(_.getMessageId).getOrElse("")
               val isGroup = "group" == chatType
+              // Skip if essential fields are missing
+              if chatId.isEmpty || msgType == null then
+                logger
+                  .debug(s"[feishu] skipping event with missing fields: chatId=$chatId msgType=$msgType")
+                  .unsafeRunSync()
+                return
               // Skip messages sent by the bot itself to prevent echo loops
               if senderType == "app" then
                 logger.debug(s"[feishu] skipping bot message: chatId=$chatId").unsafeRunSync()
                 return
               // Dedup: skip already-processed messages (e.g. history replay on reconnect)
-              val messageId = event.getEvent.getMessage.getMessageId
               val isDup = processedMsgIds.get.map(_.contains(messageId)).unsafeRunSync()
               if isDup then
                 logger.debug(s"[feishu] skipping duplicate message: $messageId").unsafeRunSync()

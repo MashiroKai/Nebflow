@@ -23,6 +23,7 @@ class FeishuClient(config: FeishuGlobalConfig):
     HttpClient
       .newBuilder()
       .version(HttpClient.Version.HTTP_1_1)
+      .connectTimeout(java.time.Duration.ofSeconds(10))
       .build()
 
   // Cached token with expiry timestamp (epoch seconds)
@@ -125,6 +126,7 @@ class FeishuClient(config: FeishuGlobalConfig):
       val builder = HttpRequest
         .newBuilder()
         .uri(URI.create(url))
+        .timeout(java.time.Duration.ofSeconds(30))
         .header("Content-Type", "application/json")
         .POST(HttpRequest.BodyPublishers.ofString(body))
       bearerToken.foreach(t => builder.header("Authorization", s"Bearer $t"))
@@ -138,6 +140,7 @@ class FeishuClient(config: FeishuGlobalConfig):
       val request = HttpRequest
         .newBuilder()
         .uri(URI.create(url))
+        .timeout(java.time.Duration.ofSeconds(30))
         .header("Content-Type", "application/json")
         .header("Authorization", s"Bearer $bearerToken")
         .method("PATCH", HttpRequest.BodyPublishers.ofString(body))

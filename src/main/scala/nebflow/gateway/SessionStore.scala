@@ -1,6 +1,7 @@
 package nebflow.gateway
 
 import cats.effect.{IO, Ref}
+import cats.effect.std.Semaphore
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
@@ -301,9 +302,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           // Remove task directory
           val td = tasksDir / id
           if os.exists(td) then os.remove.all(td)
-        } *> deleteUiMessages(id) *> (if wasActive && newActiveId.nonEmpty then
-                                        loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
-                                      else IO.unit) *> saveIndex
+        } *> deleteUiMessages(id) *> appendSemaphores.update(
+          _ - id
+        ) *> (if wasActive && newActiveId.nonEmpty then
+                loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
+              else IO.unit) *> saveIndex
       }
 
   def markUnread(id: String): IO[Unit] =
@@ -357,12 +360,25 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private def saveUiMessages(id: String, msgs: List[UiMessage]): IO[Unit] =
     IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true))
 
+  // Per-session semaphore to serialize appendUiMessages (prevents TOCTOU race)
+  private val appendSemaphores: Ref[IO, Map[String, Semaphore[IO]]] =
+    Ref.unsafe[IO, Map[String, Semaphore[IO]]](Map.empty)
+
+  private def getAppendSemaphore(sessionId: String): IO[Semaphore[IO]] =
+    appendSemaphores.get.flatMap(_.get(sessionId) match
+      case Some(sem) => IO.pure(sem)
+      case None => Semaphore[IO](1).flatTap(sem => appendSemaphores.update(_.updated(sessionId, sem))))
+
   /** Append UI messages to a session. Creates the file if it doesn't exist. */
   def appendUiMessages(sessionId: String, msgs: List[UiMessage]): IO[Unit] =
     if msgs.isEmpty then IO.unit
     else
-      loadUiMessages(sessionId).flatMap { existing =>
-        saveUiMessages(sessionId, existing ++ msgs)
+      getAppendSemaphore(sessionId).flatMap { sem =>
+        sem.permit.use { _ =>
+          loadUiMessages(sessionId).flatMap { existing =>
+            saveUiMessages(sessionId, existing ++ msgs)
+          }
+        }
       }
 
   /**
