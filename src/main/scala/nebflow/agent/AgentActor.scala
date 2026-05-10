@@ -910,110 +910,116 @@ object AgentActor extends AgentCore with AgentSession:
 
       // --- Compaction completed: apply compacted messages and retry ---
       case AgentCommand.CompactionComplete(result) =>
-        val pending = state.pendingCompaction
-        result match
-          case Right(compactedMessages) =>
-            logAgentEvent(
-              ctx,
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "compaction-complete",
-              s"before=${state.messages.size} after=${compactedMessages.size}"
-            )
-            resources.dispatcher.unsafeRunAndForget(
-              emitStreamIO(
-                state.wsSend,
+        // Guard: discard stale CompactionComplete (e.g. after ResetSession)
+        if state.pendingCompaction.isEmpty then
+          ctx.log.warn("[AgentActor] discarding stale CompactionComplete (no pending compaction)")
+          Behaviors.same
+        else
+          val pending = state.pendingCompaction
+          result match
+            case Right(compactedMessages) =>
+              logAgentEvent(
                 ctx,
-                AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size, None, None),
-                isSubagent = depth > 0,
-                state.sessionId
-              ).handleErrorWith(_ => IO.unit)
-            )
-            val compactedState = state
-              .withMessages(compactedMessages)
-              .withPendingCompaction(None)
-              .withCompactionFailures(0)
-              .withEmptyResponseRetries(0)
-              .withLatestUsage(None) // Clear stale usage to prevent maybeAutoCompact re-trigger
-              // Refresh memory after compaction — agent may have written memory during the compacted turns
-              .withMemoryBlock(buildMemoryBlock(agentDef, state.sessionId))
-
-            if pending.exists(_.resumeAfterCompact) then
-              // Auto/LLM-triggered: resume LLM call with compacted messages
-              pipeLlmCall(
                 agentDef,
-                resources,
                 depth,
-                parentRef,
-                compactedState,
-                stash,
-                ctx,
-                pending.flatMap(_.replyTo)
+                state.sessionId,
+                state.sessionName,
+                "compaction-complete",
+                s"before=${state.messages.size} after=${compactedMessages.size}"
               )
-            else
-              // User-triggered /compact: apply compacted messages and return to idle
               resources.dispatcher.unsafeRunAndForget(
-                persistIfSession(resources, compactedState)
-                  .handleErrorWith(e =>
-                    IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist after compact failed: ${e.getMessage}"))
-                  )
+                emitStreamIO(
+                  state.wsSend,
+                  ctx,
+                  AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size, None, None),
+                  isSubagent = depth > 0,
+                  state.sessionId
+                ).handleErrorWith(_ => IO.unit)
               )
-              stash.unstashAll(idle(agentDef, resources, depth, parentRef, compactedState, stash, ctx))
-            end if
-          case Left(err) =>
-            logAgentEvent(
-              ctx,
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "compaction-failed",
-              s"err=$err"
-            )
-            resources.dispatcher.unsafeRunAndForget(
-              emitStreamIO(
-                state.wsSend,
-                ctx,
-                AgentStreamEvent.CompactFailed(err, state.compactionFailures + 1, CompactConfig().circuitBreakerMax),
-                isSubagent = depth > 0,
-                state.sessionId
-              ).handleErrorWith(_ => IO.unit)
-            )
-            val now = System.currentTimeMillis()
-            val failedState = state
-              .withPendingCompaction(None)
-              .withCompactionFailures(state.compactionFailures + 1)
-              .withLastCompactionFailureAt(now)
-            // Complete any pending replyDeferred
-            pending.foreach(_.replyDeferred.foreach { d =>
-              resources.dispatcher.unsafeRunAndForget(d.complete(Left(err)).handleErrorWith(_ => IO.unit))
-            })
-            // If we have a replyTo (root agent context-exceeded path), finish turn with error
-            pending.flatMap(_.replyTo) match
-              case Some(replyTo) =>
-                val errMsg = s"Context compaction failed: $err. Please start a new session or use /clear to reset."
-                finishTurn(
+              val compactedState = state
+                .withMessages(compactedMessages)
+                .withPendingCompaction(None)
+                .withCompactionFailures(0)
+                .withEmptyResponseRetries(0)
+                .withLatestUsage(None) // Clear stale usage to prevent maybeAutoCompact re-trigger
+                // Refresh memory after compaction — agent may have written memory during the compacted turns
+                .withMemoryBlock(buildMemoryBlock(agentDef, state.sessionId))
+
+              if pending.exists(_.resumeAfterCompact) then
+                // Auto/LLM-triggered: resume LLM call with compacted messages
+                pipeLlmCall(
                   agentDef,
                   resources,
                   depth,
                   parentRef,
-                  failedState,
+                  compactedState,
                   stash,
                   ctx,
-                  errMsg,
-                  Some(replyTo),
-                  None,
-                  textAlreadyStreamed = false,
-                  None
+                  pending.flatMap(_.replyTo)
                 )
-              case None =>
-                if pending.exists(!_.resumeAfterCompact) then
-                  // User-triggered /compact: return to idle on failure too
-                  stash.unstashAll(idle(agentDef, resources, depth, parentRef, failedState, stash, ctx))
-                else processing(agentDef, resources, depth, parentRef, failedState, stash, ctx)
-        end match
+              else
+                // User-triggered /compact: apply compacted messages and return to idle
+                resources.dispatcher.unsafeRunAndForget(
+                  persistIfSession(resources, compactedState)
+                    .handleErrorWith(e =>
+                      IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist after compact failed: ${e.getMessage}"))
+                    )
+                )
+                stash.unstashAll(idle(agentDef, resources, depth, parentRef, compactedState, stash, ctx))
+              end if
+            case Left(err) =>
+              logAgentEvent(
+                ctx,
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "compaction-failed",
+                s"err=$err"
+              )
+              resources.dispatcher.unsafeRunAndForget(
+                emitStreamIO(
+                  state.wsSend,
+                  ctx,
+                  AgentStreamEvent.CompactFailed(err, state.compactionFailures + 1, CompactConfig().circuitBreakerMax),
+                  isSubagent = depth > 0,
+                  state.sessionId
+                ).handleErrorWith(_ => IO.unit)
+              )
+              val now = System.currentTimeMillis()
+              val failedState = state
+                .withPendingCompaction(None)
+                .withCompactionFailures(state.compactionFailures + 1)
+                .withLastCompactionFailureAt(now)
+              // Complete any pending replyDeferred
+              pending.foreach(_.replyDeferred.foreach { d =>
+                resources.dispatcher.unsafeRunAndForget(d.complete(Left(err)).handleErrorWith(_ => IO.unit))
+              })
+              // If we have a replyTo (root agent context-exceeded path), finish turn with error
+              pending.flatMap(_.replyTo) match
+                case Some(replyTo) =>
+                  val errMsg = s"Context compaction failed: $err. Please start a new session or use /clear to reset."
+                  finishTurn(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    failedState,
+                    stash,
+                    ctx,
+                    errMsg,
+                    Some(replyTo),
+                    None,
+                    textAlreadyStreamed = false,
+                    None
+                  )
+                case None =>
+                  if pending.exists(!_.resumeAfterCompact) then
+                    // User-triggered /compact: return to idle on failure too
+                    stash.unstashAll(idle(agentDef, resources, depth, parentRef, failedState, stash, ctx))
+                  else processing(agentDef, resources, depth, parentRef, failedState, stash, ctx)
+          end match
+        end if
 
       // --- Background task completed while processing (Phase 1 compat): convert and queue ---
       case n: AgentCommand.BackgroundTaskNotification =>
@@ -1199,6 +1205,12 @@ object AgentActor extends AgentCore with AgentSession:
         isSubagent = isSubagent,
         state.sessionId
       )
+    // Build Done event with model, contextWindow, and inputTokens
+    val doneEvent = AgentStreamEvent.Done(
+      model,
+      contextWindow = if !isSubagent then Some(state.contextWindow) else None,
+      inputTokens = if !isSubagent then state.latestUsage.map(_.inputTokens) else None
+    )
     // For root agent: await Done event delivery to guarantee frontend receives it
     // For sub-agent: fire-and-forget (parent handles the done signal)
     if isSubagent then
@@ -1206,12 +1218,12 @@ object AgentActor extends AgentCore with AgentSession:
         resources.dispatcher,
         state.wsSend,
         ctx,
-        AgentStreamEvent.Done(model),
+        doneEvent,
         isSubagent = true,
         state.sessionId
       )
     else
-      val doneJson = AgentStreamEvent.Done(model).toJson(ctx.self.path.name, false, state.sessionId)
+      val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
       NebflowLogger
         .forName("nebflow.agent")
         .info(
