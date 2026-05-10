@@ -24,11 +24,12 @@ class BridgeManager private (
   def startAll: IO[Unit] =
     pluginsRef.get.flatMap { plugins =>
       if plugins.isEmpty then logger.info("No bridge plugins configured")
-      else plugins.values.toList.traverse_ { p =>
-        p.start(ctx).handleErrorWith { e =>
-          logger.error(s"Bridge plugin '${p.name}' failed to start: ${e.getMessage}")
-        } *> logger.info(s"Bridge plugin '${p.name}' started")
-      }
+      else
+        plugins.values.toList.traverse_ { p =>
+          p.start(ctx).handleErrorWith { e =>
+            logger.error(s"Bridge plugin '${p.name}' failed to start: ${e.getMessage}")
+          } *> logger.info(s"Bridge plugin '${p.name}' started")
+        }
     }
 
   def stopAll: IO[Unit] =
@@ -46,6 +47,9 @@ class BridgeManager private (
       plugins.values.toList.traverse_(_.onAgentEvent(sessionId, event))
     }
 
+end BridgeManager
+
 object BridgeManager:
+
   def create(ctx: BridgeContext): IO[BridgeManager] =
     Ref.of[IO, Map[String, BridgePlugin]](Map.empty).map(new BridgeManager(ctx, _))

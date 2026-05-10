@@ -248,8 +248,8 @@ export function restoreFromStorage() {
       row.className = 'row error';
       const card = document.createElement('div');
       card.className = 'error-card';
-      card.style.background = '#e3f2fd';
-      card.style.color = '#1565c0';
+      card.style.background = 'rgba(91,141,217,0.1)';
+      card.style.color = '#5b8dd9';
       card.textContent = m.content;
       row.appendChild(card);
       chat.appendChild(row);
@@ -436,8 +436,8 @@ export function restoreFromBackendHistory(msgs) {
       row.className = 'row error';
       const card = document.createElement('div');
       card.className = 'error-card';
-      card.style.background = '#e3f2fd';
-      card.style.color = '#1565c0';
+      card.style.background = 'rgba(91,141,217,0.1)';
+      card.style.color = '#5b8dd9';
       card.textContent = m.content;
       row.appendChild(card);
       chat.appendChild(row);

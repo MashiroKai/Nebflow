@@ -1,17 +1,33 @@
 :root {
   --color-primary: #07c160;
   --color-primary-hover: #06ad56;
-  --color-nav-bg: #141414;
-  --color-sidebar-bg: #1a1a1a;
-  --color-header-bg: #2e2e2e;
-  --color-bg: #ededed;
   --color-error: #f44336;
   --color-success: #4caf50;
   --color-bubble-user: #95ec69;
+
+  /* Content area — light */
+  --color-bg: #ededed;
   --color-bubble-ai: #fff;
   --color-text: #000;
   --color-text-muted: #888;
   --color-border: #ddd;
+
+  /* Frame (nav / sidebar / header / modal) — light */
+  --color-nav-bg: #f0f0f0;
+  --color-sidebar-bg: #fafafa;
+  --color-header-bg: #fff;
+  --color-modal-bg: #fff;
+  --color-frame-text: #333;
+  --color-frame-text-bright: #111;
+  --color-frame-text-muted: #999;
+  --color-frame-text-dim: #aaa;
+  --color-frame-border: #e0e0e0;
+  --color-frame-border-light: #eee;
+  --color-frame-hover: #e5e5e5;
+  --color-frame-active: #d8d8d8;
+  --color-frame-input-bg: #f5f5f5;
+  --color-frame-input-border: #ddd;
+  --color-frame-input-text: #333;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -24,11 +40,40 @@ body {
   overflow: hidden;
 }
 
-/* Scrollbar styles for dark panels */
+/* ── Dark Theme (auto, follows system) ─────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Content area — dark */
+    --color-bg: #1a1a1a;
+    --color-bubble-ai: #242424;
+    --color-text: #e0e0e0;
+    --color-text-muted: #777;
+    --color-border: #333;
+
+    /* Frame — dark */
+    --color-nav-bg: #141414;
+    --color-sidebar-bg: #1a1a1a;
+    --color-header-bg: #2e2e2e;
+    --color-modal-bg: #1e1e1e;
+    --color-frame-text: #ccc;
+    --color-frame-text-bright: #fff;
+    --color-frame-text-muted: #666;
+    --color-frame-text-dim: #888;
+    --color-frame-border: #333;
+    --color-frame-border-light: #222;
+    --color-frame-hover: #242424;
+    --color-frame-active: #2a2a2a;
+    --color-frame-input-bg: #111;
+    --color-frame-input-border: #333;
+    --color-frame-input-text: #ccc;
+  }
+}
+
+/* Scrollbar styles */
 #session-list,
 #nav-agent-list,
 #settings-content,
 #config-editor {
   scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
+  scrollbar-color: var(--color-frame-border) transparent;
 }

@@ -1,0 +1,577 @@
+/* ==========================================================================
+   Nebflow Card Style Templates (Suggested — not enforced)
+   
+   Agent frontend authors can optionally use these classes to achieve visual
+   consistency with the Nebflow UI. You are free to override or ignore them.
+   
+   Usage: Add  <link rel="stylesheet" href="/css/card-templates.css">  to your
+   agent's HTML, or load it from your agent.js:
+     const link = document.createElement('link');
+     link.rel = 'stylesheet';
+     link.href = '/css/card-templates.css';
+     document.head.appendChild(link);
+   
+   All classes are prefixed with  nf-  to avoid collisions.
+   ========================================================================== */
+
+/* ── Design Tokens (CSS custom properties) ──────────────────────────────── */
+/* These are already defined in base.css.  Repeated here for reference:
+   --color-primary: #07c160
+   --color-primary-hover: #06ad56
+   --color-bg: #ededed
+   --color-text: #000
+   --color-text-muted: #888
+   --color-border: #ddd
+   --color-success: #4caf50
+   --color-error: #f44336
+   --color-bubble-ai: #fff
+*/
+
+/* ── Root Card Container ───────────────────────────────────────────────── */
+.nf-card {
+  background: var(--color-bubble-ai, #fff);
+  border: 1px solid var(--color-border, #ddd);
+  border-radius: 12px;
+  padding: 16px;
+  margin: 8px 0;
+  max-width: 100%;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--color-text, #000);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  overflow: hidden;
+}
+
+/* ── Card Title ─────────────────────────────────────────────────────────── */
+.nf-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  color: var(--color-text, #000);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nf-title-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+/* ── Sections ───────────────────────────────────────────────────────────── */
+.nf-section {
+  margin-bottom: 16px;
+}
+
+.nf-section:last-child {
+  margin-bottom: 0;
+}
+
+.nf-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  margin-bottom: 8px;
+}
+
+/* ── Badge / Tag ────────────────────────────────────────────────────────── */
+.nf-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.nf-badge--primary {
+  background: rgba(7,193,96,0.12);
+  color: var(--color-primary, #07c160);
+  border: 1px solid rgba(7,193,96,0.25);
+}
+
+.nf-badge--info {
+  background: rgba(108,142,191,0.12);
+  color: #6C8EBF;
+  border: 1px solid rgba(108,142,191,0.25);
+}
+
+.nf-badge--warn {
+  background: rgba(217,165,65,0.12);
+  color: #b8941e;
+  border: 1px solid rgba(217,165,65,0.25);
+}
+
+.nf-badge--error {
+  background: rgba(244,67,54,0.1);
+  color: var(--color-error, #f44336);
+  border: 1px solid rgba(244,67,54,0.2);
+}
+
+/* ── Meta Info (key-value pairs) ────────────────────────────────────────── */
+.nf-meta {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.nf-meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.nf-meta-label {
+  color: var(--color-text-muted, #888);
+}
+
+.nf-meta-value {
+  color: var(--color-text, #000);
+  font-weight: 600;
+}
+
+/* ── Table ──────────────────────────────────────────────────────────────── */
+.nf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.nf-table th {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 2px solid var(--color-border, #ddd);
+  color: var(--color-text-muted, #888);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.nf-table td {
+  padding: 5px 10px;
+  border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.nf-table tr:last-child td {
+  border-bottom: none;
+}
+
+.nf-table tr:hover td {
+  background: rgba(0,0,0,0.02);
+}
+
+/* ── List / Outline ─────────────────────────────────────────────────────── */
+.nf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nf-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.02);
+  transition: background 0.15s;
+}
+
+.nf-list-item:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.nf-list-num {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-muted, #888);
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.nf-list-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.nf-list-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nf-list-desc {
+  font-size: 11px;
+  color: var(--color-text-muted, #888);
+  margin-top: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Color Swatches ─────────────────────────────────────────────────────── */
+.nf-palette {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.nf-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.nf-swatch-color {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 2px solid rgba(0,0,0,0.08);
+  transition: transform 0.15s;
+}
+
+.nf-swatch-color:hover {
+  transform: scale(1.12);
+}
+
+.nf-swatch-label {
+  font-size: 10px;
+  color: var(--color-text-muted, #888);
+  text-align: center;
+  max-width: 52px;
+  line-height: 1.2;
+}
+
+.nf-swatch-hex {
+  font-size: 9px;
+  color: var(--color-text-muted, #888);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ── Progress Bar ───────────────────────────────────────────────────────── */
+.nf-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.nf-progress-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(0,0,0,0.06);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.nf-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--color-primary, #07c160);
+  transition: width 0.3s ease;
+}
+
+.nf-progress-fill--warn {
+  background: #ff9800;
+}
+
+.nf-progress-fill--error {
+  background: var(--color-error, #f44336);
+}
+
+.nf-progress-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted, #888);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Steps / Workflow ───────────────────────────────────────────────────── */
+.nf-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nf-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.02);
+}
+
+.nf-step--done { opacity: 0.65; }
+.nf-step--running { background: rgba(7,193,96,0.06); }
+.nf-step--error { background: rgba(244,67,54,0.06); }
+
+.nf-step-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 2px solid var(--color-border, #ddd);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nf-step--done .nf-step-dot {
+  background: var(--color-success, #4caf50);
+  border-color: var(--color-success, #4caf50);
+}
+
+.nf-step--running .nf-step-dot {
+  border-color: var(--color-primary, #07c160);
+  border-top-color: transparent;
+  animation: nf-spin 1s linear infinite;
+}
+
+.nf-step--error .nf-step-dot {
+  background: var(--color-error, #f44336);
+  border-color: var(--color-error, #f44336);
+}
+
+@keyframes nf-spin { to { transform: rotate(360deg); } }
+
+.nf-step-body { flex: 1; }
+.nf-step-name { font-weight: 500; font-size: 13px; }
+.nf-step-detail { font-size: 11px; color: var(--color-text-muted, #888); margin-top: 2px; }
+
+/* ── Action Buttons ─────────────────────────────────────────────────────── */
+.nf-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  justify-content: flex-end;
+}
+
+.nf-btn {
+  padding: 7px 18px;
+  border-radius: 8px;
+  border: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.nf-btn--primary {
+  background: var(--color-primary, #07c160);
+  color: #fff;
+}
+
+.nf-btn--primary:hover {
+  background: var(--color-primary-hover, #06ad56);
+}
+
+.nf-btn--outline {
+  background: transparent;
+  color: var(--color-primary, #07c160);
+  border: 1px solid var(--color-primary, #07c160);
+}
+
+.nf-btn--outline:hover {
+  background: rgba(7,193,96,0.08);
+}
+
+.nf-btn--danger {
+  background: transparent;
+  color: var(--color-error, #f44336);
+  border: 1px solid rgba(244,67,54,0.4);
+}
+
+.nf-btn--danger:hover {
+  background: rgba(244,67,54,0.08);
+}
+
+.nf-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ── Monospace Block ────────────────────────────────────────────────────── */
+.nf-code {
+  background: #f5f5f5;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  line-height: 1.4;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ── Dividers ───────────────────────────────────────────────────────────── */
+.nf-divider {
+  border: none;
+  border-top: 1px solid var(--color-border, #ddd);
+  margin: 12px 0;
+}
+
+/* ── Alert / Notice ─────────────────────────────────────────────────────── */
+.nf-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.nf-alert--info {
+  background: rgba(108,142,191,0.1);
+  border-left: 4px solid #6C8EBF;
+}
+
+.nf-alert--success {
+  background: rgba(76,175,80,0.08);
+  border-left: 4px solid var(--color-success, #4caf50);
+}
+
+.nf-alert--warn {
+  background: rgba(217,165,65,0.1);
+  border-left: 4px solid #b8941e;
+}
+
+.nf-alert--error {
+  background: rgba(244,67,54,0.08);
+  border-left: 4px solid var(--color-error, #f44336);
+}
+
+/* ── Grid ───────────────────────────────────────────────────────────────── */
+.nf-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.nf-grid--2 { grid-template-columns: repeat(2, 1fr); }
+.nf-grid--3 { grid-template-columns: repeat(3, 1fr); }
+.nf-grid--4 { grid-template-columns: repeat(4, 1fr); }
+
+/* ── Icon (inline SVG wrapper) ─────────────────────────────────────────── */
+.nf-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  vertical-align: middle;
+  color: inherit;
+}
+
+.nf-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.nf-icon--lg {
+  width: 24px;
+  height: 24px;
+}
+
+/* ── Hero / Cover Image ────────────────────────────────────────────────── */
+.nf-hero {
+  position: relative;
+  width: 100%;
+  min-height: 140px;
+  max-height: 220px;
+  border-radius: 10px;
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.nf-hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.1) 50%, transparent 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 16px;
+}
+
+.nf-hero-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.nf-hero-desc {
+  font-size: 12px;
+  color: rgba(255,255,255,0.8);
+  margin-top: 4px;
+}
+
+/* ── Avatar / Thumbnail ────────────────────────────────────────────────── */
+.nf-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(0,0,0,0.04);
+}
+
+.nf-thumb--round {
+  border-radius: 50%;
+}
+
+.nf-thumb--sm {
+  width: 32px;
+  height: 32px;
+}
+
+/* ── Dark Theme Overrides ───────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .nf-card {
+    background: #1e1e1e;
+    border-color: #333;
+    color: #e0e0e0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  }
+
+  .nf-title { color: #e0e0e0; }
+  .nf-section-title { color: #777; }
+  .nf-badge--primary { background: rgba(7,193,96,0.15); }
+  .nf-meta-value { color: #e0e0e0; }
+  .nf-table th { color: #777; }
+  .nf-table td { border-bottom-color: rgba(255,255,255,0.06); }
+  .nf-table tr:hover td { background: rgba(255,255,255,0.03); }
+  .nf-list-item { background: rgba(255,255,255,0.03); }
+  .nf-list-item:hover { background: rgba(255,255,255,0.06); }
+  .nf-list-title { color: #ddd; }
+  .nf-list-desc { color: #777; }
+  .nf-swatch-color { border-color: rgba(255,255,255,0.1); }
+  .nf-swatch-label { color: #777; }
+  .nf-swatch-hex { color: #666; }
+  .nf-progress-track { background: rgba(255,255,255,0.08); }
+  .nf-progress-pct { color: #777; }
+  .nf-step { background: rgba(255,255,255,0.03); }
+  .nf-step--running { background: rgba(7,193,96,0.08); }
+  .nf-step--error { background: rgba(244,67,54,0.08); }
+  .nf-step-name { color: #ddd; }
+  .nf-step-detail { color: #777; }
+  .nf-code { background: #2a2a2a; color: #ddd; }
+  .nf-divider { border-top-color: #333; }
+}

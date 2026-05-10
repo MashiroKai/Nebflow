@@ -9,9 +9,7 @@ import nebflow.core.NebflowLogger
 import scala.concurrent.duration.*
 import scala.util.Using
 
-/**
- * Spawns a hook process, sends JSON via stdin, reads JSON from stdout.
- */
+/** Spawns a hook process, sends JSON via stdin, reads JSON from stdout. */
 object HookRunner:
 
   private val logger = NebflowLogger.forName("nebflow.hooks")
@@ -43,13 +41,16 @@ object HookRunner:
         val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
         if defn.continueOnError then
           logger.warn(s"Hook '${defn.command.take(60)}' failed: $msg — continuing")
-          IO.pure(HookResult(
-            additionalContext = Some(s"[Hook error: $msg]")
-          ))
+          IO.pure(
+            HookResult(
+              additionalContext = Some(s"[Hook error: $msg]")
+            )
+          )
         else
           logger.warn(s"Hook '${defn.command.take(60)}' failed: $msg — blocking")
           IO.pure(HookResult.block(s"Hook failed: $msg"))
       }
+  end run
 
   // ------------------------------------------------------------------
   // Stdin JSON
@@ -81,6 +82,7 @@ object HookRunner:
       (if payload.extra.nonEmpty then List("extra" -> payload.extra.asJson) else Nil)
 
     Json.fromFields(allFields).spaces2
+  end buildStdin
 
   // ------------------------------------------------------------------
   // Environment variables
@@ -145,8 +147,7 @@ object HookRunner:
       val stdout = stdoutFork.result()
       val stderr = stderrFork.result()
 
-      if exitCode != 0 && stderr.nonEmpty then
-        logger.debug(s"Hook stderr: ${stderr.take(200)}")
+      if exitCode != 0 && stderr.nonEmpty then logger.debug(s"Hook stderr: ${stderr.take(200)}")
 
       stdout
     }
@@ -188,15 +189,15 @@ object HookRunner:
 
   private class ThreadRead(is: java.io.InputStream):
     private val buffer = new StringBuilder
-    private val thread = new Thread(() => {
+
+    private val thread = new Thread(() =>
       try
         val reader = new java.io.BufferedReader(new java.io.InputStreamReader(is, "UTF-8"))
         var line: String = null
-        while { line = reader.readLine(); line != null } do
-          buffer.append(line).append("\n")
+        while { line = reader.readLine(); line != null } do buffer.append(line).append("\n")
       catch case _: java.io.IOException => () // expected on destroy
       finally is.close()
-    })
+    )
     thread.setDaemon(true)
     thread.start()
 
@@ -206,3 +207,4 @@ object HookRunner:
     }
 
     def cancel(): Unit = thread.interrupt()
+end HookRunner

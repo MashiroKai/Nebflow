@@ -80,7 +80,8 @@ object LlmInterface:
                         providerId = result.usedCandidate.providerId,
                         model = result.usedCandidate.model,
                         durationMs = durationMs,
-                        fallbackChain = fallbackChain
+                        fallbackChain = fallbackChain,
+                        contextWindow = Some(result.usedCandidate.contextWindow)
                       )
                     )
                   )
@@ -99,111 +100,130 @@ object LlmInterface:
                   overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
                 )
 
+              val firstCandidate = candidates.headOption
+
               val maxRetries = Fallback.MaxRetries
 
               fs2.Stream.eval(IO.ref(false)).flatMap { lockedRef =>
                 fs2.Stream.eval(IO.ref(List.empty[FallbackAttempt])).flatMap { failureRef =>
-                  def tryCandidate(
-                    remaining: List[ModelCandidate],
-                    retriesLeft: Int = maxRetries,
-                    backoffMs: Long = Fallback.InitialBackoffMs
-                  ): fs2.Stream[IO, StreamChunk] =
-                    remaining match
-                      case Nil =>
-                        fs2.Stream.eval(
-                          failureRef.get.flatMap { failures =>
-                            IO.raiseError(
-                              new FallbackExhaustedError(
-                                if failures.nonEmpty then failures
-                                else
-                                  candidates.map(c =>
-                                    FallbackAttempt(
-                                      c.providerId,
-                                      c.model,
-                                      None,
-                                      None,
-                                      0,
-                                      0,
-                                      java.time.Instant.now().toString
+                  fs2.Stream.eval(IO.ref(Option.empty[ModelCandidate])).flatMap { winnerRef =>
+                    def tryCandidate(
+                      remaining: List[ModelCandidate],
+                      retriesLeft: Int = maxRetries,
+                      backoffMs: Long = Fallback.InitialBackoffMs
+                    ): fs2.Stream[IO, StreamChunk] =
+                      remaining match
+                        case Nil =>
+                          fs2.Stream.eval(
+                            failureRef.get.flatMap { failures =>
+                              IO.raiseError(
+                                new FallbackExhaustedError(
+                                  if failures.nonEmpty then failures
+                                  else
+                                    candidates.map(c =>
+                                      FallbackAttempt(
+                                        c.providerId,
+                                        c.model,
+                                        None,
+                                        None,
+                                        0,
+                                        0,
+                                        java.time.Instant.now().toString
+                                      )
                                     )
-                                  )
-                              )
-                            )
-                          }
-                        )
-                      case candidate :: rest =>
-                        val stream = fs2.Stream.force(
-                          registry
-                            .getAdapter(candidate.providerId)
-                            .map(
-                              _.sendMessageStream(
-                                SendMessageParams(
-                                  req.messages,
-                                  candidate.model,
-                                  req.tools,
-                                  Some(candidate.maxTokens),
-                                  req.thinking,
-                                  req.systemStable,
-                                  req.systemDynamic,
-                                  Some(req.sessionId),
-                                  Some(req.agentId)
                                 )
                               )
-                            )
-                        )
-                        stream
-                          .evalTap { chunk =>
-                            chunk match
-                              case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) =>
-                                lockedRef.set(true)
-                              case _ => IO.unit
-                          }
-                          .handleErrorWith { err =>
-                            fs2.Stream.eval(lockedRef.get).flatMap { locked =>
-                              if locked then fs2.Stream.eval(IO.raiseError(err))
-                              else
-                                val classification = Fallback.classifyError(err)
-                                val attempt = FallbackAttempt(
-                                  candidate.providerId,
-                                  candidate.model,
-                                  Some(classification.reason),
-                                  Some(classification.permanence),
-                                  0,
-                                  maxRetries - retriesLeft,
-                                  java.time.Instant.now().toString,
-                                  classification.message.orElse(Option(err.getMessage))
-                                )
-                                val notify = onAttempt.traverse_(_.apply(attempt))
-
-                                if classification.permanence == ErrorPermanence.Permanent then
-                                  fs2.Stream.eval(
-                                    logger.warn(
-                                      s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
-                                    )
-                                      *> failureRef.update(_ :+ attempt)
-                                      *> notify
-                                  ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
-                                else if retriesLeft > 0 then
-                                  val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
-                                  val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
-                                  fs2.Stream.eval(
-                                    notify *> logger.warn(
-                                      s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
-                                    ) *> IO.sleep(delay.millis)
-                                  ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
-                                else
-                                  fs2.Stream.eval(
-                                    logger.warn(
-                                      s"Stream fallback: ${candidate.providerId}/${candidate.model} retries exhausted"
-                                    )
-                                      *> failureRef.update(_ :+ attempt)
-                                      *> notify
-                                  ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
-                                end if
                             }
-                          }
+                          )
+                        case candidate :: rest =>
+                          val stream = fs2.Stream.force(
+                            registry
+                              .getAdapter(candidate.providerId)
+                              .map(
+                                _.sendMessageStream(
+                                  SendMessageParams(
+                                    req.messages,
+                                    candidate.model,
+                                    req.tools,
+                                    Some(candidate.maxTokens),
+                                    req.thinking,
+                                    req.systemStable,
+                                    req.systemDynamic,
+                                    Some(req.sessionId),
+                                    Some(req.agentId)
+                                  )
+                                )
+                              )
+                          )
+                          stream
+                            .evalTap { chunk =>
+                              chunk match
+                                case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) =>
+                                  lockedRef.set(true) *> winnerRef.set(Some(candidate))
+                                case _ => IO.unit
+                            }
+                            .map {
+                              case done: StreamChunk.Done =>
+                                done.copy(contextWindow = Some(candidate.contextWindow))
+                              case other => other
+                            }
+                            .handleErrorWith { err =>
+                              fs2.Stream.eval(lockedRef.get).flatMap { locked =>
+                                if locked then fs2.Stream.eval(IO.raiseError(err))
+                                else
+                                  val classification = Fallback.classifyError(err)
+                                  val attempt = FallbackAttempt(
+                                    candidate.providerId,
+                                    candidate.model,
+                                    Some(classification.reason),
+                                    Some(classification.permanence),
+                                    0,
+                                    maxRetries - retriesLeft,
+                                    java.time.Instant.now().toString,
+                                    classification.message.orElse(Option(err.getMessage))
+                                  )
+                                  val notify = onAttempt.traverse_(_.apply(attempt))
 
-                  tryCandidate(candidates)
+                                  if classification.permanence == ErrorPermanence.Permanent then
+                                    fs2.Stream.eval(
+                                      logger.warn(
+                                        s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
+                                      )
+                                        *> failureRef.update(_ :+ attempt)
+                                        *> notify
+                                    ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                                  else if retriesLeft > 0 then
+                                    val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
+                                    val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
+                                    fs2.Stream.eval(
+                                      notify *> logger.warn(
+                                        s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
+                                      ) *> IO.sleep(delay.millis)
+                                    ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
+                                  else
+                                    fs2.Stream.eval(
+                                      logger.warn(
+                                        s"Stream fallback: ${candidate.providerId}/${candidate.model} retries exhausted"
+                                      )
+                                        *> failureRef.update(_ :+ attempt)
+                                        *> notify
+                                    ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                                  end if
+                              }
+                            }
+
+                    tryCandidate(candidates)
+                      .onFinalize {
+                        // Persist fallback winner so subsequent calls use the working model
+                        winnerRef.get.flatMap { winnerOpt =>
+                          (winnerOpt, firstCandidate) match
+                            case (Some(winner), Some(first))
+                                if winner.providerId != first.providerId || winner.model != first.model =>
+                              sessionOverrides.update(_ + (req.sessionId -> winner))
+                            case _ => IO.unit
+                        }
+                      }
+                  }
                 }
               }
             }

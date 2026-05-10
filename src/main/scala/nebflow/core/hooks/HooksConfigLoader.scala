@@ -4,9 +4,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.core.NebflowLogger
 
-/**
- * Loads and parses hooks config from nebflow.json.
- */
+/** Loads and parses hooks config from nebflow.json. */
 object HooksConfigLoader:
 
   private val logger = NebflowLogger.forName("nebflow.hooks")
@@ -49,6 +47,10 @@ object HooksConfigLoader:
           logger.warn(s"Failed to load hooks config: ${e.getMessage}")
           HooksConfig.empty
 
+    end if
+
+  end load
+
   private def parseRules(json: Json): Option[List[HookRule]] =
     json.asArray.map { arr =>
       arr.flatMap(parseRule).toList
@@ -70,3 +72,4 @@ object HooksConfigLoader:
         continueOnError = obj("continueOnError").flatMap(_.asBoolean).getOrElse(true)
       )
     }
+end HooksConfigLoader

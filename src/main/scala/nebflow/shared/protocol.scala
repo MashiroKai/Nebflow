@@ -101,7 +101,8 @@ case class LlmMeta(
   providerId: String,
   model: String,
   durationMs: Long,
-  fallbackChain: Option[List[FallbackStep]] = None
+  fallbackChain: Option[List[FallbackStep]] = None,
+  contextWindow: Option[Int] = None
 )
 
 case class LlmResponse(
@@ -125,8 +126,12 @@ object StreamChunk:
   case class ToolCallStart(name: String) extends StreamChunk
   case class ToolCallChunk(toolCall: ToolCall) extends StreamChunk
 
-  case class Done(stopReason: Option[String], usage: Option[TokenUsage], meta: Option[LlmMeta] = None)
-      extends StreamChunk
+  case class Done(
+    stopReason: Option[String],
+    usage: Option[TokenUsage],
+    meta: Option[LlmMeta] = None,
+    contextWindow: Option[Int] = None
+  ) extends StreamChunk
 
 // ===== LLM Handle =====
 

@@ -55,6 +55,9 @@ object Dependencies {
   // Diff
   val diffUtils = "io.github.java-diff-utils" % "java-diff-utils" % "4.12"
 
+  // Feishu / Lark SDK (long connection WS client)
+  val feishuSdk = "com.larksuite.oapi" % "oapi-sdk" % "2.4.19"
+
   // Testing
   val munit = "org.scalameta" %% "munit" % MunitVer % Test
   val munitCatsEffect = "org.typelevel" %% "munit-cats-effect" % MunitCEVer % Test

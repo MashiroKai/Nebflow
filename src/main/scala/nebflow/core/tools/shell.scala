@@ -178,6 +178,35 @@ final class ShellSession private (
     }
 
   /**
+   * Register an externally-started fiber as a background job so it can be cancelled
+   * via cancelBackgroundJob. Used for auto-backgrounded commands.
+   */
+  def registerBackgroundJob(
+    jobId: String,
+    fiber: Fiber[IO, Throwable, Unit],
+    command: String,
+    health: JobHealth
+  ): IO[Unit] =
+    lifecycleMutex.lock.surround {
+      for
+        _ <- checkAlive *> touch
+        deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
+        // Watcher: when the fiber finishes naturally, complete the deferred so the cleanup fiber can evict it
+        _ <- (fiber.joinWithNever.attempt.flatMap { result =>
+          deferred.complete(result.map(_ => ProcessResult("", "", 0, ""))).void
+        }).start
+        job = BackgroundJob(
+          fiber = fiber,
+          heartbeatFiber = None,
+          deferred = deferred,
+          command = command,
+          health = health
+        )
+        _ <- backgroundJobs.update(_ + (jobId -> job))
+      yield ()
+    }
+
+  /**
    * Cancel a background job by its ID. Returns false if the job is not found
    *  or has already completed (result should be retrieved via getBackgroundResult).
    */

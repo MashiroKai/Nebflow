@@ -5,9 +5,16 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
 import nebflow.core.{AskItem, AskOption}
+import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
+import org.apache.pekko.util.Timeout
+
+import java.util.concurrent.TimeUnit
+import scala.concurrent.duration.*
 
 object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
+
+  private implicit val askTimeout: Timeout = Timeout(5.minutes)
 
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended.
@@ -27,11 +34,9 @@ Guidelines:
 - The UI always provides an "Other..." option so the user can type freely even for multiple-choice.
 - Supports multiple questions in one call — ask everything you need at once.
 
-Non-blocking behavior:
-- When you call this tool, the question is sent to the user immediately.
-- You do NOT need to wait for the answer. You can continue with other tasks in this turn, or finish your turn.
-- When the user responds, you will be automatically notified with their answer. You do not need to poll or re-ask.
-- This means calling AskUserQuestion is a valid way to complete a step — you have not abandoned the task."""
+Behavior:
+- This tool blocks until the user responds. Your turn pauses and resumes automatically when the user answers.
+- If the user does not respond within the timeout period, you will receive a timeout message and should proceed with your best judgment."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -97,23 +102,32 @@ Non-blocking behavior:
 
       if items.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))
       else
-        // Fire-and-forget: send AskUser to actor without replyTo
         ctx.agentActorRef match
           case Some(agentRef) =>
             val requestId = java.util.UUID.randomUUID().toString.take(8)
-            IO(agentRef ! AgentCommand.AskUser(requestId, items, None)) *>
-              IO.pure(
-                Right(
-                  "[Question sent to user] You will be automatically notified when they respond — continue with other work or finish your turn."
-                )
-              )
+            ctx.pekkoScheduler match
+              case Some(scheduler) =>
+                IO.fromFuture(
+                  IO(
+                    agentRef.ask[List[String]](replyTo => AgentCommand.AskUser(requestId, items, Some(replyTo)))(using
+                      askTimeout,
+                      scheduler
+                    )
+                  )
+                ).map { answers =>
+                  Right(formatAnswer(items, answers))
+                }.recover { case _: java.util.concurrent.TimeoutException =>
+                  Right("[Timeout] User did not respond within the timeout period. Proceed with your best judgment.")
+                }
+              case None =>
+                IO.pure(Left(ToolError("AskUserQuestion requires Pekko scheduler")))
           case None =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
       end if
     end if
   end call
 
-  /** Format user answers for injection as a user message (used by AgentActor). */
+  /** Format user answers for display. */
   def formatAnswer(items: List[AskItem], answers: List[String]): String =
     if items.size <= 1 then answers.headOption.getOrElse("")
     else

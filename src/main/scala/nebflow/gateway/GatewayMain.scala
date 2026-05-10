@@ -72,7 +72,7 @@ object GatewayMain extends IOApp.Simple:
       IO.blocking(Config.loadServiceConfig()).flatMap { config =>
         Auth.loadOrCreateToken.flatMap { token =>
           // Global session state shared across all connections
-          val sessionStore = new SessionStore(os.home / ".nebflow" / "sessions")
+          val sessionStore = new SessionStore(os.home / ".nebflow" / "sessions", os.home / ".nebflow" / "tasks")
           val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
           sessionStore.load.flatMap { _ =>
             LlmInterface.createLlm(sessionModelOverrides).flatMap { case (handle, registry, releaseBackend) =>
@@ -86,7 +86,7 @@ object GatewayMain extends IOApp.Simple:
                 // --- Fast path: only essential init before server start ---
                 val chatRoutes = new ChatRoutes(handle, token)
                 val contextWindow =
-                  val (providerId, modelId) = Config.parseModelRef(config.llm.model.primary)
+                  val (providerId, modelId) = Config.parseModelRef(config.llm.model.default)
                   val provider = config.llm.providers
                     .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
                   provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
@@ -94,6 +94,7 @@ object GatewayMain extends IOApp.Simple:
                 val url = s"$baseUrl?token=$token"
 
                 logger.info(s"nebflow v${nebflow.Version.string}") *>
+                  logger.info(s"Context window: $contextWindow tokens (from ${config.llm.model.default})") *>
                   RuntimePreferencesService.create.flatMap { runtimePrefs =>
                     RateLimiter.create().flatMap { rateLimiter =>
                       FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
