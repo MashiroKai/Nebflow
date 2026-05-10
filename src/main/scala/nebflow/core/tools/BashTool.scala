@@ -319,8 +319,8 @@ Git safety:
         _ <- signal.complete(()).void // no-op if threshold already completed it
       yield ()).start
 
-      // Start the threshold timer
-      _ <- (for
+      // Start the threshold timer — capture fiber reference for cleanup
+      thresholdFiber <- (for
         _ <- IO.sleep(threshold)
         _ <- thresholdWon.set(true)
         _ <- signal.complete(()).void // no-op if command already completed it
@@ -354,7 +354,7 @@ Git safety:
                 _ <- cb(r.getOrElse(Left(new Exception("No result after fiber completed"))))
               yield ()).start.void
             }
-        else IO.unit
+        else thresholdFiber.cancel // Command finished before threshold — cancel timer to prevent fiber leak
     yield
       if !didThresholdWin then
         resultOpt match
