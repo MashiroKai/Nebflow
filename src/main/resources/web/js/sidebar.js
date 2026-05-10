@@ -7,6 +7,7 @@ import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
 import { finishAgent, setStatus } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
+import { clearMemoryCache } from './memory.js';
 
 // ---------- Nav Bar Tab Switching ----------
 export function initNavTabs() {
@@ -42,9 +43,9 @@ export function renderAgentList() {
     el.dataset.name = a.name;
     el.title = displayName;
     const iconHtml = avatar
-      ? `<span class="nav-agent-icon">${escapeHtml(avatar)}</span>`
+      ? `<span class="nav-agent-icon">${avatar}</span>`
       : '<i data-lucide="bot" class="nav-agent-icon" style="color:#888"></i>';
-    el.innerHTML = `${iconHtml}<span class="nav-agent-label">${escapeHtml(displayName.slice(0, 5))}</span>`;
+    el.innerHTML = `${iconHtml}<span class="nav-agent-label">${escapeHtml(displayName.slice(0, 6))}</span>`;
     el.addEventListener('click', () => selectAgent(a.name));
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -443,6 +444,8 @@ export function switchSession(sessionId) {
   const prevActiveId = state.activeSessionId;
   // Switch active session
   state.activeSessionId = sessionId;
+  // Clear memory cache so new session fetches fresh content
+  clearMemoryCache();
   // Update sidebar status for both sessions (activeSessionId has changed,
   // so getSessionStatusClass may return different values, e.g. compacting → busy or vice versa)
   updateSessionStatus(sessionId);
@@ -698,6 +701,8 @@ function openFeishuPanel() {
 function buildFeishuPanelHtml(session) {
   const feishu = (session.bridges && session.bridges.feishu) || {};
   const chatId = feishu.chatId || '';
+  const appId = feishu.appId || '';
+  const hasAppSecret = !!feishu.appSecret;
   const isLinked = !!chatId;
 
   return `
@@ -714,6 +719,23 @@ function buildFeishuPanelHtml(session) {
           <input type="text" name="chatId" value="${escapeHtml(chatId)}" placeholder="oc_xxx" />
           <span class="feishu-hint">在飞书群设置里找到群的 chat_id，以 oc_ 开头</span>
         </label>
+        <div class="feishu-advanced">
+          <div class="feishu-advanced-toggle" onclick="document.getElementById('feishu-advanced-fields').classList.toggle('open')">
+            ⚙ 高级设置（可选：使用独立机器人）
+          </div>
+          <div id="feishu-advanced-fields" class="feishu-collapsible">
+            <label>
+              <span class="feishu-label">App ID</span>
+              <input type="text" name="appId" value="${escapeHtml(appId)}" placeholder="cli_xxx（留空使用全局配置）" />
+              <span class="feishu-hint">此群聊使用独立的飞书机器人；留空则使用全局 ~/.nebflow/feishu.json</span>
+            </label>
+            <label>
+              <span class="feishu-label">App Secret</span>
+              <input type="password" name="appSecret" value="" placeholder="${hasAppSecret ? '已配置（不显示原有值）' : '输入 App Secret'}" />
+              <span class="feishu-hint">保存时填写；留空保持现有值不变</span>
+            </label>
+          </div>
+        </div>
         <div class="feishu-actions">
           <button type="button" class="feishu-clear" ${!isLinked ? 'style="display:none"' : ''}>解除绑定</button>
           <button type="button" class="feishu-cancel">取消</button>
@@ -727,15 +749,20 @@ function saveFeishuConfig(sessionId) {
   if (!feishuPanelEl) return;
   const form = feishuPanelEl.querySelector('.feishu-form');
   const chatId = form.querySelector('[name="chatId"]').value.trim();
-  sendWs({
+  const appId = form.querySelector('[name="appId"]').value.trim();
+  const appSecret = form.querySelector('[name="appSecret"]').value.trim();
+  const payload = {
     type: 'updateSessionFeishu',
     sessionId,
     chatId,
     chatType: 'group',
     enabled: true,
     syncMessages: true,
-    notifyEvents: ['aiResponse', 'askUser', 'permissionRequest']
-  });
+    notifyEvents: ['aiResponse', 'askUser', 'permissionRequest'],
+    appId
+  };
+  if (appSecret) payload.appSecret = appSecret;
+  sendWs(payload);
   closeFeishuPanel();
 }
 

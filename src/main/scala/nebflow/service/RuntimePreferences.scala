@@ -6,6 +6,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.{ApprovalDecision, PermissionPolicy}
+import nebflow.shared.{MtimeCache, MtimeFileCache}
 
 // ============================================================
 // Thinking Configuration
@@ -82,39 +83,51 @@ object RuntimePreferences:
 end RuntimePreferences
 
 // ============================================================
-// Runtime Preferences Service
+// Runtime Preferences Service (mtime-cached)
 // ============================================================
 
+/**
+ * Manages runtime preferences with mtime-based caching.
+ * The preferences file is re-read only when its modification time changes.
+ * Writes immediately persist to disk and invalidate the cache.
+ */
 class RuntimePreferencesService private (
-  stateRef: Ref[IO, RuntimePreferences]
+  private val fileCache: MtimeFileCache[RuntimePreferences]
 ):
-  def getAll: IO[RuntimePreferences] = stateRef.get
 
-  def getPolicy: IO[PermissionPolicy] = stateRef.get.map(_.permissionPolicy)
+  private def load: IO[RuntimePreferences] =
+    fileCache.get.map(_.getOrElse(RuntimePreferences.default))
+
+  def getAll: IO[RuntimePreferences] = load
+
+  def getPolicy: IO[PermissionPolicy] = load.map(_.permissionPolicy)
 
   def setPolicy(policy: PermissionPolicy): IO[Unit] =
-    stateRef.update(_.copy(permissionPolicy = policy)) *>
-      RuntimePreferencesService.save(stateRef)
+    load.flatMap { current =>
+      RuntimePreferencesService.save(current.copy(permissionPolicy = policy))
+    } *> fileCache.invalidate
 
-  def getThinking: IO[Option[ThinkingConfig]] = stateRef.get.map(_.thinkingConfig)
+  def getThinking: IO[Option[ThinkingConfig]] = load.map(_.thinkingConfig)
 
   def setThinking(tc: Option[ThinkingConfig]): IO[Unit] =
-    stateRef.update(_.copy(thinkingConfig = tc)) *>
-      RuntimePreferencesService.save(stateRef)
+    load.flatMap { current =>
+      RuntimePreferencesService.save(current.copy(thinkingConfig = tc))
+    } *> fileCache.invalidate
 
-  def getLanguage: IO[Option[String]] = stateRef.get.map(_.language)
+  def getLanguage: IO[Option[String]] = load.map(_.language)
 
   def setLanguage(lang: Option[String]): IO[Unit] =
-    stateRef.update(_.copy(language = lang)) *>
-      RuntimePreferencesService.save(stateRef)
+    load.flatMap { current =>
+      RuntimePreferencesService.save(current.copy(language = lang))
+    } *> fileCache.invalidate
 
-  def getDisabledMcpServers: IO[Set[String]] = stateRef.get.map(_.disabledMcpServers)
+  def getDisabledMcpServers: IO[Set[String]] = load.map(_.disabledMcpServers)
 
   def setMcpServerEnabled(serverId: String, enabled: Boolean): IO[Unit] =
-    stateRef.update { rp =>
-      val updated = if enabled then rp.disabledMcpServers - serverId else rp.disabledMcpServers + serverId
-      rp.copy(disabledMcpServers = updated)
-    } *> RuntimePreferencesService.save(stateRef)
+    load.flatMap { current =>
+      val updated = if enabled then current.disabledMcpServers - serverId else current.disabledMcpServers + serverId
+      RuntimePreferencesService.save(current.copy(disabledMcpServers = updated))
+    } *> fileCache.invalidate
 
   def shouldApprove(toolName: String): IO[ApprovalDecision] =
     for p <- getPolicy
@@ -130,29 +143,29 @@ object RuntimePreferencesService:
   private val preferencesPath: os.Path = os.home / ".nebflow" / "preferences.json"
   private val legacyPolicyPath: os.Path = os.home / ".nebflow" / "permission_policy.json"
 
-  private def loadPreferences: RuntimePreferences =
-    try
-      if os.exists(preferencesPath) then
-        decode[RuntimePreferences](os.read(preferencesPath)).getOrElse(RuntimePreferences.default)
-      else if os.exists(legacyPolicyPath) then
-        // Migrate from legacy permission_policy.json
-        val legacyPolicy = decode[PermissionPolicy](os.read(legacyPolicyPath)).getOrElse(PermissionPolicy.default)
-        RuntimePreferences(permissionPolicy = legacyPolicy)
-      else RuntimePreferences.default
-    catch case _: Exception => RuntimePreferences.default
+  private def parsePreferences(content: String): RuntimePreferences =
+    decode[RuntimePreferences](content).getOrElse(RuntimePreferences.default)
 
-  private def save(stateRef: Ref[IO, RuntimePreferences]): IO[Unit] =
-    stateRef.get.flatMap { rp =>
-      IO.blocking {
-        try os.write.over(preferencesPath, rp.asJson.spaces2, createFolders = true)
-        catch case _: Exception => ()
-      }
+  private def save(rp: RuntimePreferences): IO[Unit] =
+    IO.blocking {
+      try os.write.over(preferencesPath, rp.asJson.spaces2, createFolders = true)
+      catch case _: Exception => ()
     }
 
   def create: IO[RuntimePreferencesService] =
-    for
-      saved <- IO.blocking(loadPreferences)
-      stateRef <- Ref.of[IO, RuntimePreferences](saved)
-    yield new RuntimePreferencesService(stateRef)
+    // Handle legacy migration: if preferences.json doesn't exist but legacy does, migrate once
+    IO.blocking {
+      if !os.exists(preferencesPath) && os.exists(legacyPolicyPath) then
+        val legacyPolicy = decode[PermissionPolicy](os.read(legacyPolicyPath)).getOrElse(PermissionPolicy.default)
+        os.write.over(
+          preferencesPath,
+          RuntimePreferences(permissionPolicy = legacyPolicy).asJson.spaces2,
+          createFolders = true
+        )
+    }.map { _ =>
+      new RuntimePreferencesService(
+        MtimeCache.file[RuntimePreferences](preferencesPath, parsePreferences)
+      )
+    }
 
 end RuntimePreferencesService

@@ -1,6 +1,6 @@
 import state from './state.js';
 import { LS_SESSIONS_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
 import { connect, onMessage, sendWs } from './ws.js';
 import {
   setBusy, clearBusy, setStatus, clearStatus,
@@ -29,7 +29,7 @@ import { renderTaskList } from './taskList.js';
 import { registerCardRenderer, renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
 import { initSearch, renderSearchResults } from './search.js';
-import { renderMemoryTags, handleMemoryData, initMemory } from './memory.js';
+import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from './memory.js';
 
 // ---------- 1. Populate DOM refs ----------
 state.dom = {
@@ -817,7 +817,7 @@ onMessage('modelOptions', (msg) => {
   options.unshift({label: 'Default', desc: 'Use config default model chain', ref: null});
   import('./chat.js').then(({ showOptions }) => {
     showOptions(state.currentAiBubble, [
-      {question: 'Select model for this session', options: options.map(o => ({label: o.label, desc: o.desc}))}
+      {question: 'Select model for this session', options: options.map(o => ({label: o.label, desc: o.desc})), allowOther: false}
     ], (answers) => {
       const selected = options.find(o => o.label === answers[0]);
       const modelRef = selected ? selected.ref : null;
@@ -1060,7 +1060,7 @@ onMessage('askError', (msg) => {
 // --- Memory ---
 onMessage('memoryData', (msg) => handleMemoryData(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
-onMessage('memoryStatus', (msg) => renderMemoryTags(msg));
+onMessage('memoryStatus', (msg) => showMemoryButton());
 
 // --- Search results ---
 onMessage('searchResults', (msg) => {
@@ -1094,35 +1094,66 @@ state.dom.chat.addEventListener('scroll', () => {
 });
 
 // ---------- 6. Expose global Nebflow API for plugins ----------
+// Theme tokens extracted from CSS custom properties — agents can read these for consistency.
+const _themeCache = {};
+function getThemeTokens() {
+  if (Object.keys(_themeCache).length) return _themeCache;
+  const s = getComputedStyle(document.documentElement);
+  const pick = (prop) => s.getPropertyValue(prop).trim();
+  _themeCache.primary = pick('--color-primary') || '#07c160';
+  _themeCache.primaryHover = pick('--color-primary-hover') || '#06ad56';
+  _themeCache.error = pick('--color-error') || '#f44336';
+  _themeCache.success = pick('--color-success') || '#4caf50';
+  _themeCache.bubbleAi = pick('--color-bubble-ai') || '#fff';
+  _themeCache.text = pick('--color-text') || '#000';
+  _themeCache.textMuted = pick('--color-text-muted') || '#888';
+  _themeCache.border = pick('--color-border') || '#ddd';
+  return _themeCache;
+}
+
 window.Nebflow = {
+  // --- Card rendering ---
   registerCardRenderer,
   escapeHtml,
+  getThemeTokens,
+  /** Send a message as if the user typed it. */
   injectUserMessage,
+  /** Get read-only state snapshot. */
   get state() { return state; },
+  /** Currently active session ID. */
+  get activeSessionId() { return state.activeSessionId; },
+  /** Currently selected agent name. */
+  get selectedAgent() { return state.selectedAgent; },
+  /** Send a raw WebSocket message. */
+  sendWs,
+  /** Smart-scroll the chat to the bottom. */
+  smartScroll,
 };
 
 // ---------- 7. Load agent frontend assets ----------
+// Cache-bust with timestamp so browser always fetches fresh copies after edits.
 async function loadAgentFrontends() {
   try {
     const res = await fetch('/agents/manifest.json');
     if (!res.ok) return;
     const data = await res.json();
     const agents = data.agents || [];
+    const bust = Date.now();
     let loaded = 0;
     for (const agent of agents) {
       if (!agent.frontend) continue;
-      // Load CSS first
+      // Load CSS
       for (const cssPath of (agent.frontend.styles || [])) {
         const link = document.createElement('link');
         link.rel = 'stylesheet';
-        link.href = `/agents/${agent.name}/${cssPath}`;
+        link.href = `/agents/${agent.name}/${cssPath}?t=${bust}`;
         document.head.appendChild(link);
       }
       // Load JS in order
       for (const jsPath of (agent.frontend.scripts || [])) {
         await new Promise((resolve) => {
           const script = document.createElement('script');
-          script.src = `/agents/${agent.name}/${jsPath}`;
+          script.src = `/agents/${agent.name}/${jsPath}?t=${bust}`;
           script.onload = resolve;
           script.onerror = () => {
             console.warn(`[agent-frontend] Failed to load ${agent.name}/${jsPath}`);
@@ -1138,9 +1169,13 @@ async function loadAgentFrontends() {
     console.warn('[agent-frontend] Failed to load agent frontends:', e);
   }
 }
-loadAgentFrontends();
 
 // ---------- 8. Start ----------
-connect();
-sendWs({ type: 'memoryStatus' });
-state.dom.input.focus();
+// Load agent frontends BEFORE connecting, so renderers are registered
+// before any toolEnd messages arrive. Without this, history restore
+// races against frontend loading and cards fall back to default rendering.
+loadAgentFrontends().then(() => {
+  connect();
+  sendWs({ type: 'memoryStatus' });
+  state.dom.input.focus();
+});

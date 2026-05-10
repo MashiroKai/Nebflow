@@ -56,7 +56,7 @@ object GatewayCodecs:
         "type" -> "toolCall".asJson,
         "toolCall" -> toolCall.asJson
       )
-    case StreamChunk.Done(stopReason, usage, meta) =>
+    case StreamChunk.Done(stopReason, usage, meta, _) =>
       Json.obj(
         "type" -> "done".asJson,
         "stopReason" -> stopReason.asJson,

@@ -1,6 +1,8 @@
 package nebflow.service
 
 import cats.effect.IO
+import cats.effect.unsafe.implicits.global
+import nebflow.shared.{MtimeCache, MtimeFileCache}
 
 /**
  * Three-level memory store backed by Markdown files.
@@ -9,6 +11,10 @@ import cats.effect.IO
  *   - User Preference:  ~/.nebflow/NEBFLOW.md           (global, all agents)
  *   - Agent:            ~/.nebflow/agents/{name}/memory.md  (per agent)
  *   - Session:          ~/.nebflow/sessions/{sid}.memory.md (per session)
+ *
+ * All reads use mtime-based caching: files are only re-read from disk
+ * when their modification time changes. Edits to memory files take
+ * effect on the next LLM call without needing a new session.
  */
 object MemoryStore:
 
@@ -22,46 +28,64 @@ object MemoryStore:
   def sessionMemoryPath(sessionId: String): os.Path =
     os.home / ".nebflow" / "sessions" / s"$sessionId.memory.md"
 
-  // --- Load (synchronous — called during system prompt build) ---
+  // --- Mtime-cached file reads ---
 
-  private def loadFile(path: os.Path): Option[String] =
-    if os.exists(path) then
-      val c = os.read(path).trim
-      if c.nonEmpty then Some(c) else None
-    else None
+  private def parseMemory(content: String): Option[String] =
+    val trimmed = content.trim
+    if trimmed.nonEmpty then Some(trimmed) else None
 
-  def loadUserMemory: Option[String] = loadFile(userMemoryPath)
+  private val userCache = MtimeCache.file[Option[String]](userMemoryPath, parseMemory)
+
+  private val agentCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
+
+  private val sessionCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
+
+  private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
+    agentCaches.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
+
+  private def getSessionCache(sessionId: String): MtimeFileCache[Option[String]] =
+    sessionCaches.getOrElseUpdate(sessionId, MtimeCache.file(sessionMemoryPath(sessionId), parseMemory))
+
+  // --- Load (mtime-cached — called during system prompt build) ---
+
+  def loadUserMemory: Option[String] =
+    userCache.get.unsafeRunSync().flatten
 
   def loadAgentMemory(agentName: String): Option[String] =
-    loadFile(agentMemoryPath(agentName))
+    getAgentCache(agentName).get.unsafeRunSync().flatten
 
   def loadSessionMemory(sessionId: String): Option[String] =
-    loadFile(sessionMemoryPath(sessionId))
+    getSessionCache(sessionId).get.unsafeRunSync().flatten
 
-  // --- Save (async — called from WS routes / tools) ---
+  // --- Save (async — called from WS routes / tools, invalidates cache) ---
 
-  private def saveFile(path: os.Path, content: String): IO[Unit] =
-    IO.blocking(os.write.over(path, content, createFolders = true))
+  private def saveFile(path: os.Path, content: String, invalidateCache: () => IO[Unit]): IO[Unit] =
+    IO.blocking(os.write.over(path, content, createFolders = true)) *> invalidateCache()
 
   def saveUserMemory(content: String): IO[Unit] =
-    saveFile(userMemoryPath, content)
+    saveFile(userMemoryPath, content, () => userCache.invalidate)
 
   def saveAgentMemory(agentName: String, content: String): IO[Unit] =
-    saveFile(agentMemoryPath(agentName), content)
+    saveFile(agentMemoryPath(agentName), content, () => getAgentCache(agentName).invalidate)
 
   def saveSessionMemory(sessionId: String, content: String): IO[Unit] =
-    saveFile(sessionMemoryPath(sessionId), content)
+    saveFile(sessionMemoryPath(sessionId), content, () => getSessionCache(sessionId).invalidate)
 
   // --- Preview (first non-heading, non-empty line, max 80 chars) ---
 
   def preview(path: os.Path): Option[String] =
-    loadFile(path).map { content =>
-      content.linesIterator
-        .dropWhile(l => l.trim.isEmpty || l.trim.startsWith("#"))
-        .find(_.trim.nonEmpty)
-        .map(_.trim.take(80))
-        .getOrElse("(empty)")
-    }
+    if !os.exists(path) then None
+    else
+      val content = os.read(path).trim
+      if content.isEmpty then None
+      else
+        Some(
+          content.linesIterator
+            .dropWhile(l => l.trim.isEmpty || l.trim.startsWith("#"))
+            .find(_.trim.nonEmpty)
+            .map(_.trim.take(80))
+            .getOrElse("(empty)")
+        )
 
   def userPreview: Option[String] = preview(userMemoryPath)
   def agentPreview(agentName: String): Option[String] = preview(agentMemoryPath(agentName))

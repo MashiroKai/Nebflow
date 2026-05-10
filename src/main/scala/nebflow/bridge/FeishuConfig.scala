@@ -10,8 +10,8 @@ import nebflow.core.NebflowLogger
 case class FeishuGlobalConfig(
   appId: String,
   appSecret: String,
-  verificationToken: String = "",   // for HTTP webhook verification
-  encryptKey: String = "",          // for event payload decryption (optional)
+  verificationToken: String = "", // for HTTP webhook verification
+  encryptKey: String = "", // for event payload decryption (optional)
   allowedUsers: List[String] = Nil, // open_id whitelist; empty = allow all
   enabled: Boolean = true
 ):
