@@ -104,27 +104,31 @@ Rules:
           .sendStream(request)
           .evalTap {
             case StreamChunk.TextDelta(delta) =>
-              wsSend(io.circe.Json.obj(
-                "type" -> "askTextDelta".asJson,
-                "sessionId" -> sessionId.asJson,
-                "delta" -> delta.asJson
-              ))
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "askTextDelta".asJson,
+                  "sessionId" -> sessionId.asJson,
+                  "delta" -> delta.asJson
+                )
+              )
             case _ => IO.unit
           }
           .compile
           .toList
         text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
         toolCalls = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }
-        meta = chunks.collectFirst { case StreamChunk.Done(_, _, Some(m)) => m }
+        meta = chunks.collectFirst { case StreamChunk.Done(_, _, Some(m), _) => m }
         result <-
           if toolCalls.isEmpty then
             val durationMs = System.currentTimeMillis() - startTime
-            wsSend(io.circe.Json.obj(
-              "type" -> "askDone".asJson,
-              "sessionId" -> sessionId.asJson,
-              "durationMs" -> durationMs.asJson,
-              "model" -> meta.map(_.model).getOrElse("").asJson
-            )) *> IO.pure(AskResult(text, durationMs, meta.map(_.model)))
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "askDone".asJson,
+                "sessionId" -> sessionId.asJson,
+                "durationMs" -> durationMs.asJson,
+                "model" -> meta.map(_.model).getOrElse("").asJson
+              )
+            ) *> IO.pure(AskResult(text, durationMs, meta.map(_.model)))
           else
             executeTools(toolCalls, toolContext, sessionId, wsSend).flatMap { toolResults =>
               val assistantBlocks = (if text.nonEmpty then List(ContentBlock.Text(text)) else Nil) ++
@@ -138,6 +142,7 @@ Rules:
               askLoop(newMsgs, toolContext, resources, sessionId, wsSend, startTime, round + 1)
             }
       yield result
+      end for
   end askLoop
 
   // ------------------------------------------------------------------
@@ -163,20 +168,24 @@ Rules:
             .handleErrorWith(e => IO.pure(ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)))
         case None =>
           IO.pure(ToolExecResult(s"Unknown tool: ${call.name}", isError = true))
-      wsSend(io.circe.Json.obj(
-        "type" -> "toolStart".asJson,
-        "sessionId" -> sessionId.asJson,
-        "label" -> summary.asJson
-      )) *> execResult.flatMap { result =>
-        wsSend(io.circe.Json.obj(
-          "type" -> "toolEnd".asJson,
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "toolStart".asJson,
           "sessionId" -> sessionId.asJson,
-          "label" -> summary.asJson,
-          "summary" -> nebflow.core.summarizeToolResult(call, result.content).asJson,
-          "content" -> result.content.asJson,
-          "isError" -> result.isError.asJson,
-          "input" -> call.input.asJson.spaces2.asJson
-        )).as(call -> result)
+          "label" -> summary.asJson
+        )
+      ) *> execResult.flatMap { result =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "toolEnd".asJson,
+            "sessionId" -> sessionId.asJson,
+            "label" -> summary.asJson,
+            "summary" -> nebflow.core.summarizeToolResult(call, result.content).asJson,
+            "content" -> result.content.asJson,
+            "isError" -> result.isError.asJson,
+            "input" -> call.input.asJson.spaces2.asJson
+          )
+        ).as(call -> result)
       }
     }
 

@@ -40,12 +40,27 @@ object ProviderConfig:
   given Decoder[ProviderConfig] = deriveDecoder[ProviderConfig]
 
 case class ModelChainConfig(
-  primary: String,
+  default: String,
   fallbacks: List[String] = Nil
 )
 
 object ModelChainConfig:
-  given Decoder[ModelChainConfig] = deriveDecoder[ModelChainConfig]
+
+  given Decoder[ModelChainConfig] = Decoder.instance { c =>
+    val defaultOpt = c.downField("default").as[Option[String]]
+    val primaryOpt = c.downField("primary").as[Option[String]]
+    val default = (defaultOpt, primaryOpt) match
+      case (Right(Some(d)), _) => Right(d)
+      case (Right(None), Right(Some(p))) => Right(p)
+      case (Right(None), Right(None)) =>
+        Left(io.circe.DecodingFailure("Missing field 'default' (or legacy 'primary')", c.history))
+      case (Left(err), _) => Left(err)
+      case (_, Left(err)) => Left(err)
+    for
+      d <- default
+      fallbacks <- c.downField("fallbacks").as[Option[List[String]]].map(_.getOrElse(Nil))
+    yield ModelChainConfig(d, fallbacks)
+  }
 
 case class McpServerConfig(
   command: Option[String] = None,

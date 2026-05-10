@@ -9,6 +9,8 @@ import nebflow.core.NebflowLogger
 import nebflow.core.hooks.*
 import nebflow.shared.*
 
+import scala.concurrent.duration.*
+
 /**
  * Direct LLM-based context compaction — no sub-agent, no raw JSON serialization.
  *
@@ -116,12 +118,14 @@ Rules:
    * @param messages        Original message history
    * @param resources       Shared resources (LLM handle, project root, etc.)
    * @param sessionId       Session identifier for the LLM call
+   * @param readTracker     Optional ReadTracker for automatic file restoration
    * @return Right(compactedMessages) or Left(errorMessage)
    */
   def compact(
     messages: List[Message],
     resources: SharedResources,
-    sessionId: String
+    sessionId: String,
+    readTracker: Option[nebflow.core.tools.ReadTracker] = None
   ): IO[Either[String, List[Message]]] =
     val hookEngine = resources.hookEngine
     val hookCtx = HookContext(
@@ -130,23 +134,34 @@ Rules:
       cwd = resources.projectRoot.toString
     )
 
+    // Fetch recently-read file paths from ReadTracker (for post-compact restoration)
+    val readPathsIO = readTracker
+      .map(_.recentFiles(CompactConfig().postCompactMaxFiles).map(_.map(_.toString)))
+      .getOrElse(IO.pure(Nil))
+
     // --- PreCompact hook ---
-    hookEngine.beforeCompact(messages.size, hookCtx).flatMap { preResult =>
-      if preResult.decision == HookDecision.Block then
-        val reason = preResult.reason.getOrElse("Compaction blocked by hook")
-        logger.info(s"Compaction blocked by hook: $reason")
-        IO.pure(Left(reason))
-      else
-        doCompact(messages, resources, sessionId, hookEngine, hookCtx)
-    }
+    (readPathsIO, hookEngine.beforeCompact(messages.size, hookCtx))
+      .mapN { (readPaths, preResult) =>
+        (readPaths, preResult)
+      }
+      .flatMap { (readPaths, preResult) =>
+        if preResult.decision == HookDecision.Block then
+          val reason = preResult.reason.getOrElse("Compaction blocked by hook")
+          logger.info(s"Compaction blocked by hook: $reason")
+          IO.pure(Left(reason))
+        else doCompact(messages, resources, sessionId, hookEngine, hookCtx, readPaths)
+      }
   end compact
+
+  private val MaxCompactRetries = 2
 
   private def doCompact(
     messages: List[Message],
     resources: SharedResources,
     sessionId: String,
     hookEngine: HookEngine,
-    hookCtx: HookContext
+    hookCtx: HookContext,
+    recentReadPaths: List[String]
   ): IO[Either[String, List[Message]]] =
     val preprocessed = preprocessMessages(messages)
     val promptText = buildCompactPrompt(preprocessed)
@@ -157,43 +172,59 @@ Rules:
       messages = List(Message(MessageRole.User, Left(promptText))),
       sessionId = sessionId,
       agentId = "context-compact",
-      tools = Some(Nil),        // explicitly empty → no tools
-      maxTokens = Some(8000),   // generous budget for the summary
+      tools = Some(Nil), // explicitly empty → no tools
+      maxTokens = Some(8000), // generous budget for the summary
       systemStable = Some(CompactSystemPrompt)
     )
 
-    resources.llm
-      .send(request)
-      .flatMap { response =>
-        if response.toolCalls.nonEmpty then
-          IO.pure(Left(s"Compact model unexpectedly returned tool calls: ${response.toolCalls.map(_.name).mkString(", ")}"))
-        else
-          val result = FullCompact.parseResponse(response.reply, messages, resources.projectRoot.toString)
-          // --- PostCompact hook ---
-          val afterSize = result.fold(_ => messages.size, _.size)
-          val tokensSaved = estimateTokensSaved(messages.size, afterSize)
-          hookEngine
-            .afterCompact(messages.size, afterSize, tokensSaved, hookCtx)
-            .map { postResult =>
-              result.map { compacted =>
-                postResult.additionalContext match
-                  case Some(ctx) =>
-                    // Inject additional context as a system message after compaction
-                    compacted :+ Message(MessageRole.System, Left(ctx))
-                  case None => compacted
-              }
-            }
-      }
-      .handleError { e =>
-        val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-        logger.warn(s"Compact LLM call failed: $msg")
-        Left(s"Compact LLM call failed: $msg")
-      }
+    def attemptCompact(retriesLeft: Int): IO[Either[String, List[Message]]] =
+      resources.llm
+        .send(request)
+        .flatMap { response =>
+          if response.toolCalls.nonEmpty then
+            IO.pure(
+              Left(s"Compact model unexpectedly returned tool calls: ${response.toolCalls.map(_.name).mkString(", ")}")
+            )
+          else
+            val result =
+              FullCompact.parseResponse(response.reply, messages, resources.projectRoot.toString, recentReadPaths)
+            result match
+              case Left(err) if err.contains("empty response") && retriesLeft > 0 =>
+                logger.warn(s"Compact LLM returned empty response, retrying ($retriesLeft left)")
+                IO.sleep(1.second) *> attemptCompact(retriesLeft - 1)
+              case _ =>
+                // --- PostCompact hook ---
+                val afterSize = result.fold(_ => messages.size, _.size)
+                val tokensSaved = estimateTokensSaved(messages.size, afterSize)
+                hookEngine
+                  .afterCompact(messages.size, afterSize, tokensSaved, hookCtx)
+                  .map { postResult =>
+                    result.map { compacted =>
+                      postResult.additionalContext match
+                        case Some(ctx) =>
+                          // Inject additional context as a system message after compaction
+                          compacted :+ Message(MessageRole.System, Left(ctx))
+                        case None => compacted
+                    }
+                  }
+        }
+        .handleErrorWith { e =>
+          val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+          if retriesLeft > 0 then
+            logger.warn(s"Compact LLM call failed: $msg, retrying ($retriesLeft left)")
+            // Retry on transient errors
+            IO.sleep(2.seconds) *> attemptCompact(retriesLeft - 1)
+          else
+            logger.warn(s"Compact LLM call failed after all retries: $msg")
+            IO.pure(Left(s"Compact LLM call failed: $msg"))
+        }
+
+    attemptCompact(MaxCompactRetries)
   end doCompact
 
   /** Rough token estimate based on message count difference. */
   private def estimateTokensSaved(before: Int, after: Int): Long =
-    ((before - after).toLong * 500).max(0)  // ~500 tokens per message average
+    ((before - after).toLong * 500).max(0) // ~500 tokens per message average
 
   // ------------------------------------------------------------------
   // Message pre-processing (human-readable text, not raw JSON)
@@ -263,16 +294,17 @@ Rules:
             case ContentBlock.ToolUse(id, name, input) =>
               val inputJson = input.asJson.noSpaces
               // Truncate very long tool inputs (e.g. Write with large content)
-              val inputDisplay = if inputJson.length > 500 then
-                inputJson.take(500) + s" ... [${inputJson.length - 500} more chars]"
-              else inputJson
+              val inputDisplay =
+                if inputJson.length > 500 then inputJson.take(500) + s" ... [${inputJson.length - 500} more chars]"
+                else inputJson
               sb.append(s"[ToolUse: $name id=$id] $inputDisplay\n")
 
             case ContentBlock.ToolResult(toolUseId, content, isError) =>
               val prefix = if isError.contains(true) then "[ToolResult ERROR" else "[ToolResult"
-              val display = if content.length > ToolResultMaxChars then
-                content.take(ToolResultMaxChars) + s"\n... [${content.length - ToolResultMaxChars} more chars]"
-              else content
+              val display =
+                if content.length > ToolResultMaxChars then
+                  content.take(ToolResultMaxChars) + s"\n... [${content.length - ToolResultMaxChars} more chars]"
+                else content
               sb.append(s"$prefix id=$toolUseId]\n$display\n")
 
             case ContentBlock.Thinking(thinking, _) =>

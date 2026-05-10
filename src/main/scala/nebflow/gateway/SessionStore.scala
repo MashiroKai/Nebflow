@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.shared.{Message, UiMessage, given}
+import nebflow.shared.{Message, MessageRole, UiMessage, given}
 
 import java.util.UUID
 
@@ -62,7 +62,7 @@ object SessionMeta:
 
 end SessionMeta
 
-class SessionStore(sessionsDir: os.Path):
+class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.session")
 
   // (activeId, metas sorted by updatedAt desc)
@@ -74,6 +74,7 @@ class SessionStore(sessionsDir: os.Path):
     Ref.unsafe[IO, List[Message]](Nil)
 
   private val indexFile = sessionsDir / "_index.json"
+  private val indexTempFile = sessionsDir / "_index.json.tmp"
 
   def load: IO[Unit] =
     IO.blocking {
@@ -91,21 +92,56 @@ class SessionStore(sessionsDir: os.Path):
       val sessions = json.hcursor.downField("sessions").as[List[SessionMeta]].getOrElse(Nil)
       (activeId, sessions)
     }.flatMap { case (activeId, sessions) =>
-      if activeId.nonEmpty && sessions.exists(_.id == activeId) then
-        loadSessionMessages(activeId).flatMap { msgs =>
-          indexRef.set((activeId, sessions)) *> activeMessagesRef.set(msgs)
-        }
-      else if sessions.nonEmpty then
-        // Fallback: use most recent session
-        sessions.maxByOption(_.updatedAt) match
-          case Some(first) =>
-            loadSessionMessages(first.id).flatMap { msgs =>
-              indexRef.set((first.id, sessions)) *> activeMessagesRef.set(msgs)
+      recoverOrphans(sessions).flatMap { recovered =>
+        val allSessions = sessions ++ recovered
+        if recovered.nonEmpty then
+          logger.info(
+            s"Recovered ${recovered.size} orphan session(s): ${recovered.map(s => s"${s.name}(${s.id.take(8)})").mkString(", ")}"
+          )
+        if activeId.nonEmpty && allSessions.exists(_.id == activeId) then
+          loadSessionMessages(activeId).flatMap { msgs =>
+            indexRef.set((activeId, allSessions)) *> activeMessagesRef.set(msgs)
+          }
+        else if allSessions.nonEmpty then
+          allSessions.maxByOption(_.updatedAt) match
+            case Some(first) =>
+              loadSessionMessages(first.id).flatMap { msgs =>
+                indexRef.set((first.id, allSessions)) *> activeMessagesRef.set(msgs)
+              }
+            case None => createDefaultSession
+        else createDefaultSession
+      }
+    }
+
+  /** Scan disk for session files not in the index and recover them. */
+  private def recoverOrphans(indexed: List[SessionMeta]): IO[List[SessionMeta]] =
+    IO.blocking {
+      val indexedIds = indexed.map(_.id).toSet
+      os.list(sessionsDir)
+        .filter(p => p.last.endsWith(".json") && !p.last.startsWith("_") && !p.last.endsWith(".ui.json"))
+        .toList
+    }.flatMap { files =>
+      files
+        .flatTraverse { f =>
+          val id = f.last.stripSuffix(".json")
+          // Skip non-UUID names (legacy files like "web.json", "last.json", etc.)
+          if id.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}") then
+            IO.blocking {
+              val mtime = os.mtime(f)
+              // Try to extract name from first user message
+              val name =
+                try
+                  val msgs = decode[List[Message]](os.read(f)).getOrElse(Nil)
+                  msgs.find(_.role == MessageRole.User).map(_.textContent.take(50)).getOrElse("Recovered Session")
+                catch case _: Exception => "Recovered Session"
+              List(SessionMeta(id, name, mtime, mtime, hasUnread = false))
             }
-          case None => createDefaultSession
-      else
-        // No sessions at all — create default
-        createDefaultSession
+          else IO.pure(Nil)
+        }
+        .map { candidates =>
+          val indexedIds = indexed.map(_.id).toSet
+          candidates.filterNot(m => indexedIds.contains(m.id))
+        }
     }
 
   private def migrateFromLegacy: IO[Unit] =
@@ -158,7 +194,9 @@ class SessionStore(sessionsDir: os.Path):
           "activeId" -> activeId.asJson,
           "sessions" -> sessions.asJson
         )
-        os.write.over(indexFile, json.spaces2, createFolders = true)
+        // Atomic write: write to temp file then rename
+        os.write.over(indexTempFile, json.spaces2, createFolders = true)
+        os.move.over(indexTempFile, indexFile)
       }
     }
 
@@ -257,8 +295,12 @@ class SessionStore(sessionsDir: os.Path):
       }
       .flatMap { case (wasActive, newActiveId) =>
         IO.blocking {
+          // Remove session data files
           val f = sessionFile(id)
           if os.exists(f) then os.remove(f)
+          // Remove task directory
+          val td = tasksDir / id
+          if os.exists(td) then os.remove.all(td)
         } *> deleteUiMessages(id) *> (if wasActive && newActiveId.nonEmpty then
                                         loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
                                       else IO.unit) *> saveIndex

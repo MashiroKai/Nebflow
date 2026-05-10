@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.llm.{Config, NebflowServiceConfig}
 import nebflow.shared.Defaults
+import nebflow.shared.MtimeCache
 
 /**
  * Loads agent definitions from two sources:
@@ -12,8 +13,11 @@ import nebflow.shared.Defaults
  *  1. Builtin agents — classpath:/agents/<name>/  (src/main/resources/agents/)
  *  2. External agents — ~/.nebflow/agents/<name>/  (user-created)
  *
- * External agents with the same name override builtins.
+ * External agents with the same name are ignored (builtins take priority).
  * contextWindow / maxTokens are NOT in agent.json — resolved at runtime from nebflow.json.
+ *
+ * Uses mtime-based caching: external agent directories are cached and only re-read
+ * when their modification time changes. Builtin agents are loaded once and never re-read.
  */
 class AgentLibrary(
   agentsDir: os.Path,
@@ -21,44 +25,44 @@ class AgentLibrary(
 ):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
-  /** In-memory cache — populated on first loadAll(), cleared by refresh(). */
-  private val cache: Ref[IO, Map[String, AgentDef]] = Ref.unsafe(Map.empty)
-
-  /** Resolve context window from nebflow.json primary model config. */
+  /** Resolve context window from nebflow.json default model config. */
   def globalContextWindow: Int =
     serviceConfig match
       case None => Defaults.ContextWindow
       case Some(cfg) =>
-        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.primary)
+        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.default)
         val provider = cfg.llm.providers
           .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
         provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
 
-  /** Resolve maxTokens from nebflow.json primary model config. */
+  /** Resolve maxTokens from nebflow.json default model config. */
   def globalMaxTokens: Int =
     serviceConfig match
       case None => Defaults.MaxTokens
       case Some(cfg) =>
-        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.primary)
+        val (providerId, modelId) = Config.parseModelRef(cfg.llm.model.default)
         val provider = cfg.llm.providers
           .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
         provider.models.find(_.id == modelId).map(_.maxTokens).getOrElse(Defaults.MaxTokens)
 
   // ============================================================
-  // Builtin agents from classpath
+  // Builtin agents from classpath (immutable, loaded once)
   // ============================================================
 
-  /** List agent directories on the classpath under /agents/. */
-  private def listClasspathAgents(): List[(String, String)] =
-    val builtins = List("Nebula", "context-manage", "Ask")
-    builtins.flatMap { name =>
+  private val builtinAgents: Map[String, AgentDef] =
+    val builtinNames = List("Nebula")
+    builtinNames.flatMap { name =>
       Option(getClass.getResourceAsStream(s"/agents/$name/agent.json")).map { jsonStream =>
         val json =
           try scala.io.Source.fromInputStream(jsonStream).mkString
           finally jsonStream.close()
-        name -> json
+        val defn = io.circe.parser
+          .decode[AgentDef](json)
+          .getOrElse(AgentDef(name = name, description = ""))
+          .copy(systemPrompt = loadClasspathSystemMd(name))
+        defn.name -> defn
       }
-    }
+    }.toMap
 
   /** Load system.md for a builtin agent from classpath. */
   private def loadClasspathSystemMd(name: String): String =
@@ -69,67 +73,44 @@ class AgentLibrary(
       case None => ""
 
   // ============================================================
-  // External agents from filesystem
+  // External agents from filesystem (mtime-cached)
   // ============================================================
 
-  private def loadExternalAgents(): Map[String, AgentDef] =
-    if !os.exists(agentsDir) then Map.empty
-    else
-      os.list(agentsDir)
-        .filter(os.isDir)
-        .flatMap { dir =>
-          val jsonPath = dir / "agent.json"
-          if os.exists(jsonPath) then
-            val defn = AgentDef.parseJson(os.read(jsonPath), dir)
-            Some(defn.name -> defn)
+  private val externalCache = MtimeCache.directory[String, AgentDef](
+    () =>
+      if !os.exists(agentsDir) then Nil
+      else
+        os.list(agentsDir).filter(os.isDir).toList.flatMap { dir =>
+          if os.exists(dir / "agent.json") then Some(dir.last -> dir)
           else None
         }
-        .toMap
+    ,
+    (name, dir) => AgentDef.parseJson(os.read(dir / "agent.json"), dir)
+  )
 
   // ============================================================
-  // Loading with cache
+  // Public API
   // ============================================================
 
-  /** Load all agent definitions. Uses cache if available. */
+  /** Load all agent definitions (builtins + mtime-cached externals). */
   def loadAll(): IO[Map[String, AgentDef]] =
-    cache.get.flatMap { cached =>
-      if cached.nonEmpty then IO.pure(cached)
-      else forceReload()
-    }
-
-  /** Force rescan from classpath + filesystem and update cache. */
-  def forceReload(): IO[Map[String, AgentDef]] =
-    IO.blocking {
-      val builtins = listClasspathAgents().map { case (name, json) =>
-        val defn = io.circe.parser
-          .decode[AgentDef](json)
-          .getOrElse(AgentDef(name = name, description = ""))
-          .copy(systemPrompt = loadClasspathSystemMd(name))
-        defn.name -> defn
-      }.toMap
-
-      val externals = loadExternalAgents()
-
+    externalCache.loadAll.map { externals =>
       // Warn and skip external agents that shadow builtins
-      val builtinNames = builtins.keySet
-      val (conflicts, valid) = externals.partition { (name, _) => builtinNames.contains(name) }
+      val (conflicts, valid) = externals.partition { (name, _) => builtinAgents.contains(name) }
       conflicts.foreach { (name, _) =>
         logger.warn(
           s"External agent '$name' conflicts with builtin — ignored. Remove it from ${agentsDir}/$name/ to use the builtin."
         )
       }
-
-      builtins ++ valid
-    }.flatTap { defs =>
-      cache.set(defs) *> IO(logger.info(s"Loaded ${defs.size} agents: ${defs.keys.mkString(", ")}"))
+      builtinAgents ++ valid
     }
 
-  /** Get a single agent by name. Uses cache. */
+  /** Get a single agent by name. */
   def get(name: String): IO[Option[AgentDef]] =
     loadAll().map(_.get(name))
 
-  /** Clear cache — next loadAll() will rescan. Call after create/update operations. */
-  def refresh(): IO[Unit] = cache.set(Map.empty)
+  /** Clear cache — next loadAll() will re-read external agents from disk. */
+  def refresh(): IO[Unit] = externalCache.invalidate
 
   /** Returns frontend configs from agents that declare them. */
   def frontendConfigs(): IO[Map[String, FrontendConfig]] =

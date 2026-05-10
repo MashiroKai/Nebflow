@@ -33,38 +33,77 @@ trait HookEngine:
   // Convenience methods — type-safe wrappers
 
   final def beforeTool(toolName: String, toolInput: JsonObject, context: HookContext): IO[HookResult] =
-    emit(HookEvent.PreToolUse, HookPayload(
-      toolName = Some(toolName),
-      toolInput = Some(toolInput)
-    ), context, Some(toolName))
+    emit(
+      HookEvent.PreToolUse,
+      HookPayload(
+        toolName = Some(toolName),
+        toolInput = Some(toolInput)
+      ),
+      context,
+      Some(toolName)
+    )
 
-  final def afterTool(toolName: String, toolInput: JsonObject, toolOutput: String, success: Boolean, context: HookContext): IO[HookResult] =
-    emit(HookEvent.PostToolUse, HookPayload(
-      toolName = Some(toolName),
-      toolInput = Some(toolInput),
-      toolOutput = Some(toolOutput),
-      toolSuccess = Some(success)
-    ), context, Some(toolName))
+  final def afterTool(
+    toolName: String,
+    toolInput: JsonObject,
+    toolOutput: String,
+    success: Boolean,
+    context: HookContext
+  ): IO[HookResult] =
+    emit(
+      HookEvent.PostToolUse,
+      HookPayload(
+        toolName = Some(toolName),
+        toolInput = Some(toolInput),
+        toolOutput = Some(toolOutput),
+        toolSuccess = Some(success)
+      ),
+      context,
+      Some(toolName)
+    )
 
-  final def afterToolFailure(toolName: String, toolInput: JsonObject, toolOutput: String, context: HookContext): IO[HookResult] =
-    emit(HookEvent.PostToolUseFailure, HookPayload(
-      toolName = Some(toolName),
-      toolInput = Some(toolInput),
-      toolOutput = Some(toolOutput),
-      toolSuccess = Some(false)
-    ), context, Some(toolName))
+  final def afterToolFailure(
+    toolName: String,
+    toolInput: JsonObject,
+    toolOutput: String,
+    context: HookContext
+  ): IO[HookResult] =
+    emit(
+      HookEvent.PostToolUseFailure,
+      HookPayload(
+        toolName = Some(toolName),
+        toolInput = Some(toolInput),
+        toolOutput = Some(toolOutput),
+        toolSuccess = Some(false)
+      ),
+      context,
+      Some(toolName)
+    )
 
   final def beforeCompact(messagesBefore: Int, context: HookContext): IO[HookResult] =
-    emit(HookEvent.PreCompact, HookPayload(
-      compactMessagesBefore = Some(messagesBefore)
-    ), context)
+    emit(
+      HookEvent.PreCompact,
+      HookPayload(
+        compactMessagesBefore = Some(messagesBefore)
+      ),
+      context
+    )
 
-  final def afterCompact(messagesBefore: Int, messagesAfter: Int, tokensSaved: Long, context: HookContext): IO[HookResult] =
-    emit(HookEvent.PostCompact, HookPayload(
-      compactMessagesBefore = Some(messagesBefore),
-      compactMessagesAfter = Some(messagesAfter),
-      compactTokensSaved = Some(tokensSaved)
-    ), context)
+  final def afterCompact(
+    messagesBefore: Int,
+    messagesAfter: Int,
+    tokensSaved: Long,
+    context: HookContext
+  ): IO[HookResult] =
+    emit(
+      HookEvent.PostCompact,
+      HookPayload(
+        compactMessagesBefore = Some(messagesBefore),
+        compactMessagesAfter = Some(messagesAfter),
+        compactTokensSaved = Some(tokensSaved)
+      ),
+      context
+    )
 
   final def onSessionStart(context: HookContext): IO[HookResult] =
     emit(HookEvent.SessionStart, HookPayload(), context)
@@ -94,13 +133,12 @@ object HookEngine:
       toolName: Option[String] = None
     ): IO[HookResult] =
       config.hooks.get(event.toString) match
-        case None | Some(Nil) => IO.pure(HookResult.allow)  // no hooks configured for this event
+        case None | Some(Nil) => IO.pure(HookResult.allow) // no hooks configured for this event
         case Some(rules) =>
           // Filter by matcher (Tool events) or select all (non-Tool events)
-          val matched = if event.hasMatcher then
-            rules.filter(r => HookMatcher.matches(r.matcher, toolName.getOrElse("")))
-          else
-            rules  // Compact/Lifecycle events fire all rules
+          val matched =
+            if event.hasMatcher then rules.filter(r => HookMatcher.matches(r.matcher, toolName.getOrElse("")))
+            else rules // Compact/Lifecycle events fire all rules
 
           if matched.isEmpty then IO.pure(HookResult.allow)
           else
@@ -118,13 +156,16 @@ object HookEngine:
       val allDefs = rules.flatMap(_.hooks)
       if allDefs.isEmpty then IO.pure(HookResult.allow)
       else
-        allDefs.parTraverse { defn =>
-          HookRunner.run(defn, event, payload, context, toolName)
-        }.map { results =>
-          results.foldLeft(HookResult.allow)(HookResult.merge)
-        }
+        allDefs
+          .parTraverse { defn =>
+            HookRunner.run(defn, event, payload, context, toolName)
+          }
+          .map { results =>
+            results.foldLeft(HookResult.allow)(HookResult.merge)
+          }
 
   /** No-op engine — used when no hooks are configured. */
   val noop: HookEngine = new HookEngine:
     def emit(event: HookEvent, payload: HookPayload, context: HookContext, toolName: Option[String]): IO[HookResult] =
       IO.pure(HookResult.allow)
+end HookEngine

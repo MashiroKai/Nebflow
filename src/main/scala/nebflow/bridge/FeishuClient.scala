@@ -20,7 +20,8 @@ class FeishuClient(config: FeishuGlobalConfig):
   private val baseUrl = "https://open.feishu.cn"
 
   private val httpClient: HttpClient =
-    HttpClient.newBuilder()
+    HttpClient
+      .newBuilder()
       .version(HttpClient.Version.HTTP_1_1)
       .build()
 
@@ -45,19 +46,21 @@ class FeishuClient(config: FeishuGlobalConfig):
     yield token
 
   private def fetchNewToken: IO[String] =
-    val body = Json.obj(
-      "app_id" -> config.appId.asJson,
-      "app_secret" -> config.appSecret.asJson
-    ).noSpaces
+    val body = Json
+      .obj(
+        "app_id" -> config.appId.asJson,
+        "app_secret" -> config.appSecret.asJson
+      )
+      .noSpaces
     for
       resp <- post(s"$baseUrl/open-apis/auth/v3/tenant_access_token/internal", body, None)
       parsed <- IO.fromEither(decode[Json](resp))
       code <- IO.fromOption(parsed.hcursor.downField("code").as[Int].toOption)(
         new RuntimeException(s"Feishu token response missing code: ${resp.take(200)}")
       )
-      _ <- if code != 0 then
-        IO.raiseError(new RuntimeException(s"Feishu token error (code=$code): ${resp.take(300)}"))
-      else IO.unit
+      _ <-
+        if code != 0 then IO.raiseError(new RuntimeException(s"Feishu token error (code=$code): ${resp.take(300)}"))
+        else IO.unit
       token <- IO.fromEither(parsed.hcursor.downField("tenant_access_token").as[String])
       expire <- IO.fromEither(parsed.hcursor.downField("expire").as[Int].map(_.toLong))
       now <- IO(System.currentTimeMillis() / 1000)
@@ -71,11 +74,13 @@ class FeishuClient(config: FeishuGlobalConfig):
   def sendTextMessage(receiveId: String, receiveIdType: String, text: String): IO[String] =
     for
       token <- requestToken
-      body = Json.obj(
-        "receive_id" -> receiveId.asJson,
-        "msg_type" -> "text".asJson,
-        "content" -> Json.obj("text" -> text.asJson).asJson
-      ).noSpaces
+      body = Json
+        .obj(
+          "receive_id" -> receiveId.asJson,
+          "msg_type" -> "text".asJson,
+          "content" -> Json.obj("text" -> text.asJson).noSpaces.asJson
+        )
+        .noSpaces
       resp <- post(s"$baseUrl/open-apis/im/v1/messages?receive_id_type=$receiveIdType", body, Some(token))
       parsed <- IO.fromEither(decode[Json](resp))
       msgId <- IO.fromEither(
@@ -87,11 +92,13 @@ class FeishuClient(config: FeishuGlobalConfig):
   def sendCardMessage(receiveId: String, receiveIdType: String, card: Json): IO[String] =
     for
       token <- requestToken
-      body = Json.obj(
-        "receive_id" -> receiveId.asJson,
-        "msg_type" -> "interactive".asJson,
-        "content" -> card.asJson
-      ).noSpaces
+      body = Json
+        .obj(
+          "receive_id" -> receiveId.asJson,
+          "msg_type" -> "interactive".asJson,
+          "content" -> card.noSpaces.asJson
+        )
+        .noSpaces
       resp <- post(s"$baseUrl/open-apis/im/v1/messages?receive_id_type=$receiveIdType", body, Some(token))
       parsed <- IO.fromEither(decode[Json](resp))
       msgId <- IO.fromEither(
@@ -103,9 +110,11 @@ class FeishuClient(config: FeishuGlobalConfig):
   def patchMessage(messageId: String, text: String): IO[Unit] =
     for
       token <- requestToken
-      body = Json.obj(
-        "content" -> Json.obj("text" -> text.asJson).asJson
-      ).noSpaces
+      body = Json
+        .obj(
+          "content" -> Json.obj("text" -> text.asJson).asJson
+        )
+        .noSpaces
       _ <- patch(s"$baseUrl/open-apis/im/v1/messages/$messageId", body, token)
     yield ()
 
@@ -113,31 +122,29 @@ class FeishuClient(config: FeishuGlobalConfig):
 
   private def post(url: String, body: String, bearerToken: Option[String]): IO[String] =
     IO.blocking {
-      val builder = HttpRequest.newBuilder()
+      val builder = HttpRequest
+        .newBuilder()
         .uri(URI.create(url))
         .header("Content-Type", "application/json")
         .POST(HttpRequest.BodyPublishers.ofString(body))
       bearerToken.foreach(t => builder.header("Authorization", s"Bearer $t"))
       val response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-      if response.statusCode() >= 200 && response.statusCode() < 300 then
-        response.body()
-      else
-        throw new RuntimeException(s"Feishu API HTTP ${response.statusCode()}: ${response.body().take(300)}")
+      if response.statusCode() >= 200 && response.statusCode() < 300 then response.body()
+      else throw new RuntimeException(s"Feishu API HTTP ${response.statusCode()}: ${response.body().take(300)}")
     }
 
   private def patch(url: String, body: String, bearerToken: String): IO[String] =
     IO.blocking {
-      val request = HttpRequest.newBuilder()
+      val request = HttpRequest
+        .newBuilder()
         .uri(URI.create(url))
         .header("Content-Type", "application/json")
         .header("Authorization", s"Bearer $bearerToken")
         .method("PATCH", HttpRequest.BodyPublishers.ofString(body))
         .build()
       val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-      if response.statusCode() >= 200 && response.statusCode() < 300 then
-        response.body()
-      else
-        throw new RuntimeException(s"Feishu API HTTP ${response.statusCode()}: ${response.body().take(300)}")
+      if response.statusCode() >= 200 && response.statusCode() < 300 then response.body()
+      else throw new RuntimeException(s"Feishu API HTTP ${response.statusCode()}: ${response.body().take(300)}")
     }
 
 end FeishuClient

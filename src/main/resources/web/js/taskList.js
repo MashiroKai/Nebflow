@@ -1,4 +1,5 @@
 const MAX_VISIBLE = 10;
+const COLLAPSED_KEY = 'nebflow-task-collapsed';
 
 const iconMap = {
   pending: 'square',
@@ -6,6 +7,14 @@ const iconMap = {
 };
 
 const activeStatuses = new Set(['pending', 'in_progress']);
+
+function isCollapsed() {
+  try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
+}
+
+function setCollapsed(v) {
+  try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0'); } catch {}
+}
 
 export function renderTaskList(tasks) {
   const container = document.getElementById('task-list');
@@ -30,6 +39,8 @@ export function renderTaskList(tasks) {
 
   container.classList.add('has-tasks');
 
+  const collapsed = isCollapsed();
+
   // Sort: in_progress first, then pending by ID
   const sorted = [...active].sort((a, b) => {
     if (a.status !== b.status) {
@@ -43,8 +54,9 @@ export function renderTaskList(tasks) {
   const counts = { pending: 0, in_progress: 0 };
   active.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
 
-  let html = '<div class="task-card">';
+  let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
   html += '<div class="task-header">';
+  html += `<button class="task-toggle" title="${collapsed ? '展开' : '收起'}"><i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i></button>`;
   html += `<span class="task-count">${active.length} task${active.length !== 1 ? 's' : ''}</span>`;
   const parts = [];
   if (terminalCount > 0) parts.push(`${terminalCount} done`);
@@ -52,6 +64,8 @@ export function renderTaskList(tasks) {
   if (counts.pending > 0) parts.push(`${counts.pending} open`);
   if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
   html += '</div>';
+
+  html += `<div class="task-body">`;
 
   const visible = sorted.slice(0, MAX_VISIBLE);
   visible.forEach(task => {
@@ -78,10 +92,27 @@ export function renderTaskList(tasks) {
     html += `<div class="task-more">+${sorted.length - MAX_VISIBLE} more</div>`;
   }
 
-  html += '</div>';
+  html += '</div>'; // .task-body
+  html += '</div>'; // .task-card
   container.innerHTML = html;
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
+
+  // Toggle handler
+  const toggleBtn = container.querySelector('.task-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      const card = container.querySelector('.task-card');
+      if (!card) return;
+      const nowCollapsed = !card.classList.contains('collapsed');
+      card.classList.toggle('collapsed', nowCollapsed);
+      setCollapsed(nowCollapsed);
+      toggleBtn.title = nowCollapsed ? '展开' : '收起';
+      const icon = toggleBtn.querySelector('i');
+      if (icon) icon.setAttribute('data-lucide', nowCollapsed ? 'chevron-down' : 'chevron-up');
+      if (typeof lucide !== 'undefined') lucide.createIcons();
+    });
+  }
 }
 
 function escapeHtml(str) {

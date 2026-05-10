@@ -95,13 +95,14 @@ Usage:
 
           val totalLines = lines.length
           val showedLines = selected.length
+          val isPartialView = start > 0 || showedLines < totalLines
           val suffix = if showedLines < totalLines then s"\n\n(showing $showedLines of $totalLines lines)" else ""
-          Right(result + suffix)
+          Right((result + suffix, isPartialView))
         catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
     }.flatMap {
-      case Right(output) =>
-        ctx.readTracker.traverse_(_.recordRead(filePath)).as(Right(output))
-      case left => IO.pure(left)
+      case Right((output, isPartialView)) =>
+        ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView)).as(Right(output))
+      case Left(err) => IO.pure(Left(err))
     }
   end call
 end ReadTool
