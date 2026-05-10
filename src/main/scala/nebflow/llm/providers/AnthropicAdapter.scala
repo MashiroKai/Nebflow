@@ -365,7 +365,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                   model = params.model,
                   durationMs = 0
                 )
-                List(StreamChunk.Done(stopReason, usage, Some(meta)))
+                List(StreamChunk.Done(stopReason, usage, Some(meta), None))
               }
             case _ => IO.pure(Nil)
 end AnthropicAdapter

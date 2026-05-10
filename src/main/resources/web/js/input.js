@@ -16,6 +16,13 @@ const slashCommands = {
       renderSystemBubble('Context cleared. LLM memory reset.');
     }
   },
+  '/compact': {
+    desc: 'Manually trigger context compaction',
+    run: () => {
+      sendWs({type:'command', command:'compact', sessionId: state.activeSessionId});
+      renderSystemBubble('Compaction triggered...');
+    }
+  },
   '/thinking': {
     desc: 'Toggle extended thinking (Deep mode)',
     run: () => {
@@ -547,55 +554,114 @@ export function initInput() {
   });
 
   // Voice start/stop — Web Speech API
-  function startVoice(e) {
-    e.preventDefault();
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert('Voice input not supported in this browser. Try Chrome.');
-      return;
-    }
-    state.recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-    state.recognition.lang = 'zh-CN';
-    state.recognition.continuous = true;
-    state.recognition.interimResults = true;
-    voiceOverlay.classList.add('on');
-    voiceText.textContent = 'Listening...';
-    const voiceBase = input.value; // text before this voice session
+  let voiceActive = false;      // user intent: is button held down?
+  let voiceFinal = '';           // accumulated finalized text this session
+  let voiceBase = '';            // text before this voice session
+  let voiceRestartCount = 0;     // auto-restart counter (prevent infinite loop)
+  const VOICE_MAX_RESTARTS = 10; // max auto-restarts per hold session
 
-    let voiceFinal = ''; // accumulated finalized text this session
-    state.recognition.onresult = (ev) => {
+  function createRecognition() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new SR();
+    rec.lang = 'zh-CN';
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.maxAlternatives = 3;
+
+    rec.onresult = (ev) => {
       let interimText = '';
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        const t = ev.results[i][0].transcript;
-        if (ev.results[i].isFinal) voiceFinal += t;
+        // Pick the best alternative (highest confidence)
+        const result = ev.results[i];
+        let bestIdx = 0;
+        let bestConf = result[0].confidence || 0;
+        for (let j = 1; j < result.length; j++) {
+          const c = result[j].confidence || 0;
+          if (c > bestConf) { bestConf = c; bestIdx = j; }
+        }
+        const t = result[bestIdx].transcript;
+        if (result.isFinal) voiceFinal += t;
         else interimText += t;
       }
       const current = voiceFinal + interimText;
       voiceText.textContent = current || 'Listening...';
       input.value = voiceBase + (voiceBase && current ? ' ' : '') + current;
     };
-    state.recognition.onerror = (ev) => {
+
+    rec.onerror = (ev) => {
+      // no-speech and aborted are benign — auto-restart if still holding
+      if (ev.error === 'no-speech' || ev.error === 'aborted') {
+        if (voiceActive && voiceRestartCount < VOICE_MAX_RESTARTS) {
+          try { rec.start(); voiceRestartCount++; } catch (_) { /* already started */ }
+          return;
+        }
+      }
+      // network errors — retry once
+      if (ev.error === 'network' && voiceActive && voiceRestartCount < 3) {
+        setTimeout(() => {
+          if (voiceActive) {
+            try { rec.start(); voiceRestartCount++; } catch (_) {}
+          }
+        }, 500);
+        return;
+      }
       voiceText.textContent = 'Error: ' + ev.error;
-      setTimeout(() => stopVoice(), 1000);
+      setTimeout(() => { if (!voiceActive) return; stopVoice(); }, 1500);
     };
-    state.recognition.onend = () => {
+
+    rec.onend = () => {
+      // If user is still holding button, auto-restart recognition
+      if (voiceActive && voiceRestartCount < VOICE_MAX_RESTARTS) {
+        try {
+          state.recognition.start();
+          voiceRestartCount++;
+        } catch (_) { /* already started */ }
+        return;
+      }
+      // User released or max restarts reached — clean up UI
       voiceOverlay.classList.remove('on');
       voiceBtn.classList.remove('recording');
     };
+
+    return rec;
+  }
+
+  function startVoice(e) {
+    e.preventDefault();
+    // Prevent touch→mouse double-fire
+    if (voiceActive) return;
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      alert('Voice input not supported in this browser. Try Chrome.');
+      return;
+    }
+    voiceActive = true;
+    voiceBase = input.value;
+    voiceFinal = '';
+    voiceRestartCount = 0;
+    state.recognition = createRecognition();
     state.recognition.start();
+    voiceOverlay.classList.add('on');
+    voiceText.textContent = 'Listening...';
     voiceBtn.classList.add('recording');
   }
 
   function stopVoice() {
-    if (state.recognition) { state.recognition.stop(); state.recognition = null; }
+    voiceActive = false;
+    if (state.recognition) {
+      try { state.recognition.stop(); } catch (_) {}
+      state.recognition = null;
+    }
     voiceOverlay.classList.remove('on');
     voiceBtn.classList.remove('recording');
   }
 
+  // Mousedown/touchstart on button starts recording
   voiceBtn.addEventListener('mousedown', startVoice);
-  voiceBtn.addEventListener('mouseup', stopVoice);
-  voiceBtn.addEventListener('mouseleave', stopVoice);
-  voiceBtn.addEventListener('touchstart', startVoice, {passive:false});
-  voiceBtn.addEventListener('touchend', stopVoice);
+  voiceBtn.addEventListener('touchstart', startVoice, {passive: false});
+  // Mouseup/touchend on DOCUMENT catches releases even if pointer left the button
+  document.addEventListener('mouseup', (e) => { if (voiceActive) stopVoice(); });
+  document.addEventListener('touchend', (e) => { if (voiceActive) stopVoice(); });
+  // No mouseleave — that was the primary cause of 断触
 
   // Slash dropdown input listener and document click listener
   input.addEventListener('input', updateSlashDropdown);

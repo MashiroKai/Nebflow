@@ -16,14 +16,14 @@ enum HookEventGroup:
  * Everything else (config, engine, protocol) requires zero changes.
  */
 enum HookEvent(val group: HookEventGroup, val hasMatcher: Boolean):
-  case PreToolUse         extends HookEvent(HookEventGroup.Tool, true)
-  case PostToolUse        extends HookEvent(HookEventGroup.Tool, true)
+  case PreToolUse extends HookEvent(HookEventGroup.Tool, true)
+  case PostToolUse extends HookEvent(HookEventGroup.Tool, true)
   case PostToolUseFailure extends HookEvent(HookEventGroup.Tool, true)
-  case PreCompact         extends HookEvent(HookEventGroup.Compact, false)
-  case PostCompact        extends HookEvent(HookEventGroup.Compact, false)
-  case SessionStart       extends HookEvent(HookEventGroup.Lifecycle, false)
-  case SessionEnd         extends HookEvent(HookEventGroup.Lifecycle, false)
-  case Stop               extends HookEvent(HookEventGroup.Lifecycle, false)
+  case PreCompact extends HookEvent(HookEventGroup.Compact, false)
+  case PostCompact extends HookEvent(HookEventGroup.Compact, false)
+  case SessionStart extends HookEvent(HookEventGroup.Lifecycle, false)
+  case SessionEnd extends HookEvent(HookEventGroup.Lifecycle, false)
+  case Stop extends HookEvent(HookEventGroup.Lifecycle, false)
 
 object HookEvent:
   /** Parse from config key string, e.g. "PreToolUse". */
@@ -51,21 +51,21 @@ case class HookPayload(
 
 /** A single hook definition (one command to run). */
 case class HookDef(
-  `type`: String,               // "command" (Phase 1 only; future: "prompt", "http")
-  command: String,              // shell command template
-  timeout: Int = 60,            // seconds
+  `type`: String, // "command" (Phase 1 only; future: "prompt", "http")
+  command: String, // shell command template
+  timeout: Int = 60, // seconds
   continueOnError: Boolean = true
 )
 
 /** A matcher + its hooks. matcher is only used for Tool events. */
 case class HookRule(
-  matcher: String,              // e.g. "Edit|Write", "*", "Bash"
+  matcher: String, // e.g. "Edit|Write", "*", "Bash"
   hooks: List[HookDef]
 )
 
 /** Top-level hooks config parsed from nebflow.json. */
 case class HooksConfig(
-  hooks: Map[String, List[HookRule]]  // key = event name string, e.g. "PreToolUse"
+  hooks: Map[String, List[HookRule]] // key = event name string, e.g. "PreToolUse"
 )
 
 object HooksConfig:
@@ -97,14 +97,16 @@ object HookResult:
   /** Merge two results: block wins, contexts are concatenated. */
   def merge(a: HookResult, b: HookResult): HookResult =
     HookResult(
-      decision = if a.decision == HookDecision.Block || b.decision == HookDecision.Block
-        then HookDecision.Block else HookDecision.Allow,
+      decision =
+        if a.decision == HookDecision.Block || b.decision == HookDecision.Block
+        then HookDecision.Block
+        else HookDecision.Allow,
       reason = (a.reason, b.reason) match
         case (Some(ra), Some(rb)) => Some(s"$ra; $rb")
         case (Some(r), None) => Some(r)
         case (None, Some(r)) => Some(r)
         case _ => None,
-      updatedInput = b.updatedInput.orElse(a.updatedInput),  // last wins
+      updatedInput = b.updatedInput.orElse(a.updatedInput), // last wins
       additionalContext = (a.additionalContext, b.additionalContext) match
         case (Some(ca), Some(cb)) => Some(s"$ca\n$cb")
         case (Some(c), None) => Some(c)
@@ -113,6 +115,7 @@ object HookResult:
       shouldStop = a.shouldStop || b.shouldStop,
       stopReason = b.stopReason.orElse(a.stopReason)
     )
+end HookResult
 
 // ============================================================
 // Hook execution context

@@ -26,13 +26,21 @@ import scala.collection.mutable
  */
 object FeishuWire:
 
-  val METHOD_CONTROL = 1
-  val METHOD_DATA = 2
+  // Must match the official Feishu SDK (com.lark.oapi.ws.enums.FrameType)
+  val METHOD_CONTROL = 0
+  val METHOD_DATA = 1
 
-  val PAYLOAD_PING = "ping"
-  val PAYLOAD_PONG = "pong"
-  val PAYLOAD_EVENT = "event"
-  val PAYLOAD_CARD = "card"
+  // Header keys — same as official SDK (com.lark.oapi.ws.Constant)
+  val HEADER_TYPE = "type"
+  val HEADER_MESSAGE_ID = "message_id"
+  val HEADER_SUM = "sum"
+  val HEADER_SEQ = "seq"
+
+  // Message types — sent in the "type" header
+  val MSG_PING = "ping"
+  val MSG_PONG = "pong"
+  val MSG_EVENT = "event"
+  val MSG_CARD = "card"
 
   case class Frame(
     seqId: Long = 0,
@@ -50,8 +58,8 @@ object FeishuWire:
 
   private def encodeVarint(buf: ByteArrayOutputStream, value: Long): Unit =
     var v = value
-    while (v & ~0x7FL) != 0 do
-      buf.write((v & 0x7F).toInt | 0x80)
+    while (v & ~0x7fL) != 0 do
+      buf.write((v & 0x7f).toInt | 0x80)
       v >>= 7
     buf.write(v.toInt)
 
@@ -93,20 +101,40 @@ object FeishuWire:
     encodeStringField(buf, 9, frame.logIdNew)
     buf.toByteArray
 
-  /** Build a ping frame. */
-  def pingFrame: Array[Byte] =
-    encodeFrame(Frame(method = METHOD_CONTROL, payloadType = PAYLOAD_PING))
+  /**
+   * Build a client ping frame (same as official SDK's newPingFrame).
+   *  Uses method=CONTROL(0) and header type="ping".
+   */
+  def pingFrame(serviceId: Int): Array[Byte] =
+    encodeFrame(
+      Frame(
+        service = serviceId,
+        method = METHOD_CONTROL,
+        headers = List(HEADER_TYPE -> MSG_PING)
+      )
+    )
 
-  /** Build an ACK frame for a received data frame. */
-  def ackFrame(original: Frame): Array[Byte] =
-    encodeFrame(Frame(
-      seqId = original.seqId,
-      logId = original.logId,
-      service = 1,
-      method = 2,
-      headers = List("code" -> "0", "msg" -> "success"),
-      logIdNew = original.logIdNew
-    ))
+  /** Build a ping frame with default serviceId. */
+  def pingFrame: Array[Byte] = pingFrame(0)
+
+  /**
+   * Build a data ACK frame (same as official SDK's response in handleDataFrame).
+   *  Reuses original frame fields, replaces payload with JSON response.
+   */
+  def dataAckFrame(original: Frame): Array[Byte] =
+    val respJson = """{"code":200}"""
+    encodeFrame(
+      Frame(
+        seqId = original.seqId,
+        logId = original.logId,
+        service = original.service,
+        method = METHOD_DATA,
+        headers = original.headers :+ (HEADER_BIZ_RT -> "0"),
+        payload = respJson.getBytes("UTF-8")
+      )
+    )
+
+  private val HEADER_BIZ_RT = "biz_rt"
 
   // ===== Decoding =====
 
@@ -116,8 +144,8 @@ object FeishuWire:
     var pos = offset
     var cont = true
     while cont && pos < data.length do
-      val b = data(pos) & 0xFF
-      result |= ((b & 0x7FL) << shift)
+      val b = data(pos) & 0xff
+      result |= ((b & 0x7fL) << shift)
       pos += 1
       if (b & 0x80) == 0 then cont = false else shift += 7
     (result, pos)
@@ -184,10 +212,14 @@ object FeishuWire:
             case 8 => payload = bytes
             case 9 => logIdNew = new String(bytes, "UTF-8")
             case _ =>
+          end match
         case _ =>
           // skip unknown wire type (shouldn't happen in practice)
           pos = data.length
+      end match
+    end while
 
     Frame(seqId, logId, service, method, headers.toList, payloadEncoding, payloadType, payload, logIdNew)
+  end decodeFrame
 
 end FeishuWire

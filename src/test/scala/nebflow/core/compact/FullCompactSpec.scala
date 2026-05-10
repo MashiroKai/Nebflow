@@ -124,4 +124,64 @@ class FullCompactSpec extends CatsEffectSuite:
     val result = FullCompact.parseResponse("", Nil)
     assert(result.isLeft)
   }
+
+  test("parseResponse preserves recent rounds for long conversations") {
+    val messages = (1 to 10).flatMap { i =>
+      List(
+        textMsg(MessageRole.User, s"user message $i"),
+        textMsg(MessageRole.Assistant, s"assistant reply $i")
+      )
+    }.toList
+    val llmOut = "<summary>1. Primary Request: Multi-turn conversation.</summary>"
+
+    val result = FullCompact.parseResponse(llmOut, messages, "/tmp/project")
+    assert(result.isRight)
+    val compacted = result.toOption.get
+    assert(compacted.size > 1, clues(compacted.size))
+    val summaryContent = compacted.head.content.left.getOrElse("")
+    assert(summaryContent.contains("<context-compact"))
+    assert(summaryContent.contains("preserved recent messages"))
+    val preserved = compacted.tail
+    assert(preserved.exists(_.textContent.contains("assistant reply 10")), "Should preserve most recent assistant")
+    assert(preserved.exists(_.textContent.contains("user message 10")), "Should preserve most recent user")
+  }
+
+  test("parseResponse includes continuation prompt in summary") {
+    val messages = List(
+      textMsg(MessageRole.User, "hello"),
+      textMsg(MessageRole.Assistant, "world"),
+      textMsg(MessageRole.User, "bye")
+    )
+    val llmOut = "<summary>Brief summary.</summary>"
+    val result = FullCompact.parseResponse(llmOut, messages)
+    assert(result.isRight)
+    val content = result.toOption.get.head.content.left.getOrElse("")
+    assert(content.contains("Continue the conversation"))
+    assert(content.contains("do not acknowledge the summary"))
+  }
+
+  test("parseResponse does not preserve rounds for short conversations") {
+    val messages = List(
+      textMsg(MessageRole.User, "hello"),
+      textMsg(MessageRole.Assistant, "world")
+    )
+    val llmOut = "<summary>Brief summary.</summary>"
+    val result = FullCompact.parseResponse(llmOut, messages)
+    assert(result.isRight)
+    val compacted = result.toOption.get
+    assert(clue(compacted.size) == 1)
+  }
+
+  test("parseResponse accepts recentReadPaths for file restoration") {
+    val messages = List(
+      textMsg(MessageRole.User, "hello"),
+      textMsg(MessageRole.Assistant, "world"),
+      textMsg(MessageRole.User, "bye")
+    )
+    val llmOut = "<summary>Brief summary.</summary>"
+    val result = FullCompact.parseResponse(llmOut, messages, "/tmp/nonexistent", List("/tmp/nonexistent/file.txt"))
+    assert(result.isRight)
+    val content = result.toOption.get.head.content.left.getOrElse("")
+    assert(!content.contains("Restored file contents"))
+  }
 end FullCompactSpec

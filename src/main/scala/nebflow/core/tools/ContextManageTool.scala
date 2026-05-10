@@ -5,6 +5,19 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
 
+/**
+ * ContextManage tool definition.
+ *
+ * Registration: Provides name, description, inputSchema for LLM tool definitions.
+ *
+ * Execution path: NOT via the normal executeTool pipeline. Instead,
+ * pipeToolExecutions separates ContextManage calls and generates synthetic results.
+ * The actual compaction is triggered directly in the ToolsComplete handler via
+ * handleTriggerCompaction — this avoids stash timing issues that would occur if
+ * TriggerCompaction were sent as a message during processing state.
+ *
+ * The `call` method exists as a safety fallback but is never invoked in practice.
+ */
 object ContextManageTool extends Tool:
   val name = "ContextManage"
 

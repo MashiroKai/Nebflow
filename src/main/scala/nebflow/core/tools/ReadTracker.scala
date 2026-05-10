@@ -4,26 +4,36 @@ import cats.effect.{IO, Ref}
 
 import java.nio.file.Path
 
-class ReadTracker private (state: Ref[IO, Vector[(Path, Long)]]):
+case class ReadEntry(
+  path: Path,
+  timestamp: Long,
+  isPartialView: Boolean = false
+)
+
+class ReadTracker private (state: Ref[IO, Vector[ReadEntry]]):
 
   /** Record a file read with current timestamp. Updates timestamp if already tracked. */
-  def recordRead(path: Path): IO[Unit] = state.update { entries =>
-    val filtered = entries.filterNot(_._1 == path)
-    filtered :+ (path -> System.currentTimeMillis())
+  def recordRead(path: Path, isPartialView: Boolean = false): IO[Unit] = state.update { entries =>
+    val filtered = entries.filterNot(_.path == path)
+    filtered :+ ReadEntry(path, System.currentTimeMillis(), isPartialView)
   }
 
-  def hasBeenRead(path: Path): IO[Boolean] = state.get.map(_.exists(_._1 == path))
+  def hasBeenRead(path: Path): IO[Boolean] = state.get.map(_.exists(_.path == path))
+
+  /** True if the most recent read of this path was a partial view (offset/limit or truncated). */
+  def isPartialView(path: Path): IO[Boolean] =
+    state.get.map(_.findLast(_.path == path).exists(_.isPartialView))
 
   def clear(): IO[Unit] = state.set(Vector.empty)
 
   /** Return the N most recently read file paths (most recent first). */
   def recentFiles(n: Int): IO[List[Path]] =
-    state.get.map(_.takeRight(n).reverse.map(_._1).toList)
+    state.get.map(_.takeRight(n).reverse.map(_.path).toList)
 
   /** Return all tracked paths (for backward compat). */
-  def allPaths: IO[Set[Path]] = state.get.map(_.map(_._1).toSet)
+  def allPaths: IO[Set[Path]] = state.get.map(_.map(_.path).toSet)
 
 object ReadTracker:
 
   def create: IO[ReadTracker] =
-    Ref.of[IO, Vector[(Path, Long)]](Vector.empty).map(new ReadTracker(_))
+    Ref.of[IO, Vector[ReadEntry]](Vector.empty).map(new ReadTracker(_))

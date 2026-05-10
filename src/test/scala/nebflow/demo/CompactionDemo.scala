@@ -82,7 +82,7 @@ class CompactionDemo extends munit.FunSuite:
 
     val estimatedTokens = TokenEstimator.estimate(messages)
     val contextWindow = 128000 // typical Claude 3.5 Sonnet
-    val threshold = contextWindow - CompactConfig().bufferTokens
+    val threshold = contextWindow - CompactConfig().bufferForWindow(contextWindow)
 
     println(s"Estimated tokens (heuristic): $estimatedTokens")
     println(s"Agent context window: $contextWindow")
