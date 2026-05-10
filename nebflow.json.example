@@ -13,7 +13,7 @@
       }
     },
     "model": {
-      "primary": "anthropic/claude-sonnet-4-6",
+      "default": "anthropic/claude-sonnet-4-6",
       "fallbacks": [
         "openai/gpt-4o"
       ]

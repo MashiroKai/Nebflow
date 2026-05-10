@@ -59,8 +59,7 @@ class AgentDefSpec extends CatsEffectSuite:
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
     assert(result.keySet.contains("Nebula"), s"Should contain Nebula: ${result.keySet}")
-    assert(result.keySet.contains("context-manage"), s"Should contain context-manage: ${result.keySet}")
-    assert(result.keySet.contains("Ask"), s"Should contain Ask: ${result.keySet}")
+    assert(result.keySet.size == 1, s"Should have exactly 1 builtin: ${result.keySet}")
   }
 
   test("AgentLibrary.loadAll loads agent with mcp config from disk") {

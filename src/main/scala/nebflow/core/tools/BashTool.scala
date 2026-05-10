@@ -28,12 +28,13 @@ Usage:
 - Only create commits when requested by the user.
 
 Background execution (run_in_background):
-- Use this for commands that take a long time (builds, tests, training, etc.).
-- When you start a background job, the command is running — it will complete on its own.
-- You do NOT need to wait for it. You can either continue with other tasks in this turn, or finish your turn.
-- When the background job finishes, you will be automatically notified with the result. You do not need to poll or re-run the command.
-- This means starting a background job is a valid way to complete a step — you have not abandoned the task.
-- NEVER call run_in_background again for the same command. The job is already running.
+- Use for long-running commands (builds, tests, servers, deploys, remote SSH operations, etc.).
+- You will be automatically notified when the job finishes. DO NOT poll or use sleep loops.
+- After starting a background job, continue with other work or finish your turn.
+- If a foreground command exceeds 2 minutes, it is automatically moved to background — same rules apply.
+
+Querying background jobs (background_job_id):
+- Only query when you receive a "stuck" notification or the user asks about a job's status.
 
 Do not use Bash when a dedicated tool exists:
 | Task | Use | Not Bash |
@@ -336,7 +337,15 @@ Git safety:
           val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
           val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
           val bgDescription = desc.getOrElse(firstLine)
+          // Register the commandFiber into ShellSession so cancelBackgroundJob can find it
+          val register = ShellSession
+            .forSession(ctx.sessionId.getOrElse(""))
+            .flatMap { shell =>
+              shell.registerBackgroundJob(autoBgJobId, commandFiber, command, health)
+            }
+            .handleErrorWith(_ => IO.unit)
           emitBgTaskStarted(ctx, autoBgJobId, bgDescription) *>
+            register *>
             startAutoBgHeartbeat(autoBgJobId, health, resultRef, onHeartbeat) *>
             onComplete.fold(IO.unit) { cb =>
               (for
@@ -433,17 +442,19 @@ Git safety:
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
-    ctx.wsSend.fold(IO.unit) { send =>
-      send(
-        io.circe.Json.obj(
-          "type" -> "backgroundTaskUpdate".asJson,
-          "sessionId" -> ctx.sessionId.asJson,
-          "taskId" -> jobId.asJson,
-          "description" -> description.asJson,
-          "status" -> "running".asJson,
-          "startedAt" -> System.currentTimeMillis().asJson
-        )
-      ).handleErrorWith(_ => IO.unit)
+    ctx.wsSend.fold(
+      IO.println(s"[BgTask] wsSend is None — cannot notify frontend for job $jobId")
+    ) { send =>
+      val json = io.circe.Json.obj(
+        "type" -> "backgroundTaskUpdate".asJson,
+        "sessionId" -> ctx.sessionId.asJson,
+        "taskId" -> jobId.asJson,
+        "description" -> description.asJson,
+        "status" -> "running".asJson,
+        "startedAt" -> System.currentTimeMillis().asJson
+      )
+      IO.println(s"[BgTask] Sending backgroundTaskUpdate: jobId=$jobId sessionId=${ctx.sessionId}") *>
+        send(json).handleErrorWith(e => IO.println(s"[BgTask] WS send failed: ${e.getMessage}"))
     }
 
   /** Build a heartbeat callback that sends WS updates to frontend and stuck notifications to agent. */

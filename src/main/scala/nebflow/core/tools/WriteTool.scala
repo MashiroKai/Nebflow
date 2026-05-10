@@ -87,10 +87,21 @@ Usage:
         if !isNew then
           ctx.readTracker match
             case Some(rt) =>
-              rt.hasBeenRead(filePath).map {
-                case true => Right(())
+              rt.hasBeenRead(filePath).flatMap {
                 case false =>
-                  Left(ToolError(s"File was not read in this session: $filePath. Read it first with the Read tool."))
+                  IO.pure(
+                    Left(ToolError(s"File was not read in this session: $filePath. Read it first with the Read tool."))
+                  )
+                case true =>
+                  rt.isPartialView(filePath).map {
+                    case true =>
+                      Left(
+                        ToolError(
+                          s"File was only partially read (offset/limit or truncated). Read the full file before overwriting: $filePath"
+                        )
+                      )
+                    case false => Right(())
+                  }
               }
             case None => IO.pure(Right(()))
         else IO.pure(Right(()))

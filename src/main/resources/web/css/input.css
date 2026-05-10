@@ -196,3 +196,30 @@
   font-size: 12px;
   color: var(--color-text-muted);
 }
+
+/* ── Dark Theme ───────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  #input-bar {
+    background: #1e1e1e;
+    border-top-color: #333;
+  }
+  #input {
+    background: #2a2a2a;
+    color: #e0e0e0;
+  }
+  #input::placeholder { color: #666; }
+  .icon-btn { color: #999; }
+  .icon-btn:hover { background: rgba(255,255,255,0.06); }
+  .icon-btn.recording { background: rgba(244,67,54,0.15); }
+
+  #slash-dropdown {
+    background: #2a2a2a;
+    box-shadow: 0 -2px 12px rgba(0,0,0,0.4);
+  }
+  .slash-item { border-bottom-color: #333; }
+  .slash-item:hover, .slash-item.active { background: #333; }
+  .slash-item.active { background: rgba(7,193,96,0.12); }
+  .slash-cmd { color: #ddd; }
+
+  .att-file { background: #333; }
+}

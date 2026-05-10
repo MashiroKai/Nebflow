@@ -34,7 +34,7 @@ class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, 
     }
 
   def getCandidates(): List[ModelCandidate] =
-    val chain = config.llm.model.primary :: config.llm.model.fallbacks
+    val chain = config.llm.model.default :: config.llm.model.fallbacks
     chain.map { ref =>
       val (providerId, modelId) = Config.parseModelRef(ref)
       val provider = config.llm.providers.getOrElse(

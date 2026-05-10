@@ -90,6 +90,9 @@ object AgentCommand:
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None
   ) extends AgentCommand
 
+  // Session model switched — update contextWindow for compaction threshold
+  case class UpdateContextWindow(window: Int) extends AgentCommand
+
   // Internal — ReplaceToolResults from RemoveUnnecessaryTool
   case class ReplaceToolResults(
     rounds: Int,
@@ -113,6 +116,9 @@ object AgentCommand:
   // Lifecycle
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
+
+  /** Full session reset — triggered by /clear to reset messages, usage, compaction state, etc. */
+  case object ResetSession extends AgentCommand
 
   // Peer communication (root agent to root agent via ActorRef)
   case class MessageToAgent(
@@ -386,12 +392,14 @@ enum AgentStatus:
 
 case class CompactionResult(before: Int, after: Int)
 
-/** A pending or in-progress compaction sub-agent task. */
+/** A pending or in-progress compaction job. */
 case class CompactionJob(
   subagentId: String,
   mode: String,
   replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
-  replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]] = None
+  replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]] = None,
+  /** When true, resume LLM call after compaction (auto/LLM-triggered). When false, return to idle (user-triggered /compact). */
+  resumeAfterCompact: Boolean = true
 )
 
 // ============================================================
@@ -409,10 +417,12 @@ case class SessionContext(
   wsSend: Json => IO[Unit] = _ => IO.unit,
   depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None,
-  /** Questions from the latest AskUserQuestion call — survives across turns until answered. */
-  pendingAskItems: List[AskItem] = Nil,
   /** Per-file write tracking for verification reminders — scoped to this agent/session. */
-  writesSinceLastRead: Map[String, WriteTrackerEntry] = Map.empty
+  writesSinceLastRead: Map[String, WriteTrackerEntry] = Map.empty,
+  /** Context window for this session's current model — updated when user switches models. */
+  contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
+  /** Cached memory block — refreshed at lifecycle points (new session, compact, clear), not every turn. */
+  memoryBlock: String = ""
 )
 
 /** Pending user interaction deferreds. */
@@ -434,7 +444,9 @@ case class ExecutionContext(
   /** Queued external events to inject after turn (replaces pendingNotifications). */
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
   /** Queued async responses (from AskUserQuestion, ask_parent) to inject after turn. */
-  pendingResponses: List[String] = Nil
+  pendingResponses: List[String] = Nil,
+  /** Retry count for LLM empty responses within a single turn. */
+  emptyResponseRetries: Int = 0
 )
 
 object ExecutionContext:
@@ -450,7 +462,8 @@ object ExecutionContext:
       activeStreamFiber = None,
       interaction = None,
       pendingEvents = Nil,
-      pendingResponses = Nil
+      pendingResponses = Nil,
+      emptyResponseRetries = 0
     )
 end ExecutionContext
 
@@ -489,13 +502,14 @@ object AgentState:
     turnIdx: Int = 0,
     wsSend: Json => IO[Unit] = _ => IO.unit,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
-    recentMessageIds: List[String] = Nil
+    recentMessageIds: List[String] = Nil,
+    contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
       case _ => Some(InteractionState(pendingAskUser, pendingPermission))
     new AgentState(
-      SessionContext(sessionId, sessionName, recentMessageIds, wsSend, depth, readTracker),
+      SessionContext(sessionId, sessionName, recentMessageIds, wsSend, depth, readTracker, Map.empty, contextWindow),
       ExecutionContext(messages, status, turnIdx, 0L, subagents, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
     )
@@ -519,13 +533,15 @@ extension (s: AgentState)
   def compactionFailures: Int = s.compaction.compactionFailures
   def lastCompactionFailureAt: Long = s.compaction.lastCompactionFailureAt
   def latestUsage: Option[TokenUsage] = s.compaction.latestUsage
+  def emptyResponseRetries: Int = s.execution.emptyResponseRetries
   def pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = s.execution.interaction.flatMap(_.pendingAskUser)
 
   def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
     s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
-  def pendingAskItems: List[AskItem] = s.session.pendingAskItems
   def writesSinceLastRead: Map[String, WriteTrackerEntry] = s.session.writesSinceLastRead
+  def contextWindow: Int = s.session.contextWindow
+  def memoryBlock: String = s.session.memoryBlock
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
@@ -565,10 +581,15 @@ extension (s: AgentState)
       )
     )
   def withRecentMessageIds(ids: List[String]): AgentState = s.copy(session = s.session.copy(recentMessageIds = ids))
-  def withPendingAskItems(items: List[AskItem]): AgentState = s.copy(session = s.session.copy(pendingAskItems = items))
 
   def withWritesSinceLastRead(tracker: Map[String, WriteTrackerEntry]): AgentState =
     s.copy(session = s.session.copy(writesSinceLastRead = tracker))
+
+  def withContextWindow(window: Int): AgentState =
+    s.copy(session = s.session.copy(contextWindow = window))
+
+  def withMemoryBlock(block: String): AgentState =
+    s.copy(session = s.session.copy(memoryBlock = block))
 
   def withPendingCompaction(job: Option[CompactionJob]): AgentState =
     s.copy(compaction = s.compaction.copy(pendingJob = job))
@@ -579,8 +600,18 @@ extension (s: AgentState)
   def withLastCompactionFailureAt(ts: Long): AgentState =
     s.copy(compaction = s.compaction.copy(lastCompactionFailureAt = ts))
 
+  def withEmptyResponseRetries(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(emptyResponseRetries = count))
+
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
+
+  /** Update contextWindow only if the LLM reports a different value (e.g. after fallback). */
+  def updateContextWindowIfNeeded(reported: Option[Int]): AgentState =
+    reported match
+      case Some(cw) if cw != s.session.contextWindow =>
+        s.copy(session = s.session.copy(contextWindow = cw))
+      case _ => s
 
   /** Reset execution state to idle — used by finishTurn, Interrupt, LlmFailed. */
   def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =
@@ -604,5 +635,6 @@ case class ConsumeResult(
   stopReason: Option[String],
   usage: Option[TokenUsage] = None,
   thinking: Option[String] = None,
-  model: Option[String] = None
+  model: Option[String] = None,
+  contextWindow: Option[Int] = None
 )

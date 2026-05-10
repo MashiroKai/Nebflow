@@ -35,7 +35,7 @@ export function startInlineNewSession() {
   input.className = 'new-session-input';
   input.type = 'text';
   input.placeholder = 'Session name...';
-  input.style.cssText = 'width:100%;background:#1a1a1a;border:1px solid #444;border-radius:6px;padding:6px 10px;color:#ccc;font-size:13px;font-family:inherit;outline:none;';
+  input.style.cssText = 'width:100%;background:var(--color-frame-input-bg);border:1px solid var(--color-frame-input-border);border-radius:6px;padding:6px 10px;color:var(--color-frame-input-text);font-size:13px;font-family:inherit;outline:none;';
   wrapper.appendChild(input);
   sessionList.prepend(wrapper);
   input.focus();
@@ -111,7 +111,7 @@ export function showAgentModal(name, configJson, systemMd) {
   const autoTools = new Set(state.agentAutoTools || []);
 
   if (allTools.length === 0) {
-    grid.innerHTML = '<div style="color:#999;font-size:12px;">Loading tools...</div>';
+    grid.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">Loading tools...</div>';
     return;
   }
 
@@ -167,7 +167,7 @@ export function showAgentModal(name, configJson, systemMd) {
     mcpSection.innerHTML = '';
     const mcpServers = state.mcpServers || [];
     if (mcpServers.length === 0) {
-      mcpSection.innerHTML = '<div style="color:#666;font-size:12px;">No MCP servers configured</div>';
+      mcpSection.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">No MCP servers configured</div>';
     } else {
       mcpServers.forEach(server => {
         const id = server.id || server;
@@ -186,7 +186,7 @@ export function showAgentModal(name, configJson, systemMd) {
         if (!globallyEnabled) {
           const hint = document.createElement('span');
           hint.textContent = ' (offline)';
-          hint.style.cssText = 'font-size:10px;color:#888;margin-left:2px;';
+          hint.style.cssText = 'font-size:10px;color:var(--color-frame-text-muted);margin-left:2px;';
           label.appendChild(hint);
         }
         label.onclick = () => {

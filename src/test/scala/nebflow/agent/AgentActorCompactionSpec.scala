@@ -120,7 +120,7 @@ class AgentActorCompactionSpec extends FunSuite:
 
   test("compaction success resets latestUsage to prevent re-trigger") {
     val contextWindow = 128000
-    val bufferTokens = CompactConfig().bufferTokens
+    val bufferTokens = CompactConfig().bufferForWindow(contextWindow)
     val threshold = contextWindow - bufferTokens
     val highUsage = TokenUsage(inputTokens = threshold + 5000, outputTokens = 1000)
 

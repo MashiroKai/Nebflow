@@ -8,7 +8,7 @@
   padding-top: 8px;
   flex-shrink: 0;
   height: 100vh;
-  border-right: 1px solid #222;
+  border-right: 1px solid var(--color-frame-border);
   overflow: hidden;
 }
 /* Agent icon container — scrollable */
@@ -40,8 +40,8 @@
   position: relative;
   gap: 2px;
 }
-.nav-agent:hover { background: #1f1f1f; }
-.nav-agent.active { background: #2a2a2a; }
+.nav-agent:hover { background: var(--color-frame-hover); }
+.nav-agent.active { background: var(--color-frame-active); }
 .nav-agent.active::before {
   content: '';
   position: absolute;
@@ -55,6 +55,10 @@
 .nav-agent-icon {
   font-size: 18px;
   line-height: 1;
+  color: var(--color-frame-text-muted, #888);
+}
+.nav-agent.active .nav-agent-icon {
+  color: var(--color-primary);
 }
 .nav-agent-icon svg {
   width: 20px;
@@ -62,11 +66,11 @@
 }
 .nav-agent-label {
   font-size: 9px;
-  color: #888;
+  color: var(--color-frame-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 40px;
+  max-width: 48px;
   text-align: center;
   line-height: 1;
 }
@@ -85,7 +89,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #22c55e;
+  background: var(--color-primary);
   pointer-events: none;
 }
 
@@ -100,13 +104,13 @@
   cursor: pointer;
   font-size: 18px;
   background: transparent;
-  border: 1px dashed #444;
-  color: #555;
+  border: 1px dashed var(--color-frame-border);
+  color: var(--color-frame-text-dim);
   margin-bottom: 4px;
   transition: all 0.15s;
   font-family: inherit;
 }
-.nav-add-btn:hover { border-color: #666; color: #aaa; background: #1f1f1f; }
+.nav-add-btn:hover { border-color: var(--color-frame-text-muted); color: var(--color-frame-text); background: var(--color-frame-hover); }
 
 .nav-spacer { flex-shrink: 0; height: 8px; }
 .nav-item {
@@ -117,12 +121,12 @@
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: #666;
+  color: var(--color-frame-text-muted);
   margin-bottom: 4px;
   position: relative;
   flex-shrink: 0;
   transition: color 0.15s, background 0.15s;
 }
-.nav-item:hover { color: #aaa; background: #1f1f1f; }
-.nav-item.active { color: #fff; background: #2a2a2a; }
+.nav-item:hover { color: var(--color-frame-text); background: var(--color-frame-hover); }
+.nav-item.active { color: var(--color-frame-text-bright); background: var(--color-frame-active); }
 .nav-item svg { width: 20px; height: 20px; }

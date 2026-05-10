@@ -51,7 +51,7 @@
   <div id="main">
     <div id="header">
       <div class="header-left"><span class="header-brand">nebflow</span></div>
-      <div class="header-center"><span id="session-name"></span><div id="memory-tags" style="display:none"><span class="memory-tag" data-scope="user">User</span><span class="memory-tag" data-scope="agent">Agent</span><span class="memory-tag" data-scope="session">Session</span></div></div>
+      <div class="header-center"><span id="session-name"></span><button id="memory-btn" class="memory-btn" style="display:none">Memory</button></div>
       <div class="header-right">
         <div id="bg-indicator" class="hidden">
           <span class="bg-dot"></span>
@@ -129,12 +129,16 @@
       </div>
     </div>
   </div>
-  <!-- Memory Editor Modal (separate overlay, reuses agent-modal styling) -->
+  <!-- Memory Editor Modal (three tabs: User / Agent / Session) -->
   <div id="memory-overlay">
     <div id="memory-modal">
       <div id="memory-modal-title">Memory</div>
+      <div class="memory-tabs">
+        <button class="memory-tab active" data-scope="session">Session</button>
+        <button class="memory-tab" data-scope="agent">Agent</button>
+        <button class="memory-tab" data-scope="user">User</button>
+      </div>
       <div id="memory-modal-body">
-        <div class="agent-field-label">Content (Markdown)</div>
         <textarea id="memory-content-input" placeholder="# Memory&#10;&#10;Key facts, decisions, context..." rows="12" spellcheck="false"></textarea>
       </div>
       <div id="memory-modal-actions">

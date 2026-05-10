@@ -332,8 +332,7 @@ export function renderToolPending(label, sessionId) {
   const row = document.createElement('div');
   row.className = 'row tool';
   const card = document.createElement('div');
-  card.className = 'tool-card';
-  card.style.background = '#e8e8e8';
+  card.className = 'tool-card tool-card--pending';
   const labelParts = label.split('\n', 2);
   const labelHtml = escapeHtml(labelParts[0])
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
@@ -373,9 +372,9 @@ export function renderTimeoutNotice() {
   card.appendChild(text);
   const btn = document.createElement('button');
   btn.textContent = 'Retry';
-  btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid #888;background:#2a2a2a;color:#eee;cursor:pointer;font-size:13px;font-family:inherit;';
-  btn.onmouseenter = () => { btn.style.background = '#3a3a3a'; };
-  btn.onmouseleave = () => { btn.style.background = '#2a2a2a'; };
+  btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
+  btn.onmouseenter = () => { btn.style.background = 'var(--color-frame-active)'; };
+  btn.onmouseleave = () => { btn.style.background = 'var(--color-frame-hover)'; };
   btn.onclick = () => {
     row.remove();
     // Find last user message from input history and resend

@@ -13,6 +13,8 @@ import nebflow.service.MemoryStore
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
+
+import scala.concurrent.duration.*
 import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 
 /**
@@ -119,7 +121,7 @@ private[agent] trait AgentCore:
         None
       else
         val inputTokensOpt = state.latestUsage.map(_.inputTokens)
-        val threshold = resources.contextWindow - config.bufferTokens
+        val threshold = state.contextWindow - config.bufferForWindow(state.contextWindow)
         inputTokensOpt match
           case Some(inputTokens) if inputTokens > threshold =>
             logAgentEvent(
@@ -182,7 +184,8 @@ private[agent] trait AgentCore:
       .compact(
         state.messages,
         resources,
-        state.sessionId.getOrElse(ctx.self.path.name)
+        state.sessionId.getOrElse(ctx.self.path.name),
+        state.readTracker
       )
       .map { result =>
         ctx.self ! AgentCommand.CompactionComplete(result)
@@ -201,7 +204,7 @@ private[agent] trait AgentCore:
         AgentStreamEvent.CompactStart(
           mode,
           state.latestUsage.map(_.inputTokens),
-          Some(resources.contextWindow - CompactConfig().bufferTokens)
+          Some(state.contextWindow - CompactConfig().bufferForWindow(state.contextWindow))
         ),
         isSubagent = depth > 0,
         state.sessionId
@@ -266,9 +269,7 @@ private[agent] trait AgentCore:
         //   tools:     tool definitions                          <- cache breakpoint (stable)
         //   messages:  [per-turn reminders] + actual conversation (dynamic, not persisted)
         // Env info is baked into system prompt once — git state is omitted; agent uses Bash on demand.
-        val baseSystemStable =
-          if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
-          else Repl.loadSystemPrompt() + "\n\n" + Repl.buildEnvInfo(resources.projectRoot.toString)
+        val baseSystemStable = buildSystemPrompt(agentDef, resources)
         val tools = buildToolList(agentDef, depth, parentRef.isDefined)
 
         val isSubagent = depth > 0
@@ -303,28 +304,8 @@ private[agent] trait AgentCore:
             state.withCurrentTurnId(turnId)
         val stateForTurn = stateAfterMicro
 
-        // --- Memory injection (synchronous file reads) ---
-        val userMemory = MemoryStore.loadUserMemory
-        val agentMemory = MemoryStore.loadAgentMemory(agentDef.name)
-        val sessionMemory = stateForTurn.sessionId.flatMap(MemoryStore.loadSessionMemory)
-        val memorySections = List(
-          userMemory.map(c => s"# Memory — User Preferences\n$c"),
-          agentMemory.map(c => s"# Memory — Agent\n$c"),
-          sessionMemory.map(c => s"# Memory — Session Context\n$c")
-        ).flatten
-        val memoryHint = stateForTurn.sessionId match
-          case Some(sid) =>
-            s"""|# Memory Files
-                |You can edit these memory files using the Edit/Write tools:
-                |- User preferences (requires approval): ${MemoryStore.userMemoryPath}
-                |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
-                |- Session context (auto-approved): ${MemoryStore.sessionMemoryPath(sid)}""".stripMargin
-          case None =>
-            s"""|# Memory Files
-                |You can edit these memory files using the Edit/Write tools:
-                |- User preferences (requires approval): ${MemoryStore.userMemoryPath}
-                |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}""".stripMargin
-        val memoryBlock = (memorySections :+ memoryHint).mkString("\n\n")
+        // --- Memory: use cached memoryBlock from state (refreshed at lifecycle points) ---
+        val memoryBlock = stateForTurn.memoryBlock
 
         // Compute verification reminder from per-agent write tracker (pure, no IO needed)
         val (verificationOpt, updatedWriteTracker) =
@@ -339,7 +320,7 @@ private[agent] trait AgentCore:
           reminders <- SystemReminders.collectAll(
             resources.reminderStateRef,
             stateForLlm.latestUsage,
-            resources.contextWindow,
+            state.contextWindow,
             fileChangesOpt,
             isUserTurn
           )
@@ -453,7 +434,8 @@ private[agent] trait AgentCore:
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
 
-    // Separate ContextManage from real tool calls — it triggers TriggerCompaction
+    // Separate ContextManage from real tool calls — handled directly in ToolsComplete handler
+    // (not sent as TriggerCompaction message to avoid stash timing issues)
     val (contextManageCalls, realToolCalls) = filteredCalls.partition(_.name == "ContextManage")
 
     // Build ToolContext with full agent-scoped context
@@ -462,7 +444,7 @@ private[agent] trait AgentCore:
       llm = Some(resources.llm),
       sessionStore = Some(resources.sessionStore),
       agentActorRef = Some(ctx.self),
-      contextWindow = resources.contextWindow,
+      contextWindow = state.contextWindow,
       sessionId = state.sessionId,
       sessionName = state.sessionName,
       taskStore = Some(resources.taskStore),
@@ -572,14 +554,9 @@ private[agent] trait AgentCore:
             }
       }
       .flatMap { freshResults =>
-        // ContextManage: send TriggerCompaction and add synthetic results
-        contextManageCalls.foreach { call =>
-          val mode = call.input("mode").flatMap(_.asString).getOrElse("full")
-          ctx.self ! AgentCommand.TriggerCompaction(mode, None)
-        }
+        // ContextManage: generate synthetic results (triggered in ToolsComplete handler, not here)
         val contextManageResults = contextManageCalls.map { call =>
-          val mode = call.input("mode").flatMap(_.asString).getOrElse("full")
-          (call, ToolExecResult(s"[ContextManage] Triggered $mode compaction", isError = false))
+          (call, ToolExecResult(s"[ContextManage] Triggered full compaction", isError = false))
         }
         val allResults = freshResults ++ contextManageResults
         // Include filtered-out tool calls as errors so the assistant message stays consistent
@@ -621,14 +598,19 @@ private[agent] trait AgentCore:
 
     resources.dispatcher.unsafeRunAndForget(
       io.handleErrorWith { e =>
-        IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed: ${e.getMessage}")) *>
-          IO(
-            ctx.self ! LlmFailed(
-              new RuntimeException(s"Tool execution pipeline failed: ${e.getMessage}"),
-              replyTo,
-              state.currentTurnId
-            )
+        val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+        NebflowLogger
+          .forName("nebflow.agent")
+          .warn(
+            s"pipeToolExecutions failed (this should be rare — individual tool errors are already handled): $msg"
           )
+        IO(
+          ctx.self ! LlmFailed(
+            new RuntimeException(s"Tool execution pipeline failed: $msg"),
+            replyTo,
+            state.currentTurnId
+          )
+        )
       }
     )
 
@@ -825,18 +807,36 @@ private[agent] trait AgentCore:
     val text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
     val thinking = chunks.collect { case StreamChunk.ThinkingDelta(d) => d }.mkString
     val toolCalls = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }
-    val usage = chunks.collectFirst { case StreamChunk.Done(_, u, _) => u }.flatten
-    val stopReason = chunks.collectFirst { case StreamChunk.Done(sr, _, _) => sr }.flatten
-    val model = chunks.collectFirst { case StreamChunk.Done(_, _, Some(meta)) => meta.model }
-    ConsumeResult(text, toolCalls, Nil, stopReason, usage, Option.when(thinking.nonEmpty)(thinking), model)
+    val usage = chunks.collectFirst { case StreamChunk.Done(_, u, _, _) => u }.flatten
+    val stopReason = chunks.collectFirst { case StreamChunk.Done(sr, _, _, _) => sr }.flatten
+    val model = chunks.collectFirst { case StreamChunk.Done(_, _, Some(meta), _) => meta.model }
+    val contextWindow = chunks.collectFirst { case StreamChunk.Done(_, _, _, cw) => cw }.flatten
+    ConsumeResult(
+      text,
+      toolCalls,
+      Nil,
+      stopReason,
+      usage,
+      Option.when(thinking.nonEmpty)(thinking),
+      model,
+      contextWindow
+    )
 
   // ============================================================
   // Prompt / tool helpers
   // ============================================================
 
   protected def buildSystemPrompt(agentDef: AgentDef, resources: SharedResources): String =
-    if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
-    else Repl.loadSystemPrompt() + "\n\n" + Repl.buildEnvInfo(resources.projectRoot.toString)
+    val prefixPath = os.home / ".nebflow" / "system-prefix.md"
+    val prefix = if os.exists(prefixPath) then
+      val content = os.read(prefixPath).trim
+      if content.nonEmpty then content + "\n\n" else ""
+    else ""
+    val agentPrompt =
+      if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
+      else Repl.loadSystemPrompt()
+    val envInfo = Repl.buildEnvInfo(resources.projectRoot.toString)
+    s"$prefix$agentPrompt\n\n$envInfo"
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
@@ -849,5 +849,60 @@ private[agent] trait AgentCore:
         path == MemoryStore.sessionMemoryPath(sid).toString
       }
     }
+
+  /**
+   * Build the full memory block: file contents + guide + file paths.
+   * Called at lifecycle points (new session, compact resume) — NOT every turn.
+   */
+  protected def buildMemoryBlock(agentDef: AgentDef, sessionId: Option[String]): String =
+    val userMemory = MemoryStore.loadUserMemory
+    val agentMemory = MemoryStore.loadAgentMemory(agentDef.name)
+    val sessionMemory = sessionId.flatMap(MemoryStore.loadSessionMemory)
+    val memorySections = List(
+      sessionMemory.map(c => s"# Memory — Session Context\n$c"),
+      agentMemory.map(c => s"# Memory — Agent\n$c"),
+      userMemory.map(c => s"# Memory — User Preferences\n$c")
+    ).flatten
+    val memoryGuide =
+      """|# Memory Usage Guidelines
+         |You have three memory scopes, each a Markdown file you can edit with Edit/Write. Writing memory is HIGH priority — err on the side of writing too much rather than too little.
+         |
+         |## You MUST write memory when:
+         |1. Starting a new task → write goal and key files to Session memory
+         |2. Discovering a project convention, architecture pattern, or non-obvious gotcha → write to Agent memory immediately (do NOT wait until "between tasks")
+         |3. Completing a task → summarize durable findings from Session into Agent memory
+         |4. The user explicitly asks you to remember something → write to User memory
+         |5. You encounter and solve a non-trivial problem (wrong API usage, hidden config, surprising behavior) → write to Agent memory so you don't repeat the same discovery
+         |
+         |## Memory scope guide
+         |- **Session** (working scratchpad): Task goals, key file paths, progress notes, open questions. Write at task start, update as you go, summarize key findings at task end.
+         |- **Agent** (durable knowledge): Architecture decisions, project conventions, tool configurations, gotchas, debugging patterns, key file locations. Write IMMEDIATELY when you discover something — do not batch or defer.
+         |- **User** (preferences): Only when the user explicitly asks, or you've confirmed a strong pattern across multiple sessions.
+         |
+         |## How to write
+         |- Use concise bullet points, not prose.
+         |- Prefix each bullet with a tag: `[decision]`, `[fact]`, `[todo]`, `[convention]`, `[gotcha]`.
+         |- Example: `[decision] Use JWT RS256 for auth` / `[gotcha] file X must be loaded before Y or init fails`
+         |- Do NOT duplicate information already in the agent's system prompt or project config files.
+         |- Do NOT log transient state (current line numbers, temporary errors being fixed).
+         |
+         |## Self-check (ask yourself every few turns)
+         |- Did I learn something about this project I didn't know before? → Write to Agent memory
+         |- Am I working on a multi-step task? → Ensure Session memory is up to date
+         |- Did I just finish a task? → Transfer key learnings from Session to Agent memory""".stripMargin
+
+    val memoryFiles = sessionId match
+      case Some(sid) =>
+        s"""|# Memory Files
+            |- Session context (auto-approved): ${MemoryStore.sessionMemoryPath(sid)}
+            |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
+            |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
+      case None =>
+        s"""|# Memory Files
+            |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
+            |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
+
+    (memorySections :+ memoryGuide :+ memoryFiles).mkString("\n\n")
+  end buildMemoryBlock
 
 end AgentCore

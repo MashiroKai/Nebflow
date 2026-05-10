@@ -75,6 +75,8 @@ class WebSocketRoutes(
                   case None => IO.raiseError(new RuntimeException("No default agent available"))
                 }
             readTracker <- nebflow.core.tools.ReadTracker.create
+            modelOverrides <- sharedResources.sessionModelOverrides.get
+            contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
           yield actorSystem.systemActorOf(
             AgentActor(
               agentDef,
@@ -85,7 +87,8 @@ class WebSocketRoutes(
               sessionId = Some(sessionId),
               sessionName = metaOpt.map(_.name),
               initialMessages = history,
-              readTracker = Some(readTracker)
+              readTracker = Some(readTracker),
+              contextWindow = contextWindow
             ),
             s"agent-$sessionId"
           )
@@ -190,7 +193,9 @@ class WebSocketRoutes(
           ws <- wsb.build(sendStream, receivePipe)
         yield ws
       else
-        logger.debug("WebSocket auth failed: invalid token") *>
+        logger.warn(
+          s"WebSocket auth failed: cookie=${cookieToken.take(8)}... param=${req.params.get("token").map(_.take(8)).getOrElse("")}..."
+        ) *>
           Forbidden("Invalid token")
       end if
 
@@ -231,12 +236,19 @@ class WebSocketRoutes(
         Ok(json.noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
       }
 
-    case req @ GET -> Root / "agents" / agentName / path =>
-      val agentDir = AgentLibrary.defaultDir / agentName
-      val filePath = agentDir / os.RelPath(path)
-      if filePath.toString.startsWith(agentDir.toString) && os.exists(filePath) && os.isFile(filePath) then
-        StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
-      else NotFound()
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/agents/") =>
+      // Serve static files under agent directory (supports nested paths)
+      // Uses manual path parsing because http4s DSL only matches single path segments
+      val segs = req.uri.path.segments.map(_.encoded).toList
+      if segs.sizeIs < 3 then NotFound()
+      else
+        val agentName = segs(1)
+        val relParts = segs.drop(2)
+        val agentDir = AgentLibrary.defaultDir / agentName
+        val filePath = agentDir / os.RelPath(relParts.mkString("/"))
+        if filePath.toString.startsWith(agentDir.toString) && os.exists(filePath) && os.isFile(filePath) then
+          StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+        else NotFound()
   }
 
   private val inputHistoryPath = os.home / ".nebflow" / "input_history.jsonl"
@@ -372,7 +384,12 @@ class WebSocketRoutes(
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
               logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
                 reminderStateRef.update(_.copy(highestPressureLevel = 0)) *>
-                routeToAgent(clearSessionId)(ref => IO(ref ! AgentCommand.ClearReadTracker))
+                routeToAgent(clearSessionId)(ref => IO(ref ! AgentCommand.ResetSession))
+            case "compact" =>
+              val compactSessionId =
+                parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+              logger.info("Manual compaction triggered") *>
+                routeToAgent(compactSessionId)(ref => IO(ref ! AgentCommand.TriggerCompaction("full")))
             case _ => IO.unit
 
         case "setThinking" =>
@@ -441,11 +458,21 @@ class WebSocketRoutes(
                   sessionStore.updateSessionModel(sessionId, None).as(Right("default"))
             ).flatMap {
               case Right(ref) =>
-                wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
+                // Notify agent actor of context window change for compaction threshold
+                val notifyAgent = sharedResources.sessionModelOverrides.get.flatMap { overrides =>
+                  overrides.get(sessionId) match
+                    case Some(candidate) =>
+                      routeToAgent(sessionId)(ref =>
+                        IO(ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
+                      )
+                    case None => IO.unit
+                }
+                notifyAgent *> wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
               case Left(err) =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
             }
           else IO.unit
+          end if
 
         case "switchSession" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
@@ -542,6 +569,8 @@ class WebSocketRoutes(
               .flatten
               .getOrElse(List("aiResponse", "askUser", "permissionRequest"))
             val syncMessages = hc.downField("syncMessages").as[Option[Boolean]].toOption.flatten.getOrElse(true)
+            val appId = hc.downField("appId").as[Option[String]].toOption.flatten.getOrElse("")
+            val appSecret = hc.downField("appSecret").as[Option[String]].toOption.flatten.getOrElse("")
             val cfgJson = Json.obj(
               "enabled" -> enabled.asJson,
               "chatId" -> chatId.asJson,
@@ -549,7 +578,10 @@ class WebSocketRoutes(
               "notifyEvents" -> notifyEvents.asJson,
               "syncMessages" -> syncMessages.asJson
             )
-            sessionStore.updateSessionFeishu(sessionId, Some(cfgJson)).flatMap { _ =>
+            val withCreds = if appId.nonEmpty then cfgJson.deepMerge(Json.obj("appId" -> appId.asJson)) else cfgJson
+            val finalCfg =
+              if appSecret.nonEmpty then withCreds.deepMerge(Json.obj("appSecret" -> appSecret.asJson)) else withCreds
+            sessionStore.updateSessionFeishu(sessionId, Some(finalCfg)).flatMap { _ =>
               sendAgentSessionList(wsSend, sessionId)
             }
           end if
@@ -815,31 +847,37 @@ class WebSocketRoutes(
         case "getMemory" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
-          // Determine agentName and sessionId from active session
-          sessionStore.getActiveMeta.flatMap { metaOpt =>
-            val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-            val sessionId = metaOpt.map(_.id).getOrElse("")
-            val content = scope match
-              case "user" => MemoryStore.loadUserMemory.getOrElse("")
-              case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
-              case "session" =>
-                if sessionId.nonEmpty then MemoryStore.loadSessionMemory(sessionId).getOrElse("") else ""
-              case _ => ""
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "memoryData".asJson,
-                "scope" -> scope.asJson,
-                "content" -> content.asJson
+          (sessionStore.getActiveMeta
+            .flatMap { metaOpt =>
+              val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+              val sessionId = metaOpt.map(_.id).getOrElse("")
+              val content = scope match
+                case "user" => MemoryStore.loadUserMemory.getOrElse("")
+                case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
+                case "session" =>
+                  if sessionId.nonEmpty then MemoryStore.loadSessionMemory(sessionId).getOrElse("") else ""
+                case _ => ""
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "memoryData".asJson,
+                  "scope" -> scope.asJson,
+                  "content" -> content.asJson
+                )
               )
-            )
-          }
+            })
+            .handleErrorWith { e =>
+              logger.warn(s"getMemory error: ${e.getMessage}")
+              wsSend(
+                io.circe.Json.obj("type" -> "error".asJson, "message" -> s"getMemory failed: ${e.getMessage}".asJson)
+              )
+            }
 
         case "saveMemory" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
           val content = json.hcursor.downField("content").as[String].getOrElse("")
-          if content.nonEmpty then
-            sessionStore.getActiveMeta.flatMap { metaOpt =>
+          (sessionStore.getActiveMeta
+            .flatMap { metaOpt =>
               val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
               val sessionId = metaOpt.map(_.id).getOrElse("")
               val save = scope match
@@ -849,8 +887,13 @@ class WebSocketRoutes(
                   if sessionId.nonEmpty then MemoryStore.saveSessionMemory(sessionId, content) else IO.unit
                 case _ => IO.unit
               save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
+            })
+            .handleErrorWith { e =>
+              logger.warn(s"saveMemory error: ${e.getMessage}")
+              wsSend(
+                io.circe.Json.obj("type" -> "error".asJson, "message" -> s"saveMemory failed: ${e.getMessage}".asJson)
+              )
             }
-          else IO.unit
 
         case "memoryStatus" =>
           sessionStore.getActiveMeta.flatMap { metaOpt =>

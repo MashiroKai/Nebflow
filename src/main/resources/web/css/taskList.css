@@ -24,6 +24,33 @@
   gap: 8px;
   margin-bottom: 6px;
   font-size: 12px;
+  cursor: default;
+}
+
+.task-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-text-muted, #888);
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.task-toggle:hover {
+  background: rgba(0,0,0,0.05);
+  color: var(--color-text, #000);
+}
+
+.task-toggle svg {
+  width: 14px;
+  height: 14px;
 }
 
 .task-count {
@@ -33,6 +60,23 @@
 
 .task-stats {
   color: var(--color-text-muted, #888);
+}
+
+/* Collapsed body */
+.task-body {
+  overflow: hidden;
+  max-height: 500px;
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+  opacity: 1;
+}
+
+.task-card.collapsed .task-body {
+  max-height: 0;
+  opacity: 0;
+}
+
+.task-card.collapsed .task-header {
+  margin-bottom: 0;
 }
 
 .task-item {
@@ -102,4 +146,16 @@
   font-size: 11px;
   color: var(--color-text-muted, #888);
   padding: 2px 0;
+}
+
+/* ── Dark Theme ───────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .task-card {
+    background: #242424;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  }
+  .task-toggle:hover {
+    background: rgba(255,255,255,0.06);
+    color: #ddd;
+  }
 }

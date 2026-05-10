@@ -2,5 +2,6 @@
   "name": "Nebula",
   "displayName": "Nebula",
   "description": "AI coding assistant with full tool access",
+  "avatar": "<i data-lucide=\"sparkles\"></i>",
   "tools": ["*"]
 }

@@ -286,7 +286,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           )
         }
         val choicesEmpty = json.hcursor.downField("choices").as[List[Json]].toOption.exists(_.isEmpty)
-        if usageOpt.isDefined && choicesEmpty then IO.pure(List(StreamChunk.Done(None, usageOpt, Some(makeMeta))))
+        if usageOpt.isDefined && choicesEmpty then IO.pure(List(StreamChunk.Done(None, usageOpt, Some(makeMeta), None)))
         else
           val delta = json.hcursor.downField("choices").downN(0).downField("delta").as[Json].toOption
           val finishReason = json.hcursor.downField("choices").downN(0).downField("finish_reason").as[String].toOption
@@ -331,12 +331,12 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                           }
                         }
                       else if finishReason.isDefined then
-                        IO.pure(acc :+ StreamChunk.Done(finishReason, None, Some(makeMeta)))
+                        IO.pure(acc :+ StreamChunk.Done(finishReason, None, Some(makeMeta), None))
                       else IO.pure(textDeltas ++ acc)
                     }
                 case None =>
                   if finishReason.isDefined then
-                    IO.pure(textDeltas :+ StreamChunk.Done(finishReason, None, Some(makeMeta)))
+                    IO.pure(textDeltas :+ StreamChunk.Done(finishReason, None, Some(makeMeta), None))
                   else IO.pure(textDeltas)
               end match
           end match

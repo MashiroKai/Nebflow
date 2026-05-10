@@ -2,7 +2,7 @@
 #sidebar-panel {
   width: 220px;
   background: var(--color-sidebar-bg);
-  color: #e0e0e0;
+  color: var(--color-frame-text);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -20,12 +20,12 @@
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  border-bottom: 1px solid #2a2a2a;
+  border-bottom: 1px solid var(--color-frame-border);
 }
 .panel-title {
   font-size: 13px;
   font-weight: 500;
-  color: #666;
+  color: var(--color-frame-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
@@ -42,16 +42,16 @@
 #search-bar svg {
   width: 14px;
   height: 14px;
-  color: #666;
+  color: var(--color-frame-text-muted);
   flex-shrink: 0;
 }
 #search-input {
   flex: 1;
   min-width: 0;
-  background: #242424;
-  border: 1px solid #333;
+  background: var(--color-frame-input-bg);
+  border: 1px solid var(--color-frame-input-border);
   border-radius: 6px;
-  color: #ccc;
+  color: var(--color-frame-input-text);
   font-size: 12px;
   padding: 5px 8px;
   outline: none;
@@ -62,12 +62,12 @@
   border-color: var(--color-primary);
 }
 #search-input::placeholder {
-  color: #555;
+  color: var(--color-frame-text-muted);
 }
 #search-clear {
   background: none;
   border: none;
-  color: #555;
+  color: var(--color-frame-text-muted);
   font-size: 16px;
   cursor: pointer;
   padding: 0 2px;
@@ -82,13 +82,13 @@
   transition: color 0.15s;
 }
 #search-clear.visible { display: flex; }
-#search-clear:hover { color: #ccc; }
+#search-clear:hover { color: var(--color-frame-text); }
 #search-results {
   display: none;
   flex: 1;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
+  scrollbar-color: var(--color-frame-border) transparent;
 }
 #search-results.active {
   display: block;
@@ -96,13 +96,13 @@
 .search-result-item {
   padding: 8px 14px;
   cursor: pointer;
-  border-bottom: 1px solid #222;
+  border-bottom: 1px solid var(--color-frame-border-light);
   transition: background 0.1s;
 }
-.search-result-item:hover { background: #242424; }
+.search-result-item:hover { background: var(--color-frame-hover); }
 .search-result-session {
   font-size: 11px;
-  color: #888;
+  color: var(--color-frame-text-muted);
   margin-bottom: 2px;
   white-space: nowrap;
   overflow: hidden;
@@ -110,7 +110,7 @@
 }
 .search-result-snippet {
   font-size: 12.5px;
-  color: #ccc;
+  color: var(--color-frame-text);
   line-height: 1.4;
   overflow: hidden;
   display: -webkit-box;
@@ -119,7 +119,7 @@
 }
 .search-result-snippet mark {
   background: rgba(7,193,96,0.25);
-  color: #95ec69;
+  color: #0a8f4a;
   border-radius: 2px;
   padding: 0 1px;
 }
@@ -133,15 +133,15 @@
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
-.search-result-type.user { background: #1a3a1a; color: #95ec69; }
-.search-result-type.ai { background: #1a2a3a; color: #7cb3ff; }
-.search-result-type.tool { background: #2a2a1a; color: #d6b656; }
-.search-result-type.agent { background: #2a1a2a; color: #b5739d; }
+.search-result-type.user { background: rgba(7,193,96,0.12); color: #07c160; }
+.search-result-type.ai { background: rgba(91,141,217,0.12); color: #5b8dd9; }
+.search-result-type.tool { background: rgba(212,160,48,0.12); color: #b8941e; }
+.search-result-type.agent { background: rgba(155,107,181,0.12); color: #9b6bb5; }
 .search-result-empty {
   padding: 20px 14px;
   text-align: center;
   font-size: 12px;
-  color: #555;
+  color: var(--color-frame-text-muted);
 }
 .search-result-meta {
   display: flex;
@@ -152,8 +152,8 @@
 
 #new-session-btn {
   background: none;
-  border: 1px solid #444;
-  color: var(--color-text-muted);
+  border: 1px solid var(--color-frame-border);
+  color: var(--color-frame-text-muted);
   font-size: 16px;
   width: 26px;
   height: 26px;
@@ -166,12 +166,12 @@
   font-family: inherit;
   line-height: 1;
 }
-#new-session-btn:hover { background: #2a2a2a; color: #fff; border-color: #666; }
+#new-session-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); border-color: var(--color-frame-text-muted); }
 #session-list {
   flex: 1;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
+  scrollbar-color: var(--color-frame-border) transparent;
 }
 .session-item {
   padding: 10px 16px;
@@ -182,12 +182,12 @@
   position: relative;
   transition: background 0.15s;
 }
-.session-item:hover { background: #242424; }
-.session-item.active { background: #2c2c2c; }
-.session-item.pinned { background: #1e1e1e; }
+.session-item:hover { background: var(--color-frame-hover); }
+.session-item.active { background: var(--color-frame-active); }
+.session-item.pinned { background: var(--color-frame-input-bg); }
 .session-divider {
   height: 1px;
-  background: #2a2a2a;
+  background: var(--color-frame-border);
   margin: 0 14px;
 }
 .session-info {
@@ -199,22 +199,22 @@
 }
 .session-name {
   font-size: 13.5px;
-  color: #ccc;
+  color: var(--color-frame-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .session-item.active .session-name {
-  color: #fff;
+  color: var(--color-frame-text-bright);
   font-weight: 500;
 }
 .session-time {
   font-size: 11px;
-  color: #666;
+  color: var(--color-frame-text-muted);
 }
 .session-draft {
   font-size: 11px;
-  color: #888;
+  color: var(--color-frame-text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -299,7 +299,7 @@
 .session-delete {
   background: none;
   border: none;
-  color: #555;
+  color: var(--color-frame-text-muted);
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.15s, color 0.15s;
@@ -319,23 +319,23 @@
 .session-ctx-menu {
   position: fixed;
   z-index: 1000;
-  background: #2a2a2a;
-  border: 1px solid #444;
+  background: var(--color-modal-bg);
+  border: 1px solid var(--color-frame-border);
   border-radius: 6px;
   padding: 4px 0;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 .session-ctx-menu .ctx-item {
   padding: 6px 14px;
   font-size: 12.5px;
-  color: #ccc;
+  color: var(--color-frame-text);
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.1s;
 }
 .session-ctx-menu .ctx-item:hover {
-  background: #333;
-  color: #fff;
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text-bright);
 }
 
 /* ---------- Settings Panel ---------- */
@@ -344,7 +344,7 @@
   overflow-y: auto;
   padding: 12px;
   scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
+  scrollbar-color: var(--color-frame-border) transparent;
 }
 .settings-section {
   margin-bottom: 16px;
@@ -352,7 +352,7 @@
 .settings-section-title {
   font-size: 11px;
   font-weight: 600;
-  color: #555;
+  color: var(--color-frame-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
   margin-bottom: 10px;
@@ -362,24 +362,24 @@
   justify-content: space-between;
   align-items: center;
   padding: 8px 0;
-  border-bottom: 1px solid #222;
+  border-bottom: 1px solid var(--color-frame-border-light);
 }
 .settings-row:last-child { border-bottom: none; }
 .settings-label {
   font-size: 13px;
-  color: #ccc;
+  color: var(--color-frame-text);
 }
 .settings-value {
   font-size: 12px;
-  color: var(--color-text-muted);
+  color: var(--color-frame-text-muted);
 }
 
 /* Text input for settings */
 .settings-text-input {
-  background: #2a2a2a;
-  border: 1px solid #444;
+  background: var(--color-frame-input-bg);
+  border: 1px solid var(--color-frame-input-border);
   border-radius: 6px;
-  color: #ccc;
+  color: var(--color-frame-input-text);
   font-size: 12px;
   padding: 4px 8px;
   width: 140px;
@@ -390,14 +390,14 @@
   border-color: var(--color-primary);
 }
 .settings-text-input::placeholder {
-  color: #666;
+  color: var(--color-frame-text-muted);
 }
 
 /* Toggle switch */
 .toggle {
   width: 36px;
   height: 20px;
-  background: #333;
+  background: var(--color-frame-border);
   border-radius: 10px;
   position: relative;
   cursor: pointer;
@@ -428,7 +428,7 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: #aaa;
+  color: var(--color-frame-text-dim);
   cursor: pointer;
 }
 .policy-option input[type="radio"] {
@@ -441,9 +441,9 @@
 #config-editor {
   width: 100%;
   min-height: 200px;
-  background: #111;
-  color: #ccc;
-  border: 1px solid #333;
+  background: var(--color-frame-input-bg);
+  color: var(--color-frame-input-text);
+  border: 1px solid var(--color-frame-input-border);
   border-radius: 6px;
   padding: 8px;
   font-size: 11px;
@@ -451,9 +451,9 @@
   line-height: 1.5;
   resize: vertical;
   scrollbar-width: thin;
-  scrollbar-color: #333 transparent;
+  scrollbar-color: var(--color-frame-border) transparent;
 }
-#config-editor:focus { outline: none; border-color: #555; }
+#config-editor:focus { outline: none; border-color: var(--color-frame-text-muted); }
 .config-actions {
   display: flex;
   gap: 6px;
@@ -463,19 +463,28 @@
   font-size: 11px;
   padding: 4px 12px;
   border-radius: 4px;
-  border: 1px solid #444;
+  border: 1px solid var(--color-frame-border);
   background: none;
-  color: #aaa;
+  color: var(--color-frame-text-dim);
   cursor: pointer;
   font-family: inherit;
   transition: all 0.15s;
 }
-.config-actions button:hover { background: #2a2a2a; color: #fff; }
+.config-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
 .config-actions .btn-save { border-color: var(--color-primary); color: var(--color-primary); }
 .config-actions .btn-save:hover { background: #07c16020; }
 /* About section */
 .about-info {
   font-size: 12px;
-  color: #666;
+  color: var(--color-frame-text-muted);
   line-height: 1.6;
+}
+
+/* ── Dark Theme ───────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .search-result-snippet mark { color: #95ec69; }
+  .search-result-type.user { background: rgba(7,193,96,0.18); color: #5cd88a; }
+  .search-result-type.ai { background: rgba(91,141,217,0.18); color: #7cb3ff; }
+  .search-result-type.tool { background: rgba(212,160,48,0.18); color: #d6b656; }
+  .search-result-type.agent { background: rgba(155,107,181,0.18); color: #c48ddb; }
 }

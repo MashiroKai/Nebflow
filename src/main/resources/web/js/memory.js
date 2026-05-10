@@ -1,69 +1,84 @@
-// memory.js — Memory card UI for Nebflow
+// memory.js — Memory modal with User / Agent / Session tabs
 
 import state from './state.js';
 import { sendWs } from './ws.js';
 
-/**
- * Render memory tag pills in the header.
- * Tags reflect the current session's memory status.
- */
-export function renderMemoryTags(status) {
-  const c = document.getElementById('memory-tags');
-  if (!c) return;
-  c.querySelectorAll('.memory-tag').forEach(tag => {
-    const scope = tag.dataset.scope;
-    const info = status?.[scope] || {};
-    tag.classList.toggle('has-content', !!info.exists);
-    tag.title = info.preview || '(empty — click to create)';
-  });
-  c.style.display = status ? 'flex' : 'none';
+/** Currently active tab scope. */
+let activeScope = 'session';
+
+/** Cache per-scope content so tab switches don't re-fetch within same session. */
+const cache = { user: null, agent: null, session: null };
+
+/** Show the Memory button in header. */
+export function showMemoryButton() {
+  const btn = document.getElementById('memory-btn');
+  if (btn) btn.style.display = '';
 }
 
 /**
- * Open the memory editor modal for the given scope.
+ * Clear all cached memory. Called on session switch so the new session
+ * fetches fresh content from the server instead of showing stale data.
  */
-export function openMemoryEditor(scope) {
-  sendWs({ type: 'getMemory', scope });
-  const modal = document.getElementById('memory-modal');
-  const title = document.getElementById('memory-modal-title');
-  const labels = { user: 'User', agent: state.selectedAgent || 'Agent', session: 'Session' };
-  title.textContent = 'Memory \u00b7 ' + (labels[scope] || scope);
-  modal.dataset.scope = scope;
-  modal.classList.add('show');
+export function clearMemoryCache() {
+  cache.user = null;
+  cache.agent = null;
+  cache.session = null;
+}
+
+/** Open the memory modal, fetch active tab content. */
+export function openMemoryEditor() {
+  document.getElementById('memory-modal').classList.add('show');
   document.getElementById('memory-overlay').classList.add('on');
+  loadTab(activeScope);
 }
 
-/**
- * Handle memoryData response from server.
- */
-export function handleMemoryData(data) {
-  document.getElementById('memory-content-input').value = data.content || '';
-}
-
-/**
- * Save memory content and close the modal.
- */
-export function saveMemory() {
-  const scope = document.getElementById('memory-modal').dataset.scope;
-  const content = document.getElementById('memory-content-input').value;
-  sendWs({ type: 'saveMemory', scope, content });
-  closeMemoryEditor();
-}
-
-/**
- * Close the memory editor modal.
- */
+/** Close the memory modal. */
 export function closeMemoryEditor() {
   document.getElementById('memory-modal').classList.remove('show');
   document.getElementById('memory-overlay').classList.remove('on');
 }
 
-/**
- * Initialize memory UI — bind tag clicks, modal buttons, overlay dismiss.
- */
+/** Switch tab — cache current content first. */
+function switchTab(scope) {
+  cache[activeScope] = document.getElementById('memory-content-input').value;
+  activeScope = scope;
+  document.querySelectorAll('.memory-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.scope === scope);
+  });
+  loadTab(scope);
+}
+
+/** Load content for a scope — use cache if hit, otherwise fetch from server. */
+function loadTab(scope) {
+  const input = document.getElementById('memory-content-input');
+  if (cache[scope] !== null) {
+    input.value = cache[scope];
+  } else {
+    input.value = '';
+    sendWs({ type: 'getMemory', scope });
+  }
+}
+
+/** Handle memoryData from server — update textarea + cache. */
+export function handleMemoryData(data) {
+  cache[data.scope] = data.content || '';
+  if (data.scope === activeScope) {
+    document.getElementById('memory-content-input').value = data.content || '';
+  }
+}
+
+/** Save the current tab's content. */
+export function saveMemory() {
+  const content = document.getElementById('memory-content-input').value;
+  cache[activeScope] = content;
+  sendWs({ type: 'saveMemory', scope: activeScope, content });
+}
+
+/** Initialize memory UI — bind button, tabs, modal buttons, overlay dismiss. */
 export function initMemory() {
-  document.querySelectorAll('#memory-tags .memory-tag').forEach(tag => {
-    tag.onclick = () => openMemoryEditor(tag.dataset.scope);
+  document.getElementById('memory-btn')?.addEventListener('click', openMemoryEditor);
+  document.querySelectorAll('.memory-tab').forEach(tab => {
+    tab.addEventListener('click', () => switchTab(tab.dataset.scope));
   });
   document.getElementById('memory-modal-cancel')?.addEventListener('click', closeMemoryEditor);
   document.getElementById('memory-modal-save')?.addEventListener('click', saveMemory);
