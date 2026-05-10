@@ -382,7 +382,8 @@ class WebSocketRoutes(
             case "clear" =>
               val clearSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-              logger.info("Session cleared") *> sessionStore.setActiveMessages(Nil) *>
+              logger.info("Session cleared") *>
+                sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
                 reminderStateRef.update(_.copy(highestPressureLevel = 0)) *>
                 routeToAgent(clearSessionId)(ref => IO(ref ! AgentCommand.ResetSession))
             case "compact" =>
