@@ -522,11 +522,14 @@ class WebSocketRoutes(
               .getSessionMeta(sessionId)
               .flatMap { metaOpt =>
                 val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                removeRootAgent(sessionId) *> sessionService
-                  .deleteSession(sessionId)
-                  .flatMap { _ =>
-                    sendAgentSessionListByName(wsSend, agentName)
-                  }
+                // Clean up text buffers for deleted session to prevent memory leak
+                sessionTextBuffers.update(_ - sessionId) *>
+                  sessionTurnStarts.update(_ - sessionId) *>
+                  removeRootAgent(sessionId) *> sessionService
+                    .deleteSession(sessionId)
+                    .flatMap { _ =>
+                      sendAgentSessionListByName(wsSend, agentName)
+                    }
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
