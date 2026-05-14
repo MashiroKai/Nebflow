@@ -1,7 +1,7 @@
 package nebflow.shared
 
-import cats.effect.{IO, Ref, Sync}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref, Sync}
 
 /**
  * File content cache keyed by modification time.
@@ -58,8 +58,7 @@ final class MtimeFileCache[T] private[shared] (
 
   /** Get the parsed value, re-reading only if the file changed. Returns None if file doesn't exist. */
   def get: IO[Option[T]] =
-    if !os.exists(path) then
-      cache.set(None) *> IO.pure(None)
+    if !os.exists(path) then cache.set(None) *> IO.pure(None)
     else
       val currentMs = MtimeCache.mtimeOf(path)
       cache.get.flatMap {
@@ -69,7 +68,9 @@ final class MtimeFileCache[T] private[shared] (
             val content = os.read(path)
             val value = parse(content)
             MtimeCache.Cached(value, currentMs)
-          }.flatTap(c => cache.set(Some(c))).map(_.value).map(Some(_))
+          }.flatTap(c => cache.set(Some(c)))
+            .map(_.value)
+            .map(Some(_))
       }
 
   /** Force clear the cache. */

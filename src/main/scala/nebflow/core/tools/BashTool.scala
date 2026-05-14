@@ -44,6 +44,9 @@ Do not use Bash when a dedicated tool exists:
 | Find files by name | `Glob` | `find`, `ls` |
 | Edit a file | `Edit` | `sed`, `awk` |
 | Create a file | `Write` | `echo >` |
+| Emit card / JSON payload | `Card` | `echo` |
+
+Never use Bash `echo` to emit card JSON or structured UI payloads. Always use the `Card` tool — it bypasses shell escaping issues and is recognized by the frontend renderer.
 
 Git safety:
 - NEVER update the git config (`git config`).
@@ -234,8 +237,9 @@ Git safety:
                   case _ => s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
                 IO.pure(Right(s"[Background job failed] Job ID: $jobId\n$errMsg"))
               case Some(Right(result)) =>
-                val out = result.stdout
-                val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
+                val out = cleanOutput(sanitizeCardOutput(result.stdout))
+                val cleanedErr = cleanOutput(result.stderr)
+                val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
                 IO.pure(Right(s"[Background job completed] Job ID: $jobId\n$out$errLine"))
             }
         }
@@ -377,11 +381,67 @@ Git safety:
   ): Either[ToolError, String] =
     val prefix = desc.map(d => s"[$d]\n").getOrElse("")
     val dirLine = s"(cwd: ${result.cwd})\n"
-    val errLine = if result.stderr.nonEmpty then s"\n[stderr]:\n${result.stderr}" else ""
-    val output = result.stdout + errLine
+    val cleanedOut = cleanOutput(sanitizeCardOutput(result.stdout))
+    val cleanedErr = cleanOutput(result.stderr)
+    val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
+    val output = cleanedOut + errLine
     val full = sandboxMark + prefix + dirLine + output
     if full.trim.isEmpty then Right(sandboxMark + "[Command executed successfully with no output]")
     else Right(full)
+
+  /**
+   * Best-effort repair of shell-damaged card JSON output.
+   * When Bash echo is used to emit card markers with HTML-heavy JSON,
+   * shell metacharacters can corrupt the payload. The most common
+   * corruption is literal \xNN sequences (e.g. \x27 for single quote)
+   * because single-quoted bash strings do not interpret backslash escapes.
+   *
+   * We only apply this repair when the output looks like it contains
+   * a card marker, to avoid changing legitimate tool output.
+   */
+  private def sanitizeCardOutput(output: String): String =
+    if looksLikeCardPayload(output) then decodeHexEscapes(output) else output
+
+  private val CardMarkerPattern = """___\w+_JSON___""".r
+
+  private def looksLikeCardPayload(output: String): Boolean =
+    CardMarkerPattern.findFirstIn(output).isDefined
+
+  /** Decode \xNN hex escape sequences into their literal characters. */
+  private def decodeHexEscapes(input: String): String =
+    val hexPattern = """\\x([0-9a-fA-F]{2})""".r
+    hexPattern.replaceAllIn(
+      input,
+      m =>
+        val code = Integer.parseInt(m.group(1), 16)
+        code.toChar.toString
+    )
+
+  // ── Output sanitization for LLM consumption ──────────────────────────
+
+  /**
+   * Clean raw command output before passing to the LLM.
+   * Removes ANSI escape codes, collapses excessive blank lines,
+   * and trims trailing whitespace on each line.
+   */
+  private def cleanOutput(raw: String): String =
+    val noAnsi = stripAnsiCodes(raw)
+    val collapsed = collapseBlankLines(noAnsi)
+    trimTrailingWhitespace(collapsed)
+
+  /** Strip ANSI escape sequences (colors, cursor moves, progress bars, etc.). */
+  private def stripAnsiCodes(s: String): String =
+    // ANSI escape sequences: ESC [ ... m  (SGR) and ESC [ ... (CSI sequences)
+    val ansiPattern = """\u001b\[[0-9;]*m|\u001b\[[0-9;]*[A-Za-z]""".r
+    ansiPattern.replaceAllIn(s, "")
+
+  /** Collapse 3+ consecutive blank lines into 2 blank lines. */
+  private def collapseBlankLines(s: String): String =
+    s.replaceAll("(?m)^[ \t]*\n[ \t]*\n[ \t]*\n+", "\n\n")
+
+  /** Trim trailing whitespace from every line. */
+  private def trimTrailingWhitespace(s: String): String =
+    s.split("\n").map(_.replaceAll("[ \t]+$", "")).mkString("\n")
 
   /** Build an on_complete callback that sends ExternalEvent to the agent actor. */
   private def makeNotifyCallback(
@@ -395,7 +455,9 @@ Git safety:
       val description = desc.getOrElse(firstLine)
       val (eventType, payload, metadata) = result match
         case Right(pr) =>
-          val output = pr.stdout + (if pr.stderr.nonEmpty then s"\n[stderr]:\n${pr.stderr}" else "")
+          val out = cleanOutput(sanitizeCardOutput(pr.stdout))
+          val cleanedErr = cleanOutput(pr.stderr)
+          val output = out + (if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else "")
           val exitInfo = if pr.exitCode != 0 then s" (exit code ${pr.exitCode})" else ""
           (
             "completed",

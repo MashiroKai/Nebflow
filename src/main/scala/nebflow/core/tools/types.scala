@@ -23,6 +23,7 @@ case class ToolContext(
   taskStore: Option[TaskStore] = None,
   wsSend: Option[Json => IO[Unit]] = None,
   readTracker: Option[ReadTracker] = None,
+  fileHistory: Option[FileHistory] = None,
   // Agent-scoped context for formerly-synthetic tools
   parentRef: Option[ActorRef[AgentCommand]] = None,
   depth: Int = 0,

@@ -15,7 +15,7 @@ object FullCompact:
 
   // How many recent "rounds" to preserve verbatim after compaction.
   // A round = one assistant turn (possibly with tool_use) + the corresponding user response.
-  private val PreserveRecentRounds = 3
+  val PreserveRecentRounds = 3
 
   // Continuation prompt — appended after the summary to prevent the model from
   // apologizing, recapping, or asking the user what to do.
@@ -96,27 +96,27 @@ object FullCompact:
   ): (List[Message], List[Message]) =
     if roundsToKeep <= 0 || messages.size <= 4 then
       // Too few messages to split meaningfully — summarize everything, preserve nothing
-      return (messages, Nil)
-
-    // Walk backwards to find the split point
-    var roundsFound = 0
-    var splitIdx = messages.size
-    var i = messages.size - 1
-    while i >= 0 && roundsFound < roundsToKeep do
-      if messages(i).role == MessageRole.Assistant then
-        roundsFound += 1
-        splitIdx = i
-      i -= 1
-    end while
-
-    if roundsFound < roundsToKeep || splitIdx == 0 then
-      // Not enough complete rounds — summarize everything
       (messages, Nil)
     else
-      val (toSummarize, toPreserve) = messages.splitAt(splitIdx)
-      // Filter out any prior compact summaries from the preserved tail
-      val cleanPreserve = toPreserve.filterNot(isCompactSummaryMessage)
-      (toSummarize, cleanPreserve)
+      // Walk backwards to find the split point
+      var roundsFound = 0
+      var splitIdx = messages.size
+      var i = messages.size - 1
+      while i >= 0 && roundsFound < roundsToKeep do
+        if messages(i).role == MessageRole.Assistant then
+          roundsFound += 1
+          splitIdx = i
+        i -= 1
+      end while
+
+      if roundsFound < roundsToKeep || splitIdx == 0 then
+        // Not enough complete rounds — summarize everything
+        (messages, Nil)
+      else
+        val (toSummarize, toPreserve) = messages.splitAt(splitIdx)
+        // Filter out any prior compact summaries from the preserved tail
+        val cleanPreserve = toPreserve.filterNot(isCompactSummaryMessage)
+        (toSummarize, cleanPreserve)
   end splitRecentRounds
 
   /** Collect file paths that appear as Read tool_use in the given messages. */

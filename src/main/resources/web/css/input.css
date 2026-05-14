@@ -75,6 +75,7 @@
   transition: background 0.15s;
 }
 .icon-btn:hover { background: rgba(0,0,0,0.06); }
+.icon-btn:active { background: rgba(0,0,0,0.10); transform: scale(0.96); }
 .icon-btn.recording {
   background: #ffebee;
   animation: pulse 0.8s infinite;
@@ -120,40 +121,63 @@
 /* ---------- Voice Overlay ---------- */
 .voice-overlay {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.5);
+  bottom: calc(100% + 8px);
+  left: 12px;
+  right: 12px;
+  background: rgba(0,0,0,0.12);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 14px;
+  padding: 10px 14px;
   display: none;
   align-items: center;
-  justify-content: center;
+  gap: 10px;
   z-index: 200;
-  flex-direction: column;
-  gap: 16px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
 }
-.voice-overlay.on { display: flex; }
+.voice-overlay.on {
+  display: flex;
+  opacity: 1;
+  transform: translateY(0);
+}
 .voice-wave {
-  width: 80px; height: 80px;
-  background: #fff;
+  width: 32px;
+  height: 32px;
+  background: var(--color-primary);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: voicePulse 1s infinite;
+  animation: voicePulse 1.2s ease infinite;
+  flex-shrink: 0;
 }
-.voice-wave svg { width: 40px; height: 40px; color: var(--color-primary); }
+.voice-wave svg {
+  width: 16px;
+  height: 16px;
+  color: #fff;
+}
 @keyframes voicePulse {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(7,193,96,0.4); }
-  50% { transform: scale(1.1); box-shadow: 0 0 0 20px rgba(7,193,96,0); }
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(7,193,96,0.5); }
+  50%      { transform: scale(1.15); box-shadow: 0 0 0 10px rgba(7,193,96,0); }
 }
 .voice-text {
+  flex: 1;
   color: #fff;
-  font-size: 16px;
-  max-width: 80%;
-  text-align: center;
-  min-height: 24px;
+  font-size: 14px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .voice-hint {
-  color: rgba(255,255,255,0.7);
-  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 /* ---------- Slash Command Autocomplete ---------- */
@@ -210,6 +234,7 @@
   #input::placeholder { color: #666; }
   .icon-btn { color: #999; }
   .icon-btn:hover { background: rgba(255,255,255,0.06); }
+  .icon-btn:active { background: rgba(255,255,255,0.10); transform: scale(0.96); }
   .icon-btn.recording { background: rgba(244,67,54,0.15); }
 
   #slash-dropdown {
@@ -222,4 +247,5 @@
   .slash-cmd { color: #ddd; }
 
   .att-file { background: #333; }
+
 }

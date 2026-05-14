@@ -39,6 +39,7 @@ object AgentActor extends AgentCore with AgentSession:
     sessionName: Option[String] = None,
     initialMessages: List[Message] = Nil,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
+    fileHistory: Option[nebflow.core.tools.FileHistory] = None,
     contextWindow: Int = Defaults.ContextWindow
   ): Behavior[AgentCommand] =
     Behaviors
@@ -73,6 +74,7 @@ object AgentActor extends AgentCore with AgentSession:
                 pendingPermission = None,
                 wsSend = wsSend,
                 readTracker = readTracker,
+                fileHistory = fileHistory,
                 contextWindow = contextWindow
               ),
               stash,
@@ -82,6 +84,11 @@ object AgentActor extends AgentCore with AgentSession:
         }
       )
       .onFailure[Exception](SupervisorStrategy.restart.withLimit(2, java.time.Duration.ofSeconds(30)))
+
+  /** Refresh agent definition from library so on-disk config changes (e.g. mcpServers) take effect. */
+  private def refreshAgentDef(current: AgentDef, resources: SharedResources): AgentDef =
+    import cats.effect.unsafe.implicits.global
+    resources.agentLibrary.get(current.name).unsafeRunSync().getOrElse(current)
 
   // ============================================================
   // Idle state
@@ -179,7 +186,9 @@ object AgentActor extends AgentCore with AgentSession:
           .withMemoryBlock("") // Will be re-loaded on next UserInput
           .withWritesSinceLastRead(Map.empty)
           .withRecentMessageIds(Nil)
-        idle(agentDef, resources, depth, parentRef, resetState, stash, ctx)
+          .withCompaction(state.compaction.copy(highestPressureLevel = 0))
+        val refreshedDef = refreshAgentDef(agentDef, resources)
+        idle(refreshedDef, resources, depth, parentRef, resetState, stash, ctx)
 
       case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
         // User-triggered /compact: compress then return to idle (no LLM resume)
@@ -313,6 +322,18 @@ object AgentActor extends AgentCore with AgentSession:
       // --- Stream fiber registered (for Interrupt cancellation) ---
       case AgentCommand.StreamFiberStarted(fiber) =>
         processing(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(Some(fiber)), stash, ctx)
+
+      // --- Per-session highest pressure level update (from IO fiber) ---
+      case AgentCommand.UpdateHighestPressureLevel(level) =>
+        processing(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state.withCompaction(state.compaction.copy(highestPressureLevel = level)),
+          stash,
+          ctx
+        )
 
       // --- LLM completed ---
       case LlmComplete(result, replyTo, turnId) =>
@@ -545,17 +566,20 @@ object AgentActor extends AgentCore with AgentSession:
                     )
                     Behaviors.stopped
                   case None =>
-                    resources.dispatcher.unsafeRunAndForget(
-                      state
-                        .wsSend(
-                          io.circe.Json.obj(
-                            "type" -> "error".asJson,
-                            "sessionId" -> state.sessionId.asJson,
-                            "message" -> errMsg.asJson
+                    state.sessionId.foreach { sid =>
+                      resources.dispatcher.unsafeRunAndForget(
+                        (state
+                          .wsSend(
+                            io.circe.Json.obj(
+                              "type" -> "error".asJson,
+                              "sessionId" -> state.sessionId.asJson,
+                              "message" -> errMsg.asJson
+                            )
                           )
-                        )
-                        .handleErrorWith(_ => IO.unit)
-                    )
+                          .handleErrorWith(_ => IO.unit)) *>
+                          emitSessionBusy(state.wsSend, sid, busy = false)
+                      )
+                    }
                     emitStream(
                       resources.dispatcher,
                       state.wsSend,
@@ -625,17 +649,20 @@ object AgentActor extends AgentCore with AgentSession:
                     .filter(_.nonEmpty)
                     .map(m => s"LLM request failed: ${m.take(200)}")
                     .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
-              resources.dispatcher.unsafeRunAndForget(
-                cleanedState
-                  .wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "error".asJson,
-                      "sessionId" -> cleanedState.sessionId.asJson,
-                      "message" -> errMsg.asJson
+              cleanedState.sessionId.foreach { sid =>
+                resources.dispatcher.unsafeRunAndForget(
+                  (cleanedState
+                    .wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "error".asJson,
+                        "sessionId" -> cleanedState.sessionId.asJson,
+                        "message" -> errMsg.asJson
+                      )
                     )
-                  )
-                  .handleErrorWith(_ => IO.unit)
-              )
+                    .handleErrorWith(_ => IO.unit)) *>
+                    emitSessionBusy(cleanedState.wsSend, sid, busy = false)
+                )
+              }
               emitStream(
                 resources.dispatcher,
                 cleanedState.wsSend,
@@ -882,8 +909,10 @@ object AgentActor extends AgentCore with AgentSession:
           .withMemoryBlock("")
           .withWritesSinceLastRead(Map.empty)
           .withRecentMessageIds(Nil)
+          .withCompaction(state.compaction.copy(highestPressureLevel = 0))
           .resetToIdle(Nil)
-        stash.unstashAll(idle(agentDef, resources, depth, parentRef, resetState, stash, ctx))
+        val refreshedDef = refreshAgentDef(agentDef, resources)
+        stash.unstashAll(idle(refreshedDef, resources, depth, parentRef, resetState, stash, ctx))
 
       // --- ReplaceToolResults: agent-driven context management ---
       case AgentCommand.ReplaceToolResults(rounds, summary, replyTo) =>
@@ -927,14 +956,45 @@ object AgentActor extends AgentCore with AgentSession:
                 "compaction-complete",
                 s"before=${state.messages.size} after=${compactedMessages.size}"
               )
+              // Archive compaction for debugging (fire-and-forget, non-blocking)
+              val archiveIO = state.sessionId match
+                case Some(sid) =>
+                  resources.historyArchiver.archiveCompaction(
+                    sessionId = sid,
+                    sessionName = state.sessionName,
+                    agentName = agentDef.name,
+                    before = state.messages,
+                    after = compactedMessages,
+                    mode = pending.map(_.mode).getOrElse("full"),
+                    extra = Map("preservedRounds" -> FullCompact.PreserveRecentRounds.toString)
+                  )
+                case None => IO.pure(Left("no sessionId"))
               resources.dispatcher.unsafeRunAndForget(
-                emitStreamIO(
-                  state.wsSend,
-                  ctx,
-                  AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size, None, None),
-                  isSubagent = depth > 0,
-                  state.sessionId
-                ).handleErrorWith(_ => IO.unit)
+                archiveIO
+                  .flatMap {
+                    case Right(archive) =>
+                      emitStreamIO(
+                        state.wsSend,
+                        ctx,
+                        AgentStreamEvent.CompactComplete(
+                          state.messages.size,
+                          compactedMessages.size,
+                          Some(archive.reportPath)
+                        ),
+                        isSubagent = depth > 0,
+                        state.sessionId
+                      )
+                    case Left(err) =>
+                      NebflowLogger.forName("nebflow.agent").warn(s"Compaction archive failed: $err")
+                      emitStreamIO(
+                        state.wsSend,
+                        ctx,
+                        AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size, None),
+                        isSubagent = depth > 0,
+                        state.sessionId
+                      )
+                  }
+                  .handleErrorWith(_ => IO.unit)
               )
               val compactedState = state
                 .withMessages(compactedMessages)
@@ -944,11 +1004,12 @@ object AgentActor extends AgentCore with AgentSession:
                 .withLatestUsage(None) // Clear stale usage to prevent maybeAutoCompact re-trigger
                 // Refresh memory after compaction — agent may have written memory during the compacted turns
                 .withMemoryBlock(buildMemoryBlock(agentDef, state.sessionId))
+              val refreshedDef = refreshAgentDef(agentDef, resources)
 
               if pending.exists(_.resumeAfterCompact) then
                 // Auto/LLM-triggered: resume LLM call with compacted messages
                 pipeLlmCall(
-                  agentDef,
+                  refreshedDef,
                   resources,
                   depth,
                   parentRef,
@@ -965,7 +1026,7 @@ object AgentActor extends AgentCore with AgentSession:
                       IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist after compact failed: ${e.getMessage}"))
                     )
                 )
-                stash.unstashAll(idle(agentDef, resources, depth, parentRef, compactedState, stash, ctx))
+                stash.unstashAll(idle(refreshedDef, resources, depth, parentRef, compactedState, stash, ctx))
               end if
             case Left(err) =>
               logAgentEvent(
@@ -1511,7 +1572,7 @@ object AgentActor extends AgentCore with AgentSession:
           case ((acc, c), msg @ Message(MessageRole.User, Right(blocks), _)) =>
             val (newBlocks, nc) = blocks.foldLeft((Vector.empty[ContentBlock], c)) {
               case ((ba, bc), tr: ContentBlock.ToolResult) if selectedIds.contains(tr.toolUseId) =>
-                (ba :+ tr.copy(content = s"[Summarized] $summary"), bc + 1)
+                (ba :+ tr.copy(content = s"[Replaced — see RemoveUnnecessary result above]"), bc + 1)
               case ((ba, bc), other) => (ba :+ other, bc)
             }
             (acc :+ msg.copy(content = Right(newBlocks.toList)), nc)

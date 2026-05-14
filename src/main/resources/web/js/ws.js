@@ -62,6 +62,25 @@ export function connect() {
   state.ws.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
+      // Filter out messages belonging to other sessions (defense against broadcast leakage)
+      const GLOBAL_MSG_TYPES = [
+        'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
+        'agentConfig', 'agentCreated', 'agentUpdated',
+        'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
+        'memoryData', 'memorySaved', 'memoryStatus', 'searchResults'
+      ];
+      // Terminal state events update per-session busy/attention status — must always be processed
+      // so the sidebar accurately reflects session state even when the user is viewing another session.
+      const TERMINAL_MSG_TYPES = [
+        'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
+        'compactStart', 'compactComplete', 'compactFailed',
+        'backgroundTaskUpdate', 'taskListUpdate',
+        'askUser', 'askPermission'
+      ];
+      if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
+          !GLOBAL_MSG_TYPES.includes(msg.type) && !TERMINAL_MSG_TYPES.includes(msg.type)) {
+        return;
+      }
       const handler = handlers[msg.type];
       if (msg.type === 'done' || msg.type === 'error') {
         console.log(`[ws] ${msg.type} received`, { sessionId: msg.sessionId, activeSessionId: state.activeSessionId, hasHandler: !!handler });

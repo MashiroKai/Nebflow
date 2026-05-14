@@ -120,6 +120,9 @@ object AgentCommand:
   /** Full session reset — triggered by /clear to reset messages, usage, compaction state, etc. */
   case object ResetSession extends AgentCommand
 
+  /** Update per-session highest context-pressure level (isolated from other sessions). */
+  case class UpdateHighestPressureLevel(level: Int) extends AgentCommand
+
   // Peer communication (root agent to root agent via ActorRef)
   case class MessageToAgent(
     targetRef: org.apache.pekko.actor.typed.ActorRef[AgentCommand],
@@ -204,9 +207,9 @@ enum AgentStreamEvent:
   case Thinking
   case ToolCallDetected(name: String)
   case RetryStatus(message: String)
-  case Done(model: Option[String] = None)
+  case Done(model: Option[String] = None, contextWindow: Option[Int] = None, inputTokens: Option[Int] = None)
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
-  case CompactComplete(before: Int, after: Int, snapshotPath: Option[String], comparisonPath: Option[String] = None)
+  case CompactComplete(before: Int, after: Int, reportPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
   case BackgroundTaskUpdate(taskId: String, description: String, status: String)
 
@@ -267,11 +270,13 @@ enum AgentStreamEvent:
       if isSubagent then
         Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
       else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
-    case Done(model) =>
+    case Done(model, contextWindow, inputTokens) =>
       val base =
         if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
         else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
-      model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
+      val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
+      val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
+      inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
     case CompactStart(mode, inputTokens, threshold) =>
       if isSubagent then
         Json.obj(
@@ -289,7 +294,7 @@ enum AgentStreamEvent:
           "inputTokens" -> inputTokens.asJson,
           "threshold" -> threshold.asJson
         )
-    case CompactComplete(before, after, snapshotPath, comparisonPath) =>
+    case CompactComplete(before, after, reportPath) =>
       if isSubagent then
         val base = Json.obj(
           "type" -> "agentCompactComplete".asJson,
@@ -297,8 +302,7 @@ enum AgentStreamEvent:
           "before" -> before.asJson,
           "after" -> after.asJson
         )
-        val withSnapshot = snapshotPath.fold(base)(p => base.deepMerge(Json.obj("snapshotPath" -> p.asJson)))
-        comparisonPath.fold(withSnapshot)(p => withSnapshot.deepMerge(Json.obj("comparisonPath" -> p.asJson)))
+        reportPath.fold(base)(p => base.deepMerge(Json.obj("reportPath" -> p.asJson)))
       else
         val base = Json.obj(
           "type" -> "compactComplete".asJson,
@@ -306,8 +310,7 @@ enum AgentStreamEvent:
           "before" -> before.asJson,
           "after" -> after.asJson
         )
-        val withSnapshot = snapshotPath.fold(base)(p => base.deepMerge(Json.obj("snapshotPath" -> p.asJson)))
-        comparisonPath.fold(withSnapshot)(p => withSnapshot.deepMerge(Json.obj("comparisonPath" -> p.asJson)))
+        reportPath.fold(base)(p => base.deepMerge(Json.obj("reportPath" -> p.asJson)))
     case CompactFailed(reason, attempt, maxAttempts) =>
       if isSubagent then
         Json.obj(
@@ -417,6 +420,7 @@ case class SessionContext(
   wsSend: Json => IO[Unit] = _ => IO.unit,
   depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None,
+  fileHistory: Option[nebflow.core.tools.FileHistory] = None,
   /** Per-file write tracking for verification reminders — scoped to this agent/session. */
   writesSinceLastRead: Map[String, WriteTrackerEntry] = Map.empty,
   /** Context window for this session's current model — updated when user switches models. */
@@ -473,7 +477,9 @@ case class CompactionState(
   compactionFailures: Int = 0,
   /** Timestamp of the last compaction failure (epoch ms) — used for retry backoff. */
   lastCompactionFailureAt: Long = 0L,
-  latestUsage: Option[TokenUsage] = None
+  latestUsage: Option[TokenUsage] = None,
+  /** Highest context-pressure reminder level shown for this session (0–100). Per-session isolation. */
+  highestPressureLevel: Int = 0
 )
 
 /** Top-level agent state — composed of domain-specific sub-structures. */
@@ -502,6 +508,7 @@ object AgentState:
     turnIdx: Int = 0,
     wsSend: Json => IO[Unit] = _ => IO.unit,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
+    fileHistory: Option[nebflow.core.tools.FileHistory] = None,
     recentMessageIds: List[String] = Nil,
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): AgentState =
@@ -509,7 +516,17 @@ object AgentState:
       case (None, None) => None
       case _ => Some(InteractionState(pendingAskUser, pendingPermission))
     new AgentState(
-      SessionContext(sessionId, sessionName, recentMessageIds, wsSend, depth, readTracker, Map.empty, contextWindow),
+      SessionContext(
+        sessionId,
+        sessionName,
+        recentMessageIds,
+        wsSend,
+        depth,
+        readTracker,
+        fileHistory,
+        Map.empty,
+        contextWindow
+      ),
       ExecutionContext(messages, status, turnIdx, 0L, subagents, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
     )
@@ -539,6 +556,7 @@ extension (s: AgentState)
   def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
     s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
+  def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
   def writesSinceLastRead: Map[String, WriteTrackerEntry] = s.session.writesSinceLastRead
   def contextWindow: Int = s.session.contextWindow
   def memoryBlock: String = s.session.memoryBlock
