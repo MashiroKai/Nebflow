@@ -983,3 +983,17 @@ export function initFeishuPanel() {
   });
 }
 
+/** Refresh header model-info bar for the active session. */
+export function initHeaderModelInfo() {
+  if (typeof state.updateHeaderModelInfo === 'function') {
+    state.updateHeaderModelInfo();
+  }
+}
+
+/** Create a new folder via WebSocket. */
+export function createNewFolder() {
+  const name = prompt('Folder name:');
+  if (!name || !name.trim()) return;
+  import('./ws.js').then(({ sendWs }) => sendWs({ type: 'createFolder', name: name.trim() }));
+}
+
