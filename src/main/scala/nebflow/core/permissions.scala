@@ -1,75 +1,37 @@
 package nebflow.core
 
-import io.circe.*
-import io.circe.syntax.*
+import io.circe.JsonObject
+import nebflow.core.tools.BashTool
 
-enum ToolRisk:
-  case Safe
-  case NeedsApproval
+/** Determines whether a tool call is reversible (auto-approve) or
+  * irreversible (ask the user for confirmation).
+  *
+  * Design principle: only truly irreversible operations require user approval.
+  * Everything else is auto-approved. File operations are reversible via FileHistory.
+  */
+object ToolReversibility:
 
-object ToolRisk:
-
-  private val defaults: Map[String, ToolRisk] = Map(
-    "Read" -> Safe,
-    "Glob" -> Safe,
-    "Grep" -> Safe,
-    "WebSearch" -> Safe,
-    "WebFetch" -> Safe,
-    "AskUserQuestion" -> Safe,
-    "ContextManage" -> Safe,
-    "delegate" -> Safe,
-    "report" -> Safe,
-    "ask_parent" -> Safe,
-    "Bash" -> NeedsApproval,
-    "Write" -> NeedsApproval,
-    "Edit" -> NeedsApproval,
-    "Curl" -> NeedsApproval
+  private val AlwaysReversible = Set(
+    "Read", "Glob", "Grep",
+    "WebSearch", "WebFetch",
+    "Edit", "Write",
+    "AskUserQuestion", "ContextManage",
+    "TaskCreate", "TaskUpdate", "TaskGet", "TaskDelete", "TaskList",
+    "Card", "RemoveUnnecessary"
   )
 
-  def classify(toolName: String): ToolRisk =
-    defaults.getOrElse(toolName, NeedsApproval)
+  private val SafeHttpMethods = Set("GET", "HEAD", "OPTIONS")
 
-enum ApprovalDecision:
-  case Approved
-  case NeedsUserApproval
-  case Blocked(reason: String)
+  def isReversible(toolName: String, input: JsonObject): Boolean =
+    if AlwaysReversible.contains(toolName) then true
+    else if toolName == "Bash" then
+      // Non-dangerous bash commands are considered reversible
+      input("command").flatMap(_.asString).forall(cmd => !BashTool.isDangerous(cmd))
+    else if toolName == "Curl" then
+      // Only read-only HTTP methods are reversible
+      input("method").flatMap(_.asString).forall(m => SafeHttpMethods.contains(m.toUpperCase))
+    else
+      // Unknown tools: conservative — ask user
+      false
 
-case class PermissionPolicy(
-  autoApproveAll: Boolean = false,
-  autoApproveTools: Set[String] = Set.empty,
-  blockedTools: Set[String] = Set.empty
-)
-
-object PermissionPolicy:
-
-  given Encoder[PermissionPolicy] = Encoder.instance { p =>
-    Json.obj(
-      "autoApproveAll" -> p.autoApproveAll.asJson,
-      "autoApproveTools" -> p.autoApproveTools.toList.asJson,
-      "blockedTools" -> p.blockedTools.toList.asJson
-    )
-  }
-
-  given Decoder[PermissionPolicy] = Decoder.instance { c =>
-    for
-      auto <- c.downField("autoApproveAll").as[Option[Boolean]].map(_.getOrElse(false))
-      autoTools <- c.downField("autoApproveTools").as[Option[List[String]]].map(_.getOrElse(Nil).toSet)
-      blocked <- c.downField("blockedTools").as[Option[List[String]]].map(_.getOrElse(Nil).toSet)
-    yield PermissionPolicy(auto, autoTools, blocked)
-  }
-
-  def default: PermissionPolicy = PermissionPolicy()
-
-  /** Map a policy back to a simple name string for the frontend. */
-  def toName(p: PermissionPolicy): String =
-    if p.autoApproveAll then "auto"
-    else if p.blockedTools.nonEmpty then "block"
-    else "ask"
-
-  def fromString(s: String): PermissionPolicy = s match
-    case "auto" => PermissionPolicy(autoApproveAll = true)
-    case "ask" => PermissionPolicy.default
-    case "block" => PermissionPolicy(blockedTools = Set("Bash", "Write", "Edit", "Curl"))
-    case _ => PermissionPolicy.default
-
-end PermissionPolicy
+end ToolReversibility

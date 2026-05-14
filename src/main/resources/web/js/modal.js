@@ -23,7 +23,9 @@ export function confirmNewSession() {
   const name = modalInput.value.trim();
   hideModals();
   if (!name) return;
-  sendWs({type: 'createSession', name, agentName: state.selectedAgent || 'Nebula'});
+  const payload = {type: 'createSession', name, agentName: state.selectedAgent || 'Nebula'};
+  if (state.activeFolderId) payload.folderId = state.activeFolderId;
+  sendWs(payload);
 }
 
 // ---------- Inline New Session ----------
@@ -61,14 +63,18 @@ export function startInlineNewSession() {
 
 // --- Delete modal ---
 let pendingBatchDelete = false;
+let pendingFolderDelete = false;
+let pendingFolderDeleteId = null;
 
 export function showDeleteModal(sessionId, sessionName) {
-  const { modalBox, deleteBox, deleteMsg, modalOverlay } = state.dom;
+  const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
-  deleteMsg.textContent = 'Delete session "' + sessionName + '"';
+  deleteTitle.textContent = 'Delete Session';
+  deleteMsg.textContent = 'Delete session "' + sessionName + '"?';
   state.pendingDeleteId = sessionId;
   pendingBatchDelete = false;
+  pendingFolderDelete = false;
   modalOverlay.classList.add('on');
 }
 
@@ -81,6 +87,20 @@ export function showBatchDeleteModal() {
   deleteMsg.textContent = 'Delete ' + count + ' selected session' + (count > 1 ? 's' : '') + '?';
   state.pendingDeleteId = null;
   pendingBatchDelete = true;
+  pendingFolderDelete = false;
+  modalOverlay.classList.add('on');
+}
+
+export function showDeleteFolderModal(folderId, folderName) {
+  const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
+  modalBox.style.display = 'none';
+  deleteBox.style.display = 'block';
+  deleteTitle.textContent = 'Delete Folder';
+  deleteMsg.textContent = 'Delete folder "' + folderName + '"?\nSessions inside will be moved to root.';
+  pendingFolderDelete = true;
+  pendingFolderDeleteId = folderId;
+  pendingBatchDelete = false;
+  state.pendingDeleteId = null;
   modalOverlay.classList.add('on');
 }
 
@@ -89,6 +109,14 @@ export function confirmDeleteSession() {
     pendingBatchDelete = false;
     hideModals();
     batchDeleteSelected();
+    return;
+  }
+  if (pendingFolderDelete) {
+    pendingFolderDelete = false;
+    const fid = pendingFolderDeleteId;
+    pendingFolderDeleteId = null;
+    hideModals();
+    if (fid) sendWs({ type: 'deleteFolder', folderId: fid });
     return;
   }
   const id = state.pendingDeleteId;

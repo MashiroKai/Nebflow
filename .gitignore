@@ -1,0 +1,33 @@
+# Build
+target/
+project/target/
+project/project/
+
+# IDE
+.idea/
+.vscode/
+.metals/
+.bloop/
+.bsp/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Nebflow runtime
+.nebflow/
+.nebflow-qc.log
+
+# Internal / development-only
+.claude/
+SKEL
+archives/
+temp/
+docs/
+*demo*.html
+/nebflow
+
+# Sensitive
+*.env
+*.secret
+credentials.json

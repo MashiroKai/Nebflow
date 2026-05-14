@@ -245,14 +245,6 @@ Git safety:
         }
       case None =>
         if command.isEmpty then IO.pure(Right("[Empty command]"))
-        else if isDangerous(command) then
-          IO.pure(
-            Left(
-              ToolError(
-                "[Blocked by sandbox] This command is permanently blocked for safety and cannot be approved."
-              )
-            )
-          )
         else
           val interactiveWarning = checkInteractive(command)
           if interactiveWarning.isDefined then

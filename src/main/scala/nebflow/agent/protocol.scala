@@ -23,20 +23,6 @@ object AgentCommand:
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 
-  // Sub-agent communication
-  case class DelegateResult(subagentId: String, result: Either[AgentError, String]) extends AgentCommand
-
-  case class SubagentQuestion(
-    subagentId: String,
-    question: String,
-    replyTo: Option[org.apache.pekko.actor.typed.ActorRef[ParentAnswer]] = None,
-    subagentRef: Option[org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = None
-  ) extends AgentCommand
-  case class ParentAnswer(answer: String) extends AgentCommand
-
-  // Streaming output forwarding
-  case class SubagentStreamEvent(subagentId: String, event: AgentStreamEvent) extends AgentCommand
-
   // Ask user / Permission (from tool execution)
   case class AskUser(
     requestId: String,
@@ -98,15 +84,6 @@ object AgentCommand:
     rounds: Int,
     summary: String,
     replyTo: cats.effect.Deferred[IO, Either[String, Int]]
-  ) extends AgentCommand
-
-  // Internal — subagent definition loaded, ready to spawn on actor thread
-  case class SubagentDefLoaded(
-    call: ToolCall,
-    agentName: String,
-    task: String,
-    defn: Option[AgentDef],
-    depth: Int
   ) extends AgentCommand
 
   // User interaction responses
@@ -385,7 +362,6 @@ case class AgentError(
 enum AgentStatus:
   case Idle
   case Processing
-  case Delegating(subagentId: String)
   case WaitingForUser
   case Error(msg: String)
 
@@ -442,13 +418,10 @@ case class ExecutionContext(
   status: AgentStatus = AgentStatus.Idle,
   turnIdx: Int = 0,
   currentTurnId: Long = 0L,
-  subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = Map.empty,
   activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
   interaction: Option[InteractionState] = None,
-  /** Queued external events to inject after turn (replaces pendingNotifications). */
+  /** Queued external events to inject after turn. */
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
-  /** Queued async responses (from AskUserQuestion, ask_parent) to inject after turn. */
-  pendingResponses: List[String] = Nil,
   /** Retry count for LLM empty responses within a single turn. */
   emptyResponseRetries: Int = 0
 )
@@ -462,11 +435,9 @@ object ExecutionContext:
       status = AgentStatus.Idle,
       turnIdx = turnIdx,
       currentTurnId = currentTurnId,
-      subagents = Map.empty,
       activeStreamFiber = None,
       interaction = None,
       pendingEvents = Nil,
-      pendingResponses = Nil,
       emptyResponseRetries = 0
     )
 end ExecutionContext
@@ -496,7 +467,6 @@ object AgentState:
     messages: List[Message] = Nil,
     status: AgentStatus = AgentStatus.Idle,
     depth: Int = 0,
-    subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = Map.empty,
     activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
     sessionId: Option[String] = None,
     sessionName: Option[String] = None,
@@ -527,7 +497,7 @@ object AgentState:
         Map.empty,
         contextWindow
       ),
-      ExecutionContext(messages, status, turnIdx, 0L, subagents, activeStreamFiber, interaction),
+      ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
     )
   end apply
@@ -543,7 +513,6 @@ extension (s: AgentState)
   def depth: Int = s.session.depth
   def turnIdx: Int = s.execution.turnIdx
   def currentTurnId: Long = s.execution.currentTurnId
-  def subagents: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = s.execution.subagents
   def activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = s.execution.activeStreamFiber
   def recentMessageIds: List[String] = s.session.recentMessageIds
   def pendingCompaction: Option[CompactionJob] = s.compaction.pendingJob
@@ -571,9 +540,6 @@ extension (s: AgentState)
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
 
   def withCurrentTurnId(id: Long): AgentState = s.copy(execution = s.execution.copy(currentTurnId = id))
-
-  def withSubagents(subs: Map[String, org.apache.pekko.actor.typed.ActorRef[AgentCommand]]): AgentState =
-    s.copy(execution = s.execution.copy(subagents = subs))
 
   def withActiveStreamFiber(fiber: Option[cats.effect.Fiber[IO, Throwable, Unit]]): AgentState =
     s.copy(execution = s.execution.copy(activeStreamFiber = fiber))

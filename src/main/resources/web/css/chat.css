@@ -726,3 +726,31 @@
   opacity: 0.55;
   margin-bottom: 2px;
 }
+
+/* ===== HTML Card styles ===== */
+.tool-card.tool-card--html {
+  max-width: 100%;
+  width: 100%;
+  padding: 0;
+  background: none;
+  cursor: default;
+  display: block;  /* override display:flex so .html-card-wrap stretches full width */
+}
+.html-card-wrap {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  width: 100%;
+}
+.html-card-iframe {
+  width: 100%;
+  border: none;
+  display: block;
+  min-height: 40px;
+}
+@media (prefers-color-scheme: dark) {
+  .html-card-wrap {
+    border-color: #444;
+  }
+}
