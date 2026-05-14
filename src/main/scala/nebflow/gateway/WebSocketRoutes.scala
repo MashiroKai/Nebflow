@@ -179,7 +179,6 @@ class WebSocketRoutes(
                   "type" -> "serverConfig".asJson,
                   "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
                   "version" -> nebflow.Version.string.asJson,
-                  "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
                   "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
                   "tools" -> toolsList.asJson,
                   "language" -> prefs.language.asJson,
@@ -222,15 +221,7 @@ class WebSocketRoutes(
               "name" -> a.name.asJson,
               "description" -> a.description.asJson,
               "displayName" -> a.displayName.getOrElse(a.name).asJson,
-              "avatar" -> a.avatar.asJson,
-              "frontend" -> a.frontend
-                .map { fe =>
-                  io.circe.Json.obj(
-                    "scripts" -> fe.scripts.asJson,
-                    "styles" -> fe.styles.asJson
-                  )
-                }
-                .getOrElse(io.circe.Json.Null)
+              "avatar" -> a.avatar.asJson
             )
           }.asJson
         )
@@ -293,7 +284,6 @@ class WebSocketRoutes(
           "type" -> "serverConfig".asJson,
           "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
           "version" -> nebflow.Version.string.asJson,
-          "policy" -> PermissionPolicy.toName(prefs.permissionPolicy).asJson,
           "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
           "tools" -> toolsList.asJson,
           "language" -> prefs.language.asJson,
@@ -366,13 +356,6 @@ class WebSocketRoutes(
           val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
           logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
             routeToAgent(permSessionId)(ref => IO(ref ! AgentCommand.PermissionAnswered(approved)))
-
-        case "setPolicy" =>
-          val policyStr = parse(text).flatMap(_.hcursor.downField("policy").as[String]).getOrElse("ask")
-          val policy = PermissionPolicy.fromString(policyStr)
-          logger.info(s"Permission policy changed to: $policyStr") *>
-            runtimePrefs.setPolicy(policy) *>
-            broadcastServerConfig
 
         case "interrupt" =>
           val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
@@ -774,7 +757,7 @@ class WebSocketRoutes(
             // Configurable builtin tools — exclude MCP tools (controlled via mcpServers) and auto-injected tools
             val isMcpTool = (name: String) => name.startsWith("mcp__")
             val autoInjected =
-              ToolRegistry.AlwaysAvailableNonCompact ++ ToolRegistry.SubagentTools ++ ToolRegistry.ParentTools
+              ToolRegistry.AlwaysAvailableNonCompact
             val configurableTools = ToolRegistry.TOOL_MAP.keys
               .filterNot(n => isMcpTool(n) || autoInjected.contains(n))
               .toList

@@ -50,34 +50,6 @@ const slashCommands = {
       });
     }
   },
-  '/trust': {
-    desc: 'Manage tool approval policy',
-    run: () => {
-      if (!state.currentAiBubble) {
-        const row = document.createElement('div');
-        row.className = 'row ai';
-        state.currentAiBubble = document.createElement('div');
-        state.currentAiBubble.className = 'bubble ai';
-        row.appendChild(state.currentAiBubble);
-        state.dom.chat.appendChild(row);
-      }
-      import('./chat.js').then(({ showOptions }) => {
-        showOptions(state.currentAiBubble, [
-          {question: 'Tool approval policy', options: [
-            {label: 'Auto-approve all', desc: 'All tools execute without asking'},
-            {label: 'Ask every time', desc: 'Prompt for Bash/Write/Edit/Curl'},
-            {label: 'Block dangerous', desc: 'Block Bash/Write/Edit/Curl entirely'}
-          ]}
-        ], (answers) => {
-          const policy = answers[0] === 'Auto-approve all' ? 'auto'
-                       : answers[0] === 'Block dangerous' ? 'block'
-                       : 'ask';
-          sendWs({type: 'setPolicy', policy});
-          renderSystemBubble('Policy: ' + answers[0]);
-        }, 'Apply');
-      });
-    }
-  },
   '/ask': {
     desc: 'Ask a question about the latest response (does not affect context)',
     run: () => {

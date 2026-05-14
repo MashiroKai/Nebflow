@@ -17,7 +17,6 @@ class AgentActorCompactionSpec extends FunSuite:
       messages = Nil,
       status = AgentStatus.Idle,
       depth = 0,
-      subagents = Map.empty,
       activeStreamFiber = None,
       sessionId = Some("test-session"),
       pendingCompaction = None,
@@ -89,7 +88,7 @@ class AgentActorCompactionSpec extends FunSuite:
       .withPendingCompaction(Some(CompactionJob("sub-1", "full", None, None)))
     // Simulate the success branch transformations in DelegateResult
     val compactedMsgs = List(Message(MessageRole.User, Left("summary")))
-    val newState = state.withPendingCompaction(None).withSubagents(Map.empty)
+    val newState = state.withPendingCompaction(None)
     val successState = newState.withMessages(compactedMsgs).withCompactionFailures(0)
 
     assert(successState.pendingCompaction.isEmpty)
@@ -108,7 +107,7 @@ class AgentActorCompactionSpec extends FunSuite:
       .withPendingCompaction(Some(CompactionJob("sub-1", "full", None, None)))
     // Simulate the failure branch transformations in DelegateResult (non-circuit-broken)
     val failures = state.compactionFailures + 1 // 2
-    val newState = state.withPendingCompaction(None).withSubagents(Map.empty)
+    val newState = state.withPendingCompaction(None)
     val failedState = newState.withCompactionFailures(failures)
 
     assert(failedState.pendingCompaction.isEmpty)
@@ -135,7 +134,7 @@ class AgentActorCompactionSpec extends FunSuite:
 
     // Simulate the success branch — exactly matching AgentActor DelegateResult handler:
     val compactedMsgs = List(Message(MessageRole.User, Left("summary")))
-    val newState = state.withPendingCompaction(None).withSubagents(Map.empty)
+    val newState = state.withPendingCompaction(None)
     val successState = newState
       .withMessages(compactedMsgs)
       .withCompactionFailures(0)
