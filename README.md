@@ -28,10 +28,10 @@ curl -fsSL https://nebflow.space/install.sh | sh
 
 ### Install (Windows)
 
-Download the JAR from [nebflow.space/releases](https://nebflow.space/releases/) and run:
+Open PowerShell and run:
 
 ```powershell
-java --add-opens java.base/java.lang=ALL-UNNAMED -jar nebflow-assembly-1.0.0.jar
+irm https://nebflow.space/install.ps1 | iex
 ```
 
 ### Docker
@@ -55,6 +55,20 @@ nebflow
 
 # Show help
 nebflow --help
+```
+
+### Windows
+
+On Windows, after installation, use the following commands:
+
+```powershell
+# PowerShell
+nebflow --server
+nebflow --help
+
+# CMD
+nebflow.cmd --server
+nebflow.cmd --help
 ```
 
 ## Configuration
