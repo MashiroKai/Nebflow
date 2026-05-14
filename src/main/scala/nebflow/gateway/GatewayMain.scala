@@ -208,7 +208,7 @@ object GatewayMain extends IOApp.Simple:
                                       )
                                       _ <- bridgeManager.startAll.start // start in background
                                       _ <- openBrowser(url)
-                                      // --- Background init: MCP servers + skill discovery ---
+                                      // --- Background init: MCP servers ---
                                       bgInit = runtimePrefs.getDisabledMcpServers
                                         .flatMap { disabled =>
                                           startMcpServers(config, mcpManager, agentLibrary, disabled)

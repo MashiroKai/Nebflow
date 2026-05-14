@@ -27,6 +27,19 @@ object SharedBackend:
   /** 统一的 User-Agent，所有 Nebflow 网络请求使用此标识。 */
   val UserAgent = s"Mozilla/5.0 (compatible; Nebflow/${nebflow.Version.string})"
 
+  /** 模拟 Chrome 导航请求的关键 headers，降低被反爬虫拦截的概率。 */
+  val BrowserHeaders: Map[String, String] = Map(
+    "User-Agent" -> UserAgent,
+    "Accept" -> "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language" -> "en-US,en;q=0.9",
+    "Referer" -> "https://www.google.com/",
+    "Sec-Fetch-Dest" -> "document",
+    "Sec-Fetch-Mode" -> "navigate",
+    "Sec-Fetch-Site" -> "cross-site",
+    "Sec-Fetch-User" -> "?1",
+    "Upgrade-Insecure-Requests" -> "1"
+  )
+
 /** HTTP 工具函数 */
 object HttpUtils:
 

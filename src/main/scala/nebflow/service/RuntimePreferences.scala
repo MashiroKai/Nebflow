@@ -5,7 +5,6 @@ import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{ApprovalDecision, PermissionPolicy}
 import nebflow.shared.{MtimeCache, MtimeFileCache}
 
 // ============================================================
@@ -52,7 +51,6 @@ end ThinkingConfig
 // ============================================================
 
 case class RuntimePreferences(
-  permissionPolicy: PermissionPolicy = PermissionPolicy.default,
   thinkingConfig: Option[ThinkingConfig] = None,
   language: Option[String] = None,
   disabledMcpServers: Set[String] = Set.empty
@@ -62,7 +60,6 @@ object RuntimePreferences:
 
   given Encoder[RuntimePreferences] = Encoder.instance { rp =>
     Json.obj(
-      "permissionPolicy" -> rp.permissionPolicy.asJson,
       "thinkingConfig" -> rp.thinkingConfig.asJson,
       "language" -> rp.language.asJson,
       "disabledMcpServers" -> rp.disabledMcpServers.asJson
@@ -71,11 +68,12 @@ object RuntimePreferences:
 
   given Decoder[RuntimePreferences] = Decoder.instance { c =>
     for
-      policy <- c.downField("permissionPolicy").as[Option[PermissionPolicy]].map(_.getOrElse(PermissionPolicy.default))
+      // Backward compat: ignore legacy "permissionPolicy" field if present
+      _ <- c.downField("permissionPolicy").as[Option[Json]]
       thinking <- c.downField("thinkingConfig").as[Option[ThinkingConfig]]
       language <- c.downField("language").as[Option[String]]
       disabledMcp <- c.downField("disabledMcpServers").as[Option[Set[String]]].map(_.getOrElse(Set.empty))
-    yield RuntimePreferences(policy, thinking, language, disabledMcp)
+    yield RuntimePreferences(thinking, language, disabledMcp)
   }
 
   val default: RuntimePreferences = RuntimePreferences()
@@ -100,13 +98,6 @@ class RuntimePreferencesService private (
 
   def getAll: IO[RuntimePreferences] = load
 
-  def getPolicy: IO[PermissionPolicy] = load.map(_.permissionPolicy)
-
-  def setPolicy(policy: PermissionPolicy): IO[Unit] =
-    load.flatMap { current =>
-      RuntimePreferencesService.save(current.copy(permissionPolicy = policy))
-    } *> fileCache.invalidate
-
   def getThinking: IO[Option[ThinkingConfig]] = load.map(_.thinkingConfig)
 
   def setThinking(tc: Option[ThinkingConfig]): IO[Unit] =
@@ -129,19 +120,10 @@ class RuntimePreferencesService private (
       RuntimePreferencesService.save(current.copy(disabledMcpServers = updated))
     } *> fileCache.invalidate
 
-  def shouldApprove(toolName: String): IO[ApprovalDecision] =
-    for p <- getPolicy
-    yield
-      if p.autoApproveAll then ApprovalDecision.Approved
-      else if p.blockedTools.contains(toolName) then ApprovalDecision.Blocked(s"$toolName is blocked by policy")
-      else if p.autoApproveTools.contains(toolName) then ApprovalDecision.Approved
-      else ApprovalDecision.NeedsUserApproval
-
 end RuntimePreferencesService
 
 object RuntimePreferencesService:
   private val preferencesPath: os.Path = os.home / ".nebflow" / "preferences.json"
-  private val legacyPolicyPath: os.Path = os.home / ".nebflow" / "permission_policy.json"
 
   private def parsePreferences(content: String): RuntimePreferences =
     decode[RuntimePreferences](content).getOrElse(RuntimePreferences.default)
@@ -153,19 +135,8 @@ object RuntimePreferencesService:
     }
 
   def create: IO[RuntimePreferencesService] =
-    // Handle legacy migration: if preferences.json doesn't exist but legacy does, migrate once
-    IO.blocking {
-      if !os.exists(preferencesPath) && os.exists(legacyPolicyPath) then
-        val legacyPolicy = decode[PermissionPolicy](os.read(legacyPolicyPath)).getOrElse(PermissionPolicy.default)
-        os.write.over(
-          preferencesPath,
-          RuntimePreferences(permissionPolicy = legacyPolicy).asJson.spaces2,
-          createFolders = true
-        )
-    }.map { _ =>
-      new RuntimePreferencesService(
-        MtimeCache.file[RuntimePreferences](preferencesPath, parsePreferences)
-      )
-    }
+    IO.pure(new RuntimePreferencesService(
+      MtimeCache.file[RuntimePreferences](preferencesPath, parsePreferences)
+    ))
 
 end RuntimePreferencesService

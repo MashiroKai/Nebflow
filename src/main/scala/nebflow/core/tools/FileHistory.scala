@@ -16,7 +16,7 @@ import scala.jdk.CollectionConverters.*
   * Files larger than `maxFileSizeBytes` are skipped.
   */
 class FileHistory private (
-  historyRoot: Path,
+  private[tools] val historyRoot: Path,
   maxEntries: Int,
   maxFileSizeBytes: Long,
   // In-memory index: path -> sorted list of snapshot timestamps (newest first)
@@ -36,7 +36,7 @@ class FileHistory private (
         Files.createDirectories(dir)
         val ts = System.currentTimeMillis()
         val dest = dir.resolve(ts.toString)
-        Files.copy(filePath, dest)
+        Files.copy(filePath, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         // Update in-memory index
         index.update { m =>
           val entries = m.getOrElse(key, Vector.empty)

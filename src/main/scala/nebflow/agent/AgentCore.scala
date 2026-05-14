@@ -1,6 +1,7 @@
 package nebflow.agent
 
 import cats.effect.IO
+import cats.effect.Ref
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -270,7 +271,7 @@ private[agent] trait AgentCore:
         //   messages:  [per-turn reminders] + actual conversation (dynamic, not persisted)
         // Env info is baked into system prompt once — git state is omitted; agent uses Bash on demand.
         val baseSystemStable = buildSystemPrompt(agentDef, resources)
-        val tools = buildToolList(agentDef, depth, parentRef.isDefined)
+        val tools = buildToolList(agentDef)
 
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
@@ -424,7 +425,7 @@ private[agent] trait AgentCore:
     ) => Behavior[AgentCommand]
   ): Behavior[AgentCommand] =
     // Build the full allowed tool set: whitelist + always-available + context-dependent
-    val allowedTools = buildAllowedToolSet(agentDef, depth, parentRef.isDefined)
+    val allowedTools = buildAllowedToolSet(agentDef)
     val (filteredCalls, droppedCalls) = result.toolCalls.partition(tc => allowedTools.contains(tc.name))
     if droppedCalls.nonEmpty then
       val dropped = droppedCalls.map(_.name).distinct.mkString(", ")
@@ -485,52 +486,15 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          (ToolRisk.classify(call.name) match
-            case ToolRisk.Safe =>
-              executeTool(call, toolCtx)
-            case ToolRisk.NeedsApproval if isSessionMemoryFile(call, state, agentDef) =>
-              // Session memory files: auto-approve (agent can edit freely)
-              executeTool(call, toolCtx)
-            case ToolRisk.NeedsApproval =>
-              resources.runtimePrefs.shouldApprove(call.name).flatMap {
-                case ApprovalDecision.Approved =>
-                  executeTool(call, toolCtx)
-                case ApprovalDecision.Blocked(reason) =>
-                  IO.pure(
-                    ToolExecResult(
-                      NebflowError.toUserMessage(NebflowError.ToolDenied(call.name, reason)),
-                      isError = true
-                    )
-                  )
-                case ApprovalDecision.NeedsUserApproval =>
-                  permissionDeferredRef.get.flatMap {
-                    case Some(_) =>
-                      IO.pure(ToolExecResult("Another permission request is already pending", isError = true))
-                    case None =>
-                      val deferred = cats.effect.Deferred.unsafe[IO, Boolean]
-                      permissionDeferredRef.set(Some(deferred)) *>
-                        // Notify actor to save the deferred in its state before we wait on it
-                        IO(ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
-                        (IO {
-                          val summary = nebflow.core.summarizeToolCall(call)
-                          Json.obj(
-                            "type" -> "askPermission".asJson,
-                            "sessionId" -> state.sessionId.asJson,
-                            "toolName" -> call.name.asJson,
-                            "summary" -> summary.asJson,
-                            "input" -> call.input.asJson
-                          )
-                        }).flatMap { permJson =>
-                          for
-                            _ <- state.wsSend(permJson)
-                            approved <- deferred.get
-                            result <-
-                              if approved then executeTool(call, toolCtx)
-                              else IO.pure(ToolExecResult("Permission denied by user", isError = true))
-                          yield result
-                        }
-                  }
-              }
+          (if isSessionMemoryFile(call, state, agentDef) then
+            // Session memory files: auto-approve (agent can edit freely)
+            executeTool(call, toolCtx)
+          else if ToolReversibility.isReversible(call.name, call.input) then
+            // Reversible operations: auto-approve
+            executeTool(call, toolCtx)
+          else
+            // Irreversible operations: ask user for confirmation
+            askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
           ).map(r => (call, r))
             .attempt
             .map {
@@ -630,6 +594,44 @@ private[agent] trait AgentCore:
   end pipeToolExecutions
 
   // ============================================================
+  // Ask user for permission to execute a tool call
+  // ============================================================
+
+  private def askUserPermission(
+    call: ToolCall,
+    state: AgentState,
+    permissionDeferredRef: Ref[IO, Option[cats.effect.Deferred[IO, Boolean]]],
+    ctx: org.apache.pekko.actor.typed.scaladsl.ActorContext[AgentCommand],
+    toolCtx: ToolContext
+  ): IO[ToolExecResult] =
+    permissionDeferredRef.get.flatMap {
+      case Some(_) =>
+        IO.pure(ToolExecResult("Another permission request is already pending", isError = true))
+      case None =>
+        val deferred = cats.effect.Deferred.unsafe[IO, Boolean]
+        permissionDeferredRef.set(Some(deferred)) *>
+          IO(ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
+          IO {
+            val summary = nebflow.core.summarizeToolCall(call)
+            Json.obj(
+              "type" -> "askPermission".asJson,
+              "sessionId" -> state.sessionId.asJson,
+              "toolName" -> call.name.asJson,
+              "summary" -> summary.asJson,
+              "input" -> call.input.asJson
+            )
+          }.flatMap { permJson =>
+            for
+              _ <- state.wsSend(permJson)
+              approved <- deferred.get
+              result <-
+                if approved then executeTool(call, toolCtx)
+                else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+            yield result
+          }
+    }
+
+  // ============================================================
   // Unified tool execution — all tools go through executeTool
   // ============================================================
 
@@ -720,7 +722,7 @@ private[agent] trait AgentCore:
   // ============================================================
 
   /** Build the set of allowed tool names for filtering tool call results. */
-  protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int, hasParent: Boolean): Set[String] =
+  protected def buildAllowedToolSet(agentDef: AgentDef): Set[String] =
     val isMcpTool = (name: String) => name.startsWith("mcp__")
     val base = agentDef.tools match
       case Nil => Set.empty[String]
@@ -740,13 +742,10 @@ private[agent] trait AgentCore:
     val always =
       if agentDef.name == "context-manage" then ToolRegistry.AlwaysAvailable
       else ToolRegistry.AlwaysAvailableNonCompact
-    // Delegate tool is always available for root agents (depth=0)
-    val delegateTools = if depth == 0 && !hasParent then ToolRegistry.SubagentTools else Set.empty[String]
-    val parentTools = if hasParent then ToolRegistry.ParentTools else Set.empty[String]
-    base ++ mcpTools ++ always ++ delegateTools ++ parentTools
+    base ++ mcpTools ++ always
 
-  protected def buildToolList(agentDef: AgentDef, depth: Int, hasParent: Boolean): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth, hasParent)
+  protected def buildToolList(agentDef: AgentDef): Option[List[ToolDefinition]] =
+    val allowedSet = buildAllowedToolSet(agentDef)
     val tools = ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name))
     Some(tools)
   end buildToolList
@@ -842,16 +841,21 @@ private[agent] trait AgentCore:
   // ============================================================
 
   protected def buildSystemPrompt(agentDef: AgentDef, resources: SharedResources): String =
-    val prefixPath = os.home / ".nebflow" / "system-prefix.md"
-    val prefix = if os.exists(prefixPath) then
-      val content = os.read(prefixPath).trim
-      if content.nonEmpty then content + "\n\n" else ""
-    else ""
+    val prefix = loadPlatformPrefix()
     val agentPrompt =
       if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
       else Repl.loadSystemPrompt()
     val envInfo = Repl.buildEnvInfo(resources.projectRoot.toString)
     s"$prefix$agentPrompt\n\n$envInfo"
+
+  /** Platform-level system prompt, mandatory for all agents, shipped inside the JAR. */
+  private def loadPlatformPrefix(): String =
+    val is = getClass.getResourceAsStream("/system-prefix.md")
+    if is != null then
+      val content = scala.io.Source.fromInputStream(is)(scala.io.Codec.UTF8).mkString.trim
+      is.close()
+      if content.nonEmpty then content + "\n\n" else ""
+    else ""
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
