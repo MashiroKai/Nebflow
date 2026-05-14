@@ -220,7 +220,7 @@ sealed trait UiMessage:
 
 object UiMessage:
 
-  case class User(text: String, attachments: List[Json] = Nil) extends UiMessage:
+  case class User(text: String, attachments: List[Json] = Nil, injected: Boolean = false) extends UiMessage:
     val typeName = "user"
 
   case class Ai(text: String, durationMs: Option[Long] = None, model: Option[String] = None) extends UiMessage:
@@ -250,7 +250,9 @@ object UiMessage:
     val typeName = "system"
 
   given Encoder[UiMessage] = Encoder.instance {
-    case m: User => Json.obj("type" -> "user".asJson, "text" -> m.text.asJson, "attachments" -> m.attachments.asJson)
+    case m: User =>
+      val base = Json.obj("type" -> "user".asJson, "text" -> m.text.asJson, "attachments" -> m.attachments.asJson)
+      if m.injected then base.deepMerge(Json.obj("injected" -> true.asJson)) else base
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -280,7 +282,8 @@ object UiMessage:
         for
           text <- cursor.downField("text").as[String]
           atts <- cursor.downField("attachments").as[Option[List[Json]]]
-        yield User(text, atts.getOrElse(Nil))
+          injected <- cursor.downField("injected").as[Option[Boolean]]
+        yield User(text, atts.getOrElse(Nil), injected.getOrElse(false))
       case "ai" =>
         for
           text <- cursor.downField("text").as[String]

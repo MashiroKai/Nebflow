@@ -1,12 +1,15 @@
 package nebflow.gateway
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Semaphore
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.shared.{Message, MessageRole, UiMessage, given}
+import nebflow.shared.{*, given}
+
+// Re-export SessionMeta from shared package for backward compatibility
+export nebflow.shared.SessionMeta
 
 import java.util.UUID
 
@@ -14,61 +17,47 @@ import java.util.UUID
 // Generic: each platform stores its config as a Json object.
 // e.g. bridges = { "feishu": { "chatId": "oc_xxx", ... }, "telegram": { "chatId": -123 } }
 
-case class SessionMeta(
+case class Folder(
   id: String,
   name: String,
+  parentId: Option[String] = None,
+  agentName: String = "",
   createdAt: Long,
-  updatedAt: Long,
-  hasUnread: Boolean,
-  agentName: Option[String] = None,
-  modelRef: Option[String] = None,
-  bridges: Map[String, Json] = Map.empty
+  updatedAt: Long
 )
 
-object SessionMeta:
+object Folder:
 
-  given Encoder[SessionMeta] = Encoder.instance { m =>
+  given Encoder[Folder] = Encoder.instance { f =>
     val base = Json.obj(
-      "id" -> m.id.asJson,
-      "name" -> m.name.asJson,
-      "createdAt" -> m.createdAt.asJson,
-      "updatedAt" -> m.updatedAt.asJson,
-      "hasUnread" -> m.hasUnread.asJson
+      "id" -> f.id.asJson,
+      "name" -> f.name.asJson,
+      "createdAt" -> f.createdAt.asJson,
+      "updatedAt" -> f.updatedAt.asJson
     )
-    val withAgent = m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
-    val withModel = m.modelRef.fold(withAgent)(r => withAgent.deepMerge(Json.obj("modelRef" -> r.asJson)))
-    // Legacy: read/write "feishu" field as bridges("feishu") for backward compat
-    val withBridges =
-      if m.bridges.nonEmpty then withModel.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withModel
-    val feishuLegacy = m.bridges.get("feishu").fold(withBridges)(f => withBridges.deepMerge(Json.obj("feishu" -> f)))
-    feishuLegacy
+    val withParent = f.parentId.fold(base)(p => base.deepMerge(Json.obj("parentId" -> p.asJson)))
+    if f.agentName.nonEmpty then withParent.deepMerge(Json.obj("agentName" -> f.agentName.asJson))
+    else withParent
   }
 
-  given Decoder[SessionMeta] = Decoder.instance { c =>
+  given Decoder[Folder] = Decoder.instance { c =>
     for
       id <- c.downField("id").as[String]
       name <- c.downField("name").as[String]
+      parentId <- c.downField("parentId").as[Option[String]]
+      agentName <- c.downField("agentName").as[Option[String]]
       createdAt <- c.downField("createdAt").as[Long]
       updatedAt <- c.downField("updatedAt").as[Long]
-      hasUnread <- c.downField("hasUnread").as[Option[Boolean]].map(_.getOrElse(false))
-      agentName <- c.downField("agentName").as[Option[String]]
-      modelRef <- c.downField("modelRef").as[Option[String]]
-      bridges <- c.downField("bridges").as[Option[Map[String, Json]]].map(_.getOrElse(Map.empty))
-      // Legacy: if "bridges" is empty but "feishu" exists, migrate it
-      feishuLegacy <- c.downField("feishu").as[Option[Json]]
-    yield
-      val migrated = if bridges.isEmpty && feishuLegacy.nonEmpty then Map("feishu" -> feishuLegacy.get) else bridges
-      SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, migrated)
+    yield Folder(id, name, parentId, agentName.getOrElse(""), createdAt, updatedAt)
   }
-
-end SessionMeta
+end Folder
 
 class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.session")
 
-  // (activeId, metas sorted by updatedAt desc)
-  private val indexRef: Ref[IO, (String, List[SessionMeta])] =
-    Ref.unsafe[IO, (String, List[SessionMeta])]("", Nil)
+  // (activeId, metas sorted by updatedAt desc, folders)
+  private val indexRef: Ref[IO, (String, List[SessionMeta], List[Folder])] =
+    Ref.unsafe[IO, (String, List[SessionMeta], List[Folder])]("", Nil, Nil)
 
   // Only active session's messages in memory
   private val activeMessagesRef: Ref[IO, List[Message]] =
@@ -91,8 +80,9 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       val json = decode[Json](raw).getOrElse(Json.obj())
       val activeId = json.hcursor.downField("activeId").as[String].getOrElse("")
       val sessions = json.hcursor.downField("sessions").as[List[SessionMeta]].getOrElse(Nil)
-      (activeId, sessions)
-    }.flatMap { case (activeId, sessions) =>
+      val folders = json.hcursor.downField("folders").as[List[Folder]].getOrElse(Nil)
+      (activeId, sessions, folders)
+    }.flatMap { case (activeId, sessions, folders) =>
       recoverOrphans(sessions).flatMap { recovered =>
         val allSessions = sessions ++ recovered
         if recovered.nonEmpty then
@@ -101,13 +91,13 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           )
         if activeId.nonEmpty && allSessions.exists(_.id == activeId) then
           loadSessionMessages(activeId).flatMap { msgs =>
-            indexRef.set((activeId, allSessions)) *> activeMessagesRef.set(msgs)
+            indexRef.set((activeId, allSessions, folders)) *> activeMessagesRef.set(msgs)
           }
         else if allSessions.nonEmpty then
           allSessions.maxByOption(_.updatedAt) match
             case Some(first) =>
               loadSessionMessages(first.id).flatMap { msgs =>
-                indexRef.set((first.id, allSessions)) *> activeMessagesRef.set(msgs)
+                indexRef.set((first.id, allSessions, folders)) *> activeMessagesRef.set(msgs)
               }
             case None => createDefaultSession
         else createDefaultSession
@@ -158,7 +148,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         val meta = SessionMeta(id, "Default Session", now, now, hasUnread = false)
         IO.blocking {
           os.write.over(sessionFile(id), msgs.asJson.spaces2, createFolders = true)
-        } *> indexRef.set((id, List(meta))) *> activeMessagesRef.set(msgs) *> saveIndex
+        } *> indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(msgs) *> saveIndex
       case None =>
         createDefaultSession
     }
@@ -167,7 +157,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
     val meta = SessionMeta(id, "Default Session", now, now, hasUnread = false)
-    indexRef.set((id, List(meta))) *> activeMessagesRef.set(Nil) *>
+    indexRef.set((id, List(meta), Nil)) *> activeMessagesRef.set(Nil) *>
       IO.blocking(os.write.over(sessionFile(id), "[]", createFolders = true)) *> saveIndex
 
   private def sessionFile(id: String): os.Path = sessionsDir / s"$id.json"
@@ -189,11 +179,12 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     IO.blocking(os.write.over(sessionFile(id), msgs.asJson.spaces2, createFolders = true))
 
   private def saveIndex: IO[Unit] =
-    indexRef.get.flatMap { case (activeId, sessions) =>
+    indexRef.get.flatMap { case (activeId, sessions, folders) =>
       IO.blocking {
         val json = Json.obj(
           "activeId" -> activeId.asJson,
-          "sessions" -> sessions.asJson
+          "sessions" -> sessions.asJson,
+          "folders" -> folders.asJson
         )
         // Atomic write: write to temp file then rename
         os.write.over(indexTempFile, json.spaces2, createFolders = true)
@@ -204,12 +195,12 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def getActiveMessages: IO[List[Message]] = activeMessagesRef.get
 
   def setActiveMessages(msgs: List[Message]): IO[Unit] =
-    indexRef.get.flatMap { case (activeId, sessions) =>
+    indexRef.get.flatMap { case (activeId, sessions, folders) =>
       val now = System.currentTimeMillis()
       val updated = sessions.map(s => if s.id == activeId then s.copy(updatedAt = now) else s)
       activeMessagesRef.set(msgs) *>
         saveSessionMessages(activeId, msgs) *>
-        indexRef.set((activeId, updated))
+        indexRef.set((activeId, updated, folders))
     // Don't save index on every message to reduce disk writes — save periodically or on switch
     }
 
@@ -218,21 +209,29 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    *  Updates the active ref only if the target is still the active session.
    */
   def saveMessagesForSession(targetId: String, msgs: List[Message]): IO[Unit] =
-    indexRef.get.flatMap { case (activeId, sessions) =>
+    indexRef.get.flatMap { case (activeId, sessions, folders) =>
       val now = System.currentTimeMillis()
       val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
       val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
-      updateRef *> saveSessionMessages(targetId, msgs) *> indexRef.set((activeId, updated))
+      updateRef *> saveSessionMessages(targetId, msgs) *> indexRef.set((activeId, updated, folders))
     }
 
   def flushIndex: IO[Unit] = saveIndex
 
   def listSessions: IO[List[SessionMeta]] =
-    indexRef.get.map { case (_, sessions) => sessions.sortBy(-_.updatedAt) }
+    indexRef.get.map { case (_, sessions, _) => sessions.sortBy(-_.updatedAt) }
+
+  /** List folders for a given agent. Old folders (agentName == "") are visible to Nebula only. */
+  def listFolders(agentName: String): IO[List[Folder]] =
+    indexRef.get.map { case (_, _, folders) =>
+      folders.filter { f =>
+        f.agentName == agentName || (f.agentName.isEmpty && agentName == "Nebula")
+      }
+    }
 
   /** List sessions filtered by agentName. Sessions without agentName match "Nebula". */
   def listSessionsByAgent(agentName: String): IO[List[SessionMeta]] =
-    indexRef.get.map { case (_, sessions) =>
+    indexRef.get.map { case (_, sessions, _) =>
       sessions
         .filter { s =>
           val effective = s.agentName.getOrElse("Nebula")
@@ -244,26 +243,26 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def getActiveId: IO[String] = indexRef.get.map(_._1)
 
   def getActiveMeta: IO[Option[SessionMeta]] =
-    indexRef.get.map { case (activeId, sessions) => sessions.find(_.id == activeId) }
+    indexRef.get.map { case (activeId, sessions, _) => sessions.find(_.id == activeId) }
 
   def getSessionMeta(id: String): IO[Option[SessionMeta]] =
-    indexRef.get.map { case (_, sessions) => sessions.find(_.id == id) }
+    indexRef.get.map { case (_, sessions, _) => sessions.find(_.id == id) }
 
   def switchSession(id: String): IO[List[Message]] =
     // Use modify for atomic read-modify-write to prevent concurrent corruption.
     // Returns: Right(oldId) for switch, Left(None) for same-session, Left(Some(err)) for not-found
     indexRef
-      .modify { case (currentId, sessions) =>
-        if id == currentId then ((currentId, sessions), Left(Option.empty[String]))
+      .modify { case (currentId, sessions, folders) =>
+        if id == currentId then ((currentId, sessions, folders), Left(Option.empty[String]))
         else
           sessions.find(_.id == id) match
-            case None => ((currentId, sessions), Left(Some(s"Session $id not found")))
+            case None => ((currentId, sessions, folders), Left(Some(s"Session $id not found")))
             case Some(_) =>
               val updated = sessions.map(s =>
                 if s.id == id then s.copy(hasUnread = false)
                 else s
               )
-              ((id, updated), Right(currentId))
+              ((id, updated, folders), Right(currentId))
       }
       .flatMap {
         case Left(None) => activeMessagesRef.get
@@ -276,23 +275,28 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           }
       }
 
-  def createSession(name: String, initialMsgs: List[Message] = Nil, agentName: Option[String] = None): IO[SessionMeta] =
+  def createSession(
+    name: String,
+    initialMsgs: List[Message] = Nil,
+    agentName: Option[String] = None,
+    folderId: Option[String] = None
+  ): IO[SessionMeta] =
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
-    val meta = SessionMeta(id, name, now, now, hasUnread = false, agentName = agentName)
-    indexRef.get.flatMap { case (activeId, sessions) =>
+    val meta = SessionMeta(id, name, now, now, hasUnread = false, agentName = agentName, folderId = folderId)
+    indexRef.get.flatMap { case (activeId, sessions, folders) =>
       saveSessionMessages(id, initialMsgs) *>
-        indexRef.set((activeId, meta :: sessions)) *> saveIndex *> meta.pure[IO]
+        indexRef.set((activeId, meta :: sessions, folders)) *> saveIndex *> meta.pure[IO]
     }
 
   def deleteSession(id: String): IO[Unit] =
     indexRef
-      .modify { case (activeId, sessions) =>
+      .modify { case (activeId, sessions, folders) =>
         val updated = sessions.filterNot(_.id == id)
         val newActiveId =
           if id == activeId then updated.maxByOption(_.updatedAt).map(_.id).getOrElse("")
           else activeId
-        ((newActiveId, updated), (id == activeId, newActiveId))
+        ((newActiveId, updated, folders), (id == activeId, newActiveId))
       }
       .flatMap { case (wasActive, newActiveId) =>
         IO.blocking {
@@ -310,25 +314,25 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       }
 
   def markUnread(id: String): IO[Unit] =
-    indexRef.update { case (activeId, sessions) =>
+    indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map(s => if s.id == id then s.copy(hasUnread = true) else s)
-      (activeId, updated)
+      (activeId, updated, folders)
     } *> saveIndex
 
   def renameSession(id: String, newName: String): IO[Unit] =
-    indexRef.update { case (activeId, sessions) =>
+    indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map(s => if s.id == id then s.copy(name = newName) else s)
-      (activeId, updated)
+      (activeId, updated, folders)
     } *> saveIndex
 
   def updateSessionModel(id: String, modelRef: Option[String]): IO[Unit] =
-    indexRef.update { case (activeId, sessions) =>
+    indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map(s => if s.id == id then s.copy(modelRef = modelRef) else s)
-      (activeId, updated)
+      (activeId, updated, folders)
     } *> saveIndex
 
   def updateSessionBridge(id: String, platform: String, config: Option[Json]): IO[Unit] =
-    indexRef.update { case (activeId, sessions) =>
+    indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map { s =>
         if s.id == id then
           val newBridges = config match
@@ -337,12 +341,71 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           s.copy(bridges = newBridges)
         else s
       }
-      (activeId, updated)
+      (activeId, updated, folders)
     } *> saveIndex
 
   /** Legacy alias for backward compat with WS messages. */
   def updateSessionFeishu(id: String, config: Option[Json]): IO[Unit] =
     updateSessionBridge(id, "feishu", config)
+
+  // ===== Folder Management =====
+
+  def createFolder(name: String, parentId: Option[String] = None, agentName: String = ""): IO[Folder] =
+    val id = UUID.randomUUID().toString
+    val now = System.currentTimeMillis()
+    val folder = Folder(id, name, parentId, agentName, now, now)
+    indexRef.update { case (activeId, sessions, folders) =>
+      (activeId, sessions, folder :: folders)
+    } *> saveIndex *> IO.pure(folder)
+
+  def renameFolder(id: String, newName: String): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      val updated =
+        folders.map(f => if f.id == id then f.copy(name = newName, updatedAt = System.currentTimeMillis()) else f)
+      (activeId, sessions, updated)
+    } *> saveIndex
+
+  def deleteFolder(id: String): IO[Unit] =
+    indexRef.modify { case (activeId, sessions, folders) =>
+      // Collect all descendant folder IDs (children, grandchildren, etc.)
+      def descendantIds(folderId: String, all: List[Folder]): Set[String] =
+        val children = all.filter(_.parentId == Some(folderId)).map(_.id).toSet
+        children ++ children.flatMap(c => descendantIds(c, all))
+
+      val idsToRemove = Set(id) ++ descendantIds(id, folders)
+
+      // Remove folders
+      val updatedFolders = folders.filterNot(f => idsToRemove.contains(f.id))
+      // Move sessions in deleted folders to root
+      val updatedSessions = sessions.map { s =>
+        if s.folderId.exists(idsToRemove.contains) then s.copy(folderId = None, updatedAt = System.currentTimeMillis())
+        else s
+      }
+      ((activeId, updatedSessions, updatedFolders), ())
+    } *> saveIndex
+
+  def moveSessionToFolder(sessionId: String, folderId: Option[String]): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      val updated = sessions.map(s =>
+        if s.id == sessionId then s.copy(folderId = folderId, updatedAt = System.currentTimeMillis()) else s
+      )
+      (activeId, updated, folders)
+    } *> saveIndex
+
+  def moveFolder(folderId: String, parentId: Option[String]): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      // Prevent circular: cannot move a folder into itself or one of its descendants
+      def descendantIds(id: String, all: List[Folder]): Set[String] =
+        val children = all.filter(_.parentId == Some(id)).map(_.id).toSet
+        children ++ children.flatMap(c => descendantIds(c, all))
+      val invalidParents = Set(folderId) ++ descendantIds(folderId, folders)
+      if parentId.exists(invalidParents.contains) then (activeId, sessions, folders) // no-op on circular
+      else
+        val updated = folders.map(f =>
+          if f.id == folderId then f.copy(parentId = parentId, updatedAt = System.currentTimeMillis()) else f
+        )
+        (activeId, sessions, updated)
+    } *> saveIndex
 
   // ============================================================
   // UI Messages (frontend rendering history)
@@ -403,16 +466,15 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     }
 
   /**
-   * Search across all sessions' UI messages for a query string.
-   * Returns results grouped by session, limited to `maxResults` total matches.
-   * Each result includes: sessionId, sessionName, messageIndex, snippet (context around match), messageType.
+   * Search across sessions: session name, agent name, and message content.
+   * Results include three hit types: "session", "agent", "message".
    */
   def searchHistory(query: String, maxResults: Int = 50): IO[List[SearchHit]] =
     if query.trim.isEmpty then IO.pure(Nil)
     else
       IO.blocking {
+        import scala.util.control.Breaks.{break, breakable}
         val q = query.toLowerCase
-        val results = scala.collection.mutable.ListBuffer.empty[SearchHit]
         val sessions =
           try
             val raw = os.read(indexFile)
@@ -420,38 +482,98 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
             json.hcursor.downField("sessions").as[List[SessionMeta]].getOrElse(Nil)
           catch case _: Exception => Nil
 
-        var stop = false
-        sessions.takeWhile(_ => !stop).foreach { meta =>
-          if results.size >= maxResults then stop = true
-          if !stop then
-            val f = uiFile(meta.id)
-            if os.exists(f) then
-              try
-                val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
-                msgs.zipWithIndex.takeWhile(_ => !stop).foreach { case (msg, idx) =>
-                  if results.size >= maxResults then stop = true
-                  if !stop then
+        // Round 1: collect session name and agent name matches (high priority)
+        val nameHits = scala.collection.mutable.ListBuffer.empty[SearchHit]
+        breakable {
+          sessions.foreach { meta =>
+            if nameHits.size >= maxResults then break
+            if meta.name.toLowerCase.contains(q) then
+              nameHits += SearchHit(meta.id, meta.name, meta.agentName, "session", None, snippet(meta.name, q), None)
+            meta.agentName.foreach { an =>
+              if an.toLowerCase.contains(q) then
+                nameHits += SearchHit(meta.id, meta.name, meta.agentName, "agent", None, snippet(an, q), None)
+            }
+          }
+        }
+
+        // Round 2: collect message matches (fill remaining quota)
+        val msgHits = scala.collection.mutable.ListBuffer.empty[SearchHit]
+        val remaining = maxResults - nameHits.size
+        if remaining > 0 then
+          breakable {
+            sessions.foreach { meta =>
+              if msgHits.size >= remaining then break
+              val f = uiFile(meta.id)
+              if os.exists(f) then
+                try
+                  val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
+                  msgs.zipWithIndex.foreach { case (msg, idx) =>
+                    if msgHits.size >= remaining then break
                     msg match
-                      case UiMessage.User(text, _) if text.toLowerCase.contains(q) =>
-                        results += SearchHit(meta.id, meta.name, idx, snippet(text, q), "user")
+                      case UiMessage.User(text, _, _) if text.toLowerCase.contains(q) =>
+                        msgHits += SearchHit(
+                          meta.id,
+                          meta.name,
+                          meta.agentName,
+                          "message",
+                          Some(idx),
+                          snippet(text, q),
+                          Some("user")
+                        )
                       case UiMessage.Ai(text, _, _) if text.toLowerCase.contains(q) =>
-                        results += SearchHit(meta.id, meta.name, idx, snippet(text, q), "ai")
+                        msgHits += SearchHit(
+                          meta.id,
+                          meta.name,
+                          meta.agentName,
+                          "message",
+                          Some(idx),
+                          snippet(text, q),
+                          Some("ai")
+                        )
                       case UiMessage.Agent(_, text) if text.toLowerCase.contains(q) =>
-                        results += SearchHit(meta.id, meta.name, idx, snippet(text, q), "agent")
+                        msgHits += SearchHit(
+                          meta.id,
+                          meta.name,
+                          meta.agentName,
+                          "message",
+                          Some(idx),
+                          snippet(text, q),
+                          Some("agent")
+                        )
                       case UiMessage.Tool(label, summary, content, _, _, _) =>
                         val combined = s"$label $summary $content"
                         if combined.toLowerCase.contains(q) then
-                          results += SearchHit(meta.id, meta.name, idx, snippet(combined, q), "tool")
+                          msgHits += SearchHit(
+                            meta.id,
+                            meta.name,
+                            meta.agentName,
+                            "message",
+                            Some(idx),
+                            snippet(combined, q),
+                            Some("tool")
+                          )
                       case UiMessage.Ask(question, answer, _, _) =>
                         val combined = s"$question $answer"
                         if combined.toLowerCase.contains(q) then
-                          results += SearchHit(meta.id, meta.name, idx, snippet(combined, q), "ask")
+                          msgHits += SearchHit(
+                            meta.id,
+                            meta.name,
+                            meta.agentName,
+                            "message",
+                            Some(idx),
+                            snippet(combined, q),
+                            Some("ask")
+                          )
                       case _ => ()
-                }
-              catch case _: Exception => ()
-          end if
-        }
-        results.toList
+                    end match
+                  }
+                catch case _: Exception => ()
+              end if
+            }
+          }
+        end if
+
+        nameHits.toList ++ msgHits.toList
       }
 
   /** Extract a short snippet around the first match occurrence. */
@@ -471,19 +593,23 @@ end SessionStore
 case class SearchHit(
   sessionId: String,
   sessionName: String,
-  messageIndex: Int,
+  agentName: Option[String],
+  hitType: String,
+  messageIndex: Option[Int],
   snippet: String,
-  messageType: String
+  messageType: Option[String]
 )
 
 object SearchHit:
 
   given Encoder[SearchHit] = Encoder.instance { h =>
-    Json.obj(
+    val base = Json.obj(
       "sessionId" -> h.sessionId.asJson,
       "sessionName" -> h.sessionName.asJson,
-      "messageIndex" -> h.messageIndex.asJson,
-      "snippet" -> h.snippet.asJson,
-      "messageType" -> h.messageType.asJson
+      "hitType" -> h.hitType.asJson,
+      "snippet" -> h.snippet.asJson
     )
+    val withAgent = h.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
+    val withIdx = h.messageIndex.fold(withAgent)(i => withAgent.deepMerge(Json.obj("messageIndex" -> i.asJson)))
+    h.messageType.fold(withIdx)(t => withIdx.deepMerge(Json.obj("messageType" -> t.asJson)))
   }

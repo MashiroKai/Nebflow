@@ -4,8 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.llm.{Config, NebflowServiceConfig}
-import nebflow.shared.Defaults
-import nebflow.shared.MtimeCache
+import nebflow.shared.{Defaults, MtimeCache}
 
 /**
  * Loads agent definitions from two sources:

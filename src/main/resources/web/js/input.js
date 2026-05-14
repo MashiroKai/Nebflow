@@ -6,6 +6,7 @@ import { sendWs } from './ws.js';
 import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble } from './chat.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
+import { saveInputDraft } from './sidebar.js';
 
 // ---------- Slash Commands ----------
 const slashCommands = {
@@ -146,6 +147,27 @@ function setSlashHighlight(index) {
   state.slashSelectedIndex = index;
   const items = state.dom.slashDropdown.querySelectorAll('.slash-item');
   items.forEach((el, i) => { el.classList.toggle('active', i === index); });
+
+  const active = items[index];
+  if (!active) return;
+
+  const dd = state.dom.slashDropdown;
+  // Calculate element's offset relative to the dropdown content area
+  let relTop = 0;
+  let el = active;
+  while (el && el !== dd) {
+    relTop += el.offsetTop;
+    el = el.offsetParent;
+  }
+  const relBottom = relTop + active.offsetHeight;
+  const scrollTop = dd.scrollTop;
+  const visibleBottom = scrollTop + dd.clientHeight;
+
+  if (relTop < scrollTop) {
+    dd.scrollTop = relTop;
+  } else if (relBottom > visibleBottom) {
+    dd.scrollTop = relBottom - dd.clientHeight;
+  }
 }
 
 function pickSlashCommand(index) {
@@ -262,11 +284,13 @@ export function send() {
       renderAskBubble(question);
     }
     input.value = '';
+    saveInputDraft(state.activeSessionId);
     setTimeout(() => { state.isSending = false; }, 300);
     return;
   }
   if (handleSlash(text)) {
     input.value = '';
+    saveInputDraft(state.activeSessionId);
     // Debounce: keep lock briefly to prevent accidental double-trigger of slash commands
     setTimeout(() => { state.isSending = false; }, 300);
     return;
@@ -300,6 +324,8 @@ export function send() {
   input.style.height = 'auto';
   state.pendingAttachments = [];
   state.dom.attPreview.innerHTML = '';
+  // Immediately clear the draft for this session so it is not restored after refresh
+  saveInputDraft(state.activeSessionId);
   setBusy(state.activeSessionId);
   // Start turn timer (for "✻ Thought for X" badge)
   state.turnStartTimes[state.activeSessionId] = Date.now();
@@ -376,7 +402,8 @@ export function injectUserMessage(text, options = {}) {
     content: trimmed,
     attachments: [],
     clientMessageId,
-    sessionId
+    sessionId,
+    injected: true
   });
 
   // Mark session as busy
@@ -415,6 +442,7 @@ export function initInput() {
   const voiceBtn = state.dom.voiceBtn;
   const voiceOverlay = state.dom.voiceOverlay;
   const voiceText = state.dom.voiceText;
+
   const slashDropdown = state.dom.slashDropdown;
 
   // Auto-resize textarea
@@ -553,12 +581,10 @@ export function initInput() {
     files.forEach(f => addFileAttachment(f));
   });
 
-  // Voice start/stop — Web Speech API
-  let voiceActive = false;      // user intent: is button held down?
+  // Voice start/stop — Web Speech API (toggle mode)
+  let voiceActive = false;      // is voice recognition currently active?
   let voiceFinal = '';           // accumulated finalized text this session
   let voiceBase = '';            // text before this voice session
-  let voiceRestartCount = 0;     // auto-restart counter (prevent infinite loop)
-  const VOICE_MAX_RESTARTS = 10; // max auto-restarts per hold session
 
   function createRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -589,20 +615,8 @@ export function initInput() {
     };
 
     rec.onerror = (ev) => {
-      // no-speech and aborted are benign — auto-restart if still holding
+      // no-speech and aborted are benign — just ignore
       if (ev.error === 'no-speech' || ev.error === 'aborted') {
-        if (voiceActive && voiceRestartCount < VOICE_MAX_RESTARTS) {
-          try { rec.start(); voiceRestartCount++; } catch (_) { /* already started */ }
-          return;
-        }
-      }
-      // network errors — retry once
-      if (ev.error === 'network' && voiceActive && voiceRestartCount < 3) {
-        setTimeout(() => {
-          if (voiceActive) {
-            try { rec.start(); voiceRestartCount++; } catch (_) {}
-          }
-        }, 500);
         return;
       }
       voiceText.textContent = 'Error: ' + ev.error;
@@ -610,26 +624,21 @@ export function initInput() {
     };
 
     rec.onend = () => {
-      // If user is still holding button, auto-restart recognition
-      if (voiceActive && voiceRestartCount < VOICE_MAX_RESTARTS) {
-        try {
-          state.recognition.start();
-          voiceRestartCount++;
-        } catch (_) { /* already started */ }
-        return;
+      // Recognition ended. If voiceActive is still true, it stopped unexpectedly
+      // (browser limit, network issue, etc.). Sync UI to stopped state.
+      if (voiceActive) {
+        stopVoice();
+      } else {
+        // User explicitly toggled off — clean up UI
+        voiceOverlay.classList.remove('on');
+        voiceBtn.classList.remove('recording');
       }
-      // User released or max restarts reached — clean up UI
-      voiceOverlay.classList.remove('on');
-      voiceBtn.classList.remove('recording');
     };
 
     return rec;
   }
 
-  function startVoice(e) {
-    e.preventDefault();
-    // Prevent touch→mouse double-fire
-    if (voiceActive) return;
+  function startVoice() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       alert('Voice input not supported in this browser. Try Chrome.');
       return;
@@ -637,7 +646,6 @@ export function initInput() {
     voiceActive = true;
     voiceBase = input.value;
     voiceFinal = '';
-    voiceRestartCount = 0;
     state.recognition = createRecognition();
     state.recognition.start();
     voiceOverlay.classList.add('on');
@@ -655,13 +663,28 @@ export function initInput() {
     voiceBtn.classList.remove('recording');
   }
 
-  // Mousedown/touchstart on button starts recording
-  voiceBtn.addEventListener('mousedown', startVoice);
-  voiceBtn.addEventListener('touchstart', startVoice, {passive: false});
-  // Mouseup/touchend on DOCUMENT catches releases even if pointer left the button
-  document.addEventListener('mouseup', (e) => { if (voiceActive) stopVoice(); });
-  document.addEventListener('touchend', (e) => { if (voiceActive) stopVoice(); });
-  // No mouseleave — that was the primary cause of 断触
+  // Long-press voice: mousedown/touchstart to start, mouseup/mouseleave/touchend to stop
+  function onVoiceStart(e) {
+    if (e.type === 'touchstart') e.preventDefault();
+    startVoice();
+  }
+  function onVoiceEnd(e) {
+    if (voiceActive) stopVoice();
+  }
+  voiceBtn.addEventListener('mousedown', onVoiceStart);
+  voiceBtn.addEventListener('touchstart', onVoiceStart, { passive: false });
+  voiceBtn.addEventListener('mouseup', onVoiceEnd);
+  voiceBtn.addEventListener('mouseleave', onVoiceEnd);
+  voiceBtn.addEventListener('touchend', onVoiceEnd);
+  voiceBtn.addEventListener('touchcancel', onVoiceEnd);
+
+  // Escape key stops voice recording (fallback)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && voiceActive) {
+      e.preventDefault();
+      stopVoice();
+    }
+  });
 
   // Slash dropdown input listener and document click listener
   input.addEventListener('input', updateSlashDropdown);

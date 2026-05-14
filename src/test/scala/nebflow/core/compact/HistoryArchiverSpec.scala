@@ -2,7 +2,7 @@ package nebflow.core.compact
 
 import munit.CatsEffectSuite
 import cats.effect.IO
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{ContentBlock, Message, MessageRole}
 import io.circe.parser.parse
 import io.circe.{Decoder, Json}
 import cats.syntax.all.*
@@ -18,142 +18,161 @@ class HistoryArchiverSpec extends CatsEffectSuite:
       Message(MessageRole.Assistant, Left("world"))
     )
 
-  test("archive returns path with archives/<sessionId>/<ts>.json format") {
+  test("archiveCompaction returns Right with report + json paths") {
     val root = os.temp.dir()
     val archiver = makeArchiver(root)
-    val io = archiver.archive("test-session", sampleMessages)
+    val io = archiver.archiveCompaction(
+      sessionId = "test-session-abc123",
+      sessionName = Some("My Session"),
+      agentName = "Nebula",
+      before = sampleMessages,
+      after = List(Message(MessageRole.User, Left("summary"))),
+      mode = "full"
+    )
     io.flatMap {
-      case Right(path) =>
+      case Right(archive) =>
         IO {
-          assert(path.contains("archives/test-session/"))
-          assert(path.endsWith(".json"))
+          assert(
+            archive.sessionDir.contains("archives/test-ses"),
+            s"sessionDir should contain short sid: ${archive.sessionDir}"
+          )
+          assert(archive.reportPath.endsWith("-report.md"), s"report should end with -report.md: ${archive.reportPath}")
+          assert(archive.beforeJsonPath.endsWith("-before.json"))
+          assert(archive.afterJsonPath.endsWith("-after.json"))
+          // All files should exist
+          assert(os.exists(os.Path(archive.reportPath)))
+          assert(os.exists(os.Path(archive.beforeJsonPath)))
+          assert(os.exists(os.Path(archive.afterJsonPath)))
         }
-      case Left(err) => IO(fail(s"archive failed: $err"))
+      case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
     }
   }
 
-  test("archive writes spaces2 JSON array compatible with SessionStore format") {
+  test("archiveCompaction writes valid JSON arrays for before/after") {
     val root = os.temp.dir()
     val archiver = makeArchiver(root)
-    archiver.archive("fmt-session", sampleMessages).flatMap {
-      case Right(path) =>
-        IO.blocking(os.read(os.Path(path))).map { content =>
-          // Must be valid JSON array (spaces2 format, NOT jsonl)
-          val json = parse(content).toOption.get
-          assert(json.isArray, "snapshot should be JSON array")
-          val arr = json.asArray.get
-          assertEquals(arr.size, 2)
-          // Verify first message role and text content
-          val first = arr(0).asObject.get
-          assertEquals(first("role").flatMap(_.asString).get, "user")
-          assertEquals(first("content").flatMap(_.asString).get, "hello")
+    val before = List(
+      Message(MessageRole.User, Left("a")),
+      Message(MessageRole.Assistant, Left("b"))
+    )
+    val after = List(Message(MessageRole.User, Left("summary")))
+    archiver.archiveCompaction("fmt-session", None, "TestAgent", before, after, "full").flatMap {
+      case Right(archive) =>
+        IO.blocking {
+          val beforeJson = parse(os.read(os.Path(archive.beforeJsonPath))).toOption.get
+          val afterJson = parse(os.read(os.Path(archive.afterJsonPath))).toOption.get
+          assert(beforeJson.isArray)
+          assert(afterJson.isArray)
+          assertEquals(beforeJson.asArray.get.size, 2)
+          assertEquals(afterJson.asArray.get.size, 1)
         }
-      case Left(err) => IO(fail(s"archive failed: $err"))
+      case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
     }
   }
 
-  test("archive returns Left on unwritable directory without throwing") {
+  test("archiveCompaction report contains metadata table") {
     val root = os.temp.dir()
-    // Make root read-only (best-effort; skip on platforms where this doesn't work)
-    val sessionDir = root / "archives" / "bad-session"
+    val archiver = makeArchiver(root)
+    archiver
+      .archiveCompaction(
+        "report-session",
+        Some("Session X"),
+        "Nebula",
+        sampleMessages,
+        List(Message(MessageRole.User, Left("s"))),
+        "micro",
+        extra = Map("preservedRounds" -> "3")
+      )
+      .flatMap {
+        case Right(archive) =>
+          IO.blocking {
+            val report = os.read(os.Path(archive.reportPath))
+            assert(report.contains("# Context Compaction Report"))
+            assert(report.contains("Session X"))
+            assert(report.contains("Nebula"))
+            assert(report.contains("micro"))
+            assert(report.contains("Preserved rounds"))
+            assert(report.contains("## Before"))
+            assert(report.contains("## After"))
+          }
+        case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
+      }
+  }
+
+  test("archiveCompaction report contains message stats") {
+    val root = os.temp.dir()
+    val archiver = makeArchiver(root)
+    val before = List(
+      Message(MessageRole.User, Left("user msg")),
+      Message(
+        MessageRole.Assistant,
+        Right(
+          List(
+            ContentBlock
+              .ToolUse("t1", "Read", io.circe.JsonObject.singleton("file_path", io.circe.Json.fromString("a.ts")))
+          )
+        )
+      ),
+      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("t1", "result content", None)))),
+      Message(MessageRole.System, Left("system note"))
+    )
+    val after = List(Message(MessageRole.User, Left("summary")))
+    archiver.archiveCompaction("stats-session", None, "Agent", before, after, "full").flatMap {
+      case Right(archive) =>
+        IO.blocking {
+          val report = os.read(os.Path(archive.reportPath))
+          // Stats table should list counts
+          assert(report.contains("User msgs"))
+          assert(report.contains("Assistant msgs"))
+          assert(report.contains("System msgs"))
+          assert(report.contains("Tool results"))
+          assert(report.contains("Tool uses"))
+        }
+      case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
+    }
+  }
+
+  test("archiveCompaction returns Left on unwritable directory without throwing") {
+    val root = os.temp.dir()
+    val sessionDir = root / "archives" / "bad-sess"
     os.makeDir.all(sessionDir)
     java.nio.file.Files.setPosixFilePermissions(
       java.nio.file.Paths.get(sessionDir.toString),
       java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ)
     )
     val archiver = makeArchiver(root)
-    archiver.archive("bad-session", sampleMessages).map { result =>
-      // Either returns Left (graceful) or succeeds (platform-dependent); never throws
+    archiver.archiveCompaction("bad-session", None, "A", sampleMessages, sampleMessages, "full").map { result =>
       assert(result.isLeft || result.isRight) // just assert no exception
     }
   }
 
-  test("archive with empty messages writes empty JSON array") {
+  test("archiveCompaction with empty messages writes empty JSON arrays and valid report") {
     val root = os.temp.dir()
     val archiver = makeArchiver(root)
-    archiver.archive("empty-session", Nil).flatMap {
-      case Right(path) =>
-        IO.blocking(os.read(os.Path(path))).map { content =>
-          val json = parse(content).toOption.get
-          assert(json.isArray)
-          assertEquals(json.asArray.get.size, 0)
+    archiver.archiveCompaction("empty-session", None, "A", Nil, Nil, "full").flatMap {
+      case Right(archive) =>
+        IO.blocking {
+          val beforeJson = parse(os.read(os.Path(archive.beforeJsonPath))).toOption.get
+          val afterJson = parse(os.read(os.Path(archive.afterJsonPath))).toOption.get
+          assert(beforeJson.isArray)
+          assertEquals(beforeJson.asArray.get.size, 0)
+          assert(afterJson.isArray)
+          assertEquals(afterJson.asArray.get.size, 0)
         }
-      case Left(err) => IO(fail(s"archive failed: $err"))
+      case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
     }
   }
 
-  test("archive path is deterministic in structure (contains sessionId and .json)") {
+  test("archiveCompaction shortens sessionId to 8 chars in directory") {
     val root = os.temp.dir()
     val archiver = makeArchiver(root)
-    archiver.archive("my-session", sampleMessages).flatMap {
-      case Right(path) =>
+    val longSid = "12345678-1234-1234-1234-123456789abc"
+    archiver.archiveCompaction(longSid, None, "A", sampleMessages, sampleMessages, "full").flatMap {
+      case Right(archive) =>
         IO {
-          assert(path.contains("archives/my-session/"))
-          assert(path.endsWith(".json"))
-          // Should contain a timestamp (digits before .json)
-          val filename = path.split("/").last
-          assert(filename.matches("\\d+\\.json"), s"filename should be digits.json, got $filename")
+          assert(archive.sessionDir.endsWith("/12345678"), s"dir should end with short sid: ${archive.sessionDir}")
         }
-      case Left(err) => IO(fail(s"archive failed: $err"))
-    }
-  }
-
-  // ---------- archiveComparison (issue 009) ----------
-
-  test("archiveComparison returns path with archives/<sessionId>/<ts>-comparison.json format") {
-    val root = os.temp.dir()
-    val archiver = makeArchiver(root)
-    val before = List(Message(MessageRole.User, Left("a")), Message(MessageRole.Assistant, Left("b")))
-    val after = List(Message(MessageRole.User, Left("summary")))
-    archiver.archiveComparison("cmp-session", "micro", before, after).flatMap {
-      case Right(path) =>
-        IO {
-          assert(path.contains("archives/cmp-session/"))
-          assert(path.endsWith("-comparison.json"))
-        }
-      case Left(err) => IO(fail(s"archiveComparison failed: $err"))
-    }
-  }
-
-  test("archiveComparison writes before and after arrays with counts") {
-    val root = os.temp.dir()
-    val archiver = makeArchiver(root)
-    val before = List(
-      Message(MessageRole.User, Left("hello")),
-      Message(MessageRole.Assistant, Left("world")),
-      Message(MessageRole.User, Left("?"))
-    )
-    val after = List(Message(MessageRole.User, Left("summary")))
-    archiver.archiveComparison("cnt-session", "full", before, after).flatMap {
-      case Right(path) =>
-        IO.blocking(os.read(os.Path(path))).map { content =>
-          val json = parse(content).toOption.get
-          assert(json.isObject, "comparison should be JSON object")
-          val obj = json.asObject.get
-          assertEquals(obj("beforeCount").flatMap(_.asNumber).flatMap(_.toInt).get, 3)
-          assertEquals(obj("afterCount").flatMap(_.asNumber).flatMap(_.toInt).get, 1)
-          assertEquals(obj("mode").flatMap(_.asString).get, "full")
-
-          val beforeArr = obj("before").flatMap(_.asArray).get
-          val afterArr = obj("after").flatMap(_.asArray).get
-          assertEquals(beforeArr.size, 3)
-          assertEquals(afterArr.size, 1)
-        }
-      case Left(err) => IO(fail(s"archiveComparison failed: $err"))
-    }
-  }
-
-  test("archiveComparison returns Left on unwritable directory without throwing") {
-    val root = os.temp.dir()
-    val sessionDir = root / "archives" / "bad-cmp-session"
-    os.makeDir.all(sessionDir)
-    java.nio.file.Files.setPosixFilePermissions(
-      java.nio.file.Paths.get(sessionDir.toString),
-      java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ)
-    )
-    val archiver = makeArchiver(root)
-    archiver.archiveComparison("bad-cmp-session", "micro", sampleMessages, sampleMessages).map { result =>
-      assert(result.isLeft || result.isRight)
+      case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
     }
   }
 end HistoryArchiverSpec

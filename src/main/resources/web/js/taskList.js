@@ -65,7 +65,7 @@ export function renderTaskList(tasks) {
   if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
   html += '</div>';
 
-  html += `<div class="task-body">`;
+  html += `<div class="task-body"><div class="task-body-inner">`;
 
   const visible = sorted.slice(0, MAX_VISIBLE);
   visible.forEach(task => {
@@ -92,7 +92,7 @@ export function renderTaskList(tasks) {
     html += `<div class="task-more">+${sorted.length - MAX_VISIBLE} more</div>`;
   }
 
-  html += '</div>'; // .task-body
+  html += '</div></div>'; // .task-body-inner / .task-body
   html += '</div>'; // .task-card
   container.innerHTML = html;
 

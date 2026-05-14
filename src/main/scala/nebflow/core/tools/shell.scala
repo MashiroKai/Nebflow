@@ -255,6 +255,19 @@ final class ShellSession private (
 
   private val MaxOutputSize = 10 * 1024 * 1024 // 10MB
 
+  private val isWindows: Boolean =
+    sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+
+  private def buildProcessBuilder(command: String, cwd: String): ProcessBuilder =
+    val pb =
+      if isWindows then new ProcessBuilder("cmd.exe", "/c", command)
+      else new ProcessBuilder("bash", "-c", command)
+    pb.directory(new File(cwd))
+    if isWindows then pb.redirectInput(ProcessBuilder.Redirect.DISCARD)
+    else pb.redirectInput(new File("/dev/null"))
+    pb.redirectErrorStream(false) // stdout/stderr separated
+    pb
+
   private def runProcess(
     command: String,
     cwd: String,
@@ -262,11 +275,7 @@ final class ShellSession private (
     health: Option[JobHealth] = None
   ): IO[ProcessResult] =
     IO.blocking {
-      val pb = new ProcessBuilder("bash", "-c", command)
-      pb.directory(new File(cwd))
-      pb.redirectInput(new File("/dev/null"))
-      pb.redirectErrorStream(false) // stdout/stderr separated
-      pb.start()
+      buildProcessBuilder(command, cwd).start()
     }.bracket { proc =>
       val storeProc = health.fold(IO.unit)(h => IO(h.processRef.set(proc)))
       val stdoutIO = IO.blocking(

@@ -18,12 +18,6 @@ class ReadTracker private (state: Ref[IO, Vector[ReadEntry]]):
     filtered :+ ReadEntry(path, System.currentTimeMillis(), isPartialView)
   }
 
-  def hasBeenRead(path: Path): IO[Boolean] = state.get.map(_.exists(_.path == path))
-
-  /** True if the most recent read of this path was a partial view (offset/limit or truncated). */
-  def isPartialView(path: Path): IO[Boolean] =
-    state.get.map(_.findLast(_.path == path).exists(_.isPartialView))
-
   def clear(): IO[Unit] = state.set(Vector.empty)
 
   /** Return the N most recently read file paths (most recent first). */

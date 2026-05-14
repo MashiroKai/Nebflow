@@ -6,6 +6,9 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
 
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
+
 /** Global Feishu bot credentials — stored in ~/.nebflow/feishu.json */
 case class FeishuGlobalConfig(
   appId: String,
@@ -64,6 +67,11 @@ object FeishuGlobalConfig:
   def save(cfg: FeishuGlobalConfig): IO[Unit] =
     IO.blocking {
       os.write.over(configPath, cfg.asJson.spaces2, createFolders = true)
+      // Restrict file permissions to owner-only (rw-------)
+      try
+        val perms = PosixFilePermissions.fromString("rw-------")
+        Files.setPosixFilePermissions(java.nio.file.Paths.get(configPath.toString), perms)
+      catch case _: Exception => () // best effort on non-POSIX systems
     }
 
   /** Generate a template config file if one doesn't exist. */

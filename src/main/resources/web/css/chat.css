@@ -27,6 +27,49 @@
   align-items: center;
 }
 #header #session-name { color: var(--color-text-muted); font-size: 13px; }
+#header #header-model-info {
+  display: none;
+  color: var(--color-frame-text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+/* Context window usage bar */
+.ctx-bar-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+.ctx-bar-track {
+  position: relative;
+  width: 72px;
+  height: 4px;
+  background: rgba(128,128,128,0.15);
+  border-radius: 2px;
+  overflow: visible;
+}
+.ctx-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease, background 0.4s ease;
+}
+.ctx-bar-threshold {
+  position: absolute;
+  top: -1px;
+  width: 2px;
+  height: 6px;
+  background: rgba(128,128,128,0.5);
+  border-radius: 1px;
+  pointer-events: none;
+}
+.ctx-bar-label {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.2px;
+}
 #header .header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; position: relative; }
 #header .conn {
   width: 8px; height: 8px; border-radius: 50%;

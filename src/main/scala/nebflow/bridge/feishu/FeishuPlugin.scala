@@ -14,6 +14,7 @@ import nebflow.bridge.*
 import nebflow.core.NebflowLogger
 
 import java.net.http.HttpClient
+
 import scala.jdk.CollectionConverters.*
 
 /**
@@ -102,6 +103,8 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
         case None => IO.unit
     }
 
+  override def refreshRoutes: IO[Unit] = rebuildRoutingTable
+
   // ===== Routing =====
 
   private def rebuildRoutingTable: IO[Unit] =
@@ -151,35 +154,36 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
               val content = msgOpt.map(_.getContent).getOrElse("")
               val messageId = msgOpt.map(_.getMessageId).getOrElse("")
               val isGroup = "group" == chatType
-              // Skip if essential fields are missing
-              if chatId.isEmpty || msgType == null then
+              if chatId.nonEmpty && msgType != null then
+                // Skip messages sent by the bot itself to prevent echo loops
+                if senderType != "app" then
+                  // Dedup: skip already-processed messages (e.g. history replay on reconnect)
+                  val isDup = processedMsgIds.get.map(_.contains(messageId)).unsafeRunSync()
+                  if !isDup then
+                    processedMsgIds
+                      .update { ids =>
+                        val updated = ids + messageId
+                        if updated.size > MaxProcessedIds then updated.drop(updated.size - MaxProcessedIds)
+                        else updated
+                      }
+                      .unsafeRunSync()
+                    logger
+                      .info(
+                        s"[feishu] message received: chatId=$chatId chatType=$chatType msgType=$msgType sender=$senderId"
+                      )
+                      .unsafeRunSync()
+                    if msgType == "text" then
+                      val text = parse(content).toOption
+                        .flatMap(_.hcursor.downField("text").as[String].toOption)
+                        .getOrElse("")
+                      if text.nonEmpty then handleUserMessage(chatId, senderId, text, isGroup).unsafeRunSync()
+                  else logger.debug(s"[feishu] skipping duplicate message: $messageId").unsafeRunSync()
+                else logger.debug(s"[feishu] skipping bot message: chatId=$chatId").unsafeRunSync()
+              else
                 logger
                   .debug(s"[feishu] skipping event with missing fields: chatId=$chatId msgType=$msgType")
                   .unsafeRunSync()
-                return
-              // Skip messages sent by the bot itself to prevent echo loops
-              if senderType == "app" then
-                logger.debug(s"[feishu] skipping bot message: chatId=$chatId").unsafeRunSync()
-                return
-              // Dedup: skip already-processed messages (e.g. history replay on reconnect)
-              val isDup = processedMsgIds.get.map(_.contains(messageId)).unsafeRunSync()
-              if isDup then
-                logger.debug(s"[feishu] skipping duplicate message: $messageId").unsafeRunSync()
-                return
-              processedMsgIds
-                .update { ids =>
-                  val updated = ids + messageId
-                  if updated.size > MaxProcessedIds then updated.drop(updated.size - MaxProcessedIds) else updated
-                }
-                .unsafeRunSync()
-              logger
-                .info(s"[feishu] message received: chatId=$chatId chatType=$chatType msgType=$msgType sender=$senderId")
-                .unsafeRunSync()
-              if msgType == "text" then
-                val text = parse(content).toOption
-                  .flatMap(_.hcursor.downField("text").as[String].toOption)
-                  .getOrElse("")
-                if text.nonEmpty then handleUserMessage(chatId, senderId, text, isGroup).unsafeRunSync()
+              end if
             end handle
         )
         .build()
@@ -237,7 +241,7 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
         chatSessionMap.get.map(_.get(chatId)).flatMap {
           case Some(sessionId) =>
             logger.info(s"[feishu] → session $sessionId: ${text.take(60)}") *>
-              ctx.injectMessage(sessionId, text, Some(senderOpenId))
+              ctx.injectMessage(sessionId, s"[飞书消息] $text", Some(senderOpenId))
           case None =>
             logger.debug("[feishu] no session bound to chat $chatId").void
         }

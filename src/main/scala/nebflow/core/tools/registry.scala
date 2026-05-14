@@ -24,6 +24,8 @@ object ToolRegistry:
       "WebSearch" -> WebSearchTool,
       "WebFetch" -> WebFetchTool,
       "Curl" -> CurlTool,
+      // Card rendering
+      "Card" -> CardTool,
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
       // Task management
