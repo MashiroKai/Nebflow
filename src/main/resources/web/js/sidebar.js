@@ -9,6 +9,20 @@ import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 
+// ---------- Active Folder (VSCode-style) ----------
+export function setActiveFolder(folderId) {
+  state.activeFolderId = folderId;
+  // Update UI highlight
+  document.querySelectorAll('.folder-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.folderId === folderId);
+  });
+}
+
+export function clearActiveFolder() {
+  state.activeFolderId = null;
+  document.querySelectorAll('.folder-item.active').forEach(el => el.classList.remove('active'));
+}
+
 // ---------- Nav Bar Tab Switching ----------
 export function initNavTabs() {
   document.querySelectorAll('.nav-item[data-tab]').forEach(item => {
@@ -77,8 +91,9 @@ export function selectAgent(agentName) {
   document.querySelectorAll('#nav-agent-list .nav-agent').forEach(el => {
     el.classList.toggle('active', el.dataset.name === agentName);
   });
-  // Exit batch mode when switching agents
-  if (state.batchMode) exitBatchMode();
+  // Exit batch mode and clear active folder when switching agents
+  if (state.selectedSessionIds.size > 0) exitBatchMode();
+  clearActiveFolder();
   // Load sessions for this agent
   sendWs({type: 'listAgentSessions', name: agentName});
 }
@@ -98,6 +113,25 @@ export function updateHeaderBrand(agentName) {
 // ---------- Settings Panel ----------
 export function renderSettings() {
   const content = document.getElementById('settings-content');
+  const cfg = state.parsedConfig || {};
+  const llm = cfg.llm || {};
+  const providers = llm.providers || {};
+  const model = llm.model || {};
+  const mcpServers = cfg.mcpServers || {};
+  const providerNames = Object.keys(providers);
+
+  // Build model options from all providers
+  const allModels = [];
+  providerNames.forEach(pName => {
+    const p = providers[pName];
+    (p.models || []).forEach(m => {
+      allModels.push({ ref: `${pName}/${m.id}`, label: `${pName}/${m.id}` });
+    });
+  });
+
+  const defaultModel = model.default || '';
+  const fallbacks = model.fallbacks || [];
+
   content.innerHTML = `
     <div class="settings-section">
       <div class="settings-section-title">Runtime</div>
@@ -105,17 +139,49 @@ export function renderSettings() {
         <span class="settings-label">Thinking Mode</span>
         <div class="toggle ${state.thinkingMode ? 'on' : ''}" id="toggle-thinking"></div>
       </div>
-      <div class="settings-row">
-        <span class="settings-label">Permission Policy</span>
-        <div class="policy-group">
-          <label class="policy-option"><input type="radio" name="policy" value="ask"> Ask</label>
-          <label class="policy-option"><input type="radio" name="policy" value="auto"> Trust All</label>
-          <label class="policy-option"><input type="radio" name="policy" value="block"> Block Dangerous</label>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">LLM Providers</div>
+      <div id="provider-list">
+        ${providerNames.map(name => renderProviderCard(name, providers[name])).join('')}
+      </div>
+      <button class="cfg-btn cfg-btn-add" id="btn-add-provider">+ Add Provider</button>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Model Chain</div>
+      <div class="cfg-form-group">
+        <label class="cfg-label">Default Model</label>
+        <select class="cfg-select" id="cfg-default-model">
+          <option value="">— select —</option>
+          ${allModels.map(m => `<option value="${m.ref}" ${m.ref === defaultModel ? 'selected' : ''}>${m.label}</option>`).join('')}
+        </select>
+      </div>
+      <div class="cfg-form-group">
+        <label class="cfg-label">Fallback Models</label>
+        <div id="cfg-fallback-list" class="cfg-tag-list">
+          ${fallbacks.map((f, i) => `
+            <span class="cfg-tag" data-fallback="${escapeHtml(f)}">${escapeHtml(f)} <span class="cfg-tag-remove" data-idx="${i}">×</span></span>
+          `).join('')}
         </div>
+        <select class="cfg-select cfg-select-sm" id="cfg-add-fallback">
+          <option value="">+ Add fallback</option>
+          ${allModels.filter(m => m.ref !== defaultModel && !fallbacks.includes(m.ref)).map(m => `<option value="${m.ref}">${m.label}</option>`).join('')}
+        </select>
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">Configuration</div>
+      <div class="settings-section-title">MCP Servers</div>
+      <div id="mcp-server-list">
+        ${Object.keys(mcpServers).map(name => renderMcpServerCard(name, mcpServers[name])).join('')}
+        ${Object.keys(mcpServers).length === 0 ? '<div class="cfg-empty">No MCP servers configured</div>' : ''}
+      </div>
+      <button class="cfg-btn cfg-btn-add" id="btn-add-mcp">+ Add MCP Server</button>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">Advanced</div>
+      <button class="cfg-btn" id="btn-toggle-json">Edit Raw JSON</button>
+    </div>
+    <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
       <div class="config-editor-wrap">
         <textarea id="config-editor" spellcheck="false">${escapeHtml(state.configText)}</textarea>
         <div class="config-actions">
@@ -131,24 +197,165 @@ export function renderSettings() {
         Connection: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? 'Disconnected' : 'Connected'}</span>
       </div>
     </div>`;
-  // Thinking toggle — unified with /thinking slash command (includes budget_tokens)
-  document.getElementById('toggle-thinking').addEventListener('click', function() {
+
+  bindSettingsEvents(content, cfg, allModels);
+}
+
+function renderProviderCard(name, p) {
+  const models = (p.models || []).map(m => m.id).join(', ') || 'none';
+  const maskedKey = maskKey(p.apiKey);
+  return `
+    <div class="cfg-card" data-provider="${escapeHtml(name)}">
+      <div class="cfg-card-header">
+        <span class="cfg-card-title">${escapeHtml(name)}</span>
+        <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
+        <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="Remove">×</button>
+      </div>
+      <div class="cfg-card-body">
+        <div class="cfg-field"><span class="cfg-field-label">Base URL</span><span class="cfg-field-value">${escapeHtml(p.baseUrl || '')}</span></div>
+        <div class="cfg-field"><span class="cfg-field-label">API Key</span><span class="cfg-field-value">${maskedKey}</span></div>
+        <div class="cfg-field"><span class="cfg-field-label">Models</span><span class="cfg-field-value">${escapeHtml(models)}</span></div>
+      </div>
+    </div>`;
+}
+
+function renderMcpServerCard(name, s) {
+  const cmd = [s.command, ...(s.args || [])].join(' ');
+  const envKeys = s.env ? Object.keys(s.env).join(', ') : '';
+  const url = s.url || '';
+  return `
+    <div class="cfg-card" data-mcp="${escapeHtml(name)}">
+      <div class="cfg-card-header">
+        <span class="cfg-card-title">${escapeHtml(name)}</span>
+        <span class="cfg-card-badge">${url ? 'URL' : 'CMD'}</span>
+        <button class="cfg-card-remove" data-mcp="${escapeHtml(name)}" title="Remove">×</button>
+      </div>
+      <div class="cfg-card-body">
+        ${url ? `<div class="cfg-field"><span class="cfg-field-label">URL</span><span class="cfg-field-value">${escapeHtml(url)}</span></div>` : ''}
+        ${cmd ? `<div class="cfg-field"><span class="cfg-field-label">Command</span><span class="cfg-field-value">${escapeHtml(cmd)}</span></div>` : ''}
+        ${envKeys ? `<div class="cfg-field"><span class="cfg-field-label">Env</span><span class="cfg-field-value">${escapeHtml(envKeys)}</span></div>` : ''}
+      </div>
+    </div>`;
+}
+
+function maskKey(key) {
+  if (!key || key === '***') return '•••';
+  if (key.length <= 8) return '••••••••';
+  return key.slice(0, 4) + '•••' + key.slice(-4);
+}
+
+function bindSettingsEvents(content, cfg, allModels) {
+  // Thinking toggle
+  document.getElementById('toggle-thinking')?.addEventListener('click', function() {
     this.classList.toggle('on');
     const enabled = this.classList.contains('on');
     state.thinkingMode = enabled ? {type: 'enabled', budget_tokens: 16000} : null;
     sendWs({type: 'setThinking', thinking: state.thinkingMode});
   });
-  // Policy radio — restore current selection from state
-  const currentPolicy = state.currentPolicy || 'ask';
-  content.querySelectorAll('input[name="policy"]').forEach(r => {
-    r.checked = (r.value === currentPolicy);
-    r.addEventListener('change', () => {
-      state.currentPolicy = r.value;
-      sendWs({type: 'setPolicy', policy: r.value});
+
+  // --- Provider add/edit/remove ---
+  document.getElementById('btn-add-provider')?.addEventListener('click', () => {
+    showProviderModal(null, null, (name, data) => {
+      if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}, model: {default: ''}}};
+      if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
+      if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
+      state.parsedConfig.llm.providers[name] = data;
+      state.configDirty = true;
+      flushConfigToServer();
     });
   });
 
-  // Config save — validate JSON before sending
+  content.querySelectorAll('.cfg-card[data-provider]').forEach(card => {
+    const name = card.dataset.provider;
+    card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!confirm(`Remove provider "${name}"?`)) return;
+      delete state.parsedConfig.llm.providers[name];
+      state.configDirty = true;
+      flushConfigToServer();
+    });
+    card.addEventListener('click', () => {
+      const p = state.parsedConfig.llm.providers[name];
+      showProviderModal(name, p, (newName, data) => {
+        if (newName !== name) {
+          delete state.parsedConfig.llm.providers[name];
+        }
+        state.parsedConfig.llm.providers[newName] = data;
+        state.configDirty = true;
+        flushConfigToServer();
+      });
+    });
+  });
+
+  // --- Model chain ---
+  document.getElementById('cfg-default-model')?.addEventListener('change', function() {
+    if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
+    if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: ''};
+    state.parsedConfig.llm.model.default = this.value;
+    state.configDirty = true;
+    flushConfigToServer();
+  });
+
+  content.querySelectorAll('.cfg-tag-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.idx);
+      state.parsedConfig.llm.model.fallbacks.splice(idx, 1);
+      state.configDirty = true;
+      flushConfigToServer();
+    });
+  });
+
+  document.getElementById('cfg-add-fallback')?.addEventListener('change', function() {
+    if (!this.value) return;
+    if (!state.parsedConfig.llm.model.fallbacks) state.parsedConfig.llm.model.fallbacks = [];
+    if (!state.parsedConfig.llm.model.fallbacks.includes(this.value)) {
+      state.parsedConfig.llm.model.fallbacks.push(this.value);
+      state.configDirty = true;
+      flushConfigToServer();
+    }
+  });
+
+  // --- MCP Servers add/remove ---
+  document.getElementById('btn-add-mcp')?.addEventListener('click', () => {
+    showMcpModal(null, null, (name, data) => {
+      if (!state.parsedConfig) state.parsedConfig = {};
+      if (!state.parsedConfig.mcpServers) state.parsedConfig.mcpServers = {};
+      state.parsedConfig.mcpServers[name] = data;
+      state.configDirty = true;
+      flushConfigToServer();
+    });
+  });
+
+  content.querySelectorAll('.cfg-card[data-mcp]').forEach(card => {
+    const name = card.dataset.mcp;
+    card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!confirm(`Remove MCP server "${name}"?`)) return;
+      delete state.parsedConfig.mcpServers[name];
+      state.configDirty = true;
+      flushConfigToServer();
+    });
+    card.addEventListener('click', () => {
+      const s = state.parsedConfig.mcpServers[name];
+      showMcpModal(name, s, (newName, data) => {
+        if (newName !== name) {
+          delete state.parsedConfig.mcpServers[name];
+        }
+        state.parsedConfig.mcpServers[newName] = data;
+        state.configDirty = true;
+        flushConfigToServer();
+      });
+    });
+  });
+
+  // --- Advanced JSON editor ---
+  document.getElementById('btn-toggle-json')?.addEventListener('click', () => {
+    state.settingsShowJson = !state.settingsShowJson;
+    const sec = document.getElementById('json-editor-section');
+    if (sec) sec.style.display = state.settingsShowJson ? 'block' : 'none';
+  });
+
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
     const cfg = document.getElementById('config-editor').value;
     try {
@@ -158,8 +365,133 @@ export function renderSettings() {
       alert('Invalid JSON: ' + e.message);
     }
   });
+
   document.getElementById('btn-reload-config')?.addEventListener('click', () => {
     sendWs({type: 'getConfig'});
+  });
+}
+
+function flushConfigToServer() {
+  const json = JSON.stringify(state.parsedConfig, null, 2);
+  state.configText = json;
+  sendWs({type: 'updateConfig', config: json});
+}
+
+// --- Provider modal ---
+function showProviderModal(existingName, existingData, onSave) {
+  const isEdit = !!existingName;
+  const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
+  const modelsStr = (p.models || []).map(m => `${m.id} (max:${m.maxTokens}, ctx:${m.contextWindow})`).join('\n');
+
+  showModal({
+    title: isEdit ? `Edit Provider: ${existingName}` : 'Add Provider',
+    fields: [
+      {key: 'name', label: 'Provider ID', type: 'text', value: existingName || '', placeholder: 'e.g. openai, zhipu', disabled: isEdit},
+      {key: 'baseUrl', label: 'Base URL', type: 'text', value: p.baseUrl || ''},
+      {key: 'apiKey', label: 'API Key', type: 'text', value: p.apiKey || '', placeholder: 'Leave as *** to keep existing'},
+      {key: 'protocol', label: 'Protocol', type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
+      {key: 'models', label: 'Models (one per line: id [maxTokens] [contextWindow])', type: 'textarea', value: modelsStr, placeholder: 'e.g. gpt-4o 16384 128000'},
+    ],
+    onConfirm(values) {
+      const name = values.name.trim();
+      if (!name) return alert('Provider ID is required');
+      if (/\s/.test(name)) return alert('Provider ID cannot contain spaces');
+      const models = values.models.split('\n').map(line => {
+        const parts = line.trim().split(/\s+/);
+        if (!parts[0]) return null;
+        return {id: parts[0], maxTokens: parseInt(parts[1]) || 131072, contextWindow: parseInt(parts[2]) || 200000};
+      }).filter(Boolean);
+      onSave(name, {
+        baseUrl: values.baseUrl.trim(),
+        apiKey: values.apiKey.trim() || '***',
+        protocol: values.protocol,
+        models,
+      });
+    }
+  });
+}
+
+// --- MCP Server modal ---
+function showMcpModal(existingName, existingData, onSave) {
+  const isEdit = !!existingName;
+  const s = existingData || {};
+  const argsStr = (s.args || []).join(' ');
+  const envLines = s.env ? Object.entries(s.env).map(([k, v]) => `${k}=${v}`).join('\n') : '';
+  const headersLines = s.headers ? Object.entries(s.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+
+  showModal({
+    title: isEdit ? `Edit MCP Server: ${existingName}` : 'Add MCP Server',
+    fields: [
+      {key: 'name', label: 'Server ID', type: 'text', value: existingName || '', disabled: isEdit},
+      {key: 'command', label: 'Command', type: 'text', value: s.command || '', placeholder: 'e.g. npx, python'},
+      {key: 'args', label: 'Arguments (space-separated)', type: 'text', value: argsStr},
+      {key: 'env', label: 'Environment Variables (KEY=VALUE per line)', type: 'textarea', value: envLines},
+      {key: 'url', label: 'Or: URL (for SSE/Streamable)', type: 'text', value: s.url || ''},
+      {key: 'headers', label: 'Headers (Key: Value per line)', type: 'textarea', value: headersLines},
+    ],
+    onConfirm(values) {
+      const name = values.name.trim();
+      if (!name) return alert('Server ID is required');
+      const data = {};
+      if (values.url.trim()) {
+        data.url = values.url.trim();
+        if (values.headers.trim()) {
+          data.headers = Object.fromEntries(values.headers.trim().split('\n').map(l => { const i = l.indexOf(':'); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : null; }).filter(Boolean));
+        }
+      } else if (values.command.trim()) {
+        data.command = values.command.trim();
+        data.args = values.args.trim() ? values.args.trim().split(/\s+/) : [];
+        if (values.env.trim()) {
+          data.env = Object.fromEntries(values.env.trim().split('\n').map(l => { const i = l.indexOf('='); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : null; }).filter(Boolean));
+        }
+      } else {
+        return alert('Command or URL is required');
+      }
+      onSave(name, data);
+    }
+  });
+}
+
+// --- Generic modal ---
+function showModal({title, fields, onConfirm}) {
+  // Remove existing modal
+  document.getElementById('cfg-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'cfg-modal';
+  overlay.className = 'cfg-modal-overlay';
+  overlay.innerHTML = `
+    <div class="cfg-modal">
+      <div class="cfg-modal-title">${escapeHtml(title)}</div>
+      <div class="cfg-modal-body">
+        ${fields.map(f => `
+          <div class="cfg-form-group">
+            <label class="cfg-label">${escapeHtml(f.label)}</label>
+            ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
+              ${f.options.map(o => `<option value="${o}" ${o === f.value ? 'selected' : ''}>${o}</option>`).join('')}
+            </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>` :
+            `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
+          </div>
+        `).join('')}
+      </div>
+      <div class="cfg-modal-actions">
+        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">Cancel</button>
+        <button class="cfg-btn cfg-btn-save" id="cfg-modal-save">Save</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+
+  const close = () => overlay.remove();
+  document.getElementById('cfg-modal-cancel').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  document.getElementById('cfg-modal-save').addEventListener('click', () => {
+    const values = {};
+    overlay.querySelectorAll('[data-field]').forEach(el => {
+      values[el.dataset.field] = el.value;
+    });
+    onConfirm(values);
+    close();
   });
 }
 
@@ -183,6 +515,137 @@ export function formatSessionTime(ts) {
   if (isToday) return hh + ':' + mm;
   if (isYesterday) return 'Yesterday ' + hh + ':' + mm;
   return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm;
+}
+
+/** Render a single session item into the given container. */
+function renderOneSessionItem(s, container, opts = {}) {
+  const inFolder = opts.inFolder || false;
+  const item = document.createElement('div');
+  const isSelected = state.selectedSessionIds.has(s.id);
+  item.className = 'session-item'
+    + (inFolder ? ' in-folder' : '')
+    + (s.id === state.activeSessionId ? ' active' : '')
+    + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
+    + (isSelected ? ' selected' : '');
+  item.dataset.id = s.id;
+  item.draggable = true;
+  item.addEventListener('dragstart', (e) => {
+    const selected = state.selectedSessionIds;
+    if (selected.size > 1 && selected.has(s.id)) {
+      e.dataTransfer.setData('text/plain', 'batch:' + [...selected].join(','));
+    } else if (selected.size === 1 && selected.has(s.id)) {
+      e.dataTransfer.setData('text/plain', 'batch:' + s.id);
+    } else {
+      e.dataTransfer.setData('text/plain', s.id);
+    }
+    e.dataTransfer.effectAllowed = 'move';
+    item.classList.add('dragging');
+    showDeleteZone();
+  });
+  item.addEventListener('dragend', () => {
+    item.classList.remove('dragging');
+    document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
+    hideDeleteZone();
+  });
+  const statusCls = getSessionStatusClass(s.id);
+  const draft = state.sessionInputDrafts[s.id];
+  const draftHtml = draft && draft.text
+    ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
+    : '';
+  const deleteBtnHtml = '<button class="session-delete" title="Delete"><i data-lucide="x"></i></button>';
+  const checkSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  const checkHtml = '<span class="ms-check">' + checkSvg + '</span>';
+  item.innerHTML =
+    (isSelected ? checkHtml : '') +
+    '<div class="session-info">' +
+    '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
+    (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
+    '</div>' +
+    '<div class="session-status ' + statusCls + '">' +
+    '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
+    '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
+    '<div class="status-dot"></div>' +
+    '</div>' +
+    deleteBtnHtml;
+  // Double-click to rename (only in normal mode)
+  const nameEl = item.querySelector('.session-name');
+  if (state.selectedSessionIds.size === 0) {
+    nameEl.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      nameEl.contentEditable = true;
+      nameEl.focus();
+      const range = document.createRange();
+      range.selectNodeContents(nameEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+    const finishRename = () => {
+      nameEl.contentEditable = false;
+      const newName = nameEl.textContent.trim();
+      if (newName && newName !== s.name) {
+        sendWs({type: 'renameSession', sessionId: s.id, name: newName});
+      } else {
+        nameEl.textContent = s.name;
+      }
+    };
+    nameEl.addEventListener('blur', finishRename);
+    nameEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        if (e.isComposing || e.keyCode === 229) return;
+        e.preventDefault(); nameEl.blur();
+      }
+      if (e.key === 'Escape') { nameEl.textContent = s.name; nameEl.blur(); }
+    });
+  }
+  if (state.selectedSessionIds.size === 0) {
+    item.querySelector('.session-delete').onclick = (e) => {
+      e.stopPropagation();
+      if (typeof window.__showDeleteModal === 'function') window.__showDeleteModal(s.id, s.name);
+    };
+  }
+  item.onclick = (e) => {
+    if (e.target.closest('.session-name[contenteditable="true"]')) return;
+    if (e.target.closest('.session-delete')) return;
+    const hasSelection = state.selectedSessionIds.size > 0;
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      toggleSessionSelection(s.id);
+    } else if (e.shiftKey && state.lastSelectedSessionId) {
+      e.preventDefault();
+      if (!hasSelection) state.lastSelectedSessionId = state.activeSessionId;
+      selectSessionRange(state.lastSelectedSessionId, s.id);
+    } else if (hasSelection) {
+      // In multi-select: click selected item does nothing; click unselected exits multi-select and switches
+      if (state.selectedSessionIds.has(s.id)) {
+        // do nothing, keep selection
+      } else {
+        exitBatchMode();
+        if (s.id !== state.activeSessionId) switchSession(s.id);
+      }
+    } else {
+      clearActiveFolder();
+      if (s.id !== state.activeSessionId) {
+        switchSession(s.id);
+      } else {
+        // Already active — still clear unread dot
+        state.unreadSessions.delete(s.id);
+        state.markedUnreadSessions.delete(s.id);
+        persistUnread();
+        persistMarkedUnread();
+        updateSessionStatus(s.id);
+      }
+    }
+  };
+  item.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (state.selectedSessionIds.size > 0) {
+      showBatchCtxMenu(e.clientX, e.clientY);
+    } else {
+      showSessionCtxMenu(e.clientX, e.clientY, s.id);
+    }
+  });
+  container.appendChild(item);
 }
 
 export function renderSessionSidebar(sessionData, activeId) {
@@ -216,124 +679,114 @@ export function renderSessionSidebar(sessionData, activeId) {
   const sessionList = state.dom.sessionList;
   sessionList.innerHTML = '';
 
-  // Sort sessions: pinned first, then by most recently active
-  const sorted = [...state.sessions].sort((a, b) => {
+  // Setup drop-to-root on sessionList (once)
+  if (!sessionList._dropSetup) {
+    sessionList._dropSetup = true;
+    sessionList.addEventListener('dragover', (e) => {
+      if (!e.target.closest('.folder-item') && !e.target.closest('.session-item')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      }
+    });
+    sessionList.addEventListener('drop', (e) => {
+      if (!e.target.closest('.folder-item') && !e.target.closest('.session-item')) {
+        e.preventDefault();
+        const data = e.dataTransfer.getData('text/plain');
+        if (!data) return;
+        if (data.startsWith('folder:')) {
+          const fid = data.slice(7);
+          sendWs({ type: 'moveFolder', folderId: fid, parentId: null });
+        } else if (data.startsWith('batch:')) {
+          const ids = data.slice(6).split(',').filter(Boolean);
+          ids.forEach(sid => sendWs({ type: 'moveSessionToFolder', sessionId: sid, folderId: null }));
+        } else {
+          sendWs({ type: 'moveSessionToFolder', sessionId: data, folderId: null });
+        }
+      }
+    });
+    // Click on empty area clears active folder (VSCode-style)
+    sessionList.addEventListener('click', (e) => {
+      if (e.target === sessionList) {
+        clearActiveFolder();
+      }
+    });
+  }
+
+  // Separate sessions by folder
+  const rootSessions = [];
+  const sessionsByFolder = {};
+  const validFolderIds = new Set((state.folders || []).map(f => f.id));
+  (state.sessions || []).forEach(s => {
+    if (s.folderId && validFolderIds.has(s.folderId)) {
+      if (!sessionsByFolder[s.folderId]) sessionsByFolder[s.folderId] = [];
+      sessionsByFolder[s.folderId].push(s);
+    } else {
+      rootSessions.push(s);
+    }
+  });
+
+  const sortSessions = (list) => [...list].sort((a, b) => {
     const pa = state.pinnedSessions.has(a.id) ? 1 : 0;
     const pb = state.pinnedSessions.has(b.id) ? 1 : 0;
     if (pb !== pa) return pb - pa;
-    const ta = a.updatedAt || a.createdAt || 0;
-    const tb = b.updatedAt || b.createdAt || 0;
-    return tb - ta;
+    return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
   });
 
-  sorted.forEach((s, idx) => {
-    // Insert divider between pinned and non-pinned groups
-    if (idx > 0 && !state.pinnedSessions.has(s.id) && state.pinnedSessions.has(sorted[idx - 1].id)) {
+  const sortedRoots = sortSessions(rootSessions);
+  Object.keys(sessionsByFolder).forEach(fid => {
+    sessionsByFolder[fid] = sortSessions(sessionsByFolder[fid]);
+  });
+
+  // Filter root folders for current agent (agentName may be undefined when empty on backend)
+  const effectiveAgent = state.selectedAgent || 'Nebula';
+  const allAgentFolders = (state.folders || []).filter(f => {
+    const fa = f.agentName || '';
+    return fa === effectiveAgent || (fa === '' && effectiveAgent === 'Nebula');
+  });
+  const agentFolders = allAgentFolders.filter(f => !f.parentId);
+
+  // Compute effective updatedAt for each folder recursively (sessions + subfolders)
+  const folderEffectiveTime = (f) => {
+    const children = sessionsByFolder[f.id] || [];
+    const childMax = children.reduce((mx, s) => Math.max(mx, s.updatedAt || s.createdAt || 0), 0);
+    const subFolders = allAgentFolders.filter(sub => sub.parentId === f.id);
+    const subFolderMax = subFolders.reduce((mx, sub) => Math.max(mx, folderEffectiveTime(sub)), 0);
+    return Math.max(f.updatedAt || 0, childMax, subFolderMax);
+  };
+
+  // Build a mixed list of root sessions and folders, each with a pinned flag and effective time
+  const mixedItems = [];
+  sortedRoots.forEach(s => {
+    mixedItems.push({ type: 'session', data: s, pinned: state.pinnedSessions.has(s.id), time: s.updatedAt || s.createdAt || 0 });
+  });
+  agentFolders.forEach(f => {
+    mixedItems.push({ type: 'folder', data: f, pinned: state.pinnedFolders.has(f.id), time: folderEffectiveTime(f) });
+  });
+
+  // Sort: pinned first, then folders before sessions, then by time descending (VSCode-style)
+  mixedItems.sort((a, b) => {
+    if (b.pinned !== a.pinned) return b.pinned ? 1 : -1;
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+    return b.time - a.time;
+  });
+
+  // Render
+  let hasPinned = false;
+  let renderedDivider = false;
+  mixedItems.forEach(item => {
+    if (item.pinned) {
+      hasPinned = true;
+    } else if (hasPinned && !renderedDivider) {
       const divider = document.createElement('div');
       divider.className = 'session-divider';
       sessionList.appendChild(divider);
+      renderedDivider = true;
     }
-    const item = document.createElement('div');
-    const isSelected = state.selectedSessionIds.has(s.id);
-    item.className = 'session-item'
-      + (s.id === state.activeSessionId ? ' active' : '')
-      + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
-      + (isSelected ? ' selected' : '')
-      + (state.batchMode ? ' batch-mode' : '');
-    item.dataset.id = s.id;
-    const statusCls = getSessionStatusClass(s.id);
-    const draft = state.sessionInputDrafts[s.id];
-    const draftHtml = draft && draft.text
-      ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
-      : '';
-    const checkboxHtml = state.batchMode
-      ? '<div class="session-checkbox"><input type="checkbox" ' + (isSelected ? 'checked' : '') + '></div>'
-      : '';
-    const deleteBtnHtml = state.batchMode
-      ? ''
-      : '<button class="session-delete" title="Delete"><i data-lucide="x"></i></button>';
-    item.innerHTML =
-      checkboxHtml +
-      '<div class="session-info">' +
-      '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
-      (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
-      '</div>' +
-      '<div class="session-status ' + statusCls + '">' +
-      '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
-      '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
-      '<div class="status-dot"></div>' +
-      '</div>' +
-      deleteBtnHtml;
-    // Double-click to rename (only in normal mode)
-    const nameEl = item.querySelector('.session-name');
-    if (!state.batchMode) {
-      nameEl.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        nameEl.contentEditable = true;
-        nameEl.focus();
-        // Select all text
-        const range = document.createRange();
-        range.selectNodeContents(nameEl);
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(range);
-      });
-      const finishRename = () => {
-        nameEl.contentEditable = false;
-        const newName = nameEl.textContent.trim();
-        if (newName && newName !== s.name) {
-          sendWs({type: 'renameSession', sessionId: s.id, name: newName});
-        } else {
-          nameEl.textContent = s.name;
-        }
-      };
-      nameEl.addEventListener('blur', finishRename);
-      nameEl.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          if (e.isComposing || e.keyCode === 229) return;
-          e.preventDefault(); nameEl.blur();
-        }
-        if (e.key === 'Escape') { nameEl.textContent = s.name; nameEl.blur(); }
-      });
+    if (item.type === 'session') {
+      renderOneSessionItem(item.data, sessionList, { inFolder: false });
+    } else {
+      renderFolderItem(item.data, sessionsByFolder[item.data.id] || [], sessionList);
     }
-    if (!state.batchMode) {
-      item.querySelector('.session-delete').onclick = (e) => {
-        e.stopPropagation();
-        if (typeof window.__showDeleteModal === 'function') window.__showDeleteModal(s.id, s.name);
-      };
-    }
-    item.onclick = (e) => {
-      if (e.target.closest('.session-name[contenteditable="true"]')) return;
-      if (state.batchMode) {
-        // In batch mode, clicks toggle selection
-        if (e.target.closest('.session-checkbox')) {
-          e.preventDefault();
-          toggleSessionSelection(s.id);
-          return;
-        }
-        if (e.ctrlKey || e.metaKey) {
-          e.preventDefault();
-          toggleSessionSelection(s.id);
-        } else if (e.shiftKey && state.lastSelectedSessionId) {
-          e.preventDefault();
-          selectSessionRange(state.lastSelectedSessionId, s.id);
-        } else {
-          toggleSessionSelection(s.id);
-        }
-      } else {
-        if (e.target.closest('.session-delete')) return;
-        if (s.id !== state.activeSessionId) switchSession(s.id);
-      }
-    };
-    item.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      if (state.batchMode) {
-        showBatchCtxMenu(e.clientX, e.clientY);
-      } else {
-        showSessionCtxMenu(e.clientX, e.clientY, s.id);
-      }
-    });
-    sessionList.appendChild(item);
   });
   if (typeof lucide !== 'undefined') lucide.createIcons();
   // Update header session name + brand
@@ -560,11 +1013,38 @@ function dismissCtxMenu() {
 function showSessionCtxMenu(x, y, sessionId) {
   dismissCtxMenu();
   const isPinned = state.pinnedSessions.has(sessionId);
+  const session = state.sessions.find(s => s.id === sessionId);
+  const currentFolderId = session?.folderId || null;
+
+  // Build folder submenu HTML
+  const effectiveAgent = state.selectedAgent || 'Nebula';
+  const agentFolders = (state.folders || []).filter(f => {
+    const fa = f.agentName || '';
+    return fa === effectiveAgent || (fa === '' && effectiveAgent === 'Nebula');
+  });
+  let folderSubHtml = '';
+  if (currentFolderId !== null) {
+    folderSubHtml += '<div class="ctx-sub" data-folder-id="">移出文件夹</div>';
+  }
+  if (agentFolders.length > 0) {
+    agentFolders.forEach(f => {
+      if (f.id !== currentFolderId) {
+        folderSubHtml += '<div class="ctx-sub" data-folder-id="' + f.id + '">' + escapeHtml(f.name) + '</div>';
+      }
+    });
+  }
+  if (!folderSubHtml) {
+    folderSubHtml = '<div class="ctx-disabled">无可用文件夹</div>';
+  }
+
   const menu = document.createElement('div');
   menu.className = 'session-ctx-menu';
   menu.innerHTML =
     '<div class="ctx-item" data-action="mark-unread">标记为未读</div>' +
-    '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? '取消置顶' : '置顶') + '</div>';
+    '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? '取消置顶' : '置顶') + '</div>' +
+    '<div class="ctx-separator"></div>' +
+    '<div class="ctx-item ctx-has-sub" data-action="move-to-folder">移动到文件夹 <span style="float:right;color:var(--color-frame-text-muted)">▸</span></div>' +
+    '<div class="ctx-submenu" id="ctx-folder-submenu">' + folderSubHtml + '</div>';
   document.body.appendChild(menu);
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
@@ -581,10 +1061,36 @@ function showSessionCtxMenu(x, y, sessionId) {
     if (isPinned) state.pinnedSessions.delete(sessionId);
     else state.pinnedSessions.add(sessionId);
     persistPinned();
-    // Re-render to update sort order and pinned class
     renderSessionSidebar(state.sessions, state.activeSessionId);
     dismissCtxMenu();
   });
+
+  // Submenu interactions
+  const subTrigger = menu.querySelector('[data-action="move-to-folder"]');
+  const subMenu = menu.querySelector('#ctx-folder-submenu');
+  let subTimer = null;
+
+  subTrigger.addEventListener('mouseenter', () => {
+    subTimer = setTimeout(() => { subMenu.style.display = 'block'; }, 100);
+  });
+  subTrigger.addEventListener('mouseleave', () => {
+    if (subTimer) clearTimeout(subTimer);
+  });
+  subMenu.addEventListener('mouseenter', () => {
+    if (subTimer) clearTimeout(subTimer);
+  });
+  subMenu.addEventListener('mouseleave', () => {
+    subMenu.style.display = 'none';
+  });
+
+  subMenu.querySelectorAll('.ctx-sub').forEach(el => {
+    el.addEventListener('click', () => {
+      const fid = el.dataset.folderId;
+      sendWs({ type: 'moveSessionToFolder', sessionId, folderId: fid || null });
+      dismissCtxMenu();
+    });
+  });
+
   activeCtxMenu = menu;
 }
 
@@ -644,10 +1150,7 @@ export function toggleSessionSelection(sessionId) {
   // Update UI for this item without full re-render
   const item = state.dom.sessionList.querySelector(`.session-item[data-id="${sessionId}"]`);
   if (item) {
-    const isSelected = state.selectedSessionIds.has(sessionId);
-    item.classList.toggle('selected', isSelected);
-    const cb = item.querySelector('.session-checkbox input');
-    if (cb) cb.checked = isSelected;
+    item.classList.toggle('selected', state.selectedSessionIds.has(sessionId));
   }
 }
 
@@ -674,14 +1177,7 @@ function selectSessionRange(fromId, toId) {
   renderSessionSidebar(state.sessions, state.activeSessionId);
 }
 
-export function enterBatchMode() {
-  state.batchMode = true;
-  updateBatchToolbar();
-  renderSessionSidebar(state.sessions, state.activeSessionId);
-}
-
 export function exitBatchMode() {
-  state.batchMode = false;
   state.selectedSessionIds.clear();
   state.lastSelectedSessionId = null;
   updateBatchToolbar();
@@ -689,21 +1185,74 @@ export function exitBatchMode() {
 }
 
 function updateBatchToolbar() {
-  const batchBtn = document.getElementById('batch-mode-btn');
-  if (!batchBtn) return;
+  // Floating toolbar removed — batch actions are via drag-to-delete-zone or context menu
+  const count = state.selectedSessionIds.size;
+  let bar = document.getElementById('multi-select-bar');
+  if (count === 0 && bar) bar.remove();
+}
 
-  if (state.batchMode) {
-    batchBtn.innerHTML = '<i data-lucide="x"></i>';
-    batchBtn.title = '取消批量选择';
-    const panelTitle = document.querySelector('#panel-sessions .panel-title');
-    if (panelTitle) panelTitle.textContent = state.selectedSessionIds.size + ' 选中';
-  } else {
-    batchBtn.innerHTML = '<i data-lucide="check-square"></i>';
-    batchBtn.title = '批量选择';
-    const panelTitle = document.querySelector('#panel-sessions .panel-title');
-    if (panelTitle) panelTitle.textContent = 'Sessions';
+let _deleteZone = null;
+
+function showDeleteZone() {
+  const panel = document.getElementById('panel-sessions');
+  if (!panel) return;
+  if (_deleteZone) return;
+  const zone = document.createElement('div');
+  zone.className = 'delete-drop-zone';
+  const count = state.selectedSessionIds.size;
+  zone.innerHTML =
+    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
+    '<span>' + (count > 1 ? 'Drop to delete ' + count + ' sessions' : 'Drop to delete') + '</span>';
+  zone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    zone.classList.add('active');
+  });
+  zone.addEventListener('dragleave', () => {
+    zone.classList.remove('active');
+  });
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.classList.remove('active');
+    const data = e.dataTransfer.getData('text/plain');
+    let ids = [];
+    if (data.startsWith('batch:')) {
+      ids = data.slice(6).split(',').filter(Boolean);
+    } else if (data && !data.startsWith('folder:')) {
+      ids = [data];
+    }
+    if (ids.length > 0) {
+      // If already in selection mode, delete all selected
+      if (state.selectedSessionIds.size > 1) {
+        sendWs({ type: 'batchDeleteSessions', sessionIds: [...state.selectedSessionIds] });
+        state.selectedSessionIds.forEach(id => {
+          delete state.sessionInputDrafts[id];
+          state.unreadSessions.delete(id);
+          state.markedUnreadSessions.delete(id);
+          state.pinnedSessions.delete(id);
+        });
+        persistUnread(); persistMarkedUnread(); persistPinned(); persistDrafts();
+        state.selectedSessionIds.clear();
+        state.lastSelectedSessionId = null;
+      } else {
+        // Single drag — confirm delete
+        const sid = ids[0];
+        const s = state.sessions.find(x => x.id === sid);
+        if (s && typeof window.__showDeleteModal === 'function') {
+          window.__showDeleteModal(sid, s.name);
+        }
+      }
+    }
+  });
+  panel.appendChild(zone);
+  _deleteZone = zone;
+}
+
+function hideDeleteZone() {
+  if (_deleteZone) {
+    _deleteZone.remove();
+    _deleteZone = null;
   }
-  if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
 export function batchDeleteSelected() {
@@ -724,13 +1273,13 @@ export function batchDeleteSelected() {
   exitBatchMode();
 }
 
-// Keyboard shortcuts for batch mode
+// Keyboard shortcuts for multi-select
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && state.batchMode) {
+  if (e.key === 'Escape' && state.selectedSessionIds.size > 0) {
     e.preventDefault();
     exitBatchMode();
   }
-  if (e.key === 'Delete' && state.batchMode && state.selectedSessionIds.size > 0) {
+  if (e.key === 'Delete' && state.selectedSessionIds.size > 0) {
     e.preventDefault();
     showBatchDeleteModal();
   }
@@ -745,13 +1294,26 @@ document.addEventListener('contextmenu', (e) => {
   if (activeCtxMenu && !activeCtxMenu.contains(e.target)) dismissCtxMenu();
 }, true);
 
+function updateFolderStatus(folderId) {
+  const folderEl = state.dom.sessionList.querySelector(`.folder-item[data-folder-id="${folderId}"]`);
+  if (!folderEl) return;
+  const el = folderEl.querySelector('.folder-status');
+  if (!el) return;
+  el.className = 'folder-status ' + getFolderStatusClass(folderId);
+}
+
 export function updateSessionStatus(sessionId) {
   if (!sessionId) return;
   const item = state.dom.sessionList.querySelector(`.session-item[data-id="${sessionId}"]`);
-  if (!item) return;
-  const el = item.querySelector('.session-status');
-  if (!el) return;
-  el.className = 'session-status ' + getSessionStatusClass(sessionId);
+  if (item) {
+    const el = item.querySelector('.session-status');
+    if (el) el.className = 'session-status ' + getSessionStatusClass(sessionId);
+  }
+  // Cascade update parent folder status if session belongs to one
+  const session = (state.sessions || []).find(s => s.id === sessionId);
+  if (session && session.folderId) {
+    updateFolderStatus(session.folderId);
+  }
 }
 
 /** Show/hide the attention indicator for a session in the sidebar. */
@@ -765,6 +1327,9 @@ export function setSessionAttention(sessionId, attention) {
   if (agentName && agentName !== state.selectedAgent) {
     if (attention) {
       state.agentUnreadCounts[agentName] = (state.agentUnreadCounts[agentName] || 0) + 1;
+    } else {
+      const cur = state.agentUnreadCounts[agentName] || 0;
+      if (cur > 0) state.agentUnreadCounts[agentName] = cur - 1;
     }
     updateAgentNotificationDotExternal(agentName);
   }
@@ -990,10 +1555,284 @@ export function initHeaderModelInfo() {
   }
 }
 
-/** Create a new folder via WebSocket. */
-export function createNewFolder() {
-  const name = prompt('Folder name:');
-  if (!name || !name.trim()) return;
-  import('./ws.js').then(({ sendWs }) => sendWs({ type: 'createFolder', name: name.trim() }));
+/** Create a new folder inline (no prompt). Inserts an editable row into the sidebar. */
+export function createNewFolder(parentFolderId) {
+  let container;
+  if (parentFolderId) {
+    // Ensure parent folder is expanded so children container exists
+    if (!state.expandedFolders.has(parentFolderId)) {
+      state.expandedFolders.add(parentFolderId);
+      persistExpandedFolders();
+      renderSessionSidebar(state.sessions, state.activeSessionId);
+    }
+    const wrapper = state.dom.sessionList.querySelector('.folder-wrapper[data-folder-id="' + parentFolderId + '"]');
+    container = wrapper ? wrapper.querySelector('.folder-children') : null;
+  } else {
+    container = document.getElementById('session-list');
+  }
+  if (!container) return;
+
+  // Remove any existing inline-new-folder input
+  container.querySelectorAll('.folder-new-row').forEach(el => el.remove());
+
+  const row = document.createElement('div');
+  row.className = 'folder-new-row';
+  row.innerHTML =
+    '<div class="folder-new-row-inner">' +
+    '<div class="folder-new-arrow"><i data-lucide="chevron-right"></i></div>' +
+    '<div class="folder-new-icon"><i data-lucide="folder"></i></div>' +
+    '<input class="folder-new-input" placeholder="New folder name…">' +
+    '</div>';
+  container.insertBefore(row, container.firstChild);
+
+  const input = row.querySelector('.folder-new-input');
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+  input.focus();
+
+  const cancel = () => row.remove();
+  const confirm = () => {
+    const name = input.value.trim();
+    row.remove();
+    if (name) {
+      const payload = { type: 'createFolder', name };
+      if (parentFolderId) payload.parentId = parentFolderId;
+      import('./ws.js').then(({ sendWs }) => sendWs(payload));
+    }
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); confirm(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', () => {
+    // Small delay so Enter can fire first
+    setTimeout(() => {
+      if (document.activeElement !== input && row.parentNode) cancel();
+    }, 150);
+  });
+}
+
+// ===== Folder helpers =====
+
+function persistExpandedFolders() {
+  try {
+    localStorage.setItem('nebflow_expanded_folders', JSON.stringify([...state.expandedFolders]));
+  } catch(e) {}
+}
+
+function persistPinnedFolders() {
+  try {
+    localStorage.setItem('nebflow_pinned_folders', JSON.stringify([...state.pinnedFolders]));
+  } catch(e) {}
+}
+
+function getFolderStatusClass(folderId, sessions) {
+  const allSessions = sessions || (state.sessions || []);
+  const folderSessions = allSessions.filter(s => s.folderId === folderId);
+  for (const s of folderSessions) {
+    if (state.attentionSessions.has(s.id)) return 'attention';
+  }
+  for (const s of folderSessions) {
+    if (state.compactingSessionIds.has(s.id) && s.id !== state.activeSessionId) return 'compacting';
+  }
+  for (const s of folderSessions) {
+    if (state.busySessionIds.has(s.id)) return 'busy';
+  }
+  for (const s of folderSessions) {
+    if (state.markedUnreadSessions.has(s.id) || state.unreadSessions.has(s.id)) return 'unread';
+  }
+  return '';
+}
+
+function renderFolderItem(folder, sessions, container) {
+  const folderWrapper = document.createElement('div');
+  folderWrapper.className = 'folder-wrapper';
+  folderWrapper.dataset.folderId = folder.id;
+
+  const isExpanded = state.expandedFolders.has(folder.id);
+  const isPinned = state.pinnedFolders.has(folder.id);
+
+  const folderEl = document.createElement('div');
+  folderEl.className = 'folder-item'
+    + (isPinned ? ' pinned' : '')
+    + (state.activeFolderId === folder.id ? ' active' : '');
+  folderEl.dataset.folderId = folder.id;
+  folderEl.draggable = true;
+
+  const statusCls = getFolderStatusClass(folder.id, sessions);
+
+  folderEl.innerHTML =
+    '<div class="folder-arrow">' +
+      (isExpanded
+        ? '<i data-lucide="chevron-down"></i>'
+        : '<i data-lucide="chevron-right"></i>') +
+    '</div>' +
+    '<div class="folder-icon"><i data-lucide="folder"></i></div>' +
+    '<div class="folder-name">' + escapeHtml(folder.name) + '</div>' +
+    '<div class="folder-status ' + statusCls + '">' +
+      '<div class="folder-status-dot"></div>' +
+    '</div>' +
+    '<button class="folder-delete" title="Delete"><i data-lucide="x"></i></button>';
+
+  // Drag: folder itself can be dragged (into another folder)
+  folderEl.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/plain', 'folder:' + folder.id);
+    e.dataTransfer.effectAllowed = 'move';
+    folderEl.classList.add('dragging');
+  });
+  folderEl.addEventListener('dragend', () => {
+    folderEl.classList.remove('dragging');
+    document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
+    hideDeleteZone();
+  });
+
+  // VSCode-style: click selects folder + expand/collapse
+  folderEl.addEventListener('click', (e) => {
+    if (e.target.closest('.folder-delete')) return;
+    setActiveFolder(folder.id);
+    toggleFolder(folder.id);
+  });
+
+  // Right-click context menu
+  folderEl.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showFolderCtxMenu(e.clientX, e.clientY, folder.id);
+  });
+
+  // Delete button
+  folderEl.querySelector('.folder-delete').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (typeof window.__showDeleteFolderModal === 'function') {
+      window.__showDeleteFolderModal(folder.id, folder.name);
+    }
+  });
+
+  // Drop zone: allow dragging sessions or folders into this folder
+  folderEl.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    folderEl.classList.add('drag-over');
+  });
+  folderEl.addEventListener('dragleave', () => {
+    folderEl.classList.remove('drag-over');
+  });
+  folderEl.addEventListener('drop', (e) => {
+    e.preventDefault();
+    folderEl.classList.remove('drag-over');
+    const data = e.dataTransfer.getData('text/plain');
+    if (!data) return;
+    if (data.startsWith('folder:')) {
+      const fid = data.slice(7);
+      if (fid && fid !== folder.id) {
+        sendWs({ type: 'moveFolder', folderId: fid, parentId: folder.id });
+      }
+    } else if (data.startsWith('batch:')) {
+      const ids = data.slice(6).split(',').filter(Boolean);
+      ids.forEach(sid => sendWs({ type: 'moveSessionToFolder', sessionId: sid, folderId: folder.id }));
+    } else {
+      sendWs({ type: 'moveSessionToFolder', sessionId: data, folderId: folder.id });
+    }
+  });
+
+  folderWrapper.appendChild(folderEl);
+
+  // Render children if expanded (sub-folders first, then sessions)
+  if (isExpanded) {
+    const childrenContainer = document.createElement('div');
+    childrenContainer.className = 'folder-children';
+
+    // Sub-folders
+    const subFolders = (state.folders || [])
+      .filter(f => f.parentId === folder.id)
+      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    subFolders.forEach(sub => {
+      const subSessions = (state.sessions || []).filter(s => s.folderId === sub.id)
+        .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+      renderFolderItem(sub, subSessions, childrenContainer);
+    });
+
+    // Sessions inside this folder
+    sessions.forEach(s => {
+      renderOneSessionItem(s, childrenContainer, { inFolder: true });
+    });
+    folderWrapper.appendChild(childrenContainer);
+  }
+
+  container.appendChild(folderWrapper);
+}
+
+export function toggleFolder(folderId) {
+  if (state.expandedFolders.has(folderId)) {
+    state.expandedFolders.delete(folderId);
+  } else {
+    state.expandedFolders.add(folderId);
+  }
+  persistExpandedFolders();
+  renderSessionSidebar(state.sessions, state.activeSessionId);
+}
+
+function showFolderCtxMenu(x, y, folderId) {
+  dismissCtxMenu();
+  const isPinned = state.pinnedFolders.has(folderId);
+  const folder = state.folders.find(f => f.id === folderId);
+  const hasParent = folder && folder.parentId;
+  const menu = document.createElement('div');
+  menu.className = 'session-ctx-menu';
+  let html =
+    '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? '取消置顶' : '置顶') + '</div>' +
+    '<div class="ctx-item" data-action="rename">重命名</div>' +
+    '<div class="ctx-item" data-action="new-subfolder">新建子文件夹</div>';
+  if (hasParent) {
+    html += '<div class="ctx-item" data-action="move-out">移出文件夹</div>';
+  }
+  html +=
+    '<div class="ctx-separator"></div>' +
+    '<div class="ctx-item" data-action="delete" style="color:var(--color-error)">删除文件夹</div>';
+  menu.innerHTML = html;
+
+  menu.querySelector('[data-action="toggle-pin"]').addEventListener('click', () => {
+    if (isPinned) state.pinnedFolders.delete(folderId);
+    else state.pinnedFolders.add(folderId);
+    persistPinnedFolders();
+    renderSessionSidebar(state.sessions, state.activeSessionId);
+    dismissCtxMenu();
+  });
+
+  menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
+    if (!folder) return;
+    const newName = prompt('Rename folder:', folder.name);
+    if (newName && newName.trim() && newName.trim() !== folder.name) {
+      sendWs({ type: 'renameFolder', folderId, name: newName.trim() });
+    }
+    dismissCtxMenu();
+  });
+
+  menu.querySelector('[data-action="new-subfolder"]').addEventListener('click', () => {
+    dismissCtxMenu();
+    createNewFolder(folderId);
+  });
+
+  if (hasParent) {
+    menu.querySelector('[data-action="move-out"]').addEventListener('click', () => {
+      sendWs({ type: 'moveFolder', folderId, parentId: null });
+      dismissCtxMenu();
+    });
+  }
+
+  menu.querySelector('[data-action="delete"]').addEventListener('click', () => {
+    if (folder && typeof window.__showDeleteFolderModal === 'function') {
+      window.__showDeleteFolderModal(folder.id, folder.name);
+    }
+    dismissCtxMenu();
+  });
+
+  document.body.appendChild(menu);
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  activeCtxMenu = menu;
+}
+
+export function moveSessionToFolder(sessionId, folderId) {
+  sendWs({ type: 'moveSessionToFolder', sessionId, folderId });
 }
 
