@@ -34,15 +34,9 @@ object ToolRegistry:
       "TaskGet" -> TaskGetTool,
       "TaskUpdate" -> TaskUpdateTool,
       "TaskDelete" -> TaskDeleteTool,
-      // Multi-agent
-      "NewSession" -> NewSessionTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "ContextManage" -> ContextManageTool,
-      "RemoveUnnecessary" -> RemoveUnnecessaryTool,
-      // Agent communication — injected conditionally by buildToolList
-      "delegate" -> DelegateTool,
-      "report" -> ReportTool,
-      "ask_parent" -> AskParentTool
+      "RemoveUnnecessary" -> RemoveUnnecessaryTool
     )
     tools.putAll(builtins.asJava)
   }
@@ -59,17 +53,11 @@ object ToolRegistry:
   /** Tools always available except on the compaction agent itself (to prevent recursion). */
   val AlwaysAvailableNonCompact: Set[String] = Set("ContextManage", "RemoveUnnecessary")
 
-  /** Tools only available when agent has subagents. */
-  val SubagentTools: Set[String] = Set("delegate")
-
-  /** Tools only available when agent has a parent (depth > 0). */
-  val ParentTools: Set[String] = Set("report", "ask_parent")
-
   /**
    * Tools that users can select in agent configuration UI.
-   *  Excludes lifecycle/communication tools that are auto-injected.
+   *  Excludes lifecycle tools that are auto-injected.
    */
-  val UserConfigurable: Set[String] = AlwaysAvailableNonCompact ++ SubagentTools ++ ParentTools
+  val UserConfigurable: Set[String] = AlwaysAvailableNonCompact
 
   /** Tool definitions for the user-configurable set (sent to frontend). */
   def userConfigurableTools: List[ToolDefinition] =

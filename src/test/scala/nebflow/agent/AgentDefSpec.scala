@@ -12,10 +12,6 @@ class AgentDefSpec extends CatsEffectSuite:
       "description": "Database helper",
       "tools": [],
       "mcpServers": ["postgres", "redis"],
-      "frontend": {
-        "scripts": ["frontend/card.js"],
-        "styles": ["frontend/card.css"]
-      },
       "avatar": "🗃️",
       "displayName": "DB Assistant"
     }"""
@@ -24,9 +20,6 @@ class AgentDefSpec extends CatsEffectSuite:
     val defn = result.toOption.get
     assertEquals(defn.name, "db-assistant")
     assertEquals(defn.mcpServers, List("postgres", "redis"))
-    assert(defn.frontend.isDefined)
-    assertEquals(defn.frontend.get.scripts, List("frontend/card.js"))
-    assertEquals(defn.frontend.get.styles, List("frontend/card.css"))
     assertEquals(defn.avatar, Some("🗃️"))
     assertEquals(defn.displayName, Some("DB Assistant"))
   }
@@ -39,19 +32,8 @@ class AgentDefSpec extends CatsEffectSuite:
     assertEquals(defn.name, "simple")
     assertEquals(defn.tools, List("Read"))
     assertEquals(defn.mcpServers, Nil)
-    assertEquals(defn.frontend, None)
     assertEquals(defn.avatar, None)
     assertEquals(defn.displayName, None)
-    // contextWindow / maxTokens are not in AgentDef — resolved at runtime from nebflow.json
-  }
-
-  test("FrontendConfig decodes correctly") {
-    val json = """{"scripts": ["a.js", "b.js"], "styles": ["c.css"]}"""
-    val result = decode[FrontendConfig](json)
-    assert(result.isRight, s"decode failed: $result")
-    val fe = result.toOption.get
-    assertEquals(fe.scripts, List("a.js", "b.js"))
-    assertEquals(fe.styles, List("c.css"))
   }
 
   test("AgentLibrary.loadAll loads builtins from classpath") {

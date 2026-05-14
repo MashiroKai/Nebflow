@@ -2,16 +2,6 @@ package nebflow.agent
 
 import io.circe.*
 import io.circe.derivation.{Configuration, ConfiguredCodec}
-import io.circe.generic.semiauto.*
-
-/** Frontend asset configuration for an agent. */
-case class FrontendConfig(
-  scripts: List[String] = Nil,
-  styles: List[String] = Nil
-)
-
-object FrontendConfig:
-  given Codec[FrontendConfig] = deriveCodec
 
 /**
  * Agent definition from agent.json.
@@ -25,7 +15,6 @@ case class AgentDef(
   mcpServers: List[String] = Nil,
   systemPrompt: String = "",
   configPath: String = "",
-  frontend: Option[FrontendConfig] = None,
   avatar: Option[String] = None,
   displayName: Option[String] = None
 )
