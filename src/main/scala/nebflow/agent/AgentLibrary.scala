@@ -111,12 +111,6 @@ class AgentLibrary(
   /** Clear cache — next loadAll() will re-read external agents from disk. */
   def refresh(): IO[Unit] = externalCache.invalidate
 
-  /** Returns frontend configs from agents that declare them. */
-  def frontendConfigs(): IO[Map[String, FrontendConfig]] =
-    loadAll().map(
-      _.values.flatMap { defn => defn.frontend.map(defn.name -> _) }.toMap
-    )
-
 end AgentLibrary
 
 object AgentLibrary:

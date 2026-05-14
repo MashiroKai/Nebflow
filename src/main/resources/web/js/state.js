@@ -65,6 +65,9 @@ export default {
   agentsData: [],
   selectedAgent: null,
   configText: '',
+  parsedConfig: null,        // structured config parsed from JSON
+  configDirty: false,        // true if local edits differ from server
+  settingsShowJson: false,   // toggle advanced JSON editor
   // Available tools (loaded from backend ToolRegistry via serverConfig)
   availableTools: [],
   // Agent-configurable tools + auto-tools (from agentList)
@@ -91,7 +94,7 @@ export default {
   // Server config (sent on WS connect)
   streamTimeoutMs: 600000,
   serverVersion: '',
-  currentPolicy: 'ask',
+
   serverThinking: null,
   language: null,
   mcpServers: [],

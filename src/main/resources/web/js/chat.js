@@ -280,9 +280,15 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const card = document.createElement('div');
   card.className = 'tool-card';
 
-  // Try plugin renderer first
-  const data = { label, summary, content, isError, input: inputJson, sessionId: sid };
-  if (renderWithRegistry(card, data)) {
+  // Try HTML card renderer first
+  let cardText = content || '';
+  // Card tool returns a short summary; HTML payload is in inputJson
+  if (label === 'Card' && inputJson && inputJson.html && !cardText.match(/^___\w+_HTML___/)) {
+    const payload = JSON.stringify({ html: inputJson.html, title: inputJson.title || '' });
+    cardText = `___CARD_HTML___${payload}`;
+  }
+  if (renderWithRegistry(card, cardText, label)) {
+    card.classList.add('tool-card--html');
     row.appendChild(card);
     chat.appendChild(row);
     smartScroll();

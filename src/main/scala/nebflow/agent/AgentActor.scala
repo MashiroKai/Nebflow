@@ -64,7 +64,6 @@ object AgentActor extends AgentCore with AgentSession:
                 messages = initialMessages,
                 status = AgentStatus.Idle,
                 depth = depth,
-                subagents = Map.empty,
                 activeStreamFiber = None,
                 sessionId = sessionId,
                 sessionName = sessionName,
@@ -167,7 +166,6 @@ object AgentActor extends AgentCore with AgentSession:
         state.activeStreamFiber.foreach(f =>
           resources.dispatcher.unsafeRunAndForget(f.cancel.handleErrorWith(_ => IO.unit))
         )
-        state.subagents.values.foreach(ctx.stop)
         Behaviors.stopped
 
       case AgentCommand.ClearReadTracker =>
@@ -245,7 +243,7 @@ object AgentActor extends AgentCore with AgentSession:
           None
         )
 
-      // --- User answered: route to blocking replyTo or forward to sub-agents ---
+      // --- User answered: route to blocking replyTo ---
       case AgentCommand.UserAnswered(answers) =>
         state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
           case Some(replyTo) =>
@@ -254,33 +252,7 @@ object AgentActor extends AgentCore with AgentSession:
             val clearedState = state.withInteraction(None)
             idle(agentDef, resources, depth, parentRef, clearedState, stash, ctx)
           case None =>
-            // Not for us — forward to sub-agents (a sub-agent may have a pending AskUser)
-            state.subagents.values.foreach(_ ! AgentCommand.UserAnswered(answers))
             Behaviors.same
-
-      // --- Parent answered (async ask_parent response): inject and activate ---
-      case AgentCommand.ParentAnswer(answer) =>
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "parent-answer-injected",
-          s"answerLen=${answer.length}"
-        )
-        val userMsg = Message(MessageRole.User, Left(s"[Parent response]\n$answer"))
-        val newMessages = state.messages :+ userMsg
-        pipeLlmCall(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state.withMessages(newMessages),
-          stash,
-          ctx,
-          None
-        )
 
       // --- Stale CompactionComplete: discard (agent was interrupted/reset) ---
       case AgentCommand.CompactionComplete(result) =>
@@ -393,37 +365,8 @@ object AgentActor extends AgentCore with AgentSession:
                 "context-exceeded",
                 s"stopReason=$stopReason"
               )
-              // Only root agent triggers compaction; sub-agents (including context-manage itself)
-              // must propagate the error upward to avoid infinite sub-agent recursion.
-              if depth > 0 then
-                val errMsg = s"Context window exceeded (stopReason: $stopReason)"
-                parentRef match
-                  case Some(p) =>
-                    p ! AgentCommand.DelegateResult(
-                      ctx.self.path.name,
-                      Left(
-                        AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, errMsg)
-                      )
-                    )
-                    Behaviors.stopped
-                  case None =>
-                    // Should not happen (depth > 0 implies parentRef.isDefined), but handle gracefully
-                    finishTurn(
-                      agentDef,
-                      resources,
-                      depth,
-                      parentRef,
-                      updatedState,
-                      stash,
-                      ctx,
-                      errMsg,
-                      replyTo,
-                      None,
-                      textAlreadyStreamed = false,
-                      result.model
-                    )
-                end match
-              else if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax
+              // Context window exceeded — trigger compaction if possible, otherwise report error
+              if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax
               then
                 // Compaction already in progress or circuit breaker open — report error
                 val msg = "Context window exceeded and compaction is unavailable. " +
@@ -556,42 +499,31 @@ object AgentActor extends AgentCore with AgentSession:
                   if stopReason.nonEmpty then
                     s"LLM returned empty response after $MaxEmptyResponseRetries retries (stopReason: $stopReason)"
                   else s"LLM returned empty response with no content after $MaxEmptyResponseRetries retries"
-                parentRef match
-                  case Some(p) =>
-                    p ! AgentCommand.DelegateResult(
-                      ctx.self.path.name,
-                      Left(
-                        AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, errMsg)
+                state.sessionId.foreach { sid =>
+                  resources.dispatcher.unsafeRunAndForget(
+                    (state
+                      .wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "error".asJson,
+                          "sessionId" -> state.sessionId.asJson,
+                          "message" -> errMsg.asJson
+                        )
                       )
-                    )
-                    Behaviors.stopped
-                  case None =>
-                    state.sessionId.foreach { sid =>
-                      resources.dispatcher.unsafeRunAndForget(
-                        (state
-                          .wsSend(
-                            io.circe.Json.obj(
-                              "type" -> "error".asJson,
-                              "sessionId" -> state.sessionId.asJson,
-                              "message" -> errMsg.asJson
-                            )
-                          )
-                          .handleErrorWith(_ => IO.unit)) *>
-                          emitSessionBusy(state.wsSend, sid, busy = false)
-                      )
-                    }
-                    emitStream(
-                      resources.dispatcher,
-                      state.wsSend,
-                      ctx,
-                      AgentStreamEvent.Done(result.model),
-                      isSubagent = false,
-                      state.sessionId
-                    )
-                    stash.unstashAll(
-                      idle(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
-                    )
-                end match
+                      .handleErrorWith(_ => IO.unit)) *>
+                      emitSessionBusy(state.wsSend, sid, busy = false)
+                  )
+                }
+                emitStream(
+                  resources.dispatcher,
+                  state.wsSend,
+                  ctx,
+                  AgentStreamEvent.Done(result.model),
+                  isSubagent = false,
+                  state.sessionId
+                )
+                stash.unstashAll(
+                  idle(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
+                )
               end if
             end if
           end if
@@ -611,13 +543,11 @@ object AgentActor extends AgentCore with AgentSession:
           )
           Behaviors.same
         else
-          // Cleanup: cancel active stream fiber and stop sub-agents to prevent resource leaks
+          // Cleanup: cancel active stream fiber to prevent resource leaks
           state.activeStreamFiber.foreach(f =>
             resources.dispatcher.unsafeRunAndForget(f.cancel.handleErrorWith(_ => IO.unit))
           )
-          state.subagents.values.foreach(ctx.stop)
           val cleanedState = state
-            .withSubagents(Map.empty)
             .withActiveStreamFiber(None)
 
           logAgentEvent(
@@ -631,47 +561,43 @@ object AgentActor extends AgentCore with AgentSession:
           )
           val agentError =
             AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
-          parentRef match
-            case Some(p) => p ! AgentCommand.DelegateResult(ctx.self.path.name, Left(agentError))
-            case None =>
-              // Emit error to frontend so the user knows what happened, then Done to clear the spinner
-              val errMsg = error match
-                case e: FallbackExhaustedError =>
-                  val attempts = e.attempts
-                    .map { a =>
-                      val detail = a.message.getOrElse(a.reason.map(_.toString).getOrElse("unknown"))
-                      s"${a.providerId}/${a.model}: $detail"
-                    }
-                    .mkString("; ")
-                  s"All providers failed: $attempts"
-                case _ =>
-                  Option(error.getMessage)
-                    .filter(_.nonEmpty)
-                    .map(m => s"LLM request failed: ${m.take(200)}")
-                    .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
-              cleanedState.sessionId.foreach { sid =>
-                resources.dispatcher.unsafeRunAndForget(
-                  (cleanedState
-                    .wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "error".asJson,
-                        "sessionId" -> cleanedState.sessionId.asJson,
-                        "message" -> errMsg.asJson
-                      )
-                    )
-                    .handleErrorWith(_ => IO.unit)) *>
-                    emitSessionBusy(cleanedState.wsSend, sid, busy = false)
+          // Emit error to frontend so the user knows what happened, then Done to clear the spinner
+          val errMsg = error match
+            case e: FallbackExhaustedError =>
+              val attempts = e.attempts
+                .map { a =>
+                  val detail = a.message.getOrElse(a.reason.map(_.toString).getOrElse("unknown"))
+                  s"${a.providerId}/${a.model}: $detail"
+                }
+                .mkString("; ")
+              s"All providers failed: $attempts"
+            case _ =>
+              Option(error.getMessage)
+                .filter(_.nonEmpty)
+                .map(m => s"LLM request failed: ${m.take(200)}")
+                .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
+          cleanedState.sessionId.foreach { sid =>
+            resources.dispatcher.unsafeRunAndForget(
+              (cleanedState
+                .wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "error".asJson,
+                    "sessionId" -> cleanedState.sessionId.asJson,
+                    "message" -> errMsg.asJson
+                  )
                 )
-              }
-              emitStream(
-                resources.dispatcher,
-                cleanedState.wsSend,
-                ctx,
-                AgentStreamEvent.Done(None),
-                isSubagent = false,
-                cleanedState.sessionId
-              )
-          end match
+                .handleErrorWith(_ => IO.unit)) *>
+                emitSessionBusy(cleanedState.wsSend, sid, busy = false)
+            )
+          }
+          emitStream(
+            resources.dispatcher,
+            cleanedState.wsSend,
+            ctx,
+            AgentStreamEvent.Done(None),
+            isSubagent = false,
+            cleanedState.sessionId
+          )
           replyTo.foreach(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
           stash.unstashAll(
             idle(
@@ -722,151 +648,6 @@ object AgentActor extends AgentCore with AgentSession:
         else pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, stash, ctx, tc.replyTo)
         end if
 
-      // --- Subagent definition loaded, spawn and start ---
-      case AgentCommand.SubagentDefLoaded(call, agentName, task, defnOpt, subDepth) =>
-        defnOpt match
-          case None =>
-            logAgentEvent(
-              ctx,
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "subagent-def-not-found",
-              s"agent=$agentName"
-            )
-            // Inject error as tool result so the LLM sees the failure
-            val errMsg = s"[Tool error: Unknown agent '$agentName']"
-            val toolResultMsg = Message(
-              MessageRole.User,
-              Right(List(ContentBlock.ToolResult(call.id, errMsg, Some(true))))
-            )
-            val assistantMsg = Message(
-              MessageRole.Assistant,
-              Right(List(ContentBlock.ToolUse(call.id, call.name, call.input)))
-            )
-            val updatedMessages = state.messages :+ assistantMsg :+ toolResultMsg
-            pipeLlmCall(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state.withMessages(updatedMessages),
-              stash,
-              ctx,
-              None
-            )
-          case Some(subDef) =>
-            val subId = s"sub-${java.util.UUID.randomUUID().toString.take(8)}"
-            logAgentEvent(
-              ctx,
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "subagent-spawn",
-              s"subId=$subId agent=$agentName depth=$subDepth"
-            )
-            // Sub-agent wsSend: forward events directly (sub-agent already uses correct format)
-            val subWsSend: Json => IO[Unit] = state.wsSend
-
-            val subBehavior = AgentActor(
-              subDef,
-              resources,
-              subWsSend,
-              depth = subDepth,
-              parentRef = Some(ctx.self),
-              sessionId = state.sessionId,
-              sessionName = state.sessionName
-            )
-            val subRef = ctx.spawn(subBehavior, subId)
-            ctx.watch(subRef)
-            // Inject assistant tool_use + user tool_result into parent messages
-            val assistantMsg = Message(
-              MessageRole.Assistant,
-              Right(List(ContentBlock.ToolUse(call.id, call.name, call.input)))
-            )
-            val toolResultMsg = Message(
-              MessageRole.User,
-              Right(
-                List(
-                  ContentBlock.ToolResult(
-                    call.id,
-                    s"Delegated to $agentName: ${task.take(100)}",
-                    Some(false)
-                  )
-                )
-              )
-            )
-            val updatedMessages = state.messages :+ assistantMsg :+ toolResultMsg
-            // Send the task to the sub-agent
-            subRef ! AgentCommand.UserInput(task, None)
-            emitStream(
-              resources.dispatcher,
-              state.wsSend,
-              ctx,
-              AgentStreamEvent.AgentStart(subId, agentName),
-              isSubagent = depth > 0,
-              state.sessionId
-            )
-            processing(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state
-                .withSubagents(state.subagents + (subId -> subRef))
-                .withMessages(updatedMessages),
-              stash,
-              ctx
-            )
-        end match
-
-      // --- Subagent stream forwarding ---
-      case AgentCommand.SubagentStreamEvent(subId, event) =>
-        emitStream(resources.dispatcher, state.wsSend, ctx, event)
-        Behaviors.same
-
-      // --- Subagent returned result ---
-      case AgentCommand.DelegateResult(subId, result) =>
-        state.subagents.get(subId).foreach(ctx.unwatch)
-        emitStream(resources.dispatcher, state.wsSend, ctx, AgentStreamEvent.AgentEnd(subId))
-        val resultText = result match
-          case Right(text) => s"[Subagent $subId completed]: $text"
-          case Left(err) => s"[Subagent $subId failed]: ${err.message}"
-        result match
-          case Right(_) =>
-            logAgentEvent(
-              ctx,
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "subagent-complete",
-              s"subId=$subId"
-            )
-          case Left(err) =>
-            logAgentEvent(
-              ctx,
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "subagent-fail",
-              s"subId=$subId err=${err.message.take(60)}"
-            )
-        processing(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state
-            .withSubagents(state.subagents - subId)
-            .withMessages(state.messages :+ Message(MessageRole.User, Left(resultText))),
-          stash,
-          ctx
-        )
-
       // --- Interrupt: cancel current LLM stream, discard pending compaction ---
       case AgentCommand.Interrupt() =>
         logAgentEvent(ctx, agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user")
@@ -887,7 +668,6 @@ object AgentActor extends AgentCore with AgentSession:
         state.activeStreamFiber.foreach(f =>
           resources.dispatcher.unsafeRunAndForget(f.cancel.handleErrorWith(_ => IO.unit))
         )
-        state.subagents.values.foreach(ctx.stop)
         Behaviors.stopped
 
       case AgentCommand.ClearReadTracker =>
@@ -1148,41 +928,6 @@ object AgentActor extends AgentCore with AgentSession:
         )
         processing(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
 
-      // --- Sub-agent asks a question (from ask_parent tool): auto-respond ---
-      case AgentCommand.SubagentQuestion(subId, question, replyToOpt, subagentRefOpt) =>
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "subagent-question",
-          s"subId=$subId question=${question.take(40)}"
-        )
-        val answer = "I don't have additional information beyond the task description I provided. " +
-          "Please use your best judgment to proceed."
-        // Send answer back to sub-agent
-        replyToOpt.foreach(_ ! ParentAnswer(answer))
-        subagentRefOpt.foreach(_ ! ParentAnswer(answer))
-        processing(agentDef, resources, depth, parentRef, state, stash, ctx)
-
-      // --- Parent answered while processing: queue for injection after this turn ---
-      case AgentCommand.ParentAnswer(answer) =>
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "parent-answer-queued",
-          s"answerLen=${answer.length}"
-        )
-        val responseText = s"[Parent response]\n$answer"
-        val updatedExec = state.execution.copy(
-          pendingResponses = state.execution.pendingResponses :+ responseText
-        )
-        processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), stash, ctx)
-
       // --- User answered while processing: complete blocking AskUserQuestion ---
       case AgentCommand.UserAnswered(answers) =>
         state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
@@ -1200,8 +945,6 @@ object AgentActor extends AgentCore with AgentSession:
             val clearedState = state.withInteraction(None)
             processing(agentDef, resources, depth, parentRef, clearedState, stash, ctx)
           case None =>
-            // Not for us — forward to sub-agents (a sub-agent may have a pending AskUser)
-            state.subagents.values.foreach(_ ! AgentCommand.UserAnswered(answers))
             Behaviors.same
 
       // --- Permission answered while processing: complete blocking permission deferred ---
@@ -1302,90 +1045,80 @@ object AgentActor extends AgentCore with AgentSession:
         }
       )
     end if
-    parentRef match
-      case Some(parent) =>
-        parent ! AgentCommand.DelegateResult(ctx.self.path.name, Right(text))
-        Behaviors.stopped
-      case None =>
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "turn-complete",
-          s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textAlreadyStreamed thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
-        )
-        val assistantContent = (thinking, text) match
-          case (None, _) => Left(text)
-          case (Some(t), "") => Right(List(ContentBlock.Thinking(t)))
-          case (Some(t), txt) => Right(List(ContentBlock.Thinking(t), ContentBlock.Text(txt)))
-        val newMessages = state.messages :+ Message(MessageRole.Assistant, assistantContent)
 
-        // Check for queued external events and async responses
-        val queuedEvents = state.execution.pendingEvents
-        val queuedResponses = state.execution.pendingResponses
-        val hasPending = queuedEvents.nonEmpty || queuedResponses.nonEmpty
-        if hasPending && depth == 0 then
-          // Inject events as user messages
-          val eventMessages = queuedEvents.map { e =>
-            Message(MessageRole.User, Left(e.payload))
-          }
-          // Inject async responses (from ask_parent)
-          val responseMessages = queuedResponses.map(text => Message(MessageRole.User, Left(text)))
-          val allPendingMessages = eventMessages ++ responseMessages
-          val messagesWithPending = newMessages ++ allPendingMessages
-          logAgentEvent(
-            ctx,
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "pending-messages-injected",
-            s"events=${queuedEvents.size} responses=${queuedResponses.size}"
-          )
-          val updatedState = state.copy(
-            execution = ExecutionContext.idle(messagesWithPending, state.execution.turnIdx)
-          )
-          state.sessionId.foreach { sid =>
-            resources.dispatcher.unsafeRunAndForget(
-              (resources.sessionStore.saveMessagesForSession(sid, messagesWithPending) *>
-                resources.sessionStore.flushIndex *>
-                emitSessionBusy(state.wsSend, sid, busy = true))
-                .handleErrorWith(e =>
-                  IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
-                )
+    logAgentEvent(
+      ctx,
+      agentDef,
+      depth,
+      state.sessionId,
+      state.sessionName,
+      "turn-complete",
+      s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textAlreadyStreamed thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
+    )
+    val assistantContent = (thinking, text) match
+      case (None, _) => Left(text)
+      case (Some(t), "") => Right(List(ContentBlock.Thinking(t)))
+      case (Some(t), txt) => Right(List(ContentBlock.Thinking(t), ContentBlock.Text(txt)))
+    val newMessages = state.messages :+ Message(MessageRole.Assistant, assistantContent)
+
+    // Check for queued external events
+    val queuedEvents = state.execution.pendingEvents
+    if queuedEvents.nonEmpty then
+      // Inject events as user messages
+      val eventMessages = queuedEvents.map { e =>
+        Message(MessageRole.User, Left(e.payload))
+      }
+      val messagesWithPending = newMessages ++ eventMessages
+      logAgentEvent(
+        ctx,
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "pending-messages-injected",
+        s"events=${queuedEvents.size}"
+      )
+      val updatedState = state.copy(
+        execution = ExecutionContext.idle(messagesWithPending, state.execution.turnIdx)
+      )
+      state.sessionId.foreach { sid =>
+        resources.dispatcher.unsafeRunAndForget(
+          (resources.sessionStore.saveMessagesForSession(sid, messagesWithPending) *>
+            resources.sessionStore.flushIndex *>
+            emitSessionBusy(state.wsSend, sid, busy = true))
+            .handleErrorWith(e =>
+              IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
             )
-          }
-          replyTo.foreach(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
-          pipeLlmCall(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            updatedState,
-            stash,
-            ctx,
-            None
-          )
-        else
-          val updatedState = state.copy(
-            execution = ExecutionContext.idle(newMessages, state.execution.turnIdx)
-          )
-          state.sessionId.foreach { sid =>
-            resources.dispatcher.unsafeRunAndForget(
-              (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
-                resources.sessionStore.flushIndex *>
-                emitSessionBusy(state.wsSend, sid, busy = false))
-                .handleErrorWith(e =>
-                  IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
-                )
+        )
+      }
+      replyTo.foreach(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
+      pipeLlmCall(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        updatedState,
+        stash,
+        ctx,
+        None
+      )
+    else
+      val updatedState = state.copy(
+        execution = ExecutionContext.idle(newMessages, state.execution.turnIdx)
+      )
+      state.sessionId.foreach { sid =>
+        resources.dispatcher.unsafeRunAndForget(
+          (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
+            resources.sessionStore.flushIndex *>
+            emitSessionBusy(state.wsSend, sid, busy = false))
+            .handleErrorWith(e =>
+              IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
             )
-          }
-          replyTo.foreach(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
-          stash.unstashAll(idle(agentDef, resources, depth, parentRef, updatedState, stash, ctx))
-        end if
-    end match
+        )
+      }
+      replyTo.foreach(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
+      stash.unstashAll(idle(agentDef, resources, depth, parentRef, updatedState, stash, ctx))
+    end if
   end finishTurn
 
   // ============================================================

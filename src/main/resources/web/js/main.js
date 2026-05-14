@@ -21,13 +21,14 @@ import {
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
+  showDeleteFolderModal,
   showAgentModal, hideAgentModal, initModals,
   startInlineNewSession
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, setNewSessionHandler, injectUserMessage } from './input.js';
 import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
 import { renderTaskList } from './taskList.js';
-import { registerCardRenderer, renderWithRegistry } from './cardRegistry.js';
+import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
 import { initSearch, renderSearchResults } from './search.js';
 import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from './memory.js';
@@ -322,6 +323,8 @@ onMessage('done', (msg) => {
   console.log('[done] contextWindow:', msg.contextWindow, 'inputTokens:', msg.inputTokens, 'model:', msg.model);
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
+  // Defensive: clear attention when turn ends (in case answer callback didn't fire)
+  if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   const durationMs = consumeTurnDuration(sid);
   delete state.sessionPendingTools[sid];
   console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length });
@@ -361,12 +364,14 @@ onMessage('done', (msg) => {
 
 onMessage('error', (msg) => {
   clearBusyFor(msg);
-  delete state.sessionPendingTools[msg.sessionId || state.activeSessionId];
+  const sid = msg.sessionId || state.activeSessionId;
+  delete state.sessionPendingTools[sid];
+  // Defensive: clear attention on error
+  if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   // Reset history loading state — backend may fail mid-pagination
   state.historyLoading = false;
   hideHistoryLoader();
   if (isActive(msg)) {
-    const sid = msg.sessionId || state.activeSessionId;
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
@@ -382,9 +387,11 @@ onMessage('error', (msg) => {
 
 onMessage('interrupted', (msg) => {
   clearBusyFor(msg);
-  delete state.sessionPendingTools[msg.sessionId || state.activeSessionId];
+  const sid = msg.sessionId || state.activeSessionId;
+  delete state.sessionPendingTools[sid];
+  // Defensive: clear attention on interrupt
+  if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (isActive(msg)) {
-    const sid = msg.sessionId || state.activeSessionId;
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
@@ -396,6 +403,8 @@ onMessage('interrupted', (msg) => {
 
 onMessage('timeout', (msg) => {
   clearBusyFor(msg);
+  const sid = msg.sessionId || state.activeSessionId;
+  if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (isActive(msg)) {
     finishAi();
     renderTimeoutNotice();
@@ -407,9 +416,10 @@ onMessage('timeout', (msg) => {
 
 onMessage('maxTokens', (msg) => {
   clearBusyFor(msg);
-  delete state.sessionPendingTools[msg.sessionId || state.activeSessionId];
+  const sid = msg.sessionId || state.activeSessionId;
+  delete state.sessionPendingTools[sid];
+  if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (isActive(msg)) {
-    const sid = msg.sessionId || state.activeSessionId;
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
@@ -825,7 +835,6 @@ onMessage('agentUpdated', () => sendWs({ type: 'listAgents' }));
 onMessage('serverConfig', (msg) => {
   if (msg.streamTimeoutMs) state.streamTimeoutMs = msg.streamTimeoutMs;
   if (msg.version) state.serverVersion = msg.version;
-  if (msg.policy) state.currentPolicy = msg.policy;
   if (msg.thinking !== undefined) {
     state.serverThinking = msg.thinking;
     state.thinkingMode = msg.thinking;
@@ -848,8 +857,15 @@ onMessage('mcpServersUpdate', (msg) => {
 
 onMessage('configData', (msg) => {
   state.configText = msg.config || '';
+  try { state.parsedConfig = JSON.parse(state.configText); } catch { state.parsedConfig = null; }
+  state.configDirty = false;
   const editor = document.getElementById('config-editor');
   if (editor) editor.value = state.configText;
+  // Re-render settings if panel is visible
+  const settingsPanel = document.getElementById('panel-settings');
+  if (settingsPanel && settingsPanel.classList.contains('active')) {
+    renderSettings();
+  }
 });
 
 onMessage('configUpdated', (msg) => {
@@ -1152,6 +1168,7 @@ onMessage('searchResults', (msg) => {
 // ---------- 4. Cross-module wiring ----------
 setNewSessionHandler(() => startInlineNewSession());
 window.__showDeleteModal = showDeleteModal;
+window.__showDeleteFolderModal = showDeleteFolderModal;
 
 // ---------- 5. Initialize UI modules ----------
 console.log('[main] initializing modules...');
@@ -1163,24 +1180,6 @@ initFeishuPanel();
 initMemory();
 // New Folder button
 document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder());
-
-// Inject batch mode button into panel header
-const panelActions = document.querySelector('#panel-sessions .panel-actions');
-if (panelActions && !document.getElementById('batch-mode-btn')) {
-  const batchBtn = document.createElement('button');
-  batchBtn.id = 'batch-mode-btn';
-  batchBtn.title = '批量选择';
-  batchBtn.className = 'panel-btn';
-  batchBtn.innerHTML = '<i data-lucide="check-square"></i>';
-  panelActions.insertBefore(batchBtn, panelActions.firstChild);
-  batchBtn.addEventListener('click', () => {
-    import('./sidebar.js').then(({ enterBatchMode, exitBatchMode }) => {
-      if (state.batchMode) exitBatchMode();
-      else enterBatchMode();
-    });
-  });
-  if (typeof lucide !== 'undefined') lucide.createIcons();
-}
 
 console.log('[main] modules initialized, connecting ws...');
 
@@ -1215,7 +1214,6 @@ function getThemeTokens() {
 
 window.Nebflow = {
   // --- Card rendering ---
-  registerCardRenderer,
   escapeHtml,
   getThemeTokens,
   /** Send a message as if the user typed it. */
@@ -1232,52 +1230,7 @@ window.Nebflow = {
   smartScroll,
 };
 
-// ---------- 7. Load agent frontend assets ----------
-// Cache-bust with timestamp so browser always fetches fresh copies after edits.
-async function loadAgentFrontends() {
-  try {
-    const res = await fetch('/agents/manifest.json');
-    if (!res.ok) return;
-    const data = await res.json();
-    const agents = data.agents || [];
-    const bust = Date.now();
-    let loaded = 0;
-    for (const agent of agents) {
-      if (!agent.frontend) continue;
-      // Load CSS
-      for (const cssPath of (agent.frontend.styles || [])) {
-        const link = document.createElement('link');
-        link.rel = 'stylesheet';
-        link.href = `/agents/${agent.name}/${cssPath}?t=${bust}`;
-        document.head.appendChild(link);
-      }
-      // Load JS in order
-      for (const jsPath of (agent.frontend.scripts || [])) {
-        await new Promise((resolve) => {
-          const script = document.createElement('script');
-          script.src = `/agents/${agent.name}/${jsPath}?t=${bust}`;
-          script.onload = resolve;
-          script.onerror = () => {
-            console.warn(`[agent-frontend] Failed to load ${agent.name}/${jsPath}`);
-            resolve(); // continue loading other agents
-          };
-          document.head.appendChild(script);
-        });
-      }
-      loaded++;
-    }
-    if (loaded > 0) console.log(`[agent-frontend] Loaded frontend assets for ${loaded} agent(s)`);
-  } catch (e) {
-    console.warn('[agent-frontend] Failed to load agent frontends:', e);
-  }
-}
-
 // ---------- 8. Start ----------
-// Load agent frontends BEFORE connecting, so renderers are registered
-// before any toolEnd messages arrive. Without this, history restore
-// races against frontend loading and cards fall back to default rendering.
-loadAgentFrontends().then(() => {
-  connect();
-  sendWs({ type: 'memoryStatus' });
-  state.dom.input.focus();
-});
+connect();
+sendWs({ type: 'memoryStatus' });
+state.dom.input.focus();
