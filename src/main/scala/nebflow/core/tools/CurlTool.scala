@@ -3,9 +3,8 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.shared.{Defaults, HttpUtils}
+import nebflow.shared.{Defaults, HttpUtils, SharedBackend}
 import sttp.client4.*
-import sttp.client4.httpclient.HttpClientSyncBackend
 
 import scala.concurrent.duration.*
 
@@ -73,72 +72,88 @@ Usage:
         .map(t => Math.min(Math.max(1, t), Defaults.CurlMaxTimeoutSec))
         .getOrElse(30)
 
+    // Characters illegal in raw URIs but commonly used in API URLs (e.g. Wikipedia's iiprop=url|size)
+    def sanitizeUrl(raw: String): String =
+      raw
+        .replace("|", "%7C")
+        .replace("[", "%5B")
+        .replace("]", "%5D")
+        .replace("{", "%7B")
+        .replace("}", "%7D")
+        .replace("<", "%3C")
+        .replace(">", "%3E")
+        .replace("^", "%5E")
+        .replace("`", "%60")
+        .replace("\\", "%5C")
+        .replace(" ", "%20")
+
+    val sanitizedUrl = sanitizeUrl(url)
+
     try
-      val parsedUrl = new java.net.URI(url)
-      if parsedUrl.getScheme != "http" && parsedUrl.getScheme != "https" then
-        Left(ToolError(s"Unsupported protocol: ${parsedUrl.getScheme}"))
+      val schemeOk = sanitizedUrl.startsWith("http://") || sanitizedUrl.startsWith("https://")
+      if !schemeOk then Left(ToolError(s"Unsupported protocol: URL must start with http:// or https://"))
       else
-        val backend = HttpClientSyncBackend()
-        try
-          val baseReq = method match
-            case "GET" => basicRequest.get(uri"$url")
-            case "POST" => basicRequest.post(uri"$url")
-            case "PUT" => basicRequest.put(uri"$url")
-            case "PATCH" => basicRequest.patch(uri"$url")
-            case "DELETE" => basicRequest.delete(uri"$url")
-            case "HEAD" => basicRequest.head(uri"$url")
-            case "OPTIONS" => basicRequest.options(uri"$url")
-            case _ => basicRequest.get(uri"$url")
+        val backend = SharedBackend.instance
+        val baseReq = method match
+          case "GET" => basicRequest.get(uri"$sanitizedUrl")
+          case "POST" => basicRequest.post(uri"$sanitizedUrl")
+          case "PUT" => basicRequest.put(uri"$sanitizedUrl")
+          case "PATCH" => basicRequest.patch(uri"$sanitizedUrl")
+          case "DELETE" => basicRequest.delete(uri"$sanitizedUrl")
+          case "HEAD" => basicRequest.head(uri"$sanitizedUrl")
+          case "OPTIONS" => basicRequest.options(uri"$sanitizedUrl")
+          case _ => basicRequest.get(uri"$sanitizedUrl")
 
-          val withHeaders = input("headers").flatMap(_.asObject) match
-            case Some(headers) =>
-              headers.toList.foldLeft(baseReq) { case (req, (k, v)) =>
-                v.asString match
-                  case Some(str) => req.header(k, str)
-                  case None => req
-              }
-            case None => baseReq
+        // Apply default User-Agent; let user-provided headers override it
+        val withDefaultUA = baseReq.header("User-Agent", SharedBackend.UserAgent)
 
-          val withBody = input("body").flatMap(_.asString) match
-            case Some(bodyStr) => withHeaders.body(bodyStr)
-            case None => withHeaders
+        val withHeaders = input("headers").flatMap(_.asObject) match
+          case Some(headers) =>
+            headers.toList.foldLeft(withDefaultUA) { case (req, (k, v)) =>
+              v.asString match
+                case Some(str) => req.header(k, str, replaceExisting = true)
+                case None => req
+            }
+          case None => withDefaultUA
 
-          val request = withBody.response(asStringAlways).readTimeout((timeoutSec * 1000).millis)
-          val response = request.send(backend)
+        val withBody = input("body").flatMap(_.asString) match
+          case Some(bodyStr) => withHeaders.body(bodyStr)
+          case None => withHeaders
 
-          val contentType = response.header("content-type").getOrElse("")
+        val request = withBody.response(asStringAlways).readTimeout((timeoutSec * 1000).millis)
+        val response = request.send(backend)
 
-          val bodyText = if HttpUtils.isBinaryContentType(contentType) then
-            val size = response.header("content-length").getOrElse("unknown size")
-            s"[Binary content: $contentType, $size bytes]"
-          else response.body
+        val contentType = response.header("content-type").getOrElse("")
 
-          val formattedBody =
-            if contentType.contains("application/json") && bodyText.nonEmpty then
-              try
-                io.circe.parser.parse(bodyText) match
-                  case Right(json) => json.spaces2
-                  case Left(_) => bodyText
-              catch case _: Exception => bodyText
-            else bodyText
+        val bodyText = if HttpUtils.isBinaryContentType(contentType) then
+          val size = response.header("content-length").getOrElse("unknown size")
+          s"[Binary content: $contentType, $size bytes]"
+        else response.body
 
-          val parts = scala.collection.mutable.ListBuffer.empty[String]
-          parts += s"Status: ${response.code} ${response.statusText}"
+        val formattedBody =
+          if contentType.contains("application/json") && bodyText.nonEmpty then
+            try
+              io.circe.parser.parse(bodyText) match
+                case Right(json) => json.spaces2
+                case Left(_) => bodyText
+            catch case _: Exception => bodyText
+          else bodyText
 
-          List("content-type", "content-length", "location").foreach { h =>
-            response.header(h).foreach(v => parts += s"$h: $v")
-          }
+        val parts = scala.collection.mutable.ListBuffer.empty[String]
+        parts += s"Status: ${response.code} ${response.statusText}"
 
-          parts += "---"
+        List("content-type", "content-length", "location").foreach { h =>
+          response.header(h).foreach(v => parts += s"$h: $v")
+        }
 
-          if formattedBody.length > MAX_RESPONSE_CHARS then
-            parts += formattedBody.take(MAX_RESPONSE_CHARS)
-            parts += s"\n[Response truncated at $MAX_RESPONSE_CHARS chars]"
-          else parts += formattedBody
+        parts += "---"
 
-          Right(parts.mkString("\n"))
-        finally backend.close()
-        end try
+        if formattedBody.length > MAX_RESPONSE_CHARS then
+          parts += formattedBody.take(MAX_RESPONSE_CHARS)
+          parts += s"\n[Response truncated at $MAX_RESPONSE_CHARS chars]"
+        else parts += formattedBody
+
+        Right(parts.mkString("\n"))
       end if
     catch
       case e: java.net.http.HttpTimeoutException =>

@@ -178,12 +178,19 @@ class CompactionDemo extends munit.FunSuite:
     banner("5. History archive snapshot")
 
     val archiver = HistoryArchiver.fileSystem(os.pwd / "target" / "demo-archives")
-    val archiveIO = archiver.archive("demo-session", messages)
+    val archiveIO = archiver.archiveCompaction(
+      sessionId = "demo-session",
+      sessionName = Some("Demo"),
+      agentName = "Nebula",
+      before = messages,
+      after = messages.take(5),
+      mode = "full"
+    )
     archiveIO.unsafeRunSync() match
-      case Right(path) =>
-        println(s"  Snapshot written to: $path")
-        val sizeBytes = os.size(os.Path(path))
-        println(s"  File size: $sizeBytes bytes")
+      case Right(archive) =>
+        println(s"  Report written to: ${archive.reportPath}")
+        println(s"  Before JSON: ${archive.beforeJsonPath}")
+        println(s"  After JSON:  ${archive.afterJsonPath}")
       case Left(err) =>
         println(s"  Archive failed (non-blocking): $err")
 

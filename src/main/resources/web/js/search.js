@@ -77,20 +77,68 @@ export function renderSearchResults(query, hits) {
   sessionList.style.display = 'none';
   results.innerHTML = '';
 
-  if (hits.length === 0) {
+  // Local folder name search
+  const qLower = query.toLowerCase();
+  const matchedFolders = (state.folders || []).filter(f => f.name.toLowerCase().includes(qLower));
+
+  if (hits.length === 0 && matchedFolders.length === 0) {
     results.innerHTML = '<div class="search-result-empty">未找到相关记录</div>';
     return;
   }
+
+  // Render matched folders first
+  matchedFolders.forEach(folder => {
+    const item = document.createElement('div');
+    item.className = 'search-result-item';
+    item.innerHTML =
+      '<div class="search-result-meta">' +
+        '<span class="search-result-type folder">文件夹</span>' +
+        '<span class="search-result-session">' + escapeHtml(folder.name) + '</span>' +
+      '</div>' +
+      '<div class="search-result-snippet">' + highlight(folder.name, query) + '</div>';
+
+    item.addEventListener('click', () => {
+      const input = document.getElementById('search-input');
+      input.value = '';
+      document.getElementById('search-clear').classList.remove('visible');
+      results.classList.remove('active');
+      results.innerHTML = '';
+      sessionList.style.display = '';
+      // Expand folder and switch to first session inside
+      import('./sidebar.js').then(mod => {
+        if (!state.expandedFolders.has(folder.id)) {
+          mod.toggleFolder(folder.id);
+        }
+        const firstSession = (state.sessions || []).find(s => s.folderId === folder.id);
+        if (firstSession && firstSession.id !== state.activeSessionId) {
+          mod.switchSession(firstSession.id);
+        }
+      });
+    });
+
+    results.appendChild(item);
+  });
 
   hits.forEach(hit => {
     const item = document.createElement('div');
     item.className = 'search-result-item';
 
-    const typeLabel = { user: '用户', ai: 'AI', tool: '工具', agent: 'Agent' }[hit.messageType] || hit.messageType;
+    let typeLabel = '';
+    let typeClass = '';
+    if (hit.hitType === 'session') {
+      typeLabel = '会话';
+      typeClass = 'session';
+    } else if (hit.hitType === 'agent') {
+      typeLabel = 'Agent';
+      typeClass = 'agent-name';
+    } else {
+      typeLabel = { user: '用户', ai: 'AI', tool: '工具', agent: 'Agent', ask: '询问' }[hit.messageType] || hit.messageType;
+      typeClass = hit.messageType;
+    }
 
     item.innerHTML =
       '<div class="search-result-meta">' +
-        '<span class="search-result-type ' + hit.messageType + '">' + typeLabel + '</span>' +
+        '<span class="search-result-type ' + typeClass + '">' + typeLabel + '</span>' +
         '<span class="search-result-session">' + escapeHtml(hit.sessionName) + '</span>' +
       '</div>' +
       '<div class="search-result-snippet">' + highlight(hit.snippet, query) + '</div>';
@@ -104,7 +152,14 @@ export function renderSearchResults(query, hits) {
       results.innerHTML = '';
       sessionList.style.display = '';
 
-      navigateToMessage(hit.sessionId, hit.messageIndex);
+      if (hit.hitType === 'message' && typeof hit.messageIndex === 'number') {
+        navigateToMessage(hit.sessionId, hit.messageIndex);
+      } else {
+        // session/agent hit: just switch to session
+        if (hit.sessionId !== state.activeSessionId) {
+          switchSession(hit.sessionId);
+        }
+      }
     });
 
     results.appendChild(item);

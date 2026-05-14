@@ -1,5 +1,32 @@
 package nebflow.shared
 
+import sttp.client4.SyncBackend
+import sttp.client4.httpclient.HttpClientSyncBackend
+
+import java.net.http.HttpClient
+import java.time.Duration as JDuration
+
+/**
+ * 全局共享的同步 HTTP Backend，所有工具复用同一个实例以利用连接池。
+ *
+ *  配置要点：
+ *  - 连接超时 10s（避免无响应连接挂死）
+ *  - Java 层启用 NORMAL 重定向（GET/HEAD 的 301/302/303/307/308）
+ *  - sttp 层额外启用 followRedirects 以处理所有情况
+ */
+object SharedBackend:
+
+  private val httpClient: HttpClient = HttpClient
+    .newBuilder()
+    .followRedirects(HttpClient.Redirect.NORMAL)
+    .connectTimeout(JDuration.ofSeconds(10))
+    .build()
+
+  val instance: SyncBackend = HttpClientSyncBackend.usingClient(httpClient)
+
+  /** 统一的 User-Agent，所有 Nebflow 网络请求使用此标识。 */
+  val UserAgent = s"Mozilla/5.0 (compatible; Nebflow/${nebflow.Version.string})"
+
 /** HTTP 工具函数 */
 object HttpUtils:
 

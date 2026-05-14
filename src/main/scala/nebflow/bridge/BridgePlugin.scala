@@ -2,7 +2,7 @@ package nebflow.bridge
 
 import cats.effect.IO
 import io.circe.Json
-import nebflow.gateway.SessionMeta
+import nebflow.shared.SessionMeta
 
 /**
  * A remote-bridge plugin that connects Nebflow sessions to an external platform.
@@ -26,6 +26,9 @@ trait BridgePlugin:
    * The plugin should forward relevant events to the bound remote chat.
    */
   def onAgentEvent(sessionId: String, event: Json): IO[Unit]
+
+  /** Called when bridge configs change (e.g. session binds/unbinds a chat). Rebuild routing tables. */
+  def refreshRoutes: IO[Unit] = IO.unit
 
 /**
  * Core APIs that a bridge plugin can call.

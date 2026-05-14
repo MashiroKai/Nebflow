@@ -13,9 +13,9 @@ import nebflow.service.MemoryStore
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
+import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 
 import scala.concurrent.duration.*
-import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 
 /**
  * Core LLM loop, tool execution, compaction, and stream helpers
@@ -317,14 +317,18 @@ private[agent] trait AgentCore:
           fileChangesOpt <- resources.fileChangeTracker.checkChanges()
           // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
-          reminders <- SystemReminders.collectAll(
-            resources.reminderStateRef,
+          collectAllResult = SystemReminders.collectAll(
+            stateForLlm.compaction.highestPressureLevel,
             stateForLlm.latestUsage,
             state.contextWindow,
             fileChangesOpt,
             isUserTurn
           )
-          allReminders = verificationOpt.toList ++ reminders
+          reminders = collectAllResult._1
+          newHighest = collectAllResult._2
+          _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
+          loggedReminders <- SystemReminders.logAndReturn(reminders)
+          allReminders = verificationOpt.toList ++ loggedReminders
           remindersText = SystemReminder.renderAll(allReminders)
           // Per-turn dynamic context: only reminders (env info is now in system prompt)
           dynamicMsg =
@@ -450,6 +454,7 @@ private[agent] trait AgentCore:
       taskStore = Some(resources.taskStore),
       wsSend = Some(state.wsSend),
       readTracker = state.readTracker,
+      fileHistory = state.fileHistory,
       parentRef = parentRef,
       depth = depth,
       agentDef = Some(agentDef),
@@ -536,13 +541,15 @@ private[agent] trait AgentCore:
               // AskUserQuestion renders its own UI — skip generic toolEnd
               if call.name != "AskUserQuestion" then
                 val summary = summarizeToolResult(call, r.content)
+                // For Card tools: frontend receives the full payload, LLM sees the summary
+                val frontendContent = r.frontendContent.getOrElse(r.content)
                 emitStreamIO(
                   state.wsSend,
                   ctx,
                   AgentStreamEvent.ToolEnd(
                     nebflow.core.summarizeToolCall(call),
                     summary,
-                    r.content,
+                    frontendContent,
                     r.isError,
                     input = Some(call.input),
                     truncated = r.truncated
@@ -665,12 +672,14 @@ private[agent] trait AgentCore:
                           ToolExecResult(appended, isError = true)
                         }
                     case Right(result) =>
+                      val isCard = call.name == "Card"
                       val guarded = ToolResultGuard.guard(result, call.name, ctx)
                       guarded match
-                        case ToolResultGuard.Rejected(msg) =>
-                          logger.warn(s"$logCtx Tool $summary result rejected: $msg")
-                          IO.pure(ToolExecResult(msg, isError = true))
                         case ToolResultGuard.Ok(content) =>
+                          if content.length < result.length then
+                            logger.warn(
+                              s"$logCtx Tool $summary result truncated: ${result.length} → ${content.length} chars"
+                            )
                           // --- PostToolUse hook ---
                           hookEngine
                             .afterTool(call.name, finalInput, content, true, hookCtx)
@@ -678,7 +687,13 @@ private[agent] trait AgentCore:
                               val finalContent = postResult.additionalContext match
                                 case Some(ctx) => s"$content\n\n$ctx"
                                 case None => content
-                              ToolExecResult(finalContent)
+                              if isCard then
+                                // Card tool: LLM sees a compact summary, frontend gets the full payload
+                                val cardType = call.input("cardType").flatMap(_.asString).getOrElse("?")
+                                val htmlSize = result.length
+                                val llmSummary = s"Card ($cardType) emitted — $htmlSize chars"
+                                ToolExecResult(llmSummary, frontendContent = Some(result))
+                              else ToolExecResult(finalContent)
                             }
                   }
                   .handleErrorWith {
