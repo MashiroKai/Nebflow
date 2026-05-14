@@ -3,6 +3,7 @@ export const LS_KEY = 'nebflow_v3';
 export const LS_SESSIONS_KEY = 'nebflow_sessions';
 export const LS_HISTORY_KEY = 'nebflow_input_history';
 export const LS_DRAFTS_KEY = 'nebflow_input_drafts';
+export const LS_MODEL_INFO_KEY = 'nebflow_model_info';
 export const MAX_FILE_SIZE = 500 * 1024;
 export const AGENT_PALETTE = ['#6C8EBF', '#D4A574', '#82B366', '#B5739D', '#9678B6', '#D6B656'];
 
@@ -18,10 +19,14 @@ export default {
 
   // Session
   activeSessionId: null,
+  activeFolderId: null,
   sessions: [],
+  folders: [],
+  expandedFolders: new Set(safeParse(localStorage.getItem('nebflow_expanded_folders'), [])),
   unreadSessions: new Set(safeParse(localStorage.getItem('nebflow_unread'), [])),
   markedUnreadSessions: new Set(safeParse(localStorage.getItem('nebflow_marked_unread'), [])),
   pinnedSessions: new Set(safeParse(localStorage.getItem('nebflow_pinned'), [])),
+  pinnedFolders: new Set(safeParse(localStorage.getItem('nebflow_pinned_folders'), [])),
   attentionSessions: new Set(),
   legacyMigrated: false,
 
@@ -91,6 +96,11 @@ export default {
   language: null,
   mcpServers: [],
 
+  // Batch selection (like VS Code Explorer)
+  batchMode: false,
+  selectedSessionIds: new Set(),
+  lastSelectedSessionId: null,
+
   // Send lock (prevents rapid double-send)
   isSending: false,
 
@@ -125,4 +135,9 @@ export default {
 
   // Background tasks update helper
   updateBgTasksUI: null,
+
+  // Per-session model info: sessionId -> { model, contextWindow, inputTokens }
+  sessionModelInfo: safeParse(localStorage.getItem('nebflow_model_info'), {}),
+  updateHeaderModelInfo: null,
+  COMPACT_THRESHOLD: 0.75,
 };

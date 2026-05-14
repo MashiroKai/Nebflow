@@ -14,7 +14,6 @@ import nebflow.core.mcp.McpManager
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.service.*
 import nebflow.shared.*
-import nebflow.skill.SkillDiscovery
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -32,12 +31,10 @@ class WebSocketRoutes(
   rateLimiter: RateLimiter,
   token: String,
   fileChangeTracker: FileChangeTracker,
-  reminderStateRef: Ref[IO, ReminderState],
   sessionStore: SessionStore,
   wsHub: WsHub,
   actorSystem: ActorSystem[Nothing],
   contextWindow: Int = Defaults.ContextWindow,
-  skillDiscovery: Option[SkillDiscovery] = None,
   sharedResources: SharedResources,
   mcpManager: McpManager
 ):
@@ -75,6 +72,7 @@ class WebSocketRoutes(
                   case None => IO.raiseError(new RuntimeException("No default agent available"))
                 }
             readTracker <- nebflow.core.tools.ReadTracker.create
+            fileHistory <- nebflow.core.tools.FileHistory.create()
             modelOverrides <- sharedResources.sessionModelOverrides.get
             contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
           yield actorSystem.systemActorOf(
@@ -88,6 +86,7 @@ class WebSocketRoutes(
               sessionName = metaOpt.map(_.name),
               initialMessages = history,
               readTracker = Some(readTracker),
+              fileHistory = Some(fileHistory),
               contextWindow = contextWindow
             ),
             s"agent-$sessionId"
@@ -189,12 +188,14 @@ class WebSocketRoutes(
                 .noSpaces
             )
           )
-          _ <- sessionService.sendSessionList(perConnWsSend)
+          activeMeta <- sessionStore.getActiveMeta
+          agentName = activeMeta.flatMap(_.agentName).getOrElse("Nebula")
+          _ <- sessionService.sendSessionList(perConnWsSend, agentName)
           ws <- wsb.build(sendStream, receivePipe)
         yield ws
       else
         logger.warn(
-          s"WebSocket auth failed: cookie=${cookieToken.take(8)}... param=${req.params.get("token").map(_.take(8)).getOrElse("")}..."
+          s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
         ) *>
           Forbidden("Invalid token")
       end if
@@ -310,12 +311,13 @@ class WebSocketRoutes(
 
   /** Send agent-filtered session list for a known agent name. */
   private def sendAgentSessionListByName(wsSend: io.circe.Json => IO[Unit], agentName: String): IO[Unit] =
-    sessionStore.listSessionsByAgent(agentName).flatMap { sessions =>
+    (sessionStore.listSessionsByAgent(agentName), sessionStore.listFolders(agentName)).flatMapN { (sessions, folders) =>
       wsSend(
         io.circe.Json.obj(
           "type" -> "agentSessionList".asJson,
           "agentName" -> agentName.asJson,
-          "sessions" -> sessions.asJson
+          "sessions" -> sessions.asJson,
+          "folders" -> folders.asJson
         )
       )
     }
@@ -384,7 +386,6 @@ class WebSocketRoutes(
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
               logger.info("Session cleared") *>
                 sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
-                reminderStateRef.update(_.copy(highestPressureLevel = 0)) *>
                 routeToAgent(clearSessionId)(ref => IO(ref ! AgentCommand.ResetSession))
             case "compact" =>
               val compactSessionId =
@@ -493,23 +494,25 @@ class WebSocketRoutes(
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val name = json.hcursor.downField("name").as[String].getOrElse("New Session")
           val agentName = json.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
+          val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
           sessionService
-            .createSession(name, agentName = agentName)
+            .createSession(name, agentName = agentName, folderId = folderId)
             .flatMap { _ =>
               // Send filtered session list for the agent tab
               agentName match
                 case Some(an) =>
-                  sessionStore.listSessionsByAgent(an).flatMap { sessions =>
+                  (sessionStore.listSessionsByAgent(an), sessionStore.listFolders(an)).flatMapN { (sessions, folders) =>
                     wsSend(
                       io.circe.Json.obj(
                         "type" -> "agentSessionList".asJson,
                         "agentName" -> an.asJson,
-                        "sessions" -> sessions.asJson
+                        "sessions" -> sessions.asJson,
+                        "folders" -> folders.asJson
                       )
                     )
                   }
                 case None =>
-                  sessionService.sendSessionList(wsSend)
+                  sessionService.sendSessionList(wsSend, "Nebula")
             }
             .handleErrorWith { e =>
               wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -531,6 +534,29 @@ class WebSocketRoutes(
                     .flatMap { _ =>
                       sendAgentSessionListByName(wsSend, agentName)
                     }
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        case "batchDeleteSessions" =>
+          val sessionIds = parse(text).flatMap(_.hcursor.downField("sessionIds").as[List[String]]).getOrElse(Nil)
+          if sessionIds.nonEmpty then
+            sessionStore
+              .getSessionMeta(sessionIds.head)
+              .flatMap { metaOpt =>
+                val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                sessionIds
+                  .traverse_ { sid =>
+                    sessionTextBuffers.update(_ - sid) *>
+                      sessionTurnStarts.update(_ - sid) *>
+                      removeRootAgent(sid) *>
+                      sessionService.deleteSession(sid)
+                  }
+                  .flatMap { _ =>
+                    sendAgentSessionListByName(wsSend, agentName)
+                  }
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -586,7 +612,9 @@ class WebSocketRoutes(
             val finalCfg =
               if appSecret.nonEmpty then withCreds.deepMerge(Json.obj("appSecret" -> appSecret.asJson)) else withCreds
             sessionStore.updateSessionFeishu(sessionId, Some(finalCfg)).flatMap { _ =>
-              sendAgentSessionList(wsSend, sessionId)
+              // Refresh bridge routing tables so the new binding takes effect immediately
+              sharedResources.bridgeManager.fold(IO.unit)(_.refreshRoutes) *>
+                sendAgentSessionList(wsSend, sessionId)
             }
           end if
 
@@ -775,15 +803,106 @@ class WebSocketRoutes(
         case "listAgentSessions" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            sessionStore.listSessionsByAgent(agentName).flatMap { sessions =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "agentSessionList".asJson,
-                  "agentName" -> agentName.asJson,
-                  "sessions" -> sessions.asJson
+            (sessionStore.listSessionsByAgent(agentName), sessionStore.listFolders(agentName)).flatMapN {
+              (sessions, folders) =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "agentSessionList".asJson,
+                    "agentName" -> agentName.asJson,
+                    "sessions" -> sessions.asJson,
+                    "folders" -> folders.asJson
+                  )
                 )
-              )
             }
+          else IO.unit
+
+        // ===== Folder Management =====
+
+        case "createFolder" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val name = json.hcursor.downField("name").as[String].getOrElse("New Folder")
+          val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
+          val agentNameFromMsg = json.hcursor.downField("agentName").as[String].getOrElse("")
+          if name.nonEmpty then
+            val agentNameIO =
+              if agentNameFromMsg.nonEmpty then IO.pure(agentNameFromMsg)
+              else sessionStore.getActiveMeta.map(_.flatMap(_.agentName).getOrElse("Nebula"))
+            agentNameIO
+              .flatMap { agentName =>
+                sessionService.createFolder(name, parentId, agentName).flatMap { _ =>
+                  sendAgentSessionListByName(wsSend, agentName)
+                }
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        case "renameFolder" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+          val newName = json.hcursor.downField("name").as[String].getOrElse("")
+          if folderId.nonEmpty && newName.nonEmpty then
+            sessionService
+              .renameFolder(folderId, newName)
+              .flatMap { _ =>
+                sessionStore.getActiveMeta.flatMap { metaOpt =>
+                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                  sendAgentSessionListByName(wsSend, agentName)
+                }
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        case "deleteFolder" =>
+          val folderId = parse(text).flatMap(_.hcursor.downField("folderId").as[String]).getOrElse("")
+          if folderId.nonEmpty then
+            sessionService
+              .deleteFolder(folderId)
+              .flatMap { _ =>
+                sessionStore.getActiveMeta.flatMap { metaOpt =>
+                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                  sendAgentSessionListByName(wsSend, agentName)
+                }
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        case "moveSessionToFolder" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
+          if sessionId.nonEmpty then
+            sessionService
+              .moveSessionToFolder(sessionId, folderId)
+              .flatMap { _ =>
+                sendAgentSessionList(wsSend, sessionId)
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        case "moveFolder" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+          val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
+          if folderId.nonEmpty then
+            sessionService
+              .moveFolder(folderId, parentId)
+              .flatMap { _ =>
+                sessionStore.getActiveMeta.flatMap { metaOpt =>
+                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                  sendAgentSessionListByName(wsSend, agentName)
+                }
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
           else IO.unit
 
         case "getAgentConfig" =>
@@ -842,7 +961,7 @@ class WebSocketRoutes(
                 agentName = Some(agentName)
               )
               _ <- sessionService.switchSession(meta.id)
-              _ <- sessionService.sendSessionList(wsSend)
+              _ <- sessionService.sendSessionList(wsSend, agentName)
             yield ()).handleErrorWith { e =>
               wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
             }
@@ -991,8 +1110,9 @@ class WebSocketRoutes(
                            "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson
                          )
                        }
+                       val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
                        sharedResources.sessionStore
-                         .appendUiMessages(msgSessionId, List(UiMessage.User(content, attJson)))
+                         .appendUiMessages(msgSessionId, List(UiMessage.User(content, attJson, injected)))
                          .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
                      else IO.unit) *> {
                       val blocksList = blocks.toList
@@ -1108,7 +1228,9 @@ class WebSocketRoutes(
 
     record.handleErrorWith(e =>
       IO(logger.warn(s"Failed to record UI message for session $sessionId: ${e.getMessage}"))
-    ) *> underlying(json)
+    ) *> underlying(json).handleErrorWith(e =>
+      IO(logger.warn(s"Failed to broadcast message for session $sessionId: ${e.getMessage}"))
+    )
 
   // ============================================================
   // /ask — isolated LLM Q&A (does not affect agent context)

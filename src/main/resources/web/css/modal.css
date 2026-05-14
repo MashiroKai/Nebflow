@@ -69,7 +69,8 @@
 #agent-model-input:focus {
   border-color: var(--color-frame-text-muted);
 }
-#agent-tools-grid {
+#agent-tools-grid,
+#agent-mcp-grid {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;

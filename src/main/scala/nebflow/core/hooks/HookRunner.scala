@@ -108,6 +108,16 @@ object HookRunner:
   // Process execution
   // ------------------------------------------------------------------
 
+  private val isWindows: Boolean =
+    sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+
+  private def buildProcessBuilder(command: String, cwd: String): ProcessBuilder =
+    val pb =
+      if isWindows then new ProcessBuilder("cmd.exe", "/c", command)
+      else new ProcessBuilder("bash", "-c", command)
+    pb.directory(new java.io.File(cwd))
+    pb
+
   private def executeCommand(
     command: String,
     stdinJson: String,
@@ -116,8 +126,7 @@ object HookRunner:
     timeout: FiniteDuration
   ): IO[String] =
     IO.blocking {
-      val pb = new ProcessBuilder("bash", "-c", command)
-      pb.directory(new java.io.File(cwd))
+      val pb = buildProcessBuilder(command, cwd)
       pb.redirectErrorStream(false)
       envVars.foreach { case (k, v) => pb.environment().put(k, v) }
 

@@ -110,41 +110,45 @@ object SystemReminders:
 
   private val logger = NebflowLogger.forName("nebflow.reminders")
 
+  /**
+   * Compute system reminders for a turn.
+   *
+   * @param highestPressureLevel  Current session's highest pressure level.
+   * @param usage                 Optional token usage from the last LLM call.
+   * @param contextWindow         Context window size for pressure calculation.
+   * @param fileChangesOpt        Optional reminder about external file changes.
+   * @param isUserTurn            Whether this is a user-initiated turn (affects time reminder).
+   * @return                      (reminders to inject, updated highestPressureLevel)
+   */
   def collectAll(
-    stateRef: Ref[IO, ReminderState],
+    highestPressureLevel: Int,
     usage: Option[TokenUsage],
     contextWindow: Int,
     fileChangesOpt: Option[SystemReminder],
     isUserTurn: Boolean = true
-  ): IO[List[SystemReminder]] =
-    stateRef
-      .modify { state =>
-        val reminders = scala.collection.mutable.ListBuffer.empty[SystemReminder]
+  ): (List[SystemReminder], Int) =
+    val reminders = scala.collection.mutable.ListBuffer.empty[SystemReminder]
 
-        // Current time — only on user input turns
-        if isUserTurn then reminders += currentTime()
+    // Current time — only on user input turns
+    if isUserTurn then reminders += currentTime()
 
-        // Token pressure
-        val (pressureReminder, updatedHighest) = usage match
-          case Some(u) => contextPressure(u, contextWindow, state.highestPressureLevel)
-          case None => (None, state.highestPressureLevel)
-        pressureReminder.foreach(reminders += _)
+    // Token pressure
+    val (pressureReminder, updatedHighest) = usage match
+      case Some(u) => contextPressure(u, contextWindow, highestPressureLevel)
+      case None => (None, highestPressureLevel)
+    pressureReminder.foreach(reminders += _)
 
-        // External file changes
-        fileChangesOpt.foreach(reminders += _)
+    // External file changes
+    fileChangesOpt.foreach(reminders += _)
 
-        val newState = state.copy(
-          highestPressureLevel = updatedHighest
-        )
-
-        (newState, reminders.toList)
-      }
-      .flatMap { reminders =>
-        reminders
-          .traverse_ { r =>
-            logger.info(s"[${r.category}] ${r.content.take(100)}")
-          }
-          .as(reminders)
-      }
+    (reminders.toList, updatedHighest)
   end collectAll
+
+  /** Log reminders and return them wrapped in IO. */
+  def logAndReturn(reminders: List[SystemReminder]): IO[List[SystemReminder]] =
+    reminders
+      .traverse_ { r =>
+        logger.info(s"[${r.category}] ${r.content.take(100)}")
+      }
+      .as(reminders)
 end SystemReminders

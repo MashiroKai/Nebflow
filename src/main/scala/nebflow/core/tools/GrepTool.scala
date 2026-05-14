@@ -4,6 +4,8 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 
+import java.util.concurrent.TimeUnit
+
 object GrepTool extends Tool:
   val DEFAULT_HEAD_LIMIT = 250
 
@@ -97,7 +99,11 @@ Usage:
       try
         val stdoutStr = stdout.mkString
         val stderrStr = stderr.mkString
-        val exitCode = proc.waitFor()
+        val exited = proc.waitFor(60, TimeUnit.SECONDS)
+        val exitCode =
+          if exited then proc.exitValue()
+          else
+            proc.destroyForcibly(); -1
 
         if exitCode == 2 then
           Left(

@@ -331,12 +331,12 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                           }
                         }
                       else if finishReason.isDefined then
-                        IO.pure(acc :+ StreamChunk.Done(finishReason, None, Some(makeMeta), None))
+                        IO.pure(acc :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
                       else IO.pure(textDeltas ++ acc)
                     }
                 case None =>
                   if finishReason.isDefined then
-                    IO.pure(textDeltas :+ StreamChunk.Done(finishReason, None, Some(makeMeta), None))
+                    IO.pure(textDeltas :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
                   else IO.pure(textDeltas)
               end match
           end match

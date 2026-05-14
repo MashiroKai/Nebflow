@@ -62,16 +62,22 @@
   color: var(--color-text-muted, #888);
 }
 
-/* Collapsed body */
+/* Collapsed body — use grid-template-rows for smooth height-aware animation */
 .task-body {
-  overflow: hidden;
-  max-height: 500px;
-  transition: max-height 0.25s ease, opacity 0.2s ease;
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.22s ease;
   opacity: 1;
 }
 
+.task-body-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
 .task-card.collapsed .task-body {
-  max-height: 0;
+  grid-template-rows: 0fr;
   opacity: 0;
 }
 
