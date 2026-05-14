@@ -29,7 +29,10 @@
     <div id="panel-sessions" class="panel active">
       <div class="panel-header">
         <span class="panel-title">Sessions</span>
-        <button id="new-session-btn" title="New Session">+</button>
+        <div class="panel-actions">
+          <button id="new-folder-btn" title="New Folder" class="panel-btn"><i data-lucide="folder"></i></button>
+          <button id="new-session-btn" title="New Session">+</button>
+        </div>
       </div>
       <div id="search-bar">
         <i data-lucide="search"></i>
@@ -53,6 +56,7 @@
       <div class="header-left"><span class="header-brand">nebflow</span></div>
       <div class="header-center"><span id="session-name"></span><button id="memory-btn" class="memory-btn" style="display:none">Memory</button></div>
       <div class="header-right">
+        <span id="header-model-info"></span>
         <div id="bg-indicator" class="hidden">
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
@@ -70,13 +74,14 @@
       <div id="lottie-spinner"></div>
       <span id="status-text"></span>
     </div>
-    <div class="voice-overlay" id="voice-overlay">
-      <div class="voice-wave"><i data-lucide="mic"></i></div>
-      <div class="voice-text" id="voice-text">Listening...</div>
-      <div class="voice-hint">Release to send</div>
-    </div>
-    <div id="input-bar" style="position:relative;">
-      <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
+    <div id="input-area" style="position:relative;">
+      <div class="voice-overlay" id="voice-overlay">
+        <div class="voice-wave"><i data-lucide="mic"></i></div>
+        <div class="voice-text" id="voice-text">Listening...</div>
+        <div class="voice-hint">Release to send</div>
+      </div>
+      <div id="input-bar">
+        <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
         <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
@@ -86,6 +91,7 @@
       <button id="send-btn"><i data-lucide="send"></i></button>
       <button id="stop-btn"><i data-lucide="square"></i></button>
     </div>
+  </div>
   </div>
 
   <!-- Modals -->

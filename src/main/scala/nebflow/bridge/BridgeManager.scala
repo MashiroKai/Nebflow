@@ -47,6 +47,12 @@ class BridgeManager private (
       plugins.values.toList.traverse_(_.onAgentEvent(sessionId, event))
     }
 
+  /** Tell all plugins to refresh their routing tables. */
+  def refreshRoutes: IO[Unit] =
+    pluginsRef.get.flatMap { plugins =>
+      plugins.values.toList.traverse_(_.refreshRoutes)
+    }
+
 end BridgeManager
 
 object BridgeManager:

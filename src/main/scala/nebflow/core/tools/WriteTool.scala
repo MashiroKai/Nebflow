@@ -83,81 +83,57 @@ Usage:
       IO.pure(Left(ToolError(s"Path is a directory, not a file: $filePath")))
     else
       val isNew = !Files.exists(filePath)
-      val readCheck: IO[Either[ToolError, Unit]] =
-        if !isNew then
-          ctx.readTracker match
-            case Some(rt) =>
-              rt.hasBeenRead(filePath).flatMap {
-                case false =>
-                  IO.pure(
-                    Left(ToolError(s"File was not read in this session: $filePath. Read it first with the Read tool."))
-                  )
-                case true =>
-                  rt.isPartialView(filePath).map {
-                    case true =>
-                      Left(
-                        ToolError(
-                          s"File was only partially read (offset/limit or truncated). Read the full file before overwriting: $filePath"
-                        )
-                      )
-                    case false => Right(())
-                  }
-              }
-            case None => IO.pure(Right(()))
-        else IO.pure(Right(()))
 
-      readCheck.flatMap {
-        case Left(err) => IO.pure(Left(err))
-        case Right(()) =>
-          val writeIO = IO.blocking {
-            try
-              val dir = filePath.getParent
-              if dir != null then Files.createDirectories(dir)
+      // Snapshot existing file before overwriting
+      val snapshot = if !isNew then ctx.fileHistory.traverse_(_.snapshot(filePath)) else IO.unit
 
-              if isNew then
-                DiffUtil.writeFile(filePath, content, "\n")
-                Right(DiffUtil.renderCreatedResult(filePath))
+      val writeIO = snapshot *> IO.blocking {
+        try
+          val dir = filePath.getParent
+          if dir != null then Files.createDirectories(dir)
+
+          if isNew then
+            DiffUtil.writeFile(filePath, content, "\n")
+            Right(DiffUtil.renderCreatedResult(filePath))
+          else
+            val original = DiffUtil.readFile(filePath)
+            val lineSep = DiffUtil.detectLineSep(original)
+            val mtime = Files.getLastModifiedTime(filePath)
+
+            // Compute the diff/stats before re-checking mtime so any work
+            // between read and write is bracketed by the mtime guard.
+            val hunks = DiffUtil.makeUnifiedDiff(original, content)
+            val editResult = EditResult(
+              filePath = filePath.toString,
+              addedLines = hunks.map(_.lines.count(_.startsWith("+"))).sum,
+              removedLines = hunks.map(_.lines.count(_.startsWith("-"))).sum,
+              hunks = hunks,
+              diffText = EditResult.renderHunks(hunks)
+            )
+
+            if Files.getLastModifiedTime(filePath) != mtime then
+              // mtime changed — only fail if content actually differs
+              val current = DiffUtil.readFile(filePath)
+              if current != original then
+                Left(ToolError("File was modified externally between read and write. Please re-check and retry."))
               else
-                val original = DiffUtil.readFile(filePath)
-                val lineSep = DiffUtil.detectLineSep(original)
-                val mtime = Files.getLastModifiedTime(filePath)
-
-                // Compute the diff/stats before re-checking mtime so any work
-                // between read and write is bracketed by the mtime guard.
-                val short = filePath.getFileName.toString
-                val hunks = DiffUtil.makeUnifiedDiff(original, content)
-                val editResult = EditResult(
-                  filePath = filePath.toString,
-                  addedLines = hunks.map(_.lines.count(_.startsWith("+"))).sum,
-                  removedLines = hunks.map(_.lines.count(_.startsWith("-"))).sum,
-                  hunks = hunks,
-                  diffText = EditResult.renderHunks(hunks)
-                )
-
-                if Files.getLastModifiedTime(filePath) != mtime then
-                  // mtime changed — only fail if content actually differs
-                  val current = DiffUtil.readFile(filePath)
-                  if current != original then
-                    Left(ToolError("File was modified externally between read and write. Please re-check and retry."))
-                  else
-                    DiffUtil.writeFile(filePath, content, lineSep)
-                    Right(editResult.toResultString)
-                else
-                  DiffUtil.writeFile(filePath, content, lineSep)
-                  Right(editResult.toResultString)
-              end if
-            catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
-          }
-          val lockedWrite = ctx.fileLockManager match
-            case Some(lm) => lm.withWriteLock(filePath)(writeIO)
-            case None => writeIO
-          lockedWrite.flatMap {
-            case Right(result) =>
-              val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
-                ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
-              record.as(Right(result))
-            case left => IO.pure(left)
-          }
+                DiffUtil.writeFile(filePath, content, lineSep)
+                Right(editResult.toResultString)
+            else
+              DiffUtil.writeFile(filePath, content, lineSep)
+              Right(editResult.toResultString)
+          end if
+        catch case e: Exception => Left(ToolError(s"Error writing file: ${e.getMessage}"))
+      }
+      val lockedWrite = ctx.fileLockManager match
+        case Some(lm) => lm.withWriteLock(filePath)(writeIO)
+        case None => writeIO
+      lockedWrite.flatMap {
+        case Right(result) =>
+          val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
+            ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
+          record.as(Right(result))
+        case left => IO.pure(left)
       }
     end if
   end call

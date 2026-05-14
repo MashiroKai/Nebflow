@@ -127,33 +127,18 @@ Edit patterns:
     validateInput(filePath, input) match
       case Left(err) => IO.pure(Left(err))
       case Right(()) =>
-        // readTracker check (lock-free)
-        val readCheck: IO[Either[ToolError, Unit]] =
-          if oldString.isEmpty then IO.pure(Right(())) // new file creation doesn't require read
-          else
-            ctx.readTracker match
-              case Some(rt) =>
-                rt.hasBeenRead(filePath).map {
-                  case true => Right(())
-                  case false =>
-                    Left(ToolError(s"File was not read in this session: $filePath. Read it first with the Read tool."))
-                }
-              case None => IO.pure(Right(()))
-
-        readCheck.flatMap {
-          case Left(err) => IO.pure(Left(err))
-          case Right(()) =>
-            val editIO = IO.blocking { doEdit(filePath, oldString, newString, replaceAll) }
-            val lockedEdit = ctx.fileLockManager match
-              case Some(lm) => lm.withWriteLock(filePath)(editIO)
-              case None => editIO
-            lockedEdit.flatMap {
-              case Right(result) =>
-                val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
-                  ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
-                record.as(Right(result))
-              case left => IO.pure(left)
-            }
+        // Snapshot file before editing (if it exists)
+        val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath))
+        val editIO = snapshot *> IO.blocking { doEdit(filePath, oldString, newString, replaceAll) }
+        val lockedEdit = ctx.fileLockManager match
+          case Some(lm) => lm.withWriteLock(filePath)(editIO)
+          case None => editIO
+        lockedEdit.flatMap {
+          case Right(result) =>
+            val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
+              ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
+            record.as(Right(result))
+          case left => IO.pure(left)
         }
     end match
   end call

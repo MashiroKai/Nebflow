@@ -2,6 +2,7 @@
 
 import state from './state.js';
 import { sendWs } from './ws.js';
+import { batchDeleteSelected } from './sidebar.js';
 
 // ---------- Session Modals ----------
 export function showNewSessionModal() {
@@ -42,7 +43,11 @@ export function startInlineNewSession() {
   const finish = () => {
     const name = input.value.trim();
     wrapper.remove();
-    if (name) sendWs({type: 'createSession', name, agentName: state.selectedAgent || 'Nebula'});
+    if (name) {
+      const payload = { type: 'createSession', name, agentName: state.selectedAgent || 'Nebula' };
+      if (state.activeFolderId) payload.folderId = state.activeFolderId;
+      sendWs(payload);
+    }
   };
   input.addEventListener('blur', finish);
   input.addEventListener('keydown', (e) => {
@@ -55,16 +60,37 @@ export function startInlineNewSession() {
 }
 
 // --- Delete modal ---
+let pendingBatchDelete = false;
+
 export function showDeleteModal(sessionId, sessionName) {
   const { modalBox, deleteBox, deleteMsg, modalOverlay } = state.dom;
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
   deleteMsg.textContent = 'Delete session "' + sessionName + '"';
   state.pendingDeleteId = sessionId;
+  pendingBatchDelete = false;
+  modalOverlay.classList.add('on');
+}
+
+export function showBatchDeleteModal() {
+  const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
+  modalBox.style.display = 'none';
+  deleteBox.style.display = 'block';
+  deleteTitle.textContent = 'Batch Delete Sessions';
+  const count = state.selectedSessionIds.size;
+  deleteMsg.textContent = 'Delete ' + count + ' selected session' + (count > 1 ? 's' : '') + '?';
+  state.pendingDeleteId = null;
+  pendingBatchDelete = true;
   modalOverlay.classList.add('on');
 }
 
 export function confirmDeleteSession() {
+  if (pendingBatchDelete) {
+    pendingBatchDelete = false;
+    hideModals();
+    batchDeleteSelected();
+    return;
+  }
   const id = state.pendingDeleteId;
   state.pendingDeleteId = null;
   hideModals();
@@ -77,13 +103,15 @@ function deleteSession(sessionId) {
 
 // ---------- Agent Modal ----------
 
-function buildConfigJson(name, desc, tools, mcpServers) {
-  const obj = {
-    name: name,
-    description: desc || '',
-    tools: tools
-  };
+let currentAgentFields = {};
+
+function buildConfigJson(name, desc, tools, mcpServers, baseFields) {
+  const obj = { ...baseFields };
+  obj.name = name;
+  obj.description = desc || '';
+  obj.tools = tools;
   if (mcpServers && mcpServers.length > 0) obj.mcpServers = mcpServers;
+  else delete obj.mcpServers;
   return JSON.stringify(obj, null, 2);
 }
 
@@ -97,6 +125,7 @@ export function showAgentModal(name, configJson, systemMd) {
   // Parse JSON config
   let fields = {};
   try { fields = JSON.parse(configJson || '{}'); } catch(e) {}
+  currentAgentFields = fields;
   document.getElementById('agent-desc-input').value = fields.description || '';
   document.getElementById('agent-system-input').value = systemMd || '';
 
@@ -270,8 +299,8 @@ export function initModals() {
       });
     }
 
-    const configJson = buildConfigJson(name, desc, finalTools, mcpServers);
     const isNew = !document.getElementById('agent-name-input').disabled;
+    const configJson = buildConfigJson(name, desc, finalTools, mcpServers, isNew ? {} : currentAgentFields);
     sendWs({type: isNew ? 'createAgent' : 'updateAgent', name, configJson, systemMd});
     hideAgentModal();
   });

@@ -2,7 +2,7 @@
 
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs, onMessage } from './ws.js';
-import { showAgentModal } from './modal.js';
+import { showAgentModal, startInlineNewSession, showBatchDeleteModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
 import { finishAgent, setStatus } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
@@ -77,6 +77,8 @@ export function selectAgent(agentName) {
   document.querySelectorAll('#nav-agent-list .nav-agent').forEach(el => {
     el.classList.toggle('active', el.dataset.name === agentName);
   });
+  // Exit batch mode when switching agents
+  if (state.batchMode) exitBatchMode();
   // Load sessions for this agent
   sendWs({type: 'listAgentSessions', name: agentName});
 }
@@ -232,16 +234,26 @@ export function renderSessionSidebar(sessionData, activeId) {
       sessionList.appendChild(divider);
     }
     const item = document.createElement('div');
+    const isSelected = state.selectedSessionIds.has(s.id);
     item.className = 'session-item'
       + (s.id === state.activeSessionId ? ' active' : '')
-      + (state.pinnedSessions.has(s.id) ? ' pinned' : '');
+      + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
+      + (isSelected ? ' selected' : '')
+      + (state.batchMode ? ' batch-mode' : '');
     item.dataset.id = s.id;
     const statusCls = getSessionStatusClass(s.id);
     const draft = state.sessionInputDrafts[s.id];
     const draftHtml = draft && draft.text
       ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
       : '';
+    const checkboxHtml = state.batchMode
+      ? '<div class="session-checkbox"><input type="checkbox" ' + (isSelected ? 'checked' : '') + '></div>'
+      : '';
+    const deleteBtnHtml = state.batchMode
+      ? ''
+      : '<button class="session-delete" title="Delete"><i data-lucide="x"></i></button>';
     item.innerHTML =
+      checkboxHtml +
       '<div class="session-info">' +
       '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
       (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
@@ -251,48 +263,75 @@ export function renderSessionSidebar(sessionData, activeId) {
       '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
       '<div class="status-dot"></div>' +
       '</div>' +
-      '<button class="session-delete" title="Delete"><i data-lucide="x"></i></button>';
-    // Double-click to rename
+      deleteBtnHtml;
+    // Double-click to rename (only in normal mode)
     const nameEl = item.querySelector('.session-name');
-    nameEl.addEventListener('dblclick', (e) => {
-      e.stopPropagation();
-      nameEl.contentEditable = true;
-      nameEl.focus();
-      // Select all text
-      const range = document.createRange();
-      range.selectNodeContents(nameEl);
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(range);
-    });
-    const finishRename = () => {
-      nameEl.contentEditable = false;
-      const newName = nameEl.textContent.trim();
-      if (newName && newName !== s.name) {
-        sendWs({type: 'renameSession', sessionId: s.id, name: newName});
-      } else {
-        nameEl.textContent = s.name;
-      }
-    };
-    nameEl.addEventListener('blur', finishRename);
-    nameEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        if (e.isComposing || e.keyCode === 229) return;
-        e.preventDefault(); nameEl.blur();
-      }
-      if (e.key === 'Escape') { nameEl.textContent = s.name; nameEl.blur(); }
-    });
-    item.querySelector('.session-delete').onclick = (e) => {
-      e.stopPropagation();
-      if (typeof window.__showDeleteModal === 'function') window.__showDeleteModal(s.id, s.name);
-    };
+    if (!state.batchMode) {
+      nameEl.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        nameEl.contentEditable = true;
+        nameEl.focus();
+        // Select all text
+        const range = document.createRange();
+        range.selectNodeContents(nameEl);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      });
+      const finishRename = () => {
+        nameEl.contentEditable = false;
+        const newName = nameEl.textContent.trim();
+        if (newName && newName !== s.name) {
+          sendWs({type: 'renameSession', sessionId: s.id, name: newName});
+        } else {
+          nameEl.textContent = s.name;
+        }
+      };
+      nameEl.addEventListener('blur', finishRename);
+      nameEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          if (e.isComposing || e.keyCode === 229) return;
+          e.preventDefault(); nameEl.blur();
+        }
+        if (e.key === 'Escape') { nameEl.textContent = s.name; nameEl.blur(); }
+      });
+    }
+    if (!state.batchMode) {
+      item.querySelector('.session-delete').onclick = (e) => {
+        e.stopPropagation();
+        if (typeof window.__showDeleteModal === 'function') window.__showDeleteModal(s.id, s.name);
+      };
+    }
     item.onclick = (e) => {
-      if (e.target.closest('.session-delete') || e.target.closest('.session-name[contenteditable="true"]')) return;
-      if (s.id !== state.activeSessionId) switchSession(s.id);
+      if (e.target.closest('.session-name[contenteditable="true"]')) return;
+      if (state.batchMode) {
+        // In batch mode, clicks toggle selection
+        if (e.target.closest('.session-checkbox')) {
+          e.preventDefault();
+          toggleSessionSelection(s.id);
+          return;
+        }
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          toggleSessionSelection(s.id);
+        } else if (e.shiftKey && state.lastSelectedSessionId) {
+          e.preventDefault();
+          selectSessionRange(state.lastSelectedSessionId, s.id);
+        } else {
+          toggleSessionSelection(s.id);
+        }
+      } else {
+        if (e.target.closest('.session-delete')) return;
+        if (s.id !== state.activeSessionId) switchSession(s.id);
+      }
     };
     item.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      showSessionCtxMenu(e.clientX, e.clientY, s.id);
+      if (state.batchMode) {
+        showBatchCtxMenu(e.clientX, e.clientY);
+      } else {
+        showSessionCtxMenu(e.clientX, e.clientY, s.id);
+      }
     });
     sessionList.appendChild(item);
   });
@@ -548,6 +587,154 @@ function showSessionCtxMenu(x, y, sessionId) {
   });
   activeCtxMenu = menu;
 }
+
+// ---------- Batch Selection Context Menu ----------
+
+function showBatchCtxMenu(x, y) {
+  dismissCtxMenu();
+  const count = state.selectedSessionIds.size;
+  const allCount = state.sessions.length;
+  const menu = document.createElement('div');
+  menu.className = 'session-ctx-menu';
+  menu.innerHTML =
+    '<div class="ctx-item" data-action="batch-select-all">' + (count === allCount ? '取消全选' : '全选 (' + allCount + ')') + '</div>' +
+    '<div class="ctx-separator"></div>' +
+    '<div class="ctx-item" data-action="batch-delete">删除选中的 ' + count + ' 个会话</div>' +
+    '<div class="ctx-item" data-action="batch-cancel">取消选择</div>';
+  document.body.appendChild(menu);
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+
+  menu.querySelector('[data-action="batch-select-all"]').addEventListener('click', () => {
+    const allIds = state.sessions.map(s => s.id);
+    const allSelected = allIds.every(id => state.selectedSessionIds.has(id));
+    if (allSelected) {
+      state.selectedSessionIds.clear();
+    } else {
+      allIds.forEach(id => state.selectedSessionIds.add(id));
+    }
+    state.lastSelectedSessionId = null;
+    updateBatchToolbar();
+    renderSessionSidebar(state.sessions, state.activeSessionId);
+    dismissCtxMenu();
+  });
+  menu.querySelector('[data-action="batch-delete"]').addEventListener('click', () => {
+    if (state.selectedSessionIds.size > 0) {
+      showBatchDeleteModal();
+    }
+    dismissCtxMenu();
+  });
+  menu.querySelector('[data-action="batch-cancel"]').addEventListener('click', () => {
+    exitBatchMode();
+    dismissCtxMenu();
+  });
+  activeCtxMenu = menu;
+}
+
+// ---------- Batch Selection Logic ----------
+
+export function toggleSessionSelection(sessionId) {
+  if (state.selectedSessionIds.has(sessionId)) {
+    state.selectedSessionIds.delete(sessionId);
+  } else {
+    state.selectedSessionIds.add(sessionId);
+  }
+  state.lastSelectedSessionId = sessionId;
+  updateBatchToolbar();
+  // Update UI for this item without full re-render
+  const item = state.dom.sessionList.querySelector(`.session-item[data-id="${sessionId}"]`);
+  if (item) {
+    const isSelected = state.selectedSessionIds.has(sessionId);
+    item.classList.toggle('selected', isSelected);
+    const cb = item.querySelector('.session-checkbox input');
+    if (cb) cb.checked = isSelected;
+  }
+}
+
+function selectSessionRange(fromId, toId) {
+  // Use the same sort order as renderSessionSidebar
+  const sorted = [...state.sessions].sort((a, b) => {
+    const pa = state.pinnedSessions.has(a.id) ? 1 : 0;
+    const pb = state.pinnedSessions.has(b.id) ? 1 : 0;
+    if (pb !== pa) return pb - pa;
+    const ta = a.updatedAt || a.createdAt || 0;
+    const tb = b.updatedAt || b.createdAt || 0;
+    return tb - ta;
+  });
+  const fromIdx = sorted.findIndex(s => s.id === fromId);
+  const toIdx = sorted.findIndex(s => s.id === toId);
+  if (fromIdx === -1 || toIdx === -1) return;
+  const start = Math.min(fromIdx, toIdx);
+  const end = Math.max(fromIdx, toIdx);
+  for (let i = start; i <= end; i++) {
+    state.selectedSessionIds.add(sorted[i].id);
+  }
+  state.lastSelectedSessionId = toId;
+  updateBatchToolbar();
+  renderSessionSidebar(state.sessions, state.activeSessionId);
+}
+
+export function enterBatchMode() {
+  state.batchMode = true;
+  updateBatchToolbar();
+  renderSessionSidebar(state.sessions, state.activeSessionId);
+}
+
+export function exitBatchMode() {
+  state.batchMode = false;
+  state.selectedSessionIds.clear();
+  state.lastSelectedSessionId = null;
+  updateBatchToolbar();
+  renderSessionSidebar(state.sessions, state.activeSessionId);
+}
+
+function updateBatchToolbar() {
+  const batchBtn = document.getElementById('batch-mode-btn');
+  if (!batchBtn) return;
+
+  if (state.batchMode) {
+    batchBtn.innerHTML = '<i data-lucide="x"></i>';
+    batchBtn.title = '取消批量选择';
+    const panelTitle = document.querySelector('#panel-sessions .panel-title');
+    if (panelTitle) panelTitle.textContent = state.selectedSessionIds.size + ' 选中';
+  } else {
+    batchBtn.innerHTML = '<i data-lucide="check-square"></i>';
+    batchBtn.title = '批量选择';
+    const panelTitle = document.querySelector('#panel-sessions .panel-title');
+    if (panelTitle) panelTitle.textContent = 'Sessions';
+  }
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+export function batchDeleteSelected() {
+  const ids = [...state.selectedSessionIds];
+  if (ids.length === 0) return;
+  sendWs({ type: 'batchDeleteSessions', sessionIds: ids });
+  // Clean up local state
+  ids.forEach(id => {
+    delete state.sessionInputDrafts[id];
+    state.unreadSessions.delete(id);
+    state.markedUnreadSessions.delete(id);
+    state.pinnedSessions.delete(id);
+  });
+  persistUnread();
+  persistMarkedUnread();
+  persistPinned();
+  persistDrafts();
+  exitBatchMode();
+}
+
+// Keyboard shortcuts for batch mode
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.batchMode) {
+    e.preventDefault();
+    exitBatchMode();
+  }
+  if (e.key === 'Delete' && state.batchMode && state.selectedSessionIds.size > 0) {
+    e.preventDefault();
+    showBatchDeleteModal();
+  }
+});
 
 // Dismiss on click outside or scroll
 document.addEventListener('click', (e) => {

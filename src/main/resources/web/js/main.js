@@ -1,5 +1,5 @@
 import state from './state.js';
-import { LS_SESSIONS_KEY } from './state.js';
+import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
 import { connect, onMessage, sendWs } from './ws.js';
 import {
@@ -15,7 +15,8 @@ import {
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   switchSession, deleteSession, formatSessionTime, setSessionAttention,
-  persistUnread, initFeishuPanel
+  initHeaderModelInfo,
+  persistUnread, initFeishuPanel, createNewFolder
 } from './sidebar.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
@@ -272,12 +273,68 @@ onMessage('toolEnd', (msg) => {
 // --- Terminal events ---
 // Always clear busySessionId. DOM + status only for active session. Always mark unread for non-active.
 
+// Header model info display
+if (!state.sessionModelInfo) state.sessionModelInfo = {};
+
+function formatTokens(n) {
+  if (n == null) return '';
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(n);
+}
+
+function updateHeaderModelInfo() {
+  const el = document.getElementById('header-model-info');
+  if (!el) return;
+  const sid = state.activeSessionId;
+  const info = sid ? state.sessionModelInfo[sid] : null;
+  if (!info || !info.contextWindow) {
+    el.textContent = '';
+    el.style.display = 'none';
+    return;
+  }
+  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
+  const pct = Math.min(Math.round(ratio * 100), 100);
+  let barColor = '#4caf50'; // green
+  if (ratio > 0.5) barColor = '#d4a030'; // amber
+  if (ratio > 0.75) barColor = '#e53935'; // red
+
+  const thresholdPct = Math.round(state.COMPACT_THRESHOLD * 100);
+  const tooltip = info.inputTokens != null
+    ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)`
+    : `${formatTokens(info.contextWindow)} context window`;
+
+  el.innerHTML = `
+    <div class="ctx-bar-wrap" title="${tooltip}">
+      <div class="ctx-bar-track">
+        <div class="ctx-bar-fill" style="width:${pct}%;background:${barColor};"></div>
+        <div class="ctx-bar-threshold" style="left:${thresholdPct}%;"></div>
+      </div>
+      <span class="ctx-bar-label">${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}</span>
+    </div>
+  `;
+  el.style.display = 'inline-flex';
+}
+state.updateHeaderModelInfo = updateHeaderModelInfo;
+
 onMessage('done', (msg) => {
+  console.log('[done] raw msg:', JSON.stringify(msg));
+  console.log('[done] contextWindow:', msg.contextWindow, 'inputTokens:', msg.inputTokens, 'model:', msg.model);
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   const durationMs = consumeTurnDuration(sid);
   delete state.sessionPendingTools[sid];
   console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length });
+  // Store model info for this session
+  if (sid && (msg.model || msg.contextWindow || msg.inputTokens != null)) {
+    state.sessionModelInfo[sid] = {
+      model: msg.model || state.sessionModelInfo[sid]?.model,
+      contextWindow: msg.contextWindow || state.sessionModelInfo[sid]?.contextWindow,
+      inputTokens: msg.inputTokens != null ? msg.inputTokens : state.sessionModelInfo[sid]?.inputTokens
+    };
+    try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
+    if (isActive(msg)) updateHeaderModelInfo();
+  }
   // Flush any remaining buffered text for this session
   if (msg.sessionId && state.sessionTexts[msg.sessionId]) {
     if (!isActive(msg)) {
@@ -389,6 +446,7 @@ let restoredSessionId = null;
 onMessage('sessionList', (msg) => {
   // Build sessionAgentMap from ALL sessions
   const allSessions = msg.sessions || [];
+  const allFolders = msg.folders || [];
   allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
 
   // Filter by selected agent if one is active (safety net — backend should send agentSessionList)
@@ -396,18 +454,20 @@ onMessage('sessionList', (msg) => {
   if (state.selectedAgent) {
     sessionsToShow = allSessions.filter(s => (s.agentName || 'Nebula') === state.selectedAgent);
   }
+  state.folders = allFolders;
 
   // Determine activeId: only use it if it belongs to the filtered (shown) sessions
   let activeId = msg.activeId;
   if (state.selectedAgent && activeId) {
     const activeAgent = state.sessionAgentMap[activeId];
     if (activeAgent !== state.selectedAgent) {
-      // activeId belongs to a different agent — don't switch away from current agent's session
-      activeId = state.activeSessionId;
+      // activeId belongs to a different agent — pick the first session of the current agent instead
+      activeId = sessionsToShow[0]?.id || null;
     }
   }
 
   renderSessionSidebar(sessionsToShow, activeId);
+  initHeaderModelInfo();
   // Only restore messages on first load (before any session was active)
   if (!restoredSessionId && activeId) {
     restoredSessionId = activeId;
@@ -702,7 +762,7 @@ onMessage('compactComplete', (msg) => {
     const wrap = state.dom.statusWrap;
     wrap.classList.remove('compacting');
     wrap.classList.add('compact-done');
-    const detail = msg.snapshotPath ? ` (snapshot: ${msg.snapshotPath.split('/').pop()})` : '';
+    const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     setStatus(`Context compacted: ${msg.before} → ${msg.after} messages${detail}`);
     setTimeout(clearStatus, 3000);
   }
@@ -747,11 +807,14 @@ onMessage('agentSessionList', (msg) => {
   // Render sessions for the selected agent
   const agentName = msg.agentName;
   const sessions = msg.sessions || [];
+  const folders = msg.folders || [];
+  state.folders = folders;
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
   // Find active session for this agent
   const activeId = state.activeSessionId;
   renderSessionSidebar(sessions, sessions.find(s => s.id === activeId) ? activeId : (sessions[0]?.id || null));
+  initHeaderModelInfo();
 });
 
 onMessage('agentConfig', (msg) => showAgentModal(msg.name, msg.configJson || '', msg.systemMd || ''));
@@ -839,8 +902,26 @@ onMessage('retryStatus', (msg) => {
 // --- Session busy state (backend authority) ---
 onMessage('sessionBusy', (msg) => {
   if (isActive(msg)) {
-    if (msg.busy) setBusy(msg.sessionId);
-    else clearBusy(msg.sessionId);
+    if (msg.busy) {
+      setBusy(msg.sessionId);
+    } else {
+      clearBusy(msg.sessionId);
+      // Defensive: if the 'done' event was lost but backend sent busy=false,
+      // finish any active streaming bubble so the cursor disappears and the
+      // duration badge is rendered.
+      const sid = msg.sessionId || state.activeSessionId;
+      delete state.sessionPendingTools[sid];
+      if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
+      if (state.currentAiBubble) {
+        const durationMs = consumeTurnDuration(sid);
+        const data = finishAi(durationMs, null);
+        if (data) saveMsg(data, sid);
+        Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
+        state.agentBubbles = {};
+        state.activeAgentId = null;
+        clearStatus();
+      }
+    }
   }
 });
 
@@ -1080,6 +1161,27 @@ initInput();
 initSearch();
 initFeishuPanel();
 initMemory();
+// New Folder button
+document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder());
+
+// Inject batch mode button into panel header
+const panelActions = document.querySelector('#panel-sessions .panel-actions');
+if (panelActions && !document.getElementById('batch-mode-btn')) {
+  const batchBtn = document.createElement('button');
+  batchBtn.id = 'batch-mode-btn';
+  batchBtn.title = '批量选择';
+  batchBtn.className = 'panel-btn';
+  batchBtn.innerHTML = '<i data-lucide="check-square"></i>';
+  panelActions.insertBefore(batchBtn, panelActions.firstChild);
+  batchBtn.addEventListener('click', () => {
+    import('./sidebar.js').then(({ enterBatchMode, exitBatchMode }) => {
+      if (state.batchMode) exitBatchMode();
+      else enterBatchMode();
+    });
+  });
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
 console.log('[main] modules initialized, connecting ws...');
 
 // Scroll listener

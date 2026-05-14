@@ -3,7 +3,7 @@ package nebflow.cli
 import scopt.OParser
 
 enum CliMode:
-  case Interactive, ContinueSession, SingleShot, Server
+  case Interactive, ContinueSession, SingleShot, Server, Stop
 
 case class Args(
   mode: CliMode = CliMode.Interactive,
@@ -18,6 +18,9 @@ object Args:
     OParser.sequence(
       programName("nebflow"),
       head("nebflow", nebflow.Version.string),
+      cmd("stop")
+        .action((_, c) => c.copy(mode = CliMode.Stop))
+        .text("Stop the running nebflow service"),
       opt[Unit]('c', "continue")
         .action((_, c) => c.copy(mode = CliMode.ContinueSession))
         .text("Continue last session"),
@@ -32,3 +35,4 @@ object Args:
 
   def parse(args: Array[String]): Option[Args] =
     OParser.parse(parser, args, Args())
+end Args

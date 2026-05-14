@@ -72,7 +72,7 @@ Example: rounds=3 means summarize the last 3 rounds of tool call results."""
             _ <- IO(ref ! AgentCommand.ReplaceToolResults(rounds, summary, deferred))
             result <- deferred.get
           yield result match
-            case Right(count) => Right(s"Replaced $count tool result(s) with summary (~saved context space)")
+            case Right(count) => Right(s"Replaced $count tool result(s). Summary: $summary")
             case Left(err) => Left(ToolError(err))
         case None =>
           IO.pure(Left(ToolError("RemoveUnnecessary requires an agent actor reference")))

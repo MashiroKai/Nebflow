@@ -55,4 +55,7 @@ class NebflowLogger(private val logger: Logger):
 
   def warnSync(msg: String, kv: (String, String)*): Unit =
     logger.warn(fmt("WARN ", YELLOW, withKv(msg, kv)))
+
+  def errorSync(msg: String, kv: (String, String)*): Unit =
+    logger.error(fmt("ERROR", RED, withKv(msg, kv)))
 end NebflowLogger

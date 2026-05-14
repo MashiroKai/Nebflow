@@ -91,34 +91,10 @@ case class ServiceLlmConfig(
 object ServiceLlmConfig:
   given Decoder[ServiceLlmConfig] = deriveDecoder[ServiceLlmConfig]
 
-case class EmbeddingConfig(
-  provider: String,
-  model: String,
-  apiKey: String,
-  baseUrl: Option[String] = None
-)
-
-object EmbeddingConfig:
-  given Decoder[EmbeddingConfig] = deriveDecoder[EmbeddingConfig]
-
-case class VectorInjectionConfig(
-  enable: Boolean = false,
-  embedding: EmbeddingConfig,
-  language: String = "zh",
-  threshold: Double = 0.7,
-  topK: Int = 1,
-  qdrantUrl: String = "http://localhost:6333",
-  collection: String = "nebflow_skill_tags"
-)
-
-object VectorInjectionConfig:
-  given Decoder[VectorInjectionConfig] = deriveDecoder[VectorInjectionConfig]
-
 case class NebflowServiceConfig(
   llm: ServiceLlmConfig,
   mcpServers: Option[Map[String, McpServerConfig]] = None,
-  search: Option[SearchConfig] = None,
-  vectorInjection: Option[VectorInjectionConfig] = None
+  search: Option[SearchConfig] = None
 )
 
 object NebflowServiceConfig:
