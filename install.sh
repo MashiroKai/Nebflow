@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.05.067}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 JAR_NAME="nebflow-assembly-${VERSION}.jar"
-DOWNLOAD_URL="https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/nebflow-assembly-${VERSION}.jar"
+DOWNLOAD_URL="https://github.com/MashiroKai/Nebflow/releases/download/v${VERSION}/${JAR_NAME}"
 
 echo ""
 echo "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗"
@@ -88,4 +88,4 @@ create_config
 echo ""
 echo "==> Done! Nebflow v${VERSION} installed."
 echo "    Run: nebflow --help"
-echo "    Config: ~/.config/nebflow/nebflow.json"
+echo "    Config: ~/.nebflow/nebflow.json"
