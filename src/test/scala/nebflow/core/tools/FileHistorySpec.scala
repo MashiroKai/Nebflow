@@ -11,11 +11,13 @@ class FileHistorySpec extends CatsEffectSuite:
   private def withHistory(test: FileHistory => Unit): Unit =
     val tmpDir = Files.createTempDirectory("nebflow-history-test")
     try
-      val history = FileHistory.create(
-        historyRoot = tmpDir,
-        maxEntries = 3,
-        maxFileSizeBytes = 1024L
-      ).unsafeRunSync()
+      val history = FileHistory
+        .create(
+          historyRoot = tmpDir,
+          maxEntries = 3,
+          maxFileSizeBytes = 1024L
+        )
+        .unsafeRunSync()
       test(history)
     finally
       if Files.exists(tmpDir) then
@@ -86,8 +88,10 @@ class FileHistorySpec extends CatsEffectSuite:
         assert(Files.list(history.historyRoot).iterator().asScala.nonEmpty)
         history.clear().unsafeRunSync()
         // After clear, the root dir should be gone or empty
-        assert(!Files.exists(history.historyRoot) ||
-          Files.walk(history.historyRoot).iterator().asScala.count(_ != history.historyRoot) == 0)
+        assert(
+          !Files.exists(history.historyRoot) ||
+            Files.walk(history.historyRoot).iterator().asScala.count(_ != history.historyRoot) == 0
+        )
       }
     }
   }

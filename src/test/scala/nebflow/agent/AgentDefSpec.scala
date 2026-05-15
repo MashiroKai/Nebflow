@@ -80,7 +80,10 @@ class AgentDefSpec extends CatsEffectSuite:
     lib.seedDefaults().unsafeRunSync()
     // User edits mcpServers
     val nebulaDir = dir / "Nebula"
-    os.write.over(nebulaDir / "agent.json", """{"name":"Nebula","description":"Override","tools":["*"],"mcpServers":["my-mcp"],"displayName":"Nebula","avatar":"<i data-lucide=\"sparkles\"></i>"}""")
+    os.write.over(
+      nebulaDir / "agent.json",
+      """{"name":"Nebula","description":"Override","tools":["*"],"mcpServers":["my-mcp"],"displayName":"Nebula","avatar":"<i data-lucide=\"sparkles\"></i>"}"""
+    )
     lib.refresh().unsafeRunSync()
     // seedDefaults again should NOT overwrite user changes
     lib.seedDefaults().unsafeRunSync()

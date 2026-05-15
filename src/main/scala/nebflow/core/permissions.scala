@@ -3,21 +3,32 @@ package nebflow.core
 import io.circe.JsonObject
 import nebflow.core.tools.BashTool
 
-/** Determines whether a tool call is reversible (auto-approve) or
-  * irreversible (ask the user for confirmation).
-  *
-  * Design principle: only truly irreversible operations require user approval.
-  * Everything else is auto-approved. File operations are reversible via FileHistory.
-  */
+/**
+ * Determines whether a tool call is reversible (auto-approve) or
+ * irreversible (ask the user for confirmation).
+ *
+ * Design principle: only truly irreversible operations require user approval.
+ * Everything else is auto-approved. File operations are reversible via FileHistory.
+ */
 object ToolReversibility:
 
   private val AlwaysReversible = Set(
-    "Read", "Glob", "Grep",
-    "WebSearch", "WebFetch",
-    "Edit", "Write",
-    "AskUserQuestion", "ContextManage",
-    "TaskCreate", "TaskUpdate", "TaskGet", "TaskDelete", "TaskList",
-    "Card", "RemoveUnnecessary"
+    "Read",
+    "Glob",
+    "Grep",
+    "WebSearch",
+    "WebFetch",
+    "Edit",
+    "Write",
+    "AskUserQuestion",
+    "ContextManage",
+    "TaskCreate",
+    "TaskUpdate",
+    "TaskGet",
+    "TaskDelete",
+    "TaskList",
+    "Card",
+    "RemoveUnnecessary"
   )
 
   private val SafeHttpMethods = Set("GET", "HEAD", "OPTIONS")

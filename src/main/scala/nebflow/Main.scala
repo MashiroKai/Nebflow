@@ -19,8 +19,7 @@ object Main extends IOApp:
           case _ =>
             // Ensure config directory exists (first-run setup)
             val configPath = Config.DefaultConfigPath
-            if !os.exists(configPath) then
-              os.write.over(configPath, "{}", createFolders = true)
+            if !os.exists(configPath) then os.write.over(configPath, "{}", createFolders = true)
 
             ProcessManager.readPid() match
               case Some(pid) if ProcessManager.isRunning(pid) =>
