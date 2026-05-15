@@ -746,7 +746,7 @@ object AgentActor extends AgentCore with AgentSession:
                     before = state.messages,
                     after = compactedMessages,
                     mode = pending.map(_.mode).getOrElse("full"),
-                    extra = Map("preservedRounds" -> FullCompact.PreserveRecentRounds.toString)
+                    extra = Map("preservedRounds" -> "0")
                   )
                 case None => IO.pure(Left("no sessionId"))
               resources.dispatcher.unsafeRunAndForget(

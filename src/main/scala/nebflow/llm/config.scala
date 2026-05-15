@@ -120,13 +120,13 @@ object Config:
       case Some(p) => os.Path(p, os.pwd)
       case None => DefaultConfigPath
 
-    if !os.exists(path) then
-      return defaultServiceConfig
+    if !os.exists(path) then defaultServiceConfig
+    else
+      val raw = os.read(path).trim
+      if raw.isEmpty || raw == "{}" || raw.replace("\n", "").replace("\r", "").trim == "{}" then defaultServiceConfig
+      else loadFromJson(raw)
 
-    val raw = os.read(path).trim
-    if raw.isEmpty || raw == "{}" || raw.replace("\n", "").replace("\r", "").trim == "{}" then
-      return defaultServiceConfig
-
+  private def loadFromJson(raw: String): NebflowServiceConfig =
     val json = parse(raw) match
       case Right(j) => j
       case Left(err) => throw new RuntimeException(s"Invalid JSON in config: ${err.message}")

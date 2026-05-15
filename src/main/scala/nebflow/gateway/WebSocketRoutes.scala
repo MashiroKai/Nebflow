@@ -235,12 +235,20 @@ class WebSocketRoutes(
       if segs.sizeIs < 3 then NotFound()
       else
         val agentName = segs(1)
-        val relParts = segs.drop(2)
-        val agentDir = AgentLibrary.defaultDir / agentName
-        val filePath = agentDir / os.RelPath(relParts.mkString("/"))
-        if filePath.toString.startsWith(agentDir.toString) && os.exists(filePath) && os.isFile(filePath) then
-          StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
-        else NotFound()
+        // Block path traversal: agentName must be a simple name (no .., /, \)
+        if agentName.contains("..") || agentName.contains("/") || agentName.contains("\\") then NotFound()
+        else
+          val agentDir = AgentLibrary.defaultDir / agentName
+          val relParts = segs.drop(2)
+          // Block path traversal in relative parts
+          val safeRel = relParts.filter(s => s != ".." && !s.contains("\\"))
+          if safeRel.length != relParts.length then NotFound()
+          else
+            val filePath = agentDir / os.RelPath(safeRel.mkString("/"))
+            // Final defense: resolve and verify the path stays under agentDir
+            if filePath.startsWith(agentDir) && os.exists(filePath) && os.isFile(filePath) then
+              StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+            else NotFound()
   }
 
   private val inputHistoryPath = os.home / ".nebflow" / "input_history.jsonl"

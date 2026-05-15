@@ -26,7 +26,7 @@ class FileChangeTracker private (
         .filter(Files.isRegularFile(_))
         .filter { p =>
           val rel = rootPath.relativize(p).toString
-          val segments = rel.split(java.io.File.separator)
+          val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
           !segments.exists(FileChangeTracker.ExcludedDirs.contains) &&
           !FileChangeTracker.ExcludedFiles.contains(segments.last)
         }
@@ -140,7 +140,7 @@ object FileChangeTracker:
         .filter(Files.isRegularFile(_))
         .filter { p =>
           val rel = rootPath.relativize(p).toString
-          val segments = rel.split(java.io.File.separator)
+          val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
           !segments.exists(ExcludedDirs.contains) &&
           !ExcludedFiles.contains(segments.last)
         }

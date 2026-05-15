@@ -209,12 +209,16 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    *  Updates the active ref only if the target is still the active session.
    */
   def saveMessagesForSession(targetId: String, msgs: List[Message]): IO[Unit] =
-    indexRef.get.flatMap { case (activeId, sessions, folders) =>
-      val now = System.currentTimeMillis()
-      val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
-      val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
-      updateRef *> saveSessionMessages(targetId, msgs) *> indexRef.set((activeId, updated, folders))
-    }
+    val now = System.currentTimeMillis()
+    indexRef
+      .modify { case (activeId, sessions, folders) =>
+        val updated = sessions.map(s => if s.id == targetId then s.copy(updatedAt = now) else s)
+        ((activeId, updated, folders), activeId)
+      }
+      .flatMap { activeId =>
+        val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
+        updateRef *> saveSessionMessages(targetId, msgs)
+      }
 
   def flushIndex: IO[Unit] = saveIndex
 
