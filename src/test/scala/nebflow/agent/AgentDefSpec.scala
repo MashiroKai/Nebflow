@@ -36,12 +36,28 @@ class AgentDefSpec extends CatsEffectSuite:
     assertEquals(defn.displayName, None)
   }
 
-  test("AgentLibrary.loadAll loads builtins from classpath") {
+  test("AgentLibrary seedDefaults creates Nebula on disk") {
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
+    lib.seedDefaults().unsafeRunSync()
     val result = lib.loadAll().unsafeRunSync()
     assert(result.keySet.contains("Nebula"), s"Should contain Nebula: ${result.keySet}")
-    assert(result.keySet.size == 1, s"Should have exactly 1 builtin: ${result.keySet}")
+    assert(result.keySet.size == 1, s"Should have exactly 1 agent: ${result.keySet}")
+    val nebula = result("Nebula")
+    assert(nebula.configPath.nonEmpty, "configPath should be set")
+    assert(nebula.systemPrompt.nonEmpty, "systemPrompt should be seeded")
+  }
+
+  test("AgentLibrary seedDefaults is idempotent") {
+    val tmpDir = os.temp.dir()
+    val lib = new AgentLibrary(tmpDir, None)
+    // Seed twice — second call should be a no-op
+    lib.seedDefaults().unsafeRunSync()
+    val first = lib.loadAll().unsafeRunSync()
+    lib.refresh().unsafeRunSync()
+    lib.seedDefaults().unsafeRunSync()
+    val second = lib.loadAll().unsafeRunSync()
+    assertEquals(first.keySet, second.keySet)
   }
 
   test("AgentLibrary.loadAll loads agent with mcp config from disk") {
@@ -55,6 +71,23 @@ class AgentDefSpec extends CatsEffectSuite:
     assert(result.keySet.contains("test-agent"), s"keys: ${result.keySet}")
     assertEquals(result("test-agent").mcpServers, List("echo"))
     assertEquals(result("test-agent").systemPrompt, "You are a test agent.")
+  }
+
+  test("User-edited agent.json is preserved across seedDefaults") {
+    val dir = os.temp.dir()
+    val lib = new AgentLibrary(dir, None)
+    // First seed creates default Nebula
+    lib.seedDefaults().unsafeRunSync()
+    // User edits mcpServers
+    val nebulaDir = dir / "Nebula"
+    os.write.over(nebulaDir / "agent.json", """{"name":"Nebula","description":"Override","tools":["*"],"mcpServers":["my-mcp"],"displayName":"Nebula","avatar":"<i data-lucide=\"sparkles\"></i>"}""")
+    lib.refresh().unsafeRunSync()
+    // seedDefaults again should NOT overwrite user changes
+    lib.seedDefaults().unsafeRunSync()
+    lib.refresh().unsafeRunSync()
+    val result = lib.loadAll().unsafeRunSync()
+    assertEquals(result("Nebula").mcpServers, List("my-mcp"))
+    assertEquals(result("Nebula").description, "Override")
   }
 
 end AgentDefSpec

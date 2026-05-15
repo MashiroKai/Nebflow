@@ -438,7 +438,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         const isStr = typeof opt === 'string';
         const label = isStr ? opt : opt.label;
         const desc = isStr ? '' : (opt.desc || opt.description || '');
-        btn.innerHTML = escapeHtml(label) + (desc ? '<div style="font-size:11px;color:#888;margin-top:2px;font-weight:normal;">' + escapeHtml(desc) + '</div>' : '');
+        btn.innerHTML = escapeHtml(label) + (desc ? '<div class="option-desc">' + escapeHtml(desc) + '</div>' : '');
         btn.onclick = () => {
           answers[qi] = label;
           optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
