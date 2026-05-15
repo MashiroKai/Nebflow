@@ -31,7 +31,7 @@ curl -fsSL https://nebflow.space/install.sh | sh
 Open PowerShell and run:
 
 ```powershell
-irm https://nebflow.space/install.ps1 | iex
+iwr -useb https://nebflow.space/install.ps1 | iex
 ```
 
 ### Docker
