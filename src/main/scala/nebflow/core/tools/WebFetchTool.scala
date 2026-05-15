@@ -161,11 +161,12 @@ Usage:
         val startMs = System.currentTimeMillis()
         try
           val backend = SharedBackend.instance
-          val request = SharedBackend.BrowserHeaders.foldLeft(
-            basicRequest
-              .get(uri"$url")
-              .readTimeout(FETCH_TIMEOUT.millis)
-          ) { case (req, (k, v)) => req.header(k, v) }
+          val request = SharedBackend.BrowserHeaders
+            .foldLeft(
+              basicRequest
+                .get(uri"$url")
+                .readTimeout(FETCH_TIMEOUT.millis)
+            ) { case (req, (k, v)) => req.header(k, v) }
             .followRedirects(true)
             .maxRedirects(5)
             .response(asStringAlways)

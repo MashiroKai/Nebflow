@@ -77,7 +77,7 @@ Example:
     input("html").flatMap(_.asString) match
       case Some(_) =>
         val title = input("title").flatMap(_.asString).getOrElse("")
-        IO.pure(Right(s"${if (title.nonEmpty) title else "Card"} rendered"))
+        IO.pure(Right(s"${if title.nonEmpty then title else "Card"} rendered"))
 
       case None =>
         IO.pure(Left(ToolError("Missing required parameter: html")))

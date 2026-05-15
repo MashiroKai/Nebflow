@@ -283,7 +283,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // Try HTML card renderer first
   let cardText = content || '';
   // Card tool returns a short summary; HTML payload is in inputJson
-  if (label === 'Card' && inputJson && inputJson.html && !cardText.match(/^___\w+_HTML___/)) {
+  if (label.startsWith('Card') && inputJson && inputJson.html && !cardText.match(/^___\w+_HTML___/)) {
     const payload = JSON.stringify({ html: inputJson.html, title: inputJson.title || '' });
     cardText = `___CARD_HTML___${payload}`;
   }

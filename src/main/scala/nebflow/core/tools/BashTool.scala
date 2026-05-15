@@ -4,6 +4,7 @@ import cats.effect.{Deferred, IO}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
+import nebflow.core.NebflowLogger
 import nebflow.shared.Defaults
 
 import scala.concurrent.TimeoutException
@@ -262,6 +263,17 @@ Git safety:
                 IO.pure(Left(ToolError(s"[Blocked by sandbox] Injection detected: $warning")))
               case _ =>
                 val sandboxMark = injectionWarning.map(_ => "[Sandbox bypassed] ").getOrElse("")
+                if bypass then
+                  val agentName = ctx.agentDef.map(_.name).getOrElse("-")
+                  val sessionName = ctx.sessionName.getOrElse("-")
+                  NebflowLogger
+                    .forName("nebflow.tool.bash")
+                    .infoSync(
+                      s"Sandbox bypassed",
+                      "agent" -> agentName,
+                      "session" -> sessionName,
+                      "command" -> command.take(120)
+                    )
                 ShellSession.forSession(sessionId).flatMap { shell =>
                   if background then
                     val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)

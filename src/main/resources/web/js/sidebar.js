@@ -556,10 +556,7 @@ function renderOneSessionItem(s, container, opts = {}) {
     ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
     : '';
   const deleteBtnHtml = '<button class="session-delete" title="Delete"><i data-lucide="x"></i></button>';
-  const checkSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-  const checkHtml = '<span class="ms-check">' + checkSvg + '</span>';
   item.innerHTML =
-    (isSelected ? checkHtml : '') +
     '<div class="session-info">' +
     '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
     (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
@@ -1150,30 +1147,25 @@ export function toggleSessionSelection(sessionId) {
   }
   state.lastSelectedSessionId = sessionId;
   updateBatchToolbar();
-  // Update UI for this item without full re-render
-  const item = state.dom.sessionList.querySelector(`.session-item[data-id="${sessionId}"]`);
-  if (item) {
-    item.classList.toggle('selected', state.selectedSessionIds.has(sessionId));
-  }
+  // Full re-render to keep selection visuals consistent with Shift+select
+  renderSessionSidebar(state.sessions, state.activeSessionId);
 }
 
 function selectSessionRange(fromId, toId) {
-  // Use the same sort order as renderSessionSidebar
-  const sorted = [...state.sessions].sort((a, b) => {
-    const pa = state.pinnedSessions.has(a.id) ? 1 : 0;
-    const pb = state.pinnedSessions.has(b.id) ? 1 : 0;
-    if (pb !== pa) return pb - pa;
-    const ta = a.updatedAt || a.createdAt || 0;
-    const tb = b.updatedAt || b.createdAt || 0;
-    return tb - ta;
-  });
-  const fromIdx = sorted.findIndex(s => s.id === fromId);
-  const toIdx = sorted.findIndex(s => s.id === toId);
+  // Use DOM order (visible session items) to determine range.
+  // This avoids selecting sessions hidden inside collapsed folders,
+  // which was causing accidental deletion of folder sessions when
+  // the user Shift+clicked to select root sessions only.
+  const sessionList = state.dom.sessionList;
+  const visibleItems = sessionList.querySelectorAll('.session-item');
+  const visibleIds = [...visibleItems].map(el => el.dataset.id);
+  const fromIdx = visibleIds.indexOf(fromId);
+  const toIdx = visibleIds.indexOf(toId);
   if (fromIdx === -1 || toIdx === -1) return;
   const start = Math.min(fromIdx, toIdx);
   const end = Math.max(fromIdx, toIdx);
   for (let i = start; i <= end; i++) {
-    state.selectedSessionIds.add(sorted[i].id);
+    state.selectedSessionIds.add(visibleIds[i]);
   }
   state.lastSelectedSessionId = toId;
   updateBatchToolbar();

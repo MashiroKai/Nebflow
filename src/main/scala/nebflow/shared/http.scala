@@ -40,6 +40,8 @@ object SharedBackend:
     "Upgrade-Insecure-Requests" -> "1"
   )
 
+end SharedBackend
+
 /** HTTP 工具函数 */
 object HttpUtils:
 
