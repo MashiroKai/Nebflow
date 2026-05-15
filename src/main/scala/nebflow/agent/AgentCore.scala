@@ -1,7 +1,6 @@
 package nebflow.agent
 
-import cats.effect.IO
-import cats.effect.Ref
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -487,42 +486,41 @@ private[agent] trait AgentCore:
            )
          else IO.unit) *>
           (if isSessionMemoryFile(call, state, agentDef) then
-            // Session memory files: auto-approve (agent can edit freely)
-            executeTool(call, toolCtx)
-          else if ToolReversibility.isReversible(call.name, call.input) then
-            // Reversible operations: auto-approve
-            executeTool(call, toolCtx)
-          else
-            // Irreversible operations: ask user for confirmation
-            askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
-          ).map(r => (call, r))
-            .attempt
-            .map {
-              case Right(pair) => pair
-              case Left(e) => (call, ToolExecResult(s"Tool error: ${e.getMessage}", isError = true))
-            }
-            .flatTap { (call, r) =>
-              // AskUserQuestion renders its own UI — skip generic toolEnd
-              if call.name != "AskUserQuestion" then
-                val summary = summarizeToolResult(call, r.content)
-                // For Card tools: frontend receives the full payload, LLM sees the summary
-                val frontendContent = r.frontendContent.getOrElse(r.content)
-                emitStreamIO(
-                  state.wsSend,
-                  ctx,
-                  AgentStreamEvent.ToolEnd(
-                    nebflow.core.summarizeToolCall(call),
-                    summary,
-                    frontendContent,
-                    r.isError,
-                    input = Some(call.input),
-                    truncated = r.truncated
-                  ),
-                  isSubagent,
-                  sessionIdOpt
-                )
-              else IO.unit
-            }
+             // Session memory files: auto-approve (agent can edit freely)
+             executeTool(call, toolCtx)
+           else if ToolReversibility.isReversible(call.name, call.input) then
+             // Reversible operations: auto-approve
+             executeTool(call, toolCtx)
+           else
+             // Irreversible operations: ask user for confirmation
+             askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
+          ) .map(r => (call, r)).attempt
+          .map {
+            case Right(pair) => pair
+            case Left(e) => (call, ToolExecResult(s"Tool error: ${e.getMessage}", isError = true))
+          }
+          .flatTap { (call, r) =>
+            // AskUserQuestion renders its own UI — skip generic toolEnd
+            if call.name != "AskUserQuestion" then
+              val summary = summarizeToolResult(call, r.content)
+              // For Card tools: frontend receives the full payload, LLM sees the summary
+              val frontendContent = r.frontendContent.getOrElse(r.content)
+              emitStreamIO(
+                state.wsSend,
+                ctx,
+                AgentStreamEvent.ToolEnd(
+                  nebflow.core.summarizeToolCall(call),
+                  summary,
+                  frontendContent,
+                  r.isError,
+                  input = Some(call.input),
+                  truncated = r.truncated
+                ),
+                isSubagent,
+                sessionIdOpt
+              )
+            else IO.unit
+          }
       }
       .flatMap { freshResults =>
         // ContextManage: generate synthetic results (triggered in ToolsComplete handler, not here)
@@ -690,11 +688,10 @@ private[agent] trait AgentCore:
                                 case Some(ctx) => s"$content\n\n$ctx"
                                 case None => content
                               if isCard then
-                                // Card tool: LLM sees a compact summary, frontend gets the full payload
-                                val cardType = call.input("cardType").flatMap(_.asString).getOrElse("?")
-                                val htmlSize = result.length
-                                val llmSummary = s"Card ($cardType) emitted — $htmlSize chars"
-                                ToolExecResult(llmSummary, frontendContent = Some(result))
+                                // Card tool: LLM sees a compact summary, frontend gets the full HTML from input
+                                val title = call.input("title").flatMap(_.asString).getOrElse("")
+                                val llmSummary = s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
+                                ToolExecResult(llmSummary, frontendContent = Some(finalContent))
                               else ToolExecResult(finalContent)
                             }
                   }

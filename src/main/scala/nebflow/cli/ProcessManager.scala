@@ -42,9 +42,7 @@ object ProcessManager:
             Thread.sleep(100)
             waited += 1
         removePid()
-        if isRunning(pid) then
-          println("Failed to stop nebflow")
-        else
-          println("nebflow stopped")
+        if isRunning(pid) then println("Failed to stop nebflow")
+        else println("nebflow stopped")
   }
 end ProcessManager
