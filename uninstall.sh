@@ -2,7 +2,7 @@
 set -e
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-CONFIG_DIR="${HOME}/.config/nebflow"
+CONFIG_DIR="${HOME}/.nebflow"
 
 echo ""
 echo "  Nebflow Uninstaller"

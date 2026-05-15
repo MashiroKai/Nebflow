@@ -68,7 +68,7 @@ WRAPPER
 
 # Create config template
 create_config() {
-    local config_dir="${HOME}/.config/nebflow"
+    local config_dir="${HOME}/.nebflow"
     local config_file="${config_dir}/nebflow.json"
     if [ ! -f "${config_file}" ]; then
         echo "==> Creating default config at ${config_file}..."
