@@ -18,27 +18,29 @@ class FileChangeTracker private (
   private val DebounceMs: Long = 5 * 1000L // 5 seconds
 
   private def scanFiles(): Map[String, Long] =
-    val stream = Files.walk(rootPath)
     try
-      stream
-        .iterator()
-        .asScala
-        .filter(Files.isRegularFile(_))
-        .filter { p =>
-          val rel = rootPath.relativize(p).toString
-          val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
-          !segments.exists(FileChangeTracker.ExcludedDirs.contains) &&
-          !FileChangeTracker.ExcludedFiles.contains(segments.last)
-        }
-        .map { p =>
-          val rel = rootPath.relativize(p).toString
-          val modTime =
-            try Files.getLastModifiedTime(p).toMillis
-            catch case _: Exception => 0L
-          rel -> modTime
-        }
-        .toMap
-    finally stream.close()
+      val stream = Files.walk(rootPath)
+      try
+        stream
+          .iterator()
+          .asScala
+          .filter(Files.isRegularFile(_))
+          .filter { p =>
+            val rel = rootPath.relativize(p).toString
+            val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
+            !segments.exists(FileChangeTracker.ExcludedDirs.contains) &&
+            !FileChangeTracker.ExcludedFiles.contains(segments.last)
+          }
+          .map { p =>
+            val rel = rootPath.relativize(p).toString
+            val modTime =
+              try Files.getLastModifiedTime(p).toMillis
+              catch case _: Exception => 0L
+            rel -> modTime
+          }
+          .toMap
+      finally stream.close()
+    catch case _: Exception => Map.empty
 
   /** Stat only files present in the previous snapshot. O(n) where n = snapshot size. */
   private def statKnown(known: Map[String, Long]): Map[String, Long] =
@@ -132,27 +134,31 @@ object FileChangeTracker:
 
   def scanProject(projectRoot: String): Map[String, Long] =
     val rootPath = Paths.get(projectRoot).toAbsolutePath.normalize
-    val stream = Files.walk(rootPath)
     try
-      stream
-        .iterator()
-        .asScala
-        .filter(Files.isRegularFile(_))
-        .filter { p =>
-          val rel = rootPath.relativize(p).toString
-          val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
-          !segments.exists(ExcludedDirs.contains) &&
-          !ExcludedFiles.contains(segments.last)
-        }
-        .map { p =>
-          val rel = rootPath.relativize(p).toString
-          val modTime =
-            try Files.getLastModifiedTime(p).toMillis
-            catch case _: Exception => 0L
-          rel -> modTime
-        }
-        .toMap
-    finally stream.close()
+      val stream = Files.walk(rootPath)
+      try
+        stream
+          .iterator()
+          .asScala
+          .filter(Files.isRegularFile(_))
+          .filter { p =>
+            val rel = rootPath.relativize(p).toString
+            val segments = rel.split(java.util.regex.Pattern.quote(java.io.File.separator))
+            !segments.exists(ExcludedDirs.contains) &&
+            !ExcludedFiles.contains(segments.last)
+          }
+          .map { p =>
+            val rel = rootPath.relativize(p).toString
+            val modTime =
+              try Files.getLastModifiedTime(p).toMillis
+              catch case _: Exception => 0L
+            rel -> modTime
+          }
+          .toMap
+      finally stream.close()
+    catch case _: Exception => Map.empty
+
+  end scanProject
 
   def create(projectRoot: String): IO[FileChangeTracker] =
     for
