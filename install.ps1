@@ -1,10 +1,10 @@
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$Version = if ($env:VERSION) { $env:VERSION } else { "1.0.0" }
+$Version = if ($env:VERSION) { $env:VERSION } else { "1.05.067" }
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\Nebflow" }
 $JarName = "nebflow-assembly-$Version.jar"
-$DownloadUrl = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/$JarName"
+$DownloadUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version/$JarName"
 
 Write-Host ""
 Write-Host "  _   _ _____ _     _     ___  " -ForegroundColor Cyan
