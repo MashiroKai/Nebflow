@@ -179,24 +179,8 @@ $configDir = Join-Path $env:USERPROFILE ".nebflow"
 $configFile = Join-Path $configDir "nebflow.json"
 if (-not (Test-Path $configFile)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-    $configContent = @"
-{
-  "llm": {
-    "providers": {
-      "anthropic": {
-        "baseUrl": "https://api.anthropic.com",
-        "apiKey": "`${ANTHROPIC_API_KEY}",
-        "protocol": "anthropic"
-      }
-    },
-    "model": {
-      "default": "anthropic/claude-sonnet-4-6"
-    }
-  },
-  "mcpServers": {}
-}
-"@
-    Set-Content -Path $configFile -Value $configContent -Encoding UTF8
+    $configContent = "{`n}"
+    [System.IO.File]::WriteAllText($configFile, $configContent)
     Write-Host "       Config created: $configFile" -ForegroundColor Green
     Write-Host "       Please edit it to set your API key." -ForegroundColor Yellow
 } else {

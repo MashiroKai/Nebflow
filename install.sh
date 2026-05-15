@@ -73,24 +73,9 @@ create_config() {
     if [ ! -f "${config_file}" ]; then
         echo "==> Creating default config at ${config_file}..."
         mkdir -p "${config_dir}"
-        cat > "${config_file}" << 'EOF'
-{
-  "llm": {
-    "providers": {
-      "anthropic": {
-        "baseUrl": "https://api.anthropic.com",
-        "apiKey": "${ANTHROPIC_API_KEY}",
-        "protocol": "anthropic"
-      }
-    },
-    "model": {
-      "default": "anthropic/claude-sonnet-4-6"
-    }
-  },
-  "mcpServers": {}
-}
-EOF
-        echo "    Please edit ${config_file} to set your API key."
+        echo '{}' > "${config_file}"
+        echo "    Config created: ${config_file}"
+        echo "    Run 'nebflow -s' to start and configure via web UI."
     fi
 }
 
