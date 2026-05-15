@@ -246,6 +246,9 @@ object UiMessage:
       extends UiMessage:
     val typeName = "ask"
 
+  case class AskPermission(toolName: String, summary: String, input: String) extends UiMessage:
+    val typeName = "askPermission"
+
   case class System(content: String) extends UiMessage:
     val typeName = "system"
 
@@ -273,6 +276,13 @@ object UiMessage:
       val base = Json.obj("type" -> "ask".asJson, "question" -> m.question.asJson, "answer" -> m.answer.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
+    case m: AskPermission =>
+      Json.obj(
+        "type" -> "askPermission".asJson,
+        "toolName" -> m.toolName.asJson,
+        "summary" -> m.summary.asJson,
+        "input" -> m.input.asJson
+      )
     case m: System => Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
   }
 
@@ -320,6 +330,12 @@ object UiMessage:
           durationMs <- cursor.downField("durationMs").as[Option[Long]]
           model <- cursor.downField("model").as[Option[String]]
         yield Ask(question, answer, durationMs, model)
+      case "askPermission" =>
+        for
+          toolName <- cursor.downField("toolName").as[String]
+          summary <- cursor.downField("summary").as[String]
+          input <- cursor.downField("input").as[String]
+        yield AskPermission(toolName, summary, input)
       case "system" =>
         cursor.downField("content").as[String].map(System(_))
       case other => Left(DecodingFailure(s"Unknown UiMessage type: $other", cursor.history))

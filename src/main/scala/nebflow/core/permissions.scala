@@ -24,6 +24,7 @@ object ToolReversibility:
 
   def isReversible(toolName: String, input: JsonObject): Boolean =
     if AlwaysReversible.contains(toolName) then true
+    else if toolName.startsWith("mcp__") then true
     else if toolName == "Bash" then
       // Non-dangerous bash commands are considered reversible
       input("command").flatMap(_.asString).forall(cmd => !BashTool.isDangerous(cmd))
