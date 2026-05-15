@@ -19,7 +19,19 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-          cache: sbt
+
+      - name: Setup sbt
+        uses: sbt/setup-sbt@v1
+
+      - name: Cache sbt
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache/v1
+          key: ${{ runner.os }}-sbt-${{ hashFiles('**/build.sbt') }}
+          restore-keys: ${{ runner.os }}-sbt-
 
       - name: Compile
         run: sbt compile
@@ -65,7 +77,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-          cache: sbt
 
       - name: Download JAR
         uses: actions/download-artifact@v4
