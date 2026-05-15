@@ -291,10 +291,26 @@ function bindSettingsEvents(content, cfg, allModels) {
   // --- Model chain ---
   document.getElementById('cfg-default-model')?.addEventListener('change', function() {
     if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
-    if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: ''};
-    state.parsedConfig.llm.model.default = this.value;
+    if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
+    const oldDefault = state.parsedConfig.llm.model.default || '';
+    const newDefault = this.value;
+    if (newDefault === oldDefault) return;
+
+    const fallbacks = state.parsedConfig.llm.model.fallbacks || [];
+
+    // Auto-adjust fallbacks:
+    // 1. Remove the new default from fallbacks (it's now the primary)
+    // 2. Add the old default to fallbacks (becomes a fallback option)
+    let newFallbacks = fallbacks.filter(f => f !== newDefault);
+    if (oldDefault && oldDefault !== newDefault && !newFallbacks.includes(oldDefault)) {
+      newFallbacks.push(oldDefault);
+    }
+
+    state.parsedConfig.llm.model.default = newDefault;
+    state.parsedConfig.llm.model.fallbacks = newFallbacks;
     state.configDirty = true;
     flushConfigToServer();
+    renderSettings();
   });
 
   content.querySelectorAll('.cfg-tag-remove').forEach(btn => {
@@ -384,7 +400,7 @@ function flushConfigToServer() {
 function showProviderModal(existingName, existingData, onSave) {
   const isEdit = !!existingName;
   const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
-  const modelsStr = (p.models || []).map(m => `${m.id} (max:${m.maxTokens}, ctx:${m.contextWindow})`).join('\n');
+  const initialModels = p.models.length > 0 ? p.models : [{id: '', maxTokens: 131072, contextWindow: 200000}];
 
   showModal({
     title: isEdit ? `Edit Provider: ${existingName}` : 'Add Provider',
@@ -393,22 +409,17 @@ function showProviderModal(existingName, existingData, onSave) {
       {key: 'baseUrl', label: 'Base URL', type: 'text', value: p.baseUrl || ''},
       {key: 'apiKey', label: 'API Key', type: 'text', value: p.apiKey || '', placeholder: 'Leave as *** to keep existing'},
       {key: 'protocol', label: 'Protocol', type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
-      {key: 'models', label: 'Models (one per line: id [maxTokens] [contextWindow])', type: 'textarea', value: modelsStr, placeholder: 'e.g. gpt-4o 16384 128000'},
+      {key: 'models', label: 'Models', type: 'models', value: initialModels},
     ],
     onConfirm(values) {
       const name = values.name.trim();
       if (!name) return alert('Provider ID is required');
       if (/\s/.test(name)) return alert('Provider ID cannot contain spaces');
-      const models = values.models.split('\n').map(line => {
-        const parts = line.trim().split(/\s+/);
-        if (!parts[0]) return null;
-        return {id: parts[0], maxTokens: parseInt(parts[1]) || 131072, contextWindow: parseInt(parts[2]) || 200000};
-      }).filter(Boolean);
       onSave(name, {
         baseUrl: values.baseUrl.trim(),
         apiKey: values.apiKey.trim() || '***',
         protocol: values.protocol,
-        models,
+        models: values.models,
       });
     }
   });
@@ -473,6 +484,10 @@ function showModal({title, fields, onConfirm}) {
             ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
               ${f.options.map(o => `<option value="${o}" ${o === f.value ? 'selected' : ''}>${o}</option>`).join('')}
             </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>` :
+            f.type === 'models' ? `<div class="cfg-models-container" data-field="${f.key}">
+              ${f.value.map((m, i) => renderModelRow(m, i)).join('')}
+              <button class="cfg-model-add" type="button">+ Add Model</button>
+            </div>` :
             `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
           </div>
         `).join('')}
@@ -485,17 +500,61 @@ function showModal({title, fields, onConfirm}) {
 
   document.body.appendChild(overlay);
 
+  // Wire up models add/remove
+  overlay.querySelectorAll('.cfg-model-add').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const container = btn.parentElement;
+      const row = document.createElement('div');
+      row.className = 'cfg-model-row';
+      row.innerHTML = renderModelRowContent();
+      container.insertBefore(row, btn);
+      row.querySelector('.cfg-model-remove').addEventListener('click', () => row.remove());
+      row.querySelector('.cfg-model-id').focus();
+    });
+  });
+  overlay.querySelectorAll('.cfg-model-remove').forEach(btn => {
+    btn.addEventListener('click', () => btn.closest('.cfg-model-row').remove());
+  });
+
   const close = () => overlay.remove();
   document.getElementById('cfg-modal-cancel').addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   document.getElementById('cfg-modal-save').addEventListener('click', () => {
     const values = {};
-    overlay.querySelectorAll('[data-field]').forEach(el => {
+    overlay.querySelectorAll('[data-field]:not([data-field="models"])').forEach(el => {
       values[el.dataset.field] = el.value;
     });
+    // Collect models
+    const modelsContainer = overlay.querySelector('[data-field="models"]');
+    if (modelsContainer) {
+      values.models = [];
+      modelsContainer.querySelectorAll('.cfg-model-row').forEach(row => {
+        const id = row.querySelector('.cfg-model-id').value.trim();
+        if (!id) return;
+        values.models.push({
+          id,
+          maxTokens: parseInt(row.querySelector('.cfg-model-max').value) || 131072,
+          contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 200000,
+        });
+      });
+    }
     onConfirm(values);
     close();
   });
+}
+
+function renderModelRowContent(m) {
+  const id = m ? escapeHtml(m.id) : '';
+  const max = m ? m.maxTokens : '';
+  const ctx = m ? m.contextWindow : '';
+  return `<input class="cfg-input cfg-model-id" type="text" value="${id}" placeholder="Model ID">
+<input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="Max tokens">
+<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="Context">
+<button class="cfg-model-remove" type="button" title="Remove">&times;</button>`;
+}
+
+function renderModelRow(m, index) {
+  return `<div class="cfg-model-row">${renderModelRowContent(m)}</div>`;
 }
 
 function escapeHtml(text) {
@@ -1152,20 +1211,36 @@ export function toggleSessionSelection(sessionId) {
 }
 
 function selectSessionRange(fromId, toId) {
-  // Use DOM order (visible session items) to determine range.
-  // This avoids selecting sessions hidden inside collapsed folders,
-  // which was causing accidental deletion of folder sessions when
-  // the user Shift+clicked to select root sessions only.
-  const sessionList = state.dom.sessionList;
-  const visibleItems = sessionList.querySelectorAll('.session-item');
-  const visibleIds = [...visibleItems].map(el => el.dataset.id);
-  const fromIdx = visibleIds.indexOf(fromId);
-  const toIdx = visibleIds.indexOf(toId);
-  if (fromIdx === -1 || toIdx === -1) return;
-  const start = Math.min(fromIdx, toIdx);
-  const end = Math.max(fromIdx, toIdx);
-  for (let i = start; i <= end; i++) {
-    state.selectedSessionIds.add(visibleIds[i]);
+  const fromSession = state.sessions.find(s => s.id === fromId);
+  const toSession = state.sessions.find(s => s.id === toId);
+  if (!fromSession || !toSession) return;
+
+  const fromFolder = fromSession.folderId || null;
+  const toFolder = toSession.folderId || null;
+
+  if (fromFolder !== toFolder) {
+    // Different levels — just select both, no range
+    state.selectedSessionIds.add(fromId);
+    state.selectedSessionIds.add(toId);
+  } else {
+    // Same level — select range within this level only
+    const sameLevel = state.sessions.filter(s => (s.folderId || null) === fromFolder);
+    sameLevel.sort((a, b) => {
+      if (!fromFolder) {
+        const pa = state.pinnedSessions.has(a.id) ? 1 : 0;
+        const pb = state.pinnedSessions.has(b.id) ? 1 : 0;
+        if (pb !== pa) return pb - pa;
+      }
+      return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
+    });
+    const fromIdx = sameLevel.findIndex(s => s.id === fromId);
+    const toIdx = sameLevel.findIndex(s => s.id === toId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    const start = Math.min(fromIdx, toIdx);
+    const end = Math.max(fromIdx, toIdx);
+    for (let i = start; i <= end; i++) {
+      state.selectedSessionIds.add(sameLevel[i].id);
+    }
   }
   state.lastSelectedSessionId = toId;
   updateBatchToolbar();
@@ -1361,6 +1436,15 @@ function reorderSessionToTop(sessionId) {
   const item = sessionList.querySelector(`.session-item[data-id="${sessionId}"]`);
   if (!item) return;
 
+  // Update the time display to reflect the new activity
+  const timeEl = item.querySelector('.session-time');
+  if (timeEl) timeEl.textContent = formatSessionTime(session.updatedAt);
+
+  // Don't reorder if session is inside a folder — moving it out would visually
+  // "detach" it from the folder. The folder will be re-rendered on the next
+  // full sessionList update.
+  if (item.classList.contains('in-folder')) return;
+
   const isPinned = state.pinnedSessions.has(sessionId);
 
   if (isPinned) {
@@ -1384,10 +1468,6 @@ function reorderSessionToTop(sessionId) {
       }
     }
   }
-
-  // Update the time display to reflect the new activity
-  const timeEl = item.querySelector('.session-time');
-  if (timeEl) timeEl.textContent = formatSessionTime(session.updatedAt);
 }
 
 // Listen for state changes from other modules (dispatched via CustomEvent)

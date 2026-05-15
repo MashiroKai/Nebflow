@@ -95,6 +95,7 @@ object GatewayMain extends IOApp.Simple:
                     provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
                 val baseUrl = s"http://localhost:${cfg.port}"
                 val url = s"$baseUrl?token=$token"
+                sys.props.update("nebflow.url", baseUrl)
 
                 logger.info(s"nebflow v${nebflow.Version.string}") *>
                   (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")

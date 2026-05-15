@@ -314,6 +314,54 @@
   background: rgba(0,0,0,0.25);
 }
 .bubble.ai pre code { background: none; padding: 0; font-size: 12px; }
+
+/* Code block wrapper & copy button */
+.bubble.ai .code-block-wrap {
+  position: relative;
+  margin: 6px 0;
+}
+.bubble.ai .code-block-wrap pre {
+  margin: 0;
+  padding-top: 12px;
+}
+.code-copy-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid rgba(0,0,0,0.12);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.8);
+  color: #666;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  line-height: 1;
+  white-space: nowrap;
+  z-index: 2;
+}
+.code-block-wrap:hover .code-copy-btn {
+  opacity: 1;
+}
+.code-copy-btn:hover {
+  background: #fff;
+  color: #333;
+  border-color: rgba(0,0,0,0.2);
+}
+.code-copy-btn.copied {
+  color: #2e7d32;
+  border-color: #2e7d32;
+  background: #e8f5e9;
+  opacity: 1;
+}
+.code-copy-btn svg {
+  flex-shrink: 0;
+}
 .bubble.ai code {
   background: rgba(0,0,0,0.05);
   padding: 1px 4px;
@@ -550,6 +598,22 @@
   .option-confirm:disabled { background: #444; }
 
   .error-card { background: rgba(244,67,54,0.12); color: #ef5350; }
+
+  .code-copy-btn {
+    background: rgba(30,30,30,0.9);
+    border-color: rgba(255,255,255,0.1);
+    color: #999;
+  }
+  .code-copy-btn:hover {
+    background: #333;
+    color: #ccc;
+    border-color: rgba(255,255,255,0.2);
+  }
+  .code-copy-btn.copied {
+    color: #66bb6a;
+    border-color: #66bb6a;
+    background: rgba(102,187,106,0.12);
+  }
 
   .row.ai .duration-badge { color: rgba(255,255,255,0.35); }
 

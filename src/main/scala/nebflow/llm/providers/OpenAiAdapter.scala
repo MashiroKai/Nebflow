@@ -168,7 +168,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
             parse(bodyStr) match
               case Left(err) => IO.raiseError(new RuntimeException(s"Failed to parse response: ${err.message}"))
               case Right(json) =>
-                IO.pure {
+                IO.defer {
                   val reply = json.hcursor
                     .downField("choices")
                     .downN(0)
@@ -183,7 +183,22 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
                     )
                   }
-                  AdapterResponse(reply, toolCalls, usage)
+                  // Empty response with no tool calls — treat as error to trigger fallback
+                  if reply.isEmpty && toolCalls.isEmpty then
+                    val finishReason = json.hcursor
+                      .downField("choices")
+                      .downN(0)
+                      .downField("finish_reason")
+                      .as[String]
+                      .toOption
+                      .getOrElse("")
+                    val detail = if finishReason.nonEmpty then s" (finish_reason: $finishReason)" else ""
+                    IO.raiseError(
+                      new RuntimeException(
+                        s"LLM returned empty response$detail"
+                      )
+                    )
+                  else IO.pure(AdapterResponse(reply, toolCalls, usage))
                 }
           }
     }
