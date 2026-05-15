@@ -220,7 +220,7 @@ onMessage('thinking', (msg) => {
       row.className = 'row ai';
       state.currentAiBubble = document.createElement('div');
       state.currentAiBubble.className = 'bubble ai thinking-placeholder';
-      state.currentAiBubble.innerHTML = '<span style="color:#999;font-size:13px;">Thinking...</span>';
+      state.currentAiBubble.innerHTML = '<span class="thinking-text">Thinking...</span>';
       row.appendChild(state.currentAiBubble);
       chat.appendChild(row);
       smartScroll();
@@ -448,7 +448,12 @@ onMessage('askUser', (msg) => {
 onMessage('askPermission', (msg) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
-  if (isActive(msg)) renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId);
+  if (isActive(msg)) {
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId);
+  } else if (sid) {
+    // Non-active session: persist so it can be restored on session switch
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input }, sid);
+  }
 });
 
 // --- Session list (global) ---
@@ -541,15 +546,17 @@ onMessage('historyPage', (msg) => {
     const lastHistMsg = histMsgs && histMsgs[histMsgs.length - 1];
     const isAskUserPending = lastHistMsg && lastHistMsg.type === 'askUser'
       && Array.isArray(lastHistMsg.items) && lastHistMsg.items.length > 0;
+    const isAskPermissionPending = lastHistMsg && lastHistMsg.type === 'askPermission'
+      && lastHistMsg.toolName;
 
-    if (isAskUserPending) {
-      // Agent is blocked on AskUser — clear stale sessionTexts so we don't create
+    if (isAskUserPending || isAskPermissionPending) {
+      // Agent is blocked on AskUser/AskPermission — clear stale sessionTexts so we don't create
       // a phantom streaming bubble for text that's already in history.
       delete state.sessionTexts[sid];
     }
 
     // Re-create streaming state if this session is still busy.
-    if (state.busySessionIds.has(sid) && !isAskUserPending) {
+    if (state.busySessionIds.has(sid) && !isAskUserPending && !isAskPermissionPending) {
       if (state.sessionTexts[sid]) {
         state.aiText = state.sessionTexts[sid];
         const chat = state.dom.chat;
@@ -595,6 +602,16 @@ onMessage('historyPage', (msg) => {
         if (row.querySelector('.option-box')) row.remove();
       });
       renderAskUser(lastHistMsg.items, sid);
+    }
+
+    // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
+    // Same logic as AskUser — if already answered, there would be subsequent tool messages.
+    if (isAskPermissionPending) {
+      // Remove the disabled askPermission row (restored by restoreFromBackendHistory).
+      state.dom.chat.querySelectorAll('.row.ai').forEach(row => {
+        if (row.querySelector('.permission-pending-box')) row.remove();
+      });
+      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid);
     }
 
     if (!state.historyHasMore && msg.messages.length > 0) showHistoryEnd();
@@ -660,7 +677,7 @@ onMessage('agentStart', (msg) => {
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai';
-    bubble.innerHTML = '<span style="color:#999;font-size:13px;">Thinking...</span>';
+    bubble.innerHTML = '<span class="thinking-text">Thinking...</span>';
     // Only show badge for non-default agents
     if (state.activeAgentId && state.activeAgentId !== 'default') {
       const badge = document.createElement('div');
@@ -712,7 +729,7 @@ onMessage('agentThinking', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
   if (state.activeAgentId && state.agentBubbles[state.activeAgentId]) {
-    state.agentBubbles[state.activeAgentId].bubble.innerHTML = '<span style="color:#999;font-size:13px;">Thinking...</span>';
+    state.agentBubbles[state.activeAgentId].bubble.innerHTML = '<span class="thinking-text">Thinking...</span>';
   }
 });
 
@@ -869,7 +886,9 @@ onMessage('configData', (msg) => {
 });
 
 onMessage('configUpdated', (msg) => {
-  if (!msg.success) renderError('Config update failed');
+  if (!msg.success) { renderError('Config update failed'); return; }
+  // Re-fetch config from server so UI reflects what was actually saved
+  sendWs({type: 'getConfig'});
 });
 
 // --- Model selection ---

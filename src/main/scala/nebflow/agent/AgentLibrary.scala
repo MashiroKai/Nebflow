@@ -1,22 +1,18 @@
 package nebflow.agent
 
-import cats.effect.{IO, Ref}
+import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.llm.{Config, NebflowServiceConfig}
 import nebflow.shared.{Defaults, MtimeCache}
 
 /**
- * Loads agent definitions from two sources:
+ * Manages agent definitions stored under ~/.nebflow/agents/<name>/.
  *
- *  1. Builtin agents — classpath:/agents/<name>/  (src/main/resources/agents/)
- *  2. External agents — ~/.nebflow/agents/<name>/  (user-created)
+ * All agents live on disk as user-editable files. Builtin agents (e.g. Nebula)
+ * are seeded on first run; after that they are treated the same as user-created ones.
  *
- * External agents with the same name are ignored (builtins take priority).
  * contextWindow / maxTokens are NOT in agent.json — resolved at runtime from nebflow.json.
- *
- * Uses mtime-based caching: external agent directories are cached and only re-read
- * when their modification time changes. Builtin agents are loaded once and never re-read.
  */
 class AgentLibrary(
   agentsDir: os.Path,
@@ -45,37 +41,10 @@ class AgentLibrary(
         provider.models.find(_.id == modelId).map(_.maxTokens).getOrElse(Defaults.MaxTokens)
 
   // ============================================================
-  // Builtin agents from classpath (immutable, loaded once)
+  // Filesystem cache (all agents live on disk)
   // ============================================================
 
-  private val builtinAgents: Map[String, AgentDef] =
-    val builtinNames = List("Nebula")
-    builtinNames.flatMap { name =>
-      Option(getClass.getResourceAsStream(s"/agents/$name/agent.json")).map { jsonStream =>
-        val json =
-          try scala.io.Source.fromInputStream(jsonStream).mkString
-          finally jsonStream.close()
-        val defn = io.circe.parser
-          .decode[AgentDef](json)
-          .getOrElse(AgentDef(name = name, description = ""))
-          .copy(systemPrompt = loadClasspathSystemMd(name))
-        defn.name -> defn
-      }
-    }.toMap
-
-  /** Load system.md for a builtin agent from classpath. */
-  private def loadClasspathSystemMd(name: String): String =
-    Option(getClass.getResourceAsStream(s"/agents/$name/system.md")) match
-      case Some(is) =>
-        try scala.io.Source.fromInputStream(is).mkString
-        finally is.close()
-      case None => ""
-
-  // ============================================================
-  // External agents from filesystem (mtime-cached)
-  // ============================================================
-
-  private val externalCache = MtimeCache.directory[String, AgentDef](
+  private val cache = MtimeCache.directory[String, AgentDef](
     () =>
       if !os.exists(agentsDir) then Nil
       else
@@ -91,25 +60,42 @@ class AgentLibrary(
   // Public API
   // ============================================================
 
-  /** Load all agent definitions (builtins + mtime-cached externals). */
-  def loadAll(): IO[Map[String, AgentDef]] =
-    externalCache.loadAll.map { externals =>
-      // Warn and skip external agents that shadow builtins
-      val (conflicts, valid) = externals.partition { (name, _) => builtinAgents.contains(name) }
-      conflicts.foreach { (name, _) =>
-        logger.warn(
-          s"External agent '$name' conflicts with builtin — ignored. Remove it from ${agentsDir}/$name/ to use the builtin."
-        )
-      }
-      builtinAgents ++ valid
+  /** Seed builtin agents to filesystem if they don't exist yet. */
+  def seedDefaults(): IO[Unit] = IO.blocking {
+    defaults.foreach { case DefaultAgent(name, agentJson, systemMd) =>
+      val dir = agentsDir / name
+      if !os.exists(dir / "agent.json") then
+        os.makeDir.all(dir)
+        os.write.over(dir / "agent.json", agentJson)
+        os.write.over(dir / "system.md", systemMd)
+        logger.info(s"Seeded default agent: $name")
     }
+  }
+
+  private case class DefaultAgent(name: String, agentJson: String, systemMd: String)
+
+  private val defaults = List(
+    DefaultAgent(
+      "Nebula",
+      """{"name":"Nebula","displayName":"Nebula","description":"AI coding assistant with full tool access","avatar":"<i data-lucide=\\"sparkles\\"></i>","tools":["*"],"mcpServers":["*"]}""",
+      """You are Nebula, an AI coding assistant running inside Nebflow.
+
+## Session Management
+
+- If the user asks for help, direct them to `/help`.
+- The Companion (Pickle) is a separate system. When the user addresses Pickle, stay out of the way — respond in one line or less for any part meant for you. Do not explain that you're not Pickle."""
+    )
+  )
+
+  /** Load all agent definitions from filesystem. */
+  def loadAll(): IO[Map[String, AgentDef]] = cache.loadAll
 
   /** Get a single agent by name. */
   def get(name: String): IO[Option[AgentDef]] =
     loadAll().map(_.get(name))
 
-  /** Clear cache — next loadAll() will re-read external agents from disk. */
-  def refresh(): IO[Unit] = externalCache.invalidate
+  /** Clear cache — next loadAll() will re-read agents from disk. */
+  def refresh(): IO[Unit] = cache.invalidate
 
 end AgentLibrary
 

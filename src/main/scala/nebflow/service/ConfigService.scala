@@ -8,6 +8,17 @@ import io.circe.{Json, JsonObject}
 object ConfigService:
   private val configPath = os.home / ".nebflow" / "nebflow.json"
 
+  def isConfigured: IO[Boolean] = IO.blocking {
+    if !os.exists(configPath) then false
+    else
+      val content = os.read(configPath).trim
+      if content.isEmpty || content == "{}" then false
+      else
+        parse(content).toOption.exists { json =>
+          json.hcursor.downField("llm").downField("providers").as[Map[String, Json]].toOption.exists(_.nonEmpty)
+        }
+  }
+
   def getConfig: IO[String] = IO.blocking {
     val content = if os.exists(configPath) then os.read(configPath) else "{}"
     // Redact sensitive fields before sending to client
@@ -32,6 +43,10 @@ object ConfigService:
    * Merge new config into existing, preserving secret values that were redacted as "***".
    * For each leaf string value: if the new value is "***", keep the existing value.
    * Also prevents empty string from overwriting an existing secret value.
+   *
+   * Keys absent from incoming are NOT preserved — this allows deletions
+   * (e.g. removing a provider) to take effect. Only individual "***" leaf values
+   * are carried over from the existing config.
    */
   private def mergeConfig(existing: String, incoming: String): String =
     def merge(existing: Json, incoming: Json, keyChain: List[String] = Nil): Json =
@@ -41,9 +56,7 @@ object ConfigService:
             val eVal = eObj(key).getOrElse(Json.Null)
             key -> merge(eVal, iVal, keyChain :+ key)
           }
-          // Preserve keys from existing that are not in incoming
-          val withExisting = eObj.toMap.filterNot { case (k, _) => merged.contains(k) }
-          Json.fromFields(merged ++ withExisting)
+          Json.fromFields(merged)
         case _ =>
           val currentKey = keyChain.lastOption.getOrElse("")
           // Leaf value: if incoming is "***", keep existing

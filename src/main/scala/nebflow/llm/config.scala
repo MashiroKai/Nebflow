@@ -120,9 +120,13 @@ object Config:
       case Some(p) => os.Path(p, os.pwd)
       case None => DefaultConfigPath
 
-    if !os.exists(path) then throw new RuntimeException(s"Config file not found: $path")
+    if !os.exists(path) then
+      return defaultServiceConfig
 
-    val raw = os.read(path)
+    val raw = os.read(path).trim
+    if raw.isEmpty || raw == "{}" then
+      return defaultServiceConfig
+
     val json = parse(raw) match
       case Right(j) => j
       case Left(err) => throw new RuntimeException(s"Invalid JSON in config: ${err.message}")
@@ -135,6 +139,15 @@ object Config:
       case Left(err) =>
         val path = io.circe.CursorOp.opsToPath(err.history)
         throw new RuntimeException(s"Config parse error at '$path': ${err.message}")
+
+  /** Minimal default config used when no config file exists. */
+  private lazy val defaultServiceConfig: NebflowServiceConfig =
+    NebflowServiceConfig(
+      llm = ServiceLlmConfig(
+        providers = Map.empty,
+        model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
+      )
+    )
 
   private def resolveEnvVarsInJson(json: Json): Json =
     json.fold(

@@ -180,6 +180,32 @@ export function restoreFromStorage() {
         box.appendChild(optsDiv);
       });
       bubble.appendChild(box);
+    } else if (m.type === 'askPermission') {
+      // Render as disabled permission prompt (will be replaced by interactive version if still pending)
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      row.appendChild(bubble);
+      chat.appendChild(row);
+      const box = document.createElement('div');
+      box.className = 'permission-pending-box option-box';
+      const q = document.createElement('div');
+      q.className = 'option-q';
+      q.textContent = 'Allow ' + (m.toolName || '?') + '?';
+      box.appendChild(q);
+      const optsDiv = document.createElement('div');
+      optsDiv.className = 'option-opts';
+      [{ label: 'Allow' }, { label: 'Deny' }].forEach(opt => {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        btn.textContent = opt.label;
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        optsDiv.appendChild(btn);
+      });
+      box.appendChild(optsDiv);
+      bubble.appendChild(box);
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
@@ -369,6 +395,32 @@ export function restoreFromBackendHistory(msgs) {
         });
         box.appendChild(optsDiv);
       });
+      bubble.appendChild(box);
+    } else if (m.type === 'askPermission') {
+      // Render as disabled permission prompt (will be replaced by interactive version if still pending)
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      row.appendChild(bubble);
+      chat.appendChild(row);
+      const box = document.createElement('div');
+      box.className = 'permission-pending-box option-box';
+      const q = document.createElement('div');
+      q.className = 'option-q';
+      q.textContent = 'Allow ' + (m.toolName || '?') + '?';
+      box.appendChild(q);
+      const optsDiv = document.createElement('div');
+      optsDiv.className = 'option-opts';
+      [{ label: 'Allow' }, { label: 'Deny' }].forEach(opt => {
+        const btn = document.createElement('button');
+        btn.className = 'option-btn';
+        btn.textContent = opt.label;
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+        optsDiv.appendChild(btn);
+      });
+      box.appendChild(optsDiv);
       bubble.appendChild(box);
     } else if (m.type === 'ask') {
       // Ask question (user side)

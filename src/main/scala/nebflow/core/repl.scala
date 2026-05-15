@@ -6,8 +6,6 @@ import nebflow.shared.*
 
 import java.nio.file.{Files, Paths}
 
-import scala.io.Source
-
 object Repl:
   private val IMAGE_EXTENSIONS = List(".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg")
   private val VIDEO_EXTENSIONS = List(".mp4", ".mov", ".avi", ".mkv", ".webm", ".flv", ".wmv", ".m4v")
@@ -88,12 +86,8 @@ object Repl:
   }
 
   def loadSystemPrompt(): String = // public for AgentActor
-    val resource = Option(getClass.getResourceAsStream("/agents/Nebula/system.md"))
-    resource match
-      case Some(is) =>
-        try Source.fromInputStream(is).mkString
-        catch case _: Exception => ""
-      case None => ""
+    val path = os.home / ".nebflow" / "agents" / "Nebula" / "system.md"
+    if os.exists(path) then os.read(path) else ""
 
   /**
    * Static environment info — injected once into system prompt, never updated per-turn.
