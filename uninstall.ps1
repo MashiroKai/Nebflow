@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $InstallDir = "$env:LOCALAPPDATA\Nebflow"
-$ConfigDir = Join-Path $env:USERPROFILE ".config\nebflow"
+$ConfigDir = Join-Path $env:USERPROFILE ".nebflow"
 
 Write-Host ""
 Write-Host "  Nebflow Uninstaller" -ForegroundColor Yellow

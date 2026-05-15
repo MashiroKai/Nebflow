@@ -175,7 +175,7 @@ if ($userPath -notlike "*$InstallDir*") {
 # --- Config ---
 Write-Host "[4/4] Setting up config..." -ForegroundColor Yellow
 
-$configDir = Join-Path $env:USERPROFILE ".config\nebflow"
+$configDir = Join-Path $env:USERPROFILE ".nebflow"
 $configFile = Join-Path $configDir "nebflow.json"
 if (-not (Test-Path $configFile)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
@@ -213,7 +213,7 @@ Write-Host "  Commands:" -ForegroundColor White
 Write-Host "    nebflow --help" -ForegroundColor Cyan
 Write-Host "    nebflow --server" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Config: $configFile" -ForegroundColor DarkGray
+Write-Host "  Config: $env:USERPROFILE\.nebflow\nebflow.json" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  NOTE: Restart your terminal for PATH to take effect." -ForegroundColor Yellow
 Write-Host ""
