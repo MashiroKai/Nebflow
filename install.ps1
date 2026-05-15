@@ -179,7 +179,7 @@ $configDir = Join-Path $env:USERPROFILE ".nebflow"
 $configFile = Join-Path $configDir "nebflow.json"
 if (-not (Test-Path $configFile)) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-    $configContent = "{`n}"
+    $configContent = "{}"
     [System.IO.File]::WriteAllText($configFile, $configContent)
     Write-Host "       Config created: $configFile" -ForegroundColor Green
     Write-Host "       Please edit it to set your API key." -ForegroundColor Yellow

@@ -124,7 +124,7 @@ object Config:
       return defaultServiceConfig
 
     val raw = os.read(path).trim
-    if raw.isEmpty || raw == "{}" then
+    if raw.isEmpty || raw == "{}" || raw.replace("\n", "").replace("\r", "").trim == "{}" then
       return defaultServiceConfig
 
     val json = parse(raw) match
