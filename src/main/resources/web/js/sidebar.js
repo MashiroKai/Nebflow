@@ -273,6 +273,7 @@ function bindSettingsEvents(content, cfg, allModels) {
       delete state.parsedConfig.llm.providers[name];
       state.configDirty = true;
       flushConfigToServer();
+      renderSettings();
     });
     card.addEventListener('click', () => {
       const p = state.parsedConfig.llm.providers[name];
@@ -303,6 +304,7 @@ function bindSettingsEvents(content, cfg, allModels) {
       state.parsedConfig.llm.model.fallbacks.splice(idx, 1);
       state.configDirty = true;
       flushConfigToServer();
+      renderSettings();
     });
   });
 
@@ -335,6 +337,7 @@ function bindSettingsEvents(content, cfg, allModels) {
       delete state.parsedConfig.mcpServers[name];
       state.configDirty = true;
       flushConfigToServer();
+      renderSettings();
     });
     card.addEventListener('click', () => {
       const s = state.parsedConfig.mcpServers[name];
@@ -1594,7 +1597,7 @@ export function createNewFolder(parentFolderId) {
     const name = input.value.trim();
     row.remove();
     if (name) {
-      const payload = { type: 'createFolder', name };
+      const payload = { type: 'createFolder', name, agentName: state.selectedAgent || 'Nebula' };
       if (parentFolderId) payload.parentId = parentFolderId;
       import('./ws.js').then(({ sendWs }) => sendWs(payload));
     }

@@ -23,22 +23,8 @@ class AgentService(library: AgentLibrary):
     library
       .get(name)
       .map(_.map { defn =>
-        val rawJson =
-          if defn.configPath.nonEmpty && os.exists(os.Path(defn.configPath) / "agent.json")
-          then os.read(os.Path(defn.configPath) / "agent.json")
-          else
-            // Builtin agent — reconstruct JSON from the definition
-            import io.circe.syntax.*
-            import io.circe.Json
-            val fields = List(
-              Some("name" -> defn.name.asJson),
-              Some("description" -> defn.description.asJson),
-              if defn.tools.nonEmpty then Some("tools" -> defn.tools.asJson) else None,
-              if defn.mcpServers.nonEmpty then Some("mcpServers" -> defn.mcpServers.asJson) else None,
-              defn.displayName.map(v => "displayName" -> v.asJson),
-              defn.avatar.map(v => "avatar" -> v.asJson)
-            ).flatten
-            Json.obj(fields*).noSpaces
+        val dir = os.Path(defn.configPath)
+        val rawJson = os.read(dir / "agent.json")
         AgentConfig(defn.name, rawJson, defn.systemPrompt)
       })
 
@@ -68,7 +54,7 @@ class AgentService(library: AgentLibrary):
       case None =>
         IO.blocking {
           val dir = AgentLibrary.defaultDir / name
-          if !os.exists(dir) then throw new RuntimeException(s"Agent not found: $name")
+          os.makeDir.all(dir)
           os.write.over(dir / "agent.json", configJson)
           os.write.over(dir / "system.md", systemMd)
         }.attempt

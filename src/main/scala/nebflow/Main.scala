@@ -17,23 +17,22 @@ object Main extends IOApp:
           case CliMode.Stop =>
             ProcessManager.stop().as(ExitCode.Success)
           case _ =>
-            val configPath = Config.DefaultConfigPath.toString
-            if !os.exists(Config.DefaultConfigPath) then
-              IO.println(s"Config file not found: $configPath") *>
-                IO.println("Create ~/.nebflow/nebflow.json with your LLM provider settings.") *>
-                IO.pure(ExitCode.Error)
-            else
-              ProcessManager.readPid() match
-                case Some(pid) if ProcessManager.isRunning(pid) =>
-                  IO.println(s"nebflow is already running (pid: $pid)") *>
-                    IO.println("Run 'nebflow stop' to stop it.") *>
-                    IO.pure(ExitCode.Error)
-                case _ =>
-                  val pid = java.lang.ProcessHandle.current().pid()
-                  ProcessManager.writePid(pid)
-                  nebflow.gateway.GatewayMain.run
-                    .guarantee(IO.blocking(ProcessManager.removePid()))
-                    .as(ExitCode.Success)
+            // Ensure config directory exists (first-run setup)
+            val configPath = Config.DefaultConfigPath
+            if !os.exists(configPath) then
+              os.write.over(configPath, "{}", createFolders = true)
+
+            ProcessManager.readPid() match
+              case Some(pid) if ProcessManager.isRunning(pid) =>
+                IO.println(s"nebflow is already running (pid: $pid)") *>
+                  IO.println("Run 'nebflow stop' to stop it.") *>
+                  IO.pure(ExitCode.Error)
+              case _ =>
+                val pid = java.lang.ProcessHandle.current().pid()
+                ProcessManager.writePid(pid)
+                nebflow.gateway.GatewayMain.run
+                  .guarantee(IO.blocking(ProcessManager.removePid()))
+                  .as(ExitCode.Success)
     end match
   end run
 end Main
