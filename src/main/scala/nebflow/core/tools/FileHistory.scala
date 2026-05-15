@@ -29,24 +29,30 @@ class FileHistory private (
    * No-op if the file doesn't exist or exceeds the size limit.
    */
   def snapshot(filePath: Path): IO[Unit] =
+    // Phase 1: Copy file to history dir (blocking I/O)
     IO.blocking {
-      if !Files.exists(filePath) || Files.isDirectory(filePath) then ()
-      else if Files.size(filePath) > maxFileSizeBytes then ()
+      if !Files.exists(filePath) || Files.isDirectory(filePath) then None
+      else if Files.size(filePath) > maxFileSizeBytes then None
       else
         val key = FileHistory.pathHash(filePath)
         val dir = historyRoot.resolve(key)
         Files.createDirectories(dir)
-        val ts = System.currentTimeMillis()
+        // Use nanoTime for unique filenames (monotonic, nanosecond precision)
+        val ts = System.nanoTime()
         val dest = dir.resolve(ts.toString)
-        Files.copy(filePath, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-        // Update in-memory index
+        Files.copy(filePath, dest)
+        Some((key, dir, ts))
+    }.flatMap {
+      case None => IO.unit
+      case Some((key, dir, ts)) =>
+        // Phase 2: Update in-memory index (Ref operation, not blocking)
         index.update { m =>
           val entries = m.getOrElse(key, Vector.empty)
           val updated = (entries :+ ts).sortBy(-_)
           m.updated(key, if updated.size > maxEntries then updated.take(maxEntries) else updated)
-        }
-        // Clean up excess snapshots on disk
-        cleanupOld(key, dir)
+        } *>
+        // Phase 3: Clean up excess files on disk (blocking)
+        IO.blocking(cleanupOld(key, dir))
     }
 
   /**
