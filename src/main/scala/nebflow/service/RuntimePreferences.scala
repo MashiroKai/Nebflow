@@ -135,8 +135,10 @@ object RuntimePreferencesService:
     }
 
   def create: IO[RuntimePreferencesService] =
-    IO.pure(new RuntimePreferencesService(
-      MtimeCache.file[RuntimePreferences](preferencesPath, parsePreferences)
-    ))
+    IO.pure(
+      new RuntimePreferencesService(
+        MtimeCache.file[RuntimePreferences](preferencesPath, parsePreferences)
+      )
+    )
 
 end RuntimePreferencesService

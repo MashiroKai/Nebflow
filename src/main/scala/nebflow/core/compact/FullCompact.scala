@@ -13,10 +13,6 @@ object FullCompact:
 
   private val logger = NebflowLogger.forName("nebflow.compact")
 
-  // How many recent "rounds" to preserve verbatim after compaction.
-  // A round = one assistant turn (possibly with tool_use) + the corresponding user response.
-  val PreserveRecentRounds = 3
-
   // Continuation prompt — appended after the summary to prevent the model from
   // apologizing, recapping, or asking the user what to do.
   private val ContinuationPrompt =
@@ -29,10 +25,11 @@ object FullCompact:
   /**
    * Parse LLM compaction response and build the compacted message list.
    *
-   * The result is: [summaryMessage] ++ preservedRecentMessages ++ [fileRestoreMessage?]
+   * The result is: [summaryMessage] + [fileRestoreMessage?]
    *
-   * This preserves the last N rounds of original messages so the model doesn't
-   * lose its immediate working context (open files, recent tool results, etc.).
+   * All original messages are replaced by the summary — no recent rounds are preserved.
+   * This avoids a compression death-loop when the last few messages contain huge tool results
+   * that can't be reduced, making compaction ineffective.
    *
    * @param text            LLM response text (contains <analysis>, <summary>, <files>)
    * @param originalMessages Original message history before compaction
@@ -54,21 +51,15 @@ object FullCompact:
       // 2. Extract <summary> content
       val summaryText = extractSummary(withoutAnalysis)
 
-      // 3. Split original messages: recent rounds to preserve, rest already summarized
-      val (preservable, recentToPreserve) = splitRecentRounds(originalMessages, PreserveRecentRounds)
+      // 3. Build file restore content from ReadTracker paths
+      val fileRestoreSection = buildFileRestoreSection(recentReadPaths, Set.empty, projectRoot)
 
-      // 4. Collect file paths already present in preserved messages (skip re-injecting)
-      val preservedFilePaths = collectReadFilePaths(recentToPreserve)
-
-      // 5. Build file restore content from ReadTracker paths, skipping duplicates
-      val fileRestoreSection = buildFileRestoreSection(recentReadPaths, preservedFilePaths, projectRoot)
-
-      // 6. Assemble summary message
+      // 4. Assemble summary message
       val message = Message(
         MessageRole.User,
         Left(
-          s"<context-compact mode=\"full\" preservedRounds=${PreserveRecentRounds}>" +
-            s"Compressed ${originalMessages.size} messages into summary + ${recentToPreserve.size} preserved recent messages.\n\n" +
+          s"<context-compact mode=\"full\" preservedRounds=0>" +
+            s"Compressed ${originalMessages.size} messages into summary.\n\n" +
             summaryText +
             "\n\n" + ContinuationPrompt +
             fileRestoreSection +
@@ -76,62 +67,11 @@ object FullCompact:
         )
       )
 
-      Right(List(message) ++ recentToPreserve)
+      Right(List(message))
   end parseResponse
 
   // ------------------------------------------------------------------
-  // Recent round preservation
-  // ------------------------------------------------------------------
-
-  /**
-   * Split message history into (messagesToSummarize, recentRoundsToPreserve).
-   *
-   * A "round" starts with an assistant message. We walk backwards from the
-   * tail and count N complete rounds (assistant + subsequent user response).
-   * System messages in the preserved tail are kept.
-   */
-  private def splitRecentRounds(
-    messages: List[Message],
-    roundsToKeep: Int
-  ): (List[Message], List[Message]) =
-    if roundsToKeep <= 0 || messages.size <= 4 then
-      // Too few messages to split meaningfully — summarize everything, preserve nothing
-      (messages, Nil)
-    else
-      // Walk backwards to find the split point
-      var roundsFound = 0
-      var splitIdx = messages.size
-      var i = messages.size - 1
-      while i >= 0 && roundsFound < roundsToKeep do
-        if messages(i).role == MessageRole.Assistant then
-          roundsFound += 1
-          splitIdx = i
-        i -= 1
-      end while
-
-      if roundsFound < roundsToKeep || splitIdx == 0 then
-        // Not enough complete rounds — summarize everything
-        (messages, Nil)
-      else
-        val (toSummarize, toPreserve) = messages.splitAt(splitIdx)
-        // Filter out any prior compact summaries from the preserved tail
-        val cleanPreserve = toPreserve.filterNot(isCompactSummaryMessage)
-        (toSummarize, cleanPreserve)
-  end splitRecentRounds
-
-  /** Collect file paths that appear as Read tool_use in the given messages. */
-  private def collectReadFilePaths(messages: List[Message]): Set[String] =
-    messages.flatMap { msg =>
-      msg.content match
-        case Right(blocks) =>
-          blocks.collect { case ContentBlock.ToolUse(_, "Read", input) =>
-            input("file_path").flatMap(_.asString)
-          }.flatten
-        case _ => Nil
-    }.toSet
-
-  // ------------------------------------------------------------------
-  // Text parsing (unchanged logic, cleaner structure)
+  // Text parsing
   // ------------------------------------------------------------------
 
   /**
@@ -151,22 +91,12 @@ object FullCompact:
       case Some(m) => m.group(1).trim
       case None => text.trim
 
-  /** Strip <files>...</files> tag — no longer used for file restoration. */
-  private def stripFiles(text: String): String =
-    val startTag = "<files>"
-    val endTag = "</files>"
-    val startIdx = text.indexOf(startTag)
-    val endIdx = text.indexOf(endTag)
-    if startIdx < 0 || endIdx < 0 || endIdx <= startIdx then text
-    else text.substring(0, startIdx) + text.substring(endIdx + endTag.length)
-
   // ------------------------------------------------------------------
   // File restoration from ReadTracker
   // ------------------------------------------------------------------
 
   /**
    * Build file restore section from ReadTracker paths.
-   * Skips files already present in the preserved messages.
    * Each file truncated to postCompactMaxCharsPerFile.
    * Total budget capped by postCompactTokenBudget.
    */
@@ -212,9 +142,20 @@ object FullCompact:
       val file = Paths.get(path.replaceFirst("^~", sys.props("user.home")))
       if !Files.exists(file) || !Files.isRegularFile(file) then ""
       else
-        val content = new String(Files.readAllBytes(file), "UTF-8")
-        if content.length <= maxChars then content
-        else content.take(maxChars) + s"\n... [truncated, ${content.length - maxChars} more chars]"
+        val fileSize = Files.size(file)
+        // Avoid OOM: skip files larger than 2x the budget (rough bytes-to-chars safety margin)
+        if fileSize > maxChars.toLong * 2 then
+          // Read only the first maxChars worth of bytes
+          val is = Files.newInputStream(file)
+          try
+            val bytes = new Array[Byte](math.min(fileSize.toInt, maxChars * 3))
+            val read = is.read(bytes)
+            new String(bytes, 0, read, "UTF-8").take(maxChars) + s"\n... [truncated]"
+          finally is.close()
+        else
+          val content = new String(Files.readAllBytes(file), "UTF-8")
+          if content.length <= maxChars then content
+          else content.take(maxChars) + s"\n... [truncated, ${content.length - maxChars} more chars]"
     catch case _: Exception => ""
 
   /** Check if a path is within the project root directory. */

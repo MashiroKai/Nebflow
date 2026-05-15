@@ -125,7 +125,7 @@ class FullCompactSpec extends CatsEffectSuite:
     assert(result.isLeft)
   }
 
-  test("parseResponse preserves recent rounds for long conversations") {
+  test("parseResponse does NOT preserve recent rounds — only summary") {
     val messages = (1 to 10).flatMap { i =>
       List(
         textMsg(MessageRole.User, s"user message $i"),
@@ -137,13 +137,10 @@ class FullCompactSpec extends CatsEffectSuite:
     val result = FullCompact.parseResponse(llmOut, messages, "/tmp/project")
     assert(result.isRight)
     val compacted = result.toOption.get
-    assert(compacted.size > 1, clues(compacted.size))
+    assert(clue(compacted.size) == 1, "Should only contain the summary message")
     val summaryContent = compacted.head.content.left.getOrElse("")
     assert(summaryContent.contains("<context-compact"))
-    assert(summaryContent.contains("preserved recent messages"))
-    val preserved = compacted.tail
-    assert(preserved.exists(_.textContent.contains("assistant reply 10")), "Should preserve most recent assistant")
-    assert(preserved.exists(_.textContent.contains("user message 10")), "Should preserve most recent user")
+    assert(summaryContent.contains("preservedRounds=0"))
   }
 
   test("parseResponse includes continuation prompt in summary") {
@@ -160,7 +157,7 @@ class FullCompactSpec extends CatsEffectSuite:
     assert(content.contains("do not acknowledge the summary"))
   }
 
-  test("parseResponse does not preserve rounds for short conversations") {
+  test("parseResponse returns single summary message for short conversations") {
     val messages = List(
       textMsg(MessageRole.User, "hello"),
       textMsg(MessageRole.Assistant, "world")

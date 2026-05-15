@@ -97,11 +97,8 @@ object GatewayMain extends IOApp.Simple:
                 val url = s"$baseUrl?token=$token"
 
                 logger.info(s"nebflow v${nebflow.Version.string}") *>
-                  (if !isConfigured then
-                    logger.info("No LLM provider configured — open the web UI to set up")
-                  else
-                    logger.info(s"Context window: $contextWindow tokens (from ${config.llm.model.default})")
-                  ) *>
+                  (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
+                   else logger.info(s"Context window: $contextWindow tokens (from ${config.llm.model.default})")) *>
                   RuntimePreferencesService.create.flatMap { runtimePrefs =>
                     RateLimiter.create().flatMap { rateLimiter =>
                       FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>

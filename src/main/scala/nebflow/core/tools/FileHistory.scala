@@ -7,14 +7,15 @@ import java.security.MessageDigest
 
 import scala.jdk.CollectionConverters.*
 
-/** VS Code-style file history: snapshots file content before overwrites.
-  *
-  * Storage layout:
-  *   ~/.nebflow/history/{pathHash}/{timestamp}
-  *
-  * Each file keeps up to `maxEntries` snapshots; oldest are evicted first.
-  * Files larger than `maxFileSizeBytes` are skipped.
-  */
+/**
+ * VS Code-style file history: snapshots file content before overwrites.
+ *
+ * Storage layout:
+ *   ~/.nebflow/history/{pathHash}/{timestamp}
+ *
+ * Each file keeps up to `maxEntries` snapshots; oldest are evicted first.
+ * Files larger than `maxFileSizeBytes` are skipped.
+ */
 class FileHistory private (
   private[tools] val historyRoot: Path,
   maxEntries: Int,
@@ -23,9 +24,10 @@ class FileHistory private (
   index: Ref[IO, Map[String, Vector[Long]]]
 ):
 
-  /** Snapshot a file's current content before it gets overwritten.
-    * No-op if the file doesn't exist or exceeds the size limit.
-    */
+  /**
+   * Snapshot a file's current content before it gets overwritten.
+   * No-op if the file doesn't exist or exceeds the size limit.
+   */
   def snapshot(filePath: Path): IO[Unit] =
     IO.blocking {
       if !Files.exists(filePath) || Files.isDirectory(filePath) then ()
@@ -47,9 +49,10 @@ class FileHistory private (
         cleanupOld(key, dir)
     }
 
-  /** Return the N most recently snapshotted file paths.
-    * Uses a reverse mapping (hash -> path) maintained on first snapshot.
-    */
+  /**
+   * Return the N most recently snapshotted file paths.
+   * Uses a reverse mapping (hash -> path) maintained on first snapshot.
+   */
   def recentFiles(n: Int): IO[List[Path]] =
     // We don't store original paths on disk (only hashes), so this is best-effort
     // from the in-memory index. For the compact use case, ReadTracker is still the
@@ -60,7 +63,12 @@ class FileHistory private (
   def clear(): IO[Unit] =
     IO.blocking {
       if Files.exists(historyRoot) then
-        Files.walk(historyRoot).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
+        Files
+          .walk(historyRoot)
+          .sorted(java.util.Comparator.reverseOrder())
+          .iterator()
+          .asScala
+          .foreach(Files.deleteIfExists)
     } *> index.set(Map.empty)
 
   // ---------------------------------------------------------------------------
@@ -68,11 +76,14 @@ class FileHistory private (
   // ---------------------------------------------------------------------------
 
   private def cleanupOld(key: String, dir: Path): Unit =
-    val files = Files.list(dir).iterator().asScala.toList
+    val files = Files
+      .list(dir)
+      .iterator()
+      .asScala
+      .toList
       .filter(f => Files.isRegularFile(f))
       .sortBy(f => f.getFileName.toString.toLongOption.getOrElse(0L))(Ordering[Long].reverse)
-    if files.size > maxEntries then
-      files.drop(maxEntries).foreach(f => Files.deleteIfExists(f))
+    if files.size > maxEntries then files.drop(maxEntries).foreach(f => Files.deleteIfExists(f))
 
 end FileHistory
 
@@ -92,4 +103,6 @@ object FileHistory:
     maxFileSizeBytes: Long = DefaultMaxFileSizeBytes
   ): IO[FileHistory] =
     IO.blocking(Files.createDirectories(historyRoot)) *>
-      Ref.of[IO, Map[String, Vector[Long]]](Map.empty).map(new FileHistory(historyRoot, maxEntries, maxFileSizeBytes, _))
+      Ref
+        .of[IO, Map[String, Vector[Long]]](Map.empty)
+        .map(new FileHistory(historyRoot, maxEntries, maxFileSizeBytes, _))
