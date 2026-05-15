@@ -64,6 +64,9 @@ export function renderMarkdownWithMath(text) {
     return prefix + `MATHBLOCK${mathBlocks.length - 1}END`;
   });
   let html = marked.parse(protected_, { headerIds: false });
+  // Wrap <pre> blocks with a copy button
+  html = html.replace(/(<pre[^>]*>)/g, '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="Copy code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span></button>$1');
+  html = html.replace(/<\/pre>/g, '</pre></div>');
   // Restore math blocks as KaTeX
   mathBlocks.forEach((block, i) => {
     const token = `MATHBLOCK${i}END`;
@@ -173,3 +176,30 @@ export function smartScroll() {
     }
   });
 }
+
+// === Code copy button handler ===
+window.copyCode = function(btn) {
+  const wrap = btn.closest('.code-block-wrap');
+  const pre = wrap && wrap.querySelector('pre');
+  const code = pre ? pre.textContent : '';
+  if (!code) return;
+  navigator.clipboard.writeText(code).then(() => {
+    const span = btn.querySelector('span');
+    const orig = span.textContent;
+    span.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      span.textContent = orig;
+      btn.classList.remove('copied');
+    }, 2000);
+  }).catch(() => {
+    // Fallback: select the code text
+    if (pre) {
+      const range = document.createRange();
+      range.selectNodeContents(pre);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  });
+};
