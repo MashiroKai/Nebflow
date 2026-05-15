@@ -60,6 +60,7 @@ object GatewayMain extends IOApp.Simple:
   ): IO[Unit] =
     val fromConfig = config.mcpServers.getOrElse(Map.empty)
     for
+      _ <- agentLibrary.seedDefaults()
       _ <- agentLibrary.loadAll()
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig, disabledServers)
@@ -84,16 +85,23 @@ object GatewayMain extends IOApp.Simple:
               } *> McpManager.create().flatMap { mcpManager =>
                 // --- Fast path: only essential init before server start ---
                 val chatRoutes = new ChatRoutes(handle, token)
+                val isConfigured = config.llm.providers.nonEmpty
                 val contextWindow =
-                  val (providerId, modelId) = Config.parseModelRef(config.llm.model.default)
-                  val provider = config.llm.providers
-                    .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
-                  provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
+                  if !isConfigured then Defaults.ContextWindow
+                  else
+                    val (providerId, modelId) = Config.parseModelRef(config.llm.model.default)
+                    val provider = config.llm.providers
+                      .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
+                    provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
                 val baseUrl = s"http://localhost:${cfg.port}"
                 val url = s"$baseUrl?token=$token"
 
                 logger.info(s"nebflow v${nebflow.Version.string}") *>
-                  logger.info(s"Context window: $contextWindow tokens (from ${config.llm.model.default})") *>
+                  (if !isConfigured then
+                    logger.info("No LLM provider configured — open the web UI to set up")
+                  else
+                    logger.info(s"Context window: $contextWindow tokens (from ${config.llm.model.default})")
+                  ) *>
                   RuntimePreferencesService.create.flatMap { runtimePrefs =>
                     RateLimiter.create().flatMap { rateLimiter =>
                       FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>

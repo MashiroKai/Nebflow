@@ -1025,13 +1025,16 @@ class WebSocketRoutes(
           }
 
         case "getConfig" =>
-          configService.getConfig.flatMap { cfg =>
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "configData".asJson,
-                "config" -> cfg.asJson
+          configService.isConfigured.flatMap { configured =>
+            configService.getConfig.flatMap { cfg =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "configData".asJson,
+                  "config" -> cfg.asJson,
+                  "configured" -> configured.asJson
+                )
               )
-            )
+            }
           }
 
         case "updateConfig" =>
@@ -1206,6 +1209,17 @@ class WebSocketRoutes(
       case "askUser" =>
         val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
         sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items)))
+
+      case "askPermission" =>
+        val toolName = hc.downField("toolName").as[String].getOrElse("")
+        val summary = hc.downField("summary").as[String].getOrElse("")
+        val permInput = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
+        if toolName.nonEmpty then
+          sharedResources.sessionStore.appendUiMessages(
+            sessionId,
+            List(UiMessage.AskPermission(toolName, summary, permInput))
+          )
+        else IO.unit
 
       case _ => IO.unit
 

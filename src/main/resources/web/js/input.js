@@ -7,6 +7,7 @@ import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview,
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
+import { renderTaskList } from './taskList.js';
 
 // ---------- Slash Commands ----------
 const slashCommands = {
@@ -14,6 +15,8 @@ const slashCommands = {
     desc: 'Clear LLM context (keeps chat history)',
     run: () => {
       sendWs({type:'command', command:'clear', sessionId: state.activeSessionId});
+      delete state.sessionTasks[state.activeSessionId];
+      renderTaskList([]);
       renderSystemBubble('Context cleared. LLM memory reset.');
     }
   },
