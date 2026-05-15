@@ -76,6 +76,8 @@ object Fallback:
           ErrorClassification(FailoverReason.ModelNotFound, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else if msg.contains("invalid request") || msg.contains("bad request") || msg.contains("400") then
           ErrorClassification(FailoverReason.Format, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else if msg.contains("empty response") || msg.contains("no content") then
+          ErrorClassification(FailoverReason.EmptyStream, ErrorPermanence.Transient, message = Some(error.getMessage))
         else ErrorClassification(FailoverReason.Unknown, ErrorPermanence.Transient, message = Some(error.getMessage))
         end if
 

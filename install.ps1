@@ -4,16 +4,17 @@ $ProgressPreference = "SilentlyContinue"
 $Version = if ($env:VERSION) { $env:VERSION } else { "1.05.067" }
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\Nebflow" }
 $JarName = "nebflow-assembly-$Version.jar"
-$DownloadUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version/$JarName"
+$DownloadUrl = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/$JarName"
 
 Write-Host ""
-Write-Host "  _   _ _____ _     _     ___  " -ForegroundColor Cyan
-Write-Host " | \ | | ____| |   | |   / _ \ " -ForegroundColor Cyan
-Write-Host " |  \| |  _| | |   | |  | | | |" -ForegroundColor Cyan
-Write-Host " | |\  | |___| |___| |__| |_| |" -ForegroundColor Cyan
-Write-Host " |_| \_|_____|_____|_____\___/ " -ForegroundColor Cyan
+Write-Host "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗" -ForegroundColor Cyan
+Write-Host "  ████╗  ██║██╔════╝██╔══██╗██╔════╝██║     ██╔═══██╗██║    ██║" -ForegroundColor Cyan
+Write-Host "  ██╔██╗ ██║█████╗  ██████╔╝█████╗  ██║     ██║   ██║██║ █╗ ██║" -ForegroundColor Cyan
+Write-Host "  ██║╚██╗██║██╔══╝  ██╔══██╗██╔══╝  ██║     ██║   ██║██║███╗██║" -ForegroundColor Cyan
+Write-Host "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝" -ForegroundColor Cyan
+Write-Host "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Installer v$Version" -ForegroundColor DarkGray
+Write-Host "  Nebflow v$Version Installer" -ForegroundColor DarkGray
 Write-Host ""
 
 # --- Check Java ---
@@ -132,7 +133,14 @@ $jarPath = Join-Path $InstallDir $JarName
 if (Test-Path $jarPath) {
     Write-Host "       Already exists, skipping. (Delete $jarPath to re-download)" -ForegroundColor DarkGray
 } else {
-    Invoke-WebRequest -Uri $DownloadUrl -OutFile $jarPath -UseBasicParsing
+    # Try primary first, fall back to GitHub Releases
+    try {
+        Invoke-WebRequest -Uri $DownloadUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 30
+    } catch {
+        Write-Host "       Primary source unavailable, trying GitHub Releases..." -ForegroundColor Yellow
+        $mirrorUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version/$JarName"
+        Invoke-WebRequest -Uri $mirrorUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
+    }
     $size = [math]::Round((Get-Item $jarPath).Length / 1MB, 1)
     Write-Host "       Downloaded ($size MB)" -ForegroundColor Green
 }
@@ -156,6 +164,7 @@ Set-Content -Path $wrapperPath -Value $wrapperContent -Encoding UTF8
 $cmdPath = Join-Path $InstallDir "nebflow.cmd"
 $cmdContent = @"
 @echo off
+set "PATH=%PATH%;C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot\bin;C:\Program Files\Temurin\jdk-17*\bin;C:\Program Files\Java\jdk-17*\bin"
 for %%f in ("%~dp0nebflow-assembly-*.jar") do set JAR=%%f
 if "%JAR%"=="" (
     echo ERROR: nebflow JAR not found in %~dp0

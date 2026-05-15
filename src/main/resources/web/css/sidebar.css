@@ -250,39 +250,6 @@
 }
 
 /* Multi-selection styles */
-.session-item .ms-check {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 1.5px solid var(--color-frame-border);
-  flex-shrink: 0;
-  transition: all 0.15s;
-  opacity: 0;
-  margin-right: -4px;
-}
-.session-item .ms-check svg {
-  width: 10px;
-  height: 10px;
-  opacity: 0;
-  transform: scale(0.5);
-  transition: opacity 0.12s, transform 0.12s;
-}
-.session-item.selected .ms-check,
-.session-item.has-selection-nearby .ms-check {
-  opacity: 1;
-}
-.session-item.selected .ms-check {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-}
-.session-item.selected .ms-check svg {
-  opacity: 1;
-  transform: scale(1);
-  color: #fff;
-}
 .session-item.selected {
   background: hsla(145, 76%, 40%, 0.06);
 }
@@ -1094,6 +1061,52 @@
   resize: vertical;
   line-height: 1.5;
   font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.cfg-models-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cfg-model-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cfg-model-row .cfg-input {
+  flex: 1;
+  min-width: 0;
+}
+.cfg-model-row .cfg-model-id { flex: 2; }
+.cfg-model-row .cfg-model-max,
+.cfg-model-row .cfg-model-ctx { flex: 1; }
+.cfg-model-remove {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--color-error, #e44);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+.cfg-model-remove:hover {
+  background: var(--color-error, #e44)20;
+  border-color: var(--color-error, #e44);
+}
+.cfg-model-add {
+  background: none;
+  border: 1px dashed var(--color-frame-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  align-self: flex-start;
+}
+.cfg-model-add:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 .cfg-modal-actions {
   display: flex;

@@ -162,10 +162,19 @@ object LlmInterface:
                                   lockedRef.set(true) *> winnerRef.set(Some(candidate))
                                 case _ => IO.unit
                             }
-                            .map {
+                            .evalMap {
                               case done: StreamChunk.Done =>
-                                done.copy(contextWindow = Some(candidate.contextWindow))
-                              case other => other
+                                lockedRef.get.flatMap { locked =>
+                                  if locked then
+                                    IO.pure(done.copy(contextWindow = Some(candidate.contextWindow)))
+                                  else
+                                    IO.raiseError(
+                                      new RuntimeException(
+                                        s"Stream completed with no content (${candidate.providerId}/${candidate.model})"
+                                      )
+                                    )
+                                }
+                              case other => IO.pure(other)
                             }
                             .handleErrorWith { err =>
                               fs2.Stream.eval(lockedRef.get).flatMap { locked =>

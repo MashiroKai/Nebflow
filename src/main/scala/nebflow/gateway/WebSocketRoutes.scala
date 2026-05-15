@@ -4,7 +4,7 @@ import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
-import io.circe.Json
+import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import nebflow.agent.*
@@ -15,6 +15,7 @@ import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.service.*
 import nebflow.shared.*
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
+import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
@@ -198,6 +199,36 @@ class WebSocketRoutes(
         ) *>
           Forbidden("Invalid token")
       end if
+
+    // --- External event injection (for hook -> agent feedback loop) ---
+    case req @ POST -> Root / "api" / "sessions" / sessionId / "inject" =>
+      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+      val provided = if cookieToken.nonEmpty then cookieToken else req.params.get("token").getOrElse("")
+      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
+      else
+        (for
+          meta <- sessionStore.getSessionMeta(sessionId)
+          _ <- IO.fromOption(meta)(new RuntimeException(s"Session not found: $sessionId"))
+          result <- req.as[String].flatMap { text =>
+            parse(text).toOption match
+              case Some(json) =>
+                val content = json.hcursor.downField("content").as[String].getOrElse("")
+                if content.isEmpty then BadRequest("Missing 'content' field")
+                else
+                  val source = json.hcursor.downField("source").as[String].getOrElse("hook")
+                  val eventType = json.hcursor.downField("eventType").as[String].getOrElse("feedback")
+                  val metadata = json.hcursor.downField("metadata").as[JsonObject].getOrElse(JsonObject.empty)
+                  val correlationId = json.hcursor.downField("correlationId").as[Option[String]].getOrElse(None)
+                  val event = AgentCommand.ExternalEvent(source, eventType, content, metadata, correlationId)
+                  handleBridgeAgentCommand(sessionId, event) *>
+                    Ok(Json.obj("status" -> "ok".asJson, "sessionId" -> sessionId.asJson))
+              case None =>
+                BadRequest("Invalid JSON body")
+          }
+        yield result).handleErrorWith {
+          case e: RuntimeException => NotFound(Json.obj("error" -> e.getMessage.asJson))
+          case e => InternalServerError(Json.obj("error" -> e.getMessage.asJson))
+        }
 
     case req @ GET -> Root =>
       StaticFile.fromResource("web/index.html", Some(req)).getOrElseF(NotFound())
