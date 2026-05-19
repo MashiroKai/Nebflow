@@ -1,7 +1,7 @@
 package nebflow.agent
 
-import cats.effect.IO
 import cats.effect.std.{Dispatcher, Semaphore}
+import cats.effect.{IO, Ref}
 import nebflow.bridge.BridgeManager
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
@@ -9,8 +9,7 @@ import nebflow.core.hooks.{HookEngine, HooksConfig}
 import nebflow.core.task.TaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderRegistry}
-import nebflow.service.RuntimePreferencesService
+import nebflow.llm.{ModelCandidate, ProviderRegistry, ThinkingConfig}
 import nebflow.shared.*
 
 /**
@@ -24,7 +23,7 @@ case class SharedResources(
   dispatcher: Dispatcher[IO],
   sessionStore: SessionStore,
   projectRoot: os.Path,
-  runtimePrefs: RuntimePreferencesService,
+  thinkingConfigRef: Ref[IO, ThinkingConfig],
   rateLimiter: RateLimiter,
   fileChangeTracker: FileChangeTracker,
   contextWindow: Int,

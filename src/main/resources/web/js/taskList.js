@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 const MAX_VISIBLE = 10;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
 
@@ -56,7 +58,7 @@ export function renderTaskList(tasks) {
 
   let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
   html += '<div class="task-header">';
-  html += `<button class="task-toggle" title="${collapsed ? '展开' : '收起'}"><i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i></button>`;
+  html += `<button class="task-toggle" title="${collapsed ? t('task.expand') : t('task.collapse')}"><i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i></button>`;
   html += `<span class="task-count">${active.length} task${active.length !== 1 ? 's' : ''}</span>`;
   const parts = [];
   if (terminalCount > 0) parts.push(`${terminalCount} done`);
@@ -107,7 +109,7 @@ export function renderTaskList(tasks) {
       const nowCollapsed = !card.classList.contains('collapsed');
       card.classList.toggle('collapsed', nowCollapsed);
       setCollapsed(nowCollapsed);
-      toggleBtn.title = nowCollapsed ? '展开' : '收起';
+      toggleBtn.title = nowCollapsed ? t('task.expand') : t('task.collapse');
       const icon = toggleBtn.querySelector('i');
       if (icon) icon.setAttribute('data-lucide', nowCollapsed ? 'chevron-down' : 'chevron-up');
       if (typeof lucide !== 'undefined') lucide.createIcons();

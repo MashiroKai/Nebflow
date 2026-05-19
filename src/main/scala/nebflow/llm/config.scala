@@ -1,7 +1,8 @@
 package nebflow.llm
 
-import io.circe.generic.semiauto.deriveDecoder
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.parse
+import io.circe.syntax.*
 import io.circe.{Decoder, Json}
 import nebflow.shared.Defaults
 
@@ -91,10 +92,29 @@ case class ServiceLlmConfig(
 object ServiceLlmConfig:
   given Decoder[ServiceLlmConfig] = deriveDecoder[ServiceLlmConfig]
 
+case class ThinkingConfig(
+  enabled: Boolean = true
+)
+
+object ThinkingConfig:
+  given io.circe.Encoder[ThinkingConfig] = io.circe.generic.semiauto.deriveEncoder
+  given io.circe.Decoder[ThinkingConfig] = io.circe.generic.semiauto.deriveDecoder
+
+  /** Convert to the raw JSON shape expected by LLM adapters (e.g. Anthropic extended thinking). */
+  def toLlmJson(tc: ThinkingConfig): io.circe.Json =
+    if tc.enabled then
+      io.circe.Json.obj(
+        "type" -> "enabled".asJson,
+        "budget_tokens" -> 32000.asJson
+      )
+    else io.circe.Json.Null
+end ThinkingConfig
+
 case class NebflowServiceConfig(
   llm: ServiceLlmConfig,
   mcpServers: Option[Map[String, McpServerConfig]] = None,
-  search: Option[SearchConfig] = None
+  search: Option[SearchConfig] = None,
+  thinkingConfig: Option[ThinkingConfig] = None
 )
 
 object NebflowServiceConfig:

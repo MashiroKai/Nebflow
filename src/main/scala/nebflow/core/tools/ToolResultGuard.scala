@@ -6,6 +6,12 @@ import nebflow.core.compact.CompactConfig
  * Centralized guard that checks tool results against context window pressure.
  * Instead of rejecting oversized results, it truncates them to fit the budget
  * so the LLM can still see partial output and decide what to do next.
+ *
+ * NOTE: This only guards individual tool results against the LAST KNOWN LLM
+ * input token count (ctx.inputTokens). It does NOT account for accumulated
+ * tool results across the current turn. The cumulative safety net is in
+ * AgentCore.pipeLlmCall's pre-flight budget check, which forces compaction
+ * before the LLM call if total estimated tokens exceed the context window.
  */
 object ToolResultGuard:
 

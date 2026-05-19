@@ -177,24 +177,7 @@
   margin-bottom: 3px;
 }
 
-#new-session-btn {
-  background: none;
-  border: 1px solid var(--color-frame-border);
-  color: var(--color-frame-text-muted);
-  font-size: 15px;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s;
-  font-family: inherit;
-  line-height: 1;
-  opacity: 0.7;
-}
-#new-session-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); border-color: var(--color-frame-text-muted); opacity: 1; }
+
 .panel-actions {
   display: flex;
   gap: 4px;
@@ -971,6 +954,12 @@
   color: var(--color-frame-text-muted);
   margin-bottom: 4px;
 }
+.cfg-hint {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  opacity: 0.6;
+  margin-top: 2px;
+}
 .cfg-select {
   width: 100%;
   background: var(--color-frame-input-bg);
@@ -1096,13 +1085,39 @@
 }
 .cfg-model-add {
   background: none;
-  border: 1px dashed var(--color-frame-border);
-  color: var(--color-text-secondary);
+  border: 1px dashed var(--color-frame-text-dim);
+  color: var(--color-frame-text-muted);
   cursor: pointer;
   padding: 4px 12px;
   border-radius: 4px;
   font-size: 13px;
   align-self: flex-start;
+}
+.cfg-password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.cfg-password-wrap input {
+  padding-right: 32px;
+}
+.cfg-eye-btn {
+  position: absolute;
+  right: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-frame-text-muted);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  line-height: 0;
+}
+.cfg-eye-btn:hover {
+  color: var(--color-frame-text);
+  background: var(--color-frame-hover);
 }
 .cfg-model-add:hover {
   border-color: var(--color-primary);
@@ -1122,8 +1137,26 @@
 }
 .cfg-btn-save:hover { background: #07c16020 !important; }
 
+/* ── Config Toast (validation errors) ─────────────────────────────── */
+.cfg-toast {
+  position: fixed; bottom: 20px; right: 20px; z-index: 10000;
+  max-width: 400px; padding: 10px 16px; border-radius: 8px;
+  font-size: 13px; line-height: 1.4;
+  animation: cfg-toast-in 0.2s ease-out;
+}
+.cfg-toast-error {
+  background: #f44336; color: #fff;
+  box-shadow: 0 4px 12px rgba(244,67,54,0.3);
+}
+@keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
+  /* cfg-model-add: ensure dashed border visible on dark modal bg */
+  .cfg-model-add {
+    border-color: var(--color-frame-text-dim);
+    color: var(--color-frame-text-muted);
+  }
   .search-result-snippet mark { color: #95ec69; }
   .search-result-type.user { background: rgba(7,193,96,0.18); color: #5cd88a; }
   .search-result-type.ai { background: rgba(91,141,217,0.18); color: #7cb3ff; }

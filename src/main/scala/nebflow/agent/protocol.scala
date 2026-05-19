@@ -62,6 +62,7 @@ object AgentCommand:
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]],
     compactedMessages: Option[List[Message]] = None,
     thinking: Option[String] = None,
+    thinkingSignature: Option[String] = None,
     updatedWriteTracker: Map[String, WriteTrackerEntry] = Map.empty
   ) extends AgentCommand
 
@@ -74,6 +75,12 @@ object AgentCommand:
   case class TriggerCompaction(
     mode: String,
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None
+  ) extends AgentCommand
+
+  // /ask — inline Q&A using agent's cached system prompt + tools
+  case class AskQuestion(
+    question: String,
+    sessionId: String
   ) extends AgentCommand
 
   // Session model switched — update contextWindow for compaction threshold
@@ -185,6 +192,9 @@ enum AgentStreamEvent:
   case ToolCallDetected(name: String)
   case RetryStatus(message: String)
   case Done(model: Option[String] = None, contextWindow: Option[Int] = None, inputTokens: Option[Int] = None)
+
+  /** Emitted after each LlmComplete round to keep frontend context bar up to date in real time. */
+  case UsageUpdate(inputTokens: Int, contextWindow: Int)
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   case CompactComplete(before: Int, after: Int, reportPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
@@ -254,6 +264,13 @@ enum AgentStreamEvent:
       val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
       val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
       inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
+    case UsageUpdate(inputTokens, contextWindow) =>
+      Json.obj(
+        "type" -> "usageUpdate".asJson,
+        "sessionId" -> sessionId.asJson,
+        "inputTokens" -> inputTokens.asJson,
+        "contextWindow" -> contextWindow.asJson
+      )
     case CompactStart(mode, inputTokens, threshold) =>
       if isSubagent then
         Json.obj(
@@ -402,7 +419,11 @@ case class SessionContext(
   /** Context window for this session's current model — updated when user switches models. */
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
   /** Cached memory block — refreshed at lifecycle points (new session, compact, clear), not every turn. */
-  memoryBlock: String = ""
+  memoryBlock: String = "",
+  /** When Some(question), this turn is an inline /ask — single Q&A, no history write-back. */
+  askMode: Option[String] = None,
+  /** Auto-detected language for system prompt injection. Per-session, set on first user message. */
+  language: Option[String] = None
 )
 
 /** Pending user interaction deferreds. */
@@ -449,6 +470,7 @@ case class CompactionState(
   /** Timestamp of the last compaction failure (epoch ms) — used for retry backoff. */
   lastCompactionFailureAt: Long = 0L,
   latestUsage: Option[TokenUsage] = None,
+  lastModel: Option[String] = None,
   /** Highest context-pressure reminder level shown for this session (0–100). Per-session isolation. */
   highestPressureLevel: Int = 0
 )
@@ -519,6 +541,7 @@ extension (s: AgentState)
   def compactionFailures: Int = s.compaction.compactionFailures
   def lastCompactionFailureAt: Long = s.compaction.lastCompactionFailureAt
   def latestUsage: Option[TokenUsage] = s.compaction.latestUsage
+  def lastModel: Option[String] = s.compaction.lastModel
   def emptyResponseRetries: Int = s.execution.emptyResponseRetries
   def pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = s.execution.interaction.flatMap(_.pendingAskUser)
 
@@ -529,6 +552,8 @@ extension (s: AgentState)
   def writesSinceLastRead: Map[String, WriteTrackerEntry] = s.session.writesSinceLastRead
   def contextWindow: Int = s.session.contextWindow
   def memoryBlock: String = s.session.memoryBlock
+  def askMode: Option[String] = s.session.askMode
+  def language: Option[String] = s.session.language
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
@@ -575,6 +600,12 @@ extension (s: AgentState)
   def withMemoryBlock(block: String): AgentState =
     s.copy(session = s.session.copy(memoryBlock = block))
 
+  def withAskMode(mode: Option[String]): AgentState =
+    s.copy(session = s.session.copy(askMode = mode))
+
+  def withLanguage(lang: Option[String]): AgentState =
+    s.copy(session = s.session.copy(language = lang))
+
   def withPendingCompaction(job: Option[CompactionJob]): AgentState =
     s.copy(compaction = s.compaction.copy(pendingJob = job))
 
@@ -589,6 +620,9 @@ extension (s: AgentState)
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
+
+  def withLastModel(model: Option[String]): AgentState =
+    s.copy(compaction = s.compaction.copy(lastModel = model))
 
   /** Update contextWindow only if the LLM reports a different value (e.g. after fallback). */
   def updateContextWindowIfNeeded(reported: Option[Int]): AgentState =
@@ -619,6 +653,7 @@ case class ConsumeResult(
   stopReason: Option[String],
   usage: Option[TokenUsage] = None,
   thinking: Option[String] = None,
+  thinkingSignature: Option[String] = None,
   model: Option[String] = None,
   contextWindow: Option[Int] = None
 )

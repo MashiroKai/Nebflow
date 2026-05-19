@@ -4,6 +4,8 @@ import cats.effect.{IO, Ref}
 import nebflow.bridge.FeishuClient
 import nebflow.core.NebflowLogger
 
+import scala.concurrent.duration.DurationLong
+
 /**
  * Manages outbound messages to Feishu for a single conversation turn.
  *
@@ -28,6 +30,7 @@ class FeishuReplyDispatcher(
   private val cardMsgId = Ref.unsafe[IO, Option[String]](None)
   private val lastPatchMs = Ref.unsafe[IO, Long](0L)
   private val typingReactionId = Ref.unsafe[IO, Option[String]](None)
+  private val doneFlag = Ref.unsafe[IO, Boolean](false)
 
   private val PatchIntervalMs = 300L
   private val MaxCardLength = 4000
@@ -35,54 +38,63 @@ class FeishuReplyDispatcher(
 
   /** Show typing indicator on user's message. Non-blocking — errors are logged, not raised. */
   def showTyping(): IO[Unit] =
-    client.addReaction(userMessageId, TypingEmoji).flatMap { reactionId =>
-      typingReactionId.set(Some(reactionId))
-    }.handleErrorWith { e =>
-      logger.warn(s"[feishu] add typing reaction failed: ${e.getMessage}")
-    }
+    client
+      .addReaction(userMessageId, TypingEmoji)
+      .flatMap { reactionId =>
+        typingReactionId.set(Some(reactionId))
+      }
+      .handleErrorWith { e =>
+        logger.warn(s"[feishu] add typing reaction failed: ${e.getMessage}")
+      }
 
   /** Append a text delta. Accumulates and fires async patch with throttle. */
   def onTextDelta(delta: String): IO[Unit] =
     if delta.isEmpty then IO.unit
     else textBuffer.update(_ ++= delta) *> fireAsyncPatch()
 
-  /** Finalize the turn: flush remaining text, remove typing indicator. */
+  /** Finalize the turn: flush remaining text (without stop button), remove typing indicator. */
   def onDone(): IO[Unit] =
-    textBuffer.get.map(_.toString).flatMap { text =>
-      if text.nonEmpty then finalFlush(text) else IO.unit
-    } *> removeTyping()
+    // Cancel any in-flight async patch by setting a flag, then do a synchronous final flush
+    doneFlag.set(true) *>
+      textBuffer.get.map(_.toString).flatMap { text =>
+        if text.nonEmpty then finalFlushClean(text) else IO.unit
+      } *> removeTyping()
 
   /** Force-flush any remaining text (used when replacing with a new dispatcher). */
   def flushAndClose(): IO[Unit] =
-    textBuffer.get.map(_.toString).flatMap { text =>
-      if text.nonEmpty then finalFlush(text).attempt.void else IO.unit
-    } *> removeTyping()
+    doneFlag.set(true) *>
+      textBuffer.get.map(_.toString).flatMap { text =>
+        if text.nonEmpty then finalFlushClean(text).attempt.void else IO.unit
+      } *> removeTyping()
 
   // -- internal --
 
-  /** Fire-and-forget: schedule a patch if throttle allows. Never blocks the caller. */
+  /** Fire-and-forget: schedule a patch if throttle allows. Skipped after done. */
   private def fireAsyncPatch(): IO[Unit] =
-    val now = System.currentTimeMillis()
-    lastPatchMs.get.flatMap { last =>
-      if now - last >= PatchIntervalMs then
-        lastPatchMs.set(now)
-        cardMsgId.get.flatMap {
-          case Some(msgId) =>
-            // Already have a card — patch asynchronously (fire-and-forget)
-            textBuffer.get.flatMap { buf =>
-              val text = truncate(buf.toString)
-              if text.nonEmpty then
-                client.patchReplyCard(msgId, text).handleErrorWith(_ => IO.unit).start.void
-              else IO.unit
+    doneFlag.get.flatMap { done =>
+      if done then IO.unit // Already finalized — skip stale patches
+      else
+        val now = System.currentTimeMillis()
+        lastPatchMs.get.flatMap { last =>
+          if now - last >= PatchIntervalMs then
+            lastPatchMs.set(now)
+            cardMsgId.get.flatMap {
+              case Some(msgId) =>
+                // Already have a card — patch asynchronously (fire-and-forget)
+                textBuffer.get.flatMap { buf =>
+                  val text = truncate(buf.toString)
+                  if text.nonEmpty then client.patchReplyCard(msgId, text).handleErrorWith(_ => IO.unit).start.void
+                  else IO.unit
+                }
+              case None =>
+                // First message — must be synchronous to capture msgId
+                textBuffer.get.flatMap { buf =>
+                  val text = buf.toString
+                  if text.nonEmpty then sendOrPatch(text) else IO.unit
+                }
             }
-          case None =>
-            // First message — must be synchronous to capture msgId
-            textBuffer.get.flatMap { buf =>
-              val text = buf.toString
-              if text.nonEmpty then sendOrPatch(text) else IO.unit
-            }
+          else IO.unit
         }
-      else IO.unit
     }
 
   private def sendOrPatch(text: String): IO[Unit] =
@@ -94,24 +106,40 @@ class FeishuReplyDispatcher(
         }
       case None =>
         // First delta for this turn — create a new card
-        client.sendReplyCard(chatId, chatIdType, display).flatMap { msgId =>
-          cardMsgId.set(Some(msgId))
-        }.void.handleErrorWith { e =>
-          logger.warn(s"[feishu] send card failed: ${e.getMessage}")
-        }
+        client
+          .sendReplyCard(chatId, chatIdType, display)
+          .flatMap { msgId =>
+            cardMsgId.set(Some(msgId))
+          }
+          .void
+          .handleErrorWith { e =>
+            logger.warn(s"[feishu] send card failed: ${e.getMessage}")
+          }
     }
 
-  private def finalFlush(text: String): IO[Unit] =
+  /** Final flush: synchronous, uses plain card (no stop button). Retries on rate limit. */
+  private def finalFlushClean(text: String): IO[Unit] =
     val display = truncate(text)
     cardMsgId.get.flatMap {
       case Some(msgId) =>
-        client.patchReplyCard(msgId, display).handleErrorWith { e =>
-          logger.warn(s"[feishu] final patch failed: ${e.getMessage}")
-        }
+        retryPatch(() => client.patchCard(msgId, display))
       case None =>
-        client.sendReplyCard(chatId, chatIdType, display).void.handleErrorWith { e =>
+        client.sendMarkdownCard(chatId, chatIdType, display).void.handleErrorWith { e =>
           logger.warn(s"[feishu] final send failed: ${e.getMessage}")
         }
+    }
+
+  /** Retry a patch operation with backoff (handles Feishu rate limit). */
+  private def retryPatch(op: () => IO[Unit], attempt: Int = 0): IO[Unit] =
+    op().handleErrorWith { e =>
+      val msg = e.getMessage
+      if attempt < 3 && (msg.contains("frequency limit") || msg.contains("230020")) then
+        val delay = (300L * (attempt + 1)).millis
+        logger.debug(s"[feishu] rate limited, retry ${attempt + 1}/3 after ${delay.toMillis}ms") *>
+          IO.sleep(delay) *> retryPatch(op, attempt + 1)
+      else
+        logger.warn(s"[feishu] final patch failed: $msg")
+        IO.unit
     }
 
   private def removeTyping(): IO[Unit] =

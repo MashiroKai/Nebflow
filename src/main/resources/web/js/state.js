@@ -96,7 +96,6 @@ export default {
   serverVersion: '',
 
   serverThinking: null,
-  language: null,
   mcpServers: [],
 
   // Batch selection (like VS Code Explorer)

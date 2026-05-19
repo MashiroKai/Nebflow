@@ -3,6 +3,7 @@
 // for optimistic display during streaming, and a fallback when backend is unreachable.
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
+import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, formatDiff, buildToolDetail, attachToolClick, esc } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { pickThinkingPhrase } from './chat.js';
@@ -126,9 +127,16 @@ export function restoreFromStorage() {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
+      // Reconstruct Card tool HTML marker from input (same logic as chat.js renderTool)
+      let toolContent = m.content || '';
+      if (m.label && m.label.startsWith('Card') && m.input && m.input.html && !toolContent.match(/^___\w+_HTML___/)) {
+        const payload = JSON.stringify({ html: m.input.html, title: m.input.title || '' });
+        toolContent = `___CARD_HTML___${payload}`;
+      }
       // Try plugin renderer first
-      const data = { label: m.label, summary: m.summary, content: m.content, isError: m.isError, input: m.input, sessionId: state.activeSessionId };
+      const data = { label: m.label, summary: m.summary, content: toolContent, isError: m.isError, input: m.input, sessionId: state.activeSessionId };
       if (renderWithRegistry(card, data)) {
+        card.classList.add('tool-card--html');
         row.appendChild(card);
         chat.appendChild(row);
       } else {
@@ -192,11 +200,11 @@ export function restoreFromStorage() {
       box.className = 'permission-pending-box option-box';
       const q = document.createElement('div');
       q.className = 'option-q';
-      q.textContent = 'Allow ' + (m.toolName || '?') + '?';
+      q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
       box.appendChild(q);
       const optsDiv = document.createElement('div');
       optsDiv.className = 'option-opts';
-      [{ label: 'Allow' }, { label: 'Deny' }].forEach(opt => {
+      [{ label: t('chat.allow') }, { label: t('chat.deny') }].forEach(opt => {
         const btn = document.createElement('button');
         btn.className = 'option-btn';
         btn.textContent = opt.label;
@@ -214,7 +222,7 @@ export function restoreFromStorage() {
       qBubble.className = 'bubble user';
       const qLabel = document.createElement('div');
       qLabel.className = 'ask-label';
-      qLabel.textContent = 'Ask';
+      qLabel.textContent = t('chat.askLabel');
       const qText = document.createElement('div');
       qText.textContent = m.question || '';
       qBubble.appendChild(qLabel);
@@ -229,7 +237,7 @@ export function restoreFromStorage() {
         aBubble.className = 'bubble ai';
         const aLabel = document.createElement('div');
         aLabel.className = 'ask-label';
-        aLabel.textContent = 'Ask';
+        aLabel.textContent = t('chat.askLabel');
         const aContent = document.createElement('div');
         aContent.innerHTML = renderMarkdownWithMath(m.answer);
         aBubble.appendChild(aLabel);
@@ -282,6 +290,11 @@ export function restoreFromStorage() {
     }
   });
   chat.scrollTop = chat.scrollHeight;
+  state.scrollSnapped = true;
+  // Schedule deferred scrolls to catch async iframe height changes from card rendering.
+  requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; });
+  setTimeout(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; }, 100);
+  setTimeout(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; }, 500);
 }
 
 // ---------- Replay backend history messages into the DOM ----------
@@ -342,8 +355,17 @@ export function restoreFromBackendHistory(msgs) {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
-      const data = { label: m.label, summary: m.summary, content: m.content, isError: m.isError, input: m.input, sessionId: state.activeSessionId };
+      // Reconstruct Card tool HTML marker from input (same logic as chat.js renderTool)
+      let toolContent = m.content || '';
+      let parsedInput = m.input;
+      try { parsedInput = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; } catch(e) {}
+      if (m.label && m.label.startsWith('Card') && parsedInput && parsedInput.html && !toolContent.match(/^___\w+_HTML___/)) {
+        const payload = JSON.stringify({ html: parsedInput.html, title: parsedInput.title || '' });
+        toolContent = `___CARD_HTML___${payload}`;
+      }
+      const data = { label: m.label, summary: m.summary, content: toolContent, isError: m.isError, input: parsedInput, sessionId: state.activeSessionId };
       if (renderWithRegistry(card, data)) {
+        card.classList.add('tool-card--html');
         row.appendChild(card);
         chat.appendChild(row);
       } else {
@@ -351,9 +373,7 @@ export function restoreFromBackendHistory(msgs) {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const diffHtml = formatDiff(m.content);
-        let inputObj = null;
-        try { inputObj = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; } catch(e) {}
-        const detailHtml = buildToolDetail(inputObj, m.label);
+        const detailHtml = buildToolDetail(parsedInput, m.label);
         const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
         const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
@@ -408,11 +428,11 @@ export function restoreFromBackendHistory(msgs) {
       box.className = 'permission-pending-box option-box';
       const q = document.createElement('div');
       q.className = 'option-q';
-      q.textContent = 'Allow ' + (m.toolName || '?') + '?';
+      q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
       box.appendChild(q);
       const optsDiv = document.createElement('div');
       optsDiv.className = 'option-opts';
-      [{ label: 'Allow' }, { label: 'Deny' }].forEach(opt => {
+      [{ label: t('chat.allow') }, { label: t('chat.deny') }].forEach(opt => {
         const btn = document.createElement('button');
         btn.className = 'option-btn';
         btn.textContent = opt.label;
@@ -430,7 +450,7 @@ export function restoreFromBackendHistory(msgs) {
       qBubble.className = 'bubble user';
       const qLabel = document.createElement('div');
       qLabel.className = 'ask-label';
-      qLabel.textContent = 'Ask';
+      qLabel.textContent = t('chat.askLabel');
       const qText = document.createElement('div');
       qText.textContent = m.question || '';
       qBubble.appendChild(qLabel);
@@ -445,7 +465,7 @@ export function restoreFromBackendHistory(msgs) {
         aBubble.className = 'bubble ai';
         const aLabel = document.createElement('div');
         aLabel.className = 'ask-label';
-        aLabel.textContent = 'Ask';
+        aLabel.textContent = t('chat.askLabel');
         const aContent = document.createElement('div');
         aContent.innerHTML = renderMarkdownWithMath(m.answer);
         aBubble.appendChild(aLabel);
@@ -496,6 +516,11 @@ export function restoreFromBackendHistory(msgs) {
     }
   });
   chat.scrollTop = chat.scrollHeight;
+  state.scrollSnapped = true;
+  // Schedule deferred scrolls to catch async iframe height changes from card rendering.
+  requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; });
+  setTimeout(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; }, 100);
+  setTimeout(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; }, 500);
 }
 
 // ---------- One-time migration from old localStorage key ----------

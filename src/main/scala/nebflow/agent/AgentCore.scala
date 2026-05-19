@@ -122,8 +122,20 @@ private[agent] trait AgentCore:
       else
         val inputTokensOpt = state.latestUsage.map(_.inputTokens)
         val threshold = state.contextWindow - config.bufferForWindow(state.contextWindow)
-        inputTokensOpt match
-          case Some(inputTokens) if inputTokens > threshold =>
+
+        // Primary check: use reported inputTokens if available and non-zero
+        val shouldCompact = inputTokensOpt match
+          case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
+            Some(s"inputTokens=$inputTokens threshold=$threshold")
+          case _ =>
+            // Fallback: estimate tokens from message chars when provider doesn't report accurate usage
+            val estimated = TokenEstimator.estimate(state.messages)
+            if estimated > threshold then
+              Some(s"estimated=$estimated threshold=$threshold (provider did not report inputTokens)")
+            else None
+
+        shouldCompact match
+          case Some(detail) =>
             logAgentEvent(
               ctx,
               agentDef,
@@ -131,7 +143,7 @@ private[agent] trait AgentCore:
               state.sessionId,
               state.sessionName,
               "auto-compact-trigger",
-              s"inputTokens=$inputTokens threshold=$threshold"
+              detail
             )
             Some(
               startDirectCompaction(
@@ -147,14 +159,18 @@ private[agent] trait AgentCore:
                 "full"
               )
             )
-          case _ => None
+          case None => None
         end match
       end if
   end maybeAutoCompact
 
   /**
-   * Start a direct compaction via CompactService (no sub-agent).
-   * Returns the processing behavior with a pending compaction job.
+   * Start inline compaction — inject a compact reminder into the message
+   * stream and call pipeLlmCall with tools disabled. The LLM response is
+   * captured by the LlmComplete handler, which runs FullCompact.parseResponse.
+   *
+   * This reuses the agent's cached system prompt + tool definitions,
+   * avoiding the expensive separate LLM call of the old approach.
    */
   protected def startDirectCompaction(
     agentDef: AgentDef,
@@ -179,24 +195,7 @@ private[agent] trait AgentCore:
     val jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
     val pending = CompactionJob(jobId, mode, None, replyTo)
 
-    // Fire-and-forget CompactService call
-    val io = CompactService
-      .compact(
-        state.messages,
-        resources,
-        state.sessionId.getOrElse(ctx.self.path.name),
-        state.readTracker
-      )
-      .map { result =>
-        ctx.self ! AgentCommand.CompactionComplete(result)
-      }
-    resources.dispatcher.unsafeRunAndForget(
-      io.handleError { e =>
-        NebflowLogger.forName("nebflow.agent").warn(s"CompactService failed: ${e.getMessage}")
-        ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage))
-      }
-    )
-
+    // Emit compact-start event to frontend
     resources.dispatcher.unsafeRunAndForget(
       emitStreamIO(
         state.wsSend,
@@ -211,7 +210,25 @@ private[agent] trait AgentCore:
       ).handleErrorWith(_ => IO.unit)
     )
 
-    processing(agentDef, resources, depth, parentRef, state.withPendingCompaction(Some(pending)), stash, ctx)
+    // Prepare state: set pendingCompaction so pipeLlmCall knows this is a compact turn
+    val compactState = state
+      .withPendingCompaction(Some(pending))
+      .withMessages(state.messages :+ CompactService.buildCompactReminder())
+
+    // Call pipeLlmCall directly — it will detect pendingCompaction and use tools=Nil
+    pipeLlmCall(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      compactState,
+      stash,
+      ctx,
+      replyTo,
+      processing,
+      // finishTurn not used for compact (handled in LlmComplete), but pass it anyway
+      (ad, r, d, p, s, st, c, t, rep, th, thSig, streamed, model) => Behaviors.unhandled
+    )
   end startDirectCompaction
 
   // ============================================================
@@ -247,6 +264,7 @@ private[agent] trait AgentCore:
       String,
       Option[ActorRef[AgentEvent]],
       Option[String],
+      Option[String],
       Boolean,
       Option[String]
     ) => Behavior[AgentCommand]
@@ -254,7 +272,12 @@ private[agent] trait AgentCore:
     maybeAutoCompact(agentDef, resources, depth, parentRef, state, stash, ctx, replyTo, processing) match
       case Some(behavior) => behavior
       case None =>
-        if depth > 0 then
+        // Inline compact mode: pendingCompaction is set, tools are disabled
+        val isCompactTurn = state.pendingCompaction.isDefined
+        // Inline ask mode: single Q&A turn, reuses agent tools, no history write-back
+        val isAskTurn = state.askMode.isDefined
+
+        if depth > 0 && !isCompactTurn && !isAskTurn then
           emitStream(
             resources.dispatcher,
             state.wsSend,
@@ -270,7 +293,8 @@ private[agent] trait AgentCore:
         //   messages:  [per-turn reminders] + actual conversation (dynamic, not persisted)
         // Env info is baked into system prompt once — git state is omitted; agent uses Bash on demand.
         val baseSystemStable = buildSystemPrompt(agentDef, resources)
-        val tools = buildToolList(agentDef)
+        // In compact mode, disable tools — model must respond with summary text only
+        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef)
 
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
@@ -284,8 +308,8 @@ private[agent] trait AgentCore:
         val turnId = state.currentTurnId + 1
 
         // FastMicroCompact: rule-driven tool result cleanup when cache is cold.
-        // Must write back to state so subsequent turns see the compacted messages.
-        val microResult = FastMicroCompact(state.messages)
+        // Skip during compact/ask turns — messages already have the reminder appended.
+        val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
         val stateAfterMicro = microResult match
           case Some(compacted) =>
             logAgentEvent(
@@ -304,74 +328,107 @@ private[agent] trait AgentCore:
             state.withCurrentTurnId(turnId)
         val stateForTurn = stateAfterMicro
 
-        // --- Memory: use cached memoryBlock from state (refreshed at lifecycle points) ---
-        val memoryBlock = stateForTurn.memoryBlock
-
-        // Compute verification reminder from per-agent write tracker (pure, no IO needed)
-        val (verificationOpt, updatedWriteTracker) =
-          SystemReminders.computeVerificationReminder(stateForTurn.writesSinceLastRead)
-        val stateForLlm = stateForTurn.withWritesSinceLastRead(updatedWriteTracker)
-
-        val io = for
-          // --- reminders (async) ---
-          fileChangesOpt <- resources.fileChangeTracker.checkChanges()
-          // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
-          isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
-          collectAllResult = SystemReminders.collectAll(
-            stateForLlm.compaction.highestPressureLevel,
-            stateForLlm.latestUsage,
-            state.contextWindow,
-            fileChangesOpt,
-            isUserTurn
+        // --- Pre-flight context budget check ---
+        // Guards against accumulated tool results + history exceeding the model's context window.
+        // ToolResultGuard handles per-tool-result truncation; this catches the cumulative overflow
+        // before the LLM call is made, forcing inline compaction instead of hitting an API error.
+        val estimatedTokens = TokenEstimator.estimate(stateForTurn.messages)
+        val maxTokens = resources.agentLibrary.globalMaxTokens
+        val safetyMargin = CompactConfig().bufferForWindow(stateForTurn.contextWindow) + maxTokens
+        val softBudget = stateForTurn.contextWindow - safetyMargin
+        if estimatedTokens > softBudget && !isCompactTurn && !isAskTurn then
+          logAgentEvent(
+            ctx,
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "context-budget-exceeded",
+            s"estimated=$estimatedTokens budget=$softBudget (ctx=${stateForTurn.contextWindow} maxTokens=$maxTokens margin=$safetyMargin)"
           )
-          reminders = collectAllResult._1
-          newHighest = collectAllResult._2
-          _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
-          loggedReminders <- SystemReminders.logAndReturn(reminders)
-          allReminders = verificationOpt.toList ++ loggedReminders
-          remindersText = SystemReminder.renderAll(allReminders)
-          // Per-turn dynamic context: only reminders (env info is now in system prompt)
-          dynamicMsg =
-            if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
-            else Nil
-          // --- LLM call ---
-          thinkingOpt <- resources.runtimePrefs.getThinking
-          languageOpt <- resources.runtimePrefs.getLanguage
-          systemStable = baseSystemStable +
-            (if memoryBlock.nonEmpty then s"\n\n$memoryBlock" else "") +
-            languageOpt.map(l => s"\n\n# Language\nAlways respond in $l.").getOrElse("")
-          request = LlmRequest(
-            messages = stateForLlm.messages ++ dynamicMsg,
-            sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
-            agentId = agentDef.name,
-            tools = tools,
-            maxTokens = Some(resources.agentLibrary.globalMaxTokens),
-            thinking = thinkingOpt.map(nebflow.service.ThinkingConfig.toLlmJson),
-            systemStable = Some(systemStable)
+          startDirectCompaction(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            stateForTurn,
+            stash,
+            ctx,
+            replyTo,
+            processing,
+            "full"
           )
-          result <- resources.llm
-            .sendStream(request, onAttempt = Some(onAttemptCb))
-            .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt))
-            .compile
-            .toList
-            .map(aggregateChunks)
-            .attempt
-          _ <- result match
-            case Right(r) => IO(ctx.self ! LlmComplete(r, replyTo, turnId))
-            case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo, turnId))
-        yield ()
+        else
+          // --- Memory: use cached memoryBlock from state (refreshed at lifecycle points) ---
+          val memoryBlock = stateForTurn.memoryBlock
 
-        // Start the IO fiber and immediately send the fiber reference back to the actor
-        // so that Interrupt can cancel it. io.start forks immediately; StreamFiberStarted
-        // is queued in the actor mailbox before any LlmComplete can arrive.
-        val startIo = io.start.handleErrorWith { e =>
-          IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
-            IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.void.start
-        }
-        resources.dispatcher.unsafeRunAndForget(
-          startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
-        )
-        processing(agentDef, resources, depth, parentRef, stateForLlm, stash, ctx)
+          // Compute verification reminder from per-agent write tracker (pure, no IO needed)
+          val (verificationOpt, updatedWriteTracker) =
+            SystemReminders.computeVerificationReminder(stateForTurn.writesSinceLastRead)
+          val stateForLlm = stateForTurn.withWritesSinceLastRead(updatedWriteTracker)
+
+          val io = for
+            // --- reminders (async) ---
+            fileChangesOpt <- resources.fileChangeTracker.checkChanges()
+            // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
+            isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
+            collectAllResult = SystemReminders.collectAll(
+              stateForLlm.compaction.highestPressureLevel,
+              stateForLlm.latestUsage,
+              state.contextWindow,
+              fileChangesOpt,
+              isUserTurn
+            )
+            reminders = collectAllResult._1
+            newHighest = collectAllResult._2
+            _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
+            loggedReminders <- SystemReminders.logAndReturn(reminders)
+            allReminders = verificationOpt.toList ++ loggedReminders
+            remindersText = SystemReminder.renderAll(allReminders)
+            // Per-turn dynamic context: only reminders (env info is now in system prompt)
+            // Skip for compact/ask turns — the reminder is already in messages
+            dynamicMsg =
+              if isCompactTurn || isAskTurn then Nil
+              else if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
+              else Nil
+            // --- LLM call ---
+            thinking <- resources.thinkingConfigRef.get
+            systemStable = baseSystemStable +
+              (if memoryBlock.nonEmpty then s"\n\n$memoryBlock" else "") +
+              stateForLlm.language.map(l => s"\n\n# Language\nAlways respond in $l.").getOrElse("")
+            request = LlmRequest(
+              messages = stateForLlm.messages ++ dynamicMsg,
+              sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
+              agentId = agentDef.name,
+              tools = tools,
+              maxTokens = Some(resources.agentLibrary.globalMaxTokens),
+              thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(thinking)),
+              systemStable = Some(systemStable)
+            )
+            result <- resources.llm
+              .sendStream(request, onAttempt = Some(onAttemptCb))
+              .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt, isAskTurn))
+              .compile
+              .toList
+              .map(aggregateChunks)
+              .attempt
+            _ <- result match
+              case Right(r) => IO(ctx.self ! LlmComplete(r, replyTo, turnId))
+              case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo, turnId))
+          yield ()
+
+          // Start the IO fiber and immediately send the fiber reference back to the actor
+          // so that Interrupt can cancel it. io.start forks immediately; StreamFiberStarted
+          // is queued in the actor mailbox before any LlmComplete can arrive.
+          val startIo = io.start.handleErrorWith { e =>
+            IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
+              IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.void.start
+          }
+          resources.dispatcher.unsafeRunAndForget(
+            startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
+          )
+          processing(agentDef, resources, depth, parentRef, stateForLlm, stash, ctx)
+        end if
     end match
   end pipeLlmCall
 
@@ -418,6 +475,7 @@ private[agent] trait AgentCore:
       ActorContext[AgentCommand],
       String,
       Option[ActorRef[AgentEvent]],
+      Option[String],
       Option[String],
       Boolean,
       Option[String]
@@ -560,6 +618,7 @@ private[agent] trait AgentCore:
             replyTo,
             None,
             result.thinking,
+            result.thinkingSignature,
             updatedWriteTracker
           )
         )
@@ -781,13 +840,16 @@ private[agent] trait AgentCore:
     wsSend: io.circe.Json => IO[Unit],
     ctx: ActorContext[AgentCommand],
     isSubagent: Boolean = true,
-    sessionId: Option[String] = None
+    sessionId: Option[String] = None,
+    isAskMode: Boolean = false
   ): fs2.Pipe[IO, StreamChunk, StreamChunk] =
     stream =>
       stream.evalTap {
         case StreamChunk.TextDelta(delta) if delta.nonEmpty =>
           val json =
-            if isSubagent then AgentStreamEvent.TextDelta(delta).toJson(ctx.self.path.name, true, None)
+            if isAskMode then
+              Json.obj("type" -> "askTextDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
+            else if isSubagent then AgentStreamEvent.TextDelta(delta).toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
           wsSend(json)
         case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty =>
@@ -817,8 +879,13 @@ private[agent] trait AgentCore:
   protected def aggregateChunks(chunks: List[StreamChunk]): ConsumeResult =
     val text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
     val thinking = chunks.collect { case StreamChunk.ThinkingDelta(d) => d }.mkString
+    val thinkingSignature = chunks.collectFirst { case StreamChunk.ThinkingSignature(s) => s }
     val toolCalls = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }
-    val usage = chunks.collectFirst { case StreamChunk.Done(_, u, _, _) => u }.flatten
+    // Prefer Done chunk with non-zero inputTokens (usage-only chunk from stream_options.include_usage
+    // arrives AFTER the finish_reason chunk whose usage is null). Fall back to first Done's usage.
+    val usage = chunks
+      .collectFirst { case StreamChunk.Done(_, Some(u), _, _) if u.inputTokens > 0 => u }
+      .orElse(chunks.collectFirst { case StreamChunk.Done(_, u, _, _) => u }.flatten)
     val stopReason = chunks.collectFirst { case StreamChunk.Done(sr, _, _, _) => sr }.flatten
     val model = chunks.collectFirst { case StreamChunk.Done(_, _, Some(meta), _) => meta.model }
     val contextWindow = chunks.collectFirst { case StreamChunk.Done(_, _, _, cw) => cw }.flatten
@@ -829,6 +896,7 @@ private[agent] trait AgentCore:
       stopReason,
       usage,
       Option.when(thinking.nonEmpty)(thinking),
+      thinkingSignature,
       model,
       contextWindow
     )

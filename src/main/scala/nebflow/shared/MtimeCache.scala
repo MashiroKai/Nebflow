@@ -91,12 +91,14 @@ final class MtimeDirCache[K, V] private[shared] (
   private case class Entry(key: K, dirPath: os.Path, mtimeMs: Long)
 
   /**
-   * Get the latest mtime of any file in the directory (not the dir itself).
+   * Get the latest mtime among files directly in the directory (shallow, non-recursive).
    * macOS does not update directory mtime when files inside are edited,
    * only when files are added/removed.
+   *
+   * Shallow scan (os.list) avoids crawling deep project subtrees.
    */
   private def latestFileMtime(dirPath: os.Path): Long =
-    os.walk(dirPath)
+    os.list(dirPath)
       .filter(os.isFile)
       .map(p => MtimeCache.mtimeOf(p))
       .maxOption

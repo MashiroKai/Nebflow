@@ -37,7 +37,7 @@ export function connect() {
   state.ws.onopen = () => {
     console.log('[ws] connected');
     state.dom.connEl.classList.remove('off');
-    if (state.thinkingMode) {
+    if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
     state.heartbeat = setInterval(() => {

@@ -16,6 +16,7 @@ trait TaskStore:
   def list(sessionId: String): IO[List[Task]]
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
+  def deleteAll(sessionId: String): IO[Unit]
 
 object FileTaskStore extends TaskStore:
   private val logger = NebflowLogger.forName("nebflow.taskstore")
@@ -239,5 +240,10 @@ object FileTaskStore extends TaskStore:
           }
         }
     }
+
+  def deleteAll(sessionId: String): IO[Unit] = IO.blocking {
+    val dir = sessionDir(sessionId)
+    if os.exists(dir) then os.remove.all(dir)
+  }
 
 end FileTaskStore

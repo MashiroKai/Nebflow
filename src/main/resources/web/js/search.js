@@ -3,6 +3,7 @@
 import state from './state.js';
 import { sendWs } from './ws.js';
 import { switchSession } from './sidebar.js';
+import { t } from './i18n.js';
 let searchTimeout = null;
 
 export function initSearch() {
@@ -82,7 +83,7 @@ export function renderSearchResults(query, hits) {
   const matchedFolders = (state.folders || []).filter(f => f.name.toLowerCase().includes(qLower));
 
   if (hits.length === 0 && matchedFolders.length === 0) {
-    results.innerHTML = '<div class="search-result-empty">未找到相关记录</div>';
+    results.innerHTML = '<div class="search-result-empty">' + t('search.noResults') + '</div>';
     return;
   }
 
@@ -92,7 +93,7 @@ export function renderSearchResults(query, hits) {
     item.className = 'search-result-item';
     item.innerHTML =
       '<div class="search-result-meta">' +
-        '<span class="search-result-type folder">文件夹</span>' +
+        '<span class="search-result-type folder">' + t('search.folder') + '</span>' +
         '<span class="search-result-session">' + escapeHtml(folder.name) + '</span>' +
       '</div>' +
       '<div class="search-result-snippet">' + highlight(folder.name, query) + '</div>';
@@ -126,13 +127,13 @@ export function renderSearchResults(query, hits) {
     let typeLabel = '';
     let typeClass = '';
     if (hit.hitType === 'session') {
-      typeLabel = '会话';
+      typeLabel = t('search.session');
       typeClass = 'session';
     } else if (hit.hitType === 'agent') {
       typeLabel = 'Agent';
       typeClass = 'agent-name';
     } else {
-      typeLabel = { user: '用户', ai: 'AI', tool: '工具', agent: 'Agent', ask: '询问' }[hit.messageType] || hit.messageType;
+      typeLabel = { user: t('search.user'), ai: 'AI', tool: t('search.tool'), agent: 'Agent', ask: t('search.ask') }[hit.messageType] || hit.messageType;
       typeClass = hit.messageType;
     }
 

@@ -296,9 +296,21 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def deleteSession(id: String): IO[Unit] =
     indexRef
       .modify { case (activeId, sessions, folders) =>
+        // Get the agent name of the session being deleted
+        val deletedAgent = sessions.find(_.id == id).flatMap(_.agentName)
         val updated = sessions.filterNot(_.id == id)
         val newActiveId =
-          if id == activeId then updated.maxByOption(_.updatedAt).map(_.id).getOrElse("")
+          if id == activeId then
+            // Pick the most recently updated session from the SAME agent only,
+            // to prevent cross-agent activeId contamination
+            updated
+              .filter { s =>
+                val effectiveAgent = s.agentName
+                effectiveAgent == deletedAgent
+              }
+              .maxByOption(_.updatedAt)
+              .map(_.id)
+              .getOrElse("")
           else activeId
         ((newActiveId, updated, folders), (id == activeId, newActiveId))
       }

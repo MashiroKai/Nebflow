@@ -295,9 +295,14 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       case Right(json) =>
         // Check for usage-only chunk (stream_options.include_usage sends a final chunk with empty choices)
         val usageOpt = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+          val promptTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0)
+          val cachedTokens =
+            u.hcursor.downField("prompt_tokens_details").downField("cached_tokens").as[Option[Int]].toOption.flatten
           TokenUsage(
-            inputTokens = u.hcursor.downField("prompt_tokens").as[Int].getOrElse(0),
-            outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
+            inputTokens = promptTokens,
+            outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0),
+            cacheReadTokens = cachedTokens,
+            cacheWriteTokens = None
           )
         }
         val choicesEmpty = json.hcursor.downField("choices").as[List[Json]].toOption.exists(_.isEmpty)
@@ -311,6 +316,17 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
             case Some(d) =>
               val textChunks = d.hcursor.downField("content").as[String].toOption.filter(_.nonEmpty).toList
               val textDeltas = textChunks.map(StreamChunk.TextDelta.apply)
+              // Some OpenAI-compatible providers (GLM, DeepSeek, etc.) return reasoning/thinking
+              // content in separate fields during thinking mode. Emit them as ThinkingDelta so they
+              // are recognized as content and prevent "Stream completed with no content" errors.
+              val thinkText = d.hcursor
+                .downField("reasoning_content")
+                .as[String]
+                .toOption
+                .orElse(d.hcursor.downField("thinking").as[String].toOption)
+                .filter(_.nonEmpty)
+              val thinkingDeltas = thinkText.map(t => List(StreamChunk.ThinkingDelta(t))).getOrElse(Nil)
+              val allTextDeltas = thinkingDeltas ++ textDeltas
 
               d.hcursor.downField("tool_calls").as[List[Json]].toOption match
                 case Some(tcs) =>
@@ -347,12 +363,12 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                         }
                       else if finishReason.isDefined then
                         IO.pure(acc :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
-                      else IO.pure(textDeltas ++ acc)
+                      else IO.pure(allTextDeltas ++ acc)
                     }
                 case None =>
                   if finishReason.isDefined then
-                    IO.pure(textDeltas :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
-                  else IO.pure(textDeltas)
+                    IO.pure(allTextDeltas :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
+                  else IO.pure(allTextDeltas)
               end match
           end match
         end if

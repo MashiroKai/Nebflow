@@ -51,8 +51,8 @@ class FileHistory private (
           val updated = (entries :+ ts).sortBy(-_)
           m.updated(key, if updated.size > maxEntries then updated.take(maxEntries) else updated)
         } *>
-        // Phase 3: Clean up excess files on disk (blocking)
-        IO.blocking(cleanupOld(key, dir))
+          // Phase 3: Clean up excess files on disk (blocking)
+          IO.blocking(cleanupOld(key, dir))
     }
 
   /**

@@ -3,7 +3,7 @@ import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
 import { connect, onMessage, sendWs } from './ws.js';
 import {
-  setBusy, clearBusy, setStatus, clearStatus,
+  setBusy, clearBusy, clearStatus,
   renderUserBubble, appendAiText, finishAi,
   appendAgentText, finishAgent, getAgentColor,
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
@@ -32,6 +32,8 @@ import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
 import { initSearch, renderSearchResults } from './search.js';
 import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from './memory.js';
+import { t, getLocale } from './i18n.js';
+import { applyLocaleToHtml } from './i18n.js';
 
 // ---------- 1. Populate DOM refs ----------
 state.dom = {
@@ -220,7 +222,7 @@ onMessage('thinking', (msg) => {
       row.className = 'row ai';
       state.currentAiBubble = document.createElement('div');
       state.currentAiBubble.className = 'bubble ai thinking-placeholder';
-      state.currentAiBubble.innerHTML = '<span class="thinking-text">Thinking...</span>';
+      state.currentAiBubble.innerHTML = '<span class="thinking-text">' + t('chat.thinking') + '</span>';
       row.appendChild(state.currentAiBubble);
       chat.appendChild(row);
       smartScroll();
@@ -318,6 +320,19 @@ function updateHeaderModelInfo() {
 }
 state.updateHeaderModelInfo = updateHeaderModelInfo;
 
+// Real-time usage update after each LLM round (multi-round tool calling)
+onMessage('usageUpdate', (msg) => {
+  const sid = msg.sessionId || state.activeSessionId;
+  if (sid && msg.inputTokens != null && msg.contextWindow) {
+    state.sessionModelInfo[sid] = {
+      model: state.sessionModelInfo[sid]?.model,
+      contextWindow: msg.contextWindow,
+      inputTokens: msg.inputTokens
+    };
+    if (sid === state.activeSessionId) updateHeaderModelInfo();
+  }
+});
+
 onMessage('done', (msg) => {
   console.log('[done] raw msg:', JSON.stringify(msg));
   console.log('[done] contextWindow:', msg.contextWindow, 'inputTokens:', msg.inputTokens, 'model:', msg.model);
@@ -327,7 +342,7 @@ onMessage('done', (msg) => {
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   const durationMs = consumeTurnDuration(sid);
   delete state.sessionPendingTools[sid];
-  console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length });
+  console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length, durationMs });
   // Store model info for this session
   if (sid && (msg.model || msg.contextWindow || msg.inputTokens != null)) {
     state.sessionModelInfo[sid] = {
@@ -500,7 +515,7 @@ function showHistoryLoader() {
   if (loader) return;
   loader = document.createElement('div');
   loader.className = 'history-loader';
-  loader.innerHTML = '<div class="history-spinner"></div><span>Loading...</span>';
+  loader.innerHTML = '<div class="history-spinner"></div><span>' + t('chat.loading') + '</span>';
   state.dom.chat.prepend(loader);
 }
 
@@ -513,7 +528,7 @@ function showHistoryEnd() {
   if (state.dom.chat.querySelector('.history-end')) return;
   const end = document.createElement('div');
   end.className = 'history-end';
-  end.textContent = '— No more messages —';
+  end.textContent = t('chat.noMoreMessages');
   state.dom.chat.prepend(end);
 }
 
@@ -525,6 +540,9 @@ function clearHistoryIndicators() {
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg) => {
+  console.log('[historyPage] sessionId:', msg.sessionId, 'msgs:', msg.messages?.length, 'first few ai with dur:',
+    msg.messages?.filter(m => m.type === 'ai' && m.durationMs != null).slice(0, 3).map(m => ({ dur: m.durationMs, model: m.model, text: m.text?.slice(0, 30) }))
+  );
   const sid = msg.sessionId;
   if (sid !== state.activeSessionId) return;
   state.historyLoading = false;
@@ -577,7 +595,7 @@ onMessage('historyPage', (msg) => {
         state.currentAskBubble.className = 'bubble ai';
         const label = document.createElement('div');
         label.className = 'ask-label';
-        label.textContent = 'Ask';
+        label.textContent = t('chat.askLabel');
         const content = document.createElement('div');
         content.innerHTML = renderMarkdownWithMath(state.askAnswerText) + '<span class="cursor"></span>';
         state.currentAskBubble.appendChild(label);
@@ -677,7 +695,7 @@ onMessage('agentStart', (msg) => {
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai';
-    bubble.innerHTML = '<span class="thinking-text">Thinking...</span>';
+    bubble.innerHTML = '<span class="thinking-text">' + t('chat.thinking') + '</span>';
     // Only show badge for non-default agents
     if (state.activeAgentId && state.activeAgentId !== 'default') {
       const badge = document.createElement('div');
@@ -729,7 +747,7 @@ onMessage('agentThinking', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
   if (state.activeAgentId && state.agentBubbles[state.activeAgentId]) {
-    state.agentBubbles[state.activeAgentId].bubble.innerHTML = '<span class="thinking-text">Thinking...</span>';
+    state.agentBubbles[state.activeAgentId].bubble.innerHTML = '<span class="thinking-text">' + t('chat.thinking') + '</span>';
   }
 });
 
@@ -775,8 +793,7 @@ onMessage('compactStart', (msg) => {
   resetStreamTimeout(sid);
   setCompacting(sid, true);
   if (sid === state.activeSessionId) {
-    state.dom.statusWrap.classList.add('compacting');
-    setStatus('Compacting context...');
+    renderSystemBubble(t('chat.compacting'));
   }
 });
 
@@ -786,12 +803,8 @@ onMessage('compactComplete', (msg) => {
   resetStreamTimeout(sid);
   setCompacting(sid, false);
   if (sid === state.activeSessionId) {
-    const wrap = state.dom.statusWrap;
-    wrap.classList.remove('compacting');
-    wrap.classList.add('compact-done');
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
-    setStatus(`Context compacted: ${msg.before} → ${msg.after} messages${detail}`);
-    setTimeout(clearStatus, 3000);
+    renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
   }
 });
 
@@ -801,14 +814,11 @@ onMessage('compactFailed', (msg) => {
   resetStreamTimeout(sid);
   setCompacting(sid, false);
   if (sid === state.activeSessionId) {
-    const wrap = state.dom.statusWrap;
-    wrap.classList.remove('compacting');
-    wrap.classList.add('compact-failed');
-    setStatus(`Context compaction failed (attempt ${msg.attempt}/${msg.maxAttempts})`);
+    renderSystemBubble(t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts }));
   }
   if (msg.attempt >= msg.maxAttempts) {
     if (isActive(msg)) {
-      renderError(`Context compaction circuit breaker open after ${msg.attempt} attempts`);
+      renderError(t('chat.compactCircuitBreaker', { attempt: msg.attempt }));
     }
     clearBusyFor(msg);
   }
@@ -831,6 +841,9 @@ onMessage('agentList', (msg) => {
 });
 
 onMessage('agentSessionList', (msg) => {
+  // Safety: ignore if agent doesn't match the currently selected tab
+  // Prevents cross-agent session list contamination on stale messages
+  if (state.selectedAgent && msg.agentName !== state.selectedAgent) return;
   // Render sessions for the selected agent
   const agentName = msg.agentName;
   const sessions = msg.sessions || [];
@@ -859,9 +872,6 @@ onMessage('serverConfig', (msg) => {
   if (msg.tools) {
     state.availableTools = msg.tools;
   }
-  if (msg.language !== undefined) {
-    state.language = msg.language || null;
-  }
   if (msg.mcpServers) {
     state.mcpServers = msg.mcpServers;
   }
@@ -886,7 +896,7 @@ onMessage('configData', (msg) => {
 });
 
 onMessage('configUpdated', (msg) => {
-  if (!msg.success) { renderError('Config update failed'); return; }
+  if (!msg.success) { renderError(t('chat.configUpdateFailed')); return; }
   // Re-fetch config from server so UI reflects what was actually saved
   sendWs({type: 'getConfig'});
 });
@@ -896,7 +906,7 @@ onMessage('modelOptions', (msg) => {
   const models = msg.models || [];
   const current = msg.current || null;
   if (models.length === 0) {
-    renderSystemBubble('No models available');
+    renderSystemBubble(t('chat.noModels'));
     return;
   }
   if (!state.currentAiBubble) {
@@ -912,16 +922,17 @@ onMessage('modelOptions', (msg) => {
     return {label: m.label + (isCurrent ? ' ✓' : ''), desc: m.ref, ref: m.ref};
   });
   // Add "Default" option to reset
-  options.unshift({label: 'Default', desc: 'Use config default model chain', ref: null});
+  const defaultLabel = t('chat.modelDefault');
+  options.unshift({label: defaultLabel, desc: t('chat.modelDefaultDesc'), ref: null});
   import('./chat.js').then(({ showOptions }) => {
     showOptions(state.currentAiBubble, [
-      {question: 'Select model for this session', options: options.map(o => ({label: o.label, desc: o.desc})), allowOther: false}
+      {question: t('chat.selectModel'), options: options.map(o => ({label: o.label, desc: o.desc})), allowOther: false}
     ], (answers) => {
       const selected = options.find(o => o.label === answers[0]);
       const modelRef = selected ? selected.ref : null;
       sendWs({type: 'setSessionModel', sessionId: state.activeSessionId, modelRef: modelRef});
-      renderSystemBubble('Model: ' + (answers[0] === 'Default' ? 'default' : answers[0].replace(' ✓', '')));
-    }, 'Apply');
+      renderSystemBubble(t('chat.modelSet', { model: answers[0] === defaultLabel ? 'default' : answers[0].replace(' ✓', '') }));
+    }, t('chat.apply'));
   });
 });
 
@@ -932,6 +943,17 @@ onMessage('sessionModelSet', (msg) => {
 onMessage('retryStatus', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (isActive(msg)) renderRetryStatus(msg.message);
+});
+
+// --- Bridge user message (e.g. from Feishu) ---
+onMessage('bridgeUser', (msg) => {
+  const sid = msg.sessionId;
+  if (!sid) return;
+  saveMsg({type: 'user', text: msg.text}, sid);
+  if (sid === state.activeSessionId) {
+    renderUserBubble(msg.text, []);
+    smartScroll();
+  }
 });
 
 // --- Session busy state (backend authority) ---
@@ -949,7 +971,8 @@ onMessage('sessionBusy', (msg) => {
       if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
       if (state.currentAiBubble) {
         const durationMs = consumeTurnDuration(sid);
-        const data = finishAi(durationMs, null);
+        const model = state.sessionModelInfo[sid]?.model || null;
+        const data = finishAi(durationMs, model);
         if (data) saveMsg(data, sid);
         Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
         state.agentBubbles = {};
@@ -1018,10 +1041,10 @@ function renderBgDropdown() {
       const idleClass = hb.idleMs > 600000 ? 'bg-status-stuck' : (hb.idleMs > 120000 ? 'bg-status-idle' : 'bg-status-active');
       statusDot = document.createElement('span');
       statusDot.className = `bg-task-status ${idleClass}`;
-      statusDot.title = hb.alive ? (hb.idleMs > 600000 ? 'No output for 10+ min' : 'Running') : 'Process ended';
+      statusDot.title = hb.alive ? (hb.idleMs > 600000 ? t('bg.stuck') : t('bg.running')) : t('bg.ended');
       linesSpan = document.createElement('span');
       linesSpan.className = 'bg-task-lines';
-      linesSpan.textContent = `${hb.outputLines} lines`;
+      linesSpan.textContent = t('bg.lines', { count: hb.outputLines });
     }
 
     meta.appendChild(idSpan);
@@ -1032,7 +1055,7 @@ function renderBgDropdown() {
     info.appendChild(meta);
     const cancelBtn = document.createElement('button');
     cancelBtn.className = 'bg-task-cancel';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = t('bg.cancel');
     cancelBtn.onclick = (e) => {
       e.stopPropagation();
       sendWs({ type: 'cancelBackgroundJob', sessionId: state.activeSessionId, jobId: t.taskId });
@@ -1191,12 +1214,18 @@ window.__showDeleteFolderModal = showDeleteFolderModal;
 
 // ---------- 5. Initialize UI modules ----------
 console.log('[main] initializing modules...');
+applyLocaleToHtml(); // Apply locale to static HTML elements
 initNavTabs();
 initModals();
 initInput();
 initSearch();
 initFeishuPanel();
 initMemory();
+
+// Re-apply locale when language changes
+window.addEventListener('locale-changed', () => {
+  applyLocaleToHtml();
+});
 // New Folder button
 document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder());
 
