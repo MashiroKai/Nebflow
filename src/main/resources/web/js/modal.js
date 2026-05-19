@@ -3,6 +3,7 @@
 import state from './state.js';
 import { sendWs } from './ws.js';
 import { batchDeleteSelected } from './sidebar.js';
+import { t } from './i18n.js';
 
 // ---------- Session Modals ----------
 export function showNewSessionModal() {
@@ -37,7 +38,7 @@ export function startInlineNewSession() {
   const input = document.createElement('input');
   input.className = 'new-session-input';
   input.type = 'text';
-  input.placeholder = 'Session name...';
+  input.placeholder = t('session.namePlaceholder');
   input.style.cssText = 'width:100%;background:var(--color-frame-input-bg);border:1px solid var(--color-frame-input-border);border-radius:6px;padding:6px 10px;color:var(--color-frame-input-text);font-size:13px;font-family:inherit;outline:none;';
   wrapper.appendChild(input);
   sessionList.prepend(wrapper);
@@ -70,8 +71,8 @@ export function showDeleteModal(sessionId, sessionName) {
   const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
-  deleteTitle.textContent = 'Delete Session';
-  deleteMsg.textContent = 'Delete session "' + sessionName + '"?';
+  deleteTitle.textContent = t('delete.sessionTitle');
+  deleteMsg.textContent = t('delete.sessionMsg', { name: sessionName });
   state.pendingDeleteId = sessionId;
   pendingBatchDelete = false;
   pendingFolderDelete = false;
@@ -82,9 +83,9 @@ export function showBatchDeleteModal() {
   const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
-  deleteTitle.textContent = 'Batch Delete Sessions';
+  deleteTitle.textContent = t('delete.batchTitle');
   const count = state.selectedSessionIds.size;
-  deleteMsg.textContent = 'Delete ' + count + ' selected session' + (count > 1 ? 's' : '') + '?';
+  deleteMsg.textContent = t('delete.batchMsg', { count, s: count > 1 ? 's' : '' });
   state.pendingDeleteId = null;
   pendingBatchDelete = true;
   pendingFolderDelete = false;
@@ -95,8 +96,8 @@ export function showDeleteFolderModal(folderId, folderName) {
   const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
-  deleteTitle.textContent = 'Delete Folder';
-  deleteMsg.textContent = 'Delete folder "' + folderName + '"?\nSessions inside will be moved to root.';
+  deleteTitle.textContent = t('delete.folderTitle');
+  deleteMsg.textContent = t('delete.folderMsg', { name: folderName });
   pendingFolderDelete = true;
   pendingFolderDeleteId = folderId;
   pendingBatchDelete = false;
@@ -146,7 +147,7 @@ function buildConfigJson(name, desc, tools, mcpServers, baseFields) {
 export function showAgentModal(name, configJson, systemMd) {
   document.getElementById('agent-modal').classList.add('show');
   document.getElementById('agent-overlay').classList.add('on');
-  document.getElementById('agent-modal-title').textContent = name ? `Edit: ${name}` : 'New Agent';
+  document.getElementById('agent-modal-title').textContent = name ? t('agent.editTitle', { name }) : t('agent.newTitle');
   document.getElementById('agent-name-input').value = name || '';
   document.getElementById('agent-name-input').disabled = !!name;
 
@@ -168,7 +169,7 @@ export function showAgentModal(name, configJson, systemMd) {
   const autoTools = new Set(state.agentAutoTools || []);
 
   if (allTools.length === 0) {
-    grid.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">Loading tools...</div>';
+    grid.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">' + t('agent.loadingTools') + '</div>';
     return;
   }
 
@@ -177,7 +178,7 @@ export function showAgentModal(name, configJson, systemMd) {
   if (autoToolsArr.length > 0) {
     const sectionLabel = document.createElement('div');
     sectionLabel.className = 'agent-built-in-label';
-    sectionLabel.textContent = 'Auto-included';
+    sectionLabel.textContent = t('agent.autoIncluded');
     grid.appendChild(sectionLabel);
     autoToolsArr.forEach(tool => {
       const label = document.createElement('label');
@@ -198,7 +199,7 @@ export function showAgentModal(name, configJson, systemMd) {
   if (configurableTools.length > 0) {
     const sectionLabel = document.createElement('div');
     sectionLabel.className = 'agent-built-in-label';
-    sectionLabel.textContent = 'Configurable';
+    sectionLabel.textContent = t('agent.configurable');
     grid.appendChild(sectionLabel);
     configurableTools.forEach(tool => {
       const label = document.createElement('label');
@@ -224,7 +225,7 @@ export function showAgentModal(name, configJson, systemMd) {
     mcpSection.innerHTML = '';
     const mcpServers = state.mcpServers || [];
     if (mcpServers.length === 0) {
-      mcpSection.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">No MCP servers configured</div>';
+      mcpSection.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">' + t('agent.noMcp') + '</div>';
     } else {
       mcpServers.forEach(server => {
         const id = server.id || server;
@@ -242,7 +243,7 @@ export function showAgentModal(name, configJson, systemMd) {
         label.appendChild(document.createTextNode(id));
         if (!globallyEnabled) {
           const hint = document.createElement('span');
-          hint.textContent = ' (offline)';
+          hint.textContent = t('agent.offline');
           hint.style.cssText = 'font-size:10px;color:var(--color-frame-text-muted);margin-left:2px;';
           label.appendChild(hint);
         }

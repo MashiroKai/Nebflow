@@ -39,6 +39,9 @@ trait BridgeContext:
   /** Inject a user message into a session's agent. */
   def injectMessage(sessionId: String, content: String, senderId: Option[String]): IO[Unit]
 
+  /** Interrupt the agent's current turn for a session. */
+  def interruptAgent(sessionId: String): IO[Unit]
+
   /** Look up a session's metadata. */
   def sessionMeta(sessionId: String): IO[Option[SessionMeta]]
 

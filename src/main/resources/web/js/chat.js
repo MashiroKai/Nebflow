@@ -4,6 +4,7 @@
 import state, { AGENT_PALETTE } from './state.js';
 import { renderMarkdownWithMath, escapeHtml, formatDiff, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
+import { t } from './i18n.js';
 
 // ---------- Agent color assignment ----------
 export function getAgentColor(agentId) {
@@ -24,7 +25,7 @@ export function setStatus(text) {
 
 export function clearStatus() {
   const { statusWrap } = state.dom;
-  statusWrap.classList.remove('on', 'compacting', 'compact-done', 'compact-failed');
+  statusWrap.classList.remove('on');
   stopSpinner();
 }
 
@@ -144,7 +145,8 @@ export function finishAi(durationMs, model) {
     state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText || '');
     if (askBox) state.currentAiBubble.appendChild(askBox);
     if (durationMs != null && durationMs > 0) {
-      renderDurationBadge(state.currentAiBubble, durationMs, model);
+      const seed = state.dom.chat.querySelectorAll('.duration-badge').length;
+      renderDurationBadge(state.currentAiBubble, durationMs, model, seed);
     }
     const result = { type: 'ai', text: state.aiText, durationMs, model };
     state.currentAiBubble = null;
@@ -170,54 +172,34 @@ export function formatDuration(ms) {
 
 
 /**
- * Cosmology-themed thinking phrases. {d} is replaced with the formatted duration.
+ * Cosmology-themed thinking phrases — now powered by i18n.
+ * Keys: think.0 through think.18. {d} is replaced with the formatted duration.
  */
-const THINKING_PHRASES = [
-  'Thought for {d}',
-  'Observed for {d}',
-  'Traversed the cosmos for {d}',
-  'Charted the stars for {d}',
-  'Navigated for {d}',
-  'Explored for {d}',
-  'Scanned the deep field for {d}',
-  'Computed for {d}',
-  'Surveyed the void for {d}',
-  'Drifted through space for {d}',
-  'Pondered for {d}',
-  'Illuminated for {d}',
-  'Wandered the cosmos for {d}',
-  'Gazed into the deep for {d}',
-  'Mapped the nebula for {d}',
-  'Orbited the problem for {d}',
-  'Aligned the constellations for {d}',
-  'Reached for the light for {d}',
-  'Probed the darkness for {d}',
-  'Sailed the stellar winds for {d}',
-];
+const THINKING_COUNT = 19;
 
 /**
- * Pick a cosmology-themed thinking phrase.
+ * Pick a cosmology-themed thinking phrase via i18n.
  * @param {number} durationMs - Duration in milliseconds.
  * @param {number} [seed] - Optional seed for deterministic selection.
  * @returns {string} The full badge text including the ✻ prefix.
  */
 export function pickThinkingPhrase(durationMs, seed) {
   const idx = seed != null
-    ? ((seed % THINKING_PHRASES.length) + THINKING_PHRASES.length) % THINKING_PHRASES.length
-    : Math.floor(Math.random() * THINKING_PHRASES.length);
-  return '✻ ' + THINKING_PHRASES[idx].replace('{d}', formatDuration(durationMs));
+    ? ((seed % THINKING_COUNT) + THINKING_COUNT) % THINKING_COUNT
+    : Math.floor(Math.random() * THINKING_COUNT);
+  return '✻ ' + t('think.' + idx, { d: formatDuration(durationMs) });
 }
 
 /**
  * Render a subtle duration badge below an AI bubble.
  */
-export function renderDurationBadge(bubble, durationMs, model) {
+export function renderDurationBadge(bubble, durationMs, model, seed) {
   if (!bubble) return;
   const row = bubble.closest('.row');
   if (!row) return;
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
-  let text = pickThinkingPhrase(durationMs);
+  let text = pickThinkingPhrase(durationMs, seed);
   if (model) text += ' · ' + model;
   badge.textContent = text;
   row.appendChild(badge);
@@ -374,10 +356,10 @@ export function renderTimeoutNotice() {
   card.style.alignItems = 'center';
   card.style.gap = '12px';
   const text = document.createElement('span');
-  text.textContent = 'Response timed out';
+  text.textContent = t('chat.timeout');
   card.appendChild(text);
   const btn = document.createElement('button');
-  btn.textContent = 'Retry';
+  btn.textContent = t('chat.retry');
   btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
   btn.onmouseenter = () => { btn.style.background = 'var(--color-frame-active)'; };
   btn.onmouseleave = () => { btn.style.background = 'var(--color-frame-hover)'; };
@@ -409,17 +391,46 @@ export function renderSystemBubble(text) {
   row.appendChild(card);
   chat.appendChild(row);
   smartScroll();
+  // Persist to localStorage and backend (via recording ws send)
+  import('./persistence.js').then(({ saveMsg }) => saveMsg({type: 'system', content: text}));
   return { type: 'system', text };
 }
 
 
 // ---------- Universal Option Box ----------
 // Renders an inline option picker. Used by AskUser tool, /thinking, permission prompts.
-export function showOptions(container, questions, onConfirm, doneLabel, onCancel) {
+const ASKUSER_DRAFTS_KEY = 'nebflow_askuser_drafts';
+
+function loadAskDrafts(sid) {
+  try { return JSON.parse(localStorage.getItem(ASKUSER_DRAFTS_KEY))?.[sid] || {}; } catch { return {}; }
+}
+
+function saveAskDraft(sid, qi, value) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ASKUSER_DRAFTS_KEY)) || {};
+    if (!all[sid]) all[sid] = {};
+    if (value) all[sid][qi] = value;
+    else delete all[sid][qi];
+    localStorage.setItem(ASKUSER_DRAFTS_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+
+function clearAskDrafts(sid) {
+  try {
+    const all = JSON.parse(localStorage.getItem(ASKUSER_DRAFTS_KEY)) || {};
+    delete all[sid];
+    localStorage.setItem(ASKUSER_DRAFTS_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+
+export function showOptions(container, questions, onConfirm, doneLabel, onCancel, askSessionId) {
   const box = document.createElement('div');
   box.className = 'option-box';
   const answers = new Array(questions.length).fill(null);
-  const confirmLabel = doneLabel || 'Confirm';
+  const confirmLabel = doneLabel || t('chat.confirm');
+
+  // Restore saved drafts for this session
+  const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
 
   questions.forEach((item, qi) => {
     const q = document.createElement('div');
@@ -445,6 +456,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
             el.classList.toggle('picked', i === oi);
           });
           customInput && (customInput.style.display = 'none');
+          customInput.value = '';
+          if (askSessionId) saveAskDraft(askSessionId, qi, '');
           checkAllAnswered();
         };
         optsDiv.appendChild(btn);
@@ -455,16 +468,30 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     const allowOther = item.allowOther !== false; // default true
     const customInput = document.createElement('textarea');
     customInput.className = 'option-custom-input';
-    customInput.placeholder = 'Type your answer...';
+    customInput.placeholder = t('chat.typeAnswer');
     customInput.rows = 2;
+
+    // Restore saved draft text for this question
+    const savedVal = saved[qi];
+    if (savedVal) {
+      customInput.value = savedVal;
+      answers[qi] = savedVal;
+    }
+
     if (!hasOptions) customInput.style.display = ''; // visible by default for open-ended
 
     let otherBtn = null;
     if (hasOptions && allowOther) {
       otherBtn = document.createElement('button');
       otherBtn.className = 'option-btn';
-      otherBtn.textContent = 'Other...';
-      customInput.style.display = 'none';
+      otherBtn.textContent = t('chat.other');
+      // If a custom draft exists, auto-select "Other" for this option set
+      if (savedVal && !item.options.some(o => (typeof o === 'string' ? o : o.label) === savedVal)) {
+        otherBtn.classList.add('picked');
+        customInput.style.display = '';
+      } else {
+        customInput.style.display = 'none';
+      }
       otherBtn.onclick = () => {
         optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
         otherBtn.classList.add('picked');
@@ -485,14 +512,20 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     }
 
     customInput.oninput = () => {
-      if (customInput.value.trim()) {
-        answers[qi] = customInput.value.trim();
+      const val = customInput.value.trim();
+      if (val) {
+        answers[qi] = val;
         if (hasOptions) {
           optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
           otherBtn && otherBtn.classList.add('picked');
         }
-        checkAllAnswered();
+      } else if (hasOptions && !otherBtn?.classList.contains('picked')) {
+        // Don't clear answer if a preset option is selected
+      } else {
+        answers[qi] = null;
       }
+      if (askSessionId) saveAskDraft(askSessionId, qi, val);
+      checkAllAnswered();
     };
     optsDiv.appendChild(customInput);
     box.appendChild(optsDiv);
@@ -503,18 +536,19 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'option-cancel';
-  cancelBtn.textContent = 'Cancel';
+  cancelBtn.textContent = t('chat.cancel');
   cancelBtn.onclick = () => {
     box.querySelectorAll('.option-btn, .option-confirm').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
     confirmBtn.disabled = true;
+    if (askSessionId) clearAskDrafts(askSessionId);
     if (onCancel) onCancel();
   };
 
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'option-confirm';
   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + escapeHtml(confirmLabel) + '</span>';
-  confirmBtn.disabled = true;
+  confirmBtn.disabled = !answers.every(a => a !== null);
   confirmBtn.onclick = () => {
     box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
@@ -527,6 +561,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     ansDiv.textContent = '-> ' + answers.join(', ');
     box.appendChild(ansDiv);
 
+    if (askSessionId) clearAskDrafts(askSessionId);
     if (onConfirm) onConfirm(answers);
   };
   btnRow.appendChild(cancelBtn);
@@ -545,7 +580,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 export function renderAskUser(items, askSessionId) {
   console.log('[askUser] rendering', items?.length || 0, 'questions');
   if (!Array.isArray(items) || items.length === 0) {
-    renderError('Waiting for question...');
+    renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
   }
   const chat = state.dom.chat;
@@ -565,15 +600,15 @@ export function renderAskUser(items, askSessionId) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers }));
       }
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
-    }, 'Confirm', () => {
+    }, t('chat.confirm'), () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers: ['__cancelled__'] }));
       }
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
-    });
+    }, targetSid);
   } catch (e) {
     console.error('[askUser] render failed:', e);
-    bubble.textContent = 'Failed to render options. Please try again.';
+    bubble.textContent = t('chat.failedRender');
   }
   return { type: 'askUser', items };
 }
@@ -598,20 +633,21 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   } catch (e) {}
 
   const targetSid = permSessionId || state.activeSessionId;
+  const allowLabel = t('chat.allow');
   const items = [{
-    question: 'Allow ' + toolName + '?',
+    question: t('chat.allowTool', { tool: toolName }),
     options: [
-      { label: 'Allow', desc: summary + (detail ? ' — ' + detail : '') },
-      { label: 'Deny', desc: 'Skip this tool call' }
+      { label: allowLabel, desc: summary + (detail ? ' — ' + detail : '') },
+      { label: t('chat.deny'), desc: t('chat.skipTool') }
     ]
   }];
   showOptions(bubble, items, (answers) => {
-    const approved = answers[0] === 'Allow';
+    const approved = answers[0] === allowLabel;
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved }));
     }
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
-  }, 'Confirm', () => {
+  }, t('chat.confirm'), () => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: false }));
     }
@@ -669,7 +705,7 @@ export function renderAskBubble(question) {
   bubble.className = 'bubble user';
   const label = document.createElement('div');
   label.className = 'ask-label';
-  label.textContent = 'Ask';
+  label.textContent = t('chat.askLabel');
   const q = document.createElement('div');
   q.textContent = question;
   bubble.appendChild(label);
@@ -689,7 +725,7 @@ export function appendAskAnswer(delta) {
     state.currentAskBubble.className = 'bubble ai';
     const label = document.createElement('div');
     label.className = 'ask-label';
-    label.textContent = 'Ask';
+    label.textContent = t('chat.askLabel');
     const content = document.createElement('div');
     state.currentAskBubble.appendChild(label);
     state.currentAskBubble.appendChild(content);
@@ -711,7 +747,8 @@ export function finishAskAnswer(durationMs, model) {
       contentEl.innerHTML = renderMarkdownWithMath(state.askAnswerText || '');
     }
     if (durationMs != null && durationMs > 0) {
-      renderDurationBadge(state.currentAskBubble, durationMs, model);
+      const seed = state.dom.chat.querySelectorAll('.duration-badge').length;
+      renderDurationBadge(state.currentAskBubble, durationMs, model, seed);
     }
     state.currentAskBubble = null;
     state.askAnswerText = '';
@@ -726,6 +763,6 @@ export function renderAskError(msg) {
     state.currentAskBubble = null;
     state.askAnswerText = '';
   }
-  renderError(msg || 'Ask failed');
+  renderError(msg || t('chat.askFailed'));
 }
 

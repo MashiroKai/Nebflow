@@ -6,6 +6,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.agent.AgentCommand.*
 import nebflow.core.*
+import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.tools.AskUserQuestionTool
 import nebflow.llm.FallbackExhaustedError
@@ -120,31 +121,24 @@ object AgentActor extends AgentCore with AgentSession:
             s"msgs=${state.messages.size}"
           )
           // Auto-detect language on first user message (root agent only, one-time)
-          if depth == 0 && parentRef.isEmpty && dedupedState.messages.isEmpty then
-            LanguageDetector.detect(text).foreach { lang =>
-              resources.dispatcher.unsafeRunAndForget(
-                resources.runtimePrefs.getLanguage.flatMap {
-                  case None =>
-                    resources.runtimePrefs.setLanguage(Some(lang)) *>
-                      NebflowLogger.forName("nebflow.agent").info(s"Auto-detected language: $lang") *>
-                      state
-                        .wsSend(io.circe.Json.obj("type" -> "serverConfig".asJson, "language" -> lang.asJson))
-                        .handleErrorWith(_ => IO.unit)
-                  case Some(_) => IO.unit
-                }
-              )
-            }
-          end if
+          val stateWithLang =
+            if depth == 0 && parentRef.isEmpty && dedupedState.messages.isEmpty then
+              LanguageDetector.detect(text) match
+                case Some(lang) =>
+                  NebflowLogger.forName("nebflow.agent").info(s"Auto-detected language: $lang")
+                  dedupedState.withLanguage(Some(lang))
+                case None => dedupedState
+            else dedupedState
 
           val userMsg = blocks.filter(_.nonEmpty) match
             case Some(bl) => Message(MessageRole.User, Right(bl))
             case None => Message(MessageRole.User, Left(text))
-          val newMessages = dedupedState.messages :+ userMsg
+          val newMessages = stateWithLang.messages :+ userMsg
           // Refresh memory if not yet loaded (first message of session)
           val stateWithMemory =
-            if dedupedState.memoryBlock.isEmpty then
-              dedupedState.withMemoryBlock(buildMemoryBlock(agentDef, dedupedState.sessionId))
-            else dedupedState
+            if stateWithLang.memoryBlock.isEmpty then
+              stateWithLang.withMemoryBlock(buildMemoryBlock(agentDef, stateWithLang.sessionId))
+            else stateWithLang
           pipeLlmCall(
             agentDef,
             resources,
@@ -156,6 +150,19 @@ object AgentActor extends AgentCore with AgentSession:
             replyTo
           )
         end if
+
+      case AgentCommand.AskQuestion(question, askSessionId) =>
+        // Inline /ask: inject ask-reminder into current messages, reuse agent's cached LLM context
+        val askReminder = AskService.buildAskReminder(question)
+        val askMessages = state.messages :+ askReminder
+        // Set askMode so pipeLlmCall knows to skip reminders/micro-compact
+        // and LlmComplete handler knows to treat the response as ask-answer
+        val askState = state
+          .withMessages(askMessages)
+          .withAskMode(Some(question))
+          .withStatus(AgentStatus.Processing)
+        logAgentEvent(ctx, agentDef, depth, state.sessionId, state.sessionName, "ask-start", s"q=${question.take(60)}")
+        pipeLlmCall(agentDef, resources, depth, parentRef, askState, stash, ctx, None)
 
       case AgentCommand.Interrupt() =>
         // Idle state — nothing to interrupt, ignore
@@ -204,7 +211,34 @@ object AgentActor extends AgentCore with AgentSession:
         )
 
       case AgentCommand.UpdateContextWindow(window) =>
-        idle(agentDef, resources, depth, parentRef, state.withContextWindow(window), stash, ctx)
+        val newState = state.withContextWindow(window)
+        // Model switched: check if current messages exceed the new context window
+        val estimatedTokens = TokenEstimator.estimate(newState.messages)
+        val config = CompactConfig()
+        val threshold = window - config.bufferForWindow(window)
+        if newState.messages.nonEmpty && estimatedTokens > threshold then
+          logAgentEvent(
+            ctx,
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "model-switch-compact",
+            s"newWindow=$window estimated=$estimatedTokens threshold=$threshold msgs=${newState.messages.size}"
+          )
+          handleTriggerCompaction(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            newState,
+            stash,
+            ctx,
+            "full",
+            None,
+            resumeAfterCompact = false
+          )
+        else idle(agentDef, resources, depth, parentRef, newState, stash, ctx)
 
       // --- Background task completed (Phase 1 compat): convert to ExternalEvent ---
       case n: AgentCommand.BackgroundTaskNotification =>
@@ -324,8 +358,60 @@ object AgentActor extends AgentCore with AgentSession:
         else
           val updatedState = state
             .withLatestUsage(result.usage.orElse(state.latestUsage))
+            .withLastModel(result.model.orElse(state.lastModel))
             .updateContextWindowIfNeeded(result.contextWindow)
-          if result.toolCalls.nonEmpty then
+
+          // Emit real-time usage update after each LLM round
+          val isSubagent = depth > 0
+          updatedState.latestUsage.foreach { usage =>
+            if !isSubagent then
+              emitStream(
+                resources.dispatcher,
+                state.wsSend,
+                ctx,
+                AgentStreamEvent.UsageUpdate(usage.inputTokens, updatedState.contextWindow),
+                isSubagent = false,
+                state.sessionId
+              )
+          }
+
+          // --- Inline compact mode: pendingCompaction is set ---
+          // The LLM has responded to the compact reminder — parse the summary
+          if state.pendingCompaction.isDefined && result.toolCalls.isEmpty && result.text.nonEmpty then
+            handleCompactResponse(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result.text)
+          else if state.pendingCompaction.isDefined && result.toolCalls.nonEmpty then
+            // Model tried to call tools despite being told not to — treat as failure
+            NebflowLogger
+              .forName("nebflow.agent")
+              .warn(
+                s"Compact model returned tool calls: ${result.toolCalls.map(_.name).mkString(", ")}"
+              )
+            handleCompactFailure(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              updatedState,
+              stash,
+              ctx,
+              "Compact model unexpectedly called tools"
+            )
+          // --- Inline ask mode: askMode is set ---
+          // The LLM has answered the ask question — capture response, restore state
+          else if state.askMode.isDefined && result.toolCalls.isEmpty then
+            handleAskComplete(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              updatedState,
+              stash,
+              ctx,
+              result.text,
+              result.model
+            )
+          // Tool calls (normal or ask mode) — execute tools
+          else if result.toolCalls.nonEmpty then
             pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
           // Has text or thinking content — normal completion
           else if result.text.nonEmpty || result.thinking.nonEmpty then
@@ -340,6 +426,7 @@ object AgentActor extends AgentCore with AgentSession:
               result.text,
               replyTo,
               result.thinking,
+              result.thinkingSignature,
               textAlreadyStreamed = true,
               result.model
             )
@@ -365,7 +452,7 @@ object AgentActor extends AgentCore with AgentSession:
                 "context-exceeded",
                 s"stopReason=$stopReason"
               )
-              // Context window exceeded — trigger compaction if possible, otherwise report error
+              // Context window exceeded — trigger inline compaction if possible
               if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax
               then
                 // Compaction already in progress or circuit breaker open — report error
@@ -382,50 +469,23 @@ object AgentActor extends AgentCore with AgentSession:
                   msg,
                   replyTo,
                   None,
+                  None,
                   textAlreadyStreamed = false,
                   result.model
                 )
               else
-                // Trigger direct compaction via CompactService, then retry
-                val jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
-                val pending = CompactionJob(jobId, "full", None, replyTo)
-                val io = CompactService
-                  .compact(
-                    state.messages,
-                    resources,
-                    state.sessionId.getOrElse(ctx.self.path.name),
-                    state.readTracker
-                  )
-                  .map { result =>
-                    ctx.self ! AgentCommand.CompactionComplete(result)
-                  }
-                resources.dispatcher.unsafeRunAndForget(
-                  io.handleError { e =>
-                    NebflowLogger.forName("nebflow.agent").warn(s"CompactService failed: ${e.getMessage}")
-                    ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage))
-                  }
-                )
-                resources.dispatcher.unsafeRunAndForget(
-                  emitStreamIO(
-                    state.wsSend,
-                    ctx,
-                    AgentStreamEvent.CompactStart(
-                      "full",
-                      result.usage.map(_.inputTokens),
-                      Some(state.contextWindow - CompactConfig().bufferForWindow(state.contextWindow))
-                    ),
-                    isSubagent = depth > 0,
-                    state.sessionId
-                  ).handleErrorWith(_ => IO.unit)
-                )
-                processing(
+                // Trigger inline compaction via pipeLlmCall with compact reminder
+                startDirectCompaction(
                   agentDef,
                   resources,
                   depth,
                   parentRef,
-                  updatedState.withPendingCompaction(Some(pending)),
+                  updatedState,
                   stash,
-                  ctx
+                  ctx,
+                  replyTo,
+                  (ad, r, d, p, s, st, c) => processing(ad, r, d, p, s, st, c),
+                  "full"
                 )
               end if
             else if isMaxTokens then
@@ -459,6 +519,7 @@ object AgentActor extends AgentCore with AgentSession:
                 ctx,
                 "[Response truncated: max output tokens reached]",
                 replyTo,
+                None,
                 None,
                 textAlreadyStreamed = false,
                 result.model
@@ -617,7 +678,7 @@ object AgentActor extends AgentCore with AgentSession:
         val didContextManage = tc.results.exists { case (call, _) => call.name == "ContextManage" }
         val toolCalls = tc.results.map((call, _) => call)
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
-        tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t))
+        tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
         if tc.originalText.nonEmpty then assistantBlocks += ContentBlock.Text(tc.originalText)
         toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
         val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
@@ -851,6 +912,7 @@ object AgentActor extends AgentCore with AgentSession:
                     errMsg,
                     Some(replyTo),
                     None,
+                    None,
                     textAlreadyStreamed = false,
                     None
                   )
@@ -996,6 +1058,7 @@ object AgentActor extends AgentCore with AgentSession:
     text: String,
     replyTo: Option[ActorRef[AgentEvent]],
     thinking: Option[String] = None,
+    thinkingSignature: Option[String] = None,
     textAlreadyStreamed: Boolean = false,
     model: Option[String] = None
   ): Behavior[AgentCommand] =
@@ -1011,7 +1074,7 @@ object AgentActor extends AgentCore with AgentSession:
       )
     // Build Done event with model, contextWindow, and inputTokens
     val doneEvent = AgentStreamEvent.Done(
-      model,
+      model.orElse(state.lastModel),
       contextWindow = if !isSubagent then Some(state.contextWindow) else None,
       inputTokens = if !isSubagent then state.latestUsage.map(_.inputTokens) else None
     )
@@ -1027,23 +1090,39 @@ object AgentActor extends AgentCore with AgentSession:
         state.sessionId
       )
     else
-      val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
+      val sid = state.sessionId
+      val doneJson = doneEvent.toJson(ctx.self.path.name, false, sid)
       NebflowLogger
         .forName("nebflow.agent")
         .info(
-          s"finishTurn: sending Done sessionId=${state.sessionId.getOrElse("-")} jsonLen=${doneJson.noSpaces.length}"
+          s"finishTurn: sending Done sessionId=${sid.getOrElse("-")} jsonLen=${doneJson.noSpaces.length}"
         )
-      resources.dispatcher.unsafeRunAndForget(
-        state
-          .wsSend(doneJson)
-          .handleErrorWith(e =>
-            IO(NebflowLogger.forName("nebflow.agent").warn(s"finishTurn: Done event delivery failed: ${e.getMessage}"))
-          ) *> IO {
-          NebflowLogger
-            .forName("nebflow.agent")
-            .info(s"finishTurn: Done event delivered sessionId=${state.sessionId.getOrElse("-")}")
-        }
-      )
+      // Send Done + sessionBusy(false) in a single IO chain so Done always
+      // arrives before sessionBusy.  Otherwise a parallel dispatcher can
+      // deliver sessionBusy first, causing the frontend to finalise the AI
+      // bubble *without* the model name (finishAi(null) in the sessionBusy
+      // handler).
+      sid.foreach { sessionId =>
+        resources.dispatcher.unsafeRunAndForget(
+          (state
+            .wsSend(doneJson)
+            .handleErrorWith(e =>
+              IO(
+                NebflowLogger
+                  .forName("nebflow.agent")
+                  .warn(s"finishTurn: Done event delivery failed: ${e.getMessage}")
+              )
+            ) *>
+            emitSessionBusy(state.wsSend, sessionId, busy = false))
+            .handleErrorWith(e =>
+              IO(
+                NebflowLogger
+                  .forName("nebflow.agent")
+                  .warn(s"finishTurn: Done+sessionBusy chain failed: ${e.getMessage}")
+              )
+            )
+        )
+      }
     end if
 
     logAgentEvent(
@@ -1057,8 +1136,8 @@ object AgentActor extends AgentCore with AgentSession:
     )
     val assistantContent = (thinking, text) match
       case (None, _) => Left(text)
-      case (Some(t), "") => Right(List(ContentBlock.Thinking(t)))
-      case (Some(t), txt) => Right(List(ContentBlock.Thinking(t), ContentBlock.Text(txt)))
+      case (Some(t), "") => Right(List(ContentBlock.Thinking(t, thinkingSignature)))
+      case (Some(t), txt) => Right(List(ContentBlock.Thinking(t, thinkingSignature), ContentBlock.Text(txt)))
     val newMessages = state.messages :+ Message(MessageRole.Assistant, assistantContent)
 
     // Check for queued external events
@@ -1109,8 +1188,7 @@ object AgentActor extends AgentCore with AgentSession:
       state.sessionId.foreach { sid =>
         resources.dispatcher.unsafeRunAndForget(
           (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
-            resources.sessionStore.flushIndex *>
-            emitSessionBusy(state.wsSend, sid, busy = false))
+            resources.sessionStore.flushIndex)
             .handleErrorWith(e =>
               IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
             )
@@ -1145,8 +1223,8 @@ object AgentActor extends AgentCore with AgentSession:
       ctx,
       replyTo,
       processing = (ad, r, d, p, s, st, c) => processing(ad, r, d, p, s, st, c),
-      finishTurn = (ad, r, d, p, s, st, c, t, rep, th, streamed, model) =>
-        finishTurn(ad, r, d, p, s, st, c, t, rep, th, streamed, model)
+      finishTurn = (ad, r, d, p, s, st, c, t, rep, th, thSig, streamed, model) =>
+        finishTurn(ad, r, d, p, s, st, c, t, rep, th, thSig, streamed, model)
     )
 
   private def pipeToolExecutions(
@@ -1172,9 +1250,217 @@ object AgentActor extends AgentCore with AgentSession:
       replyTo,
       processing = (ad, r, d, p, s, st, c) => processing(ad, r, d, p, s, st, c),
       pipeLlmCallFn = (ad, r, d, p, s, st, c, rep) => pipeLlmCall(ad, r, d, p, s, st, c, rep),
-      finishTurnFn = (ad, r, d, p, s, st, c, t, rep, th, streamed, model) =>
-        finishTurn(ad, r, d, p, s, st, c, t, rep, th, streamed, model)
+      finishTurnFn = (ad, r, d, p, s, st, c, t, rep, th, thSig, streamed, model) =>
+        finishTurn(ad, r, d, p, s, st, c, t, rep, th, thSig, streamed, model)
     )
+
+  /** Handle successful compact response — parse summary, replace messages, optionally resume. */
+  private def handleCompactResponse(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    stash: StashBuffer[AgentCommand],
+    ctx: ActorContext[AgentCommand],
+    responseText: String
+  ): Behavior[AgentCommand] =
+    val pending = state.pendingCompaction
+    val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
+
+    // Fetch recently-read file paths for file restoration
+    val readPathsIO = state.readTracker
+      .map(_.recentFiles(CompactConfig().postCompactMaxFiles).map(_.map(_.toString)))
+      .getOrElse(IO.pure(Nil))
+
+    val hookIO = CompactService.runPreCompactHook(state.messages, resources, sessionId)
+
+    resources.dispatcher.unsafeRunAndForget(
+      (readPathsIO, hookIO)
+        .mapN { (readPaths, hookResult) =>
+          (readPaths, hookResult)
+        }
+        .flatMap { (readPaths, hookResult) =>
+          hookResult match
+            case Left(reason) =>
+              // Hook blocked compaction
+              IO(ctx.self ! AgentCommand.CompactionComplete(Left(reason)))
+            case Right(_) =>
+              val result = FullCompact.parseResponse(
+                responseText,
+                state.messages,
+                resources.projectRoot.toString,
+                readPaths
+              )
+              result match
+                case Left(err) =>
+                  IO(ctx.self ! AgentCommand.CompactionComplete(Left(err)))
+                case Right(compactedMessages) =>
+                  // Run post-compact hook (fire-and-forget)
+                  resources.dispatcher.unsafeRunAndForget(
+                    CompactService
+                      .runPostCompactHook(
+                        state.messages.size,
+                        compactedMessages.size,
+                        resources,
+                        sessionId
+                      )
+                      .handleErrorWith(_ => IO.unit)
+                  )
+
+                  IO(ctx.self ! AgentCommand.CompactionComplete(Right(compactedMessages)))
+        }
+        .handleError { e =>
+          IO(ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage)))
+        }
+        .void
+    )
+    // Stay in processing state until CompactionComplete arrives
+    processing(agentDef, resources, depth, parentRef, state, stash, ctx)
+  end handleCompactResponse
+
+  /** Handle compact failure — increment failure counter, emit event, report error or retry. */
+  private def handleCompactFailure(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    stash: StashBuffer[AgentCommand],
+    ctx: ActorContext[AgentCommand],
+    err: String
+  ): Behavior[AgentCommand] =
+    val pending = state.pendingCompaction
+    val now = System.currentTimeMillis()
+
+    logAgentEvent(ctx, agentDef, depth, state.sessionId, state.sessionName, "compaction-failed", s"err=$err")
+
+    resources.dispatcher.unsafeRunAndForget(
+      emitStreamIO(
+        state.wsSend,
+        ctx,
+        AgentStreamEvent.CompactFailed(err, state.compactionFailures + 1, CompactConfig().circuitBreakerMax),
+        isSubagent = depth > 0,
+        state.sessionId
+      ).handleErrorWith(_ => IO.unit)
+    )
+
+    // Complete any pending replyDeferred
+    pending.foreach(_.replyDeferred.foreach { d =>
+      resources.dispatcher.unsafeRunAndForget(d.complete(Left(err)).handleErrorWith(_ => IO.unit))
+    })
+
+    val failedState = state
+      .withPendingCompaction(None)
+      .withCompactionFailures(state.compactionFailures + 1)
+      .withLastCompactionFailureAt(now)
+
+    pending.flatMap(_.replyTo) match
+      case Some(replyTo) =>
+        val errMsg = s"Context compaction failed: $err. Please start a new session or use /clear to reset."
+        finishTurn(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          failedState,
+          stash,
+          ctx,
+          errMsg,
+          Some(replyTo),
+          None,
+          None,
+          textAlreadyStreamed = false,
+          None
+        )
+      case None =>
+        processing(agentDef, resources, depth, parentRef, failedState, stash, ctx)
+  end handleCompactFailure
+
+  /**
+   * Handle /ask completion — send answer to frontend, persist UiMessage,
+   * restore original messages, return to idle.
+   */
+  private def handleAskComplete(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    stash: StashBuffer[AgentCommand],
+    ctx: ActorContext[AgentCommand],
+    answerText: String,
+    model: Option[String]
+  ): Behavior[AgentCommand] =
+    val question = state.askMode.getOrElse("")
+    val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
+    val durationMs = 0L // TODO: track start time if needed
+
+    logAgentEvent(
+      ctx,
+      agentDef,
+      depth,
+      state.sessionId,
+      state.sessionName,
+      "ask-complete",
+      s"q=${question.take(40)} a=${answerText.take(40)}"
+    )
+
+    // Send askDone event to frontend
+    resources.dispatcher.unsafeRunAndForget(
+      state
+        .wsSend(
+          io.circe.Json.obj(
+            "type" -> "askDone".asJson,
+            "sessionId" -> sessionId.asJson,
+            "durationMs" -> durationMs.asJson,
+            "model" -> model.getOrElse("").asJson
+          )
+        )
+        .handleErrorWith(_ => IO.unit)
+    )
+
+    // Persist UiMessage.Ask
+    resources.dispatcher.unsafeRunAndForget(
+      resources.sessionStore
+        .appendUiMessages(sessionId, List(UiMessage.Ask(question, answerText, Some(durationMs), model)))
+        .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}")))
+    )
+
+    // Restore original messages: strip the ask-reminder and any tool exchanges that happened
+    // during the ask turn. The ask messages were: original + ask-reminder + [tool exchanges].
+    // We keep only the original messages.
+    val originalMessages = state.messages.takeWhile { m =>
+      // Drop everything from (and including) the ask-reminder onward
+      !isAskReminder(m)
+    }
+    // If we couldn't find the ask-reminder (shouldn't happen), keep all messages minus the last few
+    val restoredMessages =
+      if originalMessages.size == state.messages.size then
+        // Fallback: just keep messages before ask. The ask-reminder was appended by AskQuestion handler.
+        state.messages.dropRight(1)
+      else originalMessages
+
+    // Clear askMode and return to idle with original messages restored
+    idle(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state
+        .withAskMode(None)
+        .withMessages(restoredMessages)
+        .resetToIdle(restoredMessages),
+      stash,
+      ctx
+    )
+  end handleAskComplete
+
+  /** Check if a message is the ask-reminder injected by AskQuestion handler. */
+  private def isAskReminder(msg: Message): Boolean =
+    msg.role == MessageRole.User && (msg.content match
+      case Left(text) => text.contains("<system-reminder>") && text.contains("ephemeral follow-up question")
+      case _ => false)
 
   private def handleTriggerCompaction(
     agentDef: AgentDef,
@@ -1236,43 +1522,19 @@ object AgentActor extends AgentCore with AgentSession:
         )
         Behaviors.same
       else
-        val pending = CompactionJob(
-          s"compact-${java.util.UUID.randomUUID().toString.take(8)}",
-          mode,
-          replyDeferred,
-          resumeAfterCompact = resumeAfterCompact
+        // Trigger inline compaction via pipeLlmCall with compact reminder
+        startDirectCompaction(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          stash,
+          ctx,
+          None, // replyTo not used for manual /compact
+          (ad, r, d, p, s, st, c) => processing(ad, r, d, p, s, st, c),
+          mode
         )
-        // Fire-and-forget direct compaction via CompactService
-        val io = CompactService
-          .compact(
-            state.messages,
-            resources,
-            state.sessionId.getOrElse(ctx.self.path.name),
-            state.readTracker
-          )
-          .map { result =>
-            ctx.self ! AgentCommand.CompactionComplete(result)
-          }
-        resources.dispatcher.unsafeRunAndForget(
-          io.handleError { e =>
-            NebflowLogger.forName("nebflow.agent").warn(s"CompactService failed: ${e.getMessage}")
-            ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage))
-          }
-        )
-        resources.dispatcher.unsafeRunAndForget(
-          emitStreamIO(
-            state.wsSend,
-            ctx,
-            AgentStreamEvent.CompactStart(
-              mode,
-              state.latestUsage.map(_.inputTokens),
-              Some(state.contextWindow - config.bufferForWindow(state.contextWindow))
-            ),
-            isSubagent = depth > 0,
-            state.sessionId
-          ).handleErrorWith(_ => IO.unit)
-        )
-        processing(agentDef, resources, depth, parentRef, state.withPendingCompaction(Some(pending)), stash, ctx)
       end if
     end if
   end handleTriggerCompaction
