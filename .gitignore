@@ -26,6 +26,9 @@ temp/
 docs/
 *demo*.html
 /nebflow
+nul
+openclaw/
+scripts/
 
 # Sensitive
 *.env
