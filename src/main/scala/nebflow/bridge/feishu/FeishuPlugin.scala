@@ -3,7 +3,11 @@ package nebflow.bridge.feishu
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
+import com.lark.oapi.Client as SdkClient
+import com.lark.oapi.core.token.AccessTokenType
 import com.lark.oapi.event.EventDispatcher
+import com.lark.oapi.event.cardcallback.P2CardActionTriggerHandler
+import com.lark.oapi.event.cardcallback.model.{CallBackToast, P2CardActionTrigger, P2CardActionTriggerResponse}
 import com.lark.oapi.service.im.ImService
 import com.lark.oapi.service.im.v1.model.P2MessageReceiveV1
 import com.lark.oapi.ws.Client as WsClient
@@ -11,20 +15,21 @@ import io.circe.*
 import io.circe.parser.*
 import io.circe.syntax.*
 import nebflow.bridge.*
+import scala.concurrent.duration.*
 import nebflow.core.NebflowLogger
-
-import java.net.http.HttpClient
 
 import scala.jdk.CollectionConverters.*
 
 /**
  * Feishu bridge plugin using the official Java SDK's WebSocket long-connection client.
  *
- * Uses com.larksuite.oapi:oapi-sdk for:
- * - WebSocket connection with OkHttp (supports permessage-deflate compression)
- * - Protobuf frame encoding/decoding
- * - Ping/pong keepalive
- * - Event dispatching
+ * Design (inspired by OpenClaw):
+ * - Per-turn activation: a reply dispatcher is created only when a Feishu message
+ *   triggers a conversation turn, and destroyed on completion. This ensures only
+ *   Feishu-triggered conversations get pushed to Feishu — web UI conversations
+ *   are never forwarded.
+ * - Streaming: text deltas are accumulated and the card is patched with throttle
+ *   (300ms), giving near-real-time feedback in the Feishu chat.
  */
 class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
   val name: String = "feishu"
@@ -33,45 +38,29 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
 
   private var ctx: BridgeContext = scala.compiletime.uninitialized
 
-  // Routing table: feishu chatId → sessionId
+  // Static routing: feishu chatId → sessionId
   private val chatSessionMap: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  // HTTP client for sending messages
-  private val feishuClient = new FeishuClient(globalConfig)
+  // Per-turn reply dispatchers: sessionId → FeishuReplyDispatcher
+  // Only present while a Feishu-triggered turn is active.
+  private val activeDispatchers: Ref[IO, Map[String, FeishuReplyDispatcher]] =
+    Ref.unsafe[IO, Map[String, FeishuReplyDispatcher]](Map.empty)
 
-  private val httpClient = HttpClient
-    .newBuilder()
-    .version(HttpClient.Version.HTTP_1_1)
-    .build()
-
-  // Per-session clients keyed by appId
+  // Per-session clients keyed by appId (for multi-app setups)
   private val sessionClientsRef: Ref[IO, Map[String, FeishuClient]] =
     Ref.unsafe[IO, Map[String, FeishuClient]](Map.empty)
 
-  private def getSendClient(bridgesCfg: Option[Json]): IO[FeishuClient] =
-    bridgesCfg.flatMap { cfg =>
-      val appId = cfg.hcursor.downField("appId").as[String].toOption.filter(_.nonEmpty)
-      val appSecret = cfg.hcursor.downField("appSecret").as[String].toOption.filter(_.nonEmpty)
-      (appId, appSecret) match
-        case (Some(id), Some(secret)) => Some((id, secret))
-        case _ => None
-    } match
-      case Some((appId, appSecret)) =>
-        sessionClientsRef.get.map(_.get(appId)).flatMap {
-          case Some(client) => IO.pure(client)
-          case None =>
-            val cfg = FeishuGlobalConfig(appId, appSecret)
-            val client = new FeishuClient(cfg)
-            sessionClientsRef.update(_ + (appId -> client)).as(client)
-        }
-      case None => IO.pure(feishuClient)
+  // Default client using global config
+  private val feishuClient = new FeishuClient(globalConfig)
 
-  // Per-session text accumulator for streaming responses
-  private val textBuffers: Ref[IO, Map[String, String]] = Ref.unsafe(Map.empty)
-  private val lastMsgIds: Ref[IO, Map[String, String]] = Ref.unsafe(Map.empty)
+  // Raw SDK client for direct API calls
+  private val rawSdkClient: SdkClient = SdkClient.newBuilder(globalConfig.appId, globalConfig.appSecret).build()
 
-  // Dedup: track processed message IDs (keep last N to bound memory)
+  // Bot's own open_id, auto-detected on startup
+  private val botOpenId: Ref[IO, Option[String]] = Ref.unsafe(None)
+
+  // Dedup: track processed message IDs
   private val processedMsgIds: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
   private val MaxProcessedIds = 500
 
@@ -88,20 +77,23 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
     else
       for
         _ <- logger.info(s"[feishu] plugin starting (appId=${globalConfig.appId})")
+        _ <- fetchBotOpenId
         _ <- rebuildRoutingTable
         _ <- startWsClient
       yield ()
 
   def stop: IO[Unit] =
-    // SDK WS client has no public disconnect; just let the daemon thread die
     logger.info("[feishu] plugin stopped")
 
+  /**
+   * Only forward events to Feishu if there's an active dispatcher for this session,
+   * meaning the current turn was triggered by a Feishu message.
+   */
   def onAgentEvent(sessionId: String, event: Json): IO[Unit] =
-    chatSessionMap.get.flatMap { map =>
-      map.find(_._2 == sessionId).map(_._1) match
-        case Some(chatId) => handleEvent(sessionId, chatId, event)
-        case None => IO.unit
-    }
+    activeDispatchers.get.flatMap(_.get(sessionId) match
+      case Some(dispatcher) => dispatchToFeishu(sessionId, dispatcher, event)
+      case None             => IO.unit // Not a Feishu-triggered turn — skip
+    )
 
   override def refreshRoutes: IO[Unit] = rebuildRoutingTable
 
@@ -117,7 +109,12 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
         }
       }.toMap
       chatSessionMap.set(mapping) *>
-        logger.info(s"[feishu] routing table: ${mapping.size} binding(s)")
+        (if mapping.isEmpty then
+           logger.info("[feishu] routing table: no bindings")
+         else
+           mapping.toList.traverse_ { case (chatId, sid) =>
+             logger.info(s"[feishu] routing: chat ${chatId.take(12)}... → session ${sid.take(8)}...")
+           })
     }
 
   private def sessionBinding(sessionId: String): IO[Option[(String, Json)]] =
@@ -132,271 +129,288 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
       case None => None
     }
 
+  private def getSendClient(bridgesCfg: Option[Json]): IO[FeishuClient] =
+    bridgesCfg.flatMap { cfg =>
+      val appId = cfg.hcursor.downField("appId").as[String].toOption.filter(_.nonEmpty)
+      val appSecret = cfg.hcursor.downField("appSecret").as[String].toOption.filter(_.nonEmpty)
+      (appId, appSecret) match
+        case (Some(id), Some(secret)) => Some((id, secret))
+        case _                        => None
+    } match
+      case Some((appId, appSecret)) =>
+        sessionClientsRef.get.map(_.get(appId)).flatMap {
+          case Some(client) => IO.pure(client)
+          case None =>
+            val cfg = FeishuGlobalConfig(appId, appSecret)
+            val client = new FeishuClient(cfg)
+            sessionClientsRef.update(_ + (appId -> client)).as(client)
+        }
+      case None => IO.pure(feishuClient)
+
+  // ===== Bot Identity =====
+
+  private def fetchBotOpenId: IO[Unit] =
+    IO.blocking {
+      rawSdkClient.get("/open-apis/bot/v3/info/", null, AccessTokenType.Tenant)
+    }.flatMap { resp =>
+      val body = resp.getBody
+      if body == null then
+        logger.warn("[feishu] getBotInfo: response body is null")
+        IO.unit
+      else
+        val bodyStr = new String(body, "UTF-8")
+        IO.fromEither(io.circe.parser.parse(bodyStr)).flatMap { json =>
+          val code = json.hcursor.downField("code").as[Int].getOrElse(-1)
+          if code != 0 then
+            val msg = json.hcursor.downField("msg").as[String].getOrElse("unknown")
+            logger.warn(s"[feishu] getBotInfo API error (code=$code): $msg")
+          else
+            val openId = json.hcursor.downField("bot").downField("open_id").as[String].toOption
+            openId match
+              case Some(id) =>
+                botOpenId.set(Some(id)) *> logger.info(s"[feishu] bot open_id detected: $id")
+              case None =>
+                logger.warn("[feishu] could not detect bot open_id; group mention filtering will use fallback")
+        }
+    }.handleErrorWith { e =>
+      logger.warn(s"[feishu] fetchBotOpenId error: ${e.getClass.getSimpleName}: ${e.getMessage}")
+    }
+
   // ===== SDK WS Client =====
 
   private def startWsClient: IO[Unit] =
-    IO.blocking {
-      val dispatcher = EventDispatcher
-        .newBuilder("", "")
-        .onP2MessageReceiveV1(
-          new ImService.P2MessageReceiveV1Handler:
-            def handle(event: P2MessageReceiveV1): Unit =
-              // Null-safe access: SDK may dispatch events with missing fields for
-              // unrecognized subtypes or during reconnect replays.
-              val eventBody = Option(event).flatMap(e => Option(e.getEvent))
-              val senderOpt = eventBody.flatMap(e => Option(e.getSender))
-              val senderId = senderOpt.flatMap(s => Option(s.getSenderId)).map(_.getOpenId).getOrElse("")
-              val senderType = senderOpt.map(_.getSenderType).orNull
-              val msgOpt = eventBody.flatMap(e => Option(e.getMessage))
-              val chatId = msgOpt.map(_.getChatId).getOrElse("")
-              val chatType = msgOpt.map(_.getChatType).orNull
-              val msgType = msgOpt.map(_.getMessageType).orNull
-              val content = msgOpt.map(_.getContent).getOrElse("")
-              val messageId = msgOpt.map(_.getMessageId).getOrElse("")
-              val isGroup = "group" == chatType
-              if chatId.nonEmpty && msgType != null then
-                // Skip messages sent by the bot itself to prevent echo loops
-                if senderType != "app" then
-                  // Dedup: skip already-processed messages (e.g. history replay on reconnect)
-                  val isDup = processedMsgIds.get.map(_.contains(messageId)).unsafeRunSync()
-                  if !isDup then
-                    processedMsgIds
-                      .update { ids =>
-                        val updated = ids + messageId
-                        if updated.size > MaxProcessedIds then updated.drop(updated.size - MaxProcessedIds)
-                        else updated
-                      }
-                      .unsafeRunSync()
-                    logger
-                      .info(
-                        s"[feishu] message received: chatId=$chatId chatType=$chatType msgType=$msgType sender=$senderId"
-                      )
-                      .unsafeRunSync()
-                    if msgType == "text" then
-                      val text = parse(content).toOption
-                        .flatMap(_.hcursor.downField("text").as[String].toOption)
-                        .getOrElse("")
-                      if text.nonEmpty then handleUserMessage(chatId, senderId, text, isGroup).unsafeRunSync()
-                  else logger.debug(s"[feishu] skipping duplicate message: $messageId").unsafeRunSync()
-                else logger.debug(s"[feishu] skipping bot message: chatId=$chatId").unsafeRunSync()
-              else
-                logger
-                  .debug(s"[feishu] skipping event with missing fields: chatId=$chatId msgType=$msgType")
+    wsMonitorLoop.void
+
+  /** Build a fresh EventDispatcher with all handlers. */
+  private def buildDispatcher: EventDispatcher =
+    EventDispatcher
+      .newBuilder("", "")
+      .onP2MessageReceiveV1(
+        new ImService.P2MessageReceiveV1Handler:
+          def handle(event: P2MessageReceiveV1): Unit =
+            try handleWsEvent(event)
+            catch
+              case e: Throwable =>
+                logger.warn(s"[feishu] WS event handler error: ${e.getClass.getSimpleName}: ${e.getMessage}")
                   .unsafeRunSync()
-              end if
-            end handle
-        )
-        .build()
-
-      wsClient = new WsClient.Builder(globalConfig.appId, globalConfig.appSecret)
-        .eventHandler(dispatcher)
-        .autoReconnect(true)
-        .build()
-
-      // Start in a background thread — SDK manages its own threads
-      val thread = new Thread(
-        () =>
-          try wsClient.start()
-          catch
-            case e: Exception =>
-              logger.warn(s"[feishu] WS client error: ${e.getMessage}").unsafeRunSync()
-        ,
-        "feishu-ws"
       )
-      thread.setDaemon(true)
-      thread.start()
-      logger.info("[feishu] WS client started via SDK").unsafeRunSync()
-    }
+      // Register no-op handlers for reaction events to avoid HandlerNotFoundException
+      .onP2MessageReactionCreatedV1(new ImService.P2MessageReactionCreatedV1Handler:
+        def handle(event: com.lark.oapi.service.im.v1.model.P2MessageReactionCreatedV1): Unit = ()
+      )
+      .onP2MessageReactionDeletedV1(new ImService.P2MessageReactionDeletedV1Handler:
+        def handle(event: com.lark.oapi.service.im.v1.model.P2MessageReactionDeletedV1): Unit = ()
+      )
+      .onP2CardActionTrigger(new P2CardActionTriggerHandler:
+        override def handle(event: P2CardActionTrigger): P2CardActionTriggerResponse =
+          try handleCardAction(event)
+          catch
+            case e: Throwable =>
+              logger.warn(s"[feishu] card action handler error: ${e.getClass.getSimpleName}: ${e.getMessage}")
+                .unsafeRunSync()
+              new P2CardActionTriggerResponse()
+      )
+      .build()
 
-  /** Process an im.message.receive_v1 event payload from the SDK dispatcher. */
-  private def processImMessage(payload: String): IO[Unit] =
-    for
-      json <- IO.fromEither(parse(payload))
-      _ <- logger.info(s"[feishu] im.message.receive_v1: ${payload.take(300)}")
-      ec = json.hcursor.downField("event")
-      senderCursor = ec.downField("sender")
-      senderOpenId = senderCursor.downField("sender_id").downField("open_id").as[String].getOrElse("")
-      msgCursor = ec.downField("message")
-      chatId = msgCursor.downField("chat_id").as[String].getOrElse("")
-      chatType = msgCursor.downField("chat_type").as[String].getOrElse("p2p")
-      isGroup = chatType == "group"
-      messageType = msgCursor.downField("message_type").as[String].getOrElse("")
-      contentStr = msgCursor.downField("content").as[String].getOrElse("{}")
-      _ <- messageType match
-        case "text" =>
-          val text = parse(contentStr).toOption
-            .flatMap(_.hcursor.downField("text").as[String].toOption)
-            .getOrElse("")
-          if text.nonEmpty then handleUserMessage(chatId, senderOpenId, text, isGroup)
-          else IO.unit
-        case _ =>
-          logger.debug("[feishu] ignoring non-text message (type=$messageType)").void
-    yield ()
+  /**
+   * Start WS client with retry. Uses SDK's built-in autoReconnect for normal operation.
+   * Only retries on initial connection failure.
+   */
+  private def wsMonitorLoop: IO[Unit] =
+    def connectWithBackoff(attempt: Int): IO[Unit] =
+      val delay = math.min(math.pow(2, attempt - 1).toInt, 30)
+      (if attempt > 1 then
+        logger.info(s"[feishu] WS connect attempt $attempt in ${delay}s...") *> IO.sleep(delay.seconds)
+      else IO.unit) *>
+      IO.blocking {
+        val dispatcher = buildDispatcher
+        wsClient = new WsClient.Builder(globalConfig.appId, globalConfig.appSecret)
+          .eventHandler(dispatcher)
+          .autoReconnect(true)
+          .build()
+        wsClient.start()
+      }.attempt.flatMap {
+        case Right(_) =>
+          logger.info("[feishu] WS client started")
+        case Left(e) =>
+          logger.warn(s"[feishu] WS start failed: ${e.getClass.getSimpleName}: ${e.getMessage}") *>
+            connectWithBackoff(attempt + 1)
+      }
 
-  private def handleUserMessage(chatId: String, senderOpenId: String, text: String, isGroup: Boolean): IO[Unit] =
-    val authCheck = if isGroup then IO.pure(true) else IO.pure(globalConfig.allowsUser(senderOpenId))
-    authCheck.flatMap { allowed =>
-      if !allowed then logger.warn(s"[feishu] message from unauthorized user: $senderOpenId").void
+    connectWithBackoff(1)
+
+  /** Handle interactive card action (button click) from Feishu. */
+  private def handleCardAction(event: P2CardActionTrigger): P2CardActionTriggerResponse =
+    val data = event.getEvent
+    if data == null then return new P2CardActionTriggerResponse()
+
+    val action = data.getAction
+    if action == null then return new P2CardActionTriggerResponse()
+
+    val value = action.getValue
+    if value == null || value.getOrDefault("action", "") != "interrupt" then
+      return new P2CardActionTriggerResponse()
+
+    val context = data.getContext
+    val chatId = if context != null then Option(context.getOpenChatId).getOrElse("") else ""
+
+    if chatId.nonEmpty then
+      val sessionId = chatSessionMap.get.map(_.get(chatId)).unsafeRunSync()
+      sessionId match
+        case Some(sid) =>
+          logger.info(s"[feishu] card interrupt: chat=${chatId.take(12)}... → session=${sid.take(8)}...")
+            .unsafeRunSync()
+          ctx.interruptAgent(sid).unsafeRunSync()
+        case None =>
+          logger.warn(s"[feishu] card interrupt: no session for chat ${chatId.take(12)}...")
+            .unsafeRunSync()
+
+    // Return a toast to acknowledge
+    val toast = new CallBackToast()
+    toast.setType("success")
+    toast.setContent("已停止")
+    val resp = new P2CardActionTriggerResponse()
+    resp.setToast(toast)
+    resp
+
+  /** Handle an incoming WS event from Feishu SDK. Runs on SDK's internal thread. */
+  private def handleWsEvent(event: P2MessageReceiveV1): Unit =
+    val eventBody = Option(event).flatMap(e => Option(e.getEvent))
+    val senderOpt = eventBody.flatMap(e => Option(e.getSender))
+    val senderId = senderOpt.flatMap(s => Option(s.getSenderId)).map(_.getOpenId).getOrElse("")
+    val senderType = senderOpt.map(_.getSenderType).orNull
+    val msgOpt = eventBody.flatMap(e => Option(e.getMessage))
+    val chatId = msgOpt.map(_.getChatId).getOrElse("")
+    val chatType = msgOpt.map(_.getChatType).orNull
+    val msgType = msgOpt.map(_.getMessageType).orNull
+    val content = msgOpt.map(_.getContent).getOrElse("")
+    val messageId = msgOpt.map(_.getMessageId).getOrElse("")
+    val isGroup = "group" == chatType
+
+    // Parse mentions
+    val mentionsArr =
+      msgOpt.flatMap(m => Option(m.getMentions)).map(_.toSeq).getOrElse(Seq.empty)
+    val mentionedOpenIds = mentionsArr.flatMap(m => Option(m.getId).flatMap(id => Option(id.getOpenId)))
+
+    if chatId.nonEmpty && msgType != null then
+      // Skip bot's own messages to prevent echo loops
+      if senderType == "app" then
+        return // skip silently — bot echo
+      end if
+
+      logger.info(s"[feishu] ws-event: chat=$chatId type=$msgType sender=${senderId.take(10)} msgId=${messageId.take(10)}").unsafeRunSync()
+
+      // Dedup
+      val isDup = processedMsgIds.get.map(_.contains(messageId)).unsafeRunSync()
+      if !isDup then
+        processedMsgIds
+          .update { ids =>
+            val updated = ids + messageId
+            if updated.size > MaxProcessedIds then updated.drop(updated.size - MaxProcessedIds)
+            else updated
+          }
+          .unsafeRunSync()
+
+        // Group mention filter
+        val isMentioned =
+          if isGroup then
+            botOpenId.get.map {
+              case Some(botId) => mentionedOpenIds.contains(botId)
+              case None        => mentionedOpenIds.nonEmpty
+            }.unsafeRunSync()
+          else true
+
+        if isMentioned then
+          msgType match
+            case "text" =>
+              val rawText = parse(content).toOption
+                .flatMap(_.hcursor.downField("text").as[String].toOption)
+                .getOrElse("")
+              val mentionKeys = mentionsArr.flatMap(m => Option(m.getKey)).toSet
+              val cleanText = mentionKeys.foldLeft(rawText)((t, key) => t.replace(key, "")).trim
+              if cleanText.nonEmpty then
+                logger.info(s"[feishu] inbound: chat=$chatId sender=${senderId.take(10)} msg=${messageId.take(10)} text=${cleanText.take(40)}").unsafeRunSync()
+                handleUserMessage(chatId, senderId, messageId, cleanText, isGroup).unsafeRunSync()
+            case _ =>
+              // Non-text messages (image, file, etc.) — log for now
+              logger.debug(s"[feishu] non-text message type: $msgType").unsafeRunSync()
+        else
+          logger.debug(s"[feishu] skipped (not mentioned)").unsafeRunSync()
       else
-        chatSessionMap.get.map(_.get(chatId)).flatMap {
-          case Some(sessionId) =>
-            logger.info(s"[feishu] → session $sessionId: ${text.take(60)}") *>
-              ctx.injectMessage(sessionId, s"[飞书消息] $text", Some(senderOpenId))
-          case None =>
-            logger.debug("[feishu] no session bound to chat $chatId").void
+        logger.debug(s"[feishu] skipped (duplicate)").unsafeRunSync()
+      end if
+    end if
+  end handleWsEvent
+
+  // ===== Inbound: Feishu → Agent =====
+
+  private val InterruptKeywords = Set("停止", "中断", "stop", "cancel", "abort", "interrupt")
+
+  private def handleUserMessage(
+    chatId: String,
+    senderOpenId: String,
+    userMessageId: String,
+    text: String,
+    isGroup: Boolean
+  ): IO[Unit] =
+    val authCheck =
+      if isGroup then IO.pure(true)
+      else IO.pure(globalConfig.allowsUser(senderOpenId))
+
+    authCheck.flatMap { allowed =>
+      if !allowed then logger.warn(s"[feishu] unauthorized user: $senderOpenId").void
+      else
+        chatSessionMap.get.flatMap { routing =>
+          routing.get(chatId) match
+            case Some(sessionId) =>
+              val normalizedText = text.trim.toLowerCase
+              if InterruptKeywords.contains(normalizedText) then
+                // Interrupt current agent turn
+                logger.info(s"[feishu] interrupt: chat=${chatId.take(12)}... → session=${sessionId.take(8)}...") *>
+                  ctx.interruptAgent(sessionId) *>
+                  activeDispatchers.get.flatMap(_.get(sessionId).map(_.flushAndClose()).getOrElse(IO.unit)) *>
+                  feishuClient.sendTextMessage(chatId, "chat_id", "已中断").void
+              else
+                logger.info(s"[feishu] route: chat=${chatId.take(12)}... → session=${sessionId.take(8)}...") *>
+                  activeDispatchers.get.flatMap(_.get(sessionId).map(_.flushAndClose()).getOrElse(IO.unit)) *>
+                  createDispatcher(sessionId, chatId, userMessageId) *>
+                  ctx.injectMessage(sessionId, s"[飞书消息] $text", Some(senderOpenId))
+            case None =>
+              logger.warn(s"[feishu] no session bound to chat ${chatId.take(12)}...").void
         }
     }
 
-  // ===== Agent Event → Feishu =====
-
-  private def handleEvent(sessionId: String, chatId: String, event: Json): IO[Unit] =
-    val hc = event.hcursor
-    val eventType = hc.downField("type").as[String].getOrElse("")
-
+  /** Create a per-turn reply dispatcher for this session. */
+  private def createDispatcher(sessionId: String, chatId: String, userMessageId: String): IO[Unit] =
     sessionBinding(sessionId).flatMap {
       case Some((_, cfgJson)) =>
-        val enabled = cfgJson.hcursor.downField("enabled").as[Option[Boolean]].toOption.flatten.getOrElse(true)
-        val notifyEvents = cfgJson.hcursor
-          .downField("notifyEvents")
-          .as[Option[List[String]]]
-          .toOption
-          .flatten
-          .getOrElse(List("aiResponse", "askUser", "permissionRequest"))
-        val chatType = cfgJson.hcursor.downField("chatType").as[Option[String]].toOption.flatten.getOrElse("p2p")
-        val chatIdType = chatType match
-          case "group" => "chat_id"
-          case _ => "open_id"
-
-        if !enabled then IO.unit
-        else
-          getSendClient(Some(cfgJson)).flatMap { client =>
-            eventType match
-              case "textDelta" =>
-                if notifyEvents.contains("aiResponse") then handleTextDelta(sessionId, chatId, chatIdType, hc, client)
-                else IO.unit
-              case "done" =>
-                if notifyEvents.contains("aiResponse") then handleDone(sessionId, chatId, chatIdType, hc, client)
-                else IO.unit
-              case "askUser" =>
-                if notifyEvents.contains("askUser") then handleAskUser(sessionId, chatId, chatIdType, hc, client)
-                else IO.unit
-              case "permissionRequest" =>
-                if notifyEvents.contains("permissionRequest") then
-                  handlePermissionRequest(sessionId, chatId, chatIdType, hc, client)
-                else IO.unit
-              case _ => IO.unit
-          }
+        // Both group and p2p chats use oc_ prefixed chat_id
+        val chatIdType = "chat_id"
+        getSendClient(Some(cfgJson)).flatMap { client =>
+          val dispatcher = new FeishuReplyDispatcher(client, chatId, chatIdType, sessionId, userMessageId)
+          activeDispatchers.update(_.updated(sessionId, dispatcher)) *>
+            // Show typing indicator (non-blocking, errors logged)
+            dispatcher.showTyping()
+        }
       case None => IO.unit
     }
 
-  end handleEvent
+  // ===== Outbound: Agent → Feishu (per-turn dispatch) =====
 
-  private def handleTextDelta(
+  private def dispatchToFeishu(
     sessionId: String,
-    chatId: String,
-    chatIdType: String,
-    hc: HCursor,
-    client: FeishuClient
+    dispatcher: FeishuReplyDispatcher,
+    event: Json
   ): IO[Unit] =
-    val delta = hc.downField("delta").as[String].getOrElse("")
-    if delta.isEmpty then IO.unit
-    else textBuffers.update(_.updatedWith(sessionId)(_.map(_ + delta).orElse(Some(delta))))
-
-  private def handleDone(
-    sessionId: String,
-    chatId: String,
-    chatIdType: String,
-    hc: HCursor,
-    client: FeishuClient
-  ): IO[Unit] =
-    textBuffers.get.flatMap(_.get(sessionId) match
-      case Some(text) if text.nonEmpty =>
-        for
-          _ <- textBuffers.update(_ - sessionId)
-          _ <- flushText(sessionId, chatId, chatIdType, text, client)
-        yield ()
-      case _ => IO.unit)
-
-  private def flushText(
-    sessionId: String,
-    chatId: String,
-    chatIdType: String,
-    text: String,
-    client: FeishuClient
-  ): IO[Unit] =
-    val displayText = if text.length > 4000 then text.take(3900) + "\n...(truncated)" else text
-    client
-      .sendTextMessage(chatId, chatIdType, displayText)
-      .flatMap { msgId =>
-        lastMsgIds.update(_.updated(sessionId, msgId))
-      }
-      .handleErrorWith { e =>
-        logger.warn(s"[feishu] failed to send message: ${e.getMessage}").void
-      }
-
-  private def handleAskUser(
-    sessionId: String,
-    chatId: String,
-    chatIdType: String,
-    hc: HCursor,
-    client: FeishuClient
-  ): IO[Unit] =
-    textBuffers.get.flatMap(_.get(sessionId) match
-      case Some(text) if text.nonEmpty =>
-        textBuffers.update(_ - sessionId) *> flushText(sessionId, chatId, chatIdType, text, client)
-      case _ => IO.unit) *> {
-      val question = hc.downField("question").as[String].getOrElse("")
-      if question.nonEmpty then
-        client
-          .sendTextMessage(chatId, chatIdType, s"❓ $question")
-          .void
-          .handleErrorWith(e => logger.warn(s"[feishu] failed to send askUser: ${e.getMessage}"))
-      else IO.unit
-    }
-
-  private def handlePermissionRequest(
-    sessionId: String,
-    chatId: String,
-    chatIdType: String,
-    hc: HCursor,
-    client: FeishuClient
-  ): IO[Unit] =
-    val tool = hc.downField("tool").as[String].getOrElse("")
-    val args = hc.downField("args").as[String].getOrElse("")
-    val card = Json.obj(
-      "config" -> Json.obj("wide_screen_mode" -> true.asJson),
-      "header" -> Json.obj(
-        "title" -> Json.obj("tag" -> "plain_text".asJson, "content" -> "⚠ 权限请求".asJson),
-        "template" -> "orange".asJson
-      ),
-      "elements" -> List(
-        Json.obj(
-          "tag" -> "div".asJson,
-          "text" -> Json.obj("tag" -> "plain_text".asJson, "content" -> s"工具: $tool\n参数: ${args.take(200)}".asJson)
-        ),
-        Json.obj(
-          "tag" -> "action".asJson,
-          "actions" -> Json.arr(
-            Json.obj(
-              "tag" -> "button".asJson,
-              "text" -> Json.obj("tag" -> "plain_text".asJson, "content" -> "✅ 允许".asJson),
-              "type" -> "primary".asJson,
-              "value" -> Json.obj("action" -> "permissionApprove".asJson, "sessionId" -> sessionId.asJson)
-            ),
-            Json.obj(
-              "tag" -> "button".asJson,
-              "text" -> Json.obj("tag" -> "plain_text".asJson, "content" -> "❌ 拒绝".asJson),
-              "type" -> "danger".asJson,
-              "value" -> Json.obj("action" -> "permissionDeny".asJson, "sessionId" -> sessionId.asJson)
-            )
-          )
-        )
-      ).asJson
-    )
-    client
-      .sendCardMessage(chatId, chatIdType, card)
-      .void
-      .handleErrorWith(e => logger.warn(s"[feishu] failed to send permission card: ${e.getMessage}"))
-  end handlePermissionRequest
+    val eventType = event.hcursor.downField("type").as[String].getOrElse("")
+    eventType match
+      case "textDelta" =>
+        val delta = event.hcursor.downField("delta").as[String].getOrElse("")
+        dispatcher.onTextDelta(delta)
+      case "done" =>
+        dispatcher.onDone().attempt.void *>
+          // Remove dispatcher — turn complete
+          activeDispatchers.update(_ - sessionId)
+      case _ => IO.unit
 
 end FeishuPlugin
