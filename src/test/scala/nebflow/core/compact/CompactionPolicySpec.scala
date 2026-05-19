@@ -14,10 +14,10 @@ class CompactionPolicySpec extends CatsEffectSuite:
     assertEquals(TokenEstimator.estimate(Nil), 0)
   }
 
-  test("TokenEstimator: pure text 300 chars ~ 100 tokens") {
+  test("TokenEstimator: pure ASCII 300 chars ~ 75 tokens") {
     val text = "x" * 300
     val msgs = List(textMsg(MessageRole.User, text))
-    assertEquals(TokenEstimator.estimate(msgs), 100)
+    assertEquals(TokenEstimator.estimate(msgs), 75)
   }
 
   test("TokenEstimator: image block counts 1500 tokens each, text separate") {
@@ -32,7 +32,7 @@ class CompactionPolicySpec extends CatsEffectSuite:
         )
       )
     )
-    assertEquals(TokenEstimator.estimate(msgs), 1600)
+    assertEquals(TokenEstimator.estimate(msgs), 1575)
   }
 
   test("TokenEstimator: multiple images accumulate") {
@@ -73,7 +73,7 @@ class CompactionPolicySpec extends CatsEffectSuite:
     )
     val est = TokenEstimator.estimate(msgs)
     assert(est > 0)
-    assert(est >= 1723) // 200 + 1500 + 23
+    assert(est >= 1667) // 150 (600/4) + 1500 + 17 (70/4)
   }
 
   // ---------- CompactConfig 字段有效性 ----------

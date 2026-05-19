@@ -15,7 +15,10 @@ case class ModelCandidate(
   contextWindow: Int = Defaults.ContextWindow
 )
 
-class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, Fs2Streams[IO]]):
+class ProviderRegistry(
+  configRef: Ref[IO, NebflowServiceConfig],
+  backend: StreamBackend[IO, Fs2Streams[IO]]
+):
   private val adaptersRef: Ref[IO, Map[String, ProviderAdapter[IO]]] = Ref.unsafe(Map.empty)
 
   private def createAdapter(provider: ProviderConfig): ProviderAdapter[IO] =
@@ -27,40 +30,72 @@ class ProviderRegistry(config: NebflowServiceConfig, backend: StreamBackend[IO, 
     adaptersRef.get.map(_.get(providerId)).flatMap {
       case Some(a) => IO.pure(a)
       case None =>
-        val provider =
-          config.llm.providers.getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
-        val adapter = createAdapter(provider)
-        adaptersRef.update(_ + (providerId -> adapter)).as(adapter)
+        configRef.get.flatMap { config =>
+          config.llm.providers.get(providerId) match
+            case Some(provider) =>
+              val adapter = createAdapter(provider)
+              adaptersRef.update(_ + (providerId -> adapter)).as(adapter)
+            case None =>
+              IO.raiseError(new RuntimeException(s"Unknown provider: $providerId"))
+        }
     }
 
-  def getCandidates(): List[ModelCandidate] =
-    val chain = config.llm.model.default :: config.llm.model.fallbacks
-    chain.map { ref =>
-      val (providerId, modelId) = Config.parseModelRef(ref)
-      val provider = config.llm.providers.getOrElse(
-        providerId,
-        throw new RuntimeException(s"Model ref \"$ref\" points to unknown provider \"$providerId\"")
-      )
-      val modelConfig = provider.models.find(_.id == modelId)
-      val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
-      val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
-      ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow)
+  def getCandidates(): IO[List[ModelCandidate]] =
+    configRef.get.map { config =>
+      val chain = config.llm.model.default :: config.llm.model.fallbacks
+      chain.flatMap { ref =>
+        // Gracefully skip invalid refs instead of throwing
+        try
+          val (providerId, modelId) = Config.parseModelRef(ref)
+          config.llm.providers.get(providerId) match
+            case Some(provider) =>
+              val modelConfig = provider.models.find(_.id == modelId)
+              val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
+              val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
+              Some(ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow))
+            case None => None // Skip unknown provider
+        catch case _: Exception => None // Skip malformed ref
+      }
     }
 
   /** List all available models across all providers. Returns (ref, displayName) pairs. */
-  def getAllModels(): List[(String, String)] =
-    config.llm.providers.flatMap { case (providerId, provider) =>
-      if provider.models.nonEmpty then provider.models.map(mc => (s"$providerId/${mc.id}", mc.id))
-      else List.empty
-    }.toList
-
-  /** Build a ModelCandidate from a model ref string (e.g. "openai/gpt-4o"). */
-  def getCandidateForRef(ref: String): Option[ModelCandidate] =
-    val (providerId, modelId) = Config.parseModelRef(ref)
-    config.llm.providers.get(providerId).map { provider =>
-      val modelConfig = provider.models.find(_.id == modelId)
-      val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
-      val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
-      ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow)
+  def getAllModels(): IO[List[(String, String)]] =
+    configRef.get.map { config =>
+      config.llm.providers.flatMap { case (providerId, provider) =>
+        if provider.models.nonEmpty then provider.models.map(mc => (s"$providerId/${mc.id}", mc.id))
+        else List.empty
+      }.toList
     }
+
+  /** Build a ModelCandidate from a model ref string (e.g. "openai/gpt-4o"). Returns None gracefully. */
+  def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
+    configRef.get.map { config =>
+      try
+        val (providerId, modelId) = Config.parseModelRef(ref)
+        config.llm.providers.get(providerId).map { provider =>
+          val modelConfig = provider.models.find(_.id == modelId)
+          val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
+          val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
+          ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow)
+        }
+      catch case _: Exception => None
+    }
+
+  /** Reload: re-read config from disk and clear adapter cache. */
+  def reloadConfig(): IO[Unit] =
+    for
+      newConfig <- IO.blocking {
+        try Config.loadServiceConfig()
+        catch
+          case _: Exception =>
+            NebflowServiceConfig(
+              llm = ServiceLlmConfig(
+                providers = Map.empty,
+                model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
+              )
+            )
+      }
+      _ <- configRef.set(newConfig)
+      _ <- adaptersRef.set(Map.empty)
+    yield ()
 end ProviderRegistry

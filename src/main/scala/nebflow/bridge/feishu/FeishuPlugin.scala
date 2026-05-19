@@ -15,9 +15,9 @@ import io.circe.*
 import io.circe.parser.*
 import io.circe.syntax.*
 import nebflow.bridge.*
-import scala.concurrent.duration.*
 import nebflow.core.NebflowLogger
 
+import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 /**
@@ -92,7 +92,7 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
   def onAgentEvent(sessionId: String, event: Json): IO[Unit] =
     activeDispatchers.get.flatMap(_.get(sessionId) match
       case Some(dispatcher) => dispatchToFeishu(sessionId, dispatcher, event)
-      case None             => IO.unit // Not a Feishu-triggered turn — skip
+      case None => IO.unit // Not a Feishu-triggered turn — skip
     )
 
   override def refreshRoutes: IO[Unit] = rebuildRoutingTable
@@ -109,8 +109,7 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
         }
       }.toMap
       chatSessionMap.set(mapping) *>
-        (if mapping.isEmpty then
-           logger.info("[feishu] routing table: no bindings")
+        (if mapping.isEmpty then logger.info("[feishu] routing table: no bindings")
          else
            mapping.toList.traverse_ { case (chatId, sid) =>
              logger.info(s"[feishu] routing: chat ${chatId.take(12)}... → session ${sid.take(8)}...")
@@ -135,7 +134,7 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
       val appSecret = cfg.hcursor.downField("appSecret").as[String].toOption.filter(_.nonEmpty)
       (appId, appSecret) match
         case (Some(id), Some(secret)) => Some((id, secret))
-        case _                        => None
+        case _ => None
     } match
       case Some((appId, appSecret)) =>
         sessionClientsRef.get.map(_.get(appId)).flatMap {
@@ -191,24 +190,29 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
             try handleWsEvent(event)
             catch
               case e: Throwable =>
-                logger.warn(s"[feishu] WS event handler error: ${e.getClass.getSimpleName}: ${e.getMessage}")
+                logger
+                  .warn(s"[feishu] WS event handler error: ${e.getClass.getSimpleName}: ${e.getMessage}")
                   .unsafeRunSync()
       )
       // Register no-op handlers for reaction events to avoid HandlerNotFoundException
-      .onP2MessageReactionCreatedV1(new ImService.P2MessageReactionCreatedV1Handler:
-        def handle(event: com.lark.oapi.service.im.v1.model.P2MessageReactionCreatedV1): Unit = ()
+      .onP2MessageReactionCreatedV1(
+        new ImService.P2MessageReactionCreatedV1Handler:
+          def handle(event: com.lark.oapi.service.im.v1.model.P2MessageReactionCreatedV1): Unit = ()
       )
-      .onP2MessageReactionDeletedV1(new ImService.P2MessageReactionDeletedV1Handler:
-        def handle(event: com.lark.oapi.service.im.v1.model.P2MessageReactionDeletedV1): Unit = ()
+      .onP2MessageReactionDeletedV1(
+        new ImService.P2MessageReactionDeletedV1Handler:
+          def handle(event: com.lark.oapi.service.im.v1.model.P2MessageReactionDeletedV1): Unit = ()
       )
-      .onP2CardActionTrigger(new P2CardActionTriggerHandler:
-        override def handle(event: P2CardActionTrigger): P2CardActionTriggerResponse =
-          try handleCardAction(event)
-          catch
-            case e: Throwable =>
-              logger.warn(s"[feishu] card action handler error: ${e.getClass.getSimpleName}: ${e.getMessage}")
-                .unsafeRunSync()
-              new P2CardActionTriggerResponse()
+      .onP2CardActionTrigger(
+        new P2CardActionTriggerHandler:
+          override def handle(event: P2CardActionTrigger): P2CardActionTriggerResponse =
+            try handleCardAction(event)
+            catch
+              case e: Throwable =>
+                logger
+                  .warn(s"[feishu] card action handler error: ${e.getClass.getSimpleName}: ${e.getMessage}")
+                  .unsafeRunSync()
+                new P2CardActionTriggerResponse()
       )
       .build()
 
@@ -220,58 +224,65 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
     def connectWithBackoff(attempt: Int): IO[Unit] =
       val delay = math.min(math.pow(2, attempt - 1).toInt, 30)
       (if attempt > 1 then
-        logger.info(s"[feishu] WS connect attempt $attempt in ${delay}s...") *> IO.sleep(delay.seconds)
-      else IO.unit) *>
-      IO.blocking {
-        val dispatcher = buildDispatcher
-        wsClient = new WsClient.Builder(globalConfig.appId, globalConfig.appSecret)
-          .eventHandler(dispatcher)
-          .autoReconnect(true)
-          .build()
-        wsClient.start()
-      }.attempt.flatMap {
-        case Right(_) =>
-          logger.info("[feishu] WS client started")
-        case Left(e) =>
-          logger.warn(s"[feishu] WS start failed: ${e.getClass.getSimpleName}: ${e.getMessage}") *>
-            connectWithBackoff(attempt + 1)
-      }
+         logger.info(s"[feishu] WS connect attempt $attempt in ${delay}s...") *> IO.sleep(delay.seconds)
+       else IO.unit) *>
+        IO.blocking {
+          val dispatcher = buildDispatcher
+          wsClient = new WsClient.Builder(globalConfig.appId, globalConfig.appSecret)
+            .eventHandler(dispatcher)
+            .autoReconnect(true)
+            .build()
+          wsClient.start()
+        }.attempt
+          .flatMap {
+            case Right(_) =>
+              logger.info("[feishu] WS client started")
+            case Left(e) =>
+              logger.warn(s"[feishu] WS start failed: ${e.getClass.getSimpleName}: ${e.getMessage}") *>
+                connectWithBackoff(attempt + 1)
+          }
 
     connectWithBackoff(1)
 
   /** Handle interactive card action (button click) from Feishu. */
   private def handleCardAction(event: P2CardActionTrigger): P2CardActionTriggerResponse =
     val data = event.getEvent
-    if data == null then return new P2CardActionTriggerResponse()
+    if data == null then new P2CardActionTriggerResponse()
+    else
+      val action = data.getAction
+      if action == null then new P2CardActionTriggerResponse()
+      else
+        val value = action.getValue
+        if value == null || value.getOrDefault("action", "") != "interrupt" then new P2CardActionTriggerResponse()
+        else
+          val context = data.getContext
+          val chatId = if context != null then Option(context.getOpenChatId).getOrElse("") else ""
 
-    val action = data.getAction
-    if action == null then return new P2CardActionTriggerResponse()
+          if chatId.nonEmpty then
+            val sessionId = chatSessionMap.get.map(_.get(chatId)).unsafeRunSync()
+            sessionId match
+              case Some(sid) =>
+                logger
+                  .info(s"[feishu] card interrupt: chat=${chatId.take(12)}... → session=${sid.take(8)}...")
+                  .unsafeRunSync()
+                ctx.interruptAgent(sid).unsafeRunSync()
+              case None =>
+                logger
+                  .warn(s"[feishu] card interrupt: no session for chat ${chatId.take(12)}...")
+                  .unsafeRunSync()
 
-    val value = action.getValue
-    if value == null || value.getOrDefault("action", "") != "interrupt" then
-      return new P2CardActionTriggerResponse()
+          // Return a toast to acknowledge
+          val toast = new CallBackToast()
+          toast.setType("success")
+          toast.setContent("已停止")
+          val resp = new P2CardActionTriggerResponse()
+          resp.setToast(toast)
+          resp
+        end if
+      end if
+    end if
 
-    val context = data.getContext
-    val chatId = if context != null then Option(context.getOpenChatId).getOrElse("") else ""
-
-    if chatId.nonEmpty then
-      val sessionId = chatSessionMap.get.map(_.get(chatId)).unsafeRunSync()
-      sessionId match
-        case Some(sid) =>
-          logger.info(s"[feishu] card interrupt: chat=${chatId.take(12)}... → session=${sid.take(8)}...")
-            .unsafeRunSync()
-          ctx.interruptAgent(sid).unsafeRunSync()
-        case None =>
-          logger.warn(s"[feishu] card interrupt: no session for chat ${chatId.take(12)}...")
-            .unsafeRunSync()
-
-    // Return a toast to acknowledge
-    val toast = new CallBackToast()
-    toast.setType("success")
-    toast.setContent("已停止")
-    val resp = new P2CardActionTriggerResponse()
-    resp.setToast(toast)
-    resp
+  end handleCardAction
 
   /** Handle an incoming WS event from Feishu SDK. Runs on SDK's internal thread. */
   private def handleWsEvent(event: P2MessageReceiveV1): Unit =
@@ -292,13 +303,11 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
       msgOpt.flatMap(m => Option(m.getMentions)).map(_.toSeq).getOrElse(Seq.empty)
     val mentionedOpenIds = mentionsArr.flatMap(m => Option(m.getId).flatMap(id => Option(id.getOpenId)))
 
-    if chatId.nonEmpty && msgType != null then
+    if chatId.nonEmpty && msgType != null && senderType != "app" then
       // Skip bot's own messages to prevent echo loops
-      if senderType == "app" then
-        return // skip silently — bot echo
-      end if
-
-      logger.info(s"[feishu] ws-event: chat=$chatId type=$msgType sender=${senderId.take(10)} msgId=${messageId.take(10)}").unsafeRunSync()
+      logger
+        .info(s"[feishu] ws-event: chat=$chatId type=$msgType sender=${senderId.take(10)} msgId=${messageId.take(10)}")
+        .unsafeRunSync()
 
       // Dedup
       val isDup = processedMsgIds.get.map(_.contains(messageId)).unsafeRunSync()
@@ -314,10 +323,12 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
         // Group mention filter
         val isMentioned =
           if isGroup then
-            botOpenId.get.map {
-              case Some(botId) => mentionedOpenIds.contains(botId)
-              case None        => mentionedOpenIds.nonEmpty
-            }.unsafeRunSync()
+            botOpenId.get
+              .map {
+                case Some(botId) => mentionedOpenIds.contains(botId)
+                case None => mentionedOpenIds.nonEmpty
+              }
+              .unsafeRunSync()
           else true
 
         if isMentioned then
@@ -329,15 +340,17 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
               val mentionKeys = mentionsArr.flatMap(m => Option(m.getKey)).toSet
               val cleanText = mentionKeys.foldLeft(rawText)((t, key) => t.replace(key, "")).trim
               if cleanText.nonEmpty then
-                logger.info(s"[feishu] inbound: chat=$chatId sender=${senderId.take(10)} msg=${messageId.take(10)} text=${cleanText.take(40)}").unsafeRunSync()
+                logger
+                  .info(
+                    s"[feishu] inbound: chat=$chatId sender=${senderId.take(10)} msg=${messageId.take(10)} text=${cleanText.take(40)}"
+                  )
+                  .unsafeRunSync()
                 handleUserMessage(chatId, senderId, messageId, cleanText, isGroup).unsafeRunSync()
             case _ =>
               // Non-text messages (image, file, etc.) — log for now
               logger.debug(s"[feishu] non-text message type: $msgType").unsafeRunSync()
-        else
-          logger.debug(s"[feishu] skipped (not mentioned)").unsafeRunSync()
-      else
-        logger.debug(s"[feishu] skipped (duplicate)").unsafeRunSync()
+        else logger.debug(s"[feishu] skipped (not mentioned)").unsafeRunSync()
+      else logger.debug(s"[feishu] skipped (duplicate)").unsafeRunSync()
       end if
     end if
   end handleWsEvent
@@ -379,6 +392,8 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
               logger.warn(s"[feishu] no session bound to chat ${chatId.take(12)}...").void
         }
     }
+
+  end handleUserMessage
 
   /** Create a per-turn reply dispatcher for this session. */
   private def createDispatcher(sessionId: String, chatId: String, userMessageId: String): IO[Unit] =

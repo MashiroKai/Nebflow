@@ -8,6 +8,10 @@ import { finishAgent, setStatus } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
+import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
+
+const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
 // ---------- Active Folder (VSCode-style) ----------
 export function setActiveFolder(folderId) {
@@ -72,7 +76,18 @@ export function renderAgentList() {
 
 /** Select an agent and load its sessions. */
 export function selectAgent(agentName) {
-  if (state.selectedAgent === agentName) return;
+  const isSame = state.selectedAgent === agentName;
+  // When the same agent icon is clicked (e.g. returning from settings with a single agent),
+  // still switch the panel back to sessions.
+  if (isSame) {
+    const panel = document.getElementById('panel-settings');
+    if (panel && panel.classList.contains('active')) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('panel-sessions').classList.add('active');
+      document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
+    }
+    return;
+  }
   // Save current input draft before switching agent tabs
   saveInputDraft(state.activeSessionId);
   state.selectedAgent = agentName;
@@ -118,6 +133,7 @@ export function renderSettings() {
   const providers = llm.providers || {};
   const model = llm.model || {};
   const mcpServers = cfg.mcpServers || {};
+  const compact = cfg.compact || {};
   const providerNames = Object.keys(providers);
 
   // Build model options from all providers
@@ -132,69 +148,111 @@ export function renderSettings() {
   const defaultModel = model.default || '';
   const fallbacks = model.fallbacks || [];
 
+  // Request feishu global config to populate settings
+  sendWs({type: 'getFeishuGlobalConfig'});
+
+  // Build language selector options
+  const locales = getAvailableLocales();
+  const localeLabels = { 'zh-CN': '中文', en: 'English' };
+  const langOpts = locales.map(code =>
+    `<option value="${code}" ${code === getLocale() ? 'selected' : ''}>${localeLabels[code] || code}</option>`
+  ).join('');
+
   content.innerHTML = `
     <div class="settings-section">
-      <div class="settings-section-title">Runtime</div>
+      <div class="settings-section-title">${t('settings.runtime')}</div>
       <div class="settings-row">
-        <span class="settings-label">Thinking Mode</span>
+        <span class="settings-label">${t('settings.thinkingMode')}</span>
         <div class="toggle ${state.thinkingMode ? 'on' : ''}" id="toggle-thinking"></div>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.language')}</span>
+        <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">LLM Providers</div>
+      <div class="settings-section-title">${t('settings.compaction')}</div>
+      <div class="cfg-form-group">
+        <label class="cfg-label">${t('settings.compactTtl')} <span class="cfg-hint">(${t('settings.compactTtlUnit')})</span></label>
+        <input class="cfg-input" id="cfg-compact-ttl" type="number" min="1" max="1440" value="${compact.microCacheTtlMinutes ?? 120}" autocomplete="off">
+        <div class="cfg-hint">${t('settings.compactTtlHint')}</div>
+      </div>
+      <div class="cfg-form-group">
+        <label class="cfg-label">${t('settings.keepRecent')}</label>
+        <input class="cfg-input" id="cfg-compact-keep" type="number" min="0" max="50" value="${compact.microKeepRecent ?? 5}" autocomplete="off">
+        <div class="cfg-hint">${t('settings.keepRecentHint')}</div>
+      </div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">${t('settings.feishu')}</div>
+      <div class="cfg-form-group">
+        <label class="cfg-label">${t('settings.feishuAppId')}</label>
+        <input class="cfg-input" id="cfg-feishu-appid" type="text" placeholder="cli_xxx" value="" autocomplete="new-password">
+      </div>
+      <div class="cfg-form-group">
+        <label class="cfg-label">${t('settings.feishuAppSecret')}</label>
+        <div class="cfg-password-wrap">
+          <input class="cfg-input" id="cfg-feishu-appsecret" type="text" value="" autocomplete="new-password" style="-webkit-text-security:disc">
+          <button class="cfg-eye-btn" id="cfg-feishu-eye" type="button" aria-label="Toggle visibility">${eyeSvg}</button>
+        </div>
+      </div>
+      <button class="cfg-btn" id="btn-save-feishu-global" style="margin-top:6px">${t('settings.save')}</button>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">${t('settings.providers')}</div>
       <div id="provider-list">
         ${providerNames.map(name => renderProviderCard(name, providers[name])).join('')}
       </div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-provider">+ Add Provider</button>
+      <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">Model Chain</div>
+      <div class="settings-section-title">${t('settings.modelChain')}</div>
       <div class="cfg-form-group">
-        <label class="cfg-label">Default Model</label>
+        <label class="cfg-label">${t('settings.defaultModel')}</label>
         <select class="cfg-select" id="cfg-default-model">
-          <option value="">— select —</option>
+          <option value="">${t('settings.selectPlaceholder')}</option>
           ${allModels.map(m => `<option value="${m.ref}" ${m.ref === defaultModel ? 'selected' : ''}>${m.label}</option>`).join('')}
         </select>
       </div>
       <div class="cfg-form-group">
-        <label class="cfg-label">Fallback Models</label>
+        <label class="cfg-label">${t('settings.fallbackModels')}</label>
         <div id="cfg-fallback-list" class="cfg-tag-list">
           ${fallbacks.map((f, i) => `
             <span class="cfg-tag" data-fallback="${escapeHtml(f)}">${escapeHtml(f)} <span class="cfg-tag-remove" data-idx="${i}">×</span></span>
           `).join('')}
         </div>
         <select class="cfg-select cfg-select-sm" id="cfg-add-fallback">
-          <option value="">+ Add fallback</option>
+          <option value="">${t('settings.addFallback')}</option>
           ${allModels.filter(m => m.ref !== defaultModel && !fallbacks.includes(m.ref)).map(m => `<option value="${m.ref}">${m.label}</option>`).join('')}
         </select>
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">MCP Servers</div>
+      <div class="settings-section-title">${t('settings.mcpServers')}</div>
       <div id="mcp-server-list">
         ${Object.keys(mcpServers).map(name => renderMcpServerCard(name, mcpServers[name])).join('')}
-        ${Object.keys(mcpServers).length === 0 ? '<div class="cfg-empty">No MCP servers configured</div>' : ''}
+        ${Object.keys(mcpServers).length === 0 ? `<div class="cfg-empty">${t('settings.noMcp')}</div>` : ''}
       </div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-mcp">+ Add MCP Server</button>
+      <button class="cfg-btn cfg-btn-add" id="btn-add-mcp">${t('settings.addMcp')}</button>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">Advanced</div>
-      <button class="cfg-btn" id="btn-toggle-json">Edit Raw JSON</button>
+      <div class="settings-section-title">${t('settings.advanced')}</div>
+      <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
     </div>
     <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
       <div class="config-editor-wrap">
         <textarea id="config-editor" spellcheck="false">${escapeHtml(state.configText)}</textarea>
         <div class="config-actions">
-          <button class="btn-save" id="btn-save-config">Save</button>
-          <button id="btn-reload-config">Reload</button>
+          <button class="btn-save" id="btn-save-config">${t('settings.save')}</button>
+          <button id="btn-reload-config">${t('settings.reload')}</button>
         </div>
       </div>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">About</div>
+      <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
         Nebflow v${state.serverVersion || '...'}<br>
-        Connection: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? 'Disconnected' : 'Connected'}</span>
+        ${t('settings.connection')}: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? t('settings.disconnected') : t('settings.connected')}</span>
       </div>
     </div>`;
 
@@ -209,12 +267,12 @@ function renderProviderCard(name, p) {
       <div class="cfg-card-header">
         <span class="cfg-card-title">${escapeHtml(name)}</span>
         <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
-        <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="Remove">×</button>
+        <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
       </div>
       <div class="cfg-card-body">
-        <div class="cfg-field"><span class="cfg-field-label">Base URL</span><span class="cfg-field-value">${escapeHtml(p.baseUrl || '')}</span></div>
-        <div class="cfg-field"><span class="cfg-field-label">API Key</span><span class="cfg-field-value">${maskedKey}</span></div>
-        <div class="cfg-field"><span class="cfg-field-label">Models</span><span class="cfg-field-value">${escapeHtml(models)}</span></div>
+        <div class="cfg-field"><span class="cfg-field-label">${t('provider.baseUrl')}</span><span class="cfg-field-value">${escapeHtml(p.baseUrl || '')}</span></div>
+        <div class="cfg-field"><span class="cfg-field-label">${t('provider.apiKey')}</span><span class="cfg-field-value">${maskedKey}</span></div>
+        <div class="cfg-field"><span class="cfg-field-label">${t('provider.models')}</span><span class="cfg-field-value">${escapeHtml(models)}</span></div>
       </div>
     </div>`;
 }
@@ -228,7 +286,7 @@ function renderMcpServerCard(name, s) {
       <div class="cfg-card-header">
         <span class="cfg-card-title">${escapeHtml(name)}</span>
         <span class="cfg-card-badge">${url ? 'URL' : 'CMD'}</span>
-        <button class="cfg-card-remove" data-mcp="${escapeHtml(name)}" title="Remove">×</button>
+        <button class="cfg-card-remove" data-mcp="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
       </div>
       <div class="cfg-card-body">
         ${url ? `<div class="cfg-field"><span class="cfg-field-label">URL</span><span class="cfg-field-value">${escapeHtml(url)}</span></div>` : ''}
@@ -249,8 +307,54 @@ function bindSettingsEvents(content, cfg, allModels) {
   document.getElementById('toggle-thinking')?.addEventListener('click', function() {
     this.classList.toggle('on');
     const enabled = this.classList.contains('on');
-    state.thinkingMode = enabled ? {type: 'enabled', budget_tokens: 16000} : null;
+    state.thinkingMode = enabled ? {enabled: true} : null;
     sendWs({type: 'setThinking', thinking: state.thinkingMode});
+  });
+
+  // Language selector
+  document.getElementById('cfg-language')?.addEventListener('change', function() {
+    setLocale(this.value);
+    renderSettings();
+  });
+
+  // --- Compact config ---
+  const compactInputs = ['cfg-compact-ttl', 'cfg-compact-keep'];
+  compactInputs.forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      if (!state.parsedConfig) state.parsedConfig = {};
+      const ttl = parseInt(document.getElementById('cfg-compact-ttl')?.value) || 120;
+      const keep = parseInt(document.getElementById('cfg-compact-keep')?.value) || 5;
+      state.parsedConfig.compact = {
+        ...(state.parsedConfig.compact || {}),
+        microCacheTtlMinutes: ttl,
+        microKeepRecent: keep
+      };
+      state.configDirty = true;
+      flushConfigToServer();
+    });
+  });
+
+  // --- Feishu global config save ---
+  document.getElementById('btn-save-feishu-global')?.addEventListener('click', () => {
+    const appId = document.getElementById('cfg-feishu-appid')?.value.trim() || '';
+    const appSecret = document.getElementById('cfg-feishu-appsecret')?.value.trim() || '';
+    if (!appId) return;
+    const payload = { type: 'updateFeishuGlobalConfig', appId };
+    if (appSecret) payload.appSecret = appSecret;
+    sendWs(payload);
+    const btn = document.getElementById('btn-save-feishu-global');
+    btn.textContent = t('settings.saved');
+    setTimeout(() => { btn.textContent = t('settings.save'); }, 1500);
+  });
+
+  // --- Feishu secret eye toggle ---
+  document.getElementById('cfg-feishu-eye')?.addEventListener('click', () => {
+    const input = document.getElementById('cfg-feishu-appsecret');
+    const btn = document.getElementById('cfg-feishu-eye');
+    if (!input || !btn) return;
+    const isHidden = input.style.webkitTextSecurity === 'disc' || input.style.webkitTextSecurity === '';
+    input.style.webkitTextSecurity = isHidden ? 'none' : 'disc';
+    btn.innerHTML = isHidden ? eyeOffSvg : eyeSvg;
   });
 
   // --- Provider add/edit/remove ---
@@ -269,7 +373,7 @@ function bindSettingsEvents(content, cfg, allModels) {
     const name = card.dataset.provider;
     card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (!confirm(`Remove provider "${name}"?`)) return;
+      if (!confirm(t('provider.removeConfirm', { name }))) return;
       delete state.parsedConfig.llm.providers[name];
       state.configDirty = true;
       flushConfigToServer();
@@ -349,7 +453,7 @@ function bindSettingsEvents(content, cfg, allModels) {
     const name = card.dataset.mcp;
     card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (!confirm(`Remove MCP server "${name}"?`)) return;
+      if (!confirm(t('mcp.removeConfirm', { name }))) return;
       delete state.parsedConfig.mcpServers[name];
       state.configDirty = true;
       flushConfigToServer();
@@ -396,6 +500,18 @@ function flushConfigToServer() {
   sendWs({type: 'updateConfig', config: json});
 }
 
+// Listen for config validation errors
+onMessage('error', (data) => {
+  if (data.message && typeof data.message === 'string' && data.message.includes('Provider')) {
+    // Show validation errors from backend
+    const toast = document.createElement('div');
+    toast.className = 'cfg-toast cfg-toast-error';
+    toast.textContent = data.message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
+  }
+});
+
 // --- Provider modal ---
 function showProviderModal(existingName, existingData, onSave) {
   const isEdit = !!existingName;
@@ -403,23 +519,31 @@ function showProviderModal(existingName, existingData, onSave) {
   const initialModels = p.models.length > 0 ? p.models : [{id: '', maxTokens: 131072, contextWindow: 200000}];
 
   showModal({
-    title: isEdit ? `Edit Provider: ${existingName}` : 'Add Provider',
+    title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
     fields: [
-      {key: 'name', label: 'Provider ID', type: 'text', value: existingName || '', placeholder: 'e.g. openai, zhipu', disabled: isEdit},
-      {key: 'baseUrl', label: 'Base URL', type: 'text', value: p.baseUrl || ''},
-      {key: 'apiKey', label: 'API Key', type: 'text', value: p.apiKey || '', placeholder: 'Leave as *** to keep existing'},
-      {key: 'protocol', label: 'Protocol', type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
-      {key: 'models', label: 'Models', type: 'models', value: initialModels},
+      {key: 'name', label: t('provider.id'), type: 'text', value: existingName || '', placeholder: t('provider.idPlaceholder'), disabled: isEdit},
+      {key: 'baseUrl', label: t('provider.baseUrl'), type: 'text', value: p.baseUrl || '', placeholder: 'https://api.example.com/v1'},
+      {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey || '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
+      {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
+      {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
     ],
     onConfirm(values) {
       const name = values.name.trim();
-      if (!name) return alert('Provider ID is required');
-      if (/\s/.test(name)) return alert('Provider ID cannot contain spaces');
+      if (!name) return alert(t('provider.idRequired'));
+      if (/\s/.test(name)) return alert(t('provider.noSpaces'));
+      let baseUrl = values.baseUrl.trim();
+      if (!baseUrl) return alert(t('provider.baseUrlRequired'));
+      // Auto-add trailing slash
+      if (!baseUrl.endsWith('/')) baseUrl += '/';
+      const apiKey = values.apiKey.trim() || '***';
+      if (!isEdit && apiKey === '***') return alert(t('provider.keyRequired'));
+      const validModels = values.models.filter(m => m.id && m.id.trim());
+      if (validModels.length === 0) return alert(t('provider.modelRequired'));
       onSave(name, {
-        baseUrl: values.baseUrl.trim(),
-        apiKey: values.apiKey.trim() || '***',
+        baseUrl,
+        apiKey,
         protocol: values.protocol,
-        models: values.models,
+        models: validModels,
       });
     }
   });
@@ -434,18 +558,18 @@ function showMcpModal(existingName, existingData, onSave) {
   const headersLines = s.headers ? Object.entries(s.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
 
   showModal({
-    title: isEdit ? `Edit MCP Server: ${existingName}` : 'Add MCP Server',
+    title: isEdit ? t('mcp.edit', { name: existingName }) : t('mcp.add'),
     fields: [
-      {key: 'name', label: 'Server ID', type: 'text', value: existingName || '', disabled: isEdit},
-      {key: 'command', label: 'Command', type: 'text', value: s.command || '', placeholder: 'e.g. npx, python'},
-      {key: 'args', label: 'Arguments (space-separated)', type: 'text', value: argsStr},
-      {key: 'env', label: 'Environment Variables (KEY=VALUE per line)', type: 'textarea', value: envLines},
-      {key: 'url', label: 'Or: URL (for SSE/Streamable)', type: 'text', value: s.url || ''},
-      {key: 'headers', label: 'Headers (Key: Value per line)', type: 'textarea', value: headersLines},
+      {key: 'name', label: t('mcp.serverId'), type: 'text', value: existingName || '', disabled: isEdit},
+      {key: 'command', label: t('mcp.command'), type: 'text', value: s.command || '', placeholder: t('mcp.commandPlaceholder')},
+      {key: 'args', label: t('mcp.args'), type: 'text', value: argsStr},
+      {key: 'env', label: t('mcp.env'), type: 'textarea', value: envLines},
+      {key: 'url', label: t('mcp.url'), type: 'text', value: s.url || ''},
+      {key: 'headers', label: t('mcp.headers'), type: 'textarea', value: headersLines},
     ],
     onConfirm(values) {
       const name = values.name.trim();
-      if (!name) return alert('Server ID is required');
+      if (!name) return alert(t('mcp.idRequired'));
       const data = {};
       if (values.url.trim()) {
         data.url = values.url.trim();
@@ -459,7 +583,7 @@ function showMcpModal(existingName, existingData, onSave) {
           data.env = Object.fromEntries(values.env.trim().split('\n').map(l => { const i = l.indexOf('='); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : null; }).filter(Boolean));
         }
       } else {
-        return alert('Command or URL is required');
+        return alert(t('mcp.cmdOrUrlRequired'));
       }
       onSave(name, data);
     }
@@ -486,15 +610,16 @@ function showModal({title, fields, onConfirm}) {
             </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>` :
             f.type === 'models' ? `<div class="cfg-models-container" data-field="${f.key}">
               ${f.value.map((m, i) => renderModelRow(m, i)).join('')}
-              <button class="cfg-model-add" type="button">+ Add Model</button>
+              <button class="cfg-model-add" type="button">${t('model.add')}</button>
             </div>` :
+            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="password" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="new-password" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeSvg}</button></div>` :
             `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
           </div>
         `).join('')}
       </div>
       <div class="cfg-modal-actions">
-        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">Cancel</button>
-        <button class="cfg-btn cfg-btn-save" id="cfg-modal-save">Save</button>
+        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
+        <button class="cfg-btn cfg-btn-save" id="cfg-modal-save">${t('settings.save')}</button>
       </div>
     </div>`;
 
@@ -514,6 +639,16 @@ function showModal({title, fields, onConfirm}) {
   });
   overlay.querySelectorAll('.cfg-model-remove').forEach(btn => {
     btn.addEventListener('click', () => btn.closest('.cfg-model-row').remove());
+  });
+
+  // Wire up password eye toggle
+  overlay.querySelectorAll('.cfg-eye-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = btn.parentElement.querySelector('input');
+      const isPassword = input.type === 'password';
+      input.type = isPassword ? 'text' : 'password';
+      btn.innerHTML = isPassword ? eyeOffSvg : eyeSvg;
+    });
   });
 
   const close = () => overlay.remove();
@@ -547,10 +682,10 @@ function renderModelRowContent(m) {
   const id = m ? escapeHtml(m.id) : '';
   const max = m ? m.maxTokens : '';
   const ctx = m ? m.contextWindow : '';
-  return `<input class="cfg-input cfg-model-id" type="text" value="${id}" placeholder="Model ID">
-<input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="Max tokens">
-<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="Context">
-<button class="cfg-model-remove" type="button" title="Remove">&times;</button>`;
+  return `<input class="cfg-input cfg-model-id" type="text" value="${id}" placeholder="${t('model.idPlaceholder')}">
+<input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="${t('model.maxTokensPlaceholder')}">
+<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
+<button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
 }
 
 function renderModelRow(m, index) {
@@ -575,7 +710,7 @@ export function formatSessionTime(ts) {
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   if (isToday) return hh + ':' + mm;
-  if (isYesterday) return 'Yesterday ' + hh + ':' + mm;
+  if (isYesterday) return t('time.yesterday') + ' ' + hh + ':' + mm;
   return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + hh + ':' + mm;
 }
 
@@ -614,7 +749,7 @@ function renderOneSessionItem(s, container, opts = {}) {
   const draftHtml = draft && draft.text
     ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
     : '';
-  const deleteBtnHtml = '<button class="session-delete" title="Delete"><i data-lucide="x"></i></button>';
+  const deleteBtnHtml = '<button class="session-delete" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
   item.innerHTML =
     '<div class="session-info">' +
     '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
@@ -964,17 +1099,10 @@ function resetChatForActiveSession() {
   sendBtn.style.display = isBusy ? 'none' : 'flex';
   stopBtn.style.display = isBusy ? 'flex' : 'none';
 
-  // Restore compacting status if this session is compacting
+  // Clear any residual status from previous session
   const statusWrap = state.dom.statusWrap;
-  statusWrap.classList.remove('compacting', 'compact-done', 'compact-failed');
-  if (state.compactingSessionIds.has(sid)) {
-    statusWrap.classList.add('compacting');
-    setStatus('Compacting context...');
-  } else {
-    // Clear residual status from previous session
-    statusWrap.classList.remove('on');
-    stopSpinner();
-  }
+  statusWrap.classList.remove('on');
+  stopSpinner();
 
   if (!isBusy) input.focus();
 
@@ -1083,7 +1211,7 @@ function showSessionCtxMenu(x, y, sessionId) {
   });
   let folderSubHtml = '';
   if (currentFolderId !== null) {
-    folderSubHtml += '<div class="ctx-sub" data-folder-id="">移出文件夹</div>';
+    folderSubHtml += '<div class="ctx-sub" data-folder-id="">' + t('ctx.removeFolder') + '</div>';
   }
   if (agentFolders.length > 0) {
     agentFolders.forEach(f => {
@@ -1093,16 +1221,16 @@ function showSessionCtxMenu(x, y, sessionId) {
     });
   }
   if (!folderSubHtml) {
-    folderSubHtml = '<div class="ctx-disabled">无可用文件夹</div>';
+    folderSubHtml = '<div class="ctx-disabled">' + t('ctx.noFolders') + '</div>';
   }
 
   const menu = document.createElement('div');
   menu.className = 'session-ctx-menu';
   menu.innerHTML =
-    '<div class="ctx-item" data-action="mark-unread">标记为未读</div>' +
-    '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? '取消置顶' : '置顶') + '</div>' +
+    '<div class="ctx-item" data-action="mark-unread">' + t('ctx.markUnread') + '</div>' +
+    '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? t('ctx.unpin') : t('ctx.pin')) + '</div>' +
     '<div class="ctx-separator"></div>' +
-    '<div class="ctx-item ctx-has-sub" data-action="move-to-folder">移动到文件夹 <span style="float:right;color:var(--color-frame-text-muted)">▸</span></div>' +
+    '<div class="ctx-item ctx-has-sub" data-action="move-to-folder">' + t('ctx.moveToFolder') + ' <span style="float:right;color:var(--color-frame-text-muted)">▸</span></div>' +
     '<div class="ctx-submenu" id="ctx-folder-submenu">' + folderSubHtml + '</div>';
   document.body.appendChild(menu);
   menu.style.left = x + 'px';
@@ -1162,10 +1290,10 @@ function showBatchCtxMenu(x, y) {
   const menu = document.createElement('div');
   menu.className = 'session-ctx-menu';
   menu.innerHTML =
-    '<div class="ctx-item" data-action="batch-select-all">' + (count === allCount ? '取消全选' : '全选 (' + allCount + ')') + '</div>' +
+    '<div class="ctx-item" data-action="batch-select-all">' + (count === allCount ? t('ctx.deselectAll') : t('ctx.selectAll', { count: allCount })) + '</div>' +
     '<div class="ctx-separator"></div>' +
-    '<div class="ctx-item" data-action="batch-delete">删除选中的 ' + count + ' 个会话</div>' +
-    '<div class="ctx-item" data-action="batch-cancel">取消选择</div>';
+    '<div class="ctx-item" data-action="batch-delete">' + t('ctx.batchDelete', { count }) + '</div>' +
+    '<div class="ctx-item" data-action="batch-cancel">' + t('ctx.batchCancel') + '</div>';
   document.body.appendChild(menu);
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
@@ -1272,7 +1400,7 @@ function showDeleteZone() {
   const count = state.selectedSessionIds.size;
   zone.innerHTML =
     '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
-    '<span>' + (count > 1 ? 'Drop to delete ' + count + ' sessions' : 'Drop to delete') + '</span>';
+    '<span>' + (count > 1 ? t('session.dropDeleteCount', { count }) : t('session.dropDelete')) + '</span>';
   zone.addEventListener('dragover', (e) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
@@ -1488,128 +1616,73 @@ window.addEventListener('session-compacting', (e) => {
   updateSessionStatus(e.detail.sessionId);
 });
 
-// ===== Feishu Config Panel =====
-// Click header session-name to open feishu config
+// ===== Feishu Group ID — Inline Bubble =====
 
-let feishuPanelEl = null;
+let feishuBubbleEl = null;
 
-function openFeishuPanel() {
-  if (feishuPanelEl) return; // already open
+function toggleFeishuBubble() {
+  if (feishuBubbleEl) { closeFeishuBubble(); return; }
   const active = state.sessions.find(s => s.id === state.activeSessionId);
   if (!active) return;
 
-  const panel = document.createElement('div');
-  panel.id = 'feishu-panel';
-  panel.innerHTML = buildFeishuPanelHtml(active);
-  document.body.appendChild(panel);
-  feishuPanelEl = panel;
+  const feishu = (active.bridges && active.bridges.feishu) || {};
+  const chatId = feishu.chatId || '';
 
-  // Close on overlay click
-  panel.querySelector('.feishu-overlay').addEventListener('click', closeFeishuPanel);
+  const bubble = document.createElement('div');
+  bubble.id = 'feishu-bubble';
+  bubble.innerHTML = `
+    <div class="fb-row">
+      <input type="text" id="fb-chatid-input" value="${escapeHtml(chatId)}" placeholder="Chat ID" autocomplete="off">
+      <button id="fb-unbind" class="fb-btn fb-btn-subtle" ${!chatId ? 'style="display:none"' : ''} title="Clear">×</button>
+    </div>`;
+  document.getElementById('session-name').parentElement.appendChild(bubble);
+  feishuBubbleEl = bubble;
 
-  // Bind form events
-  const form = panel.querySelector('.feishu-form');
-  const chatIdInput = form.querySelector('[name="chatId"]');
-  const enabledCheck = form.querySelector('[name="enabled"]');
+  const input = bubble.querySelector('#fb-chatid-input');
+  input.focus();
+  input.select();
 
-  // Save on submit or chatId blur
-  form.addEventListener('submit', (e) => { e.preventDefault(); saveFeishuConfig(active.id); });
-  form.querySelector('.feishu-save').addEventListener('click', () => saveFeishuConfig(active.id));
-  form.querySelector('.feishu-cancel').addEventListener('click', closeFeishuPanel);
-  form.querySelector('.feishu-clear').addEventListener('click', () => {
-    sendWs({type: 'updateSessionFeishu', sessionId: active.id, chatId: ''});
-    closeFeishuPanel();
+  // Save on Enter or blur
+  const save = () => {
+    const val = input.value.trim();
+    if (val !== chatId) {
+      if (val) {
+        sendWs({ type: 'updateSessionFeishu', sessionId: active.id, chatId: val, chatType: 'group', enabled: true, syncMessages: true, notifyEvents: ['aiResponse', 'askUser', 'permissionRequest'] });
+      } else {
+        sendWs({ type: 'updateSessionFeishu', sessionId: active.id, chatId: '' });
+      }
+    }
+    closeFeishuBubble();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') closeFeishuBubble();
+  });
+  input.addEventListener('blur', () => setTimeout(save, 120));
+
+  bubble.querySelector('#fb-unbind')?.addEventListener('click', () => {
+    sendWs({ type: 'updateSessionFeishu', sessionId: active.id, chatId: '' });
+    closeFeishuBubble();
   });
 
-  // Request global config status
-  sendWs({type: 'getFeishuGlobalConfig'});
+  // Animate in
+  requestAnimationFrame(() => bubble.classList.add('open'));
 }
 
-function buildFeishuPanelHtml(session) {
-  const feishu = (session.bridges && session.bridges.feishu) || {};
-  const chatId = feishu.chatId || '';
-  const appId = feishu.appId || '';
-  const hasAppSecret = !!feishu.appSecret;
-  const isLinked = !!chatId;
-
-  return `
-    <div class="feishu-overlay"></div>
-    <div class="feishu-panel-content">
-      <div class="feishu-header">
-        <span class="feishu-title">绑定飞书群聊</span>
-        <span class="feishu-session-name">${escapeHtml(session.name)}</span>
-      </div>
-      <div class="feishu-status" id="feishu-global-status">检查全局配置...</div>
-      <form class="feishu-form">
-        <label>
-          <span class="feishu-label">群聊 Chat ID</span>
-          <input type="text" name="chatId" value="${escapeHtml(chatId)}" placeholder="oc_xxx" />
-          <span class="feishu-hint">在飞书群设置里找到群的 chat_id，以 oc_ 开头</span>
-        </label>
-        <div class="feishu-advanced">
-          <div class="feishu-advanced-toggle" onclick="document.getElementById('feishu-advanced-fields').classList.toggle('open')">
-            ⚙ 高级设置（可选：使用独立机器人）
-          </div>
-          <div id="feishu-advanced-fields" class="feishu-collapsible">
-            <label>
-              <span class="feishu-label">App ID</span>
-              <input type="text" name="appId" value="${escapeHtml(appId)}" placeholder="cli_xxx（留空使用全局配置）" />
-              <span class="feishu-hint">此群聊使用独立的飞书机器人；留空则使用全局 ~/.nebflow/feishu.json</span>
-            </label>
-            <label>
-              <span class="feishu-label">App Secret</span>
-              <input type="password" name="appSecret" value="" placeholder="${hasAppSecret ? '已配置（不显示原有值）' : '输入 App Secret'}" />
-              <span class="feishu-hint">保存时填写；留空保持现有值不变</span>
-            </label>
-          </div>
-        </div>
-        <div class="feishu-actions">
-          <button type="button" class="feishu-clear" ${!isLinked ? 'style="display:none"' : ''}>解除绑定</button>
-          <button type="button" class="feishu-cancel">取消</button>
-          <button type="button" class="feishu-save">绑定</button>
-        </div>
-      </form>
-    </div>`;
+function closeFeishuBubble() {
+  if (!feishuBubbleEl) return;
+  feishuBubbleEl.classList.remove('open');
+  setTimeout(() => { feishuBubbleEl?.remove(); feishuBubbleEl = null; }, 200);
 }
 
-function saveFeishuConfig(sessionId) {
-  if (!feishuPanelEl) return;
-  const form = feishuPanelEl.querySelector('.feishu-form');
-  const chatId = form.querySelector('[name="chatId"]').value.trim();
-  const appId = form.querySelector('[name="appId"]').value.trim();
-  const appSecret = form.querySelector('[name="appSecret"]').value.trim();
-  const payload = {
-    type: 'updateSessionFeishu',
-    sessionId,
-    chatId,
-    chatType: 'group',
-    enabled: true,
-    syncMessages: true,
-    notifyEvents: ['aiResponse', 'askUser', 'permissionRequest'],
-    appId
-  };
-  if (appSecret) payload.appSecret = appSecret;
-  sendWs(payload);
-  closeFeishuPanel();
-}
-
-function closeFeishuPanel() {
-  if (feishuPanelEl) {
-    feishuPanelEl.remove();
-    feishuPanelEl = null;
-  }
-}
-
-// Handle global feishu config response
+// Handle feishu global config response — populate settings fields
 onMessage('feishuGlobalConfig', (data) => {
-  if (!feishuPanelEl) return;
-  const statusEl = feishuPanelEl.querySelector('#feishu-global-status');
+  const appIdInput = document.getElementById('cfg-feishu-appid');
+  const secretInput = document.getElementById('cfg-feishu-appsecret');
+  if (!appIdInput) return;
   if (data.configured) {
-    statusEl.className = 'feishu-status ok';
-    statusEl.textContent = '全局配置 ✓ (appId: ' + data.appId + '...)';
-  } else {
-    statusEl.className = 'feishu-status warn';
-    statusEl.innerHTML = '全局配置未设置 — 请创建 <code>~/.nebflow/feishu.json</code>（含 appId/appSecret）';
+    appIdInput.value = data.appId || '';
+    secretInput.value = data.appSecret || '';
   }
 });
 
@@ -1619,7 +1692,7 @@ export function initFeishuPanel() {
   state.dom.sessionNameEl.style.cursor = 'pointer';
   state.dom.sessionNameEl.addEventListener('click', (e) => {
     e.stopPropagation();
-    openFeishuPanel();
+    toggleFeishuBubble();
   });
 }
 
@@ -1656,7 +1729,7 @@ export function createNewFolder(parentFolderId) {
     '<div class="folder-new-row-inner">' +
     '<div class="folder-new-arrow"><i data-lucide="chevron-right"></i></div>' +
     '<div class="folder-new-icon"><i data-lucide="folder"></i></div>' +
-    '<input class="folder-new-input" placeholder="New folder name…">' +
+    '<input class="folder-new-input" placeholder="' + t('folder.newPlaceholder') + '">' +
     '</div>';
   container.insertBefore(row, container.firstChild);
 
@@ -1854,15 +1927,15 @@ function showFolderCtxMenu(x, y, folderId) {
   const menu = document.createElement('div');
   menu.className = 'session-ctx-menu';
   let html =
-    '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? '取消置顶' : '置顶') + '</div>' +
-    '<div class="ctx-item" data-action="rename">重命名</div>' +
-    '<div class="ctx-item" data-action="new-subfolder">新建子文件夹</div>';
+    '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? t('ctx.unpin') : t('ctx.pin')) + '</div>' +
+    '<div class="ctx-item" data-action="rename">' + t('ctx.rename') + '</div>' +
+    '<div class="ctx-item" data-action="new-subfolder">' + t('ctx.newSubfolder') + '</div>';
   if (hasParent) {
-    html += '<div class="ctx-item" data-action="move-out">移出文件夹</div>';
+    html += '<div class="ctx-item" data-action="move-out">' + t('ctx.moveOut') + '</div>';
   }
   html +=
     '<div class="ctx-separator"></div>' +
-    '<div class="ctx-item" data-action="delete" style="color:var(--color-error)">删除文件夹</div>';
+    '<div class="ctx-item" data-action="delete" style="color:var(--color-error)">' + t('ctx.deleteFolder') + '</div>';
   menu.innerHTML = html;
 
   menu.querySelector('[data-action="toggle-pin"]').addEventListener('click', () => {
@@ -1875,7 +1948,7 @@ function showFolderCtxMenu(x, y, folderId) {
 
   menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
     if (!folder) return;
-    const newName = prompt('Rename folder:', folder.name);
+    const newName = prompt(t('session.renameFolder'), folder.name);
     if (newName && newName.trim() && newName.trim() !== folder.name) {
       sendWs({ type: 'renameFolder', folderId, name: newName.trim() });
     }

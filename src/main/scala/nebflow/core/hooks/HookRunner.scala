@@ -102,8 +102,7 @@ object HookRunner:
       "TOOL_INPUT_FILE_PATH" -> payload.toolInput
         .flatMap(_("file_path").flatMap(_.asString))
         .getOrElse(""),
-      "NEBFLOW_URL" -> sys.props.getOrElse("nebflow.url", "http://localhost:8080"),
-      "NEBFLOW_TOKEN" -> readToken().getOrElse("")
+      "NEBFLOW_URL" -> sys.props.getOrElse("nebflow.url", "http://localhost:8080")
     )
 
   // ------------------------------------------------------------------
@@ -219,12 +218,4 @@ object HookRunner:
 
     def cancel(): Unit = thread.interrupt()
 
-  /** Read NEBFLOW_TOKEN from disk, stripping trailing newline. */
-  private def readToken(): Option[String] =
-    val tokenFile = os.home / ".nebflow" / ".token"
-    try
-      val raw = os.read(tokenFile)
-      val trimmed = raw.stripLineEnd
-      if trimmed.nonEmpty then Some(trimmed) else None
-    catch case _: Exception => None
 end HookRunner
