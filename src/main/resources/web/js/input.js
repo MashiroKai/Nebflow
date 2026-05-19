@@ -8,64 +8,39 @@ import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
 import { renderTaskList } from './taskList.js';
+import { t } from './i18n.js';
+import { getLocale } from './i18n.js';
 
 // ---------- Slash Commands ----------
 const slashCommands = {
   '/clear': {
-    desc: 'Clear LLM context (keeps chat history)',
+    desc: () => t('slash.clear'),
     run: () => {
       sendWs({type:'command', command:'clear', sessionId: state.activeSessionId});
       delete state.sessionTasks[state.activeSessionId];
       renderTaskList([]);
-      renderSystemBubble('Context cleared. LLM memory reset.');
+      renderSystemBubble(t('slash.clearDone'));
     }
   },
   '/compact': {
-    desc: 'Manually trigger context compaction',
+    desc: () => t('slash.compact'),
     run: () => {
       sendWs({type:'command', command:'compact', sessionId: state.activeSessionId});
-      renderSystemBubble('Compaction triggered...');
-    }
-  },
-  '/thinking': {
-    desc: 'Toggle extended thinking (Deep mode)',
-    run: () => {
-      if (!state.currentAiBubble) {
-        const row = document.createElement('div');
-        row.className = 'row ai';
-        state.currentAiBubble = document.createElement('div');
-        state.currentAiBubble.className = 'bubble ai';
-        row.appendChild(state.currentAiBubble);
-        state.dom.chat.appendChild(row);
-      }
-      import('./chat.js').then(({ showOptions }) => {
-        showOptions(state.currentAiBubble, [
-          {question: 'Extended thinking', options: [
-            {label:'Enable', desc:'Deep analysis with thinking tokens'},
-            {label:'Disable', desc:'Normal response mode'}
-          ]}
-        ], (answers) => {
-          const mode = answers[0];
-          state.thinkingMode = mode === 'Enable' ? {type: 'enabled', budget_tokens: 16000} : null;
-          sendWs({type: 'setThinking', thinking: state.thinkingMode});
-          renderSystemBubble('Thinking: ' + mode.toLowerCase());
-        }, 'Confirm');
-      });
+      renderSystemBubble(t('slash.compactDone'));
     }
   },
   '/ask': {
-    desc: 'Ask a question about the latest response (does not affect context)',
+    desc: () => t('slash.ask'),
     run: () => {
-      renderSystemBubble('Usage: /ask <your question>');
+      renderSystemBubble(t('slash.askUsage'));
     }
   },
   '/new': {
-    desc: 'Create a new session',
-    // Will be wired up from session module in main.js
+    desc: () => t('slash.new'),
     run: null
   },
   '/model': {
-    desc: 'Select model for this session',
+    desc: () => t('slash.model'),
     run: () => {
       sendWs({type: 'getModelOptions', sessionId: state.activeSessionId});
     }
@@ -93,7 +68,7 @@ function updateSlashDropdown() {
   const query = text.slice(1).toLowerCase();
   state.slashMatches = Object.entries(slashCommands)
     .filter(([cmd]) => cmd.slice(1).toLowerCase().startsWith(query))
-    .map(([cmd, info]) => ({ cmd, desc: info.desc }));
+    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc }));
   if (state.slashMatches.length === 0) {
     closeSlashDropdown();
     return;
@@ -564,7 +539,7 @@ export function initInput() {
   function createRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new SR();
-    rec.lang = 'zh-CN';
+    rec.lang = getLocale();
     rec.continuous = true;
     rec.interimResults = true;
     rec.maxAlternatives = 3;
@@ -585,7 +560,7 @@ export function initInput() {
         else interimText += t;
       }
       const current = voiceFinal + interimText;
-      voiceText.textContent = current || 'Listening...';
+      voiceText.textContent = current || t('voice.listening');
       input.value = voiceBase + (voiceBase && current ? ' ' : '') + current;
     };
 
@@ -594,7 +569,7 @@ export function initInput() {
       if (ev.error === 'no-speech' || ev.error === 'aborted') {
         return;
       }
-      voiceText.textContent = 'Error: ' + ev.error;
+      voiceText.textContent = t('voice.error', { error: ev.error });
       setTimeout(() => { if (!voiceActive) return; stopVoice(); }, 1500);
     };
 
@@ -615,7 +590,7 @@ export function initInput() {
 
   function startVoice() {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert('Voice input not supported in this browser. Try Chrome.');
+      alert(t('input.voiceError'));
       return;
     }
     voiceActive = true;
@@ -624,7 +599,7 @@ export function initInput() {
     state.recognition = createRecognition();
     state.recognition.start();
     voiceOverlay.classList.add('on');
-    voiceText.textContent = 'Listening...';
+    voiceText.textContent = t('voice.listening');
     voiceBtn.classList.add('recording');
   }
 

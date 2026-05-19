@@ -18,6 +18,9 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
+  // Holds (inputTokens, cacheReadTokens, cacheCreationTokens) from message_start
+  private case class Tokens(input: Int, cacheRead: Option[Int], cacheWrite: Option[Int])
+
   private def toAnthropicMessages(messages: List[Message]): List[Json] =
     mergeConsecutive(messages.filterNot(_.role == MessageRole.System)).map { msg =>
       val role = msg.role match
@@ -202,15 +205,21 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     }
 
     val usage = json.hcursor.downField("usage").as[Json].toOption.map { u =>
+      val inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0)
+      val cacheRead = u.hcursor.downField("cache_read_input_tokens").as[Option[Int]].toOption.flatten
+      val cacheWrite = u.hcursor.downField("cache_creation_input_tokens").as[Option[Int]].toOption.flatten
+      val totalInput = inputTokens + cacheRead.getOrElse(0) + cacheWrite.getOrElse(0)
       TokenUsage(
-        inputTokens = u.hcursor.downField("input_tokens").as[Int].getOrElse(0),
+        inputTokens = totalInput,
         outputTokens = u.hcursor.downField("output_tokens").as[Int].getOrElse(0),
-        cacheReadTokens = u.hcursor.downField("cache_read_input_tokens").as[Int].toOption,
-        cacheWriteTokens = u.hcursor.downField("cache_creation_input_tokens").as[Int].toOption
+        cacheReadTokens = cacheRead,
+        cacheWriteTokens = cacheWrite
       )
     }
 
     AdapterResponse(reply, toolCalls, usage)
+
+  end parseNonStreamingResponse
 
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
     val systemBlocks = buildSystemBlocks(params)
@@ -246,7 +255,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
       case _ => bodyWithThinking
 
     Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
-      Stream.eval(IO.ref(0)).flatMap { inputTokensRef =>
+      Stream.eval(IO.ref(Tokens(0, None, None))).flatMap { tokenRef =>
         val request = basicRequest
           .post(uri"$base/v1/messages")
           .header("x-api-key", apiKey)
@@ -261,7 +270,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
             case Left(error) =>
               Stream.eval(IO.raiseError(new RuntimeException(s"Anthropic API error: $error")))
             case Right(byteStream) =>
-              parseSseIncrementally(byteStream, toolCallState, inputTokensRef, params)
+              parseSseIncrementally(byteStream, toolCallState, tokenRef, params)
         }
       }
     }
@@ -271,7 +280,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
   private def parseSseIncrementally(
     byteStream: Stream[IO, Byte],
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
-    inputTokensRef: Ref[IO, Int],
+    tokenRef: Ref[IO, Tokens],
     params: SendMessageParams
   ): Stream[IO, StreamChunk] =
     Stream.eval(IO.ref(Option.empty[String])).flatMap { eventTypeRef =>
@@ -284,8 +293,8 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
           else if line.startsWith("data:") then
             val data = line.drop(5).trim
             eventTypeRef.getAndSet(None).flatMap {
-              case Some(et) => processAnthropicEvent(et, data, toolCallState, inputTokensRef, params)
-              case None => processAnthropicEvent("", data, toolCallState, inputTokensRef, params)
+              case Some(et) => processAnthropicEvent(et, data, toolCallState, tokenRef, params)
+              case None => processAnthropicEvent("", data, toolCallState, tokenRef, params)
             }
           else IO.pure(Nil)
         }
@@ -296,7 +305,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     eventType: String,
     data: String,
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
-    inputTokensRef: Ref[IO, Int],
+    tokenRef: Ref[IO, Tokens],
     params: SendMessageParams
   ): IO[List[StreamChunk]] =
     if data == "[DONE]" then IO.pure(Nil)
@@ -306,14 +315,17 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         case Right(json) =>
           eventType match
             case "message_start" =>
-              // Capture input_tokens from message_start (message_delta only has output_tokens)
-              val inputTokens = json.hcursor
-                .downField("message")
-                .downField("usage")
-                .downField("input_tokens")
-                .as[Int]
-                .getOrElse(0)
-              inputTokensRef.set(inputTokens).as(Nil)
+              // Capture usage from message_start (message_delta only has output_tokens)
+              val usageObj = json.hcursor.downField("message").downField("usage")
+              val inputTokens = usageObj.downField("input_tokens").as[Int].getOrElse(0)
+              val cacheRead = usageObj.downField("cache_read_input_tokens").as[Option[Int]].toOption.flatten
+              val cacheWrite = usageObj.downField("cache_creation_input_tokens").as[Option[Int]].toOption.flatten
+              nebflow.core.NebflowLogger
+                .forName("nebflow.llm.anthropic")
+                .info(
+                  s"message_start: model=${params.model} usage_json=${usageObj.as[Json].getOrElse(Json.Null).noSpaces} inputTokens=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite"
+                )
+              tokenRef.set(Tokens(inputTokens, cacheRead, cacheWrite)).as(Nil)
             case "content_block_delta" =>
               json.hcursor.downField("delta").downField("type").as[String].toOption match
                 case Some("text_delta") =>
@@ -343,6 +355,9 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                   toolCallState
                     .update(_ + (idx -> (id, name, new StringBuilder)))
                     .as(List(StreamChunk.ToolCallStart(name)))
+                case Some("thinking") =>
+                  val sig = json.hcursor.downField("content_block").downField("signature").as[String].toOption
+                  IO.pure(sig.map(s => List(StreamChunk.ThinkingSignature(s))).getOrElse(Nil))
                 case _ => IO.pure(Nil)
             case "content_block_stop" =>
               val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
@@ -355,9 +370,32 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
               }
             case "message_delta" =>
               val stopReason = json.hcursor.downField("delta").downField("stop_reason").as[String].toOption
-              val outputTokens = json.hcursor.downField("usage").downField("output_tokens").as[Int].getOrElse(0)
-              inputTokensRef.get.map { inputTokens =>
-                val usage = Some(TokenUsage(inputTokens = inputTokens, outputTokens = outputTokens))
+              val deltaUsage = json.hcursor.downField("usage")
+              val outputTokens = deltaUsage.downField("output_tokens").as[Int].getOrElse(0)
+              // Some Anthropic-compatible providers (Zhipu, DeepSeek) report input_tokens in
+              // message_delta instead of (or in addition to) message_start.
+              // Prefer message_delta's input_tokens when available and non-zero.
+              val deltaInput = deltaUsage.downField("input_tokens").as[Int].toOption
+              val deltaCacheRead = deltaUsage.downField("cache_read_input_tokens").as[Option[Int]].toOption.flatten
+              val deltaCacheWrite = deltaUsage.downField("cache_creation_input_tokens").as[Option[Int]].toOption.flatten
+              tokenRef.get.map { t =>
+                val inputTokens = deltaInput.filter(_ > 0).getOrElse(t.input)
+                val cacheRead = deltaCacheRead.orElse(t.cacheRead)
+                val cacheWrite = deltaCacheWrite.orElse(t.cacheWrite)
+                val totalInput = inputTokens + cacheRead.getOrElse(0) + cacheWrite.getOrElse(0)
+                nebflow.core.NebflowLogger
+                  .forName("nebflow.llm.anthropic")
+                  .info(
+                    s"message_delta: model=${params.model} deltaInput=$deltaInput stored_input=${t.input} final_input=$inputTokens cacheRead=$cacheRead cacheWrite=$cacheWrite totalInput=$totalInput outputTokens=$outputTokens stopReason=$stopReason"
+                  )
+                val usage = Some(
+                  TokenUsage(
+                    inputTokens = totalInput,
+                    outputTokens = outputTokens,
+                    cacheReadTokens = cacheRead,
+                    cacheWriteTokens = cacheWrite
+                  )
+                )
                 val meta = LlmMeta(
                   sessionId = params.sessionId.getOrElse(""),
                   agentId = params.agentId.getOrElse(""),

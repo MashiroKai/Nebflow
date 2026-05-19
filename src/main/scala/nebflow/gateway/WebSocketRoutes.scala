@@ -4,14 +4,14 @@ import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
-import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.agent.*
 import nebflow.core.*
-import nebflow.core.ask.AskService
 import nebflow.core.mcp.McpManager
 import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
 import nebflow.shared.*
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
@@ -28,7 +28,7 @@ class WebSocketRoutes(
   sessionService: SessionService,
   agentService: AgentService,
   configService: ConfigService.type,
-  runtimePrefs: RuntimePreferencesService,
+  configRef: Ref[IO, NebflowServiceConfig],
   rateLimiter: RateLimiter,
   token: String,
   fileChangeTracker: FileChangeTracker,
@@ -132,6 +132,14 @@ class WebSocketRoutes(
             sharedResources.sessionStore
               .appendUiMessages(sessionId, List(UiMessage.User(content, Nil)))
               .handleErrorWith(e => IO(logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}"))) *>
+            // Push to frontend in real-time so it shows without switching sessions
+            wsHub.broadcast(
+              io.circe.Json.obj(
+                "type" -> "bridgeUser".asJson,
+                "sessionId" -> sessionId.asJson,
+                "text" -> content.asJson
+              )
+            ) *>
             routeToAgent(sessionId)(ref =>
               IO(ref ! AgentCommand.UserInput(content, None, None, Some(List(ContentBlock.Text(content)))))
             )
@@ -166,7 +174,7 @@ class WebSocketRoutes(
 
           sendStream = Stream.fromQueueUnterminated(outbound)
           _ <- logger.info("WebSocket client connected")
-          prefs <- runtimePrefs.getAll
+          thinkingCfg <- sharedResources.thinkingConfigRef.get
           toolsList = ToolRegistry.userConfigurableTools.map(t =>
             io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
           )
@@ -180,9 +188,8 @@ class WebSocketRoutes(
                   "type" -> "serverConfig".asJson,
                   "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
                   "version" -> nebflow.Version.string.asJson,
-                  "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
+                  "thinking" -> thinkingCfg.asJson,
                   "tools" -> toolsList.asJson,
-                  "language" -> prefs.language.asJson,
                   "mcpServers" -> mcpServers.asJson
                 )
                 .noSpaces
@@ -200,41 +207,21 @@ class WebSocketRoutes(
           Forbidden("Invalid token")
       end if
 
-    // --- External event injection (for hook -> agent feedback loop) ---
-    case req @ POST -> Root / "api" / "sessions" / sessionId / "inject" =>
-      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-      val provided = if cookieToken.nonEmpty then cookieToken else req.params.get("token").getOrElse("")
+    // --- Callback endpoint (外→内) ---
+    // POST /api/callbacks/inject — agent-centric, authenticated via gateway token
+    case req @ POST -> Root / "api" / "callbacks" / "inject" =>
+      val provided = extractToken(req)
       if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
-      else
-        (for
-          meta <- sessionStore.getSessionMeta(sessionId)
-          _ <- IO.fromOption(meta)(new RuntimeException(s"Session not found: $sessionId"))
-          result <- req.as[String].flatMap { text =>
-            parse(text).toOption match
-              case Some(json) =>
-                val content = json.hcursor.downField("content").as[String].getOrElse("")
-                if content.isEmpty then BadRequest("Missing 'content' field")
-                else
-                  val source = json.hcursor.downField("source").as[String].getOrElse("hook")
-                  val eventType = json.hcursor.downField("eventType").as[String].getOrElse("feedback")
-                  val metadata = json.hcursor.downField("metadata").as[JsonObject].getOrElse(JsonObject.empty)
-                  val correlationId = json.hcursor.downField("correlationId").as[Option[String]].getOrElse(None)
-                  val event = AgentCommand.ExternalEvent(source, eventType, content, metadata, correlationId)
-                  handleBridgeAgentCommand(sessionId, event) *>
-                    Ok(Json.obj("status" -> "ok".asJson, "sessionId" -> sessionId.asJson))
-              case None =>
-                BadRequest("Invalid JSON body")
-          }
-        yield result).handleErrorWith {
-          case e: RuntimeException => NotFound(Json.obj("error" -> e.getMessage.asJson))
-          case e => InternalServerError(Json.obj("error" -> e.getMessage.asJson))
-        }
+      else handleInject(req)
 
     case req @ GET -> Root =>
       StaticFile.fromResource("web/index.html", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / "css" / file =>
       StaticFile.fromResource(s"web/css/$file", Some(req)).getOrElseF(NotFound())
+
+    case req @ GET -> Root / "js" / "locales" / file =>
+      StaticFile.fromResource(s"web/js/locales/$file", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / "js" / file =>
       StaticFile.fromResource(s"web/js/$file", Some(req)).getOrElseF(NotFound())
@@ -314,7 +301,7 @@ class WebSocketRoutes(
       io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
     )
     for
-      prefs <- runtimePrefs.getAll
+      thinkingCfg <- sharedResources.thinkingConfigRef.get
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
       })
@@ -323,13 +310,27 @@ class WebSocketRoutes(
           "type" -> "serverConfig".asJson,
           "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
           "version" -> nebflow.Version.string.asJson,
-          "thinking" -> prefs.thinkingConfig.map(ThinkingConfig.toJson).getOrElse(io.circe.Json.Null),
+          "thinking" -> thinkingCfg.asJson,
           "tools" -> toolsList.asJson,
-          "language" -> prefs.language.asJson,
           "mcpServers" -> mcpServers.asJson
         )
       )
     yield ()
+
+  /** Persist thinking config to nebflow.json — targeted field update. */
+  private def persistThinkingConfig(enabled: Boolean): IO[Unit] =
+    IO.blocking {
+      val path = nebflow.llm.Config.DefaultConfigPath
+      val existing = if os.exists(path) then os.read(path) else "{}"
+      parse(existing).foreach { json =>
+        val updated = json.mapObject { obj =>
+          obj.add("thinkingConfig", ThinkingConfig(enabled).asJson)
+        }
+        os.write.over(path, updated.spaces2, createFolders = true)
+      }
+    }.handleErrorWith { e =>
+      logger.warn(s"Failed to persist thinking config: ${e.getMessage}")
+    }
 
   /** Send agent-filtered session list by looking up the session's agent name. */
   private def sendAgentSessionList(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
@@ -408,6 +409,18 @@ class WebSocketRoutes(
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
               logger.info("Session cleared") *>
                 sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
+                sessionStore.appendUiMessages(
+                  clearSessionId,
+                  List(UiMessage.System("Context cleared. LLM memory reset."))
+                ) *>
+                sharedResources.taskStore.deleteAll(clearSessionId) *>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "taskListUpdate".asJson,
+                    "tasks" -> io.circe.Json.arr(),
+                    "sessionId" -> clearSessionId.asJson
+                  )
+                ) *>
                 routeToAgent(clearSessionId)(ref => IO(ref ! AgentCommand.ResetSession))
             case "compact" =>
               val compactSessionId =
@@ -415,51 +428,36 @@ class WebSocketRoutes(
               logger.info("Manual compaction triggered") *>
                 routeToAgent(compactSessionId)(ref => IO(ref ! AgentCommand.TriggerCompaction("full")))
             case _ => IO.unit
+          end match
 
         case "setThinking" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          json.hcursor.downField("thinking").focus match
-            case Some(t) if !t.isNull =>
-              ThinkingConfig.fromJson(t) match
-                case Right(tc) =>
-                  logger.info(s"Thinking mode changed to: enabled=${tc.enabled}, budget=${tc.budgetTokens}") *>
-                    runtimePrefs.setThinking(Some(tc)) *>
-                    broadcastServerConfig
-                case Left(err) =>
-                  logger.warn(s"Invalid thinking config: $err") *>
-                    wsSend(
-                      io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid thinking config: $err".asJson)
-                    )
-            case _ =>
-              logger.info("Thinking mode disabled") *>
-                runtimePrefs.setThinking(None) *>
-                broadcastServerConfig
-
-        case "setMcpEnabled" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val serverId = json.hcursor.downField("serverId").as[String].getOrElse("")
-          val enabled = json.hcursor.downField("enabled").as[Boolean].getOrElse(true)
-          if serverId.nonEmpty then
-            logger.info(s"MCP server '$serverId' ${if enabled then "enabled" else "disabled"}") *>
-              runtimePrefs.setMcpServerEnabled(serverId, enabled) *>
-              mcpManager.setEnabled(serverId, enabled) *>
-              broadcastServerConfig
-          else IO.unit
+          val hc = json.hcursor
+          val thinkingOpt = hc.downField("thinking").as[Option[io.circe.Json]].toOption.flatten
+          // null/absent means toggled off; {enabled: false} also means off; otherwise default true
+          val enabled = thinkingOpt match
+            case None | Some(io.circe.Json.Null) => false
+            case Some(v) => v.hcursor.downField("enabled").as[Boolean].getOrElse(true)
+          logger.info(s"Thinking mode set to: enabled=$enabled") *>
+            sharedResources.thinkingConfigRef.set(ThinkingConfig(enabled)) *>
+            persistThinkingConfig(enabled) *>
+            broadcastServerConfig
 
         case "getModelOptions" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-          val models = sharedResources.providerRegistry.getAllModels()
-          sharedResources.sessionModelOverrides.get.flatMap { overrides =>
-            val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "modelOptions".asJson,
-                "models" -> models.map { case (ref, label) =>
-                  io.circe.Json.obj("ref" -> ref.asJson, "label" -> label.asJson)
-                }.asJson,
-                "current" -> currentOpt.asJson
+          sharedResources.providerRegistry.getAllModels().flatMap { models =>
+            sharedResources.sessionModelOverrides.get.flatMap { overrides =>
+              val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "modelOptions".asJson,
+                  "models" -> models.map { case (ref, label) =>
+                    io.circe.Json.obj("ref" -> ref.asJson, "label" -> label.asJson)
+                  }.asJson,
+                  "current" -> currentOpt.asJson
+                )
               )
-            )
+            }
           }
 
         case "setSessionModel" =>
@@ -469,7 +467,7 @@ class WebSocketRoutes(
           if sessionId.nonEmpty then
             (modelRef match
               case Some(ref) =>
-                sharedResources.providerRegistry.getCandidateForRef(ref) match
+                sharedResources.providerRegistry.getCandidateForRef(ref).flatMap {
                   case Some(candidate) =>
                     sharedResources.sessionModelOverrides.update(_ + (sessionId -> candidate)) *>
                       sessionStore
@@ -477,6 +475,7 @@ class WebSocketRoutes(
                         .as(Right(s"${candidate.providerId}/${candidate.model}"))
                   case None =>
                     IO.pure(Left(s"Unknown model: $ref"))
+                }
               case None =>
                 sharedResources.sessionModelOverrides.update(_ - sessionId) *>
                   sessionStore.updateSessionModel(sessionId, None).as(Right("default"))
@@ -609,7 +608,8 @@ class WebSocketRoutes(
           else if chatId.isEmpty then
             // Clear feishu config
             sessionStore.updateSessionFeishu(sessionId, None).flatMap { _ =>
-              sendAgentSessionList(wsSend, sessionId)
+              sharedResources.bridgeManager.fold(IO.unit)(_.refreshRoutes) *>
+                sendAgentSessionList(wsSend, sessionId)
             }
           else
             val enabled = hc.downField("enabled").as[Option[Boolean]].toOption.flatten.getOrElse(true)
@@ -641,7 +641,6 @@ class WebSocketRoutes(
           end if
 
         case "getFeishuGlobalConfig" =>
-          // Check if global feishu config exists (without exposing secrets)
           import nebflow.bridge.FeishuGlobalConfig
           FeishuGlobalConfig.load.flatMap {
             case Some(cfg) =>
@@ -649,7 +648,9 @@ class WebSocketRoutes(
                 io.circe.Json.obj(
                   "type" -> "feishuGlobalConfig".asJson,
                   "configured" -> true.asJson,
-                  "appId" -> cfg.appId.take(6).asJson // Show prefix for verification
+                  "appId" -> cfg.appId.asJson,
+                  "hasAppSecret" -> cfg.appSecret.nonEmpty.asJson,
+                  "appSecret" -> cfg.appSecret.asJson
                 )
               )
             case None =>
@@ -660,6 +661,25 @@ class WebSocketRoutes(
                 )
               )
           }
+
+        case "updateFeishuGlobalConfig" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val appId = hc.downField("appId").as[String].getOrElse("")
+          val appSecret = hc.downField("appSecret").as[String].getOrElse("")
+          if appId.nonEmpty then
+            import nebflow.bridge.FeishuGlobalConfig
+            // Load existing config to preserve other fields, then merge
+            FeishuGlobalConfig.load.flatMap { existing =>
+              val base = existing.getOrElse(FeishuGlobalConfig(appId = "", appSecret = ""))
+              val updated = base.copy(
+                appId = appId,
+                appSecret = if appSecret.nonEmpty then appSecret else base.appSecret
+              )
+              FeishuGlobalConfig.save(updated) *>
+                wsSend(io.circe.Json.obj("type" -> "feishuGlobalConfigSaved".asJson, "ok" -> true.asJson))
+            }
+          else IO.unit
 
         case "ask" =>
           val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -1083,7 +1103,13 @@ class WebSocketRoutes(
               case Left(err) =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
               case Right(_) =>
-                wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+                // Hot-reload: update in-memory config and clear adapter cache
+                sharedResources.providerRegistry.reloadConfig().attempt.flatMap {
+                  case Right(_) =>
+                    logger.info("Config hot-reloaded successfully")
+                  case Left(e) =>
+                    logger.warn(s"Config hot-reload failed: ${e.getMessage}")
+                } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
             }
           else IO.unit
 
@@ -1179,8 +1205,8 @@ class WebSocketRoutes(
         val delta = hc.downField("delta").as[String].getOrElse("")
         if delta.nonEmpty then
           sessionTurnStarts
-            .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
-          sessionTextBuffers.update(m => m.updatedWith(sessionId)(_.map(_ + delta).orElse(Some(delta))))
+            .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis())) *>
+            sessionTextBuffers.update(m => m.updatedWith(sessionId)(_.map(_ + delta).orElse(Some(delta))))
         else IO.unit
 
       case "thinking" =>
@@ -1260,6 +1286,37 @@ class WebSocketRoutes(
           )
         else IO.unit
 
+      case "system" =>
+        val content = hc.downField("content").as[String].getOrElse("")
+        if content.nonEmpty then
+          sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.System(content)))
+        else IO.unit
+
+      case "compactStart" =>
+        val mode = hc.downField("mode").as[String].getOrElse("full")
+        sharedResources.sessionStore.appendUiMessages(
+          sessionId,
+          List(UiMessage.System(s"Compacting context ($mode)..."))
+        )
+
+      case "compactComplete" =>
+        val before = hc.downField("before").as[Int].getOrElse(0)
+        val after = hc.downField("after").as[Int].getOrElse(0)
+        val reportPath = hc.downField("reportPath").as[String].toOption
+        val detail = reportPath.map(p => s" (report: ${p.split('/').last})").getOrElse("")
+        sharedResources.sessionStore.appendUiMessages(
+          sessionId,
+          List(UiMessage.System(s"Context compacted: $before → $after messages$detail"))
+        )
+
+      case "compactFailed" =>
+        val attempt = hc.downField("attempt").as[Int].getOrElse(0)
+        val maxAttempts = hc.downField("maxAttempts").as[Int].getOrElse(0)
+        sharedResources.sessionStore.appendUiMessages(
+          sessionId,
+          List(UiMessage.System(s"Context compaction failed (attempt $attempt/$maxAttempts)"))
+        )
+
       case _ => IO.unit
 
     record.handleErrorWith(e =>
@@ -1277,44 +1334,84 @@ class WebSocketRoutes(
     question: String,
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
-    sharedResources.askSemaphore.tryAcquire.flatMap { acquired =>
-      if !acquired then
-        wsSend(
-          io.circe.Json.obj(
-            "type" -> "askError".asJson,
-            "sessionId" -> sessionId.asJson,
-            "message" -> "Another ask is in progress, please wait".asJson
+    // Route /ask to the agent actor — it handles inline via pipeLlmCall with askMode
+    routeToAgent(sessionId)(ref => IO(ref ! AgentCommand.AskQuestion(question, sessionId)))
+
+  // ============================================================
+  // Callback helpers
+  // ============================================================
+
+  /** Extract token from cookie, Authorization header, or query param. */
+  private def extractToken(req: org.http4s.Request[IO]): String =
+    val fromCookie = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
+    if fromCookie.nonEmpty then fromCookie
+    else
+      val fromHeader = req.headers
+        .get[org.http4s.headers.Authorization]
+        .collectFirst { case org.http4s.headers.Authorization(org.http4s.Credentials.Token(_, t)) =>
+          t
+        }
+        .getOrElse("")
+      if fromHeader.nonEmpty then fromHeader
+      else req.params.get("token").getOrElse("")
+
+  /**
+   * POST /api/callbacks/inject
+   *
+   * Body: { "agent": "Nebula", "session?": "abc123", "message": "text" }
+   *
+   * - agent is required
+   * - session is optional; if missing, create a new session for the agent
+   * - message is required
+   */
+  private def handleInject(req: org.http4s.Request[IO]): IO[org.http4s.Response[IO]] =
+    req.bodyText.compile.string
+      .flatMap { text =>
+        parse(text).toOption match
+          case None => BadRequest("Invalid JSON body")
+          case Some(json) =>
+            val cursor = json.hcursor
+            val agentName = cursor.downField("agent").as[String].getOrElse("")
+            val sessionIdOpt = cursor.downField("session").as[Option[String]].getOrElse(None)
+            val message = cursor.downField("message").as[String].getOrElse("")
+            val source = cursor.downField("source").as[String].getOrElse("callback")
+            val metadata = cursor.downField("metadata").as[JsonObject].getOrElse(JsonObject.empty)
+            val correlationId = cursor.downField("correlationId").as[Option[String]].getOrElse(None)
+
+            if agentName.isEmpty then BadRequest(Json.obj("error" -> "Missing 'agent' field".asJson))
+            else if message.isEmpty then BadRequest(Json.obj("error" -> "Missing 'message' field".asJson))
+            else
+              resolveSession(agentName, sessionIdOpt).flatMap { sessionId =>
+                val event = AgentCommand.ExternalEvent(source, "inject", message, metadata, correlationId)
+                handleBridgeAgentCommand(sessionId, event) *>
+                  Ok(
+                    Json.obj(
+                      "status" -> "ok".asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "agent" -> agentName.asJson
+                    )
+                  )
+              }
+      }
+      .handleErrorWith {
+        case e: RuntimeException => NotFound(Json.obj("error" -> e.getMessage.asJson))
+        case e => InternalServerError(Json.obj("error" -> e.getMessage.asJson))
+      }
+
+  /** Resolve a session: use provided ID, or create a new one for the agent. */
+  private def resolveSession(agentName: String, sessionIdOpt: Option[String]): IO[String] =
+    sessionIdOpt match
+      case Some(sid) =>
+        sessionStore.getSessionMeta(sid).flatMap {
+          case Some(_) => IO.pure(sid)
+          case None => IO.raiseError(new RuntimeException(s"Session not found: $sid"))
+        }
+      case None =>
+        sessionService
+          .createSession(
+            name = s"$agentName-callback",
+            agentName = Some(agentName)
           )
-        )
-      else
-        val toolContext = ToolContext(
-          projectRoot = sharedResources.projectRoot.toString,
-          sessionId = Some(sessionId),
-          depth = 0,
-          agentDef = None
-        )
-        (for
-          messages <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
-          history = messages.filter(m => m.role == MessageRole.User || m.role == MessageRole.Assistant)
-          finalResult <- AskService.ask(question, history, toolContext, sharedResources, sessionId, wsSend)
-          _ <- sharedResources.sessionStore
-            .appendUiMessages(
-              sessionId,
-              List(UiMessage.Ask(question, finalResult.text, Some(finalResult.durationMs), finalResult.model))
-            )
-            .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}")))
-        yield ())
-          .handleErrorWith { e =>
-            logger.warn(s"Ask failed for session $sessionId: ${e.getMessage}") *>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "askError".asJson,
-                  "sessionId" -> sessionId.asJson,
-                  "message" -> s"Ask failed: ${e.getMessage.take(200)}".asJson
-                )
-              )
-          }
-          .guarantee(sharedResources.askSemaphore.release)
-    }
+          .map(_.id)
 
 end WebSocketRoutes

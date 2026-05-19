@@ -1,4 +1,5 @@
 import state from './state.js';
+import { t } from './i18n.js';
 
 // === Lottie spinner JSON (rotating ring) ===
 export const spinnerJson = {
@@ -186,7 +187,7 @@ window.copyCode = function(btn) {
   navigator.clipboard.writeText(code).then(() => {
     const span = btn.querySelector('span');
     const orig = span.textContent;
-    span.textContent = 'Copied!';
+    span.textContent = t('chat.copied');
     btn.classList.add('copied');
     setTimeout(() => {
       span.textContent = orig;

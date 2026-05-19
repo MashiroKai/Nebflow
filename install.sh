@@ -20,7 +20,41 @@ echo ""
 # Check Java version
 check_java() {
     if ! command -v java &> /dev/null; then
-        echo "ERROR: Java not found. Please install JDK 17 or higher."
+        echo "ERROR: Java not found. JDK 17+ is required."
+        echo ""
+        echo "Install Java for your platform:"
+        echo ""
+        detect_os
+        case "$OS_FAMILY" in
+            mac)
+                echo "  macOS (choose one):"
+                echo "    brew install openjdk"
+                echo "    https://adoptium.net/temurin/releases/?version=21&os=mac"
+                ;;
+            linux)
+                echo "  Linux (choose one):"
+                if command -v apt-get &> /dev/null; then
+                    echo "    sudo apt install openjdk-21-jdk"
+                elif command -v dnf &> /dev/null; then
+                    echo "    sudo dnf install java-21-openjdk-devel"
+                elif command -v yum &> /dev/null; then
+                    echo "    sudo yum install java-21-openjdk-devel"
+                else
+                    echo "    Use your package manager to install JDK 17+"
+                fi
+                echo "    https://adoptium.net/temurin/releases/?version=21&os=linux"
+                ;;
+            windows)
+                echo "  Windows:"
+                echo "    winget install EclipseAdoptium.Temurin.21.JDK"
+                echo "    https://adoptium.net/temurin/releases/?version=21&os=windows"
+                ;;
+            *)
+                echo "  https://adoptium.net/temurin/releases/?version=21"
+                ;;
+        esac
+        echo ""
+        echo "After installing Java, re-run this script."
         exit 1
     fi
     local java_version
@@ -29,10 +63,24 @@ check_java() {
         java_version=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)
     fi
     if [ "$java_version" -lt 17 ]; then
-        echo "ERROR: Java ${java_version} detected. JDK 17+ is required."
+        echo "ERROR: Java ${java_version} detected, but JDK 17+ is required."
+        echo ""
+        echo "Upgrade Java:"
+        echo "  https://adoptium.net/temurin/releases/?version=21"
+        echo ""
         exit 1
     fi
     echo "    Java: $(java -version 2>&1 | head -n1)"
+}
+
+detect_os() {
+    local uname_out="$(uname -s 2>/dev/null)"
+    case "$uname_out" in
+        Darwin*) OS_FAMILY="mac" ;;
+        Linux*)  OS_FAMILY="linux" ;;
+        MINGW*|MSYS*|CYGWIN*) OS_FAMILY="windows" ;;
+        *)       OS_FAMILY="unknown" ;;
+    esac
 }
 
 # Download with fallback: try primary, then GitHub Releases
