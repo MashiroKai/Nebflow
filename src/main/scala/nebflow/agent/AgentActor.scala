@@ -164,6 +164,46 @@ object AgentActor extends AgentCore with AgentSession:
         logAgentEvent(ctx, agentDef, depth, state.sessionId, state.sessionName, "ask-start", s"q=${question.take(60)}")
         pipeLlmCall(agentDef, resources, depth, parentRef, askState, stash, ctx, None)
 
+      case AgentCommand.SkillActivate(skillName, input, skillSessionId, skillContent, skillBaseDir) =>
+        // Skill activation: prepend skill content + user input as a new user message
+        val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
+        val userMsg = Message(MessageRole.User, Left(combinedText))
+        val newMessages = state.messages :+ userMsg
+        val stateWithMemory =
+          if state.memoryBlock.isEmpty then state.withMemoryBlock(buildMemoryBlock(agentDef, state.sessionId))
+          else state
+        val processingState = stateWithMemory
+          .withMessages(newMessages)
+          .withStatus(AgentStatus.Processing)
+        // Persist a system bubble showing skill activation
+        val sysMsg = nebflow.shared.UiMessage.System(
+          s"Using skill: $skillName",
+          Some("slash.skillActivated"),
+          Some(io.circe.Json.obj("skillName" -> skillName.asJson))
+        )
+        resources.dispatcher.unsafeRunAndForget(
+          resources.sessionStore.appendUiMessages(state.sessionId.getOrElse(""), List(sysMsg))
+        )
+        logAgentEvent(
+          ctx,
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "skill-start",
+          s"skill=$skillName input=${input.take(60)}"
+        )
+        pipeLlmCall(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          processingState,
+          stash,
+          ctx,
+          None
+        )
+
       case AgentCommand.Interrupt() =>
         // Idle state — nothing to interrupt, ignore
         Behaviors.same
@@ -665,7 +705,6 @@ object AgentActor extends AgentCore with AgentSession:
 
       // --- Tools completed ---
       case tc: ToolsComplete =>
-        val didContextManage = tc.results.exists { case (call, _) => call.name == "ContextManage" }
         val toolCalls = tc.results.map((call, _) => call)
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
         tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
@@ -691,13 +730,7 @@ object AgentActor extends AgentCore with AgentSession:
             )
         )
 
-        if didContextManage then
-          // ContextManage triggered: directly invoke compaction (not via TriggerCompaction message,
-          // which would get stashed in processing state and cause timing issues).
-          // After compaction completes, CompactionComplete handler will call pipeLlmCall to resume.
-          handleTriggerCompaction(agentDef, resources, depth, parentRef, updatedState, stash, ctx, "full", None)
-        else pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, stash, ctx, tc.replyTo)
-        end if
+        pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, stash, ctx, tc.replyTo)
 
       // --- Interrupt: cancel current LLM stream, discard pending compaction ---
       case AgentCommand.Interrupt() =>

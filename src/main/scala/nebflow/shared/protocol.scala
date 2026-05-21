@@ -224,7 +224,12 @@ object UiMessage:
   case class User(text: String, attachments: List[Json] = Nil, injected: Boolean = false) extends UiMessage:
     val typeName = "user"
 
-  case class Ai(text: String, durationMs: Option[Long] = None, model: Option[String] = None) extends UiMessage:
+  case class Ai(
+    text: String,
+    durationMs: Option[Long] = None,
+    model: Option[String] = None,
+    thinking: Option[String] = None
+  ) extends UiMessage:
     val typeName = "ai"
 
   case class Tool(
@@ -260,7 +265,8 @@ object UiMessage:
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
-      m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
+      val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
+      m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
     case m: Tool =>
       val base = Json.obj(
         "type" -> "tool".asJson,
@@ -303,7 +309,8 @@ object UiMessage:
           text <- cursor.downField("text").as[String]
           durationMs <- cursor.downField("durationMs").as[Option[Long]]
           model <- cursor.downField("model").as[Option[String]]
-        yield Ai(text, durationMs, model)
+          thinking <- cursor.downField("thinking").as[Option[String]]
+        yield Ai(text, durationMs, model, thinking)
       case "tool" =>
         for
           label <- cursor.downField("label").as[String]

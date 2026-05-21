@@ -106,6 +106,29 @@ export function restoreFromStorage() {
       });
       chat.appendChild(row);
     } else if (m.type === 'ai') {
+      // Thinking bubble (if present)
+      if (m.thinking) {
+        const tRow = document.createElement('div');
+        tRow.className = 'row ai thinking-row';
+        const tBubble = document.createElement('div');
+        tBubble.className = 'bubble ai thinking-bubble thinking-done';
+        const tLabel = document.createElement('div');
+        tLabel.className = 'thinking-label collapsible';
+        tLabel.textContent = t('chat.thinkingLabel');
+        const tContent = document.createElement('div');
+        tContent.className = 'thinking-content';
+        tContent.innerHTML = renderMarkdownWithMath(m.thinking);
+        tContent.style.display = 'none';
+        tBubble.appendChild(tLabel);
+        tBubble.appendChild(tContent);
+        tRow.appendChild(tBubble);
+        chat.appendChild(tRow);
+        tLabel.onclick = () => {
+          const visible = tContent.style.display !== 'none';
+          tContent.style.display = visible ? 'none' : '';
+          tLabel.classList.toggle('expanded', !visible);
+        };
+      }
       const row = document.createElement('div');
       row.className = 'row ai';
       const bubble = document.createElement('div');
@@ -140,8 +163,8 @@ export function restoreFromStorage() {
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const diffHtml = formatDiff(m.content);
         const detailHtml = buildToolDetail(m.input, m.label);
-        const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
-        const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
+        const bodyText = diffHtml ? '' : (m.content ? esc(m.content) : '');
+        const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre class="tool-body-pre">' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
         const truncBadge = m.truncated ? '<span class="truncated-badge" title="' + esc(t('tool.result.truncatedTitle')) + '">' + esc(t('tool.result.truncated')) + '</span>' : '';
         const localLabel = localizeToolLabel(m.label);
@@ -332,6 +355,29 @@ export function restoreFromBackendHistory(msgs) {
       });
       chat.appendChild(row);
     } else if (m.type === 'ai') {
+      // Thinking bubble (if present)
+      if (m.thinking) {
+        const tRow = document.createElement('div');
+        tRow.className = 'row ai thinking-row';
+        const tBubble = document.createElement('div');
+        tBubble.className = 'bubble ai thinking-bubble thinking-done';
+        const tLabel = document.createElement('div');
+        tLabel.className = 'thinking-label collapsible';
+        tLabel.textContent = t('chat.thinkingLabel');
+        const tContent = document.createElement('div');
+        tContent.className = 'thinking-content';
+        tContent.innerHTML = renderMarkdownWithMath(m.thinking);
+        tContent.style.display = 'none';
+        tBubble.appendChild(tLabel);
+        tBubble.appendChild(tContent);
+        tRow.appendChild(tBubble);
+        chat.appendChild(tRow);
+        tLabel.onclick = () => {
+          const visible = tContent.style.display !== 'none';
+          tContent.style.display = visible ? 'none' : '';
+          tLabel.classList.toggle('expanded', !visible);
+        };
+      }
       const row = document.createElement('div');
       row.className = 'row ai';
       const bubble = document.createElement('div');
@@ -367,8 +413,8 @@ export function restoreFromBackendHistory(msgs) {
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const diffHtml = formatDiff(m.content);
         const detailHtml = buildToolDetail(parsedInput, m.label);
-        const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
-        const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
+        const bodyText = diffHtml ? '' : (m.content ? esc(m.content) : '');
+        const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre class="tool-body-pre">' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
         const truncBadge = m.truncated ? '<span class="truncated-badge" title="' + esc(t('tool.result.truncatedTitle')) + '">' + esc(t('tool.result.truncated')) + '</span>' : '';
         const localLabel = localizeToolLabel(m.label);

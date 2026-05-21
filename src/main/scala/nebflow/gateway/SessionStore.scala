@@ -322,6 +322,9 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           // Remove task directory
           val td = tasksDir / id
           if os.exists(td) then os.remove.all(td)
+          // Remove uploaded attachments directory
+          val ud = os.home / ".nebflow" / "uploads" / id
+          if os.exists(ud) then os.remove.all(ud)
         } *> deleteUiMessages(id) *> appendSemaphores.update(
           _ - id
         ) *> (if wasActive && newActiveId.nonEmpty then
@@ -536,7 +539,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
                           snippet(text, q),
                           Some("user")
                         )
-                      case UiMessage.Ai(text, _, _) if text.toLowerCase.contains(q) =>
+                      case UiMessage.Ai(text, _, _, _) if text.toLowerCase.contains(q) =>
                         msgHits += SearchHit(
                           meta.id,
                           meta.name,

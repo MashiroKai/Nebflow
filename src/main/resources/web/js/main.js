@@ -10,13 +10,15 @@ import {
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
   showOptions, renderAskUser, renderPermissionPrompt,
   renderAttachmentPreview,
-  appendAskAnswer, finishAskAnswer, renderAskError
+  appendAskAnswer, finishAskAnswer, renderAskError,
+  appendThinkingDelta, finishThinking
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   switchSession, deleteSession, formatSessionTime, setSessionAttention,
   initHeaderModelInfo,
-  persistUnread, initFeishuPanel, createNewFolder
+  persistUnread, initFeishuPanel, createNewFolder,
+  resetChatForActiveSession
 } from './sidebar.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
@@ -25,7 +27,7 @@ import {
   showAgentModal, hideAgentModal, initModals,
   startInlineNewSession
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, setNewSessionHandler, injectUserMessage } from './input.js';
+import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands } from './input.js';
 import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry } from './cardRegistry.js';
@@ -193,6 +195,25 @@ function resetStreamTimeout(sid) {
 // --- Chat streaming ---
 // ALL sessions: save to localStorage. Active session only: render DOM.
 
+onMessage('thinkingDelta', (msg) => {
+  const sid = msg.sessionId;
+  if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+  // Accumulate thinking text for ALL sessions
+  if (sid) state.sessionThinkingBuffers[sid] = (state.sessionThinkingBuffers[sid] || '') + msg.delta;
+  resetStreamTimeout(sid);
+  if (isActive(msg)) {
+    if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
+    // Remove the generic thinking placeholder if it exists
+    const existing = state.dom.chat.querySelector('.thinking-placeholder');
+    if (existing) {
+      const row = existing.closest('.row');
+      if (row) row.remove();
+      if (state.currentAiBubble === existing) state.currentAiBubble = null;
+    }
+    appendThinkingDelta(msg.delta);
+  }
+});
+
 onMessage('textDelta', (msg) => {
   const sid = msg.sessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
@@ -202,6 +223,8 @@ onMessage('textDelta', (msg) => {
   if (isActive(msg)) {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
+    // Finish thinking bubble before first text delta
+    if (state.currentThinkingBubble) finishThinking();
     appendAiText(msg.delta);
   }
 });
@@ -209,12 +232,18 @@ onMessage('textDelta', (msg) => {
 onMessage('textDone', (msg) => {
   const sid = msg.sessionId;
   if (isActive(msg)) {
+    if (state.currentThinkingBubble) finishThinking();
     const data = finishAi();
     if (data) saveMsg(data, sid);
   } else if (sid && state.sessionTexts[sid]) {
-    // Non-active session: save buffered text to localStorage
-    saveMsg({type: 'ai', text: state.sessionTexts[sid]}, sid);
+    // Non-active session: save to localStorage + stash in pendingRestore
+    // for switch-back restoration, then reset sessionTexts/sessionThinkingBuffers
+    // (must reset between turns to avoid cross-turn concatenation).
+    const thinkingText = state.sessionThinkingBuffers[sid] || '';
+    saveMsg({type: 'ai', text: state.sessionTexts[sid], thinking: thinkingText || undefined}, sid);
+    state.pendingRestore[sid] = { text: state.sessionTexts[sid], thinking: thinkingText || undefined };
     delete state.sessionTexts[sid];
+    if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
   }
 });
 
@@ -248,6 +277,7 @@ onMessage('toolCallDetected', (msg) => {
   if (isActive(msg)) {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
+    if (state.currentThinkingBubble) finishThinking();
     const prevData = finishAi();
     if (prevData) saveMsg(prevData, msg.sessionId);
     renderToolPending(msg.name, msg.sessionId);
@@ -264,6 +294,7 @@ onMessage('toolStart', (msg) => {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
     // Finish the current AI bubble so that text after tool execution goes into a new bubble
+    if (state.currentThinkingBubble) finishThinking();
     const prevData = finishAi();
     if (prevData) saveMsg(prevData, msg.sessionId);
     renderToolPending(msg.label, msg.sessionId);
@@ -366,9 +397,19 @@ onMessage('done', (msg) => {
   // Flush any remaining buffered text for this session
   if (msg.sessionId && state.sessionTexts[msg.sessionId]) {
     if (!isActive(msg)) {
-      saveMsg({type: 'ai', text: state.sessionTexts[msg.sessionId], durationMs, model: msg.model}, msg.sessionId);
+      const thinkingText = state.sessionThinkingBuffers[msg.sessionId] || '';
+      saveMsg({type: 'ai', text: state.sessionTexts[msg.sessionId], thinking: thinkingText || undefined, durationMs, model: msg.model}, msg.sessionId);
+      state.pendingRestore[msg.sessionId] = { text: state.sessionTexts[msg.sessionId], thinking: thinkingText || undefined, durationMs, model: msg.model };
+      delete state.sessionTexts[msg.sessionId];
+    } else {
+      delete state.sessionTexts[msg.sessionId];
     }
-    delete state.sessionTexts[msg.sessionId];
+  }
+  if (isActive(msg) && msg.sessionId && state.sessionThinkingBuffers[msg.sessionId]) {
+    delete state.sessionThinkingBuffers[msg.sessionId];
+  }
+  if (!isActive(msg) && msg.sessionId && state.sessionThinkingBuffers[msg.sessionId]) {
+    delete state.sessionThinkingBuffers[msg.sessionId];
   }
   if (isActive(msg)) {
     // Clean up per-session pending tool card for this session
@@ -376,8 +417,19 @@ onMessage('done', (msg) => {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
     }
+    // Clean up pendingRestore (previous turn's data no longer needed)
+    if (sid && state.pendingRestore[sid]) delete state.pendingRestore[sid];
+    // Finish thinking bubble if still streaming
+    const thinkingText = finishThinking() || (sid ? state.sessionThinkingBuffers[sid] || '' : '');
+    if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
     const data = finishAi(durationMs, msg.model);
-    if (data) saveMsg(data, msg.sessionId);
+    if (data) {
+      data.thinking = thinkingText || undefined;
+      saveMsg(data, msg.sessionId);
+    } else if (thinkingText) {
+      // Thinking-only response (no text): save as ai message with empty text
+      saveMsg({ type: 'ai', text: '', thinking: thinkingText, durationMs, model: msg.model }, msg.sessionId);
+    }
     Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
     state.agentBubbles = {};
     state.activeAgentId = null;
@@ -391,6 +443,7 @@ onMessage('error', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
+  if (sid) delete state.pendingRestore[sid];
   // Defensive: clear attention on error
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   // Reset history loading state — backend may fail mid-pagination
@@ -401,6 +454,7 @@ onMessage('error', (msg) => {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
     }
+    finishThinking();
     finishAi();
     renderError(msg.message);
     clearStatus();
@@ -421,6 +475,7 @@ onMessage('interrupted', (msg) => {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
     }
+    finishThinking();
     finishAi();
     clearStatus();
   }
@@ -431,6 +486,7 @@ onMessage('timeout', (msg) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (isActive(msg)) {
+    finishThinking();
     finishAi();
     renderTimeoutNotice();
     clearStatus();
@@ -449,6 +505,7 @@ onMessage('maxTokens', (msg) => {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
     }
+    finishThinking();
     finishAi();
     renderError('Max tokens reached — response truncated');
     clearStatus();
@@ -583,21 +640,76 @@ onMessage('historyPage', (msg) => {
       delete state.sessionTexts[sid];
     }
 
-    // Re-create streaming state if this session is still busy.
-    if (state.busySessionIds.has(sid) && !isAskUserPending && !isAskPermissionPending) {
-      if (state.sessionTexts[sid]) {
-        state.aiText = state.sessionTexts[sid];
+    // Re-create streaming/completed state from sessionTexts/sessionThinkingBuffers/pendingRestore.
+    const isStillBusy = state.busySessionIds.has(sid);
+    if (!isAskUserPending && !isAskPermissionPending) {
+      // If the backend history already includes the completed message, clean up pendingRestore
+      // to avoid duplication. Check last AI message text match.
+      const pendingData = state.pendingRestore[sid];
+      if (pendingData && !isStillBusy) {
+        const histMsgs = msg.messages;
+        const lastAiMsg = histMsgs && [...histMsgs].reverse().find(m => m.type === 'ai' && m.text);
+        if (lastAiMsg && lastAiMsg.text === pendingData.text) {
+          delete state.pendingRestore[sid];
+        }
+      }
+
+      const pd = state.pendingRestore[sid];
+      const thinkBuf = state.sessionThinkingBuffers[sid] || pd?.thinking;
+      const txtBuf = state.sessionTexts[sid] || pd?.text;
+
+      // Restore thinking bubble
+      if (thinkBuf) {
+        state.thinkingText = thinkBuf;
+        const hasText = !!txtBuf;
+        const done = hasText || !isStillBusy;
+        const chat = state.dom.chat;
+        const row = document.createElement('div');
+        row.className = 'row ai thinking-row';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble ai thinking-bubble' + (done ? ' thinking-done' : '');
+        const label = document.createElement('div');
+        label.className = 'thinking-label' + (done ? ' collapsible' : '');
+        label.textContent = t('chat.thinkingLabel');
+        const content = document.createElement('div');
+        content.className = 'thinking-content';
+        if (done) {
+          content.style.display = 'none';
+          label.classList.add('expanded');
+          label.onclick = () => {
+            const visible = content.style.display !== 'none';
+            content.style.display = visible ? 'none' : '';
+            label.classList.toggle('expanded', !visible);
+          };
+        }
+        content.innerHTML = renderMarkdownWithMath(state.thinkingText) + (!done ? '<span class="cursor"></span>' : '');
+        bubble.appendChild(label);
+        bubble.appendChild(content);
+        row.appendChild(bubble);
+        chat.appendChild(row);
+        state.currentThinkingBubble = done ? null : bubble;
+      }
+
+      // Restore text bubble
+      if (txtBuf) {
+        state.aiText = txtBuf;
         const chat = state.dom.chat;
         const row = document.createElement('div');
         row.className = 'row ai';
         state.currentAiBubble = document.createElement('div');
         state.currentAiBubble.className = 'bubble ai';
-        state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText) + '<span class="cursor"></span>';
+        state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText) + (isStillBusy ? '<span class="cursor"></span>' : '');
         row.appendChild(state.currentAiBubble);
         chat.appendChild(row);
+        if (!isStillBusy) {
+          state.currentAiBubble = null;
+          state.aiText = '';
+          delete state.pendingRestore[sid];
+        }
       }
+
       const askBuf = state.sessionAskBuffers[sid];
-      if (askBuf && askBuf.answer) {
+      if (isStillBusy && askBuf && askBuf.answer) {
         state.askAnswerText = askBuf.answer;
         const chat = state.dom.chat;
         const row = document.createElement('div');
@@ -1205,6 +1317,13 @@ onMessage('askError', (msg) => {
   if (isActive(msg)) renderAskError(msg.message);
 });
 
+// --- Skills ---
+onMessage('skillList', (msg) => {
+  const skills = msg.skills || [];
+  state.skills = skills;
+  registerSkillCommands(skills);
+});
+
 
 // --- Memory ---
 onMessage('memoryData', (msg) => handleMemoryData(msg));
@@ -1222,7 +1341,6 @@ onMessage('searchResults', (msg) => {
 
 
 // ---------- 4. Cross-module wiring ----------
-setNewSessionHandler(() => startInlineNewSession());
 window.__showDeleteModal = showDeleteModal;
 window.__showDeleteFolderModal = showDeleteFolderModal;
 
@@ -1239,18 +1357,19 @@ initMemory();
 // Sidebar collapse toggle
 (function initSidebarToggle() {
   const LS_KEY = 'nebflow_sidebar_collapsed';
-  const toggle = document.getElementById('sidebar-toggle');
-  if (!toggle) return;
+  const edge = document.getElementById('sidebar-edge');
+  if (!edge) return;
   const collapsed = localStorage.getItem(LS_KEY) === 'true';
   if (collapsed) document.body.classList.add('sidebar-collapsed');
-  toggle.addEventListener('click', () => {
+  edge.addEventListener('click', () => {
     document.body.classList.toggle('sidebar-collapsed');
     localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
   });
+  edge.addEventListener('mouseenter', () => edge.classList.add('edge-hover'));
+  edge.addEventListener('mouseleave', () => edge.classList.remove('edge-hover'));
   // Keyboard shortcut: Cmd/Ctrl+B to toggle sidebar
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
-      // Don't trigger if focused in input/textarea
       const tag = document.activeElement?.tagName;
       if (tag === 'TEXTAREA' || tag === 'INPUT') return;
       e.preventDefault();
@@ -1263,6 +1382,11 @@ initMemory();
 // Re-apply locale when language changes
 window.addEventListener('locale-changed', () => {
   applyLocaleToHtml();
+  // Re-render current session content to update translated text
+  if (state.activeSessionId) {
+    renderSessionSidebar(state.sessions, state.activeSessionId);
+    resetChatForActiveSession();
+  }
 });
 // New Folder button
 document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder());

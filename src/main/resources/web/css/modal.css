@@ -280,17 +280,24 @@
   left: 50%;
   transform: translateX(-50%) translateY(6px);
   opacity: 0;
-  background: rgba(0, 0, 0, 0.12);
-  -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  backdrop-filter: blur(20px) saturate(1.2);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.2);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(128, 128, 128, 0.12);
   border-radius: 12px;
   padding: 8px 12px;
-  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
   z-index: 300;
   transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   min-width: 380px;
   pointer-events: none;
+}
+@media (prefers-color-scheme: dark) {
+  #feishu-bubble {
+    background: rgba(30, 30, 30, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+  }
 }
 #feishu-bubble.open {
   opacity: 1;
@@ -306,7 +313,7 @@
 
 #feishu-bubble input {
   flex: 1;
-  background: rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.35);
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border: none;
@@ -321,13 +328,24 @@
   transition: background 0.15s;
 }
 #feishu-bubble input:focus {
-  background: rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.5);
+}
+#feishu-bubble input::placeholder {
+  color: var(--color-text-muted);
+}
+@media (prefers-color-scheme: dark) {
+  #feishu-bubble input {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  #feishu-bubble input:focus {
+    background: rgba(255, 255, 255, 0.15);
+  }
 }
 
 .fb-btn-subtle {
   background: none;
   border: none;
-  color: rgba(0, 0, 0, 0.3);
+  color: var(--color-text-muted);
   font-size: 15px;
   line-height: 1;
   padding: 2px 4px;
@@ -336,7 +354,7 @@
   transition: color 0.15s;
 }
 .fb-btn-subtle:hover {
-  color: rgba(220, 50, 50, 0.8);
+  color: var(--color-error);
 }
 
 /* ---------- Settings: Feishu Config ---------- */

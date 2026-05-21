@@ -118,9 +118,27 @@ export default {
   // IME
   composing: false,
 
+  // Skill list (from server)
+  skills: [],
+
   // /ask command
   currentAskBubble: null,
   askAnswerText: '',
+  askMode: false,
+
+  // Skill mode
+  skillMode: false,
+  skillModeName: '',
+  skillModeDesc: '',
+
+  // Thinking bubble
+  currentThinkingBubble: null,
+  thinkingText: '',
+  // Per-session thinking buffer: sessionId -> accumulated thinking text
+  sessionThinkingBuffers: {},
+  // Per-session last completed turn data (kept alive until historyPage confirms it).
+  // Prevents lost messages on switch-back when backend hasn't persisted yet.
+  pendingRestore: {},
 
   // Slash autocomplete
   slashSelectedIndex: 0,

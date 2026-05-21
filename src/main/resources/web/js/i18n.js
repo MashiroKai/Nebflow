@@ -88,6 +88,19 @@ export function applyLocaleToHtml() {
     else if (attr === 'placeholder') el.placeholder = t(key);
   }
 
+  // Buttons/titles not covered by the map above
+  const extras = [
+    ['new-session-btn', 'title', 'sidebar.newSession'],
+    ['search-clear', 'title', 'search.clear'],
+    ['sidebar-edge', 'title', 'sidebar.edgeToggle'],
+    ['new-agent-btn', 'title', 'nav.newAgent'],
+    ['new-folder-btn', 'title', 'sidebar.newFolder'],
+  ];
+  for (const [id, attr, key] of extras) {
+    const el = document.getElementById(id);
+    if (el) el[attr] = t(key);
+  }
+
   // Agent modal field labels (by data-i18n attribute)
   document.querySelectorAll('[data-i18n]').forEach(el => {
     el.textContent = t(el.dataset.i18n);
@@ -125,10 +138,6 @@ export function applyLocaleToHtml() {
   const settingsNavItem = document.querySelector('.nav-item[data-tab="settings"]');
   if (settingsNavItem) settingsNavItem.title = t('nav.settings');
 
-  // New agent button title
-  const newAgentBtn = document.getElementById('new-agent-btn');
-  if (newAgentBtn) newAgentBtn.title = t('nav.newAgent');
-
   // Session panel title
   const sessionPanelTitle = document.querySelector('#panel-sessions .panel-title');
   if (sessionPanelTitle) sessionPanelTitle.textContent = t('sidebar.sessions');
@@ -136,10 +145,6 @@ export function applyLocaleToHtml() {
   // Settings panel title
   const settingsPanelTitle = document.querySelector('#panel-settings .panel-title');
   if (settingsPanelTitle) settingsPanelTitle.textContent = t('sidebar.settingsTitle');
-
-  // New folder button title
-  const newFolderBtn = document.getElementById('new-folder-btn');
-  if (newFolderBtn) newFolderBtn.title = t('sidebar.newFolder');
 
   // HTML lang attribute
   document.documentElement.lang = t('html.lang');

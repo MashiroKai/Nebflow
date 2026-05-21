@@ -397,7 +397,7 @@ private[agent] trait AgentCore:
               (if memoryBlock.nonEmpty then s"\n\n$memoryBlock" else "") +
               stateForLlm.language
                 .map(l =>
-                  s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- All user-visible text must be in $l."
+                  s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
                 )
                 .getOrElse("")
             request = LlmRequest(
@@ -500,10 +500,6 @@ private[agent] trait AgentCore:
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
 
-    // Separate ContextManage from real tool calls — handled directly in ToolsComplete handler
-    // (not sent as TriggerCompaction message to avoid stash timing issues)
-    val (contextManageCalls, realToolCalls) = filteredCalls.partition(_.name == "ContextManage")
-
     // Build ToolContext with full agent-scoped context
     val toolCtx = ToolContext(
       projectRoot = resources.projectRoot.toString,
@@ -534,7 +530,7 @@ private[agent] trait AgentCore:
       )
     )
 
-    val io = realToolCalls
+    val io = filteredCalls
       .traverse { call =>
         // AskUserQuestion renders its own UI via askUser event — skip generic toolStart/End
         val skipStreaming = call.name == "AskUserQuestion"
@@ -585,11 +581,6 @@ private[agent] trait AgentCore:
           }
       }
       .flatMap { freshResults =>
-        // ContextManage: generate synthetic results (triggered in ToolsComplete handler, not here)
-        val contextManageResults = contextManageCalls.map { call =>
-          (call, ToolExecResult(s"[ContextManage] Triggered full compaction", isError = false))
-        }
-        val allResults = freshResults ++ contextManageResults
         // Include filtered-out tool calls as errors so the assistant message stays consistent
         val droppedResults = droppedCalls.map { call =>
           (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
@@ -617,7 +608,7 @@ private[agent] trait AgentCore:
 
         IO(
           ctx.self ! ToolsComplete(
-            allResults ++ droppedResults,
+            freshResults ++ droppedResults,
             result.text,
             replyTo,
             None,
@@ -868,7 +859,7 @@ private[agent] trait AgentCore:
         case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty =>
           val json =
             if isSubagent then AgentStreamEvent.Thinking.toJson(ctx.self.path.name, true, None)
-            else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
+            else Json.obj("type" -> "thinkingDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
           wsSend(json)
         case StreamChunk.ToolCallStart(name) if name != "AskUserQuestion" =>
           val json =
