@@ -819,10 +819,7 @@
   width: 100%;
   border: none;
   display: block;
-  min-height: 40px;
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
 }
-@media (prefers-color-scheme: dark) {
-  .html-card-wrap {
-    border-color: #444;
-  }
-}
+

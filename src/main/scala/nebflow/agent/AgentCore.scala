@@ -395,7 +395,11 @@ private[agent] trait AgentCore:
             thinking <- resources.thinkingConfigRef.get
             systemStable = baseSystemStable +
               (if memoryBlock.nonEmpty then s"\n\n$memoryBlock" else "") +
-              stateForLlm.language.map(l => s"\n\n# Language\nAlways respond in $l.").getOrElse("")
+              stateForLlm.language
+                .map(l =>
+                  s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- All user-visible text must be in $l."
+                )
+                .getOrElse("")
             request = LlmRequest(
               messages = stateForLlm.messages ++ dynamicMsg,
               sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -731,28 +735,37 @@ private[agent] trait AgentCore:
                           ToolExecResult(appended, isError = true)
                         }
                     case Right(result) =>
+                      // ToolResultGuard truncates LLM-facing content to protect context window.
+                      // Raw result is always preserved in frontendContent for correct frontend rendering.
+                      val guarded = ToolResultGuard.guard(result, call.name, ctx) match
+                        case ToolResultGuard.Ok(c) => c
+                      val wasTruncated = guarded.length < result.length
+                      if wasTruncated then
+                        logger.warn(
+                          s"$logCtx Tool $summary result truncated: ${result.length} → ${guarded.length} chars"
+                        )
                       val isCard = call.name == "Card"
-                      val guarded = ToolResultGuard.guard(result, call.name, ctx)
-                      guarded match
-                        case ToolResultGuard.Ok(content) =>
-                          if content.length < result.length then
-                            logger.warn(
-                              s"$logCtx Tool $summary result truncated: ${result.length} → ${content.length} chars"
+                      // --- PostToolUse hook operates on LLM-visible content ---
+                      hookEngine
+                        .afterTool(call.name, finalInput, guarded, true, hookCtx)
+                        .map { postResult =>
+                          val hookSuffix = postResult.additionalContext.getOrElse("")
+                          // Card tool: LLM sees a compact summary (not the guarded HTML)
+                          if isCard then
+                            val title = call.input("title").flatMap(_.asString).getOrElse("")
+                            val llmSummary = s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
+                            ToolExecResult(
+                              llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
+                              truncated = wasTruncated
                             )
-                          // --- PostToolUse hook ---
-                          hookEngine
-                            .afterTool(call.name, finalInput, content, true, hookCtx)
-                            .map { postResult =>
-                              val finalContent = postResult.additionalContext match
-                                case Some(ctx) => s"$content\n\n$ctx"
-                                case None => content
-                              if isCard then
-                                // Card tool: LLM sees a compact summary, frontend gets the full HTML from input
-                                val title = call.input("title").flatMap(_.asString).getOrElse("")
-                                val llmSummary = s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
-                                ToolExecResult(llmSummary, frontendContent = Some(finalContent))
-                              else ToolExecResult(finalContent)
-                            }
+                          else
+                            ToolExecResult(
+                              guarded + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
+                              truncated = wasTruncated
+                            )
+                        }
                   }
                   .handleErrorWith {
                     case _: UserAbort => IO.raiseError(new UserAbort())

@@ -35,6 +35,16 @@ import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 
+// Randomized cosmic thinking bubble text
+const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
+let _lastThinkingIdx = -1;
+function randomThinkingText() {
+  let idx;
+  do { idx = Math.floor(Math.random() * THINKING_VARIANTS); } while (idx === _lastThinkingIdx && THINKING_VARIANTS > 1);
+  _lastThinkingIdx = idx;
+  return t('chat.thinking.' + idx);
+}
+
 // ---------- 1. Populate DOM refs ----------
 state.dom = {
   chat: document.getElementById('chat'),
@@ -222,7 +232,7 @@ onMessage('thinking', (msg) => {
       row.className = 'row ai';
       state.currentAiBubble = document.createElement('div');
       state.currentAiBubble.className = 'bubble ai thinking-placeholder';
-      state.currentAiBubble.innerHTML = '<span class="thinking-text">' + t('chat.thinking') + '</span>';
+      state.currentAiBubble.innerHTML = '<span class="thinking-text">' + randomThinkingText() + '</span>';
       row.appendChild(state.currentAiBubble);
       chat.appendChild(row);
       smartScroll();
@@ -695,7 +705,7 @@ onMessage('agentStart', (msg) => {
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
     bubble.className = 'bubble ai';
-    bubble.innerHTML = '<span class="thinking-text">' + t('chat.thinking') + '</span>';
+    bubble.innerHTML = '<span class="thinking-text">' + randomThinkingText() + '</span>';
     // Only show badge for non-default agents
     if (state.activeAgentId && state.activeAgentId !== 'default') {
       const badge = document.createElement('div');
@@ -747,7 +757,7 @@ onMessage('agentThinking', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
   if (state.activeAgentId && state.agentBubbles[state.activeAgentId]) {
-    state.agentBubbles[state.activeAgentId].bubble.innerHTML = '<span class="thinking-text">' + t('chat.thinking') + '</span>';
+    state.agentBubbles[state.activeAgentId].bubble.innerHTML = '<span class="thinking-text">' + randomThinkingText() + '</span>';
   }
 });
 
@@ -1015,26 +1025,26 @@ function renderBgDropdown() {
     return;
   }
   const now = Date.now();
-  running.forEach(t => {
+  running.forEach(task => {
     const row = document.createElement('div');
     row.className = 'bg-task-row';
     const info = document.createElement('div');
     info.className = 'bg-task-info';
     const desc = document.createElement('span');
     desc.className = 'bg-task-desc';
-    desc.textContent = t.description || t.taskId;
+    desc.textContent = task.description || task.taskId;
     const meta = document.createElement('div');
     meta.className = 'bg-task-meta';
     const idSpan = document.createElement('span');
     idSpan.className = 'bg-task-id';
-    idSpan.textContent = t.taskId;
+    idSpan.textContent = task.taskId;
     const durationSpan = document.createElement('span');
     durationSpan.className = 'bg-task-duration';
-    durationSpan.dataset.taskId = t.taskId;
-    if (t.startedAt) durationSpan.textContent = formatDuration(now - t.startedAt);
+    durationSpan.dataset.taskId = task.taskId;
+    if (task.startedAt) durationSpan.textContent = formatDuration(now - task.startedAt);
 
     // Heartbeat status indicator
-    const hb = t.heartbeat;
+    const hb = task.heartbeat;
     let statusDot = null;
     let linesSpan = null;
     if (hb) {
@@ -1058,7 +1068,7 @@ function renderBgDropdown() {
     cancelBtn.textContent = t('bg.cancel');
     cancelBtn.onclick = (e) => {
       e.stopPropagation();
-      sendWs({ type: 'cancelBackgroundJob', sessionId: state.activeSessionId, jobId: t.taskId });
+      sendWs({ type: 'cancelBackgroundJob', sessionId: state.activeSessionId, jobId: task.taskId });
       cancelBtn.disabled = true;
       cancelBtn.textContent = '...';
     };
@@ -1088,7 +1098,7 @@ function stopBgTimer() {
 
 function updateBgTasksUI() {
   const tasks = state.sessionBgTasks[state.activeSessionId] || [];
-  const running = tasks.filter(t => t.status === 'running');
+  const running = tasks.filter(task => task.status === 'running');
   const el = state.dom.bgIndicatorEl;
   const countEl = state.dom.bgCountEl;
   const dropdown = state.dom.bgDropdownEl;
@@ -1201,6 +1211,10 @@ onMessage('memoryData', (msg) => handleMemoryData(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
 onMessage('memoryStatus', (msg) => showMemoryButton());
 
+// --- Card design prompt ---
+onMessage('cardDesignData', (msg) => { state.cardDesignPrompt = msg.content || ''; });
+onMessage('cardDesignSaved', () => { /* saved confirmation */ });
+
 // --- Search results ---
 onMessage('searchResults', (msg) => {
   renderSearchResults(msg.query, msg.results || []);
@@ -1221,6 +1235,30 @@ initInput();
 initSearch();
 initFeishuPanel();
 initMemory();
+
+// Sidebar collapse toggle
+(function initSidebarToggle() {
+  const LS_KEY = 'nebflow_sidebar_collapsed';
+  const toggle = document.getElementById('sidebar-toggle');
+  if (!toggle) return;
+  const collapsed = localStorage.getItem(LS_KEY) === 'true';
+  if (collapsed) document.body.classList.add('sidebar-collapsed');
+  toggle.addEventListener('click', () => {
+    document.body.classList.toggle('sidebar-collapsed');
+    localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
+  });
+  // Keyboard shortcut: Cmd/Ctrl+B to toggle sidebar
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+      // Don't trigger if focused in input/textarea
+      const tag = document.activeElement?.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT') return;
+      e.preventDefault();
+      document.body.classList.toggle('sidebar-collapsed');
+      localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
+    }
+  });
+})();
 
 // Re-apply locale when language changes
 window.addEventListener('locale-changed', () => {

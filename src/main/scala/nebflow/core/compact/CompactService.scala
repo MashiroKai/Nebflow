@@ -37,16 +37,18 @@ object CompactService:
 
   private val CompactReminderText =
     """<system-reminder>
-      |CRITICAL INSTRUCTION — CONTEXT COMPACTION REQUIRED.
-      |Your conversation context has grown too large and must be compressed.
+      |Context compaction required — the conversation has grown too large and must be compressed.
+      |Stop your current task. All tools are DISABLED for this turn. TEXT ONLY — no tool calls.
       |
-      |Stop your current task immediately. All tools have been DISABLED for this turn.
-      |You MUST respond with TEXT ONLY — do NOT call any tools.
+      |Your response must contain exactly two blocks:
       |
-      |Your entire response must contain exactly two blocks:
+      |1. <analysis> block: organize your thoughts about the conversation (internal scratchpad).
+      |2. <summary> block with the following sections:
       |
-      |1. An <analysis> block where you organize your thoughts about the conversation.
-      |2. A <summary> block with the following sections:
+      |LANGUAGE RULE — your summary MUST be written in the SAME language as the user's messages.
+      |If the user wrote in Chinese, write your summary in Chinese.
+      |If the user wrote in English, write your summary in English.
+      |If the user wrote in Japanese, write your summary in Japanese.
       |
       |<summary>
       |1. Primary Request and Intent:
@@ -83,7 +85,6 @@ object CompactService:
       |</summary>
       |
       |After the </summary> tag, list files whose content should be restored after compaction.
-      |These should be files you are actively reading, editing, or will need immediately.
       |Maximum 5 files.
       |
       |<files>
@@ -97,7 +98,6 @@ object CompactService:
       |- Preserve all decisions, trade-offs, and user preferences stated
       |- If the user gave explicit instructions, quote them verbatim
       |- Keep the summary focused and information-dense
-      |- Write the summary in the SAME language as the user's messages
       |</system-reminder>""".stripMargin
 
   // ------------------------------------------------------------------

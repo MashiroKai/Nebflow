@@ -7,24 +7,33 @@ import { smartScroll } from './utils.js';
 
 let _iframeId = 0;
 
-/** Inject theme CSS variables from the parent document into the iframe via srcdoc. */
+/** Inject theme CSS variables from the parent document into the iframe via srcdoc.
+ *  Automatically collects all --color-* custom properties so new variables
+ *  added to base.css are always available inside card iframes. */
 function buildThemeVarsCSS() {
   const root = getComputedStyle(document.documentElement);
-  const vars = [
-    '--color-primary', '--color-primary-hover', '--color-text', '--color-text-muted',
-    '--color-bg', '--color-bg-secondary', '--color-border', '--color-bubble-ai',
-    '--color-error', '--color-success'
-  ];
-  const pairs = vars.map(v => {
-    const val = root.getPropertyValue(v).trim();
-    return val ? `${v}:${val}` : null;
-  }).filter(Boolean);
+  // Collect all --color-* custom properties from :root
+  const pairs = [];
+  for (const sheet of document.styleSheets) {
+    try {
+      for (const rule of sheet.cssRules) {
+        if (rule.selectorText === ':root') {
+          for (const prop of rule.style) {
+            if (prop.startsWith('--color-')) {
+              const val = root.getPropertyValue(prop).trim();
+              if (val) pairs.push(`${prop}:${val}`);
+            }
+          }
+        }
+      }
+    } catch (e) { /* cross-origin stylesheet, skip */ }
+  }
   return pairs.length > 0 ? `:root{${pairs.join(';')}}` : '';
 }
 
 /** Build the auto-scale + height-reporting script to inject into srcdoc.
- *  Wraps content in #nf-wrap; measures natural width vs viewport;
- *  applies transform:scale() if content overflows; reports scaled height. */
+ *  #nf-wrap uses width:fit-content so the card shrinks to content width.
+ *  Reports both width and height; parent adjusts accordingly. */
 function buildHeightScript(id) {
   return `<script>
 (function(){
@@ -33,10 +42,13 @@ function buildHeightScript(id) {
     try{
       var d=document.documentElement,b=document.body,w=document.getElementById('nf-wrap');
       if(!w)return;
-      var cw=w.scrollWidth,ch=w.scrollHeight,vw=d.clientWidth;
+      var vw=d.clientWidth;
+      var cw=w.scrollWidth;
       var s=cw>vw?vw/cw:1;
       w.style.transform=s<1?'scale('+s+')':'';
-      parent.postMessage({_nfCardH:Math.ceil(ch*s),id:id},"*");
+      var rect=w.getBoundingClientRect();
+      var reportW=s<1?vw:w.offsetWidth;
+      parent.postMessage({_nfCardW:reportW,_nfCardH:Math.ceil(rect.height),id:id},"*");
     }catch(e){}
   }
   new ResizeObserver(send).observe(document.body);
@@ -45,17 +57,30 @@ function buildHeightScript(id) {
 </script>`;
 }
 
+/** Track which iframes have received their first height measurement. */
+const _firstHeightDone = new Set();
+
 /** Listen for height messages from card iframes. */
 window.addEventListener('message', (e) => {
   if (!e.data || !e.data._nfCardH) return;
   const iframe = document.querySelector(`iframe[data-nf-card-id="${e.data.id}"]`);
   if (iframe) {
+    const isFirst = !_firstHeightDone.has(e.data.id);
+    if (isFirst) {
+      _firstHeightDone.add(e.data.id);
+    }
     const oldHeight = iframe.style.height;
     const newHeight = e.data._nfCardH + 'px';
     iframe.style.height = newHeight;
+    // On first measurement: set card width and reveal
+    if (isFirst) {
+      if (e.data._nfCardW) {
+        const wrap = iframe.closest('.html-card-wrap');
+        if (wrap) wrap.style.width = e.data._nfCardW + 'px';
+      }
+      iframe.style.opacity = '1';
+    }
     // If the card grew taller, force scroll to bottom if we were near the bottom.
-    // Use a direct scroll check (not smartScroll's scrollSnapped) to handle the edge
-    // case where rAF timing causes smartScroll to miss a height change.
     if (oldHeight && oldHeight !== newHeight) {
       const chat = state.dom.chat;
       const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;
@@ -89,7 +114,7 @@ function renderHtmlCard(container, html, title) {
   // to fit the iframe viewport when it's wider than available space.
   // Note: do NOT put overflow:hidden on body — it breaks flexbox min-width:auto.
   // scrolling="no" on iframe prevents scrollbars; iframe clips beyond its viewport.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);}*,*:before,*:after{box-sizing:inherit;}</style></head><body><div id="nf-wrap" style="transform-origin:top left">${html}</div>${heightScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);}*,*:before,*:after{box-sizing:inherit;}</style></head><body><div id="nf-wrap" style="transform-origin:top left;width:fit-content;max-width:100%">${html}</div>${heightScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';
@@ -104,9 +129,19 @@ function renderHtmlCard(container, html, title) {
 
 /**
  * Try to render a tool card using the universal HTML renderer.
- * Detects ___<AGENT>_HTML___ markers in the tool output text.
+ * Accepts:
+ *  - A string with ___<AGENT>_HTML___ or ___<AGENT>_JSON___ markers (legacy)
+ *  - An object {html, title} for direct rendering (preferred)
+ *  - An object with .content string containing markers (from persistence)
  */
 export function renderWithRegistry(container, text, toolName) {
+  // Direct {html, title} object — used by Card tool (no marker needed)
+  if (text && typeof text === 'object' && !Array.isArray(text) && text.html) {
+    renderHtmlCard(container, text.html, text.title || '');
+    return true;
+  }
+
+  // Extract string from wrapped object (persistence format: {content, summary, ...})
   if (text && typeof text === 'object' && !Array.isArray(text)) {
     text = text.content || text.summary || '';
   }

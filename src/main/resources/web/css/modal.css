@@ -497,3 +497,75 @@
 #memory-modal-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
 #memory-modal-save { border-color: var(--color-primary) !important; color: var(--color-primary) !important; }
 #memory-modal-save:hover { background: #07c16020 !important; }
+
+/* ---------- Card Design Modal ---------- */
+#card-design-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 310;
+}
+#card-design-overlay.on { display: flex; }
+#card-design-modal {
+  display: none;
+  background: var(--color-modal-bg);
+  border-radius: 12px;
+  padding: 20px;
+  width: 560px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+#card-design-modal.show { display: block; }
+#card-design-modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+  margin-bottom: 14px;
+}
+#card-design-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#card-design-input {
+  width: 100%;
+  background: var(--color-frame-input-bg);
+  color: var(--color-frame-input-text);
+  border: 1px solid var(--color-frame-input-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  line-height: 1.5;
+  resize: vertical;
+  box-sizing: border-box;
+  min-height: 360px;
+}
+#card-design-input:focus {
+  outline: none;
+  border-color: var(--color-frame-text-muted);
+}
+#card-design-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+#card-design-modal-actions button {
+  font-size: 12px;
+  padding: 6px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid var(--color-frame-border);
+  background: none;
+  color: var(--color-frame-text-dim);
+  transition: all 0.15s;
+}
+#card-design-modal-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
+#card-design-modal-save { border-color: var(--color-primary) !important; color: var(--color-primary) !important; }
+#card-design-modal-save:hover { background: #07c16020 !important; }
+#card-design-modal-reset { margin-right: auto; }
