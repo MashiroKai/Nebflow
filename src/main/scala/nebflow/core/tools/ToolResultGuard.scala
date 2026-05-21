@@ -49,8 +49,7 @@ object ToolResultGuard:
     if content.length <= maxChars then content
     else
       val marker =
-        s"\n\n[...truncated: output was ~${originalChars / 1000}k chars but only ~${maxChars / 1000}k chars fit in context. " +
-          "Use ContextManage to compact, or narrow the query to get smaller output.]"
+        s"\n\n[...truncated: output was ~${originalChars / 1000}k chars but only ~${maxChars / 1000}k chars fit in context.]"
       val keepChars = math.max(0, maxChars - marker.length)
       // Keep the head of the output (usually the most informative part)
       content.take(keepChars) + marker

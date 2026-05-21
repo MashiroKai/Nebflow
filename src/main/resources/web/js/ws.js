@@ -40,6 +40,8 @@ export function connect() {
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
+    // Request skill list
+    sendWs({type: 'getSkills'});
     state.heartbeat = setInterval(() => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         sendWs({type: 'ping'});

@@ -10,6 +10,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.mcp.McpManager
+import nebflow.core.skill.SkillService
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
@@ -385,11 +386,14 @@ class WebSocketRoutes(
     else
       parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
         case "askUserAnswer" =>
-          parse(text).flatMap(_.hcursor.downField("answers").as[List[String]]).toOption match
-            case Some(answers) =>
-              val askSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-              routeToAgent(askSessionId)(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
-            case None => IO.unit
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
+            case (Right(answers), Right(askSessionId)) =>
+              val answerText = answers.mkString("\n")
+              sessionStore.appendUiMessages(askSessionId, List(UiMessage.User(answerText))) *>
+                routeToAgent(askSessionId)(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
+            case _ => IO.unit
 
         case "permissionAnswer" =>
           val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
@@ -549,6 +553,7 @@ class WebSocketRoutes(
                 val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
                 // Clean up text buffers for deleted session to prevent memory leak
                 sessionTextBuffers.update(_ - sessionId) *>
+                  sessionThinkingBuffers.update(_ - sessionId) *>
                   sessionTurnStarts.update(_ - sessionId) *>
                   removeRootAgent(sessionId) *> sessionService
                     .deleteSession(sessionId)
@@ -571,6 +576,7 @@ class WebSocketRoutes(
                 sessionIds
                   .traverse_ { sid =>
                     sessionTextBuffers.update(_ - sid) *>
+                      sessionThinkingBuffers.update(_ - sid) *>
                       sessionTurnStarts.update(_ - sid) *>
                       removeRootAgent(sid) *>
                       sessionService.deleteSession(sid)
@@ -718,6 +724,34 @@ class WebSocketRoutes(
                 "results" -> List.empty[SearchHit].asJson
               )
             )
+
+        case "getSkills" =>
+          SkillService.listSkills().flatMap { skills =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "skillList".asJson,
+                "skills" -> skills.asJson
+              )
+            )
+          }
+
+        case "skill" =>
+          val skillJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val skillName = skillJson.hcursor.downField("skillName").as[String].getOrElse("")
+          val skillInput = skillJson.hcursor.downField("input").as[String].getOrElse("")
+          val skillSessionId = skillJson.hcursor.downField("sessionId").as[String].getOrElse("")
+          if skillName.nonEmpty && skillSessionId.nonEmpty then
+            executeSkill(skillName, skillInput, skillSessionId, wsSend).handleErrorWith { e =>
+              logger.warn(s"Skill '$skillName' failed for session $skillSessionId: ${e.getMessage}")
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "skillError".asJson,
+                  "sessionId" -> skillSessionId.asJson,
+                  "message" -> s"Skill failed: ${e.getMessage.take(200)}".asJson
+                )
+              )
+            }
+          else IO.unit
 
         case "ping" => IO.unit
 
@@ -1164,16 +1198,44 @@ class WebSocketRoutes(
                 val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
                 if content.nonEmpty then blocks += ContentBlock.Text(content)
 
+                val savedPaths = scala.collection.mutable.ListBuffer.empty[String]
                 attachments.foreach { att =>
                   val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
                   val data = att.hcursor.downField("data").as[String].getOrElse("")
                   val name = att.hcursor.downField("name").as[String].getOrElse("")
                   if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
                   else if data.nonEmpty then
-                    val maxChars = 30000
-                    if data.length <= maxChars then blocks += ContentBlock.Text(s"[file: $name]\n$data")
-                    else
-                      blocks += ContentBlock.Text(s"[file: $name] (文件过大，已截断前 ${maxChars} 字符)\n${data.take(maxChars)}")
+                    // Save file to disk, only send path reference to LLM
+                    val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
+                    try
+                      os.makeDir.all(uploadDir)
+                      // Sanitize filename: strip path separators and path traversal sequences
+                      val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+                      val fileName = s"${System.nanoTime()}_$safeName"
+                      val filePath = uploadDir / fileName
+                      os.write.over(filePath, data)
+                      val absPath = filePath.toString
+                      // Verify the resolved path is still within uploadDir (defense in depth)
+                      if absPath.startsWith(uploadDir.toString) then
+                        savedPaths += absPath
+                        blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
+                        logger.info(s"Saved attachment '$name' to $absPath (${data.length} chars)")
+                      else
+                        logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
+                        val truncated =
+                          if data.length <= 5000 then data
+                          else data.take(5000) + s"\n... (truncated, ${data.length} total chars)"
+                        blocks += ContentBlock.Text(s"[file: $name (path unsafe, inline)]\n$truncated")
+                    catch
+                      case e: Exception =>
+                        logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
+                        // Fallback: embed content directly (truncated)
+                        val truncated =
+                          if data.length <= 5000 then data
+                          else data.take(5000) + s"\n... (truncated, ${data.length} total chars)"
+                        blocks += ContentBlock.Text(s"[file: $name (保存失败，内联内容)]\n$truncated")
+                    end try
+                  end if
                 }
 
                 sessionStore.getSessionMeta(msgSessionId).flatMap { metaOpt =>
@@ -1183,12 +1245,15 @@ class WebSocketRoutes(
                     logInputHistory(content, attachments) *>
                     // Record user message as UiMessage for history
                     (if msgSessionId.nonEmpty then
-                       val attJson = attachments.map { att =>
+                       val attJson = attachments.zipWithIndex.map { case (att, idx) =>
                          val name = att.hcursor.downField("name").as[String].getOrElse("")
                          val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                         val savedPath =
+                           if !mimeType.startsWith("image/") && idx < savedPaths.length then savedPaths(idx) else ""
                          io.circe.Json.obj(
                            "name" -> name.asJson,
-                           "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson
+                           "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
+                           "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
                          )
                        }
                        val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
@@ -1219,6 +1284,10 @@ class WebSocketRoutes(
   private val sessionTextBuffers: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
+  /** Per-session accumulator for thinking deltas. */
+  private val sessionThinkingBuffers: Ref[IO, Map[String, String]] =
+    Ref.unsafe[IO, Map[String, String]](Map.empty)
+
   /** Per-session turn start time — set on first streaming event, consumed on done. */
   private val sessionTurnStarts: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
@@ -1230,6 +1299,18 @@ class WebSocketRoutes(
     val hc = json.hcursor
     val eventType = hc.downField("type").as[String].getOrElse("")
     val record = eventType match
+      case "thinkingDelta" =>
+        val delta = hc.downField("delta").as[String].getOrElse("")
+        if delta.nonEmpty then
+          sessionTurnStarts
+            .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis())) *>
+            sessionThinkingBuffers.update(m => m.updatedWith(sessionId)(_.map(_ + delta).orElse(Some(delta))))
+        else IO.unit
+
+      case "thinking" =>
+        sessionTurnStarts
+          .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
+
       case "textDelta" =>
         // Accumulate text for this session
         val delta = hc.downField("delta").as[String].getOrElse("")
@@ -1239,14 +1320,10 @@ class WebSocketRoutes(
             sessionTextBuffers.update(m => m.updatedWith(sessionId)(_.map(_ + delta).orElse(Some(delta))))
         else IO.unit
 
-      case "thinking" =>
-        sessionTurnStarts
-          .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
-
       case "toolStart" =>
         sessionTurnStarts
           .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
-        // Flush accumulated text before tool execution, matching frontend finishAi() behavior.
+        // Flush accumulated text + thinking before tool execution, matching frontend finishAi() behavior.
         // Without this, text output before a tool call stays in the in-memory buffer and is lost
         // when the user switches sessions before the final "done" event.
           *> sessionTextBuffers
@@ -1256,8 +1333,20 @@ class WebSocketRoutes(
             }
             .flatMap { text =>
               if text.nonEmpty then
-                sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text, None, None)))
-              else IO.unit
+                sessionThinkingBuffers
+                  .modify { m =>
+                    val thinking = m.getOrElse(sessionId, "")
+                    (m - sessionId, thinking)
+                  }
+                  .flatMap { thinking =>
+                    sharedResources.sessionStore.appendUiMessages(
+                      sessionId,
+                      List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking)))
+                    )
+                  }
+              else
+                sessionThinkingBuffers.update(_ - sessionId)
+                IO.unit
             }
 
       case "done" =>
@@ -1275,9 +1364,20 @@ class WebSocketRoutes(
                 (m - sessionId, text)
               }
               .flatMap { text =>
-                if text.nonEmpty then
-                  sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text, durationMs, model)))
-                else IO.unit
+                sessionThinkingBuffers
+                  .modify { m =>
+                    val thinking = m.getOrElse(sessionId, "")
+                    (m - sessionId, thinking)
+                  }
+                  .flatMap { thinking =>
+                    val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
+                    if text.nonEmpty || thinkingOpt.isDefined then
+                      sharedResources.sessionStore.appendUiMessages(
+                        sessionId,
+                        List(UiMessage.Ai(text, durationMs, model, thinkingOpt))
+                      )
+                    else IO.unit
+                  }
               }
           }
 
@@ -1378,6 +1478,48 @@ class WebSocketRoutes(
   ): IO[Unit] =
     // Route /ask to the agent actor — it handles inline via pipeLlmCall with askMode
     routeToAgent(sessionId)(ref => IO(ref ! AgentCommand.AskQuestion(question, sessionId)))
+
+  private def executeSkill(
+    skillName: String,
+    input: String,
+    sessionId: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    // Scan skills to find the matching skill file, then load its content
+    SkillService.listSkills().flatMap { skills =>
+      skills.find(_.name == skillName) match
+        case Some(skillInfo) =>
+          SkillService.loadSkill(skillInfo.filePath).flatMap {
+            case Some(content) =>
+              routeToAgent(sessionId) { ref =>
+                IO(
+                  ref ! AgentCommand.SkillActivate(
+                    skillName,
+                    input,
+                    sessionId,
+                    content.content,
+                    content.baseDir
+                  )
+                )
+              }
+            case None =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "skillError".asJson,
+                  "sessionId" -> sessionId.asJson,
+                  "message" -> s"Skill '$skillName' content not found".asJson
+                )
+              )
+          }
+        case None =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "skillError".asJson,
+              "sessionId" -> sessionId.asJson,
+              "message" -> s"Skill '$skillName' not found".asJson
+            )
+          )
+    }
 
   // ============================================================
   // Callback helpers

@@ -71,7 +71,7 @@ object AgentCommand:
     result: Either[String, List[Message]]
   ) extends AgentCommand
 
-  // Internal — manual compaction trigger from ContextManageTool
+  // Internal — manual compaction trigger (from /compact command or model switch)
   case class TriggerCompaction(
     mode: String,
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None
@@ -81,6 +81,15 @@ object AgentCommand:
   case class AskQuestion(
     question: String,
     sessionId: String
+  ) extends AgentCommand
+
+  // Skill activation — runs skill.md content + user input as a normal agent turn
+  case class SkillActivate(
+    skillName: String,
+    input: String,
+    sessionId: String,
+    skillContent: String,
+    skillBaseDir: String
   ) extends AgentCommand
 
   // Session model switched — update contextWindow for compaction threshold

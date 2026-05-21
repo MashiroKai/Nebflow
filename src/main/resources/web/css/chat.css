@@ -25,6 +25,7 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
+  z-index: 10;
 }
 #header #session-name { color: var(--color-text-muted); font-size: 13px; }
 #header #header-model-info {
@@ -482,16 +483,25 @@
   border-radius: 6px;
   padding: 6px 8px;
 }
-.tool-card .body.open { display: block; }
+.tool-card .body.open {
+  display: block;
+  max-height: 55vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tool-card .body.open::-webkit-scrollbar { width: 4px; height: 4px; }
+.tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
+.tool-card .body.open::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
 .tool-card .body pre {
   margin: 0;
-  overflow-x: auto;
   font-size: 11px;
   line-height: 1.4;
-  max-height: 300px;
-  overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(0,0,0,0.15) transparent;
+}
+.tool-card .body pre.tool-body-pre {
+  white-space: pre;
 }
 .tool-card .body pre::-webkit-scrollbar {
   width: 4px;
@@ -583,6 +593,9 @@
     background: #1e1e1e;
     color: #ccc;
   }
+  .tool-card .body.open::-webkit-scrollbar { width: 4px; height: 4px; }
+  .tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
+  .tool-card .body.open::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
   .tool-card .body .detail-cmd { border-bottom-color: #333; color: #888; }
 
   .history-loader { color: #666; }
@@ -738,6 +751,57 @@
   font-size: 13px;
 }
 
+/* ===== Thinking bubble ===== */
+.thinking-row {
+  margin-bottom: 0 !important;
+}
+.thinking-bubble {
+  background: transparent !important;
+  padding: 6px 12px !important;
+  font-size: 13px;
+}
+.thinking-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.45;
+  margin-bottom: 2px;
+  color: var(--color-text-muted);
+}
+.thinking-label.collapsible {
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.thinking-label.collapsible:hover {
+  opacity: 0.7;
+}
+.thinking-label.collapsible::before {
+  content: '';
+}
+.thinking-label.collapsible.expanded::before {
+  content: '';
+}
+.thinking-content {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  max-height: none;
+  overflow: visible;
+  margin-top: 2px;
+}
+.thinking-content p {
+  margin: 0.3em 0;
+}
+.thinking-content pre {
+  margin: 0.3em 0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
 /* Streaming cursor */
 .cursor {
   display: inline-block;
@@ -797,6 +861,82 @@
   letter-spacing: 0.4px;
   opacity: 0.55;
   margin-bottom: 2px;
+}
+
+/* ===== Ask mode input indicator ===== */
+#ask-indicator {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  pointer-events: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  opacity: 0.5;
+  color: var(--color-text, #666);
+  white-space: nowrap;
+  user-select: none;
+}
+#ask-indicator.show {
+  display: flex;
+}
+#ask-indicator-cancel {
+  cursor: pointer;
+  pointer-events: auto;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+  padding: 0 2px;
+}
+#ask-indicator-cancel:hover {
+  opacity: 1;
+}
+
+/* ===== Skill mode input indicator ===== */
+#skill-indicator {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  pointer-events: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  opacity: 0.5;
+  color: var(--color-text, #666);
+  white-space: nowrap;
+  user-select: none;
+}
+#skill-indicator.show {
+  display: flex;
+}
+#skill-indicator-label {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#skill-indicator-cancel {
+  cursor: pointer;
+  pointer-events: auto;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+  padding: 0 2px;
+}
+#skill-indicator-cancel:hover {
+  opacity: 1;
 }
 
 /* ===== HTML Card styles ===== */

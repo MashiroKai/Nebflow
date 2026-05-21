@@ -31,9 +31,18 @@ function buildThemeVarsCSS() {
   return pairs.length > 0 ? `:root{${pairs.join(';')}}` : '';
 }
 
+/** Extract just the CSS variable declarations from a theme CSS string.
+ *  Input: ":root{--color-bg:#fff;--color-text:#000}"
+ *  Output: "--color-bg:#fff;--color-text:#000" */
+function extractThemeVars(themeCSS) {
+  return themeCSS.replace(':root{', '').replace('}', '').trim();
+}
+
 /** Build the auto-scale + height-reporting script to inject into srcdoc.
  *  #nf-wrap uses width:fit-content so the card shrinks to content width.
- *  Reports both width and height; parent adjusts accordingly. */
+ *  Reports both width and height; parent adjusts accordingly.
+ *  Also listens for _nfThemeVars messages from parent to live-update theme
+ *  when the system switches between light and dark mode. */
 function buildHeightScript(id) {
   return `<script>
 (function(){
@@ -46,13 +55,23 @@ function buildHeightScript(id) {
       var cw=w.scrollWidth;
       var s=cw>vw?vw/cw:1;
       w.style.transform=s<1?'scale('+s+')':'';
-      var rect=w.getBoundingClientRect();
       var reportW=s<1?vw:w.offsetWidth;
-      parent.postMessage({_nfCardW:reportW,_nfCardH:Math.ceil(rect.height),id:id},"*");
+      // body.scrollHeight includes all content + margins (getBoundingClientRect misses child margins)
+      var reportH=Math.ceil(document.body.scrollHeight*s);
+      parent.postMessage({_nfCardW:reportW,_nfCardH:reportH,id:id},"*");
     }catch(e){}
   }
   new ResizeObserver(send).observe(document.body);
   send();setTimeout(send,100);setTimeout(send,500);
+  // Listen for live theme updates from parent window
+  window.addEventListener('message',function(e){
+    if(e.data&&e.data._nfThemeVars){
+      var s=document.getElementById('nf-card-theme');
+      if(!s){s=document.createElement('style');s.id='nf-card-theme';document.head.appendChild(s);}
+      s.textContent=':root{'+e.data._nfThemeVars+'}';
+      setTimeout(send,50);
+    }
+  });
 })();
 </script>`;
 }
@@ -114,7 +133,7 @@ function renderHtmlCard(container, html, title) {
   // to fit the iframe viewport when it's wider than available space.
   // Note: do NOT put overflow:hidden on body — it breaks flexbox min-width:auto.
   // scrolling="no" on iframe prevents scrollbars; iframe clips beyond its viewport.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);}*,*:before,*:after{box-sizing:inherit;}</style></head><body><div id="nf-wrap" style="transform-origin:top left;width:fit-content;max-width:100%">${html}</div>${heightScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);}*,*:before,*:after{box-sizing:inherit;}img,svg,video{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="transform-origin:top left;width:fit-content;max-width:100%">${html}</div>${heightScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';
@@ -181,3 +200,24 @@ export function registerCardRenderer() {}
 
 /** No-op for backward compatibility. */
 export function clearRenderers() {}
+
+/**
+ * Watch for system theme changes (light/dark) and propagate the new CSS
+ * custom properties to all rendered card iframes so they update live.
+ */
+(function initThemeWatcher() {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const handler = () => {
+    const css = buildThemeVarsCSS();
+    if (!css) return;
+    const vars = extractThemeVars(css);
+    document.querySelectorAll('iframe[data-nf-card-id]').forEach(iframe => {
+      try {
+        if (iframe.contentWindow) {
+          iframe.contentWindow.postMessage({ _nfThemeVars: vars }, '*');
+        }
+      } catch (e) { /* cross-origin iframe, skip */ }
+    });
+  };
+  mq.addEventListener('change', handler);
+})();
