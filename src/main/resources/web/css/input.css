@@ -220,6 +220,23 @@
   font-size: 12px;
   color: var(--color-text-muted);
 }
+.slash-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin: 0 6px;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+.slash-badge.skill {
+  color: var(--color-text-muted);
+  background: rgba(128,128,128,0.12);
+  margin-left: auto;
+}
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {

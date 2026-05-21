@@ -283,8 +283,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const diffHtml = formatDiff(content);
   const detailHtml = buildToolDetail(inputJson, label);
-  const bodyText = diffHtml ? '' : (content ? escapeHtml(content.length > 120 ? content.slice(0,120) + '...' : content) : '');
-  const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
+  // Render full content in body (no truncation). Body is hidden by default,
+  // click to expand shows full content with scroll for long output.
+  const bodyText = diffHtml ? '' : (content ? escapeHtml(content) : '');
+  const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre class="tool-body-pre">' + bodyText + '</pre>' : ''))) || '';
   const hasBody = !!bodyHtml;
   const localLabel = localizeToolLabel(label);
   const localSummary = localizeToolSummary(summary, label);
@@ -611,6 +613,9 @@ export function renderAskUser(items, askSessionId) {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers }));
       }
+      const answerText = answers.join('\n');
+      renderUserBubble(answerText);
+      import('./persistence.js').then(({ saveMsg }) => saveMsg({type: 'user', text: answerText}, targetSid));
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, t('chat.confirm'), () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
@@ -776,5 +781,60 @@ export function renderAskError(msg) {
     state.askAnswerText = '';
   }
   renderError(msg || t('chat.askFailed'));
+}
+
+// ---------- Thinking bubble rendering ----------
+export function appendThinkingDelta(delta) {
+  const chat = state.dom.chat;
+  state.thinkingText += delta;
+  if (!state.currentThinkingBubble) {
+    const row = document.createElement('div');
+    row.className = 'row ai thinking-row';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble ai thinking-bubble';
+    const label = document.createElement('div');
+    label.className = 'thinking-label';
+    label.textContent = t('chat.thinkingLabel');
+    const content = document.createElement('div');
+    content.className = 'thinking-content';
+    bubble.appendChild(label);
+    bubble.appendChild(content);
+    row.appendChild(bubble);
+    chat.appendChild(row);
+    state.currentThinkingBubble = bubble;
+  }
+  const contentEl = state.currentThinkingBubble.querySelector('.thinking-content');
+  if (contentEl) {
+    const cursor = '<span class="cursor"></span>';
+    contentEl.innerHTML = renderMarkdownWithMath(state.thinkingText || '') + cursor;
+  }
+  smartScroll();
+}
+
+export function finishThinking() {
+  if (state.currentThinkingBubble) {
+    const contentEl = state.currentThinkingBubble.querySelector('.thinking-content');
+    if (contentEl) {
+      contentEl.innerHTML = renderMarkdownWithMath(state.thinkingText || '');
+    }
+    // Collapse: hide content, make label clickable
+    state.currentThinkingBubble.classList.add('thinking-done');
+    const label = state.currentThinkingBubble.querySelector('.thinking-label');
+    const content = state.currentThinkingBubble.querySelector('.thinking-content');
+    if (content) content.style.display = 'none';
+    if (label) {
+      label.classList.add('collapsible');
+      label.onclick = () => {
+        const visible = content.style.display !== 'none';
+        content.style.display = visible ? 'none' : '';
+        label.classList.toggle('expanded', !visible);
+      };
+    }
+    const text = state.thinkingText;
+    state.currentThinkingBubble = null;
+    state.thinkingText = '';
+    return text;
+  }
+  return '';
 }
 

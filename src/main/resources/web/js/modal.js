@@ -432,7 +432,11 @@ Follow these rules strictly when generating HTML for the Card tool. These repres
 
 export function showCardDesignModal() {
   document.getElementById('card-design-input').value = state.cardDesignPrompt || '';
+  document.getElementById('card-design-input').placeholder = t('settings.cardDesignPlaceholder');
   document.getElementById('card-design-modal-title').textContent = t('settings.cardDesign');
+  document.getElementById('card-design-modal-reset').textContent = t('settings.cardDesignReset');
+  document.getElementById('card-design-modal-cancel').textContent = t('modal.cancel');
+  document.getElementById('card-design-modal-save').textContent = t('memory.save');
   document.getElementById('card-design-modal').classList.add('show');
   document.getElementById('card-design-overlay').classList.add('on');
 }
