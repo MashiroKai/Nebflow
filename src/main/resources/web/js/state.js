@@ -142,4 +142,7 @@ export default {
   sessionModelInfo: safeParse(localStorage.getItem('nebflow_model_info'), {}),
   updateHeaderModelInfo: null,
   COMPACT_THRESHOLD: 0.75,
+
+  // Card design prompt
+  cardDesignPrompt: '',
 };

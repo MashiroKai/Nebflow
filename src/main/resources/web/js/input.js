@@ -358,7 +358,8 @@ export function injectUserMessage(text, options = {}) {
 
   // Mark session as busy
   setBusy(sessionId);
-  state.turnStartTimes[sessionId] = Date.now();
+  // Only set timer if not already running — don't reset during active turn
+  if (!state.turnStartTimes[sessionId]) state.turnStartTimes[sessionId] = Date.now();
 
   // Safety timeout (same as normal send)
   if (state.sessionBusyTimeouts[sessionId]) {

@@ -561,6 +561,8 @@ object AgentActor extends AgentCore with AgentSession:
                     s"LLM returned empty response after $MaxEmptyResponseRetries retries (stopReason: $stopReason)"
                   else s"LLM returned empty response with no content after $MaxEmptyResponseRetries retries"
                 state.sessionId.foreach { sid =>
+                  val doneEvent = AgentStreamEvent.Done(result.model)
+                  val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
                   resources.dispatcher.unsafeRunAndForget(
                     (state
                       .wsSend(
@@ -571,17 +573,10 @@ object AgentActor extends AgentCore with AgentSession:
                         )
                       )
                       .handleErrorWith(_ => IO.unit)) *>
+                      state.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
                       emitSessionBusy(state.wsSend, sid, busy = false)
                   )
                 }
-                emitStream(
-                  resources.dispatcher,
-                  state.wsSend,
-                  ctx,
-                  AgentStreamEvent.Done(result.model),
-                  isSubagent = false,
-                  state.sessionId
-                )
                 stash.unstashAll(
                   idle(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
                 )
@@ -638,6 +633,8 @@ object AgentActor extends AgentCore with AgentSession:
                 .map(m => s"LLM request failed: ${m.take(200)}")
                 .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
           cleanedState.sessionId.foreach { sid =>
+            val doneEvent = AgentStreamEvent.Done(None)
+            val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
             resources.dispatcher.unsafeRunAndForget(
               (cleanedState
                 .wsSend(
@@ -648,17 +645,10 @@ object AgentActor extends AgentCore with AgentSession:
                   )
                 )
                 .handleErrorWith(_ => IO.unit)) *>
+                cleanedState.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
                 emitSessionBusy(cleanedState.wsSend, sid, busy = false)
             )
           }
-          emitStream(
-            resources.dispatcher,
-            cleanedState.wsSend,
-            ctx,
-            AgentStreamEvent.Done(None),
-            isSubagent = false,
-            cleanedState.sessionId
-          )
           replyTo.foreach(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
           stash.unstashAll(
             idle(
@@ -1406,9 +1396,17 @@ object AgentActor extends AgentCore with AgentSession:
       s"q=${question.take(40)} a=${answerText.take(40)}"
     )
 
-    // Send askDone event to frontend
+    // Send askDone + Done + sessionBusy(false) in sequence so frontend
+    // properly clears the busy UI (stop button, input disabled, etc.).
+    // This mirrors what finishTurn does for normal turns.
+    val doneEvent = AgentStreamEvent.Done(
+      model,
+      contextWindow = Some(state.contextWindow),
+      inputTokens = state.latestUsage.map(_.inputTokens)
+    )
+    val doneJson = doneEvent.toJson(ctx.self.path.name, false, Some(sessionId))
     resources.dispatcher.unsafeRunAndForget(
-      state
+      (state
         .wsSend(
           io.circe.Json.obj(
             "type" -> "askDone".asJson,
@@ -1418,6 +1416,8 @@ object AgentActor extends AgentCore with AgentSession:
           )
         )
         .handleErrorWith(_ => IO.unit)
+        *> state.wsSend(doneJson).handleErrorWith(_ => IO.unit)
+        *> emitSessionBusy(state.wsSend, sessionId, busy = false))
     )
 
     // Persist UiMessage.Ask

@@ -2,7 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
-import { renderMarkdownWithMath, escapeHtml, formatDiff, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, formatDiff, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 
@@ -263,13 +263,9 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   card.className = 'tool-card';
 
   // Try HTML card renderer first
-  let cardText = content || '';
-  // Card tool returns a short summary; HTML payload is in inputJson
-  if (label.startsWith('Card') && inputJson && inputJson.html && !cardText.match(/^___\w+_HTML___/)) {
-    const payload = JSON.stringify({ html: inputJson.html, title: inputJson.title || '' });
-    cardText = `___CARD_HTML___${payload}`;
-  }
-  if (renderWithRegistry(card, cardText, label)) {
+  // Card tool: pass inputJson directly ({html, title}) — renderWithRegistry handles it natively
+  const cardData = (label.startsWith('Card') && inputJson && inputJson.html) ? inputJson : (content || '');
+  if (renderWithRegistry(card, cardData, label)) {
     card.classList.add('tool-card--html');
     row.appendChild(card);
     chat.appendChild(row);
@@ -279,7 +275,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 
   // Truncation warning badge
   const truncBadge = truncated
-    ? '<span class="truncated-badge" title="Output was too large and has been truncated to prevent context overflow">Truncated</span>'
+    ? '<span class="truncated-badge" title="' + escapeHtml(t('tool.result.truncatedTitle')) + '">' + escapeHtml(t('tool.result.truncated')) + '</span>'
     : '';
 
   // Fallback to default rendering
@@ -290,8 +286,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const bodyText = diffHtml ? '' : (content ? escapeHtml(content.length > 120 ? content.slice(0,120) + '...' : content) : '');
   const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
   const hasBody = !!bodyHtml;
-  const labelParts = label.split('\n', 2);
-  const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(summary) + truncBadge
+  const localLabel = localizeToolLabel(label);
+  const localSummary = localizeToolSummary(summary, label);
+  const labelParts = localLabel.split('\n', 2);
+  const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(localSummary) + truncBadge
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div>' +
@@ -315,13 +313,27 @@ export function renderToolPending(label, sessionId) {
     state.currentAiBubble = null;
     state.aiText = '';
   }
-  const pending = state.sessionToolCards[sid];
-  if (pending) pending.remove();
+
+  // If a pending card already exists for this session, update it in-place
+  // to avoid spinner flicker between toolCallDetected → toolStart events.
+  const existing = state.sessionToolCards[sid];
+  if (existing) {
+    const labelEl = existing.querySelector('.label');
+    if (labelEl) {
+      const localLabel = localizeToolLabel(label);
+      const labelParts = localLabel.split('\n', 2);
+      labelEl.innerHTML = escapeHtml(labelParts[0])
+        + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
+    }
+    return;
+  }
+
   const row = document.createElement('div');
   row.className = 'row tool';
   const card = document.createElement('div');
   card.className = 'tool-card tool-card--pending';
-  const labelParts = label.split('\n', 2);
+  const localLabel = localizeToolLabel(label);
+  const labelParts = localLabel.split('\n', 2);
   const labelHtml = escapeHtml(labelParts[0])
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon"><span class="spinner"></span></span>' +

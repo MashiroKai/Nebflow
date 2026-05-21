@@ -59,11 +59,11 @@ export function renderTaskList(tasks) {
   let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
   html += '<div class="task-header">';
   html += `<button class="task-toggle" title="${collapsed ? t('task.expand') : t('task.collapse')}"><i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i></button>`;
-  html += `<span class="task-count">${active.length} task${active.length !== 1 ? 's' : ''}</span>`;
+  html += `<span class="task-count">${t('task.count', { count: active.length })}</span>`;
   const parts = [];
-  if (terminalCount > 0) parts.push(`${terminalCount} done`);
-  if (counts.in_progress > 0) parts.push(`${counts.in_progress} in progress`);
-  if (counts.pending > 0) parts.push(`${counts.pending} open`);
+  if (terminalCount > 0) parts.push(t('task.done', { count: terminalCount }));
+  if (counts.in_progress > 0) parts.push(t('task.inProgress', { count: counts.in_progress }));
+  if (counts.pending > 0) parts.push(t('task.open', { count: counts.pending }));
   if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
   html += '</div>';
 
@@ -79,7 +79,7 @@ export function renderTaskList(tasks) {
     const iconName = iconMap[task.status] || 'square';
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
     const blocked = task.blockedBy && task.blockedBy.length > 0
-      ? ` <span class="task-blocked">blocked by #${task.blockedBy.join(', #')}</span>`
+      ? ` <span class="task-blocked">${t('task.blockedBy', { ids: task.blockedBy.join(', #') })}</span>`
       : '';
 
     html += `<div class="${cls}" data-task-id="${task.id}">`;
@@ -91,7 +91,7 @@ export function renderTaskList(tasks) {
   });
 
   if (sorted.length > MAX_VISIBLE) {
-    html += `<div class="task-more">+${sorted.length - MAX_VISIBLE} more</div>`;
+    html += `<div class="task-more">${t('task.more', { count: sorted.length - MAX_VISIBLE })}</div>`;
   }
 
   html += '</div></div>'; // .task-body-inner / .task-body

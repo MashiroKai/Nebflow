@@ -411,7 +411,7 @@ class WebSocketRoutes(
                 sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
                 sessionStore.appendUiMessages(
                   clearSessionId,
-                  List(UiMessage.System("Context cleared. LLM memory reset."))
+                  List(UiMessage.System("Context cleared. LLM memory reset.", Some("slash.clearDone")))
                 ) *>
                 sharedResources.taskStore.deleteAll(clearSessionId) *>
                 wsSend(
@@ -1083,6 +1083,36 @@ class WebSocketRoutes(
             )
           }
 
+        case "getCardDesign" =>
+          val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
+          IO.blocking {
+            if java.nio.file.Files.exists(path) then
+              new String(java.nio.file.Files.readAllBytes(path), java.nio.charset.StandardCharsets.UTF_8)
+            else ""
+          }.flatMap { content =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "cardDesignData".asJson,
+                "content" -> content.asJson
+              )
+            )
+          }
+
+        case "saveCardDesign" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val content = json.hcursor.downField("content").as[String].getOrElse("")
+          val path = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
+          IO.blocking {
+            java.nio.file.Files.write(path, content.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+          }.flatMap { _ =>
+            wsSend(io.circe.Json.obj("type" -> "cardDesignSaved".asJson, "ok" -> true.asJson))
+          }.handleErrorWith { e =>
+            wsSend(
+              io.circe.Json
+                .obj("type" -> "error".asJson, "message" -> s"Failed to save card design: ${e.getMessage}".asJson)
+            )
+          }
+
         case "getConfig" =>
           configService.isConfigured.flatMap { configured =>
             configService.getConfig.flatMap { cfg =>
@@ -1296,7 +1326,7 @@ class WebSocketRoutes(
         val mode = hc.downField("mode").as[String].getOrElse("full")
         sharedResources.sessionStore.appendUiMessages(
           sessionId,
-          List(UiMessage.System(s"Compacting context ($mode)..."))
+          List(UiMessage.System(s"Compacting context ($mode)...", Some("chat.compacting")))
         )
 
       case "compactComplete" =>
@@ -1306,7 +1336,13 @@ class WebSocketRoutes(
         val detail = reportPath.map(p => s" (report: ${p.split('/').last})").getOrElse("")
         sharedResources.sessionStore.appendUiMessages(
           sessionId,
-          List(UiMessage.System(s"Context compacted: $before → $after messages$detail"))
+          List(
+            UiMessage.System(
+              s"Context compacted: $before → $after messages$detail",
+              Some("chat.compacted"),
+              Some(io.circe.Json.obj("before" -> before.asJson, "after" -> after.asJson, "detail" -> detail.asJson))
+            )
+          )
         )
 
       case "compactFailed" =>
@@ -1314,7 +1350,13 @@ class WebSocketRoutes(
         val maxAttempts = hc.downField("maxAttempts").as[Int].getOrElse(0)
         sharedResources.sessionStore.appendUiMessages(
           sessionId,
-          List(UiMessage.System(s"Context compaction failed (attempt $attempt/$maxAttempts)"))
+          List(
+            UiMessage.System(
+              s"Context compaction failed (attempt $attempt/$maxAttempts)",
+              Some("chat.compactFailed"),
+              Some(io.circe.Json.obj("attempt" -> attempt.asJson, "maxAttempts" -> maxAttempts.asJson))
+            )
+          )
         )
 
       case _ => IO.unit

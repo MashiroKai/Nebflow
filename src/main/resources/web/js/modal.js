@@ -2,7 +2,7 @@
 
 import state from './state.js';
 import { sendWs } from './ws.js';
-import { batchDeleteSelected } from './sidebar.js';
+import { batchDeleteSelected, deleteFolder } from './sidebar.js';
 import { t } from './i18n.js';
 
 // ---------- Session Modals ----------
@@ -117,7 +117,7 @@ export function confirmDeleteSession() {
     const fid = pendingFolderDeleteId;
     pendingFolderDeleteId = null;
     hideModals();
-    if (fid) sendWs({ type: 'deleteFolder', folderId: fid });
+    if (fid) deleteFolder(fid);
     return;
   }
   const id = state.pendingDeleteId;
@@ -336,4 +336,108 @@ export function initModals() {
 
   // Expose session modal helpers for sidebar cross-module usage
   window.__showDeleteModal = showDeleteModal;
+
+  // --- Card Design Modal ---
+  document.getElementById('card-design-modal-cancel')?.addEventListener('click', hideCardDesignModal);
+  document.getElementById('card-design-overlay')?.addEventListener('click', (e) => {
+    if (e.target.id === 'card-design-overlay') hideCardDesignModal();
+  });
+  document.getElementById('card-design-modal-save')?.addEventListener('click', () => {
+    const content = document.getElementById('card-design-input').value;
+    state.cardDesignPrompt = content;
+    sendWs({type: 'saveCardDesign', content});
+    const btn = document.getElementById('card-design-modal-save');
+    btn.textContent = t('settings.saved');
+    setTimeout(() => { btn.textContent = t('settings.save'); }, 1500);
+  });
+  document.getElementById('card-design-modal-reset')?.addEventListener('click', () => {
+    if (!confirm(t('settings.cardDesignResetConfirm'))) return;
+    const defaultPrompt = getDefaultCardDesignPrompt();
+    state.cardDesignPrompt = defaultPrompt;
+    document.getElementById('card-design-input').value = defaultPrompt;
+    sendWs({type: 'saveCardDesign', content: defaultPrompt});
+  });
+}
+
+// ---------- Card Design Modal ----------
+function getDefaultCardDesignPrompt() {
+  return `## Card Visual Design Guidelines
+
+Follow these rules strictly when generating HTML for the Card tool. These represent the user's visual preferences and override any conflicting defaults.
+
+### Core Style
+
+- Minimalist and refined — remove anything that does not serve the content. Every element must earn its place.
+- Premium, polished feel — think Apple-style design language, not developer documentation.
+- No emoji anywhere — in text, headings, badges, or decorative elements. Use typography and spacing for visual interest.
+- No accent bars (colored left-border stripes) on cards or sections. Use surface elevation and spacing for hierarchy instead.
+- No decorative borders — use shadow-as-border technique or no border at all.
+
+### Color & Theme
+
+- MUST follow the system theme (light/dark). Use CSS custom properties: var(--color-bg), var(--color-surface) or var(--color-primary), var(--color-text), var(--color-success), var(--color-error), var(--color-warning).
+- For dark mode: use @media (prefers-color-scheme: dark) or rely on the injected CSS variables.
+- Light mode: white or #fafafa surfaces with soft shadows. Text #171717, not #000000.
+- Dark mode: #141516 to #1a1a1a surfaces with hairline borders (rgba(255,255,255,0.06)). Text #e0e0e0.
+- Color should be functional, not decorative. Use chromatic accents only for status, actions, or emphasis.
+
+### Glassmorphism & Depth
+
+- Use frosted glass (backdrop-filter blur) for cards and overlays when it enhances the visual hierarchy:
+  background: rgba(255,255,255,0.65); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.18);
+- On dark mode: background: rgba(30,30,30,0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06);
+- Multi-layer shadow stacks for cards (border layer + subtle elevation), NOT traditional CSS borders.
+
+### Border Radius & Shapes
+
+- Rounded and soft — cards: 16px, buttons: 10px, inputs: 8px, badges/tags: 9999px (pill shape).
+- Avatars: 50% (fully round).
+- Never use sharp corners (0px) on interactive or card elements.
+
+### Typography
+
+- Font stack: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif
+- Use tight letter-spacing on headings (-0.02em to -0.04em at 20px+).
+- Line height: tight for headings (1.1-1.2), relaxed for body (1.5-1.6).
+- Font sizes: 13-14px for body, 16-20px for headings. Never above 24px unless it is a hero element.
+- Weights: 400 for body, 500 for UI elements, 600 for headings. Avoid 700+.
+
+### Spacing
+
+- Generous whitespace — let content breathe. 16px minimum padding on cards.
+- Use consistent spacing scale: 4, 8, 12, 16, 20, 24, 32px.
+- Group related elements tighter; separate unrelated groups with larger gaps.
+
+### Animation
+
+- Use CSS animations ONLY when they genuinely improve information communication (e.g., progress bars, state transitions, loading indicators).
+- Animations must be subtle and brief (200-400ms). Ease-out for entrances, ease-in for exits.
+- Respect prefers-reduced-motion — disable all animations when the user requests it.
+- Never animate decorative elements. If an animation does not make the content clearer, remove it.
+
+### Layout
+
+- Prefer flexbox and CSS grid for layouts. Avoid float or manual positioning.
+- Use flex-wrap: wrap for multi-column content to handle narrow chat width gracefully.
+- Max content width is constrained (~85% of chat width). Design for this constraint.
+- Use max-width: 100% on all images and media.
+
+### Specific Patterns
+
+- Status indicators: small colored dot (6-8px) + text label. No colored backgrounds or badges.
+- Progress bars: thin (4-6px height), rounded, with subtle animation for active states.
+- Tables: minimal styling, zebra striping with very subtle contrast, no heavy borders.
+- Icons: prefer simple geometric shapes or CSS-drawn icons over emoji or complex SVGs.`;
+}
+
+export function showCardDesignModal() {
+  document.getElementById('card-design-input').value = state.cardDesignPrompt || '';
+  document.getElementById('card-design-modal-title').textContent = t('settings.cardDesign');
+  document.getElementById('card-design-modal').classList.add('show');
+  document.getElementById('card-design-overlay').classList.add('on');
+}
+
+export function hideCardDesignModal() {
+  document.getElementById('card-design-modal').classList.remove('show');
+  document.getElementById('card-design-overlay').classList.remove('on');
 }

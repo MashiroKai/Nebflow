@@ -4,7 +4,7 @@
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, formatDiff, buildToolDetail, attachToolClick, esc } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, smartScroll, formatDiff, buildToolDetail, attachToolClick, esc, localizeToolLabel, localizeToolSummary } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { pickThinkingPhrase } from './chat.js';
 
@@ -127,15 +127,10 @@ export function restoreFromStorage() {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
-      // Reconstruct Card tool HTML marker from input (same logic as chat.js renderTool)
-      let toolContent = m.content || '';
-      if (m.label && m.label.startsWith('Card') && m.input && m.input.html && !toolContent.match(/^___\w+_HTML___/)) {
-        const payload = JSON.stringify({ html: m.input.html, title: m.input.title || '' });
-        toolContent = `___CARD_HTML___${payload}`;
-      }
-      // Try plugin renderer first
-      const data = { label: m.label, summary: m.summary, content: toolContent, isError: m.isError, input: m.input, sessionId: state.activeSessionId };
-      if (renderWithRegistry(card, data)) {
+      // Card tool: pass input directly ({html, title}) — renderWithRegistry handles it natively
+      const isCard = m.label && m.label.startsWith('Card') && m.input && m.input.html;
+      const cardData = isCard ? m.input : { label: m.label, summary: m.summary, content: m.content || '', isError: m.isError, input: m.input, sessionId: state.activeSessionId };
+      if (renderWithRegistry(card, cardData)) {
         card.classList.add('tool-card--html');
         row.appendChild(card);
         chat.appendChild(row);
@@ -148,9 +143,11 @@ export function restoreFromStorage() {
         const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
         const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
-        const truncBadge = m.truncated ? '<span class="truncated-badge" title="Output was too large and has been truncated to prevent context overflow">Truncated</span>' : '';
-        const lParts = m.label.split('\n', 2);
-        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(m.summary) + truncBadge
+        const truncBadge = m.truncated ? '<span class="truncated-badge" title="' + esc(t('tool.result.truncatedTitle')) + '">' + esc(t('tool.result.truncated')) + '</span>' : '';
+        const localLabel = localizeToolLabel(m.label);
+        const localSummary = localizeToolSummary(m.summary, m.label);
+        const lParts = localLabel.split('\n', 2);
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + truncBadge
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div>' +
@@ -284,7 +281,7 @@ export function restoreFromStorage() {
       card.className = 'error-card';
       card.style.background = 'rgba(91,141,217,0.1)';
       card.style.color = '#5b8dd9';
-      card.textContent = m.content;
+      card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
       row.appendChild(card);
       chat.appendChild(row);
     }
@@ -355,16 +352,12 @@ export function restoreFromBackendHistory(msgs) {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
-      // Reconstruct Card tool HTML marker from input (same logic as chat.js renderTool)
-      let toolContent = m.content || '';
+      // Card tool: pass input directly ({html, title}) — renderWithRegistry handles it natively
       let parsedInput = m.input;
       try { parsedInput = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; } catch(e) {}
-      if (m.label && m.label.startsWith('Card') && parsedInput && parsedInput.html && !toolContent.match(/^___\w+_HTML___/)) {
-        const payload = JSON.stringify({ html: parsedInput.html, title: parsedInput.title || '' });
-        toolContent = `___CARD_HTML___${payload}`;
-      }
-      const data = { label: m.label, summary: m.summary, content: toolContent, isError: m.isError, input: parsedInput, sessionId: state.activeSessionId };
-      if (renderWithRegistry(card, data)) {
+      const isCard2 = m.label && m.label.startsWith('Card') && parsedInput && parsedInput.html;
+      const cardData2 = isCard2 ? parsedInput : { label: m.label, summary: m.summary, content: m.content || '', isError: m.isError, input: parsedInput, sessionId: state.activeSessionId };
+      if (renderWithRegistry(card, cardData2)) {
         card.classList.add('tool-card--html');
         row.appendChild(card);
         chat.appendChild(row);
@@ -377,9 +370,11 @@ export function restoreFromBackendHistory(msgs) {
         const bodyText = diffHtml ? '' : (m.content ? esc(m.content.length > 120 ? m.content.slice(0,120) + '...' : m.content) : '');
         const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre>' + bodyText + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
-        const truncBadge = m.truncated ? '<span class="truncated-badge" title="Output was too large and has been truncated to prevent context overflow">Truncated</span>' : '';
-        const lParts = m.label.split('\n', 2);
-        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(m.summary) + truncBadge
+        const truncBadge = m.truncated ? '<span class="truncated-badge" title="' + esc(t('tool.result.truncatedTitle')) + '">' + esc(t('tool.result.truncated')) + '</span>' : '';
+        const localLabel = localizeToolLabel(m.label);
+        const localSummary = localizeToolSummary(m.summary, m.label);
+        const lParts = localLabel.split('\n', 2);
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + truncBadge
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div>' +
@@ -510,7 +505,7 @@ export function restoreFromBackendHistory(msgs) {
       card.className = 'error-card';
       card.style.background = 'rgba(91,141,217,0.1)';
       card.style.color = '#5b8dd9';
-      card.textContent = m.content;
+      card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
       row.appendChild(card);
       chat.appendChild(row);
     }
