@@ -110,8 +110,8 @@ object CardTool extends Tool:
         "UTF-8"
       )}"""
 
-  /** Regex matching src= attributes (only src, not href — only images make sense in sandboxed iframes). */
-  private val SrcAttrRegex = """(?i)src\s*=\s*"([^"]+)"""".r
+  /** Regex matching src= attributes with both single and double quotes. */
+  private val SrcAttrRegex = """(?i)src\s*=\s*["']([^"']+)["']""".r
 
   private def fileExtension(path: String): String =
     path.lastIndexOf('.') match
@@ -197,7 +197,26 @@ object CardTool extends Tool:
 
   val name = "Card"
 
-  val description = """Renders HTML content as a visual card in the chat.
+  /** Path to user-editable card design prompt. */
+  private val designPromptPath = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "card-design-prompt.md")
+
+  /** Cached design prompt (reloaded on each access via mtime check). */
+  @volatile private var designPromptCache: (Long, String) = (0L, "")
+
+  /** Load user design prompt from disk (cached by mtime). */
+  private def loadDesignPrompt(): String =
+    try
+      val mtime = java.nio.file.Files.getLastModifiedTime(designPromptPath).toMillis
+      if mtime != designPromptCache._1 then
+        val content =
+          new String(java.nio.file.Files.readAllBytes(designPromptPath), java.nio.charset.StandardCharsets.UTF_8)
+        designPromptCache = (mtime, content)
+        content
+      else designPromptCache._2
+    catch case _: Exception => designPromptCache._2
+
+  /** Base description without user design prompt. */
+  private val baseDescription = """Renders HTML content as a visual card in the chat.
 
 Use this tool when you want to show something visual — previews, dashboards, diagrams, tables, styled content, etc.
 Just pass raw HTML (with inline CSS). The frontend renders it in a sandboxed iframe.
@@ -236,6 +255,12 @@ Example:
   "html": "<div style=\"font-family:sans-serif;padding:12px;font-size:13px\"><h3 style=\"margin:0 0 8px\">Status</h3><p style=\"color:var(--color-success)\">All systems green</p></div>",
   "title": "Status"
 }"""
+
+  /** Dynamic description: base tool description + user design prompt (if present). */
+  def description: String =
+    val prompt = loadDesignPrompt()
+    if prompt.nonEmpty then s"$baseDescription\n\n$prompt"
+    else baseDescription
 
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(

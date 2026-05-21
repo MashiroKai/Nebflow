@@ -3,10 +3,12 @@
   --color-primary-hover: #06ad56;
   --color-error: #f44336;
   --color-success: #4caf50;
+  --color-warning: #ff9800;
   --color-bubble-user: #95ec69;
 
   /* Content area — light */
   --color-bg: #ededed;
+  --color-surface: #ffffff;
   --color-bubble-ai: #fff;
   --color-text: #000;
   --color-text-muted: #888;
@@ -45,6 +47,7 @@ body {
   :root {
     /* Content area — dark */
     --color-bg: #1a1a1a;
+    --color-surface: #242424;
     --color-bubble-ai: #242424;
     --color-text: #e0e0e0;
     --color-text-muted: #777;
@@ -68,6 +71,55 @@ body {
     --color-frame-input-text: #ccc;
   }
 }
+
+/* ---------- Sidebar Collapse ---------- */
+#nav-bar,
+#sidebar-panel {
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.2s ease,
+              border-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+body.sidebar-collapsed #nav-bar {
+  width: 0;
+  border-right-width: 0;
+  opacity: 0;
+}
+body.sidebar-collapsed #sidebar-panel {
+  width: 0;
+  opacity: 0;
+}
+
+/* Toggle button */
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--color-frame-text-muted);
+  border-radius: 6px;
+  cursor: pointer;
+  margin-right: 6px;
+  flex-shrink: 0;
+  padding: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.sidebar-toggle:hover {
+  color: var(--color-frame-text-bright);
+  background: var(--color-frame-hover);
+}
+.sidebar-toggle svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 1.8;
+}
+/* Show/hide the correct icon based on state */
+.sidebar-toggle .toggle-icon-closed { display: none; }
+body.sidebar-collapsed .sidebar-toggle .toggle-icon-open { display: none; }
+body.sidebar-collapsed .sidebar-toggle .toggle-icon-closed { display: flex; }
 
 /* Scrollbar styles */
 #session-list,

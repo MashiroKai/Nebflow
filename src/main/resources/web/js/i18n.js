@@ -88,18 +88,10 @@ export function applyLocaleToHtml() {
     else if (attr === 'placeholder') el.placeholder = t(key);
   }
 
-  // Agent modal field labels (by class)
-  const agentLabels = {
-    'agent-name-label': 'agent.name',
-    'agent-desc-label': 'agent.description',
-    'agent-tools-label': 'agent.tools',
-    'agent-mcp-label': 'agent.mcpServers',
-    'agent-system-label': 'agent.systemPrompt',
-  };
-  for (const [id, key] of Object.entries(agentLabels)) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = t(key);
-  }
+  // Agent modal field labels (by data-i18n attribute)
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
 
   // Agent modal inputs placeholders
   const placeholders = {

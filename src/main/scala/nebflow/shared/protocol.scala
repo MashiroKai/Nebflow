@@ -250,7 +250,7 @@ object UiMessage:
   case class AskPermission(toolName: String, summary: String, input: String) extends UiMessage:
     val typeName = "askPermission"
 
-  case class System(content: String) extends UiMessage:
+  case class System(content: String, i18nKey: Option[String] = None, params: Option[Json] = None) extends UiMessage:
     val typeName = "system"
 
   given Encoder[UiMessage] = Encoder.instance {
@@ -284,7 +284,10 @@ object UiMessage:
         "summary" -> m.summary.asJson,
         "input" -> m.input.asJson
       )
-    case m: System => Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
+    case m: System =>
+      val base = Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
+      val withKey = m.i18nKey.fold(base)(k => base.deepMerge(Json.obj("i18nKey" -> k.asJson)))
+      m.params.fold(withKey)(p => withKey.deepMerge(Json.obj("params" -> p)))
   }
 
   given Decoder[UiMessage] = Decoder.instance { cursor =>
@@ -338,7 +341,11 @@ object UiMessage:
           input <- cursor.downField("input").as[String]
         yield AskPermission(toolName, summary, input)
       case "system" =>
-        cursor.downField("content").as[String].map(System(_))
+        for
+          content <- cursor.downField("content").as[String]
+          i18nKey <- cursor.downField("i18nKey").as[Option[String]]
+          params <- cursor.downField("params").as[Option[Json]]
+        yield System(content, i18nKey, params)
       case other => Left(DecodingFailure(s"Unknown UiMessage type: $other", cursor.history))
     }
   }

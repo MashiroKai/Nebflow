@@ -151,6 +151,9 @@ export function renderSettings() {
   // Request feishu global config to populate settings
   sendWs({type: 'getFeishuGlobalConfig'});
 
+  // Load card design prompt
+  sendWs({type: 'getCardDesign'});
+
   // Build language selector options
   const locales = getAvailableLocales();
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
@@ -234,6 +237,11 @@ export function renderSettings() {
         ${Object.keys(mcpServers).length === 0 ? `<div class="cfg-empty">${t('settings.noMcp')}</div>` : ''}
       </div>
       <button class="cfg-btn cfg-btn-add" id="btn-add-mcp">${t('settings.addMcp')}</button>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">${t('settings.cardDesign')}</div>
+      <div class="cfg-hint" style="margin-bottom:8px">${t('settings.cardDesignHint')}</div>
+      <button class="cfg-btn" id="btn-edit-card-design">${t('settings.cardDesignEdit')}</button>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
@@ -491,6 +499,11 @@ function bindSettingsEvents(content, cfg, allModels) {
 
   document.getElementById('btn-reload-config')?.addEventListener('click', () => {
     sendWs({type: 'getConfig'});
+  });
+
+  // --- Card design prompt ---
+  document.getElementById('btn-edit-card-design')?.addEventListener('click', () => {
+    import('./modal.js').then(m => m.showCardDesignModal());
   });
 }
 
@@ -1148,6 +1161,20 @@ export function deleteSession(sessionId) {
   sendWs({type: 'deleteSession', sessionId});
 }
 
+export function deleteFolder(folderId) {
+  // Remove from local state immediately so UI reflects deletion without waiting for server.
+  // Cascading: collect all descendant folder IDs (children, grandchildren, etc.)
+  const allFolders = state.folders || [];
+  const descendantIds = (fid) => {
+    const children = allFolders.filter(f => f.parentId === fid).map(f => f.id);
+    return children.concat(children.flatMap(descendantIds));
+  };
+  const idsToRemove = new Set([folderId, ...descendantIds(folderId)]);
+  state.folders = allFolders.filter(f => !idsToRemove.has(f.id));
+  renderSessionSidebar(state.sessions, state.activeSessionId);
+  sendWs({type: 'deleteFolder', folderId});
+}
+
 // ---------- Session status state machine ----------
 // Priority: attention > compacting-bg > busy > marked unread > unread > idle
 // Only one indicator visible at a time, controlled by a single CSS class.
@@ -1413,10 +1440,19 @@ function showDeleteZone() {
     e.preventDefault();
     zone.classList.remove('active');
     const data = e.dataTransfer.getData('text/plain');
+    // Handle folder drop
+    if (data.startsWith('folder:')) {
+      const fid = data.slice(7);
+      const f = state.folders.find(x => x.id === fid);
+      if (f && typeof window.__showDeleteFolderModal === 'function') {
+        window.__showDeleteFolderModal(fid, f.name);
+      }
+      return;
+    }
     let ids = [];
     if (data.startsWith('batch:')) {
       ids = data.slice(6).split(',').filter(Boolean);
-    } else if (data && !data.startsWith('folder:')) {
+    } else if (data) {
       ids = [data];
     }
     if (ids.length > 0) {
@@ -1822,11 +1858,12 @@ function renderFolderItem(folder, sessions, container) {
     '</div>' +
     '<button class="folder-delete" title="Delete"><i data-lucide="x"></i></button>';
 
-  // Drag: folder itself can be dragged (into another folder)
+  // Drag: folder itself can be dragged (into another folder) or to delete zone
   folderEl.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', 'folder:' + folder.id);
     e.dataTransfer.effectAllowed = 'move';
     folderEl.classList.add('dragging');
+    showDeleteZone();
   });
   folderEl.addEventListener('dragend', () => {
     folderEl.classList.remove('dragging');
