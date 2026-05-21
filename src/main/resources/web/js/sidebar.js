@@ -876,13 +876,6 @@ export function renderSessionSidebar(sessionData, activeId) {
     }
     if (changed) { try { localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all)); } catch(e) {} }
   } catch(e) {}
-  // Clean up drafts for deleted sessions
-  let draftsChanged = false;
-  for (const sid of Object.keys(state.sessionInputDrafts)) {
-    if (!currentIds.has(sid)) { delete state.sessionInputDrafts[sid]; draftsChanged = true; }
-  }
-  if (draftsChanged) persistDrafts();
-
   const sessionList = state.dom.sessionList;
   sessionList.innerHTML = '';
 
@@ -1055,9 +1048,11 @@ function restoreInputDraft(sessionId) {
 }
 
 // Reset chat area for the current activeSessionId (used after session list updates)
-function resetChatForActiveSession() {
+export function resetChatForActiveSession() {
   state.aiText = '';
   state.currentAiBubble = null;
+  state.currentThinkingBubble = null;
+  state.thinkingText = '';
   state.agentBubbles = {};
   state.activeAgentId = null;
   Object.keys(state.sessionToolCards).forEach(sid => {
@@ -1089,17 +1084,63 @@ function resetChatForActiveSession() {
     }
   }
 
-  // If this session is streaming, restore buffered text
-  if (isStreaming && state.sessionTexts[sid]) {
-    state.aiText = state.sessionTexts[sid];
+  // Restore buffered thinking + text.
+  // Two sources: in-progress streaming (sessionTexts/sessionThinkingBuffers) and
+  // completed-but-not-yet-in-history (pendingRestore).
+  const pendingData = state.pendingRestore[sid];
+  const thinkingBuf = state.sessionThinkingBuffers[sid] || pendingData?.thinking;
+  const textBuf = state.sessionTexts[sid] || pendingData?.text;
+  if (thinkingBuf || textBuf) {
     const chat = state.dom.chat;
-    const row = document.createElement('div');
-    row.className = 'row ai';
-    state.currentAiBubble = document.createElement('div');
-    state.currentAiBubble.className = 'bubble ai';
-    state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText) + '<span class="cursor"></span>';
-    row.appendChild(state.currentAiBubble);
-    chat.appendChild(row);
+
+    // Restore thinking bubble (collapsed if text also exists or turn is complete)
+    if (thinkingBuf) {
+      state.thinkingText = thinkingBuf;
+      const hasText = !!textBuf;
+      const done = hasText || !isStreaming;
+      const row = document.createElement('div');
+      row.className = 'row ai thinking-row';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai thinking-bubble' + (done ? ' thinking-done' : '');
+      const label = document.createElement('div');
+      label.className = 'thinking-label' + (done ? ' collapsible' : '');
+      label.textContent = t('chat.thinkingLabel');
+      const content = document.createElement('div');
+      content.className = 'thinking-content';
+      if (done) {
+        content.style.display = 'none';
+        label.classList.add('expanded');
+        label.onclick = () => {
+          const visible = content.style.display !== 'none';
+          content.style.display = visible ? 'none' : '';
+          label.classList.toggle('expanded', !visible);
+        };
+      }
+      content.innerHTML = renderMarkdownWithMath(state.thinkingText) + (!done ? '<span class="cursor"></span>' : '');
+      bubble.appendChild(label);
+      bubble.appendChild(content);
+      row.appendChild(bubble);
+      chat.appendChild(row);
+      state.currentThinkingBubble = done ? null : bubble;
+    }
+
+    // Restore text bubble
+    if (textBuf) {
+      state.aiText = textBuf;
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      state.currentAiBubble = document.createElement('div');
+      state.currentAiBubble.className = 'bubble ai';
+      state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText) + (isStreaming ? '<span class="cursor"></span>' : '');
+      row.appendChild(state.currentAiBubble);
+      chat.appendChild(row);
+      // If turn is complete (not streaming), this is a completed bubble — clear refs
+      if (!isStreaming) {
+        state.currentAiBubble = null;
+        state.aiText = '';
+      }
+    }
+
     smartScroll();
   }
 
@@ -1668,8 +1709,8 @@ function toggleFeishuBubble() {
   bubble.id = 'feishu-bubble';
   bubble.innerHTML = `
     <div class="fb-row">
-      <input type="text" id="fb-chatid-input" value="${escapeHtml(chatId)}" placeholder="Chat ID" autocomplete="off">
-      <button id="fb-unbind" class="fb-btn fb-btn-subtle" ${!chatId ? 'style="display:none"' : ''} title="Clear">×</button>
+      <input type="text" id="fb-chatid-input" value="${escapeHtml(chatId)}" placeholder="${t('feishu.bindPlaceholder')}" autocomplete="off">
+      <button id="fb-unbind" class="fb-btn fb-btn-subtle" ${!chatId ? 'style="display:none"' : ''} title="${t('sidebar.feishuUnbind')}">×</button>
     </div>`;
   document.getElementById('session-name').parentElement.appendChild(bubble);
   feishuBubbleEl = bubble;
@@ -1856,7 +1897,7 @@ function renderFolderItem(folder, sessions, container) {
     '<div class="folder-status ' + statusCls + '">' +
       '<div class="folder-status-dot"></div>' +
     '</div>' +
-    '<button class="folder-delete" title="Delete"><i data-lucide="x"></i></button>';
+    '<button class="folder-delete" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';
 
   // Drag: folder itself can be dragged (into another folder) or to delete zone
   folderEl.addEventListener('dragstart', (e) => {

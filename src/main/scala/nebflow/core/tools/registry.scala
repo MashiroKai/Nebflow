@@ -35,7 +35,6 @@ object ToolRegistry:
       "TaskUpdate" -> TaskUpdateTool,
       "TaskDelete" -> TaskDeleteTool,
       // Agent lifecycle — always available, no tool whitelist filtering
-      "ContextManage" -> ContextManageTool,
       "RemoveUnnecessary" -> RemoveUnnecessaryTool
     )
     tools.putAll(builtins.asJava)
@@ -51,12 +50,9 @@ object ToolRegistry:
   val AlwaysAvailable: Set[String] = Set.empty[String]
 
   /** Tools always available except on the compaction agent itself (to prevent recursion). */
-  val AlwaysAvailableNonCompact: Set[String] = Set("ContextManage", "RemoveUnnecessary")
+  val AlwaysAvailableNonCompact: Set[String] = Set("RemoveUnnecessary")
 
-  /**
-   * Tools that users can select in agent configuration UI.
-   *  Excludes lifecycle tools that are auto-injected.
-   */
+  /** Tools that users can select in agent configuration UI. */
   val UserConfigurable: Set[String] = AlwaysAvailableNonCompact
 
   /** Tool definitions for the user-configurable set (sent to frontend). */

@@ -13,12 +13,13 @@
   <link rel="stylesheet" href="css/taskList.css">
 </head>
 <body>
+  <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
   <!-- Nav Bar — agent icons + settings at bottom -->
   <div id="nav-bar">
     <div id="nav-agent-list"></div>
-    <button id="new-agent-btn" title="New Agent" class="nav-add-btn">+</button>
+    <button id="new-agent-btn" class="nav-add-btn">+</button>
     <div class="nav-spacer"></div>
-    <div class="nav-item" data-tab="settings" title="Settings">
+    <div class="nav-item" data-tab="settings">
       <i data-lucide="settings"></i>
     </div>
   </div>
@@ -29,14 +30,14 @@
       <div class="panel-header">
         <span class="panel-title">Sessions</span>
         <div class="panel-actions">
-          <button id="new-folder-btn" title="New Folder" class="panel-btn"><i data-lucide="folder"></i></button>
-          <button id="new-session-btn" title="New Session" class="panel-btn">+</button>
+          <button id="new-folder-btn" class="panel-btn"><i data-lucide="folder"></i></button>
+          <button id="new-session-btn" class="panel-btn">+</button>
         </div>
       </div>
       <div id="search-bar">
         <i data-lucide="search"></i>
         <input id="search-input" type="text" placeholder="搜索聊天记录" autocomplete="off">
-        <button id="search-clear" title="Clear">&times;</button>
+        <button id="search-clear">&times;</button>
       </div>
       <div id="search-results"></div>
       <div id="session-list"></div>
@@ -51,14 +52,9 @@
 
   <!-- Main Chat Area -->
   <div id="main">
+    <div id="sidebar-edge"></div>
     <div id="header">
-      <div class="header-left">
-        <button id="sidebar-toggle" class="sidebar-toggle" title="Toggle sidebar">
-          <i data-lucide="panel-left-close" class="toggle-icon-open"></i>
-          <i data-lucide="panel-left-open" class="toggle-icon-closed"></i>
-        </button>
-        <span class="header-brand">nebflow</span>
-      </div>
+      <div class="header-left"><span class="header-brand">nebflow</span></div>
       <div class="header-center"><span id="session-name"></span><button id="memory-btn" class="memory-btn" style="display:none">Memory</button></div>
       <div class="header-right">
         <span id="header-model-info"></span>
@@ -89,6 +85,8 @@
         <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
+        <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
+        <div id="skill-indicator"><span id="skill-indicator-label">SKILL</span><span id="skill-indicator-cancel">&times;</span></div>
         <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
         <div id="slash-dropdown"></div>
       </div>

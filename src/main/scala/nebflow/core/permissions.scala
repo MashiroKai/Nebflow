@@ -21,7 +21,6 @@ object ToolReversibility:
     "Edit",
     "Write",
     "AskUserQuestion",
-    "ContextManage",
     "TaskCreate",
     "TaskUpdate",
     "TaskGet",

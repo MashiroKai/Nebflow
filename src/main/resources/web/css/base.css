@@ -76,50 +76,55 @@ body {
 #nav-bar,
 #sidebar-panel {
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.2s ease,
-              border-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+              opacity 0.2s ease;
   overflow: hidden;
 }
 body.sidebar-collapsed #nav-bar {
   width: 0;
-  border-right-width: 0;
   opacity: 0;
+  border-right-width: 0;
 }
 body.sidebar-collapsed #sidebar-panel {
   width: 0;
   opacity: 0;
 }
 
-/* Toggle button */
-.sidebar-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: none;
-  color: var(--color-frame-text-muted);
-  border-radius: 6px;
-  cursor: pointer;
-  margin-right: 6px;
-  flex-shrink: 0;
-  padding: 0;
-  transition: color 0.15s, background 0.15s;
-}
-.sidebar-toggle:hover {
-  color: var(--color-frame-text-bright);
-  background: var(--color-frame-hover);
-}
-.sidebar-toggle svg {
+/* Edge hover zone */
+#sidebar-edge {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 18px;
-  height: 18px;
-  stroke-width: 1.8;
+  height: 100%;
+  z-index: 50;
+  cursor: pointer;
 }
-/* Show/hide the correct icon based on state */
-.sidebar-toggle .toggle-icon-closed { display: none; }
-body.sidebar-collapsed .sidebar-toggle .toggle-icon-open { display: none; }
-body.sidebar-collapsed .sidebar-toggle .toggle-icon-closed { display: flex; }
+#sidebar-edge::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: -26px;
+  bottom: 0;
+  background: linear-gradient(to right, rgba(0,0,0,0.06), transparent 80%);
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+@media (prefers-color-scheme: dark) {
+  #sidebar-edge::before {
+    background: linear-gradient(to right, rgba(255,255,255,0.07), transparent 80%);
+  }
+  body.sidebar-collapsed #sidebar-edge::before {
+    background: linear-gradient(to right, rgba(255,255,255,0.12), transparent 80%);
+  }
+}
+#sidebar-edge.edge-hover::before {
+  opacity: 1;
+}
+body.sidebar-collapsed #sidebar-edge::before {
+  background: linear-gradient(to right, rgba(0,0,0,0.10), transparent 80%);
+}
 
 /* Scrollbar styles */
 #session-list,

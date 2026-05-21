@@ -32,12 +32,8 @@ const slashCommands = {
   '/ask': {
     desc: () => t('slash.ask'),
     run: () => {
-      renderSystemBubble(t('slash.askUsage'));
+      enterAskMode();
     }
-  },
-  '/new': {
-    desc: () => t('slash.new'),
-    run: null
   },
   '/model': {
     desc: () => t('slash.model'),
@@ -46,6 +42,27 @@ const slashCommands = {
     }
   }
 };
+
+/** Register skill commands from the server-provided skill list. */
+export function registerSkillCommands(skills) {
+  // Remove previously registered skill commands
+  Object.keys(slashCommands).forEach(key => {
+    if (key.startsWith('/') && slashCommands[key]._skill) {
+      delete slashCommands[key];
+    }
+  });
+  skills.forEach(skill => {
+    const cmd = '/' + skill.name;
+    // Don't override built-in commands
+    if (!slashCommands[cmd] || slashCommands[cmd]._skill) {
+      slashCommands[cmd] = {
+        _skill: true,
+        desc: () => skill.description || t('slash.skillDefault'),
+        run: () => enterSkillMode(skill.name, skill.description)
+      };
+    }
+  });
+}
 
 // ---------- Slash Command Handler ----------
 export function handleSlash(text) {
@@ -68,7 +85,7 @@ function updateSlashDropdown() {
   const query = text.slice(1).toLowerCase();
   state.slashMatches = Object.entries(slashCommands)
     .filter(([cmd]) => cmd.slice(1).toLowerCase().startsWith(query))
-    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc }));
+    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, isSkill: !!info._skill }));
   if (state.slashMatches.length === 0) {
     closeSlashDropdown();
     return;
@@ -78,7 +95,8 @@ function updateSlashDropdown() {
   state.slashMatches.forEach((item, i) => {
     const div = document.createElement('div');
     div.className = 'slash-item' + (i === 0 ? ' active' : '');
-    div.innerHTML = '<span class="slash-cmd">' + escapeHtml(item.cmd) + '</span><span class="slash-desc">' + escapeHtml(item.desc) + '</span>';
+    const badge = item.isSkill ? '<span class="slash-badge skill">' + escapeHtml(t('slash.skillBadge')) + '</span>' : '';
+    div.innerHTML = '<div style="display:flex;align-items:center"><span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge + '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>';
     div.onclick = () => { pickSlashCommand(i); };
     div.onmouseenter = () => { setSlashHighlight(i); };
     slashDropdown.appendChild(div);
@@ -129,6 +147,86 @@ function pickSlashCommand(index) {
   if (slashCommands[cmd] && slashCommands[cmd].run) slashCommands[cmd].run();
 }
 
+// ---------- Ask Mode ----------
+export function enterAskMode() {
+  if (state.askMode) return;
+  state.askMode = true;
+  updateAskIndicator();
+  state.dom.input.placeholder = t('input.askPlaceholder');
+  state.dom.input.focus();
+}
+
+export function cancelAskMode() {
+  if (!state.askMode) return;
+  state.askMode = false;
+  updateInputIndicator();
+  state.dom.input.placeholder = t('input.placeholder');
+}
+
+function updateAskIndicator() {
+  updateInputIndicator();
+}
+
+function updateInputIndicator() {
+  const askEl = document.getElementById('ask-indicator');
+  const skillEl = document.getElementById('skill-indicator');
+  const skillLabel = document.getElementById('skill-indicator-label');
+  const input = state.dom.input;
+  // Ask mode takes priority over skill mode
+  if (state.askMode) {
+    if (askEl) askEl.classList.add('show');
+    if (skillEl) skillEl.classList.remove('show');
+    input.style.paddingLeft = '';
+    if (askEl) {
+      askEl.classList.add('show');
+      // Measure ask indicator width after layout
+      const w = askEl.offsetWidth + 12;
+      input.style.paddingLeft = Math.max(w, 48) + 'px';
+    }
+  } else if (state.skillMode) {
+    if (askEl) askEl.classList.remove('show');
+    if (skillEl) {
+      if (skillLabel) skillLabel.textContent = state.skillModeName || 'SKILL';
+      skillEl.classList.add('show');
+      // Measure skill indicator width after layout
+      const w = skillEl.offsetWidth + 12;
+      input.style.paddingLeft = Math.max(w, 56) + 'px';
+    } else {
+      input.style.paddingLeft = '';
+    }
+  } else {
+    if (askEl) askEl.classList.remove('show');
+    if (skillEl) skillEl.classList.remove('show');
+    input.style.paddingLeft = '';
+  }
+}
+
+// ---------- Skill Mode ----------
+export function enterSkillMode(skillName, description) {
+  if (state.skillMode) {
+    // Already in skill mode — if it's a different skill, switch; otherwise do nothing
+    if (state.skillModeName === skillName) return;
+    cancelSkillMode();
+  }
+  // Cancel ask mode if active
+  if (state.askMode) cancelAskMode();
+  state.skillMode = true;
+  state.skillModeName = skillName;
+  state.skillModeDesc = description || '';
+  updateInputIndicator();
+  state.dom.input.placeholder = t('input.skillPlaceholder');
+  state.dom.input.focus();
+}
+
+export function cancelSkillMode() {
+  if (!state.skillMode) return;
+  state.skillMode = false;
+  state.skillModeName = '';
+  state.skillModeDesc = '';
+  updateInputIndicator();
+  state.dom.input.placeholder = t('input.placeholder');
+}
+
 // ---------- Image Compression ----------
 function compressImage(file, opts = {}) {
   const maxDim = opts.maxDim || 1920;
@@ -175,7 +273,7 @@ export async function addFileAttachment(file, callback) {
       const reader = new FileReader();
       reader.onload = () => {
         state.pendingAttachments.push({
-          type: 'image', mimeType: file.type,
+          type: 'image', mimeType: 'image/jpeg',
           data: reader.result.split(',')[1],
           name: file.name, preview: reader.result
         });
@@ -188,12 +286,7 @@ export async function addFileAttachment(file, callback) {
     renderAttachmentPreview();
     if (callback) callback();
   } else {
-    // Non-image: check size
-    const MAX_FILE_SIZE = 500 * 1024;
-    if (file.size > MAX_FILE_SIZE) {
-      alert('File too large (max 500KB for text files): ' + file.name + ' (' + (file.size / 1024).toFixed(0) + 'KB)');
-      return;
-    }
+    // Non-image: save to disk on backend, no size limit needed
     const reader = new FileReader();
     reader.onload = () => {
       state.pendingAttachments.push({
@@ -216,6 +309,39 @@ export function send() {
   const input = state.dom.input;
   const text = input.value.trim();
   const isBusy = state.busySessionIds.has(state.activeSessionId);
+  // If in skill mode, send as skill activation
+  if (state.skillMode) {
+    const skillName = state.skillModeName;
+    cancelSkillMode();
+    if (!text || isBusy || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    state.isSending = true;
+    sendWs({ type: 'skill', skillName, input: text, sessionId: state.activeSessionId });
+    renderSystemBubble(t('slash.skillActivated', { skill: skillName }));
+    renderUserBubble(text);
+    saveMsg({type:'user', text, attachments: (state.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
+    input.value = '';
+    saveInputDraft(state.activeSessionId);
+    setTimeout(() => { state.isSending = false; }, 300);
+    return;
+  }
+  // If in ask mode, send as ask question
+  if (state.askMode) {
+    cancelAskMode();
+    if (!text || isBusy || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      state.isSending = false;
+      return;
+    }
+    state.isSending = true;
+    sendWs({ type: 'ask', question: text, sessionId: state.activeSessionId });
+    state.sessionAskBuffers[state.activeSessionId] = { question: text, answer: '' };
+    renderAskBubble(text);
+    input.value = '';
+    saveInputDraft(state.activeSessionId);
+    setTimeout(() => { state.isSending = false; }, 300);
+    return;
+  }
   if ((!text && state.pendingAttachments.length === 0) || isBusy) {
     console.warn('[send] blocked:', { text: text.slice(0,20), busy: state.busySessionIds.has(state.activeSessionId), wsState: state.ws?.readyState });
     return;
@@ -288,6 +414,8 @@ export function send() {
   });
   state.currentAiBubble = null;
   state.aiText = '';
+  state.currentThinkingBubble = null;
+  state.thinkingText = '';
   // Safety timeout: backend sends 'timeout' event, but this is a last-resort fallback
   // in case the backend event never arrives. Uses streamTimeoutMs from server config (+ 30s buffer).
   const sid = state.activeSessionId;
@@ -379,11 +507,6 @@ export function injectUserMessage(text, options = {}) {
   return true;
 }
 
-// ---------- Wire up /new to session module (called from main.js) ----------
-export function setNewSessionHandler(fn) {
-  slashCommands['/new'].run = fn;
-}
-
 // ---------- Initialize all input event listeners ----------
 export function initInput() {
   const input = state.dom.input;
@@ -438,6 +561,32 @@ export function initInput() {
 
   // Keydown handler — slash autocomplete navigation, input history navigation, Enter-to-send
   input.onkeydown = (e) => {
+    // Escape cancels ask mode or skill mode
+    if (e.key === 'Escape') {
+      if (state.askMode) {
+        e.preventDefault();
+        cancelAskMode();
+        return;
+      }
+      if (state.skillMode) {
+        e.preventDefault();
+        cancelSkillMode();
+        return;
+      }
+    }
+    // Backspace/Delete on empty input cancels ask/skill mode (like removing a tag)
+    if ((e.key === 'Backspace' || e.key === 'Delete') && state.dom.input.value.trim() === '') {
+      if (state.askMode) {
+        e.preventDefault();
+        cancelAskMode();
+        return;
+      }
+      if (state.skillMode) {
+        e.preventDefault();
+        cancelSkillMode();
+        return;
+      }
+    }
     if (slashDropdown.classList.contains('on')) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -507,7 +656,7 @@ export function initInput() {
     const f = document.createElement('input');
     f.type = 'file';
     f.style.display = 'none';
-    f.accept = 'image/*,.txt,.md,.json,.scala,.js,.ts,.py,.java,.go,.rs,.csv,.xml,.yaml,.yml,.html,.css,.log,.sh,.bash,.toml,.conf,.cfg,.ini,.env,.sql,.proto,.graphql,.tf,.dart,.rb,.php,.c,.cpp,.h,.hpp,.r,.swift,.kt,.kts';
+    // No accept filter — backend saves to disk, LLM reads via path
     document.body.appendChild(f);
     f.onchange = (e) => {
       const file = e.target.files[0];
@@ -644,4 +793,23 @@ export function initInput() {
       closeSlashDropdown();
     }
   });
+
+  // Ask indicator cancel button
+  const askCancel = document.getElementById('ask-indicator-cancel');
+  if (askCancel) {
+    askCancel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cancelAskMode();
+      state.dom.input.focus();
+    });
+  }
+  // Skill indicator cancel button
+  const skillCancel = document.getElementById('skill-indicator-cancel');
+  if (skillCancel) {
+    skillCancel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cancelSkillMode();
+      state.dom.input.focus();
+    });
+  }
 }
