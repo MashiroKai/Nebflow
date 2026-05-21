@@ -66,7 +66,7 @@ export function renderMarkdownWithMath(text) {
   });
   let html = marked.parse(protected_, { headerIds: false });
   // Wrap <pre> blocks with a copy button
-  html = html.replace(/(<pre[^>]*>)/g, '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="Copy code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>Copy</span></button>$1');
+  html = html.replace(/(<pre[^>]*>)/g, '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="' + t('chat.copy') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>' + t('chat.copy') + '</span></button>$1');
   html = html.replace(/<\/pre>/g, '</pre></div>');
   // Restore math blocks as KaTeX
   mathBlocks.forEach((block, i) => {
@@ -132,6 +132,133 @@ export function formatDiff(content) {
     return '<div class="diff-line"><span class="diff-lineno">' + (oldLine - 1) + '</span><span class="diff-content">' + esc(line) + '</span></div>';
   }).filter(Boolean).join('');
   return '<pre>' + html + '</pre>';
+}
+
+// === Tool label/summary localization ===
+
+/**
+ * Localize a tool label (the first line of tool cards).
+ * Backend sends English like "Read(file.scala)" or "Bash\n  (npm run build)".
+ * This replaces the tool name portion with the localized equivalent.
+ */
+export function localizeToolLabel(label) {
+  if (!label) return label;
+  const firstNewline = label.indexOf('\n');
+  const firstLine = firstNewline >= 0 ? label.slice(0, firstNewline) : label;
+  const rest = firstNewline >= 0 ? label.slice(firstNewline) : '';
+
+  // "[MCP] toolName" pattern
+  if (firstLine.startsWith('[MCP] ')) {
+    const mcpName = firstLine.slice(6);
+    const localPrefix = t('tool.MCP');
+    if (localPrefix !== 'tool.MCP') {
+      return '[' + localPrefix + '] ' + mcpName + rest;
+    }
+    return label;
+  }
+
+  // Match "ToolName(args)" — captures tool name and everything inside parens
+  const m = firstLine.match(/^(\w+)\((.*)\)$/s);
+  if (m) {
+    const toolName = m[1];
+    const args = m[2];
+    const localName = t('tool.' + toolName);
+    if (localName !== 'tool.' + toolName) {
+      return localName + '(' + args + ')' + rest;
+    }
+    return label;
+  }
+
+  // Bare tool name without parens, e.g. "Bash" (when label is "Bash\n  (cmd)")
+  // or "Card" (when label is "Card\n  (title)")
+  const bareMatch = firstLine.match(/^(\w+)$/);
+  if (bareMatch) {
+    const localName = t('tool.' + bareMatch[1]);
+    if (localName !== 'tool.' + bareMatch[1]) {
+      return localName + rest;
+    }
+  }
+
+  return label;
+}
+
+/**
+ * Localize a tool result summary string.
+ * Backend sends English like "3 lines", "File created", "2 files matched".
+ */
+export function localizeToolSummary(summary, toolLabel) {
+  if (!summary) return summary;
+
+  // Exact match patterns (most specific first)
+  const exactMap = {
+    'File created': () => t('tool.result.fileCreated'),
+    'File updated': () => t('tool.result.fileUpdated'),
+    'Edited': () => t('tool.result.edited'),
+    'Created': () => t('tool.result.created'),
+    'No output': () => t('tool.result.noOutput'),
+    'No matches': () => t('tool.result.noMatches'),
+    'No files found': () => t('tool.result.noFilesFound'),
+    'Timed out': () => t('tool.result.timedOut'),
+    'Blocked': () => t('tool.result.blocked'),
+    'Interactive blocked': () => t('tool.result.interactiveBlocked'),
+    'Background': () => t('tool.result.background'),
+    'Sandbox bypassed': () => t('tool.result.sandboxBypassed'),
+    'Auto-background': () => t('tool.result.autoBackground'),
+  };
+
+  if (exactMap[summary]) {
+    const result = exactMap[summary]();
+    if (result !== summary) return result;
+  }
+
+  // Regex patterns
+  // "N lines"
+  let rm = summary.match(/^(\d+) lines$/);
+  if (rm) return t('tool.result.lines', { n: rm[1] });
+
+  // "N lines of output"
+  rm = summary.match(/^(\d+) lines of output$/);
+  if (rm) return t('tool.result.linesOfOutput', { n: rm[1] });
+
+  // "N lines fetched"
+  rm = summary.match(/^(\d+) lines fetched$/);
+  if (rm) return t('tool.result.linesFetched', { n: rm[1] });
+
+  // "N files found"
+  rm = summary.match(/^(\d+) files? found$/);
+  if (rm) return t('tool.result.filesFound', { n: rm[1] });
+
+  // "N files matched"
+  rm = summary.match(/^(\d+) files? matched$/);
+  if (rm) return t('tool.result.filesMatched', { n: rm[1] });
+
+  // "N files with matches"
+  rm = summary.match(/^(\d+) files with matches$/);
+  if (rm) return t('tool.result.filesWithMatches', { n: rm[1] });
+
+  // "N matches"
+  rm = summary.match(/^(\d+) matches$/);
+  if (rm) return t('tool.result.matches', { n: rm[1] });
+
+  // "N lines added" / "N lines removed" / combo "Na added, Nr removed"
+  rm = summary.match(/^(\d+) lines? added$/);
+  if (rm) return t('tool.result.lineAdded', { n: rm[1] });
+  rm = summary.match(/^(\d+) lines? removed$/);
+  if (rm) return t('tool.result.lineRemoved', { n: rm[1] });
+
+  // "Na added, Nr removed"
+  rm = summary.match(/^(\d+) lines? added, (\d+) lines? removed$/);
+  if (rm) return t('tool.result.lineAdded', { n: rm[1] }) + ', ' + t('tool.result.lineRemoved', { n: rm[2] });
+
+  // "N of M lines"
+  rm = summary.match(/^(\d+) of (\d+) lines$/);
+  if (rm) return t('tool.result.ofLines', { current: rm[1], total: rm[2] });
+
+  // "Task #N created"
+  rm = summary.match(/^Task #(\d+) created$/);
+  if (rm) return t('tool.result.taskCreated', { id: rm[1] });
+
+  return summary;
 }
 
 // === Tool detail builder ===
