@@ -118,7 +118,12 @@ export function restoreFromStorage() {
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
-        tContent.style.display = 'none';
+        // If there's no text, keep thinking expanded so user can see what the model thought
+        if (!m.text) {
+          tLabel.classList.add('expanded');
+        } else {
+          tContent.style.display = 'none';
+        }
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
@@ -129,21 +134,24 @@ export function restoreFromStorage() {
           tLabel.classList.toggle('expanded', !visible);
         };
       }
-      const row = document.createElement('div');
-      row.className = 'row ai';
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble ai';
-      bubble.innerHTML = renderMarkdownWithMath(m.text || '');
-      row.appendChild(bubble);
-      if (m.durationMs != null && m.durationMs > 0) {
-        const badge = document.createElement('div');
-        badge.className = 'duration-badge';
-        let text = pickThinkingPhrase(m.durationMs, i);
-        if (m.model) text += ' · ' + m.model;
-        badge.textContent = text;
-        row.appendChild(badge);
+      // Only render AI bubble if there's actual text content
+      if (m.text) {
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble ai';
+        bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+        row.appendChild(bubble);
+        if (m.durationMs != null && m.durationMs > 0) {
+          const badge = document.createElement('div');
+          badge.className = 'duration-badge';
+          let text = pickThinkingPhrase(m.durationMs, i);
+          if (m.model) text += ' · ' + m.model;
+          badge.textContent = text;
+          row.appendChild(badge);
+        }
+        chat.appendChild(row);
       }
-      chat.appendChild(row);
     } else if (m.type === 'tool') {
       // Inline render to avoid triggering saveMsg again
       const row = document.createElement('div');
@@ -367,7 +375,12 @@ export function restoreFromBackendHistory(msgs) {
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
-        tContent.style.display = 'none';
+        // If there's no text, keep thinking expanded so user can see what the model thought
+        if (!m.text) {
+          tLabel.classList.add('expanded');
+        } else {
+          tContent.style.display = 'none';
+        }
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
@@ -378,21 +391,24 @@ export function restoreFromBackendHistory(msgs) {
           tLabel.classList.toggle('expanded', !visible);
         };
       }
-      const row = document.createElement('div');
-      row.className = 'row ai';
-      const bubble = document.createElement('div');
-      bubble.className = 'bubble ai';
-      bubble.innerHTML = renderMarkdownWithMath(m.text || '');
-      row.appendChild(bubble);
-      if (m.durationMs != null && m.durationMs > 0) {
-        const badge = document.createElement('div');
-        badge.className = 'duration-badge';
-        let text = pickThinkingPhrase(m.durationMs, i);
-        if (m.model) text += ' · ' + m.model;
-        badge.textContent = text;
-        row.appendChild(badge);
+      // Only render AI bubble if there's actual text content
+      if (m.text) {
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble ai';
+        bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+        row.appendChild(bubble);
+        if (m.durationMs != null && m.durationMs > 0) {
+          const badge = document.createElement('div');
+          badge.className = 'duration-badge';
+          let text = pickThinkingPhrase(m.durationMs, i);
+          if (m.model) text += ' · ' + m.model;
+          badge.textContent = text;
+          row.appendChild(badge);
+        }
+        chat.appendChild(row);
       }
-      chat.appendChild(row);
     } else if (m.type === 'tool') {
       const row = document.createElement('div');
       row.className = 'row tool';

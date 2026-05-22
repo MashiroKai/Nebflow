@@ -50,6 +50,8 @@ export default {
   // === Settings panel ===
   'settings.runtime': '运行时',
   'settings.thinkingMode': '思考模式',
+  'settings.thinkingBudget': '思考 Token 预算',
+  'settings.thinkingBudgetHint': '模型内部思考可使用的最大 token 数。调高提升复杂推理质量，但增加延迟和成本。',
   'settings.language': '语言',
   'settings.compaction': '上下文压缩',
   'settings.compactTtl': '微压缩缓存 TTL',

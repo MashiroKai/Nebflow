@@ -89,41 +89,26 @@ body.sidebar-collapsed #sidebar-panel {
   opacity: 0;
 }
 
-/* Edge hover zone */
-#sidebar-edge {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 18px;
-  height: 100%;
-  z-index: 50;
+/* Toggle button */
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--color-frame-text-muted);
+  border-radius: 6px;
   cursor: pointer;
+  margin-right: 6px;
+  flex-shrink: 0;
+  padding: 0;
+  transition: color 0.15s, background 0.15s;
 }
-#sidebar-edge::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: -26px;
-  bottom: 0;
-  background: linear-gradient(to right, rgba(0,0,0,0.06), transparent 80%);
-  opacity: 0;
-  transition: opacity 0.3s;
-  pointer-events: none;
-}
-@media (prefers-color-scheme: dark) {
-  #sidebar-edge::before {
-    background: linear-gradient(to right, rgba(255,255,255,0.07), transparent 80%);
-  }
-  body.sidebar-collapsed #sidebar-edge::before {
-    background: linear-gradient(to right, rgba(255,255,255,0.12), transparent 80%);
-  }
-}
-#sidebar-edge.edge-hover::before {
-  opacity: 1;
-}
-body.sidebar-collapsed #sidebar-edge::before {
-  background: linear-gradient(to right, rgba(0,0,0,0.10), transparent 80%);
+.sidebar-toggle:hover {
+  color: var(--color-frame-text-bright);
+  background: var(--color-frame-hover);
 }
 
 /* Scrollbar styles */

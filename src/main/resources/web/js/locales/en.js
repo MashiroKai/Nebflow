@@ -50,6 +50,8 @@ export default {
   // === Settings panel ===
   'settings.runtime': 'Runtime',
   'settings.thinkingMode': 'Thinking Mode',
+  'settings.thinkingBudget': 'Thinking Token Budget',
+  'settings.thinkingBudgetHint': 'Maximum tokens for internal reasoning. Higher = better complex reasoning, but slower and more expensive.',
   'settings.language': 'Language',
   'settings.compaction': 'Context Compaction',
   'settings.compactTtl': 'Micro Compact Cache TTL',

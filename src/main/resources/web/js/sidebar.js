@@ -4,7 +4,7 @@ import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { showAgentModal, startInlineNewSession, showBatchDeleteModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
-import { finishAgent, setStatus } from './chat.js';
+import { finishAgent, setStatus, renderToolPending } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
@@ -148,8 +148,11 @@ export function renderSettings() {
   const defaultModel = model.default || '';
   const fallbacks = model.fallbacks || [];
 
-  // Request feishu global config to populate settings
-  sendWs({type: 'getFeishuGlobalConfig'});
+  // Request feishu global config once (cache result in state)
+  if (!state.feishuGlobalConfigFetched) {
+    state.feishuGlobalConfigFetched = true;
+    sendWs({type: 'getFeishuGlobalConfig'});
+  }
 
   // Load card design prompt
   sendWs({type: 'getCardDesign'});
@@ -167,6 +170,11 @@ export function renderSettings() {
       <div class="settings-row">
         <span class="settings-label">${t('settings.thinkingMode')}</span>
         <div class="toggle ${state.thinkingMode ? 'on' : ''}" id="toggle-thinking"></div>
+      </div>
+      <div class="cfg-form-group" id="thinking-budget-group" style="display:${state.thinkingMode ? 'block' : 'none'}">
+        <label class="cfg-label">${t('settings.thinkingBudget')}</label>
+        <input class="cfg-input" id="cfg-thinking-budget" type="number" min="1024" value="${state.thinkingMode?.budgetTokens ?? 32000}" autocomplete="off">
+        <div class="cfg-hint">${t('settings.thinkingBudgetHint')}</div>
       </div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
@@ -315,8 +323,20 @@ function bindSettingsEvents(content, cfg, allModels) {
   document.getElementById('toggle-thinking')?.addEventListener('click', function() {
     this.classList.toggle('on');
     const enabled = this.classList.contains('on');
-    state.thinkingMode = enabled ? {enabled: true} : null;
+    const budgetEl = document.getElementById('cfg-thinking-budget');
+    const budgetVal = budgetEl ? parseInt(budgetEl.value) || 32000 : 32000;
+    state.thinkingMode = enabled ? {enabled: true, budgetTokens: budgetVal} : null;
     sendWs({type: 'setThinking', thinking: state.thinkingMode});
+    const group = document.getElementById('thinking-budget-group');
+    if (group) group.style.display = enabled ? 'block' : 'none';
+  });
+
+  document.getElementById('cfg-thinking-budget')?.addEventListener('change', function() {
+    const val = parseInt(this.value) || 32000;
+    if (state.thinkingMode?.enabled) {
+      state.thinkingMode = {enabled: true, budgetTokens: val};
+      sendWs({type: 'setThinking', thinking: state.thinkingMode});
+    }
   });
 
   // Language selector
@@ -1145,6 +1165,13 @@ export function resetChatForActiveSession() {
   }
 
   // Interactive AskUser is re-rendered in the historyPage handler (main.js) after history loads
+
+  // Re-create pending tool card if this session has an in-progress tool
+  // Must be done here (not just in historyPage handler) so the spinner is visible
+  // immediately when switching back, before the async getHistory roundtrip completes.
+  if (state.sessionPendingTools[sid]) {
+    renderToolPending(state.sessionPendingTools[sid].label, sid);
+  }
 
   // Update busy UI
   const isBusy = isStreaming;
@@ -1980,6 +2007,36 @@ function renderFolderItem(folder, sessions, container) {
     // Sessions inside this folder
     sessions.forEach(s => {
       renderOneSessionItem(s, childrenContainer, { inFolder: true });
+    });
+    // VSCode-style: allow dropping into the expanded children area, not just the folder name row
+    childrenContainer.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'move';
+      childrenContainer.classList.add('drag-over');
+    });
+    childrenContainer.addEventListener('dragleave', (e) => {
+      if (!childrenContainer.contains(e.relatedTarget)) {
+        childrenContainer.classList.remove('drag-over');
+      }
+    });
+    childrenContainer.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      childrenContainer.classList.remove('drag-over');
+      const data = e.dataTransfer.getData('text/plain');
+      if (!data) return;
+      if (data.startsWith('folder:')) {
+        const fid = data.slice(7);
+        if (fid && fid !== folder.id) {
+          sendWs({ type: 'moveFolder', folderId: fid, parentId: folder.id });
+        }
+      } else if (data.startsWith('batch:')) {
+        const ids = data.slice(6).split(',').filter(Boolean);
+        ids.forEach(sid => sendWs({ type: 'moveSessionToFolder', sessionId: sid, folderId: folder.id }));
+      } else {
+        sendWs({ type: 'moveSessionToFolder', sessionId: data, folderId: folder.id });
+      }
     });
     folderWrapper.appendChild(childrenContainer);
   }
