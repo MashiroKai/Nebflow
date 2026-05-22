@@ -55,9 +55,9 @@ object FeishuGlobalConfig:
       case Some(raw) =>
         decode[FeishuGlobalConfig](raw) match
           case Right(cfg) if cfg.enabled =>
-            logger.info(s"Feishu bridge enabled (appId=${cfg.appId})").as(Some(cfg))
+            IO.pure(Some(cfg))
           case Right(cfg) =>
-            logger.info("Feishu bridge disabled in config").as(None)
+            IO.pure(None)
           case Left(err) =>
             logger.warn(s"Failed to parse feishu.json: ${err.getMessage}").as(None)
       case None =>

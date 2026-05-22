@@ -684,6 +684,11 @@
   position: relative;
   margin-left: 6px;
   border-left: 1.5px solid var(--color-frame-border-light);
+  transition: border-color 0.15s, background 0.15s;
+}
+.folder-children.drag-over {
+  border-left-color: var(--color-primary);
+  background: rgba(7,193,96,0.04);
 }
 
 /* Inline folder input (new folder, subfolder) */

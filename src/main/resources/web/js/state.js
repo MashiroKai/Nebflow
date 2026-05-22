@@ -57,6 +57,10 @@ export default {
 
   // Per-session pending tool metadata: sessionId -> { label } (persists across session switches)
   sessionPendingTools: {},
+  // Per-session pending AI message segments: sessionId -> [{ type:'ai', text, thinking }]
+  // Accumulated between tool call boundaries, flushed by toolStart/toolCallDetected
+  // and consumed by the done handler to reconstruct correct per-bubble messages.
+  sessionPendingAiMessages: {},
 
   // Task list cache per session
   sessionTasks: {},
