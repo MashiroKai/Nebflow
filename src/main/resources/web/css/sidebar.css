@@ -680,16 +680,20 @@
 .folder-item:hover .folder-delete { opacity: 1; }
 .folder-delete:hover { color: var(--color-error); }
 .folder-delete svg { width: 13px; height: 13px; stroke-width: 1.8; }
+.folder-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+  margin-left: 4px;
+  opacity: 0.5;
+}
+.folder-item:hover .folder-badge { opacity: 0.8; }
 .folder-children {
   position: relative;
   margin-left: 6px;
   border-left: 1.5px solid var(--color-frame-border-light);
-  transition: border-color 0.15s, background 0.15s;
 }
-.folder-children.drag-over {
-  border-left-color: var(--color-primary);
-  background: rgba(7,193,96,0.04);
-}
+
 
 /* Inline folder input (new folder, subfolder) */
 .folder-new-row {

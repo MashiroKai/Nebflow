@@ -34,6 +34,7 @@ import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
 import { initSearch, renderSearchResults } from './search.js';
 import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from './memory.js';
+import { handleRulesData, handleRulesSaved } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 
@@ -233,8 +234,13 @@ onMessage('textDone', (msg) => {
   const sid = msg.sessionId;
   if (isActive(msg)) {
     if (state.currentThinkingBubble) finishThinking();
+    const tThinking = state.sessionThinkingBuffers[sid] || '';
+    if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
     const data = finishAi();
-    if (data) saveMsg(data, sid);
+    if (data) {
+      data.thinking = tThinking || undefined;
+      saveMsg(data, sid);
+    }
   } else if (sid && state.sessionTexts[sid]) {
     // Non-active session: save to localStorage + stash in pendingRestore
     // for switch-back restoration, then reset sessionTexts/sessionThinkingBuffers
@@ -294,8 +300,15 @@ onMessage('toolCallDetected', (msg) => {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
     if (state.currentThinkingBubble) finishThinking();
+    // Flush thinking buffer for active sessions to prevent cross-turn concatenation.
+    // finishAi() only returns text, so we read thinking separately from the buffer.
+    const tThinking = state.sessionThinkingBuffers[sid] || '';
+    if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
     const prevData = finishAi();
-    if (prevData) saveMsg(prevData, msg.sessionId);
+    if (prevData) {
+      prevData.thinking = tThinking || undefined;
+      saveMsg(prevData, msg.sessionId);
+    }
     renderToolPending(msg.name, msg.sessionId);
   }
 });
@@ -327,8 +340,14 @@ onMessage('toolStart', (msg) => {
     clearRetryStatus();
     // Finish the current AI bubble so that text after tool execution goes into a new bubble
     if (state.currentThinkingBubble) finishThinking();
+    // Flush thinking buffer for active sessions (same as toolCallDetected)
+    const tThinking = state.sessionThinkingBuffers[toolStartSid] || '';
+    if (toolStartSid && state.sessionThinkingBuffers[toolStartSid]) delete state.sessionThinkingBuffers[toolStartSid];
     const prevData = finishAi();
-    if (prevData) saveMsg(prevData, msg.sessionId);
+    if (prevData) {
+      prevData.thinking = tThinking || undefined;
+      saveMsg(prevData, msg.sessionId);
+    }
     renderToolPending(msg.label, msg.sessionId);
   }
 });
@@ -464,6 +483,10 @@ onMessage('done', (msg) => {
     // Finish thinking bubble if still streaming
     const thinkingText = finishThinking() || (sid ? state.sessionThinkingBuffers[sid] || '' : '');
     if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
+    // Clear thinkingText unconditionally — when appendThinkingDelta skipped DOM
+    // creation (second+ thinking block after text), finishThinking() had no bubble
+    // to clear and state.thinkingText retains skipped content.
+    state.thinkingText = '';
     const data = finishAi(durationMs, msg.model);
     if (data) {
       data.thinking = thinkingText || undefined;
@@ -1391,6 +1414,10 @@ onMessage('askDone', (msg) => {
     saveMsg({ type: 'ask', question: buf.question, answer: buf.answer, durationMs, model: msg.model }, sid);
   }
   if (sid) delete state.sessionAskBuffers[sid];
+  // Clean up thinking buffer so the subsequent 'done' event doesn't save
+  // ask-mode thinking as a separate AI message (stray thinking fragment).
+  if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
+  if (state.currentThinkingBubble) finishThinking();
 });
 onMessage('askError', (msg) => {
   const sid = msg.sessionId || state.activeSessionId;
@@ -1410,6 +1437,10 @@ onMessage('skillList', (msg) => {
 onMessage('memoryData', (msg) => handleMemoryData(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
 onMessage('memoryStatus', (msg) => showMemoryButton());
+
+// --- Rules ---
+onMessage('rulesData', (msg) => handleRulesData(msg));
+onMessage('rulesSaved', (msg) => handleRulesSaved(msg));
 
 // --- Card design prompt ---
 onMessage('cardDesignData', (msg) => { state.cardDesignPrompt = msg.content || ''; });

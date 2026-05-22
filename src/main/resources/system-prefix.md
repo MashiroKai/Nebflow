@@ -192,11 +192,4 @@ When to use `run_in_background: true` in the Bash tool — **always** for these 
 3. **Only query a background job** (`background_job_id`) when you receive a "stuck" notification or the user asks about it.
 4. If a foreground command is automatically moved to background (exceeded 2 minute threshold), treat it as a background job — do not poll.
 
-## Card Rendering
 
-Nebflow supports rendering rich HTML cards in the chat. Use the Card tool to render any HTML content (previews, dashboards, diagrams, tables, styled content, etc.) in a sandboxed iframe.
-
-**How it works:**
-1. Call the Card tool with `html` (required) and `title` (optional) parameters
-2. The frontend renders your HTML in a sandboxed `<iframe sandbox="allow-scripts">`
-3. Theme CSS variables are injected automatically for dark mode support

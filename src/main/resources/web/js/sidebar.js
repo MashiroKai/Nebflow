@@ -1921,6 +1921,7 @@ function renderFolderItem(folder, sessions, container) {
     '</div>' +
     '<div class="folder-icon"><i data-lucide="folder"></i></div>' +
     '<div class="folder-name">' + escapeHtml(folder.name) + '</div>' +
+    (folder.projectRoot ? '<span class="folder-badge" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
     '<div class="folder-status ' + statusCls + '">' +
       '<div class="folder-status-dot"></div>' +
     '</div>' +
@@ -2013,17 +2014,17 @@ function renderFolderItem(folder, sessions, container) {
       e.preventDefault();
       e.stopPropagation();
       e.dataTransfer.dropEffect = 'move';
-      childrenContainer.classList.add('drag-over');
+      folderEl.classList.add('drag-over');
     });
     childrenContainer.addEventListener('dragleave', (e) => {
       if (!childrenContainer.contains(e.relatedTarget)) {
-        childrenContainer.classList.remove('drag-over');
+        folderEl.classList.remove('drag-over');
       }
     });
     childrenContainer.addEventListener('drop', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      childrenContainer.classList.remove('drag-over');
+      folderEl.classList.remove('drag-over');
       const data = e.dataTransfer.getData('text/plain');
       if (!data) return;
       if (data.startsWith('folder:')) {
@@ -2059,12 +2060,20 @@ function showFolderCtxMenu(x, y, folderId) {
   const isPinned = state.pinnedFolders.has(folderId);
   const folder = state.folders.find(f => f.id === folderId);
   const hasParent = folder && folder.parentId;
+  const isTopLevel = folder && !folder.parentId;
   const menu = document.createElement('div');
   menu.className = 'session-ctx-menu';
   let html =
     '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? t('ctx.unpin') : t('ctx.pin')) + '</div>' +
     '<div class="ctx-item" data-action="rename">' + t('ctx.rename') + '</div>' +
     '<div class="ctx-item" data-action="new-subfolder">' + t('ctx.newSubfolder') + '</div>';
+  // Project root — only for top-level folders
+  if (isTopLevel) {
+    html += '<div class="ctx-separator"></div>' +
+      '<div class="ctx-item" data-action="set-project-root">' + t('ctx.setProjectRoot') + '</div>';
+  }
+  // Rules — available for all folders
+  html += '<div class="ctx-item" data-action="edit-rules">' + t('ctx.editRules') + '</div>';
   if (hasParent) {
     html += '<div class="ctx-item" data-action="move-out">' + t('ctx.moveOut') + '</div>';
   }
@@ -2095,6 +2104,27 @@ function showFolderCtxMenu(x, y, folderId) {
     createNewFolder(folderId);
   });
 
+  // Set project root (top-level only)
+  if (isTopLevel) {
+    menu.querySelector('[data-action="set-project-root"]').addEventListener('click', () => {
+      if (!folder) return;
+      const current = folder.projectRoot || '';
+      const newPath = prompt(t('ctx.setProjectRootPrompt'), current);
+      if (newPath === null) { dismissCtxMenu(); return; }
+      const trimmed = newPath.trim();
+      const projectRoot = trimmed.length > 0 ? trimmed : null;
+      sendWs({ type: 'setFolderProjectRoot', folderId, projectRoot });
+      dismissCtxMenu();
+    });
+  }
+
+  // Edit rules
+  menu.querySelector('[data-action="edit-rules"]').addEventListener('click', () => {
+    if (!folder) return;
+    openRulesEditor(folderId, folder.name);
+    dismissCtxMenu();
+  });
+
   if (hasParent) {
     menu.querySelector('[data-action="move-out"]').addEventListener('click', () => {
       sendWs({ type: 'moveFolder', folderId, parentId: null });
@@ -2113,6 +2143,64 @@ function showFolderCtxMenu(x, y, folderId) {
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
   activeCtxMenu = menu;
+}
+
+/** Open a simple rules editor for a folder. */
+let activeRulesFolderId = null;
+function openRulesEditor(folderId, folderName) {
+  activeRulesFolderId = folderId;
+  // Remove existing editor if any
+  const existing = document.getElementById('rules-editor-modal');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'rules-editor-overlay';
+  overlay.className = 'modal-overlay on';
+
+  const modal = document.createElement('div');
+  modal.id = 'rules-editor-modal';
+  modal.className = 'modal-box show';
+  modal.innerHTML =
+    '<div class="modal-title">' + t('rules.title') + ' — ' + escapeHtml(folderName) + '</div>' +
+    '<textarea id="rules-editor-input" class="memory-content-input" placeholder="' + t('rules.placeholder') + '"></textarea>' +
+    '<div class="modal-buttons">' +
+      '<button id="rules-editor-cancel" class="modal-cancel">' + t('modal.cancel') + '</button>' +
+      '<button id="rules-editor-save" class="modal-confirm">' + t('modal.save') + '</button>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+  document.body.appendChild(modal);
+
+  // Fetch current content
+  sendWs({ type: 'getRules', folderId });
+
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeRulesEditor();
+  });
+  document.getElementById('rules-editor-cancel').addEventListener('click', closeRulesEditor);
+  document.getElementById('rules-editor-save').addEventListener('click', () => {
+    const content = document.getElementById('rules-editor-input').value;
+    sendWs({ type: 'saveRules', folderId: activeRulesFolderId, content });
+  });
+}
+
+function closeRulesEditor() {
+  activeRulesFolderId = null;
+  document.getElementById('rules-editor-modal')?.remove();
+  document.getElementById('rules-editor-overlay')?.remove();
+}
+
+/** Handle rulesData from server. */
+export function handleRulesData(data) {
+  if (activeRulesFolderId === data.folderId) {
+    const input = document.getElementById('rules-editor-input');
+    if (input) input.value = data.content || '';
+  }
+}
+
+/** Handle rulesSaved from server. */
+export function handleRulesSaved(data) {
+  if (data.folderId) closeRulesEditor();
 }
 
 export function moveSessionToFolder(sessionId, folderId) {

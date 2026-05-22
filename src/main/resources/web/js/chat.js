@@ -785,9 +785,19 @@ export function renderAskError(msg) {
 
 // ---------- Thinking bubble rendering ----------
 export function appendThinkingDelta(delta) {
-  const chat = state.dom.chat;
+  // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   state.thinkingText += delta;
+  // If text bubble already exists (e.g. second+ thinking block after text has started),
+  // do NOT create a new thinking bubble — it would appear after the text (misplaced).
+  // The thinking content is still accumulated in state.thinkingText + sessionThinkingBuffers
+  // and will be captured correctly by finishThinking() + done handler's fallback.
   if (!state.currentThinkingBubble) {
+    if (state.currentAiBubble) {
+      // Text already showing — skip DOM bubble creation for this thinking block.
+      // Content is in state.thinkingText for persistence; no bubble needed.
+      return;
+    }
+    const chat = state.dom.chat;
     const row = document.createElement('div');
     row.className = 'row ai thinking-row';
     const bubble = document.createElement('div');

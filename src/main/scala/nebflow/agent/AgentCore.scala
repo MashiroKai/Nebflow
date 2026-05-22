@@ -292,7 +292,7 @@ private[agent] trait AgentCore:
         //   tools:     tool definitions                          <- cache breakpoint (stable)
         //   messages:  [per-turn reminders] + actual conversation (dynamic, not persisted)
         // Env info is baked into system prompt once — git state is omitted; agent uses Bash on demand.
-        val baseSystemStable = buildSystemPrompt(agentDef, resources)
+        val baseSystemStable = buildSystemPrompt(agentDef, resources, state.projectRoot, state.rulesMd)
         // In compact mode, disable tools — model must respond with summary text only
         val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef)
 
@@ -501,8 +501,9 @@ private[agent] trait AgentCore:
     val sessionIdOpt = state.sessionId
 
     // Build ToolContext with full agent-scoped context
+    val effectiveProjectRoot = state.projectRoot.getOrElse(resources.projectRoot.toString)
     val toolCtx = ToolContext(
-      projectRoot = resources.projectRoot.toString,
+      projectRoot = effectiveProjectRoot,
       llm = Some(resources.llm),
       sessionStore = Some(resources.sessionStore),
       agentActorRef = Some(ctx.self),
@@ -525,8 +526,8 @@ private[agent] trait AgentCore:
       hookEngine = resources.hookEngine,
       hookContext = HookContext(
         sessionId = state.sessionId,
-        projectRoot = resources.projectRoot.toString,
-        cwd = resources.projectRoot.toString
+        projectRoot = effectiveProjectRoot,
+        cwd = effectiveProjectRoot
       )
     )
 
@@ -910,13 +911,20 @@ private[agent] trait AgentCore:
   // Prompt / tool helpers
   // ============================================================
 
-  protected def buildSystemPrompt(agentDef: AgentDef, resources: SharedResources): String =
+  protected def buildSystemPrompt(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    sessionProjectRoot: Option[String] = None,
+    sessionRulesMd: Option[String] = None
+  ): String =
     val prefix = loadPlatformPrefix()
     val agentPrompt =
       if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
       else Repl.loadSystemPrompt()
-    val envInfo = Repl.buildEnvInfo(resources.projectRoot.toString)
-    s"$prefix$agentPrompt\n\n$envInfo"
+    val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
+    val envInfo = Repl.buildEnvInfo(effectiveRoot)
+    val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
+    s"$prefix$agentPrompt\n\n$envInfo$rulesBlock"
 
   /** Platform-level system prompt, mandatory for all agents, shipped inside the JAR. */
   private def loadPlatformPrefix(): String =

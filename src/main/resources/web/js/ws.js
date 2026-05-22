@@ -70,7 +70,8 @@ export function connect() {
         'agentConfig', 'agentCreated', 'agentUpdated',
         'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
         'memoryData', 'memorySaved', 'memoryStatus', 'searchResults',
-        'cardDesignData', 'cardDesignSaved'
+        'cardDesignData', 'cardDesignSaved',
+        'rulesData', 'rulesSaved', 'rulesStatus'
       ];
       // Terminal state events update per-session busy/attention status — must always be processed
       // so the sidebar accurately reflects session state even when the user is viewing another session.

@@ -11,6 +11,7 @@ export default {
   'sidebar.newSession': 'New Session — start a new conversation',
   'sidebar.searchPlaceholder': 'Search chats...',
   'search.clear': 'Clear — clear the search',
+  'sidebar.toggle': 'Collapse or expand sidebar — show or hide the session panel',
   'sidebar.edgeToggle': 'Toggle sidebar — expand or collapse',
   'sidebar.settingsTitle': 'Settings',
   'sidebar.feishuUnbind': 'Unbind — disconnect from Feishu group',
@@ -143,6 +144,13 @@ export default {
   'ctx.deselectAll': 'Deselect all',
   'ctx.batchDelete': 'Delete {count} selected sessions',
   'ctx.batchCancel': 'Cancel selection',
+  'ctx.setProjectRoot': 'Set project directory',
+  'ctx.setProjectRootPrompt': 'Project directory path (leave empty to clear):',
+  'ctx.editRules': 'Edit rules',
+
+  // === Rules ===
+  'rules.title': 'Project Rules',
+  'rules.placeholder': 'Enter project rules for this folder...\nSub-folders automatically inherit parent rules.',
 
   // === Session sidebar ===
   'session.namePlaceholder': 'Session name...',

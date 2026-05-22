@@ -216,39 +216,22 @@ object CardTool extends Tool:
     catch case _: Exception => designPromptCache._2
 
   /** Base description without user design prompt. */
-  private val baseDescription = """Renders HTML content as a visual card in the chat.
+  private val baseDescription =
+    """Renders HTML content as a styled visual card in the chat — perfect for layouts, dashboards, diagrams, and anything that benefits from visual structure.
 
-Use this tool when you want to show something visual — previews, dashboards, diagrams, tables, styled content, etc.
-Just pass raw HTML (with inline CSS). The frontend renders it in a sandboxed iframe.
+This tool shines where Markdown falls short: spatial layouts, color coding, side-by-side comparisons, and any content the user should grasp at a glance rather than read through.
 
-Use this when plain text or Markdown falls short. HTML enables layouts, colors, and visual precision that Markdown cannot express.
-
-Typical scenarios:
-- Multi-column layouts — side-by-side comparisons, dashboards with panels, grid-based designs
-- Color-dependent content — color palettes, heatmaps, status indicators with precise colors
-- Visual UI previews — layout mockups with exact spacing, border radii, shadows, gradients
-- Interactive-looking elements — hover states, clickable cards, toggle switches (visual only, no JS execution)
-- Diagrams with precise positioning — architecture diagrams, flowcharts, timelines, annotated images
-- Progress & status visuals — progress bars, step indicators, circular gauges, completion badges
-- Concept explanations — math/physics formulas with annotated SVG diagrams, step-by-step derivations with visual alignment
-- Before/after comparisons — split views, slider-like overlays, A/B layout diffs
-- Complex data grids — sortable-style tables with styled headers, conditional formatting, multi-level grouping
-- Pixel-perfect mockups — anything where exact padding, alignment, or visual hierarchy matters
-
+Recommended use cases:
+- Side-by-side layouts — comparisons, dashboards, before/after, multi-panel views
+- Status dashboards — progress bars, step indicators, completion badges
+- Architecture diagrams — flowcharts, component relationships, annotated layouts
+- Data grids with conditional formatting — color-coded cells, heatmaps, thresholds
+- UI mockups — pixel-precise layout previews, component designs
+- Color/status indicators — colored dots, labels, status markers
 
 Parameters:
-- html (string, required): The HTML content to render. Include all styles inline or in a <style> tag.
-  Use CSS custom properties from the host theme: var(--color-primary), var(--color-text), var(--color-bg), etc.
-- title (string, optional): A short title shown above the card (e.g. "Color Palette", "Page Preview").
-
-Guidelines:
-- Keep HTML self-contained — all styles inline or in <style> tags within the HTML.
-- For dark mode support, use `@media (prefers-color-scheme: dark)` or the injected CSS variables.
-- JavaScript in the HTML will NOT execute (sandboxed for security).
-- Keep the payload reasonable in size — very large HTML wastes LLM context tokens.
-- **Font size**: default is 14px. Use smaller sizes (12–14px) for dense content like tables or dashboards. Avoid 16px+ body text — it wastes space in the chat stream.
-- **Horizontal layout**: the card width is limited (~85% of chat width). For multi-column layouts, use `flex-wrap: wrap`, `min-width` on columns, or ensure content can reflow. Do not rely on wide fixed widths.
-- **Images**: use `max-width: 100%` on images to prevent overflow.
+- html (string, required): HTML with inline CSS. Supports dark mode via var(--color-*) CSS variables. JavaScript does NOT execute (sandboxed iframe).
+- title (string, optional): Short title above the card.
 
 Example:
 {
