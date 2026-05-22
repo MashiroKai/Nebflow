@@ -8,13 +8,14 @@ import nebflow.core.NebflowLogger
 final case class SkillInfo(name: String, description: String, filePath: String)
 
 object SkillInfo:
+
   given Encoder[SkillInfo] = Encoder.instance { s =>
     Json.obj("name" -> s.name.asJson, "description" -> s.description.asJson, "filePath" -> s.filePath.asJson)
   }
 
 final case class SkillContent(content: String, baseDir: String)
 
-object SkillService {
+object SkillService:
   private val logger = NebflowLogger.forName("nebflow.skill")
 
   private val skillsDir: os.Path =
@@ -24,16 +25,18 @@ object SkillService {
   def listSkills(): IO[List[SkillInfo]] = IO.delay {
     if !os.isDir(skillsDir) then Nil
     else
-      os.list(skillsDir).flatMap { subDir =>
-        if !os.isDir(subDir) then None
-        else
-          val skillFile = subDir / "skill.md"
-          if !os.isFile(skillFile) then None
+      os.list(skillsDir)
+        .flatMap { subDir =>
+          if !os.isDir(subDir) then None
           else
-            readSkillFrontmatter(skillFile).map { case (name, desc) =>
-              SkillInfo(name, desc, skillFile.toString)
-            }
-      }.toList
+            val skillFile = subDir / "skill.md"
+            if !os.isFile(skillFile) then None
+            else
+              readSkillFrontmatter(skillFile).map { case (name, desc) =>
+                SkillInfo(name, desc, skillFile.toString)
+              }
+        }
+        .toList
   }
 
   /** Load full skill content from a skill file path. */
@@ -54,8 +57,7 @@ object SkillService {
       val name = extractField(frontmatter, "name").getOrElse((filePath / os.up).baseName)
       val description = extractField(frontmatter, "description").getOrElse("")
       Some((name, description))
-    catch
-      case _: Exception => None
+    catch case _: Exception => None
 
   private def extractFrontmatter(content: String): String =
     val trimmed = content.trim
@@ -78,4 +80,4 @@ object SkillService {
       .find(_.startsWith(s"$field:"))
       .map(_.drop(field.length + 1).trim)
       .map(_.stripPrefix("\"").stripSuffix("\"").stripPrefix("'").stripSuffix("'"))
-}
+end SkillService

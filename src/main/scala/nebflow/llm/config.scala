@@ -93,19 +93,26 @@ object ServiceLlmConfig:
   given Decoder[ServiceLlmConfig] = deriveDecoder[ServiceLlmConfig]
 
 case class ThinkingConfig(
-  enabled: Boolean = true
+  enabled: Boolean = true,
+  budgetTokens: Int = 32000
 )
 
 object ThinkingConfig:
   given io.circe.Encoder[ThinkingConfig] = io.circe.generic.semiauto.deriveEncoder
-  given io.circe.Decoder[ThinkingConfig] = io.circe.generic.semiauto.deriveDecoder
+
+  given io.circe.Decoder[ThinkingConfig] = io.circe.Decoder.instance { c =>
+    for
+      enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(true))
+      budgetTokens <- c.downField("budgetTokens").as[Option[Int]].map(_.getOrElse(32000))
+    yield ThinkingConfig(enabled, budgetTokens)
+  }
 
   /** Convert to the raw JSON shape expected by LLM adapters (e.g. Anthropic extended thinking). */
   def toLlmJson(tc: ThinkingConfig): io.circe.Json =
     if tc.enabled then
       io.circe.Json.obj(
         "type" -> "enabled".asJson,
-        "budget_tokens" -> 32000.asJson
+        "budget_tokens" -> tc.budgetTokens.asJson
       )
     else io.circe.Json.Null
 end ThinkingConfig

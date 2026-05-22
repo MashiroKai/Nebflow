@@ -411,7 +411,7 @@ private[agent] trait AgentCore:
             )
             result <- resources.llm
               .sendStream(request, onAttempt = Some(onAttemptCb))
-              .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt, isAskTurn))
+              .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
               .compile
               .toList
               .map(aggregateChunks)
@@ -845,28 +845,29 @@ private[agent] trait AgentCore:
     ctx: ActorContext[AgentCommand],
     isSubagent: Boolean = true,
     sessionId: Option[String] = None,
-    isAskMode: Boolean = false
+    isAskMode: Boolean = false,
+    isCompactTurn: Boolean = false
   ): fs2.Pipe[IO, StreamChunk, StreamChunk] =
     stream =>
       stream.evalTap {
-        case StreamChunk.TextDelta(delta) if delta.nonEmpty =>
+        case StreamChunk.TextDelta(delta) if delta.nonEmpty && !isCompactTurn =>
           val json =
             if isAskMode then
               Json.obj("type" -> "askTextDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
             else if isSubagent then AgentStreamEvent.TextDelta(delta).toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
           wsSend(json)
-        case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty =>
+        case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty && !isCompactTurn =>
           val json =
             if isSubagent then AgentStreamEvent.Thinking.toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "thinkingDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
           wsSend(json)
-        case StreamChunk.ToolCallStart(name) if name != "AskUserQuestion" =>
+        case StreamChunk.ToolCallStart(name) if name != "AskUserQuestion" && !isCompactTurn =>
           val json =
             if isSubagent then AgentStreamEvent.ToolCallDetected(name).toJson(ctx.self.path.name, true, None)
             else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
           wsSend(json)
-        case StreamChunk.ToolCallChunk(tc) if tc.name != "AskUserQuestion" =>
+        case StreamChunk.ToolCallChunk(tc) if tc.name != "AskUserQuestion" && !isCompactTurn =>
           val json =
             if isSubagent then
               AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(tc)).toJson(ctx.self.path.name, true, None)

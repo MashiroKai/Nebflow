@@ -207,8 +207,9 @@ final class ShellSession private (
     }
 
   /**
-   * Cancel a background job by its ID. Returns false if the job is not found
-   *  or has already completed (result should be retrieved via getBackgroundResult).
+   * Cancel a background job by its ID.
+   * Kills the underlying process (if still alive), cancels all fibers, and removes the job.
+   * Returns true if the job was found and cancelled, false if already gone/completed.
    */
   def cancelBackgroundJob(jobId: String): IO[Boolean] =
     lifecycleMutex.lock.surround {
@@ -220,10 +221,25 @@ final class ShellSession private (
             job.isComplete.flatMap {
               case true => IO.pure(false)
               case false =>
-                job.deferred.complete(Left(new InterruptedException("Cancelled"))).attempt.void *>
-                  job.fiber.cancel *>
-                  job.heartbeatFiber.traverse(_.cancel) *>
-                  backgroundJobs.update(_ - jobId).as(true)
+                // 1) Kill the underlying OS process directly (not relying on fiber cancellation)
+                val killProcess = IO {
+                  val proc = job.health.processRef.get()
+                  if proc != null && proc.isAlive then
+                    proc.destroyForcibly()
+                    try proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+                    catch case _: InterruptedException => ()
+                  ()
+                }
+                // 2) Complete the deferred so any waiters get the cancellation signal
+                val completeDeferred =
+                  job.deferred.complete(Left(new InterruptedException("Cancelled"))).attempt.void
+                // 3) Cancel the cats-effect fibers (command + heartbeat)
+                val cancelFibers =
+                  job.fiber.cancel *> job.heartbeatFiber.traverse(_.cancel)
+                // 4) Remove from map
+                val remove = backgroundJobs.update(_ - jobId)
+
+                killProcess *> completeDeferred *> cancelFibers *> remove.as(true)
             }
         }
       yield res
