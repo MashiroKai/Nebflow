@@ -432,7 +432,13 @@ case class SessionContext(
   /** When Some(question), this turn is an inline /ask — single Q&A, no history write-back. */
   askMode: Option[String] = None,
   /** Auto-detected language for system prompt injection. Per-session, set on first user message. */
-  language: Option[String] = None
+  language: Option[String] = None,
+  /** Resolved project root from session's folder. None → use agent workspace default. */
+  projectRoot: Option[String] = None,
+  /** Resolved inherited rules.md content from folder chain. None → no rules. */
+  rulesMd: Option[String] = None,
+  /** This session's folder ID (for rules re-resolution). */
+  folderId: Option[String] = None
 )
 
 /** Pending user interaction deferreds. */
@@ -511,7 +517,10 @@ object AgentState:
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
     recentMessageIds: List[String] = Nil,
-    contextWindow: Int = nebflow.shared.Defaults.ContextWindow
+    contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
+    projectRoot: Option[String] = None,
+    rulesMd: Option[String] = None,
+    folderId: Option[String] = None
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -526,7 +535,10 @@ object AgentState:
         readTracker,
         fileHistory,
         Map.empty,
-        contextWindow
+        contextWindow,
+        folderId = folderId,
+        projectRoot = projectRoot,
+        rulesMd = rulesMd
       ),
       ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
@@ -563,6 +575,9 @@ extension (s: AgentState)
   def memoryBlock: String = s.session.memoryBlock
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
+  def projectRoot: Option[String] = s.session.projectRoot
+  def rulesMd: Option[String] = s.session.rulesMd
+  def folderId: Option[String] = s.session.folderId
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)

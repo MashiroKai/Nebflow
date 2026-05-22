@@ -25,8 +25,15 @@ export function confirmNewSession() {
   hideModals();
   if (!name) return;
   const payload = {type: 'createSession', name, agentName: state.selectedAgent || 'Nebula'};
-  if (state.activeFolderId) payload.folderId = state.activeFolderId;
+  const folderId = state.activeFolderId || getCurrentSessionFolderId();
+  if (folderId) payload.folderId = folderId;
   sendWs(payload);
+}
+
+/** Get the folderId of the currently displayed session, or null if at root. */
+function getCurrentSessionFolderId() {
+  const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
+  return active ? (active.folderId || null) : null;
 }
 
 // ---------- Inline New Session ----------
@@ -48,7 +55,8 @@ export function startInlineNewSession() {
     wrapper.remove();
     if (name) {
       const payload = { type: 'createSession', name, agentName: state.selectedAgent || 'Nebula' };
-      if (state.activeFolderId) payload.folderId = state.activeFolderId;
+      const folderId = state.activeFolderId || getCurrentSessionFolderId();
+      if (folderId) payload.folderId = folderId;
       sendWs(payload);
     }
   };

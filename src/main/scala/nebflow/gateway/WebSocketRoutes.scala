@@ -77,6 +77,29 @@ class WebSocketRoutes(
             fileHistory <- nebflow.core.tools.FileHistory.create()
             modelOverrides <- sharedResources.sessionModelOverrides.get
             contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
+            // Resolve folder-level projectRoot and inherited rules
+            folderId = metaOpt.flatMap(_.folderId)
+            resolvedProjectRoot <- sharedResources.sessionStore.resolveProjectRoot(folderId)
+            agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+            // Compute effective projectRoot: folder setting → agent workspace default
+            effectiveProjectRoot <- resolvedProjectRoot match
+              case Some(pr) => IO.pure(Some(pr))
+              case None => folderId match
+                case Some(fid) =>
+                  // Find folder name for default workspace directory
+                  val folderName = sharedResources.sessionStore.getFolderName(fid)
+                    .getOrElse(fid.take(8))
+                  val defaultPath = os.home / ".nebflow" / "agents" / agentName / "projects" / folderName
+                  IO.blocking {
+                    if !os.exists(defaultPath) then os.makeDir.all(defaultPath)
+                  }.as(Some(defaultPath.toString))
+                case None => IO.pure(None)
+            // Resolve inherited rules from folder chain
+            resolvedRules = folderId.map { fid =>
+              nebflow.service.RulesStore.resolveInheritedRules(fid, id =>
+                sharedResources.sessionStore.getFolderParentId(id)
+              )
+            }.flatten
           yield actorSystem.systemActorOf(
             AgentActor(
               agentDef,
@@ -89,7 +112,10 @@ class WebSocketRoutes(
               initialMessages = history,
               readTracker = Some(readTracker),
               fileHistory = Some(fileHistory),
-              contextWindow = contextWindow
+              contextWindow = contextWindow,
+              projectRoot = effectiveProjectRoot,
+              rulesMd = resolvedRules,
+              folderId = folderId
             ),
             s"agent-$sessionId"
           )
@@ -1006,6 +1032,62 @@ class WebSocketRoutes(
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
               }
+          else IO.unit
+
+        case "setFolderProjectRoot" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+          val projectRoot = json.hcursor.downField("projectRoot").as[Option[String]].getOrElse(None)
+          if folderId.nonEmpty then
+            sessionService
+              .setFolderProjectRoot(folderId, projectRoot)
+              .flatMap {
+                case Right(_) =>
+                  sessionStore.getActiveMeta.flatMap { metaOpt =>
+                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                    sendAgentSessionListByName(wsSend, agentName)
+                  }
+                case Left(err) =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
+        // ===== Folder Rules Management =====
+
+        case "getRules" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+          if folderId.nonEmpty then
+            val content = RulesStore.loadFolderRules(folderId).getOrElse("")
+            wsSend(io.circe.Json.obj(
+              "type" -> "rulesData".asJson,
+              "folderId" -> folderId.asJson,
+              "content" -> content.asJson
+            ))
+          else IO.unit
+
+        case "saveRules" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+          val content = json.hcursor.downField("content").as[String].getOrElse("")
+          if folderId.nonEmpty then
+            RulesStore.saveFolderRules(folderId, content) *>
+              wsSend(io.circe.Json.obj("type" -> "rulesSaved".asJson, "folderId" -> folderId.asJson))
+          else IO.unit
+
+        case "rulesStatus" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
+          if folderId.nonEmpty then
+            wsSend(io.circe.Json.obj(
+              "type" -> "rulesStatus".asJson,
+              "folderId" -> folderId.asJson,
+              "exists" -> RulesStore.exists(folderId).asJson,
+              "preview" -> RulesStore.preview(folderId).asJson
+            ))
           else IO.unit
 
         case "getAgentConfig" =>

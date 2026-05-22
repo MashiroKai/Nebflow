@@ -22,6 +22,7 @@ case class Folder(
   name: String,
   parentId: Option[String] = None,
   agentName: String = "",
+  projectRoot: Option[String] = None,  // only top-level folders may set this
   createdAt: Long,
   updatedAt: Long
 )
@@ -36,8 +37,8 @@ object Folder:
       "updatedAt" -> f.updatedAt.asJson
     )
     val withParent = f.parentId.fold(base)(p => base.deepMerge(Json.obj("parentId" -> p.asJson)))
-    if f.agentName.nonEmpty then withParent.deepMerge(Json.obj("agentName" -> f.agentName.asJson))
-    else withParent
+    val withAgent = if f.agentName.nonEmpty then withParent.deepMerge(Json.obj("agentName" -> f.agentName.asJson)) else withParent
+    f.projectRoot.fold(withAgent)(pr => withAgent.deepMerge(Json.obj("projectRoot" -> pr.asJson)))
   }
 
   given Decoder[Folder] = Decoder.instance { c =>
@@ -46,9 +47,10 @@ object Folder:
       name <- c.downField("name").as[String]
       parentId <- c.downField("parentId").as[Option[String]]
       agentName <- c.downField("agentName").as[Option[String]]
+      projectRoot <- c.downField("projectRoot").as[Option[String]]
       createdAt <- c.downField("createdAt").as[Long]
       updatedAt <- c.downField("updatedAt").as[Long]
-    yield Folder(id, name, parentId, agentName.getOrElse(""), createdAt, updatedAt)
+    yield Folder(id, name, parentId, agentName.getOrElse(""), projectRoot, createdAt, updatedAt)
   }
 end Folder
 
@@ -233,6 +235,16 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       }
     }
 
+  /** Get folder name by ID. Synchronous lookup from in-memory index. */
+  def getFolderName(folderId: String): Option[String] =
+    import cats.effect.unsafe.implicits.global
+    indexRef.get.map { case (_, _, folders) => folders.find(_.id == folderId).map(_.name) }.unsafeRunSync()
+
+  /** Get parentId for a folder — returns None if folder not found, Some(None) if top-level. */
+  def getFolderParentId(folderId: String): Option[Option[String]] =
+    import cats.effect.unsafe.implicits.global
+    indexRef.get.map { case (_, _, folders) => folders.find(_.id == folderId).map(_.parentId) }.unsafeRunSync()
+
   /** List sessions filtered by agentName. Sessions without agentName match "Nebula". */
   def listSessionsByAgent(agentName: String): IO[List[SessionMeta]] =
     indexRef.get.map { case (_, sessions, _) =>
@@ -372,10 +384,43 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def createFolder(name: String, parentId: Option[String] = None, agentName: String = ""): IO[Folder] =
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
-    val folder = Folder(id, name, parentId, agentName, now, now)
+    val folder = Folder(id, name, parentId, agentName, projectRoot = None, now, now)
     indexRef.update { case (activeId, sessions, folders) =>
       (activeId, sessions, folder :: folders)
     } *> saveIndex *> IO.pure(folder)
+
+  /** Set projectRoot on a top-level folder. Returns Left(error) if folder is not top-level. */
+  def setFolderProjectRoot(folderId: String, projectRoot: Option[String]): IO[Either[String, Unit]] =
+    indexRef.modify { case (activeId, sessions, folders) =>
+      folders.find(_.id == folderId) match
+        case None => ((activeId, sessions, folders), Left(s"Folder $folderId not found"))
+        case Some(f) if f.parentId.isDefined =>
+          ((activeId, sessions, folders), Left("Only top-level folders can set project root"))
+        case Some(_) =>
+          val updated = folders.map(f =>
+            if f.id == folderId then f.copy(projectRoot = projectRoot, updatedAt = System.currentTimeMillis()) else f
+          )
+          ((activeId, sessions, updated), Right(()))
+    }.flatMap {
+      case Right(_) => saveIndex.as(Right(()))
+      case err => IO.pure(err)
+    }
+
+  /** Resolve effective projectRoot for a session: its folder's projectRoot (top-level only). */
+  def resolveProjectRoot(folderId: Option[String]): IO[Option[String]] =
+    folderId match
+      case None => IO.pure(None)
+      case Some(fid) =>
+        indexRef.get.map { case (_, _, folders) =>
+          // Walk up to top-level folder
+          def findTop(id: String): Option[Folder] =
+            folders.find(_.id == id) match
+              case None => None
+              case Some(f) => f.parentId match
+                case Some(pid) => findTop(pid)
+                case None => Some(f)
+          findTop(fid).flatMap(_.projectRoot).filter(_.nonEmpty)
+        }
 
   def renameFolder(id: String, newName: String): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
@@ -403,10 +448,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       ((activeId, updatedSessions, updatedFolders), ())
     } *> saveIndex
 
+  // NOTE: moving to a folder is reorganization — must not touch updatedAt (interaction timestamp)
   def moveSessionToFolder(sessionId: String, folderId: Option[String]): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map(s =>
-        if s.id == sessionId then s.copy(folderId = folderId, updatedAt = System.currentTimeMillis()) else s
+        if s.id == sessionId then s.copy(folderId = folderId) else s
       )
       (activeId, updated, folders)
     } *> saveIndex
