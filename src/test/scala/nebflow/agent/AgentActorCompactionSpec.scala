@@ -1,8 +1,8 @@
 package nebflow.agent
 
 import munit.FunSuite
-import nebflow.shared.{Message, MessageRole, TokenUsage}
 import nebflow.core.compact.CompactConfig
+import nebflow.shared.{Message, MessageRole, TokenUsage}
 
 /**
  * Lightweight state-level circuit breaker tests.

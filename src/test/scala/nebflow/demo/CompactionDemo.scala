@@ -1,10 +1,10 @@
 package nebflow.demo
 
-import nebflow.shared.{ContentBlock, Message, MessageRole}
-import nebflow.core.compact.{CompactConfig, FullCompact, HistoryArchiver, TokenEstimator, FastMicroCompact}
-import io.circe.JsonObject
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import io.circe.JsonObject
+import nebflow.core.compact.*
+import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 /**
  * Interactive demo: run with

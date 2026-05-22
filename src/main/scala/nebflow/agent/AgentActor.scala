@@ -41,7 +41,10 @@ object AgentActor extends AgentCore with AgentSession:
     initialMessages: List[Message] = Nil,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
-    contextWindow: Int = Defaults.ContextWindow
+    contextWindow: Int = Defaults.ContextWindow,
+    projectRoot: Option[String] = None,
+    rulesMd: Option[String] = None,
+    folderId: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors
       .supervise(
@@ -75,7 +78,10 @@ object AgentActor extends AgentCore with AgentSession:
                 wsSend = wsSend,
                 readTracker = readTracker,
                 fileHistory = fileHistory,
-                contextWindow = contextWindow
+                contextWindow = contextWindow,
+                projectRoot = projectRoot,
+                rulesMd = rulesMd,
+                folderId = folderId
               ),
               stash,
               context
@@ -1312,7 +1318,7 @@ object AgentActor extends AgentCore with AgentSession:
               val result = FullCompact.parseResponse(
                 responseText,
                 state.messages,
-                resources.projectRoot.toString,
+                state.projectRoot.getOrElse(resources.projectRoot.toString),
                 readPaths
               )
               result match
@@ -1429,15 +1435,10 @@ object AgentActor extends AgentCore with AgentSession:
       s"q=${question.take(40)} a=${answerText.take(40)}"
     )
 
-    // Send askDone + Done + sessionBusy(false) in sequence so frontend
-    // properly clears the busy UI (stop button, input disabled, etc.).
-    // This mirrors what finishTurn does for normal turns.
-    val doneEvent = AgentStreamEvent.Done(
-      model,
-      contextWindow = Some(state.contextWindow),
-      inputTokens = state.latestUsage.map(_.inputTokens)
-    )
-    val doneJson = doneEvent.toJson(ctx.self.path.name, false, Some(sessionId))
+    // Send askDone + sessionBusy(false). Do NOT send a 'done' event — it would
+    // cause the frontend done handler + makeRecordingWsSend to save ask-mode
+    // thinking as a separate AI message (stray thinking fragment). askDone alone
+    // signals completion to the frontend.
     resources.dispatcher.unsafeRunAndForget(
       (state
         .wsSend(
@@ -1449,7 +1450,6 @@ object AgentActor extends AgentCore with AgentSession:
           )
         )
         .handleErrorWith(_ => IO.unit)
-        *> state.wsSend(doneJson).handleErrorWith(_ => IO.unit)
         *> emitSessionBusy(state.wsSend, sessionId, busy = false))
     )
 

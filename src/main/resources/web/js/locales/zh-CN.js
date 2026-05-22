@@ -11,6 +11,7 @@ export default {
   'sidebar.newSession': '新建会话 — 开始一段新的对话',
   'sidebar.searchPlaceholder': '搜索聊天记录',
   'search.clear': '清除 — 清空搜索内容',
+  'sidebar.toggle': '收起或展开会话栏 — 隐藏或显示左侧会话面板',
   'sidebar.edgeToggle': '展开或收起侧边栏',
   'sidebar.settingsTitle': '设置',
   'sidebar.feishuUnbind': '解绑 — 断开飞书群聊关联',
@@ -143,6 +144,13 @@ export default {
   'ctx.deselectAll': '取消全选',
   'ctx.batchDelete': '删除选中的 {count} 个会话',
   'ctx.batchCancel': '取消选择',
+  'ctx.setProjectRoot': '设置项目目录',
+  'ctx.setProjectRootPrompt': '项目目录路径（留空则清除）：',
+  'ctx.editRules': '编辑规则',
+
+  // === Rules ===
+  'rules.title': '项目规则',
+  'rules.placeholder': '输入此文件夹的项目规则…\n子文件夹会自动继承父文件夹的规则。',
 
   // === Session sidebar ===
   'session.namePlaceholder': '会话名称...',

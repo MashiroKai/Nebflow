@@ -1,7 +1,7 @@
 package nebflow.core.compact
 
 import munit.CatsEffectSuite
-import nebflow.shared.{ContentBlock, Message, MessageRole, TokenUsage}
+import nebflow.shared.*
 
 class CompactionPolicySpec extends CatsEffectSuite:
 

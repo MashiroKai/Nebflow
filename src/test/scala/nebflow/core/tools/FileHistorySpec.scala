@@ -2,8 +2,9 @@ package nebflow.core.tools
 
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
-import java.nio.file.Files
-import java.nio.file.Path
+
+import java.nio.file.{Files, Path}
+
 import scala.jdk.CollectionConverters.*
 
 class FileHistorySpec extends CatsEffectSuite:
