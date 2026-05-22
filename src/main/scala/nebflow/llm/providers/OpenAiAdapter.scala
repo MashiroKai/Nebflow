@@ -18,6 +18,31 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
+  /**
+   * Map Anthropic-style budget_tokens to OpenAI reasoning_effort.
+   *
+   * OpenAI doesn't have a quantitative reasoning budget, only a qualitative
+   * effort scale.  This mapping gives the user a natural continuum:
+   *   ≤ 2048   → low
+   *   2049…8192   → medium
+   *   8193…32768  → high
+   *   > 32768     → xhigh
+   */
+  private def budgetToEffort(budget: Int): String =
+    if budget <= 2048 then "low"
+    else if budget <= 8192 then "medium"
+    else if budget <= 32768 then "high"
+    else "xhigh"
+
+  /** Extract reasoning_effort from the thinking JSON config. */
+  private def effortFromThinking(thinking: Option[io.circe.Json]): Option[String] =
+    thinking.flatMap { t =>
+      t.hcursor.get[String]("type").toOption match
+        case Some("enabled") =>
+          Some(budgetToEffort(t.hcursor.get[Int]("budget_tokens").getOrElse(32000)))
+        case _ => None
+    }
+
   /** Build system message from stable + dynamic parts for OpenAI's messages format. */
   private def buildSystemMessage(params: SendMessageParams): Option[Json] =
     val stable = params.systemStable.filter(_.nonEmpty)
@@ -133,10 +158,10 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
       case None => body
     // OpenAI o-series models support reasoning_effort; silently ignore for others
-    val bodyWithThinking = params.thinking match
-      case Some(t) if t.hcursor.get[String]("type").toOption.contains("enabled") =>
-        bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> "high".asJson))
-      case _ => bodyWithTools
+    val effort = effortFromThinking(params.thinking)
+    val bodyWithThinking = effort match
+      case Some(e) => bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> e.asJson))
+      case None => bodyWithTools
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
         bodyWithThinking.deepMerge(
@@ -220,10 +245,10 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       case Some(tools) => body.deepMerge(Json.obj("tools" -> toOpenAiTools(tools)))
       case None => body
     // OpenAI o-series models support reasoning_effort; silently ignore for others
-    val bodyWithThinking = params.thinking match
-      case Some(t) if t.hcursor.get[String]("type").toOption.contains("enabled") =>
-        bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> "high".asJson))
-      case _ => bodyWithTools
+    val effort = effortFromThinking(params.thinking)
+    val bodyWithThinking = effort match
+      case Some(e) => bodyWithTools.deepMerge(Json.obj("reasoning_effort" -> e.asJson))
+      case None => bodyWithTools
     val bodyWithMetadata = (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
         bodyWithThinking.deepMerge(

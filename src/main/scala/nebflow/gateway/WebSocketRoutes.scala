@@ -319,13 +319,13 @@ class WebSocketRoutes(
     yield ()
 
   /** Persist thinking config to nebflow.json — targeted field update. */
-  private def persistThinkingConfig(enabled: Boolean): IO[Unit] =
+  private def persistThinkingConfig(tc: ThinkingConfig): IO[Unit] =
     IO.blocking {
       val path = nebflow.llm.Config.DefaultConfigPath
       val existing = if os.exists(path) then os.read(path) else "{}"
       parse(existing).foreach { json =>
         val updated = json.mapObject { obj =>
-          obj.add("thinkingConfig", ThinkingConfig(enabled).asJson)
+          obj.add("thinkingConfig", tc.asJson)
         }
         os.write.over(path, updated.spaces2, createFolders = true)
       }
@@ -442,9 +442,13 @@ class WebSocketRoutes(
           val enabled = thinkingOpt match
             case None | Some(io.circe.Json.Null) => false
             case Some(v) => v.hcursor.downField("enabled").as[Boolean].getOrElse(true)
-          logger.info(s"Thinking mode set to: enabled=$enabled") *>
-            sharedResources.thinkingConfigRef.set(ThinkingConfig(enabled)) *>
-            persistThinkingConfig(enabled) *>
+          val budgetTokens = thinkingOpt match
+            case None | Some(io.circe.Json.Null) => 32000
+            case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
+          val tc = ThinkingConfig(enabled, budgetTokens)
+          logger.info(s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens") *>
+            sharedResources.thinkingConfigRef.set(tc) *>
+            persistThinkingConfig(tc) *>
             broadcastServerConfig
 
         case "getModelOptions" =>
@@ -655,8 +659,7 @@ class WebSocketRoutes(
                   "type" -> "feishuGlobalConfig".asJson,
                   "configured" -> true.asJson,
                   "appId" -> cfg.appId.asJson,
-                  "hasAppSecret" -> cfg.appSecret.nonEmpty.asJson,
-                  "appSecret" -> cfg.appSecret.asJson
+                  "hasAppSecret" -> cfg.appSecret.nonEmpty.asJson
                 )
               )
             case None =>
@@ -764,22 +767,46 @@ class WebSocketRoutes(
               .forSession(cancelSessionId)
               .flatMap { shell =>
                 shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "backgroundTaskUpdate".asJson,
-                      "sessionId" -> cancelSessionId.asJson,
-                      "taskId" -> jobId.asJson,
-                      "description" -> "".asJson,
-                      "status" -> (if cancelled then "completed" else "running").asJson
+                  // Notify the agent so it can process cancellation
+                  routeToAgent(cancelSessionId) { ref =>
+                    IO(
+                      ref ! AgentCommand.ExternalEvent(
+                        source = "background-task",
+                        eventType = "cancelled",
+                        payload = s"[Background task cancelled] Job ID: $jobId",
+                        metadata = io.circe.JsonObject(
+                          "jobId" -> jobId.asJson
+                        ),
+                        correlationId = Some(jobId)
+                      )
                     )
-                  )
+                  } *>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "backgroundTaskUpdate".asJson,
+                        "sessionId" -> cancelSessionId.asJson,
+                        "taskId" -> jobId.asJson,
+                        "description" -> "".asJson,
+                        "status" -> "completed".asJson // always report completed, regardless of whether the job was found
+                      )
+                    )
                 }
               }
               .handleErrorWith { e =>
-                logger.warn(s"cancelBackgroundJob failed: ${e.getMessage}")
-                IO.unit
+                logger.warn(s"cancelBackgroundJob failed for session=$cancelSessionId job=$jobId: ${e.getMessage}")
+                // Send a completion update even on error, so the frontend removes the task
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "backgroundTaskUpdate".asJson,
+                    "sessionId" -> cancelSessionId.asJson,
+                    "taskId" -> jobId.asJson,
+                    "description" -> "".asJson,
+                    "status" -> "failed".asJson
+                  )
+                ).handleErrorWith(_ => IO.unit)
               }
           else IO.unit
+          end if
 
         case "getHistory" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)

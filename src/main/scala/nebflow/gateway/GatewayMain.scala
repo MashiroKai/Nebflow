@@ -232,7 +232,8 @@ object GatewayMain extends IOApp.Simple:
                                     // Load Feishu plugin if config exists
                                     FeishuGlobalConfig.load.flatMap {
                                       case Some(cfg) =>
-                                        mgr.register(new FeishuPlugin(cfg)).as(mgr)
+                                        logger.info(s"Feishu bridge enabled (appId=${cfg.appId})") *>
+                                          mgr.register(new FeishuPlugin(cfg)).as(mgr)
                                       case None => IO.pure(mgr)
                                     }
                                   }

@@ -274,6 +274,22 @@ onMessage('toolCallDetected', (msg) => {
   if (msg.name === 'AskUserQuestion') return;
   const sid = msg.sessionId;
   if (sid && !state.sessionPendingTools[sid]) state.sessionPendingTools[sid] = { label: msg.name };
+
+  // Flush accumulated text buffer for ALL sessions at tool call boundary.
+  // This prevents cross-round concatenation in sessionTexts[sid] for non-active
+  // sessions (active sessions are handled by finishAi() below).
+  if (sid && state.sessionTexts[sid]) {
+    const thinkingText = state.sessionThinkingBuffers[sid] || '';
+    if (!state.sessionPendingAiMessages[sid]) state.sessionPendingAiMessages[sid] = [];
+    state.sessionPendingAiMessages[sid].push({
+      type: 'ai',
+      text: state.sessionTexts[sid],
+      thinking: thinkingText || undefined
+    });
+    delete state.sessionTexts[sid];
+    if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
+  }
+
   if (isActive(msg)) {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
@@ -290,6 +306,22 @@ onMessage('toolStart', (msg) => {
   if (msg.label && msg.label.startsWith('AskUser')) return;
   const toolStartSid = msg.sessionId;
   if (toolStartSid) state.sessionPendingTools[toolStartSid] = { label: msg.label };
+
+  // Flush accumulated text buffer for ALL sessions at tool boundary.
+  // Same as toolCallDetected — ensures sessionTexts doesn't accumulate
+  // across rounds for non-active sessions.
+  if (toolStartSid && state.sessionTexts[toolStartSid]) {
+    const thinkingText = state.sessionThinkingBuffers[toolStartSid] || '';
+    if (!state.sessionPendingAiMessages[toolStartSid]) state.sessionPendingAiMessages[toolStartSid] = [];
+    state.sessionPendingAiMessages[toolStartSid].push({
+      type: 'ai',
+      text: state.sessionTexts[toolStartSid],
+      thinking: thinkingText || undefined
+    });
+    delete state.sessionTexts[toolStartSid];
+    if (state.sessionThinkingBuffers[toolStartSid]) delete state.sessionThinkingBuffers[toolStartSid];
+  }
+
   if (isActive(msg)) {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
@@ -394,22 +426,30 @@ onMessage('done', (msg) => {
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
     if (isActive(msg)) updateHeaderModelInfo();
   }
-  // Flush any remaining buffered text for this session
-  if (msg.sessionId && state.sessionTexts[msg.sessionId]) {
+  // Flush any remaining buffered text/thinking for this session
+  if (msg.sessionId) {
     if (!isActive(msg)) {
       const thinkingText = state.sessionThinkingBuffers[msg.sessionId] || '';
-      saveMsg({type: 'ai', text: state.sessionTexts[msg.sessionId], thinking: thinkingText || undefined, durationMs, model: msg.model}, msg.sessionId);
-      state.pendingRestore[msg.sessionId] = { text: state.sessionTexts[msg.sessionId], thinking: thinkingText || undefined, durationMs, model: msg.model };
+      // Save ALL pending segments accumulated at tool boundaries, then the final round.
+      const pendingSegments = state.sessionPendingAiMessages[msg.sessionId] || [];
+      pendingSegments.forEach(seg => saveMsg(seg, msg.sessionId));
+      delete state.sessionPendingAiMessages[msg.sessionId];
+
+      if (state.sessionTexts[msg.sessionId] || thinkingText) {
+        const text = state.sessionTexts[msg.sessionId] || '';
+        // Save final round's text/thinking as the main message
+        saveMsg({type: 'ai', text, thinking: thinkingText || undefined, durationMs, model: msg.model}, msg.sessionId);
+        // pendingRestore only contains the LAST round's data (not concatenated across rounds),
+        // so dedup against backend history (last Ai message) works correctly.
+        state.pendingRestore[msg.sessionId] = { text, thinking: thinkingText || undefined, durationMs, model: msg.model };
+      }
       delete state.sessionTexts[msg.sessionId];
+      delete state.sessionThinkingBuffers[msg.sessionId];
     } else {
       delete state.sessionTexts[msg.sessionId];
+      // Note: sessionThinkingBuffers is NOT deleted here for active sessions —
+      // it's consumed by finishThinking() + the fallback read in the isActive(msg) block below.
     }
-  }
-  if (isActive(msg) && msg.sessionId && state.sessionThinkingBuffers[msg.sessionId]) {
-    delete state.sessionThinkingBuffers[msg.sessionId];
-  }
-  if (!isActive(msg) && msg.sessionId && state.sessionThinkingBuffers[msg.sessionId]) {
-    delete state.sessionThinkingBuffers[msg.sessionId];
   }
   if (isActive(msg)) {
     // Clean up per-session pending tool card for this session
@@ -417,6 +457,8 @@ onMessage('done', (msg) => {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
     }
+    // Clean up pending segments accumulated at tool boundaries
+    if (sid && state.sessionPendingAiMessages[sid]) delete state.sessionPendingAiMessages[sid];
     // Clean up pendingRestore (previous turn's data no longer needed)
     if (sid && state.pendingRestore[sid]) delete state.pendingRestore[sid];
     // Finish thinking bubble if still streaming
@@ -427,8 +469,16 @@ onMessage('done', (msg) => {
       data.thinking = thinkingText || undefined;
       saveMsg(data, msg.sessionId);
     } else if (thinkingText) {
-      // Thinking-only response (no text): save as ai message with empty text
-      saveMsg({ type: 'ai', text: '', thinking: thinkingText, durationMs, model: msg.model }, msg.sessionId);
+      // Thinking-only response (no text): keep thinking bubble expanded
+      const thinkBubble = state.dom.chat.querySelector('.thinking-bubble');
+      if (thinkBubble) {
+        const content = thinkBubble.querySelector('.thinking-content');
+        const label = thinkBubble.querySelector('.thinking-label');
+        if (content) content.style.display = '';
+        if (label) label.classList.add('expanded');
+      }
+      // Save without text field so restoreFromStorage doesn't render an empty bubble
+      saveMsg({ type: 'ai', thinking: thinkingText, durationMs, model: msg.model }, msg.sessionId);
     }
     Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
     state.agentBubbles = {};
@@ -444,6 +494,7 @@ onMessage('error', (msg) => {
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
   if (sid) delete state.pendingRestore[sid];
+  if (sid) delete state.sessionPendingAiMessages[sid];
   // Defensive: clear attention on error
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   // Reset history loading state — backend may fail mid-pagination
@@ -468,6 +519,8 @@ onMessage('interrupted', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
+  if (sid) delete state.pendingRestore[sid];
+  if (sid) delete state.sessionPendingAiMessages[sid];
   // Defensive: clear attention on interrupt
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (isActive(msg)) {
@@ -485,6 +538,7 @@ onMessage('timeout', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
+  if (sid) delete state.sessionPendingAiMessages[sid];
   if (isActive(msg)) {
     finishThinking();
     finishAi();
@@ -499,6 +553,8 @@ onMessage('maxTokens', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
+  if (sid) delete state.pendingRestore[sid];
+  if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (isActive(msg)) {
     if (sid && state.sessionToolCards[sid]) {
@@ -644,17 +700,37 @@ onMessage('historyPage', (msg) => {
     const isStillBusy = state.busySessionIds.has(sid);
     if (!isAskUserPending && !isAskPermissionPending) {
       // If the backend history already includes the completed message, clean up pendingRestore
-      // to avoid duplication. Check last AI message text match.
+      // to avoid duplication. Check last AI message text+thinking match.
       const pendingData = state.pendingRestore[sid];
       if (pendingData && !isStillBusy) {
         const histMsgs = msg.messages;
-        const lastAiMsg = histMsgs && [...histMsgs].reverse().find(m => m.type === 'ai' && m.text);
-        if (lastAiMsg && lastAiMsg.text === pendingData.text) {
+        const lastAiMsg = histMsgs && [...histMsgs].reverse().find(m => m.type === 'ai' && (m.text || m.thinking));
+        const textMatch = lastAiMsg && lastAiMsg.text === pendingData.text;
+        const thinkingMatch = lastAiMsg && lastAiMsg.thinking === pendingData.thinking;
+        // Exact match: both text and thinking (or both absent) match.
+        // Loose match: text matches and thinking is absent on both sides, or
+        //             thinking matches and text is absent on both sides.
+        const looseMatch = lastAiMsg && (
+          (textMatch && (!lastAiMsg.thinking || !pendingData.thinking || thinkingMatch)) ||
+          (!lastAiMsg.text && !pendingData.text && thinkingMatch)
+        );
+        if (textMatch || looseMatch) {
           delete state.pendingRestore[sid];
         }
+        // If texts don't match, keep pendingRestore — it may be from a turn
+        // the backend hasn't persisted yet. The sessionPendingAiMessages fix
+        // ensures text is not concatenated across rounds, so even if rendered
+        // as extra bubbles, the content is correct (not duplicated/concatenated).
       }
 
       const pd = state.pendingRestore[sid];
+      // After historyPage restores the authoritative state, clean up any remaining
+      // per-session buffer state that wasn't consumed by the active streaming path.
+      // This prevents stale data from leaking through on subsequent restores.
+      if (!isStillBusy && !pd && !state.sessionTexts[sid]) {
+        delete state.sessionThinkingBuffers[sid];
+        delete state.sessionPendingAiMessages[sid];
+      }
       const thinkBuf = state.sessionThinkingBuffers[sid] || pd?.thinking;
       const txtBuf = state.sessionTexts[sid] || pd?.text;
 
@@ -725,7 +801,10 @@ onMessage('historyPage', (msg) => {
         row.appendChild(state.currentAskBubble);
         chat.appendChild(row);
       }
-      // Re-create pending tool card if this session has an in-progress tool
+      // Re-create pending tool card if this session has an in-progress tool.
+      // Also restored in sidebar.js resetChatForActiveSession() for immediate
+      // feedback before history arrives. This re-creation ensures the spinner
+      // persists after the async getHistory roundtrip clears the DOM.
       if (state.sessionPendingTools[sid]) {
         renderToolPending(state.sessionPendingTools[sid].label, sid);
       }
@@ -1090,6 +1169,8 @@ onMessage('sessionBusy', (msg) => {
       // duration badge is rendered.
       const sid = msg.sessionId || state.activeSessionId;
       delete state.sessionPendingTools[sid];
+      delete state.sessionPendingAiMessages[sid];
+      delete state.pendingRestore[sid];
       if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
       if (state.currentAiBubble) {
         const durationMs = consumeTurnDuration(sid);
@@ -1357,17 +1438,15 @@ initMemory();
 // Sidebar collapse toggle
 (function initSidebarToggle() {
   const LS_KEY = 'nebflow_sidebar_collapsed';
-  const edge = document.getElementById('sidebar-edge');
-  if (!edge) return;
+  const btn = document.getElementById('sidebar-toggle');
+  if (!btn) return;
   const collapsed = localStorage.getItem(LS_KEY) === 'true';
   if (collapsed) document.body.classList.add('sidebar-collapsed');
-  edge.addEventListener('click', () => {
+  btn.addEventListener('click', () => {
     document.body.classList.toggle('sidebar-collapsed');
     localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
   });
-  edge.addEventListener('mouseenter', () => edge.classList.add('edge-hover'));
-  edge.addEventListener('mouseleave', () => edge.classList.remove('edge-hover'));
-  // Keyboard shortcut: Cmd/Ctrl+B to toggle sidebar
+  // Keyboard shortcut: Cmd/Ctrl+B
   document.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
       const tag = document.activeElement?.tagName;
