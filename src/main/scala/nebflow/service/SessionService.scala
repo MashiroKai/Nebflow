@@ -53,6 +53,12 @@ class SessionService(store: SessionStore):
   def moveFolder(folderId: String, parentId: Option[String]): IO[Unit] =
     store.moveFolder(folderId, parentId)
 
+  def setFolderProjectRoot(folderId: String, projectRoot: Option[String]): IO[Either[String, Unit]] =
+    store.setFolderProjectRoot(folderId, projectRoot)
+
+  def resolveProjectRoot(folderId: Option[String]): IO[Option[String]] =
+    store.resolveProjectRoot(folderId)
+
   def listFolders(agentName: String): IO[List[Folder]] =
     store.listFolders(agentName)
 

@@ -1,11 +1,11 @@
 package nebflow.core.compact
 
-import munit.CatsEffectSuite
 import cats.effect.IO
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import cats.syntax.all.*
 import io.circe.parser.parse
 import io.circe.{Decoder, Json}
-import cats.syntax.all.*
+import munit.CatsEffectSuite
+import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 class HistoryArchiverSpec extends CatsEffectSuite:
 

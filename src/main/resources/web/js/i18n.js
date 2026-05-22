@@ -52,11 +52,15 @@ export function getAvailableLocales() {
  * Called once on init and again when locale changes.
  */
 export function applyLocaleToHtml() {
+  // ── Register unified i18n for UI controls ──
+  // All buttons/controls requiring title/text/placeholder MUST be registered here,
+  // NOT hardcoded in index.html. Add:  id → [attr, 'namespace.key']
   const map = {
     'new-agent-btn': ['title', 'nav.newAgent'],
     'nav-settings-btn': null, // handled by data-tab
     'panel-title-sessions': ['text', 'sidebar.sessions'],
     'new-folder-btn': ['title', 'sidebar.newFolder'],
+    'sidebar-toggle': ['title', 'sidebar.toggle'],
     'search-input': ['placeholder', 'sidebar.searchPlaceholder'],
     'panel-title-settings': ['text', 'sidebar.settingsTitle'],
     'memory-btn': ['text', 'header.memory'],
