@@ -92,9 +92,8 @@ private[agent] trait AgentCore:
       val backoffOk =
         if state.compactionFailures == 0 then true
         else
-          val backoff = config.compactionRetryDelayMs * math.pow(2, state.compactionFailures - 1).toLong
           val elapsed = System.currentTimeMillis() - state.lastCompactionFailureAt
-          val ok = elapsed >= backoff
+          val ok = config.isBackoffSatisfied(state.compactionFailures, elapsed)
           if !ok then
             logAgentEvent(
               ctx,
@@ -103,7 +102,7 @@ private[agent] trait AgentCore:
               state.sessionId,
               state.sessionName,
               "auto-compact-skipped",
-              s"backoff=${backoff}ms elapsed=${elapsed}ms failures=${state.compactionFailures}"
+              s"backoff=${config.backoffMs(state.compactionFailures)}ms elapsed=${elapsed}ms failures=${state.compactionFailures}"
             )
           ok
 
@@ -805,6 +804,8 @@ private[agent] trait AgentCore:
       else ToolRegistry.AlwaysAvailableNonCompact
     base ++ mcpTools ++ always
 
+  end buildAllowedToolSet
+
   protected def buildToolList(agentDef: AgentDef): Option[List[ToolDefinition]] =
     val allowedSet = buildAllowedToolSet(agentDef)
     val tools = ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name))
@@ -831,6 +832,8 @@ private[agent] trait AgentCore:
           IO(NebflowLogger.forName("nebflow.agent").warn(s"emitStream($eventName) failed: ${e.getMessage}"))
         )
     )
+
+  end emitStream
 
   protected def emitStreamIO(
     wsSend: io.circe.Json => IO[Unit],
@@ -906,6 +909,7 @@ private[agent] trait AgentCore:
       model,
       contextWindow
     )
+  end aggregateChunks
 
   // ============================================================
   // Prompt / tool helpers
@@ -960,46 +964,19 @@ private[agent] trait AgentCore:
       agentMemory.map(c => s"# Memory — Agent\n$c"),
       userMemory.map(c => s"# Memory — User Preferences\n$c")
     ).flatten
-    val memoryGuide =
-      """|# Memory Usage Guidelines
-         |You have three memory scopes, each a Markdown file you can edit with Edit/Write. Writing memory is HIGH priority — err on the side of writing too much rather than too little.
-         |
-         |## You MUST write memory when:
-         |1. Starting a new task → write goal and key files to Session memory
-         |2. Discovering a project convention, architecture pattern, or non-obvious gotcha → write to Agent memory immediately (do NOT wait until "between tasks")
-         |3. Completing a task → summarize durable findings from Session into Agent memory
-         |4. The user explicitly asks you to remember something → write to User memory
-         |5. You encounter and solve a non-trivial problem (wrong API usage, hidden config, surprising behavior) → write to Agent memory so you don't repeat the same discovery
-         |
-         |## Memory scope guide
-         |- **Session** (working scratchpad): Task goals, key file paths, progress notes, open questions. Write at task start, update as you go, summarize key findings at task end.
-         |- **Agent** (durable knowledge): Architecture decisions, project conventions, tool configurations, gotchas, debugging patterns, key file locations. Write IMMEDIATELY when you discover something — do not batch or defer.
-         |- **User** (preferences): Only when the user explicitly asks, or you've confirmed a strong pattern across multiple sessions.
-         |
-         |## How to write
-         |- Use concise bullet points, not prose.
-         |- Prefix each bullet with a tag: `[decision]`, `[fact]`, `[todo]`, `[convention]`, `[gotcha]`.
-         |- Example: `[decision] Use JWT RS256 for auth` / `[gotcha] file X must be loaded before Y or init fails`
-         |- Do NOT duplicate information already in the agent's system prompt or project config files.
-         |- Do NOT log transient state (current line numbers, temporary errors being fixed).
-         |
-         |## Self-check (ask yourself every few turns)
-         |- Did I learn something about this project I didn't know before? → Write to Agent memory
-         |- Am I working on a multi-step task? → Ensure Session memory is up to date
-         |- Did I just finish a task? → Transfer key learnings from Session to Agent memory""".stripMargin
 
     val memoryFiles = sessionId match
       case Some(sid) =>
-        s"""|# Memory Files
-            |- Session context (auto-approved): ${MemoryStore.sessionMemoryPath(sid)}
-            |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
-            |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
+        s"""# Memory Files
+           |- Session context (auto-approved): ${MemoryStore.sessionMemoryPath(sid)}
+           |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
+           |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
       case None =>
-        s"""|# Memory Files
-            |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
-            |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
+        s"""# Memory Files
+           |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
+           |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
 
-    (memorySections :+ memoryGuide :+ memoryFiles).mkString("\n\n")
+    (memorySections :+ memoryFiles).mkString("\n\n")
   end buildMemoryBlock
 
 end AgentCore

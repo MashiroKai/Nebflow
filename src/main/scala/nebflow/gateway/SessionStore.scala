@@ -22,7 +22,7 @@ case class Folder(
   name: String,
   parentId: Option[String] = None,
   agentName: String = "",
-  projectRoot: Option[String] = None,  // only top-level folders may set this
+  projectRoot: Option[String] = None, // only top-level folders may set this
   createdAt: Long,
   updatedAt: Long
 )
@@ -37,7 +37,8 @@ object Folder:
       "updatedAt" -> f.updatedAt.asJson
     )
     val withParent = f.parentId.fold(base)(p => base.deepMerge(Json.obj("parentId" -> p.asJson)))
-    val withAgent = if f.agentName.nonEmpty then withParent.deepMerge(Json.obj("agentName" -> f.agentName.asJson)) else withParent
+    val withAgent =
+      if f.agentName.nonEmpty then withParent.deepMerge(Json.obj("agentName" -> f.agentName.asJson)) else withParent
     f.projectRoot.fold(withAgent)(pr => withAgent.deepMerge(Json.obj("projectRoot" -> pr.asJson)))
   }
 
@@ -154,6 +155,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       case None =>
         createDefaultSession
     }
+
+  end migrateFromLegacy
 
   private def createDefaultSession: IO[Unit] =
     val id = UUID.randomUUID().toString
@@ -391,20 +394,22 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
 
   /** Set projectRoot on a top-level folder. Returns Left(error) if folder is not top-level. */
   def setFolderProjectRoot(folderId: String, projectRoot: Option[String]): IO[Either[String, Unit]] =
-    indexRef.modify { case (activeId, sessions, folders) =>
-      folders.find(_.id == folderId) match
-        case None => ((activeId, sessions, folders), Left(s"Folder $folderId not found"))
-        case Some(f) if f.parentId.isDefined =>
-          ((activeId, sessions, folders), Left("Only top-level folders can set project root"))
-        case Some(_) =>
-          val updated = folders.map(f =>
-            if f.id == folderId then f.copy(projectRoot = projectRoot, updatedAt = System.currentTimeMillis()) else f
-          )
-          ((activeId, sessions, updated), Right(()))
-    }.flatMap {
-      case Right(_) => saveIndex.as(Right(()))
-      case err => IO.pure(err)
-    }
+    indexRef
+      .modify { case (activeId, sessions, folders) =>
+        folders.find(_.id == folderId) match
+          case None => ((activeId, sessions, folders), Left(s"Folder $folderId not found"))
+          case Some(f) if f.parentId.isDefined =>
+            ((activeId, sessions, folders), Left("Only top-level folders can set project root"))
+          case Some(_) =>
+            val updated = folders.map(f =>
+              if f.id == folderId then f.copy(projectRoot = projectRoot, updatedAt = System.currentTimeMillis()) else f
+            )
+            ((activeId, sessions, updated), Right(()))
+      }
+      .flatMap {
+        case Right(_) => saveIndex.as(Right(()))
+        case err => IO.pure(err)
+      }
 
   /** Resolve effective projectRoot for a session: its folder's projectRoot (top-level only). */
   def resolveProjectRoot(folderId: Option[String]): IO[Option[String]] =
@@ -416,9 +421,10 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           def findTop(id: String): Option[Folder] =
             folders.find(_.id == id) match
               case None => None
-              case Some(f) => f.parentId match
-                case Some(pid) => findTop(pid)
-                case None => Some(f)
+              case Some(f) =>
+                f.parentId match
+                  case Some(pid) => findTop(pid)
+                  case None => Some(f)
           findTop(fid).flatMap(_.projectRoot).filter(_.nonEmpty)
         }
 
@@ -451,9 +457,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   // NOTE: moving to a folder is reorganization — must not touch updatedAt (interaction timestamp)
   def moveSessionToFolder(sessionId: String, folderId: Option[String]): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
-      val updated = sessions.map(s =>
-        if s.id == sessionId then s.copy(folderId = folderId) else s
-      )
+      val updated = sessions.map(s => if s.id == sessionId then s.copy(folderId = folderId) else s)
       (activeId, updated, folders)
     } *> saveIndex
 

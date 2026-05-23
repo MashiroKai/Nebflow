@@ -39,6 +39,8 @@ class McpClient(serverId: String, transport: McpTransport):
       _ <- logger.info(s"Handshake complete")
     yield ()
 
+  end initialize
+
   def listTools(): IO[List[McpTool]] =
     val request = JsonRpcRequest(
       id = nextId,
@@ -59,6 +61,8 @@ class McpClient(serverId: String, transport: McpTransport):
           }
         case None => Nil
     }
+
+  end listTools
 
   def callTool(name: String, arguments: JsonObject): IO[String] =
     val request = JsonRpcRequest(

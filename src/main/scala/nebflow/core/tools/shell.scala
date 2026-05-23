@@ -364,6 +364,8 @@ final class ShellSession private (
       yield ()
     loop.start.map(Some(_))
 
+  end startHeartbeat
+
   private def readStream(is: java.io.InputStream, onLine: String => Unit = _ => ()): String =
     Using.resource(new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) { reader =>
       val sb = new StringBuilder

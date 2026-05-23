@@ -34,3 +34,4 @@ object AskUser:
       case None => IO.raiseError(new Exception("AskUser not available in non-interactive mode"))
 
   def isInteractive: Boolean = handler.get().isDefined
+end AskUser

@@ -60,6 +60,7 @@ lazy val root = (project in file("."))
       "-Xfatal-warnings",
     ),
 
+    Compile / run / mainClass := Some("nebflow.Main"),
     run / fork := true,
     run / connectInput := true,
 

@@ -112,3 +112,4 @@ object FileHistory:
       Ref
         .of[IO, Map[String, Vector[Long]]](Map.empty)
         .map(new FileHistory(historyRoot, maxEntries, maxFileSizeBytes, _))
+end FileHistory
