@@ -136,6 +136,8 @@ object FullCompact:
         if result.trim == "Restored file contents after compaction:" then ""
         else result
 
+      end if
+
   /** Read file content, truncate to maxChars. Returns empty string on failure. */
   private def readFileContent(path: String, maxChars: Int): String =
     try
@@ -156,6 +158,7 @@ object FullCompact:
           val content = new String(Files.readAllBytes(file), "UTF-8")
           if content.length <= maxChars then content
           else content.take(maxChars) + s"\n... [truncated, ${content.length - maxChars} more chars]"
+      end if
     catch case _: Exception => ""
 
   /** Check if a path is within the project root directory. */

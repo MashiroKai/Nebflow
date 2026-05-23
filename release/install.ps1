@@ -1,10 +1,38 @@
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$Version = if ($env:VERSION) { $env:VERSION } else { "1.05.067" }
+# Parse flags
+$Channel = "stable"
+$Region = ""
+if ($args -contains "-Beta") { $Channel = "beta" }
+if ($args -contains "-Cn") { $Region = "cn" }
+if ($args -contains "-Global") { $Region = "global" }
+
+# Resolve version
+if ($Channel -eq "beta") {
+    Write-Host "==> Resolving latest beta version..." -ForegroundColor Yellow
+    try {
+        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases" -TimeoutSec 10
+        $beta = $releases | Where-Object { $_.prerelease -eq $true } | Select-Object -First 1
+        if ($beta) {
+            $BetaVersion = $beta.tag_name -replace '^v', '' -replace '-beta$', ''
+        }
+    } catch {}
+    if (-not $BetaVersion) {
+        Write-Host "ERROR: Could not find a beta release." -ForegroundColor Red
+        Write-Host "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability." -ForegroundColor Yellow
+        exit 1
+    }
+    $Version = if ($env:VERSION) { $env:VERSION } else { $BetaVersion }
+} else {
+    $Version = if ($env:VERSION) { $env:VERSION } else { "1.05.067" }
+}
+
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\Nebflow" }
 $JarName = "nebflow-assembly-$Version.jar"
-$DownloadUrl = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/$JarName"
+$CosUrl = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/$JarName"
+$GhUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version/$JarName"
+$GhBetaUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version-beta/$JarName"
 
 Write-Host ""
 Write-Host "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗" -ForegroundColor Cyan
@@ -14,7 +42,7 @@ Write-Host "  ██║╚██╗██║██╔══╝  ██╔══�
 Write-Host "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝" -ForegroundColor Cyan
 Write-Host "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Nebflow v$Version Installer" -ForegroundColor DarkGray
+Write-Host "  Nebflow v$Version Installer ($Channel)" -ForegroundColor DarkGray
 Write-Host ""
 
 # --- Check Java ---
@@ -133,16 +161,55 @@ $jarPath = Join-Path $InstallDir $JarName
 if (Test-Path $jarPath) {
     Write-Host "       Already exists, skipping. (Delete $jarPath to re-download)" -ForegroundColor DarkGray
 } else {
-    # Try primary first, fall back to GitHub Releases
-    try {
-        Invoke-WebRequest -Uri $DownloadUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 30
-    } catch {
-        Write-Host "       Primary source unavailable, trying GitHub Releases..." -ForegroundColor Yellow
-        $mirrorUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version/$JarName"
-        Invoke-WebRequest -Uri $mirrorUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
+    # Auto-detect region for download source selection
+    if (-not $Region) {
+        $tz = [TimeZoneInfo]::Local.Id
+        if ($tz -match "China|Shanghai|Chongqing|Hong_Kong|Taipei|Macau|Urumqi") {
+            $Region = "cn"
+        } elseif ($env:LANG -match "zh_CN|zh_TW|zh_HK" -or $env:LC_ALL -match "zh_CN|zh_TW|zh_HK") {
+            $Region = "cn"
+        } else {
+            # Quick connectivity test: compare latency
+            try {
+                $cosTime = (Measure-Command {
+                    Invoke-WebRequest -Uri "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/" -UseBasicParsing -TimeoutSec 3 | Out-Null
+                }).TotalMilliseconds
+            } catch { $cosTime = 9999 }
+            try {
+                $ghTime = (Measure-Command {
+                    Invoke-WebRequest -Uri "https://github.com/favicon.ico" -UseBasicParsing -TimeoutSec 3 | Out-Null
+                }).TotalMilliseconds
+            } catch { $ghTime = 9999 }
+            if ($cosTime -lt 500 -and $cosTime -lt ($ghTime / 2)) {
+                $Region = "cn"
+            } else {
+                $Region = "global"
+            }
+        }
+    }
+
+    if ($Channel -eq "beta") {
+        # Beta: always from GitHub
+        Invoke-WebRequest -Uri $GhBetaUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
+    } elseif ($Region -eq "cn") {
+        # China: COS first, GitHub fallback
+        try {
+            Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 30
+        } catch {
+            Write-Host "       COS unavailable, trying GitHub..." -ForegroundColor Yellow
+            Invoke-WebRequest -Uri $GhUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
+        }
+    } else {
+        # Global: GitHub first, COS fallback
+        try {
+            Invoke-WebRequest -Uri $GhUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 30
+        } catch {
+            Write-Host "       GitHub unavailable, trying COS mirror..." -ForegroundColor Yellow
+            Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
+        }
     }
     $size = [math]::Round((Get-Item $jarPath).Length / 1MB, 1)
-    Write-Host "       Downloaded ($size MB)" -ForegroundColor Green
+    Write-Host "       Downloaded ($size MB) from $($Region) source" -ForegroundColor Green
 }
 
 # --- Create wrapper scripts ---

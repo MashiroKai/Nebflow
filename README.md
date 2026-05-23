@@ -34,6 +34,21 @@ Open PowerShell and run:
 iwr -useb https://nebflow.space/install.ps1 | iex
 ```
 
+### Install Beta
+
+To install the latest beta release:
+
+```bash
+# macOS / Linux
+curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta
+```
+
+```powershell
+# Windows PowerShell
+iwr -useb https://nebflow.space/install.ps1 -OutFile $env:TEMP\nebflow-install.ps1
+& $env:TEMP\nebflow-install.ps1 -Beta
+```
+
 ### Docker
 
 ```bash

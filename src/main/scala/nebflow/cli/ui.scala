@@ -37,6 +37,8 @@ class NebflowUI(store: UiStore):
 
     loop.guarantee(IO(terminal.close()))
 
+  end runInteractive
+
   def readInput: IO[Option[String]] = IO.blocking {
     try
       val prompt = s"$Cyan>$Reset "
@@ -123,6 +125,7 @@ class NebflowUI(store: UiStore):
             done = true
           case _ => ()
       catch case _: Exception => done = true
+    end while
 
     terminal.puts(org.jline.utils.InfoCmp.Capability.cursor_normal)
     out.print(s"\u001b[${options.length}B")

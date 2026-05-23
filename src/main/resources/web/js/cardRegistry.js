@@ -90,6 +90,8 @@ window.addEventListener('message', (e) => {
     }
     const oldHeight = iframe.style.height;
     const newHeight = e.data._nfCardH + 'px';
+    // Track whether height actually changed (first measurement always counts as "changed")
+    const heightChanged = !oldHeight || oldHeight !== newHeight;
     iframe.style.height = newHeight;
     // On first measurement: set card width and reveal
     if (isFirst) {
@@ -99,8 +101,9 @@ window.addEventListener('message', (e) => {
       }
       iframe.style.opacity = '1';
     }
-    // If the card grew taller, force scroll to bottom if we were near the bottom.
-    if (oldHeight && oldHeight !== newHeight) {
+    // If height changed, ensure scroll position still shows the card bottom.
+    // Works for first measurement (oldHeight == '' → heightChanged = true) and subsequent resizes.
+    if (heightChanged) {
       const chat = state.dom.chat;
       const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;
       if (nearBottom) {
@@ -111,18 +114,18 @@ window.addEventListener('message', (e) => {
       } else {
         smartScroll();
       }
-    } else {
-      smartScroll();
     }
   }
 });
 
-/** Render HTML content inside a sandboxed iframe. */
+/** Render HTML content inside a sandboxed iframe — lazily via IntersectionObserver. */
 function renderHtmlCard(container, html, title) {
   container.innerHTML = '';
 
   const wrap = document.createElement('div');
   wrap.className = 'html-card-wrap';
+  // Show a minimal placeholder while the iframe loads
+  wrap.style.minHeight = '40px';
 
   const id = ++_iframeId;
   const themeCSS = buildThemeVarsCSS();
@@ -131,18 +134,28 @@ function renderHtmlCard(container, html, title) {
   // Wrap user HTML in #nf-wrap for auto-scaling.
   // The wrapper carries transform-origin so transform:scale() can shrink content
   // to fit the iframe viewport when it's wider than available space.
-  // Note: do NOT put overflow:hidden on body — it breaks flexbox min-width:auto.
-  // scrolling="no" on iframe prevents scrollbars; iframe clips beyond its viewport.
   const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);}*,*:before,*:after{box-sizing:inherit;}img,svg,video{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="transform-origin:top left;width:fit-content;max-width:100%">${html}</div>${heightScript}</body></html>`;
 
-  const iframe = document.createElement('iframe');
-  iframe.className = 'html-card-iframe';
-  iframe.setAttribute('sandbox', 'allow-scripts');
-  iframe.setAttribute('scrolling', 'no');
-  iframe.setAttribute('srcdoc', srcdoc);
-  iframe.dataset.nfCardId = id;
+  // Use IntersectionObserver to defer iframe creation until visible
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        observer.disconnect();
+        const iframe = document.createElement('iframe');
+        iframe.className = 'html-card-iframe';
+        iframe.setAttribute('sandbox', 'allow-scripts');
+        iframe.setAttribute('scrolling', 'no');
+        iframe.setAttribute('srcdoc', srcdoc);
+        iframe.dataset.nfCardId = id;
+        // Remove min-height since iframe will set its own height
+        wrap.style.minHeight = '';
+        wrap.appendChild(iframe);
+        break;
+      }
+    }
+  }, { rootMargin: '200px' }); // Start loading 200px before visible
+  observer.observe(wrap);
 
-  wrap.appendChild(iframe);
   container.appendChild(wrap);
 }
 

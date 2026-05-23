@@ -122,6 +122,7 @@ Behavior:
                 }
               case None =>
                 IO.pure(Left(ToolError("AskUserQuestion requires Pekko scheduler")))
+            end match
           case None =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
       end if
