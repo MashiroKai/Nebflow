@@ -613,9 +613,6 @@ export function renderAskUser(items, askSessionId) {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         state.ws.send(JSON.stringify({ type: 'askUserAnswer', sessionId: targetSid, answers }));
       }
-      const answerText = answers.join('\n');
-      renderUserBubble(answerText);
-      import('./persistence.js').then(({ saveMsg }) => saveMsg({type: 'user', text: answerText}, targetSid));
       window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     }, t('chat.confirm'), () => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {

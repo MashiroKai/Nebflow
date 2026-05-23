@@ -224,6 +224,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       )
                     )
                   else IO.pure(AdapterResponse(reply, toolCalls, usage))
+                  end if
                 }
           }
     }
@@ -377,6 +378,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                                 case None => (m, ())
                             }
                             .as(acc)
+                      end match
                     }
                     .flatMap { acc =>
                       if finishReason.contains("tool_calls") || finishReason.contains("function_call") then

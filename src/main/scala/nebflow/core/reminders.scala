@@ -92,6 +92,8 @@ object SystemReminders:
       }
       (Some(verificationReminder(staleFiles)), updated)
 
+  end computeVerificationReminder
+
   /**
    * Update write tracker based on tool results (pure function).
    * - Reads reset the file's entry.

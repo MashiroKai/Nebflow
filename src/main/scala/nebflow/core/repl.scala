@@ -51,6 +51,8 @@ object Repl:
       }
       result + input.substring(lastEnd)
 
+  end replaceMediaPaths
+
   def buildUserMessage(input: String): IO[Message] = IO.blocking { // public for AgentActor
     val matches = MEDIA_REGEX.findAllMatchIn(input).toList
     if matches.isEmpty then Message(MessageRole.User, Left(input))

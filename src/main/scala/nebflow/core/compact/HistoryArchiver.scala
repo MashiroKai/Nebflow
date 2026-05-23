@@ -36,6 +36,8 @@ trait HistoryArchiver:
     extra: Map[String, String] = Map.empty
   ): IO[Either[String, CompactionArchive]]
 
+end HistoryArchiver
+
 object HistoryArchiver:
 
   def fileSystem(root: os.Path): HistoryArchiver = new:

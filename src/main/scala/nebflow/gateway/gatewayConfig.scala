@@ -22,3 +22,4 @@ object GatewayConfig:
       .getOrElse(DefaultPort)
     GatewayConfig(host, port)
   }
+end GatewayConfig

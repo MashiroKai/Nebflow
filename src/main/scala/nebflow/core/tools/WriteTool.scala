@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.core.PathSandbox
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path, Paths}
@@ -70,6 +71,17 @@ Usage:
       if filePathStr.startsWith("/") then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
+    // PathSandbox check — only allow writes within project root
+    PathSandbox.isAllowed(filePath.toString, ctx.projectRoot).flatMap { allowed =>
+      if !allowed then IO.pure(Left(ToolError(s"File is outside project root and cannot be written: $filePath")))
+      else doWrite(filePath, content, ctx)
+    }
+
+  private def doWrite(
+    filePath: Path,
+    content: String,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
     val contentBytes = content.getBytes(StandardCharsets.UTF_8).length
     if contentBytes > MAX_WRITE_BYTES then
       IO.pure(
@@ -136,5 +148,5 @@ Usage:
         case left => IO.pure(left)
       }
     end if
-  end call
+  end doWrite
 end WriteTool

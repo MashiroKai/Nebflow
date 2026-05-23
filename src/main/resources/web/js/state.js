@@ -143,6 +143,9 @@ export default {
   // Per-session last completed turn data (kept alive until historyPage confirms it).
   // Prevents lost messages on switch-back when backend hasn't persisted yet.
   pendingRestore: {},
+  // Per-session flag: true when a turn is in progress (user sent message or server
+  // explicitly set busy). Prevents stray thinkingDelta after done from creating bubbles.
+  turnExpecting: {},
 
   // Slash autocomplete
   slashSelectedIndex: 0,

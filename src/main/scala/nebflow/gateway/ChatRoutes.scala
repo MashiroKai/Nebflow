@@ -115,4 +115,6 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
         )
       case _ =>
         ServerSentEvent(data = Some(payload.noSpaces), eventType = Some("error"))
+    end match
+  end errorSse
 end ChatRoutes

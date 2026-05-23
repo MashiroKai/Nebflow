@@ -317,6 +317,7 @@ export function send() {
       return;
     }
     state.isSending = true;
+    if (state.activeSessionId) state.turnExpecting[state.activeSessionId] = true;
     sendWs({ type: 'skill', skillName, input: text, sessionId: state.activeSessionId });
     renderSystemBubble(t('slash.skillActivated', { skill: skillName }));
     renderUserBubble(text);
@@ -334,6 +335,7 @@ export function send() {
       return;
     }
     state.isSending = true;
+    if (state.activeSessionId) state.turnExpecting[state.activeSessionId] = true;
     sendWs({ type: 'ask', question: text, sessionId: state.activeSessionId });
     state.sessionAskBuffers[state.activeSessionId] = { question: text, answer: '' };
     renderAskBubble(text);
@@ -351,6 +353,8 @@ export function send() {
     return;
   }
   state.isSending = true;
+  // Mark this session as expecting a turn (prevents stray thinking bubbles after done)
+  if (state.activeSessionId) state.turnExpecting[state.activeSessionId] = true;
   // Intercept /ask <question> before normal slash handling
   if (text.startsWith('/ask ')) {
     const question = text.slice(5).trim();
@@ -684,7 +688,8 @@ export function initInput() {
   // Voice start/stop — Web Speech API (toggle mode)
   let voiceActive = false;      // is voice recognition currently active?
   let voiceFinal = '';           // accumulated finalized text this session
-  let voiceBase = '';            // text before this voice session
+  let voiceBefore = '';          // text before cursor at voice start
+  let voiceAfter = '';           // text after cursor at voice start
 
   function createRecognition() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -711,7 +716,8 @@ export function initInput() {
       }
       const current = voiceFinal + interimText;
       voiceText.textContent = current || t('voice.listening');
-      input.value = voiceBase + (voiceBase && current ? ' ' : '') + current;
+      const sep = voiceBefore && !voiceBefore.endsWith(' ') ? ' ' : '';
+      input.value = voiceBefore + sep + current + voiceAfter;
     };
 
     rec.onerror = (ev) => {
@@ -744,7 +750,9 @@ export function initInput() {
       return;
     }
     voiceActive = true;
-    voiceBase = input.value;
+    const pos = input.selectionStart || input.value.length;
+    voiceBefore = input.value.substring(0, pos);
+    voiceAfter = input.value.substring(pos);
     voiceFinal = '';
     state.recognition = createRecognition();
     state.recognition.start();
@@ -761,6 +769,8 @@ export function initInput() {
     }
     voiceOverlay.classList.remove('on');
     voiceBtn.classList.remove('recording');
+    // Return focus to input so Enter can send immediately
+    if (input.value.trim()) input.focus();
   }
 
   // Long-press voice: mousedown/touchstart to start, mouseup/mouseleave/touchend to stop

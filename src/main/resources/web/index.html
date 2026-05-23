@@ -3,7 +3,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <title>nebflow</title>
-  <link rel="stylesheet" href="https://unpkg.com/katex@0.16.11/dist/katex.min.css">
+  <link rel="stylesheet" href="vendor/katex.min.css">
   <link rel="stylesheet" href="css/base.css">
   <link rel="stylesheet" href="css/nav.css">
   <link rel="stylesheet" href="css/sidebar.css">
@@ -174,10 +174,37 @@
       </div>
     </div>
   </div>
-  <script src="https://unpkg.com/lucide@0.454.0/dist/umd/lucide.min.js"></script>
-  <script src="https://unpkg.com/lottie-web@5.12.2/build/player/lottie.min.js"></script>
-  <script src="https://unpkg.com/marked@12.0.2/marked.min.js"></script>
-  <script src="https://unpkg.com/katex@0.16.11/dist/katex.min.js"></script>
+  <!-- Rules Editor Modal -->
+  <div id="rules-overlay">
+    <div id="rules-modal">
+      <div id="rules-modal-title">Project Rules</div>
+      <div id="rules-modal-body">
+        <textarea id="rules-input" placeholder="" rows="14" spellcheck="false"></textarea>
+      </div>
+      <div id="rules-modal-actions">
+        <button id="rules-modal-delete" style="display:none;margin-right:auto"></button>
+        <button id="rules-modal-cancel">Cancel</button>
+        <button id="rules-modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+  <!-- Project Root Picker Modal -->
+  <div id="path-picker-overlay">
+    <div id="path-picker-modal">
+      <div id="path-picker-title">Set Project Directory</div>
+      <div id="path-picker-breadcrumb"></div>
+      <div id="path-picker-list"></div>
+      <div id="path-picker-actions">
+        <button id="path-picker-cancel">Cancel</button>
+        <button id="path-picker-clear">Clear</button>
+        <button id="path-picker-select">Select This Folder</button>
+      </div>
+    </div>
+  </div>
+  <script src="vendor/lucide.min.js"></script>
+  <script src="vendor/lottie.min.js"></script>
+  <script src="vendor/marked.min.js"></script>
+  <script src="vendor/katex.min.js"></script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

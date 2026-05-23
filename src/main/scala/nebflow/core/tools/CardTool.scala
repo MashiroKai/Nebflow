@@ -194,6 +194,7 @@ object CardTool extends Tool:
       val result = sb.toString
       if result != html then logger.debug(s"Embedded ${replacements.size} local file(s) as data URIs")
       result
+  end embedLocalFiles
 
   val name = "Card"
 
@@ -217,26 +218,27 @@ object CardTool extends Tool:
 
   /** Base description without user design prompt. */
   private val baseDescription =
-    """Renders HTML content as a styled visual card in the chat — perfect for layouts, dashboards, diagrams, and anything that benefits from visual structure.
+    """Renders an interactive visual explanation in the chat — use this when a diagram, animation, or spatial layout conveys the idea better than paragraphs of text.
 
-This tool shines where Markdown falls short: spatial layouts, color coding, side-by-side comparisons, and any content the user should grasp at a glance rather than read through.
+This tool is for "a picture is worth a thousand words" scenarios. If the content works equally well as Markdown text, do NOT use this tool.
 
 Recommended use cases:
-- Side-by-side layouts — comparisons, dashboards, before/after, multi-panel views
-- Status dashboards — progress bars, step indicators, completion badges
-- Architecture diagrams — flowcharts, component relationships, annotated layouts
-- Data grids with conditional formatting — color-coded cells, heatmaps, thresholds
-- UI mockups — pixel-precise layout previews, component designs
-- Color/status indicators — colored dots, labels, status markers
+- Complex concept visualization — physical processes (e.g. how a heat pump works, TCP handshake), algorithm flows, data transformations, system architectures
+- Design demos — UI mockups, layout previews, before/after comparisons, interactive prototypes
+- Animated explanations — CSS-animated diagrams showing state changes over time, data flow, or causal chains
+- Spatial relationships — anything where the position/size/color of elements carries meaning (hierarchy, dependency, timeline, distribution)
+- Side-by-side comparisons — showing two states, versions, or alternatives visually
+
+CRITICAL: This tool must NOT be used for text-heavy content. If the card's primary information carrier is text (paragraphs, lists, explanations), use Markdown instead. Cards should be dominated by visual elements — shapes, lines, colors, spatial arrangement — with text kept to minimal annotations and labels.
 
 Parameters:
-- html (string, required): HTML with inline CSS. Supports dark mode via var(--color-*) CSS variables. JavaScript does NOT execute (sandboxed iframe).
+- html (string, required): HTML with inline CSS. Supports dark mode via var(--color-*) CSS variables. JavaScript does NOT execute (sandboxed iframe), but CSS animations work.
 - title (string, optional): Short title above the card.
 
 Example:
 {
-  "html": "<div style=\"font-family:sans-serif;padding:12px;font-size:13px\"><h3 style=\"margin:0 0 8px\">Status</h3><p style=\"color:var(--color-success)\">All systems green</p></div>",
-  "title": "Status"
+  "html": "<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"13\">Client</text><line x1=\"90\" y1=\"80\" x2=\"180\" y2=\"80\" stroke=\"var(--color-text)\" stroke-width=\"2\" stroke-dasharray=\"5,3\"/><text x=\"135\" y=\"70\" text-anchor=\"middle\" fill=\"var(--color-text)\" font-size=\"11\" opacity=\"0.6\">SYN</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"13\">Server</text></svg><p style=\"margin:8px 0 0;font-size:12px;color:var(--color-text);opacity:0.6;text-align:center\">TCP 三次握手：Client → SYN → Server</p></div>",
+  "title": "TCP 握手示意"
 }"""
 
   /** Dynamic description: base tool description + user design prompt (if present). */

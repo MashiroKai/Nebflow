@@ -101,6 +101,8 @@ object FeishuWire:
     encodeStringField(buf, 9, frame.logIdNew)
     buf.toByteArray
 
+  end encodeFrame
+
   /**
    * Build a client ping frame (same as official SDK's newPingFrame).
    *  Uses method=CONTROL(0) and header type="ping".
@@ -206,6 +208,7 @@ object FeishuWire:
                   case _ =>
                     // skip unknown wire type in header
                     hpos = bytes.length // simplified: skip rest
+              end while
               if hk.nonEmpty then headers += ((hk, hv))
             case 6 => payloadEncoding = new String(bytes, "UTF-8")
             case 7 => payloadType = new String(bytes, "UTF-8")

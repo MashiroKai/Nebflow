@@ -104,6 +104,10 @@ object FileTaskStore extends TaskStore:
       _ <- writeTask(sessionId, task)
     yield newId
 
+    end for
+
+  end create
+
   def get(sessionId: String, taskId: String): IO[Option[Task]] =
     readTask(taskFile(sessionId, taskId))
 
@@ -168,6 +172,8 @@ object FileTaskStore extends TaskStore:
 
     // Only visit tasks that are in the graph
     tasks.exists(t => !visited.contains(t.id) && dfs(t.id))
+
+  end hasCycle
 
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]] =
     get(sessionId, taskId).flatMap {

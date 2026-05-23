@@ -1,10 +1,36 @@
 #!/bin/bash
 set -e
 
-VERSION="${VERSION:-1.05.067}"
+# Parse flags
+CHANNEL="stable"
+for arg in "$@"; do
+    case "$arg" in
+        --beta) CHANNEL="beta" ;;
+        --cn) REGION="cn" ;;
+        --global) REGION="global" ;;
+    esac
+done
+
+# Resolve version
+if [ "$CHANNEL" = "beta" ]; then
+    echo "==> Resolving latest beta version..."
+    BETA_VERSION=$(curl -fsSL "https://api.github.com/repos/MashiroKai/Nebflow/releases" \
+        2>/dev/null | grep -m1 '"tag_name".*-beta"' | sed 's/.*"v\(.*\)-beta".*/\1/')
+    if [ -z "$BETA_VERSION" ]; then
+        echo "ERROR: Could not find a beta release."
+        echo "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability."
+        exit 1
+    fi
+    VERSION="${VERSION:-$BETA_VERSION}"
+else
+    VERSION="${VERSION:-1.05.067}"
+fi
+
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 JAR_NAME="nebflow-assembly-${VERSION}.jar"
-DOWNLOAD_URL="https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/${JAR_NAME}"
+COS_URL="https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/${JAR_NAME}"
+GH_URL="https://github.com/MashiroKai/Nebflow/releases/download/v${VERSION}/${JAR_NAME}"
+GH_BETA_URL="https://github.com/MashiroKai/Nebflow/releases/download/v${VERSION}-beta/${JAR_NAME}"
 
 echo ""
 echo "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗"
@@ -14,7 +40,7 @@ echo "  ██║╚██╗██║██╔══╝  ██╔══██�
 echo "  ██║ ╚████║███████╗██████╔╝██║     ███████╗╚██████╔╝╚███╔███╔╝"
 echo "  ╚═╝  ╚═══╝╚══════╝╚═════╝ ╚═╝     ╚══════╝ ╚═════╝  ╚══╝╚══╝"
 echo ""
-echo "  Nebflow v${VERSION} Installer"
+echo "  Nebflow v${VERSION} Installer (${CHANNEL})"
 echo ""
 
 # Check Java version
@@ -83,20 +109,94 @@ detect_os() {
     esac
 }
 
-# Download with fallback: try primary, then GitHub Releases
+# Auto-detect region: check if user is in China
+detect_region() {
+    if [ -n "$REGION" ]; then
+        return 0  # already set by --cn or --global flag
+    fi
+    # Method 1: check system timezone
+    local tz=""
+    if [ -f /etc/timezone ]; then
+        tz=$(cat /etc/timezone 2>/dev/null)
+    elif command -v timedatectl &> /dev/null; then
+        tz=$(timedatectl show -p Timezone 2>/dev/null | cut -d= -f2)
+    fi
+    case "$tz" in
+        Asia/Shanghai|Asia/Chongqing|Asia/Hong_Kong|Asia/Taipei|Asia/Macau|PRC|Asia/Urumqi)
+            REGION="cn"
+            return 0
+            ;;
+    esac
+
+    # Method 2: check LANG/LC_ALL for zh_CN
+    case "${LANG:-}${LC_ALL:-}" in
+        *zh_CN*|*zh_TW*|*zh_HK*)
+            REGION="cn"
+            return 0
+            ;;
+    esac
+
+    # Method 3: try a quick connectivity test (COS is fast in China, slow elsewhere)
+    # Test latency to COS vs GitHub — pick whichever responds first
+    local cos_ms=99999 gh_ms=99999
+    if command -v curl &> /dev/null; then
+        cos_ms=$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 2 --max-time 3 \
+            "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/" 2>/dev/null | \
+            awk '{printf "%d", $1 * 1000}')
+        gh_ms=$(curl -o /dev/null -s -w '%{time_total}' --connect-timeout 2 --max-time 3 \
+            "https://github.com/favicon.ico" 2>/dev/null | \
+            awk '{printf "%d", $1 * 1000}')
+    fi
+
+    # If COS is significantly faster (> 2x), user is likely in China
+    if [ "$cos_ms" -lt 500 ] && [ "$cos_ms" -lt $((gh_ms / 2)) ]; then
+        REGION="cn"
+    else
+        REGION="global"
+    fi
+}
+
+# Download with automatic source selection
 download_jar() {
     local target="${INSTALL_DIR}/${JAR_NAME}"
     echo "==> Downloading ${JAR_NAME}..."
-    if _download "${DOWNLOAD_URL}" "${target}"; then
+
+    # Beta always from GitHub
+    if [ "$CHANNEL" = "beta" ]; then
+        _download "${GH_BETA_URL}" "${target}" || {
+            echo "ERROR: Download failed."
+            exit 1
+        }
         return 0
     fi
-    # Primary down, fall back to GitHub Releases
-    local mirror_url="https://github.com/MashiroKai/Nebflow/releases/download/v${VERSION}/${JAR_NAME}"
-    echo "       Primary source unavailable, trying GitHub..."
-    _download "${mirror_url}" "${target}" || {
-        echo "ERROR: Download failed from both sources."
-        exit 1
-    }
+
+    detect_region
+    echo "    Region: ${REGION} (use --cn or --global to override)"
+
+    case "$REGION" in
+        cn)
+            # China: COS first, GitHub fallback
+            if _download "${COS_URL}" "${target}"; then
+                return 0
+            fi
+            echo "       COS unavailable, trying GitHub..."
+            _download "${GH_URL}" "${target}" || {
+                echo "ERROR: Download failed from both sources."
+                exit 1
+            }
+            ;;
+        *)
+            # Global: GitHub first, COS fallback
+            if _download "${GH_URL}" "${target}"; then
+                return 0
+            fi
+            echo "       GitHub unavailable, trying COS mirror..."
+            _download "${COS_URL}" "${target}" || {
+                echo "ERROR: Download failed from both sources."
+                exit 1
+            }
+            ;;
+    esac
 }
 
 _download() {

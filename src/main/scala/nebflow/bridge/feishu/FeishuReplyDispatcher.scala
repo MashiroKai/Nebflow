@@ -117,6 +117,8 @@ class FeishuReplyDispatcher(
           }
     }
 
+  end sendOrPatch
+
   /** Final flush: synchronous, uses plain card (no stop button). Retries on rate limit. */
   private def finalFlushClean(text: String): IO[Unit] =
     val display = truncate(text)

@@ -91,6 +91,7 @@ object GlobTool extends Tool:
             else output
           )
       finally walkStream.close()
+      end try
     catch case e: Exception => Left(ToolError(s"Error: ${e.getMessage}"))
     end try
   }

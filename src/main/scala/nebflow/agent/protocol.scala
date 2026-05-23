@@ -113,6 +113,9 @@ object AgentCommand:
   /** Full session reset — triggered by /clear to reset messages, usage, compaction state, etc. */
   case object ResetSession extends AgentCommand
 
+  /** Async result of refreshing agent definition — sent back to self by AgentActor.refreshAgentDefAsync. */
+  case class AgentDefRefreshed(defn: AgentDef) extends AgentCommand
+
   /** Update per-session highest context-pressure level (isolated from other sessions). */
   case class UpdateHighestPressureLevel(level: Int) extends AgentCommand
 

@@ -164,6 +164,8 @@ object HookEngine:
             results.foldLeft(HookResult.allow)(HookResult.merge)
           }
 
+    end executeHooks
+
   /** No-op engine — used when no hooks are configured. */
   val noop: HookEngine = new HookEngine:
     def emit(event: HookEvent, payload: HookPayload, context: HookContext, toolName: Option[String]): IO[HookResult] =

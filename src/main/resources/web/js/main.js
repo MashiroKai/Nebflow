@@ -34,7 +34,7 @@ import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
 import { initSearch, renderSearchResults } from './search.js';
 import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from './memory.js';
-import { handleRulesData, handleRulesSaved } from './sidebar.js';
+import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 
@@ -210,6 +210,12 @@ onMessage('thinkingDelta', (msg) => {
       const row = existing.closest('.row');
       if (row) row.remove();
       if (state.currentAiBubble === existing) state.currentAiBubble = null;
+    }
+    // Guard: only create thinking bubbles when a turn is expected (user sent
+    // message or server explicitly started a new round). Prevents stray thinking
+    // bubbles from late-arriving thinkingDelta after done has been processed.
+    if (!state.turnExpecting[sid] && !state.currentThinkingBubble && !state.currentAiBubble) {
+      return;
     }
     appendThinkingDelta(msg.delta);
   }
@@ -434,6 +440,8 @@ onMessage('done', (msg) => {
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   const durationMs = consumeTurnDuration(sid);
   delete state.sessionPendingTools[sid];
+  // Turn is complete — clear turnExpecting so stray thinkingDelta won't create bubbles
+  if (sid) delete state.turnExpecting[sid];
   console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length, durationMs });
   // Store model info for this session
   if (sid && (msg.model || msg.contextWindow || msg.inputTokens != null)) {
@@ -512,12 +520,30 @@ onMessage('done', (msg) => {
   }
 });
 
+// roundComplete: backend signals the current round's text is finalized but a new
+// LLM round is about to start (e.g. pendingEvents injection). Finalize the
+// current AI bubble without ending the turn (no done/sessionBusy(false)).
+onMessage('roundComplete', (msg) => {
+  const sid = msg.sessionId || state.activeSessionId;
+  if (isActive(msg)) {
+    if (state.currentThinkingBubble) finishThinking();
+    const tThinking = state.sessionThinkingBuffers[sid] || '';
+    if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
+    const prevData = finishAi();
+    if (prevData) {
+      prevData.thinking = tThinking || undefined;
+      saveMsg(prevData, msg.sessionId);
+    }
+  }
+});
+
 onMessage('error', (msg) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
+  if (sid) delete state.turnExpecting[sid];
   // Defensive: clear attention on error
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   // Reset history loading state — backend may fail mid-pagination
@@ -544,6 +570,7 @@ onMessage('interrupted', (msg) => {
   delete state.sessionPendingTools[sid];
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
+  if (sid) delete state.turnExpecting[sid];
   // Defensive: clear attention on interrupt
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (isActive(msg)) {
@@ -578,6 +605,7 @@ onMessage('maxTokens', (msg) => {
   delete state.sessionPendingTools[sid];
   if (sid) delete state.pendingRestore[sid];
   if (sid) delete state.sessionPendingAiMessages[sid];
+  if (sid) delete state.turnExpecting[sid];
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (isActive(msg)) {
     if (sid && state.sessionToolCards[sid]) {
@@ -648,7 +676,7 @@ onMessage('sessionList', (msg) => {
   if (!restoredSessionId && activeId) {
     restoredSessionId = activeId;
     // Try backend history first; fall back to localStorage
-    sendWs({ type: 'getHistory', sessionId: activeId, limit: 100 });
+    sendWs({ type: 'getHistory', sessionId: activeId, limit: 50 });
   }
   migrateLegacyIfNeeded();
   // Request agent list on first connect (no tab to trigger it now)
@@ -699,10 +727,12 @@ onMessage('historyPage', (msg) => {
   const isInitialLoad = state.historyOffset === 0;
   if (isInitialLoad) {
     // Initial load or full refresh — replace
+    state.dom.chat.innerHTML = '';
+    // Clear history indicators before rendering
+    clearHistoryIndicators();
     state.historyOffset = msg.offset;
     state.historyTotal = msg.total;
     state.historyHasMore = msg.hasMore;
-    state.dom.chat.innerHTML = '';
     restoreFromBackendHistory(msg.messages);
 
     // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
@@ -857,7 +887,17 @@ onMessage('historyPage', (msg) => {
     }
 
     if (!state.historyHasMore && msg.messages.length > 0) showHistoryEnd();
-    smartScroll();
+
+    // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
+    // is complete, ensure the viewport shows the latest content.
+    // Uses rAF to avoid layout thrashing — fires after any pending style calculations.
+    requestAnimationFrame(() => {
+      const chat = state.dom.chat;
+      if (state.scrollSnapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
+        chat.scrollTop = chat.scrollHeight;
+        state.scrollSnapped = true;
+      }
+    });
 
     // Handle search navigation: scroll to a specific message after history loads
     if (state.searchNavigateTarget && state.searchNavigateTarget.sessionId === sid) {
@@ -882,12 +922,9 @@ onMessage('historyPage', (msg) => {
     // Insert before first child
     const fragment = document.createDocumentFragment();
     const tempDiv = document.createElement('div');
-    // Render messages into a temp container
-    const prevActiveId = state.activeSessionId;
-    // Use a temporary chat container for rendering
     const origChat = state.dom.chat;
     state.dom.chat = tempDiv;
-    restoreFromBackendHistory(msg.messages);
+    restoreFromBackendHistory(msg.messages, { scrollToBottom: false });
     state.dom.chat = origChat;
     // Move rendered children to fragment, skip animation on prepended rows
     while (tempDiv.firstChild) {
@@ -1073,6 +1110,7 @@ onMessage('agentSessionList', (msg) => {
   const sessions = msg.sessions || [];
   const folders = msg.folders || [];
   state.folders = folders;
+  state.foldersWithRules = new Set(msg.foldersWithRules || []);
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
   // Find active session for this agent
@@ -1173,6 +1211,7 @@ onMessage('retryStatus', (msg) => {
 onMessage('bridgeUser', (msg) => {
   const sid = msg.sessionId;
   if (!sid) return;
+  state.turnExpecting[sid] = true;
   saveMsg({type: 'user', text: msg.text}, sid);
   if (sid === state.activeSessionId) {
     renderUserBubble(msg.text, []);
@@ -1183,14 +1222,16 @@ onMessage('bridgeUser', (msg) => {
 // --- Session busy state (backend authority) ---
 onMessage('sessionBusy', (msg) => {
   if (isActive(msg)) {
+    const sid = msg.sessionId || state.activeSessionId;
     if (msg.busy) {
       setBusy(msg.sessionId);
+      // Server explicitly set busy — mark as expecting a turn (e.g. pendingEvents round)
+      if (sid) state.turnExpecting[sid] = true;
     } else {
       clearBusy(msg.sessionId);
       // Defensive: if the 'done' event was lost but backend sent busy=false,
       // finish any active streaming bubble so the cursor disappears and the
       // duration badge is rendered.
-      const sid = msg.sessionId || state.activeSessionId;
       delete state.sessionPendingTools[sid];
       delete state.sessionPendingAiMessages[sid];
       delete state.pendingRestore[sid];
@@ -1441,6 +1482,10 @@ onMessage('memoryStatus', (msg) => showMemoryButton());
 // --- Rules ---
 onMessage('rulesData', (msg) => handleRulesData(msg));
 onMessage('rulesSaved', (msg) => handleRulesSaved(msg));
+onMessage('rulesDeleted', (msg) => handleRulesDeleted(msg));
+
+// --- Browse Result (path picker) ---
+onMessage('browseResult', (msg) => handleBrowseResult(msg));
 
 // --- Card design prompt ---
 onMessage('cardDesignData', (msg) => { state.cardDesignPrompt = msg.content || ''; });
@@ -1461,6 +1506,8 @@ console.log('[main] initializing modules...');
 applyLocaleToHtml(); // Apply locale to static HTML elements
 initNavTabs();
 initModals();
+initRulesModal();
+initPathPicker();
 initInput();
 initSearch();
 initFeishuPanel();

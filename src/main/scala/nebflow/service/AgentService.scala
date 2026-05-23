@@ -47,6 +47,8 @@ class AgentService(library: AgentLibrary):
             case Left(_) => IO.unit
           }
 
+  end createAgent
+
   def updateAgent(name: String, configJson: String, systemMd: String): IO[Either[String, Unit]] =
     val toolResult = validateTools(configJson)
     toolResult match
@@ -63,6 +65,8 @@ class AgentService(library: AgentLibrary):
             case Right(_) => library.refresh()
             case Left(_) => IO.unit
           }
+
+  end updateAgent
 
   /** Validate tool names in agent JSON against ToolRegistry. */
   private def validateTools(configJson: String): Option[String] =

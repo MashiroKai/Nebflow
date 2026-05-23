@@ -71,7 +71,8 @@ export function connect() {
         'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
         'memoryData', 'memorySaved', 'memoryStatus', 'searchResults',
         'cardDesignData', 'cardDesignSaved',
-        'rulesData', 'rulesSaved', 'rulesStatus'
+        'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
+        'browseResult'
       ];
       // Terminal state events update per-session busy/attention status — must always be processed
       // so the sidebar accurately reflects session state even when the user is viewing another session.
@@ -81,8 +82,16 @@ export function connect() {
         'backgroundTaskUpdate', 'taskListUpdate',
         'askUser', 'askPermission'
       ];
+      // NOTE: streaming events must reach handlers for ALL sessions so that buffer accumulation
+      // (sessionThinkingBuffers / sessionTexts) stays complete. DOM updates are gated by isActive().
+      const STREAM_MSG_TYPES = [
+        'thinkingDelta', 'textDelta', 'textDone',
+        'toolCallDetected', 'toolCallStart', 'toolCallChunk', 'toolStart', 'toolEnd',
+        'roundComplete'
+      ];
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
-          !GLOBAL_MSG_TYPES.includes(msg.type) && !TERMINAL_MSG_TYPES.includes(msg.type)) {
+          !GLOBAL_MSG_TYPES.includes(msg.type) && !TERMINAL_MSG_TYPES.includes(msg.type) &&
+          !STREAM_MSG_TYPES.includes(msg.type)) {
         return;
       }
       const handler = handlers[msg.type];

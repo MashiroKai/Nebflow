@@ -30,6 +30,8 @@ trait BridgePlugin:
   /** Called when bridge configs change (e.g. session binds/unbinds a chat). Rebuild routing tables. */
   def refreshRoutes: IO[Unit] = IO.unit
 
+end BridgePlugin
+
 /**
  * Core APIs that a bridge plugin can call.
  * Provided by Nebflow core; plugins must not hold hard references to
@@ -50,3 +52,4 @@ trait BridgeContext:
 
   /** Update (or remove) the bridge config for a specific platform on a session. */
   def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit]
+end BridgeContext

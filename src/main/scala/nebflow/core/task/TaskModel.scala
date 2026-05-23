@@ -24,6 +24,8 @@ object TaskStatus:
     }
   )
 
+end TaskStatus
+
 case class Task(
   id: String,
   subject: String,

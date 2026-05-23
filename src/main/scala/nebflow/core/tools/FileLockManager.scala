@@ -34,6 +34,8 @@ class FileLockManager private (locks: Ref[IO, Map[Path, Semaphore[IO]]]):
       }
     yield existing.getOrElse(sem)
 
+end FileLockManager
+
 object FileLockManager:
 
   def create: IO[FileLockManager] =

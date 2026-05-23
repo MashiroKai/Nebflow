@@ -128,6 +128,8 @@ Usage:
     if results.nonEmpty then results.mkString("\n\n")
     else extractGenericLinks(html)
 
+  end extractDuckDuckGo
+
   /** Bing results: <li class="b_algo"> blocks. */
   private def extractBing(html: String): String =
     val results = scala.collection.mutable.ListBuffer.empty[String]
@@ -145,6 +147,8 @@ Usage:
     }
     if results.nonEmpty then results.mkString("\n\n")
     else extractGenericLinks(html)
+
+  end extractBing
 
   /** Baidu results: <div class="result"> blocks with c-container class. */
   private def extractBaidu(html: String): String =
@@ -164,6 +168,8 @@ Usage:
     if results.nonEmpty then results.mkString("\n\n")
     else extractGenericLinks(html)
 
+  end extractBaidu
+
   /** Generic fallback: extract <a> links with meaningful text. */
   private def extractGenericLinks(html: String): String =
     val results = scala.collection.mutable.ListBuffer.empty[String]
@@ -180,6 +186,7 @@ Usage:
     }
     if results.nonEmpty then results.mkString("\n\n")
     else HttpUtils.stripHtmlTags(html).take(DEFAULT_MAX_CHARS)
+  end extractGenericLinks
 
   // ── Single-engine fetch ───────────────────────────────────────────
 

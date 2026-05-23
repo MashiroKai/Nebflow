@@ -26,6 +26,18 @@ case class CompactConfig(
   /** Buffer that scales with context window (10% min, or fixed 13k for small models). */
   def bufferForWindow(contextWindow: Int): Int =
     math.max(bufferTokens, (contextWindow * bufferRatio).toInt)
+
+  /**
+   * Exponential backoff: delay = compactionRetryDelayMs * 2^(failures - 1)
+   * Returns 0 for failures=0 (no backoff needed).
+   */
+  def backoffMs(failures: Int): Long =
+    if failures <= 0 then 0L
+    else compactionRetryDelayMs.toLong * math.pow(2, failures - 1).toLong
+
+  /** Check whether the elapsed time (ms) satisfies the backoff for the given failure count. */
+  def isBackoffSatisfied(failures: Int, elapsedMs: Long): Boolean =
+    failures <= 0 || elapsedMs >= backoffMs(failures)
 end CompactConfig
 
 object CompactConfig:

@@ -135,6 +135,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
         )
       }
       Json.fromValues(blocks.toList)
+    end if
   end buildSystemBlocks
 
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =

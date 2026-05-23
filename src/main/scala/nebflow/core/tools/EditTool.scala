@@ -1,11 +1,10 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathSandbox}
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -123,24 +122,35 @@ Edit patterns:
     val newString = input("new_string").flatMap(_.asString).getOrElse("")
     val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
 
-    // Phase 1: lock-free pre-validation
-    validateInput(filePath, input) match
-      case Left(err) => IO.pure(Left(err))
-      case Right(()) =>
-        // Snapshot file before editing (if it exists)
-        val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath))
-        val editIO = snapshot *> IO.blocking { doEdit(filePath, oldString, newString, replaceAll) }
-        val lockedEdit = ctx.fileLockManager match
-          case Some(lm) => lm.withWriteLock(filePath)(editIO)
-          case None => editIO
-        lockedEdit.flatMap {
-          case Right(result) =>
-            val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
-              ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
-            record.as(Right(result))
-          case left => IO.pure(left)
-        }
-    end match
+    // Phase 0: PathSandbox check — only allow edits within project root
+    val sandboxCheck = PathSandbox.isAllowed(filePath.toString, ctx.projectRoot)
+    sandboxCheck.flatMap { allowed =>
+      if !allowed then IO.pure(Left(ToolError(s"File is outside project root and cannot be edited: $filePath")))
+      else
+        // Phase 1: lock-free pre-validation
+        validateInput(filePath, input) match
+          case Left(err) => IO.pure(Left(err))
+          case Right(()) =>
+            // Snapshot file before editing (if it exists)
+            val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath))
+            val editIO = (snapshot *> IO.blocking(doEdit(filePath, oldString, newString, replaceAll)))
+              .handleErrorWith { e =>
+                val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+                logger.warn(s"Error editing file $filePath: ${e.getClass.getSimpleName}: $msg") *>
+                  IO.pure(Left(ToolError(s"Error editing file: $msg")))
+              }
+            val lockedEdit = ctx.fileLockManager match
+              case Some(lm) => lm.withWriteLock(filePath)(editIO)
+              case None => editIO
+            lockedEdit.flatMap {
+              case Right(result) =>
+                val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
+                  ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
+                record.as(Right(result))
+              case left => IO.pure(left)
+            }
+        end match
+    }
   end call
 
   // ---------------------------------------------------------------------------
@@ -153,71 +163,67 @@ Edit patterns:
     newString: String,
     replaceAll: Boolean
   ): Either[ToolError, String] =
-    try
-      // --- New file creation branch ---
-      if oldString.isEmpty then
-        if Files.exists(filePath) then
-          val content = DiffUtil.readFile(filePath)
-          validateInLock(filePath, content, oldString) match
-            case Left(err) => Left(err)
-            case Right(()) =>
-              DiffUtil.writeFile(filePath, newString, "\n")
-              Right(DiffUtil.renderCreatedResult(filePath))
-        else
-          val parent = filePath.getParent
-          if parent != null && !Files.exists(parent) then Files.createDirectories(parent)
-          DiffUtil.writeFile(filePath, newString, "\n")
-          Right(DiffUtil.renderCreatedResult(filePath))
+    // --- New file creation branch ---
+    if oldString.isEmpty then
+      if Files.exists(filePath) then
+        val content = DiffUtil.readFile(filePath)
+        validateInLock(filePath, content, oldString) match
+          case Left(err) => Left(err)
+          case Right(()) =>
+            DiffUtil.writeFile(filePath, newString, "\n")
+            Right(DiffUtil.renderCreatedResult(filePath))
       else
-        // --- Existing file edit branch ---
-        if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
+        val parent = filePath.getParent
+        if parent != null && !Files.exists(parent) then Files.createDirectories(parent)
+        DiffUtil.writeFile(filePath, newString, "\n")
+        Right(DiffUtil.renderCreatedResult(filePath))
+    else
+      // --- Existing file edit branch ---
+      if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
+      else
+        // File size check BEFORE reading content
+        val size = Files.size(filePath)
+        if size > MaxEditFileSize then
+          Left(ToolError(s"File too large to edit (${formatSize(size)}). Maximum is ${formatSize(MaxEditFileSize)}."))
         else
-          // File size check BEFORE reading content
-          val size = Files.size(filePath)
-          if size > MaxEditFileSize then
-            Left(ToolError(s"File too large to edit (${formatSize(size)}). Maximum is ${formatSize(MaxEditFileSize)}."))
-          else
-            val content = DiffUtil.readFile(filePath)
-            val lineSep = DiffUtil.detectLineSep(content)
-            val mtime = Files.getLastModifiedTime(filePath)
+          val content = DiffUtil.readFile(filePath)
+          val lineSep = DiffUtil.detectLineSep(content)
+          val mtime = Files.getLastModifiedTime(filePath)
 
-            // Fuzzy matching
-            StringMatcher.findActualString(content, oldString) match
-              case None =>
+          // Fuzzy matching
+          StringMatcher.findActualString(content, oldString) match
+            case None =>
+              Left(
+                ToolError(
+                  "old_string not found in file. Ensure the string matches exactly, including whitespace and indentation."
+                )
+              )
+            case Some(actualOld) =>
+              // Uniqueness check
+              val matchCount = DiffUtil.countMatches(content, actualOld)
+              if matchCount > 1 && !replaceAll then
                 Left(
                   ToolError(
-                    "old_string not found in file. Ensure the string matches exactly, including whitespace and indentation."
+                    s"Found $matchCount matches of old_string. Either provide more context to make it unique, or set replace_all to true."
                   )
                 )
-              case Some(actualOld) =>
-                // Uniqueness check
-                val matchCount = DiffUtil.countMatches(content, actualOld)
-                if matchCount > 1 && !replaceAll then
-                  Left(
-                    ToolError(
-                      s"Found $matchCount matches of old_string. Either provide more context to make it unique, or set replace_all to true."
-                    )
-                  )
-                else
-                  // Apply preserveQuoteStyle when fuzzy match was used
-                  val effectiveNew =
-                    if actualOld != oldString then StringMatcher.preserveQuoteStyle(oldString, actualOld, newString)
-                    else newString
+              else
+                // Apply preserveQuoteStyle when fuzzy match was used
+                val effectiveNew =
+                  if actualOld != oldString then StringMatcher.preserveQuoteStyle(oldString, actualOld, newString)
+                  else newString
 
-                  // Double-check concurrency: mtime + content comparison
-                  val currentMtime = Files.getLastModifiedTime(filePath)
-                  if currentMtime != mtime then
-                    val currentContent = DiffUtil.readFile(filePath)
-                    if currentContent != content then
-                      Left(ToolError("File was modified externally. Please re-read and retry."))
-                    else performReplace(filePath.toString, content, actualOld, effectiveNew, replaceAll, lineSep)
+                // Double-check concurrency: mtime + content comparison
+                val currentMtime = Files.getLastModifiedTime(filePath)
+                if currentMtime != mtime then
+                  val currentContent = DiffUtil.readFile(filePath)
+                  if currentContent != content then
+                    Left(ToolError("File was modified externally. Please re-read and retry."))
                   else performReplace(filePath.toString, content, actualOld, effectiveNew, replaceAll, lineSep)
-            end match
-          end if
-    catch
-      case e: Exception =>
-        logger.warn(s"Error editing file ${filePath}: ${e.getClass.getSimpleName}: ${e.getMessage}").unsafeRunSync()
-        Left(ToolError(s"Error editing file: ${e.getMessage}"))
+                else performReplace(filePath.toString, content, actualOld, effectiveNew, replaceAll, lineSep)
+              end if
+          end match
+        end if
 
   private def performReplace(
     filePathStr: String,

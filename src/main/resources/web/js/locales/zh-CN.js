@@ -145,12 +145,19 @@ export default {
   'ctx.batchDelete': '删除选中的 {count} 个会话',
   'ctx.batchCancel': '取消选择',
   'ctx.setProjectRoot': '设置项目目录',
-  'ctx.setProjectRootPrompt': '项目目录路径（留空则清除）：',
   'ctx.editRules': '编辑规则',
+  'ctx.createRules': '创建规则',
 
   // === Rules ===
   'rules.title': '项目规则',
   'rules.placeholder': '输入此文件夹的项目规则…\n子文件夹会自动继承父文件夹的规则。',
+  'rules.delete': '删除',
+
+  // === Path Picker ===
+  'pathPicker.title': '选择项目目录',
+  'pathPicker.select': '选择此目录',
+  'pathPicker.clear': '清除',
+  'pathPicker.empty': '此目录下无子目录',
 
   // === Session sidebar ===
   'session.namePlaceholder': '会话名称...',

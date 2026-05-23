@@ -74,6 +74,8 @@ class McpManager private (
       _ <- serversRef.update(_ + (id -> (client, wrapped)))
     yield ()
 
+  end connectWithTransport
+
   /** Re-fetch tool list from server and update ToolRegistry. */
   private def refreshServerTools(id: String, client: McpClient): IO[Unit] =
     for

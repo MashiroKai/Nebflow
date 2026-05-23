@@ -63,6 +63,8 @@ object ModelChainConfig:
     yield ModelChainConfig(d, fallbacks)
   }
 
+end ModelChainConfig
+
 case class McpServerConfig(
   command: Option[String] = None,
   args: Option[List[String]] = None,
@@ -131,10 +133,20 @@ object Config:
   val NebflowHome: os.Path = os.home / ".nebflow"
   val DefaultConfigPath: os.Path = NebflowHome / "nebflow.json"
 
+  private val envVarLogger = nebflow.core.NebflowLogger.forName("nebflow.config")
+
   def resolveEnvVars(str: String): String =
     """\$\{([^}]+)\}""".r.replaceAllIn(
       str,
-      m => java.util.regex.Matcher.quoteReplacement(sys.env.getOrElse(m.group(1), m.matched))
+      m =>
+        val key = m.group(1)
+        sys.env.get(key) match
+          case Some(value) => java.util.regex.Matcher.quoteReplacement(value)
+          case None =>
+            envVarLogger.infoSync(
+              "Environment variable $" + key + " not found in config value, replacing with empty string"
+            )
+            ""
     )
 
   def parseModelRef(ref: String): (String, String) =

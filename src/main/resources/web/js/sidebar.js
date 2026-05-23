@@ -203,7 +203,7 @@ export function renderSettings() {
       <div class="cfg-form-group">
         <label class="cfg-label">${t('settings.feishuAppSecret')}</label>
         <div class="cfg-password-wrap">
-          <input class="cfg-input" id="cfg-feishu-appsecret" type="text" value="" autocomplete="new-password" style="-webkit-text-security:disc">
+          <input class="cfg-input" id="cfg-feishu-appsecret" type="password" value="" autocomplete="new-password">
           <button class="cfg-eye-btn" id="cfg-feishu-eye" type="button" aria-label="Toggle visibility">${eyeSvg}</button>
         </div>
       </div>
@@ -276,46 +276,32 @@ export function renderSettings() {
 }
 
 function renderProviderCard(name, p) {
-  const models = (p.models || []).map(m => m.id).join(', ') || 'none';
-  const maskedKey = maskKey(p.apiKey);
+  const modelCount = (p.models || []).length;
   return `
     <div class="cfg-card" data-provider="${escapeHtml(name)}">
       <div class="cfg-card-header">
         <span class="cfg-card-title">${escapeHtml(name)}</span>
-        <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
         <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
       </div>
-      <div class="cfg-card-body">
-        <div class="cfg-field"><span class="cfg-field-label">${t('provider.baseUrl')}</span><span class="cfg-field-value">${escapeHtml(p.baseUrl || '')}</span></div>
-        <div class="cfg-field"><span class="cfg-field-label">${t('provider.apiKey')}</span><span class="cfg-field-value">${maskedKey}</span></div>
-        <div class="cfg-field"><span class="cfg-field-label">${t('provider.models')}</span><span class="cfg-field-value">${escapeHtml(models)}</span></div>
+      <div class="cfg-card-meta">
+        <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
+        <span class="cfg-card-sub">${modelCount} model${modelCount !== 1 ? 's' : ''}</span>
       </div>
     </div>`;
 }
 
 function renderMcpServerCard(name, s) {
-  const cmd = [s.command, ...(s.args || [])].join(' ');
-  const envKeys = s.env ? Object.keys(s.env).join(', ') : '';
-  const url = s.url || '';
+  const type = s.url ? 'URL' : 'CMD';
   return `
     <div class="cfg-card" data-mcp="${escapeHtml(name)}">
       <div class="cfg-card-header">
         <span class="cfg-card-title">${escapeHtml(name)}</span>
-        <span class="cfg-card-badge">${url ? 'URL' : 'CMD'}</span>
         <button class="cfg-card-remove" data-mcp="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
       </div>
-      <div class="cfg-card-body">
-        ${url ? `<div class="cfg-field"><span class="cfg-field-label">URL</span><span class="cfg-field-value">${escapeHtml(url)}</span></div>` : ''}
-        ${cmd ? `<div class="cfg-field"><span class="cfg-field-label">Command</span><span class="cfg-field-value">${escapeHtml(cmd)}</span></div>` : ''}
-        ${envKeys ? `<div class="cfg-field"><span class="cfg-field-label">Env</span><span class="cfg-field-value">${escapeHtml(envKeys)}</span></div>` : ''}
+      <div class="cfg-card-meta">
+        <span class="cfg-card-badge">${type}</span>
       </div>
     </div>`;
-}
-
-function maskKey(key) {
-  if (!key || key === '***') return '•••';
-  if (key.length <= 8) return '••••••••';
-  return key.slice(0, 4) + '•••' + key.slice(-4);
 }
 
 function bindSettingsEvents(content, cfg, allModels) {
@@ -380,9 +366,9 @@ function bindSettingsEvents(content, cfg, allModels) {
     const input = document.getElementById('cfg-feishu-appsecret');
     const btn = document.getElementById('cfg-feishu-eye');
     if (!input || !btn) return;
-    const isHidden = input.style.webkitTextSecurity === 'disc' || input.style.webkitTextSecurity === '';
-    input.style.webkitTextSecurity = isHidden ? 'none' : 'disc';
-    btn.innerHTML = isHidden ? eyeOffSvg : eyeSvg;
+    const isPassword = input.type === 'password';
+    input.type = isPassword ? 'text' : 'password';
+    btn.innerHTML = isPassword ? eyeOffSvg : eyeSvg;
   });
 
   // --- Provider add/edit/remove ---
@@ -1100,7 +1086,7 @@ export function resetChatForActiveSession() {
       const beforeIndex = targetIdx + Math.floor(limit / 2);
       sendWs({ type: 'getHistory', sessionId: sid, limit, beforeIndex });
     } else {
-      sendWs({ type: 'getHistory', sessionId: sid, limit: 100 });
+      sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
     }
   }
 
@@ -1787,6 +1773,10 @@ onMessage('feishuGlobalConfig', (data) => {
   if (data.configured) {
     appIdInput.value = data.appId || '';
     secretInput.value = data.appSecret || '';
+    if (data.hasAppSecret && !data.appSecret) {
+      // Fallback: placeholder when secret isn't sent
+      secretInput.placeholder = '••••••••';
+    }
   }
 });
 
@@ -1964,6 +1954,7 @@ function renderFolderItem(folder, sessions, container) {
   // Drop zone: allow dragging sessions or folders into this folder
   folderEl.addEventListener('dragover', (e) => {
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
     folderEl.classList.add('drag-over');
   });
@@ -1972,6 +1963,7 @@ function renderFolderItem(folder, sessions, container) {
   });
   folderEl.addEventListener('drop', (e) => {
     e.preventDefault();
+    e.stopPropagation();
     folderEl.classList.remove('drag-over');
     const data = e.dataTransfer.getData('text/plain');
     if (!data) return;
@@ -1994,6 +1986,20 @@ function renderFolderItem(folder, sessions, container) {
   if (isExpanded) {
     const childrenContainer = document.createElement('div');
     childrenContainer.className = 'folder-children';
+
+    // Rules.md entry — only shown when rules exist for this folder
+    if (state.foldersWithRules && state.foldersWithRules.has(folder.id)) {
+      const rulesItem = document.createElement('div');
+      rulesItem.className = 'session-item in-folder rules-item';
+      rulesItem.innerHTML =
+        '<div class="session-icon"><i data-lucide="file-text" style="width:14px;height:14px;color:var(--color-text-muted)"></i></div>' +
+        '<div class="session-name">rules.md</div>';
+      rulesItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openRulesEditor(folder.id, folder.name);
+      });
+      childrenContainer.appendChild(rulesItem);
+    }
 
     // Sub-folders
     const subFolders = (state.folders || [])
@@ -2072,8 +2078,9 @@ function showFolderCtxMenu(x, y, folderId) {
     html += '<div class="ctx-separator"></div>' +
       '<div class="ctx-item" data-action="set-project-root">' + t('ctx.setProjectRoot') + '</div>';
   }
-  // Rules — available for all folders
-  html += '<div class="ctx-item" data-action="edit-rules">' + t('ctx.editRules') + '</div>';
+  // Rules — dynamic: create if not exists, edit if exists
+  const hasRules = state.foldersWithRules && state.foldersWithRules.has(folderId);
+  html += '<div class="ctx-item" data-action="edit-rules">' + (hasRules ? t('ctx.editRules') : t('ctx.createRules')) + '</div>';
   if (hasParent) {
     html += '<div class="ctx-item" data-action="move-out">' + t('ctx.moveOut') + '</div>';
   }
@@ -2104,16 +2111,11 @@ function showFolderCtxMenu(x, y, folderId) {
     createNewFolder(folderId);
   });
 
-  // Set project root (top-level only)
+  // Set project root (top-level only) — opens directory picker
   if (isTopLevel) {
     menu.querySelector('[data-action="set-project-root"]').addEventListener('click', () => {
       if (!folder) return;
-      const current = folder.projectRoot || '';
-      const newPath = prompt(t('ctx.setProjectRootPrompt'), current);
-      if (newPath === null) { dismissCtxMenu(); return; }
-      const trimmed = newPath.trim();
-      const projectRoot = trimmed.length > 0 ? trimmed : null;
-      sendWs({ type: 'setFolderProjectRoot', folderId, projectRoot });
+      openPathPicker(folderId, folder.projectRoot);
       dismissCtxMenu();
     });
   }
@@ -2145,62 +2147,191 @@ function showFolderCtxMenu(x, y, folderId) {
   activeCtxMenu = menu;
 }
 
-/** Open a simple rules editor for a folder. */
+/** Open rules editor modal for a folder — Nebflow standard modal. */
 let activeRulesFolderId = null;
+let activeRulesExists = false;
 function openRulesEditor(folderId, folderName) {
   activeRulesFolderId = folderId;
-  // Remove existing editor if any
-  const existing = document.getElementById('rules-editor-modal');
-  if (existing) existing.remove();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'rules-editor-overlay';
-  overlay.className = 'modal-overlay on';
-
-  const modal = document.createElement('div');
-  modal.id = 'rules-editor-modal';
-  modal.className = 'modal-box show';
-  modal.innerHTML =
-    '<div class="modal-title">' + t('rules.title') + ' — ' + escapeHtml(folderName) + '</div>' +
-    '<textarea id="rules-editor-input" class="memory-content-input" placeholder="' + t('rules.placeholder') + '"></textarea>' +
-    '<div class="modal-buttons">' +
-      '<button id="rules-editor-cancel" class="modal-cancel">' + t('modal.cancel') + '</button>' +
-      '<button id="rules-editor-save" class="modal-confirm">' + t('modal.save') + '</button>' +
-    '</div>';
-
-  document.body.appendChild(overlay);
-  document.body.appendChild(modal);
-
+  activeRulesExists = state.foldersWithRules && state.foldersWithRules.has(folderId);
+  const title = document.getElementById('rules-modal-title');
+  const input = document.getElementById('rules-input');
+  const deleteBtn = document.getElementById('rules-modal-delete');
+  title.textContent = t('rules.title') + ' — ' + folderName;
+  input.value = '';
+  input.placeholder = t('rules.placeholder');
+  deleteBtn.style.display = activeRulesExists ? 'inline-block' : 'none';
+  deleteBtn.textContent = t('rules.delete');
+  document.getElementById('rules-overlay').classList.add('on');
+  document.getElementById('rules-modal').classList.add('show');
   // Fetch current content
   sendWs({ type: 'getRules', folderId });
-
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeRulesEditor();
-  });
-  document.getElementById('rules-editor-cancel').addEventListener('click', closeRulesEditor);
-  document.getElementById('rules-editor-save').addEventListener('click', () => {
-    const content = document.getElementById('rules-editor-input').value;
-    sendWs({ type: 'saveRules', folderId: activeRulesFolderId, content });
-  });
+  setTimeout(() => input.focus(), 50);
 }
 
 function closeRulesEditor() {
   activeRulesFolderId = null;
-  document.getElementById('rules-editor-modal')?.remove();
-  document.getElementById('rules-editor-overlay')?.remove();
+  document.getElementById('rules-overlay').classList.remove('on');
+  document.getElementById('rules-modal').classList.remove('show');
 }
 
 /** Handle rulesData from server. */
 export function handleRulesData(data) {
   if (activeRulesFolderId === data.folderId) {
-    const input = document.getElementById('rules-editor-input');
+    const input = document.getElementById('rules-input');
     if (input) input.value = data.content || '';
   }
 }
 
 /** Handle rulesSaved from server. */
 export function handleRulesSaved(data) {
-  if (data.folderId) closeRulesEditor();
+  if (data.folderId) {
+    if (!state.foldersWithRules) state.foldersWithRules = new Set();
+    state.foldersWithRules.add(data.folderId);
+    // Re-render sidebar to show rules.md entry
+    const activeId = state.activeSessionId;
+    renderSessionSidebar(state.sessions, activeId);
+    closeRulesEditor();
+  }
+}
+
+/** Handle rulesDeleted from server. */
+export function handleRulesDeleted(data) {
+  if (data.folderId) {
+    if (state.foldersWithRules) state.foldersWithRules.delete(data.folderId);
+    const activeId = state.activeSessionId;
+    renderSessionSidebar(state.sessions, activeId);
+    closeRulesEditor();
+  }
+}
+
+// ----- Rules Modal wiring (called from modal.js initModals) -----
+export function initRulesModal() {
+  document.getElementById('rules-modal-cancel').addEventListener('click', closeRulesEditor);
+  document.getElementById('rules-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'rules-overlay') closeRulesEditor();
+  });
+  document.getElementById('rules-modal-save').addEventListener('click', () => {
+    const content = document.getElementById('rules-input').value;
+    sendWs({ type: 'saveRules', folderId: activeRulesFolderId, content });
+  });
+  document.getElementById('rules-modal-delete').addEventListener('click', () => {
+    if (!activeRulesFolderId) return;
+    sendWs({ type: 'deleteRules', folderId: activeRulesFolderId });
+  });
+}
+
+// ===== Path Picker Modal =====
+let pathPickerFolderId = null;
+let pathPickerCurrentPath = '';
+
+function openPathPicker(folderId, currentRoot) {
+  pathPickerFolderId = folderId;
+  const startPath = currentRoot || '~';
+  document.getElementById('path-picker-title').textContent = t('pathPicker.title');
+  document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
+  document.getElementById('path-picker-clear').textContent = t('pathPicker.clear');
+  document.getElementById('path-picker-select').textContent = t('pathPicker.select');
+  // Show/hide clear button based on current state
+  document.getElementById('path-picker-clear').style.display = currentRoot ? 'inline-block' : 'none';
+  document.getElementById('path-picker-overlay').classList.add('on');
+  document.getElementById('path-picker-modal').classList.add('show');
+  browseTo(startPath);
+}
+
+function closePathPicker() {
+  pathPickerFolderId = null;
+  pathPickerCurrentPath = '';
+  document.getElementById('path-picker-overlay').classList.remove('on');
+  document.getElementById('path-picker-modal').classList.remove('show');
+}
+
+function browseTo(path) {
+  sendWs({ type: 'browsePath', path });
+}
+
+function buildBreadcrumb(path) {
+  const bc = document.getElementById('path-picker-breadcrumb');
+  const parts = path.split('/').filter(Boolean);
+  let html = '';
+  let accumulated = '';
+  // root
+  if (path.startsWith('/')) {
+    html += '<span data-path="/">/</span>';
+    accumulated = '/';
+  }
+  parts.forEach((part, i) => {
+    accumulated += (accumulated.endsWith('/') ? '' : '/') + part;
+    const p = accumulated;
+    if (i < parts.length - 1) {
+      html += ' / <span data-path="' + escapeHtml(p) + '">' + escapeHtml(part) + '</span>';
+    } else {
+      html += ' / ' + escapeHtml(part);
+    }
+  });
+  bc.innerHTML = html;
+  bc.querySelectorAll('span[data-path]').forEach(span => {
+    span.addEventListener('click', () => browseTo(span.dataset.path));
+  });
+}
+
+export function handleBrowseResult(data) {
+  const list = document.getElementById('path-picker-list');
+  if (!list) return;
+  pathPickerCurrentPath = data.path || '';
+  buildBreadcrumb(pathPickerCurrentPath);
+  const entries = data.entries || [];
+  list.innerHTML = '';
+  list.removeAttribute('data-empty');
+  if (data.error) {
+    list.setAttribute('data-empty', data.error);
+    return;
+  }
+  // Parent directory item — hidden at filesystem root
+  if (pathPickerCurrentPath !== '/') {
+    const parentItem = document.createElement('div');
+    parentItem.className = 'pp-item';
+    parentItem.innerHTML = '<span class="pp-icon">..</span><span class="pp-name">..</span>';
+    parentItem.addEventListener('click', () => {
+      const parts = pathPickerCurrentPath.replace(/\/$/, '').split('/');
+      parts.pop();
+      const parent = parts.join('/') || '/';
+      browseTo(parent);
+    });
+    list.appendChild(parentItem);
+  }
+
+  if (entries.length === 0) {
+    const emptyHint = document.createElement('div');
+    emptyHint.style.cssText = 'text-align:center;padding:24px;color:var(--color-frame-text-muted);font-size:12px;';
+    emptyHint.textContent = t('pathPicker.empty');
+    list.appendChild(emptyHint);
+    return;
+  }
+
+  entries.forEach(entry => {
+    const item = document.createElement('div');
+    item.className = 'pp-item';
+    item.innerHTML = '<span class="pp-icon">&#128193;</span><span class="pp-name">' + escapeHtml(entry.name) + '</span>';
+    item.addEventListener('click', () => browseTo(entry.path));
+    list.appendChild(item);
+  });
+}
+
+export function initPathPicker() {
+  document.getElementById('path-picker-cancel').addEventListener('click', closePathPicker);
+  document.getElementById('path-picker-overlay').addEventListener('click', (e) => {
+    if (e.target.id === 'path-picker-overlay') closePathPicker();
+  });
+  document.getElementById('path-picker-select').addEventListener('click', () => {
+    if (!pathPickerFolderId) return;
+    sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: pathPickerCurrentPath });
+    closePathPicker();
+  });
+  document.getElementById('path-picker-clear').addEventListener('click', () => {
+    if (!pathPickerFolderId) return;
+    sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: null });
+    closePathPicker();
+  });
 }
 
 export function moveSessionToFolder(sessionId, folderId) {

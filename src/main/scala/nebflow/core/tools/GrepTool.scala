@@ -69,8 +69,8 @@ Usage:
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
     val pathOpt = input("path").flatMap(_.asString)
     val searchRoot = pathOpt match
-      case Some(p) if p.startsWith("/") => p
-      case Some(p) => os.Path(ctx.projectRoot) / p
+      case Some(p) if p.startsWith("/") || (p.length >= 2 && p.charAt(1) == ':') => p
+      case Some(p) => nebflow.core.PathUtil.resolvePath(p, os.Path(ctx.projectRoot)).toString
       case None => ctx.projectRoot
 
     val args = scala.collection.mutable.ListBuffer("--color=never")
@@ -120,6 +120,7 @@ Usage:
         stdout.close()
         stderr.close()
         proc.destroy()
+      end try
     catch case e: Exception => Left(ToolError(s"Failed to spawn rg: ${e.getMessage}"))
     end try
   }

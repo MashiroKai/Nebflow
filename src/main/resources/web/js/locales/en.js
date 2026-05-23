@@ -145,12 +145,19 @@ export default {
   'ctx.batchDelete': 'Delete {count} selected sessions',
   'ctx.batchCancel': 'Cancel selection',
   'ctx.setProjectRoot': 'Set project directory',
-  'ctx.setProjectRootPrompt': 'Project directory path (leave empty to clear):',
   'ctx.editRules': 'Edit rules',
+  'ctx.createRules': 'Create rules',
 
   // === Rules ===
   'rules.title': 'Project Rules',
   'rules.placeholder': 'Enter project rules for this folder...\nSub-folders automatically inherit parent rules.',
+  'rules.delete': 'Delete',
+
+  // === Path Picker ===
+  'pathPicker.title': 'Select Project Directory',
+  'pathPicker.select': 'Select This Folder',
+  'pathPicker.clear': 'Clear',
+  'pathPicker.empty': 'No subdirectories in this folder',
 
   // === Session sidebar ===
   'session.namePlaceholder': 'Session name...',

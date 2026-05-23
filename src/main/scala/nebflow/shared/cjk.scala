@@ -21,3 +21,4 @@ object CjkWidth:
         if isWideChar(cp) then 2 else 1
       }
       .sum
+end CjkWidth

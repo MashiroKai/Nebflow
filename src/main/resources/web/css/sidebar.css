@@ -688,6 +688,16 @@
   opacity: 0.5;
 }
 .folder-item:hover .folder-badge { opacity: 0.8; }
+.rules-item {
+  opacity: 0.55;
+  font-style: italic;
+}
+.rules-item:hover {
+  opacity: 0.85;
+  font-style: normal;
+}
+
+/* ===== Rules Editor Modal (in modal.css) ===== */
 .folder-children {
   position: relative;
   margin-left: 6px;
@@ -907,25 +917,10 @@
   transition: color 0.15s;
 }
 .cfg-card-remove:hover { color: #e53935; }
-.cfg-card-body { padding: 6px 10px 8px; }
-.cfg-field {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  padding: 3px 0;
+.cfg-card-sub {
   font-size: 11px;
-}
-.cfg-field-label {
   color: var(--color-frame-text-muted);
-  min-width: 60px;
-  flex-shrink: 0;
-}
-.cfg-field-value {
-  color: var(--color-frame-text);
-  word-break: break-all;
-  text-align: right;
-  flex: 1;
-  margin-left: 8px;
+  margin-right: 4px;
 }
 .cfg-empty {
   color: var(--color-frame-text-muted);

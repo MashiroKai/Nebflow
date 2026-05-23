@@ -43,6 +43,14 @@ object RulesStore:
     IO.blocking(os.write.over(rulesPath(folderId), content, createFolders = true)) *>
       getCache(folderId).invalidate
 
+  // --- Delete ---
+
+  def deleteFolderRules(folderId: String): IO[Unit] =
+    IO.blocking {
+      val path = rulesPath(folderId)
+      if os.exists(path) then os.remove(path)
+    } *> getCache(folderId).invalidate
+
   // --- Preview (first non-heading, non-empty line, max 80 chars) ---
 
   def preview(folderId: String): Option[String] =
@@ -76,14 +84,14 @@ object RulesStore:
    */
   def resolveInheritedRules(
     folderId: String,
-    findParent: String => Option[Option[String]]  // folderId => Option[parentId]
+    findParent: String => Option[Option[String]] // folderId => Option[parentId]
   ): Option[String] =
     // Build chain from leaf to root
     def chain(id: String, acc: List[String]): List[String] =
       findParent(id) match
-        case None => acc  // folder not found, stop
+        case None => acc // folder not found, stop
         case Some(Some(pid)) => chain(pid, pid :: acc)
-        case Some(None) => id :: acc  // top-level reached
+        case Some(None) => id :: acc // top-level reached
 
     val ordered = chain(folderId, List(folderId))
     val rulesList = ordered.flatMap(loadFolderRules)

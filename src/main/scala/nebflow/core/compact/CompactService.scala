@@ -123,6 +123,8 @@ object CompactService:
       else Right(())
     }
 
+  end runPreCompactHook
+
   def runPostCompactHook(
     beforeSize: Int,
     afterSize: Int,

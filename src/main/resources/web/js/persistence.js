@@ -327,9 +327,14 @@ export function restoreFromStorage() {
 
 // ---------- Replay backend history messages into the DOM ----------
 // Same logic as restoreFromStorage but takes messages array directly (from backend).
-export function restoreFromBackendHistory(msgs) {
+// Uses DocumentFragment to batch DOM insertions and avoids redundant scroll operations.
+export function restoreFromBackendHistory(msgs, opts = {}) {
+  const { scrollToBottom = true } = opts;
   const chat = state.dom.chat;
+  const fragment = document.createDocumentFragment();
+  let skipUserMsg = false;
   msgs.forEach((m, i) => {
+    if (skipUserMsg) { skipUserMsg = false; return; }
     if (m.type === 'user') {
       const row = document.createElement('div');
       row.className = 'row user';
@@ -361,7 +366,7 @@ export function restoreFromBackendHistory(msgs) {
         }
         row.appendChild(bubble);
       });
-      chat.appendChild(row);
+      fragment.appendChild(row);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
       if (m.thinking) {
@@ -384,7 +389,7 @@ export function restoreFromBackendHistory(msgs) {
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
-        chat.appendChild(tRow);
+        fragment.appendChild(tRow);
         tLabel.onclick = () => {
           const visible = tContent.style.display !== 'none';
           tContent.style.display = visible ? 'none' : '';
@@ -407,7 +412,7 @@ export function restoreFromBackendHistory(msgs) {
           badge.textContent = text;
           row.appendChild(badge);
         }
-        chat.appendChild(row);
+        fragment.appendChild(row);
       }
     } else if (m.type === 'tool') {
       const row = document.createElement('div');
@@ -422,7 +427,7 @@ export function restoreFromBackendHistory(msgs) {
       if (renderWithRegistry(card, cardData2)) {
         card.classList.add('tool-card--html');
         row.appendChild(card);
-        chat.appendChild(row);
+        fragment.appendChild(row);
       } else {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
@@ -442,7 +447,7 @@ export function restoreFromBackendHistory(msgs) {
           '<div class="content"><div class="label">' + lHtml + '</div>' +
           (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
         row.appendChild(card);
-        chat.appendChild(row);
+        fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
       }
     } else if (m.type === 'askUser') {
@@ -451,7 +456,7 @@ export function restoreFromBackendHistory(msgs) {
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
-      chat.appendChild(row);
+      fragment.appendChild(row);
       const box = document.createElement('div');
       box.className = 'option-box';
       m.items.forEach(item => {
@@ -473,6 +478,15 @@ export function restoreFromBackendHistory(msgs) {
         box.appendChild(optsDiv);
       });
       bubble.appendChild(box);
+      // If the next message is a User answer (from AskUser), show it on the card
+      const nextMsg = msgs[i + 1];
+      if (nextMsg && nextMsg.type === 'user' && nextMsg.text) {
+        const ansDiv = document.createElement('div');
+        ansDiv.className = 'option-answer';
+        ansDiv.textContent = '-> ' + nextMsg.text;
+        box.appendChild(ansDiv);
+        skipUserMsg = true;
+      }
     } else if (m.type === 'askPermission') {
       // Render as disabled permission prompt (will be replaced by interactive version if still pending)
       const row = document.createElement('div');
@@ -480,7 +494,7 @@ export function restoreFromBackendHistory(msgs) {
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
-      chat.appendChild(row);
+      fragment.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
       const q = document.createElement('div');
@@ -513,7 +527,7 @@ export function restoreFromBackendHistory(msgs) {
       qBubble.appendChild(qLabel);
       qBubble.appendChild(qText);
       qRow.appendChild(qBubble);
-      chat.appendChild(qRow);
+      fragment.appendChild(qRow);
       // Ask answer (AI side)
       if (m.answer) {
         const aRow = document.createElement('div');
@@ -536,7 +550,7 @@ export function restoreFromBackendHistory(msgs) {
           badge.textContent = text;
           aRow.appendChild(badge);
         }
-        chat.appendChild(aRow);
+        fragment.appendChild(aRow);
       }
     } else if (m.type === 'agent') {
       const row = document.createElement('div');
@@ -559,7 +573,7 @@ export function restoreFromBackendHistory(msgs) {
         row.appendChild(badge);
       }
       row.appendChild(bubble);
-      chat.appendChild(row);
+      fragment.appendChild(row);
     } else if (m.type === 'system') {
       const row = document.createElement('div');
       row.className = 'row error';
@@ -569,15 +583,18 @@ export function restoreFromBackendHistory(msgs) {
       card.style.color = '#5b8dd9';
       card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
       row.appendChild(card);
-      chat.appendChild(row);
+      fragment.appendChild(row);
     }
   });
-  chat.scrollTop = chat.scrollHeight;
-  state.scrollSnapped = true;
-  // Schedule deferred scrolls to catch async iframe height changes from card rendering.
-  requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; });
-  setTimeout(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; }, 100);
-  setTimeout(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; }, 500);
+  chat.appendChild(fragment);
+  // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
+  // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
+  // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
+  if (scrollToBottom) {
+    chat.scrollTop = chat.scrollHeight;
+    state.scrollSnapped = true;
+    requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; });
+  }
 }
 
 // ---------- One-time migration from old localStorage key ----------
