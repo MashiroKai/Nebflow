@@ -171,6 +171,7 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
               case None =>
                 logger.warn("[feishu] could not detect bot open_id; group mention filtering will use fallback")
         }
+      end if
     }.handleErrorWith { e =>
       logger.warn(s"[feishu] fetchBotOpenId error: ${e.getClass.getSimpleName}: ${e.getMessage}")
     }
@@ -241,8 +242,11 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
               logger.warn(s"[feishu] WS start failed: ${e.getClass.getSimpleName}: ${e.getMessage}") *>
                 connectWithBackoff(attempt + 1)
           }
+    end connectWithBackoff
 
     connectWithBackoff(1)
+
+  end wsMonitorLoop
 
   /** Handle interactive card action (button click) from Feishu. */
   private def handleCardAction(event: P2CardActionTrigger): P2CardActionTriggerResponse =
@@ -350,6 +354,7 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
               // Non-text messages (image, file, etc.) — log for now
               logger.debug(s"[feishu] non-text message type: $msgType").unsafeRunSync()
         else logger.debug(s"[feishu] skipped (not mentioned)").unsafeRunSync()
+        end if
       else logger.debug(s"[feishu] skipped (duplicate)").unsafeRunSync()
       end if
     end if
@@ -427,5 +432,6 @@ class FeishuPlugin(globalConfig: FeishuGlobalConfig) extends BridgePlugin:
           // Remove dispatcher — turn complete
           activeDispatchers.update(_ - sessionId)
       case _ => IO.unit
+  end dispatchToFeishu
 
 end FeishuPlugin

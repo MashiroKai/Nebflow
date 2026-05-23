@@ -26,3 +26,4 @@ object PathSandbox:
           resolved.startsWith(realRoot)
         catch case _: Exception => false
     }
+end PathSandbox

@@ -40,6 +40,7 @@ class FileChangeTracker private (
           }
           .toMap
       finally stream.close()
+      end try
     catch case _: Exception => Map.empty
 
   /** Stat only files present in the previous snapshot. O(n) where n = snapshot size. */
@@ -156,7 +157,9 @@ object FileChangeTracker:
           }
           .toMap
       finally stream.close()
+      end try
     catch case _: Exception => Map.empty
+    end try
 
   end scanProject
 

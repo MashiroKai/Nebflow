@@ -24,6 +24,7 @@ object ContentBlock:
 
   case class Thinking(thinking: String, signature: Option[String] = None) extends ContentBlock:
     val `type` = "thinking"
+end ContentBlock
 
 // ===== Message =====
 
@@ -133,6 +134,7 @@ object StreamChunk:
     meta: Option[LlmMeta] = None,
     contextWindow: Option[Int] = None
   ) extends StreamChunk
+end StreamChunk
 
 // ===== LLM Handle =====
 

@@ -217,5 +217,6 @@ object HookRunner:
     }
 
     def cancel(): Unit = thread.interrupt()
+  end ThreadRead
 
 end HookRunner

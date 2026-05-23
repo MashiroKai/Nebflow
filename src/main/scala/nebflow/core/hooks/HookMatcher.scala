@@ -23,3 +23,4 @@ object HookMatcher:
   /** Heuristic: treat as regex if it contains regex-specific chars. */
   private def isRegex(s: String): Boolean =
     s.contains('^') || s.contains('$') || s.contains(".*") || s.contains("\\d")
+end HookMatcher

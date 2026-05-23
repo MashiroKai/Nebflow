@@ -42,6 +42,7 @@ object HooksConfigLoader:
                 if eventCount > 0 then
                   logger.info(s"Loaded ${eventCount} hook rules across ${config.hooks.size} events")
                 config
+        end match
       catch
         case e: Exception =>
           logger.warn(s"Failed to load hooks config: ${e.getMessage}")

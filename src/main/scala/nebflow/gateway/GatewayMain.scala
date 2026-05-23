@@ -14,7 +14,7 @@ import nebflow.core.mcp.*
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.*
-import nebflow.service.*
+import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.*
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
@@ -111,22 +111,39 @@ object GatewayMain extends IOApp.Simple:
       _ <- logger.info("MCP servers initialized")
     yield ()
 
+  private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
+    llm = ServiceLlmConfig(
+      providers = Map.empty,
+      model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
+    )
+  )
+
   def run: IO[Unit] =
     // Read port from config first, then kill stale processes on that port
     GatewayConfig.load.flatMap { cfg =>
       ensureSingleInstance(cfg.port.value) *> GatewayConfig.load.flatMap { cfg =>
-        // Safe config load — never crash on bad config
+        // Safe config load — never crash on bad config; auto-restore from snapshot on corruption
         val configRef: Ref[IO, NebflowServiceConfig] = Ref.unsafe {
-          try Config.loadServiceConfig()
+          try
+            val cfg = Config.loadServiceConfig()
+            // Save snapshot on successful load (fire-and-forget)
+            ConfigSnapshot.save().unsafeRunSync()
+            cfg
           catch
             case e: Exception =>
-              logger.warn(s"Config load failed: ${e.getMessage} — starting with defaults")
-              NebflowServiceConfig(
-                llm = ServiceLlmConfig(
-                  providers = Map.empty,
-                  model = ModelChainConfig(default = "anthropic/claude-sonnet-4-6")
-                )
-              )
+              logger.warn(s"Config load failed: ${e.getMessage}")
+              // Try restoring from latest snapshot
+              ConfigSnapshot.restoreLatest().unsafeRunSync() match
+                case true =>
+                  logger.info("Restored config from latest snapshot")
+                  try Config.loadServiceConfig()
+                  catch
+                    case _: Exception =>
+                      logger.warn("Restored snapshot also invalid — starting with defaults")
+                      defaultConfig
+                case false =>
+                  logger.warn("No snapshot available — starting with defaults")
+                  defaultConfig
         }
         configRef.get.flatMap { config =>
           Auth.loadOrCreateToken.flatMap { token =>
@@ -265,8 +282,17 @@ object GatewayMain extends IOApp.Simple:
                                       )
                                       wsRoutesHolder = Some(wsRoutes)
 
+                                      // REST API routes for CLI consumption
+                                      val restApiRoutes = new RestApiRoutes(
+                                        token,
+                                        configRef,
+                                        sharedResourcesWithBridge,
+                                        sessionStore,
+                                        wsRoutes
+                                      )
+
                                       Router(
-                                        "/api" -> chatRoutes.routes,
+                                        "/api" -> (chatRoutes.routes <+> restApiRoutes.routes),
                                         "/" -> wsRoutes.routes
                                       ).orNotFound
                                     }

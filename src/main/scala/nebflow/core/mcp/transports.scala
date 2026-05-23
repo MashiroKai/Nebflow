@@ -105,6 +105,8 @@ class StdioTransport private (
         p.success(response)
         pending.remove(idStr)
 
+  end dispatchResponse
+
   private def dispatchNotification(json: Json): Unit =
     val method = json.hcursor.downField("method").as[String].toOption.getOrElse("")
     val params = json.hcursor.downField("params").as[JsonObject].toOption

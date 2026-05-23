@@ -76,4 +76,6 @@ Example: rounds=3 means summarize the last 3 rounds of tool call results."""
             case Left(err) => Left(ToolError(err))
         case None =>
           IO.pure(Left(ToolError("RemoveUnnecessary requires an agent actor reference")))
+    end if
+  end call
 end RemoveUnnecessaryTool

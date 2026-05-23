@@ -112,7 +112,7 @@ object ConfigService:
       jsonNull = Json.Null,
       jsonBoolean = b => Json.fromBoolean(b),
       jsonNumber = n => Json.fromJsonNumber(n),
-      jsonString = _ => Json.fromString("***"),
+      jsonString = s => Json.fromString(s),
       jsonArray = arr => Json.fromValues(arr.map(redactJson)),
       jsonObject = obj =>
         Json.fromJsonObject(
@@ -157,4 +157,5 @@ object ConfigService:
     (parse(existing), parse(incoming)) match
       case (Right(eJson), Right(iJson)) => merge(eJson, iJson).spaces2
       case _ => incoming // fallback: write incoming as-is if parse fails
+  end mergeConfig
 end ConfigService

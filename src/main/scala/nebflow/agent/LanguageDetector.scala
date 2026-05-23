@@ -54,6 +54,8 @@ object LanguageDetector:
         else if ch >= '\u0E00' && ch <= '\u0E7F' then thai += 1
         // Devanagari
         else if ch >= '\u0900' && ch <= '\u097F' then devanagari += 1
+        end if
+      end if
       i += 1
     end while
 

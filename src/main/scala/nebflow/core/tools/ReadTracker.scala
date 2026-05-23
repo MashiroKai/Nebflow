@@ -27,6 +27,8 @@ class ReadTracker private (state: Ref[IO, Vector[ReadEntry]]):
   /** Return all tracked paths (for backward compat). */
   def allPaths: IO[Set[Path]] = state.get.map(_.map(_.path).toSet)
 
+end ReadTracker
+
 object ReadTracker:
 
   def create: IO[ReadTracker] =
