@@ -13,6 +13,84 @@ import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
+// ---------- Fallback drag state (module level, survives re-renders) ----------
+let _fallbackDrag = null;
+
+document.addEventListener('mousemove', (e) => {
+  const d = _fallbackDrag;
+  if (!d) return;
+
+  if (!d.active) {
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
+    d.active = true;
+    d.tag.classList.add('dragging');
+    // Create floating clone of the dragged tag
+    const rect = d.tag.getBoundingClientRect();
+    const clone = d.tag.cloneNode(true);
+    clone.style.position = 'fixed';
+    clone.style.left = rect.left + 'px';
+    clone.style.top = rect.top + 'px';
+    clone.style.width = rect.width + 'px';
+    clone.style.pointerEvents = 'none';
+    clone.style.opacity = '0.85';
+    clone.style.zIndex = '10000';
+    clone.style.transform = 'rotate(1.5deg) scale(1.05)';
+    clone.style.boxShadow = '0 4px 16px rgba(0,0,0,0.18)';
+    clone.style.transition = 'none';
+    document.body.appendChild(clone);
+    d.clone = clone;
+  } else {
+    // Move floating clone with cursor
+    const clone = d.clone;
+    clone.style.left = (e.clientX - 20) + 'px';
+    clone.style.top = (e.clientY - 12) + 'px';
+
+    // Detect element under cursor (hide clone temporarily)
+    clone.style.display = 'none';
+    const elemBelow = document.elementFromPoint(e.clientX, e.clientY);
+    clone.style.display = '';
+
+    const target = elemBelow?.closest('.cfg-tag');
+    if (target && target !== d.tag && target.closest('#cfg-fallback-list')) {
+      if (d.targetTag && d.targetTag !== target) d.targetTag.classList.remove('drag-over');
+      target.classList.add('drag-over');
+      d.targetTag = target;
+    } else if (d.targetTag) {
+      d.targetTag.classList.remove('drag-over');
+      d.targetTag = null;
+    }
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  const d = _fallbackDrag;
+  if (!d) return;
+
+  // Clean up floating clone
+  if (d.clone) d.clone.remove();
+  d.tag?.classList.remove('dragging');
+
+  if (d.active && d.targetTag) {
+    const dstIdx = parseInt(d.targetTag.dataset.idx);
+    d.targetTag.classList.remove('drag-over');
+    if (dstIdx !== d.idx) {
+      const fallbacks = state.parsedConfig.llm.model.fallbacks;
+      const [moved] = fallbacks.splice(d.idx, 1);
+      const insertIdx = dstIdx <= d.idx ? dstIdx : dstIdx - 1;
+      fallbacks.splice(insertIdx, 0, moved);
+      state.configDirty = true;
+      flushConfigToServer();
+      renderSettings();
+    }
+  } else if (d.targetTag) {
+    d.targetTag.classList.remove('drag-over');
+  }
+
+  _fallbackDrag = null;
+});
+
 // ---------- Active Folder (VSCode-style) ----------
 export function setActiveFolder(folderId) {
   state.activeFolderId = folderId;
@@ -148,11 +226,8 @@ export function renderSettings() {
   const defaultModel = model.default || '';
   const fallbacks = model.fallbacks || [];
 
-  // Request feishu global config once (cache result in state)
-  if (!state.feishuGlobalConfigFetched) {
-    state.feishuGlobalConfigFetched = true;
-    sendWs({type: 'getFeishuGlobalConfig'});
-  }
+  // Request feishu global config every time settings are opened (data is not cached)
+  sendWs({type: 'getFeishuGlobalConfig'});
 
   // Load card design prompt
   sendWs({type: 'getCardDesign'});
@@ -198,12 +273,12 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.feishu')}</div>
       <div class="cfg-form-group">
         <label class="cfg-label">${t('settings.feishuAppId')}</label>
-        <input class="cfg-input" id="cfg-feishu-appid" type="text" placeholder="cli_xxx" value="" autocomplete="new-password">
+        <input class="cfg-input" id="cfg-feishu-appid" type="text" placeholder="cli_xxx" value="" autocomplete="off">
       </div>
       <div class="cfg-form-group">
         <label class="cfg-label">${t('settings.feishuAppSecret')}</label>
         <div class="cfg-password-wrap">
-          <input class="cfg-input" id="cfg-feishu-appsecret" type="password" value="" autocomplete="new-password">
+          <input class="cfg-input" id="cfg-feishu-appsecret" type="text" value="" autocomplete="off" style="-webkit-text-security:disc">
           <button class="cfg-eye-btn" id="cfg-feishu-eye" type="button" aria-label="Toggle visibility">${eyeSvg}</button>
         </div>
       </div>
@@ -229,7 +304,7 @@ export function renderSettings() {
         <label class="cfg-label">${t('settings.fallbackModels')}</label>
         <div id="cfg-fallback-list" class="cfg-tag-list">
           ${fallbacks.map((f, i) => `
-            <span class="cfg-tag" data-fallback="${escapeHtml(f)}">${escapeHtml(f)} <span class="cfg-tag-remove" data-idx="${i}">×</span></span>
+            <span class="cfg-tag" data-idx="${i}" data-fallback="${escapeHtml(f)}">${escapeHtml(f)} <span class="cfg-tag-remove" data-idx="${i}">×</span></span>
           `).join('')}
         </div>
         <select class="cfg-select cfg-select-sm" id="cfg-add-fallback">
@@ -271,6 +346,14 @@ export function renderSettings() {
         ${t('settings.connection')}: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? t('settings.disconnected') : t('settings.connected')}</span>
       </div>
     </div>`;
+
+  // Immediately populate feishu fields from cached data (DOM now exists)
+  if (state.feishuGlobalConfig?.configured) {
+    const appIdInput = document.getElementById('cfg-feishu-appid');
+    const secretInput = document.getElementById('cfg-feishu-appsecret');
+    if (appIdInput) appIdInput.value = state.feishuGlobalConfig.appId || '';
+    if (secretInput) secretInput.value = state.feishuGlobalConfig.appSecret || '';
+  }
 
   bindSettingsEvents(content, cfg, allModels);
 }
@@ -366,9 +449,9 @@ function bindSettingsEvents(content, cfg, allModels) {
     const input = document.getElementById('cfg-feishu-appsecret');
     const btn = document.getElementById('cfg-feishu-eye');
     if (!input || !btn) return;
-    const isPassword = input.type === 'password';
-    input.type = isPassword ? 'text' : 'password';
-    btn.innerHTML = isPassword ? eyeOffSvg : eyeSvg;
+    const isMasked = input.style.webkitTextSecurity !== 'none';
+    input.style.webkitTextSecurity = isMasked ? 'none' : 'disc';
+    btn.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
   });
 
   // --- Provider add/edit/remove ---
@@ -451,6 +534,22 @@ function bindSettingsEvents(content, cfg, allModels) {
       flushConfigToServer();
     }
   });
+
+  // --- Fallback drag-and-drop reorder (mouse events, no HTML5 DnD) ---
+  const fallbackList = document.getElementById('cfg-fallback-list');
+  if (fallbackList) {
+    fallbackList.querySelectorAll('.cfg-tag').forEach(tag => {
+      tag.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || e.target.closest('.cfg-tag-remove')) return;
+        e.preventDefault();
+        _fallbackDrag = {
+          tag, idx: parseInt(tag.dataset.idx),
+          startX: e.clientX, startY: e.clientY,
+          active: false, clone: null, targetTag: null
+        };
+      });
+    });
+  }
 
   // --- MCP Servers add/remove ---
   document.getElementById('btn-add-mcp')?.addEventListener('click', () => {
@@ -1068,6 +1167,7 @@ export function resetChatForActiveSession() {
   state.historyOffset = 0;
   state.historyHasMore = false;
   state.historyLoading = false;
+  state.pendingInitialLoad = true;
   state.dom.chat.innerHTML = '';
   // Clear any history loader/end indicators (they live in chat, but belt-and-suspenders)
   state.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
@@ -1573,11 +1673,10 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// Dismiss on click outside or scroll
+// Dismiss on click outside
 document.addEventListener('click', (e) => {
   if (activeCtxMenu && !activeCtxMenu.contains(e.target)) dismissCtxMenu();
 });
-document.addEventListener('scroll', () => dismissCtxMenu(), true);
 document.addEventListener('contextmenu', (e) => {
   if (activeCtxMenu && !activeCtxMenu.contains(e.target)) dismissCtxMenu();
 }, true);
@@ -1767,6 +1866,7 @@ function closeFeishuBubble() {
 
 // Handle feishu global config response — populate settings fields
 onMessage('feishuGlobalConfig', (data) => {
+  state.feishuGlobalConfig = data;
   const appIdInput = document.getElementById('cfg-feishu-appid');
   const secretInput = document.getElementById('cfg-feishu-appsecret');
   if (!appIdInput) return;
@@ -1913,6 +2013,8 @@ function renderFolderItem(folder, sessions, container) {
     '<div class="folder-name">' + escapeHtml(folder.name) + '</div>' +
     (folder.projectRoot ? '<span class="folder-badge" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
     '<div class="folder-status ' + statusCls + '">' +
+      '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
+      '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
       '<div class="folder-status-dot"></div>' +
     '</div>' +
     '<button class="folder-delete" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';

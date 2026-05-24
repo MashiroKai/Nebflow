@@ -14,6 +14,7 @@ object SkillCommand extends CliCommand:
     def name = "list"
     def description = "List available skills"
     def params = Nil
+
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
@@ -31,14 +32,18 @@ object SkillCommand extends CliCommand:
               else CliResult.Text("Skills:" :: lines)
           }
 
+  end SkillList
+
   private object SkillRun extends CliSubcommand:
     def name = "run"
     def description = "Execute a skill"
+
     def params = List(
       CliParam("name", None, "Skill name", required = true),
       CliParam("session", Some('s'), "Session ID", required = false),
-      CliParam("input", Some('i'), "Input text", required = false),
+      CliParam("input", Some('i'), "Input text", required = false)
     )
+
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
@@ -49,9 +54,15 @@ object SkillCommand extends CliCommand:
           if skillName.isEmpty then IO.pure(CliResult.Error("Skill name required"))
           else if sessionId.isEmpty then IO.pure(CliResult.Error("Session ID required (--session)"))
           else
-            client.command(Json.obj(
-              "type" -> "skill".asJson,
-              "skillName" -> skillName.asJson,
-              "input" -> input.asJson,
-              "sessionId" -> sessionId.asJson,
-            )).map(resp => CliResult.Json(resp))
+            client
+              .command(
+                Json.obj(
+                  "type" -> "skill".asJson,
+                  "skillName" -> skillName.asJson,
+                  "input" -> input.asJson,
+                  "sessionId" -> sessionId.asJson
+                )
+              )
+              .map(resp => CliResult.Json(resp))
+  end SkillRun
+end SkillCommand
