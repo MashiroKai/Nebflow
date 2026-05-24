@@ -22,11 +22,12 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: sbt
+      - uses: sbt/setup-sbt@v1
       - name: Info
         shell: bash
         run: |
           java -version 2>&1
-          echo "SBT_OPTS=${SBT_OPTS:-not set}"
+          sbt --version 2>&1 | head -3
       - name: Compile
         shell: bash
         run: sbt compile
@@ -42,6 +43,7 @@ jobs:
           distribution: temurin
           java-version: 17
           cache: sbt
+      - uses: sbt/setup-sbt@v1
       - name: Run tests
         run: sbt test
 
@@ -56,6 +58,7 @@ jobs:
           distribution: temurin
           java-version: 17
           cache: sbt
+      - uses: sbt/setup-sbt@v1
       - name: Build assembly
         run: sbt assembly
       - name: Upload artifact
