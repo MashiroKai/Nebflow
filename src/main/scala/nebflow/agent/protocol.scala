@@ -3,7 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.{AskItem, ToolExecResult}
+import nebflow.core.{AskItem, SystemReminder, ToolExecResult}
 import nebflow.shared.*
 
 // ============================================================
@@ -112,9 +112,6 @@ object AgentCommand:
 
   /** Full session reset — triggered by /clear to reset messages, usage, compaction state, etc. */
   case object ResetSession extends AgentCommand
-
-  /** Async result of refreshing agent definition — sent back to self by AgentActor.refreshAgentDefAsync. */
-  case class AgentDefRefreshed(defn: AgentDef) extends AgentCommand
 
   /** Update per-session highest context-pressure level (isolated from other sessions). */
   case class UpdateHighestPressureLevel(level: Int) extends AgentCommand
@@ -414,6 +411,21 @@ case class CompactionJob(
 // AgentState sub-structures — grouped by business domain
 // ============================================================
 
+/**
+ * Per-turn resolved context — all values are freshly resolved from disk/config
+ * at the start of each pipeLlmCall via ContextRefresher.
+ *
+ * All resources are EveryTurn — mtime-cached so unchanged reads cost only stat() syscalls.
+ */
+case class TurnContext(
+  agentDef: AgentDef,
+  projectRoot: Option[String],
+  rulesMd: Option[String],
+  memoryBlock: String,
+  thinkingConfig: nebflow.llm.ThinkingConfig,
+  fileChanges: Option[SystemReminder]
+)
+
 /** Per-file write tracking entry for verification reminders. */
 case class WriteTrackerEntry(writeCount: Int, remindCount: Int)
 
@@ -430,8 +442,6 @@ case class SessionContext(
   writesSinceLastRead: Map[String, WriteTrackerEntry] = Map.empty,
   /** Context window for this session's current model — updated when user switches models. */
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
-  /** Cached memory block — refreshed at lifecycle points (new session, compact, clear), not every turn. */
-  memoryBlock: String = "",
   /** When Some(question), this turn is an inline /ask — single Q&A, no history write-back. */
   askMode: Option[String] = None,
   /** Auto-detected language for system prompt injection. Per-session, set on first user message. */
@@ -575,7 +585,6 @@ extension (s: AgentState)
   def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
   def writesSinceLastRead: Map[String, WriteTrackerEntry] = s.session.writesSinceLastRead
   def contextWindow: Int = s.session.contextWindow
-  def memoryBlock: String = s.session.memoryBlock
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
   def projectRoot: Option[String] = s.session.projectRoot
@@ -623,9 +632,6 @@ extension (s: AgentState)
 
   def withContextWindow(window: Int): AgentState =
     s.copy(session = s.session.copy(contextWindow = window))
-
-  def withMemoryBlock(block: String): AgentState =
-    s.copy(session = s.session.copy(memoryBlock = block))
 
   def withAskMode(mode: Option[String]): AgentState =
     s.copy(session = s.session.copy(askMode = mode))

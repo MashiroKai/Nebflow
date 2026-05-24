@@ -19,7 +19,8 @@ object ConfigSnapshot:
     if !os.exists(configPath) then ()
     else
       os.makeDir.all(backupDir)
-      val ts = java.time.LocalDateTime.now()
+      val ts = java.time.LocalDateTime
+        .now()
         .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
       val snapshot = backupDir / s"nebflow.json.$ts"
       os.copy.over(configPath, snapshot, createFolders = true)
@@ -41,13 +42,20 @@ object ConfigSnapshot:
   /** List all snapshots, newest first. */
   def snapshots(): Seq[Path] =
     if !os.exists(backupDir) then Seq.empty
-    else os.list(backupDir)
-      .filter(_.last.startsWith("nebflow.json."))
-      .sortBy(_.last).reverse
+    else
+      os.list(backupDir)
+        .filter(_.last.startsWith("nebflow.json."))
+        .sortBy(_.last)
+        .reverse
 
   /** Keep only the latest MaxSnapshots. */
   private def prune(): Unit =
     val all = snapshots()
     if all.length > MaxSnapshots then
-      all.drop(MaxSnapshots).foreach(s => try os.remove(s) catch case _ => ())
+      all
+        .drop(MaxSnapshots)
+        .foreach(s =>
+          try os.remove(s)
+          catch case _ => ()
+        )
 end ConfigSnapshot

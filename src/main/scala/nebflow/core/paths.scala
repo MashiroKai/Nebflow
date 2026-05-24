@@ -27,8 +27,8 @@ object PathUtil:
       Path(java.nio.file.Paths.get(pathStr))
     else if pathStr.startsWith("/") || pathStr.startsWith("\\\\") then
       // Unix absolute or UNC path
-      try os.Path(pathStr, base) catch case _: Exception => Path(java.nio.file.Paths.get(pathStr))
-    else
-      base / pathStr
+      try os.Path(pathStr, base)
+      catch case _: Exception => Path(java.nio.file.Paths.get(pathStr))
+    else base / pathStr
 
 end PathUtil

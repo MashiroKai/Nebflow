@@ -118,14 +118,14 @@ window.addEventListener('message', (e) => {
   }
 });
 
-/** Render HTML content inside a sandboxed iframe — lazily via IntersectionObserver. */
+/** Render HTML content inside a sandboxed iframe.
+ *  Creates the iframe immediately (no lazy loading) — the browser handles srcdoc
+ *  parsing asynchronously, so this is safe even with many cards. */
 function renderHtmlCard(container, html, title) {
   container.innerHTML = '';
 
   const wrap = document.createElement('div');
   wrap.className = 'html-card-wrap';
-  // Show a minimal placeholder while the iframe loads
-  wrap.style.minHeight = '40px';
 
   const id = ++_iframeId;
   const themeCSS = buildThemeVarsCSS();
@@ -136,25 +136,13 @@ function renderHtmlCard(container, html, title) {
   // to fit the iframe viewport when it's wider than available space.
   const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);}*,*:before,*:after{box-sizing:inherit;}img,svg,video{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="transform-origin:top left;width:fit-content;max-width:100%">${html}</div>${heightScript}</body></html>`;
 
-  // Use IntersectionObserver to defer iframe creation until visible
-  const observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (entry.isIntersecting) {
-        observer.disconnect();
-        const iframe = document.createElement('iframe');
-        iframe.className = 'html-card-iframe';
-        iframe.setAttribute('sandbox', 'allow-scripts');
-        iframe.setAttribute('scrolling', 'no');
-        iframe.setAttribute('srcdoc', srcdoc);
-        iframe.dataset.nfCardId = id;
-        // Remove min-height since iframe will set its own height
-        wrap.style.minHeight = '';
-        wrap.appendChild(iframe);
-        break;
-      }
-    }
-  }, { rootMargin: '200px' }); // Start loading 200px before visible
-  observer.observe(wrap);
+  const iframe = document.createElement('iframe');
+  iframe.className = 'html-card-iframe';
+  iframe.setAttribute('sandbox', 'allow-scripts');
+  iframe.setAttribute('scrolling', 'no');
+  iframe.setAttribute('srcdoc', srcdoc);
+  iframe.dataset.nfCardId = id;
+  wrap.appendChild(iframe);
 
   container.appendChild(wrap);
 }

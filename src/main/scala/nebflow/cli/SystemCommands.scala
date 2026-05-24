@@ -18,6 +18,7 @@ object VersionCommand extends CliCommand:
     def name = "show"
     def description = "Display version number"
     def params = Nil
+
     def run(ctx: CliContext): IO[CliResult] =
       if ctx.json then IO.pure(CliResult.Json(io.circe.Json.obj("version" -> nebflow.Version.string.asJson)))
       else IO.pure(CliResult.text(s"nebflow v${nebflow.Version.string}"))
@@ -32,6 +33,7 @@ object StartCommand extends CliCommand:
     def name = "run"
     def description = "Start the Gateway"
     def params = Nil
+
     def run(ctx: CliContext): IO[CliResult] =
       // Delegated to Main.scala — this command triggers GatewayMain
       IO.pure(CliResult.Error("start is handled by Main.scala directly"))
@@ -46,6 +48,7 @@ object StopCommand extends CliCommand:
     def name = "run"
     def description = "Stop the Gateway"
     def params = Nil
+
     def run(ctx: CliContext): IO[CliResult] =
       nebflow.cli.ProcessManager.stop().as(CliResult.ok)
 
@@ -59,22 +62,30 @@ object StatusCommand extends CliCommand:
     def name = "check"
     def description = "Check Gateway status"
     def params = Nil
+
     def run(ctx: CliContext): IO[CliResult] =
       val pidOpt = nebflow.cli.ProcessManager.readPid()
       val running = pidOpt.exists(nebflow.cli.ProcessManager.isRunning)
       val port = sys.env.get("NEBFLOW_GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
       if ctx.json then
-        IO.pure(CliResult.Json(io.circe.Json.obj(
-          "running" -> running.asJson,
-          "pid" -> pidOpt.asJson,
-          "port" -> port.asJson,
-          "version" -> nebflow.Version.string.asJson
-        )))
-      else
-        if running then
-          IO.pure(CliResult.text(s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)"))
-        else
-          IO.pure(CliResult.text("✗ Gateway not running"))
+        IO.pure(
+          CliResult.Json(
+            io.circe.Json.obj(
+              "running" -> running.asJson,
+              "pid" -> pidOpt.asJson,
+              "port" -> port.asJson,
+              "version" -> nebflow.Version.string.asJson
+            )
+          )
+        )
+      else if running then IO.pure(CliResult.text(s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)"))
+      else IO.pure(CliResult.text("✗ Gateway not running"))
+
+    end run
+
+  end StatusCheck
+
+end StatusCommand
 
 object DoctorCommand extends CliCommand:
   def name = "doctor"
@@ -85,9 +96,11 @@ object DoctorCommand extends CliCommand:
   private object DoctorRun extends CliSubcommand:
     def name = "check"
     def description = "Run diagnostics (--fix to auto-repair)"
+
     def params = List(
       CliParam("fix", short = Some('f'), description = "Automatically fix detected issues", isFlag = true)
     )
+
     def run(ctx: CliContext): IO[CliResult] =
       IO.blocking {
         val fix = ctx.args.get("fix").contains("true")
@@ -103,9 +116,14 @@ object DoctorCommand extends CliCommand:
 
         // --- 1. Java ---
         val javaVer = sys.props.getOrElse("java.version", "unknown")
-        val javaMajor = try javaVer.takeWhile(_.isDigit).toInt catch case _ => 0
+        val javaMajor =
+          try javaVer.takeWhile(_.isDigit).toInt
+          catch case _ => 0
         val javaOk = javaMajor >= 11
-        checks += Diagnostic("Java", javaOk, javaVer,
+        checks += Diagnostic(
+          "Java",
+          javaOk,
+          javaVer,
           if !javaOk && fix then
             fixes += "Java 11+ required — please install or update JDK"
             "Java 11+ required"
@@ -121,24 +139,23 @@ object DoctorCommand extends CliCommand:
               os.write.over(configPath, "{}", createFolders = true)
               fixes += s"Created empty config: $configPath"
               (true, s"Created: $configPath", "")
-            else
-              (false, s"Not found: $configPath", "Run with --fix to create")
+            else (false, s"Not found: $configPath", "Run with --fix to create")
           else
             // Validate JSON
-            val content = try os.read(configPath) catch case _ => ""
+            val content =
+              try os.read(configPath)
+              catch case _ => ""
             parse(content) match
               case Right(json) =>
                 // Check it's a valid object (not array or primitive)
                 if json.isObject then (true, s"Valid JSON ($configPath)", "")
-                else
-                  if fix then
-                    val backupPath = configDir / "nebflow.json.bak"
-                    os.move.over(configPath, backupPath)
-                    os.write.over(configPath, "{}")
-                    fixes += s"Invalid JSON (was ${json.name}) — backed up to $backupPath, reset to {}"
-                    (true, s"Reset to empty: $configPath", "")
-                  else
-                    (false, s"Invalid: expected JSON object, got ${json.name}", "Run with --fix to reset")
+                else if fix then
+                  val backupPath = configDir / "nebflow.json.bak"
+                  os.move.over(configPath, backupPath)
+                  os.write.over(configPath, "{}")
+                  fixes += s"Invalid JSON (was ${json.name}) — backed up to $backupPath, reset to {}"
+                  (true, s"Reset to empty: $configPath", "")
+                else (false, s"Invalid: expected JSON object, got ${json.name}", "Run with --fix to reset")
               case Left(err) =>
                 // Try to restore from snapshot
                 val snaps = ConfigSnapshot.snapshots()
@@ -149,33 +166,38 @@ object DoctorCommand extends CliCommand:
                         os.copy.over(snap, configPath, createFolders = true)
                         fixes += s"Restored config from snapshot: ${snap.last}"
                         (true, s"Restored from snapshot: ${snap.last}", "")
-                      catch case e: Exception =>
-                        val backupPath = configDir / "nebflow.json.bak"
-                        try os.move.over(configPath, backupPath) catch case _ => ()
-                        os.write.over(configPath, "{}")
-                        fixes += s"Corrupt config (parse error at ${err.message}) — backed up, reset to {}"
-                        (true, "Reset to empty", "")
+                      catch
+                        case e: Exception =>
+                          val backupPath = configDir / "nebflow.json.bak"
+                          try os.move.over(configPath, backupPath)
+                          catch case _ => ()
+                          os.write.over(configPath, "{}")
+                          fixes += s"Corrupt config (parse error at ${err.message}) — backed up, reset to {}"
+                          (true, "Reset to empty", "")
                     case None =>
                       val backupPath = configDir / "nebflow.json.bak"
-                      try os.move.over(configPath, backupPath) catch case _ => ()
+                      try os.move.over(configPath, backupPath)
+                      catch case _ => ()
                       os.write.over(configPath, "{}")
                       fixes += s"Corrupt config (no snapshots) — backed up, reset to {}"
                       (true, "Reset to empty", "")
-                else
-                  (false, s"Corrupt JSON: ${err.message}", "Run with --fix to restore from snapshot")
+                else (false, s"Corrupt JSON: ${err.message}", "Run with --fix to restore from snapshot")
+                end if
+            end match
         checks += Diagnostic("Config", configOk, configDetail, configFix)
 
         // --- 3. Config snapshots ---
         val snaps = ConfigSnapshot.snapshots()
         if snaps.nonEmpty then
           checks += Diagnostic("Snapshots", true, s"${snaps.length} snapshot(s), latest: ${snaps.head.last}", "")
-        else
-          checks += Diagnostic("Snapshots", true, "No snapshots yet (created on next successful start)", "")
+        else checks += Diagnostic("Snapshots", true, "No snapshots yet (created on next successful start)", "")
 
         // --- 4. Auth token ---
         val authPath = configDir / "auth.json"
         val authExists = os.exists(authPath)
-        checks += Diagnostic("Auth", authExists,
+        checks += Diagnostic(
+          "Auth",
+          authExists,
           if authExists then authPath.toString else s"Not found: $authPath",
           if !authExists then "Created automatically on next start" else ""
         )
@@ -184,19 +206,29 @@ object DoctorCommand extends CliCommand:
         val pidOpt = ProcessManager.readPid()
         val gatewayRunning = pidOpt.exists(ProcessManager.isRunning)
         val port = sys.env.get("NEBFLOW_GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
-        if gatewayRunning then
-          checks += Diagnostic("Gateway", true, s"Running (pid=${pidOpt.get}, port=$port)", "")
+        if gatewayRunning then checks += Diagnostic("Gateway", true, s"Running (pid=${pidOpt.get}, port=$port)", "")
         else
           // Stale PID file?
           val pidExists = os.exists(configDir / ".pid")
           if pidExists && fix then
             ProcessManager.removePid()
             fixes += "Removed stale PID file"
-            checks += Diagnostic("Gateway", false, "Not running (cleaned stale PID file)", "Run 'nebflow start' to start")
+            checks += Diagnostic(
+              "Gateway",
+              false,
+              "Not running (cleaned stale PID file)",
+              "Run 'nebflow start' to start"
+            )
           else if pidExists then
-            checks += Diagnostic("Gateway", false, "Not running (stale PID file)", "Run with --fix to clean, or 'nebflow start'")
-          else
-            checks += Diagnostic("Gateway", false, "Not running", "Run 'nebflow start'")
+            checks += Diagnostic(
+              "Gateway",
+              false,
+              "Not running (stale PID file)",
+              "Run with --fix to clean, or 'nebflow start'"
+            )
+          else checks += Diagnostic("Gateway", false, "Not running", "Run 'nebflow start'")
+          end if
+        end if
 
         // --- 6. Disk space ---
         val homeDir = java.io.File(sys.props("user.home"))
@@ -204,8 +236,12 @@ object DoctorCommand extends CliCommand:
         val totalGB = homeDir.getTotalSpace / (1024 * 1024 * 1024)
         val usagePercent = ((totalGB - freeGB) * 100 / Math.max(totalGB, 1))
         val diskOk = usagePercent < 90
-        checks += Diagnostic("Disk", diskOk, s"${freeGB}GB free / ${totalGB}GB total (${usagePercent}% used)",
-          if !diskOk then "Free up disk space" else "")
+        checks += Diagnostic(
+          "Disk",
+          diskOk,
+          s"${freeGB}GB free / ${totalGB}GB total (${usagePercent}% used)",
+          if !diskOk then "Free up disk space" else ""
+        )
 
         // --- 7. Sessions directory ---
         val sessionsDir = configDir / "sessions"
@@ -215,9 +251,12 @@ object DoctorCommand extends CliCommand:
           fixes += s"Created sessions directory: $sessionsDir"
           checks += Diagnostic("Sessions", true, s"Created: $sessionsDir", "")
         else
-          checks += Diagnostic("Sessions", sessionsOk,
+          checks += Diagnostic(
+            "Sessions",
+            sessionsOk,
             if sessionsOk then s"$sessionsDir" else "Not found",
-            if !sessionsOk then "Run with --fix to create" else "")
+            if !sessionsOk then "Run with --fix to create" else ""
+          )
 
         // --- 8. Port availability (if gateway not running) ---
         if !gatewayRunning then
@@ -227,11 +266,16 @@ object DoctorCommand extends CliCommand:
             checks += Diagnostic("Port", true, s"$port available", "")
           catch
             case _: java.net.BindException =>
-              checks += Diagnostic("Port", false, s"Port $port in use by another process",
+              checks += Diagnostic(
+                "Port",
+                false,
+                s"Port $port in use by another process",
                 if isWindows then "Run 'netstat -ano | findstr :$port' to find the process"
-                else s"Run 'lsof -i :$port' to find the process")
+                else s"Run 'lsof -i :$port' to find the process"
+              )
             case _ =>
               checks += Diagnostic("Port", true, s"$port (check skipped)", "")
+        end if
 
         // --- 9. Platform-specific checks ---
         if isWindows then
@@ -240,22 +284,26 @@ object DoctorCommand extends CliCommand:
           val hasNonAscii = home.exists(c => c > 127)
           if hasNonAscii then
             checks += Diagnostic("Platform", true, s"Windows (home has non-ASCII chars — usually OK)", "")
-          else
-            checks += Diagnostic("Platform", true, "Windows", "")
+          else checks += Diagnostic("Platform", true, "Windows", "")
 
           // Cross-drive check: warn if working directory and home are on different drives
           val pwd = sys.props("user.dir")
           val homeDrive = home.take(1).toUpperCase
           val pwdDrive = pwd.take(1).toUpperCase
           if homeDrive != pwdDrive then
-            checks += Diagnostic("Paths", true,
-              s"Home=$homeDrive: drive, CWD=$pwdDrive: drive (cross-drive paths resolved automatically)", "")
-          else
-            checks += Diagnostic("Paths", true, s"Home=$home CWD=$pwd", "")
+            checks += Diagnostic(
+              "Paths",
+              true,
+              s"Home=$homeDrive: drive, CWD=$pwdDrive: drive (cross-drive paths resolved automatically)",
+              ""
+            )
+          else checks += Diagnostic("Paths", true, s"Home=$home CWD=$pwd", "")
         else
           // Unix: check write permission on config dir
           val canWrite = configDir.toIO.canWrite()
-          checks += Diagnostic("Permissions", canWrite,
+          checks += Diagnostic(
+            "Permissions",
+            canWrite,
             if canWrite then s"Write OK: $configDir" else s"Cannot write: $configDir",
             if !canWrite && fix then
               try
@@ -264,7 +312,9 @@ object DoctorCommand extends CliCommand:
                 "Fixed"
               catch case _ => "Run: chmod u+w " + configDir.toString
             else if !canWrite then "Run: chmod u+w " + configDir.toString
-            else "")
+            else ""
+          )
+        end if
 
         // --- 10. Logs directory ---
         val logsDir = configDir / "logs"
@@ -274,19 +324,29 @@ object DoctorCommand extends CliCommand:
           fixes += s"Created logs directory: $logsDir"
           checks += Diagnostic("Logs", true, s"Created: $logsDir", "")
         else
-          checks += Diagnostic("Logs", logsOk,
+          checks += Diagnostic(
+            "Logs",
+            logsOk,
             if logsOk then s"$logsDir" else "Not found (auto-created on start)",
-            if !logsOk then "" else "")
+            if !logsOk then "" else ""
+          )
 
         // --- Build output ---
         if ctx.json then
-          CliResult.Json(Json.obj(
-            "version" -> nebflow.Version.string.asJson,
-            "checks" -> checks.toList.map { d =>
-              Json.obj("name" -> d.name.asJson, "ok" -> d.ok.asJson, "detail" -> d.detail.asJson, "hint" -> d.hint.asJson)
-            }.asJson,
-            "fixes" -> fixes.toList.asJson
-          ))
+          CliResult.Json(
+            Json.obj(
+              "version" -> nebflow.Version.string.asJson,
+              "checks" -> checks.toList.map { d =>
+                Json.obj(
+                  "name" -> d.name.asJson,
+                  "ok" -> d.ok.asJson,
+                  "detail" -> d.detail.asJson,
+                  "hint" -> d.hint.asJson
+                )
+              }.asJson,
+              "fixes" -> fixes.toList.asJson
+            )
+          )
         else
           val lines = scala.collection.mutable.ListBuffer.empty[String]
           lines += s"nebflow v${nebflow.Version.string} — diagnostics"
@@ -301,7 +361,9 @@ object DoctorCommand extends CliCommand:
             lines += "Fixes applied:"
             fixes.foreach(f => lines += s"  ✓ $f")
           CliResult.Text(lines.toList)
+        end if
       }
+  end DoctorRun
 
   private case class Diagnostic(name: String, ok: Boolean, detail: String, hint: String)
 end DoctorCommand

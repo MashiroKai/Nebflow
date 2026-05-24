@@ -11,9 +11,6 @@ object TaskCreateTool extends Tool:
   val description =
     """Create a new task in the task list.
 
-Use this tool to create a structured task list for your current coding session.
-This helps you track progress, organize complex tasks, and show the user what you are doing.
-
 ## When to Use
 
 - Complex multi-step tasks — When a task requires 3 or more distinct steps
@@ -33,16 +30,7 @@ This helps you track progress, organize complex tasks, and show the user what yo
 - **description**: What needs to be done
 - **activeForm** (optional): Present continuous form for spinner (e.g., "Fixing authentication bug")
 
-All tasks are created with status `pending`.
-
-## Task System Overview
-
-- Status progresses: `pending` -> `in_progress` -> `completed` or `failed`
-- Valid transitions: pending -> in_progress, pending -> completed, pending -> failed, in_progress -> completed, in_progress -> failed
-- `completed` and `failed` cannot go back to any other state
-- Use TaskUpdate to change status and manage dependencies (addBlocks, addBlockedBy, removeBlocks, removeBlockedBy)
-- Use TaskDelete to permanently remove a task (irreversible)
-- Prefer working on tasks in ID order when multiple are available"""
+All tasks are created with status `pending`. Use TaskUpdate to change status and manage dependencies."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -79,8 +67,7 @@ All tasks are created with status `pending`.
         val createInput = TaskCreateInput(
           subject = input("subject").flatMap(_.asString).getOrElse(""),
           description = input("description").flatMap(_.asString).getOrElse(""),
-          activeForm = input("activeForm").flatMap(_.asString),
-          metadata = input("metadata").flatMap(_.as[Map[String, io.circe.Json]].toOption)
+          activeForm = input("activeForm").flatMap(_.asString)
         )
         for
           id <- store.create(sessionId, createInput)

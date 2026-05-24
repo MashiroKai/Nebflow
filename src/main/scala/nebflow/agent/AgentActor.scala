@@ -91,25 +91,6 @@ object AgentActor extends AgentCore with AgentSession:
       )
       .onFailure[Exception](SupervisorStrategy.restart.withLimit(2, java.time.Duration.ofSeconds(30)))
 
-  /**
-   * Refresh agent definition from library asynchronously.
-   * Sends AgentDefRefreshed(defn) to self when done.
-   * NOTE: only called at lifecycle boundaries (ResetSession, CompactionComplete).
-   */
-  private def refreshAgentDefAsync(
-    current: AgentDef,
-    resources: SharedResources,
-    ctx: ActorContext[AgentCommand]
-  ): Unit =
-    resources.dispatcher.unsafeRunAndForget(
-      resources.agentLibrary
-        .get(current.name)
-        .map {
-          _.getOrElse(current)
-        }
-        .flatMap(defn => IO(ctx.self ! AgentCommand.AgentDefRefreshed(defn)))
-    )
-
   private def buildHookContext(state: AgentState): nebflow.core.hooks.HookContext =
     nebflow.core.hooks.HookContext(
       sessionId = state.sessionId,
@@ -169,17 +150,13 @@ object AgentActor extends AgentCore with AgentSession:
             case Some(bl) => Message(MessageRole.User, Right(bl))
             case None => Message(MessageRole.User, Left(text))
           val newMessages = stateWithLang.messages :+ userMsg
-          // Refresh memory if not yet loaded (first message of session)
-          val stateWithMemory =
-            if stateWithLang.memoryBlock.isEmpty then
-              stateWithLang.withMemoryBlock(buildMemoryBlock(agentDef, stateWithLang.sessionId))
-            else stateWithLang
+          // Memory is loaded EveryTurn via TurnContext — no need to preload here
           pipeLlmCall(
             agentDef,
             resources,
             depth,
             parentRef,
-            stateWithMemory.withMessages(newMessages),
+            stateWithLang.withMessages(newMessages),
             stash,
             ctx,
             replyTo
@@ -204,10 +181,8 @@ object AgentActor extends AgentCore with AgentSession:
         val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
         val userMsg = Message(MessageRole.User, Left(combinedText))
         val newMessages = state.messages :+ userMsg
-        val stateWithMemory =
-          if state.memoryBlock.isEmpty then state.withMemoryBlock(buildMemoryBlock(agentDef, state.sessionId))
-          else state
-        val processingState = stateWithMemory
+        // Memory is loaded EveryTurn via TurnContext — no need to preload here
+        val processingState = state
           .withMessages(newMessages)
           .withStatus(AgentStatus.Processing)
         // Persist a system bubble showing skill activation
@@ -264,19 +239,11 @@ object AgentActor extends AgentCore with AgentSession:
           .withPendingCompaction(None)
           .withCompactionFailures(0)
           .withLastCompactionFailureAt(0L)
-          .withMemoryBlock("") // Will be re-loaded on next UserInput
           .withWritesSinceLastRead(Map.empty)
           .withRecentMessageIds(Nil)
           .withCompaction(state.compaction.copy(highestPressureLevel = 0))
-        // Async refresh: agent def arrives as AgentDefRefreshed, then resume
-        refreshAgentDefAsync(agentDef, resources, ctx)
-        Behaviors.receiveMessage[AgentCommand] {
-          case AgentCommand.AgentDefRefreshed(defn) =>
-            stash.unstashAll(idle(defn, resources, depth, parentRef, resetState, stash, ctx))
-          case other =>
-            stash.stash(other)
-            Behaviors.same
-        }
+        // agentDef is refreshed EveryTurn via TurnContext — no lifecycle refresh needed
+        stash.unstashAll(idle(agentDef, resources, depth, parentRef, resetState, stash, ctx))
 
       case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
         // User-triggered /compact: compress then return to idle (no LLM resume)
@@ -845,20 +812,12 @@ object AgentActor extends AgentCore with AgentSession:
           .withPendingCompaction(None)
           .withCompactionFailures(0)
           .withLastCompactionFailureAt(0L)
-          .withMemoryBlock("")
           .withWritesSinceLastRead(Map.empty)
           .withRecentMessageIds(Nil)
           .withCompaction(state.compaction.copy(highestPressureLevel = 0))
           .resetToIdle(Nil)
-        // Async refresh: agent def arrives as AgentDefRefreshed, then resume
-        refreshAgentDefAsync(agentDef, resources, ctx)
-        Behaviors.receiveMessage[AgentCommand] {
-          case AgentCommand.AgentDefRefreshed(defn) =>
-            stash.unstashAll(idle(defn, resources, depth, parentRef, resetState, stash, ctx))
-          case other =>
-            stash.stash(other)
-            Behaviors.same
-        }
+        // agentDef is refreshed EveryTurn via TurnContext — no lifecycle refresh needed
+        stash.unstashAll(idle(agentDef, resources, depth, parentRef, resetState, stash, ctx))
 
       // --- ReplaceToolResults: agent-driven context management ---
       case AgentCommand.ReplaceToolResults(rounds, summary, replyTo) =>
@@ -949,42 +908,34 @@ object AgentActor extends AgentCore with AgentSession:
                 .withCompactionFailures(0)
                 .withEmptyResponseRetries(0)
                 .withLatestUsage(None) // Clear stale usage to prevent maybeAutoCompact re-trigger
-                // Refresh memory after compaction — agent may have written memory during the compacted turns
-                .withMemoryBlock(buildMemoryBlock(agentDef, state.sessionId))
-              // Async refresh: agent def arrives as AgentDefRefreshed, then resume
-              refreshAgentDefAsync(agentDef, resources, ctx)
-              Behaviors.receiveMessage[AgentCommand] {
-                case AgentCommand.AgentDefRefreshed(defn) =>
-                  if pending.exists(_.resumeAfterCompact) then
-                    // Auto/LLM-triggered: resume LLM call with compacted messages
-                    pipeLlmCall(
-                      defn,
-                      resources,
-                      depth,
-                      parentRef,
-                      compactedState,
-                      stash,
-                      ctx,
-                      pending.flatMap(_.replyTo)
+              // Memory is loaded EveryTurn via TurnContext — no need to refresh here
+              // agentDef is refreshed EveryTurn via TurnContext — no lifecycle refresh needed
+              if pending.exists(_.resumeAfterCompact) then
+                // Auto/LLM-triggered: resume LLM call with compacted messages
+                pipeLlmCall(
+                  agentDef,
+                  resources,
+                  depth,
+                  parentRef,
+                  compactedState,
+                  stash,
+                  ctx,
+                  pending.flatMap(_.replyTo)
+                )
+              else
+                // User-triggered /compact: apply compacted messages and return to idle
+                resources.dispatcher.unsafeRunAndForget(
+                  persistIfSession(resources, compactedState)
+                    .handleErrorWith(e =>
+                      IO(
+                        NebflowLogger
+                          .forName("nebflow.agent")
+                          .warn(s"Persist after compact failed: ${e.getMessage}")
+                      )
                     )
-                  else
-                    // User-triggered /compact: apply compacted messages and return to idle
-                    resources.dispatcher.unsafeRunAndForget(
-                      persistIfSession(resources, compactedState)
-                        .handleErrorWith(e =>
-                          IO(
-                            NebflowLogger
-                              .forName("nebflow.agent")
-                              .warn(s"Persist after compact failed: ${e.getMessage}")
-                          )
-                        )
-                    )
-                    stash.unstashAll(idle(defn, resources, depth, parentRef, compactedState, stash, ctx))
-                  end if
-                case other =>
-                  stash.stash(other)
-                  Behaviors.same
-              }
+                )
+                stash.unstashAll(idle(agentDef, resources, depth, parentRef, compactedState, stash, ctx))
+              end if
             case Left(err) =>
               logAgentEvent(
                 ctx,
@@ -1415,12 +1366,20 @@ object AgentActor extends AgentCore with AgentSession:
 
     val hookIO = CompactService.runPreCompactHook(state.messages, resources, sessionId)
 
-    resources.dispatcher.unsafeRunAndForget(
-      (readPathsIO, hookIO)
-        .mapN { (readPaths, hookResult) =>
-          (readPaths, hookResult)
+    // Re-resolve projectRoot so folder settings changes take effect immediately
+    val rootIO: IO[String] = state.folderId match
+      case Some(fid) =>
+        resources.sessionStore.resolveProjectRoot(Some(fid)).map { rr =>
+          rr.getOrElse(resources.projectRoot.toString)
         }
-        .flatMap { (readPaths, hookResult) =>
+      case None => IO.pure(resources.projectRoot.toString)
+
+    resources.dispatcher.unsafeRunAndForget(
+      (readPathsIO, hookIO, rootIO)
+        .mapN { (readPaths, hookResult, effectiveRoot) =>
+          (readPaths, hookResult, effectiveRoot)
+        }
+        .flatMap { (readPaths, hookResult, effectiveRoot) =>
           hookResult match
             case Left(reason) =>
               // Hook blocked compaction
@@ -1429,7 +1388,7 @@ object AgentActor extends AgentCore with AgentSession:
               val result = FullCompact.parseResponse(
                 responseText,
                 state.messages,
-                state.projectRoot.getOrElse(resources.projectRoot.toString),
+                effectiveRoot,
                 readPaths
               )
               result match

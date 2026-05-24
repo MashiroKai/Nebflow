@@ -75,8 +75,7 @@ class GatewayClient(baseUri: String, token: String):
           throw new RuntimeException(
             s"Gateway REST API not available. Restart Gateway to enable CLI support."
           )
-        else
-          throw new RuntimeException(s"Failed to parse response from $path: ${body.take(100)}")
+        else throw new RuntimeException(s"Failed to parse response from $path: ${body.take(100)}")
 
   /** Simple health check — any HTTP response means gateway is running */
   def healthCheck: IO[Boolean] = IO.blocking {
@@ -87,8 +86,7 @@ class GatewayClient(baseUri: String, token: String):
         .response(asStringAlways)
         .send(backend)
       resp.code.code != 0 // any HTTP response means server is up
-    catch
-      case _: Exception => false
+    catch case _: Exception => false
   }
 
   /** POST /api/chat with SSE streaming — calls handler for each SSE event */
@@ -109,8 +107,7 @@ class GatewayClient(baseUri: String, token: String):
         .filter(_.startsWith("data: "))
         .map(_.stripPrefix("data: "))
         .mkString("\n")
-      if dataLines.nonEmpty then
-        onEvent(dataLines).unsafeRunSync()
+      if dataLines.nonEmpty then onEvent(dataLines).unsafeRunSync()
     }
   }
 end GatewayClient
@@ -120,8 +117,7 @@ object GatewayClient:
 
   /** Read the stored auth token */
   def readToken: IO[Option[String]] = IO.blocking {
-    if os.exists(authPath) then
-      parser.decode[String](os.read(authPath)).toOption
+    if os.exists(authPath) then parser.decode[String](os.read(authPath)).toOption
     else None
   }
 
@@ -140,3 +136,4 @@ object GatewayClient:
         }
       case None => IO.pure(None)
     }
+end GatewayClient

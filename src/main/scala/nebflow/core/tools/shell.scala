@@ -406,10 +406,10 @@ object ShellSession:
     sessions.get.flatMap(s => s.values.toList.traverse_(_.kill())).unsafeRunAndForget()
   }
 
-  def forSession(sessionId: String): IO[ShellSession] =
-    createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId)))
+  def forSession(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
+    createMutex.flatMap(_.lock.surround(doGetOrCreate(sessionId, initialDir)))
 
-  private def doGetOrCreate(sessionId: String): IO[ShellSession] =
+  private def doGetOrCreate(sessionId: String, initialDir: Option[String]): IO[ShellSession] =
     sessions.get.flatMap { m =>
       m.get(sessionId) match
         case Some(s) =>
@@ -417,13 +417,13 @@ object ShellSession:
             case true =>
               // Cancel the old cleanup fiber before killing the session to prevent fiber leak
               s.cancelCleanupFiber() *> s.kill() *> sessions.update(_ - sessionId) *>
-                ShellSession.create(sessionId).flatMap { newS =>
+                ShellSession.create(sessionId, initialDir).flatMap { newS =>
                   sessions.update(_ + (sessionId -> newS)).as(newS)
                 }
             case false => s.touch.as(s)
           }
         case None =>
-          ShellSession.create(sessionId).flatMap { newS =>
+          ShellSession.create(sessionId, initialDir).flatMap { newS =>
             sessions.update(_ + (sessionId -> newS)).as(newS)
           }
     }
@@ -435,9 +435,9 @@ object ShellSession:
         case None => (m, IO.unit)
     }.flatten
 
-  private[tools] def create(sessionId: String): IO[ShellSession] =
+  private[tools] def create(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
     for
-      dirRef <- Ref.of[IO, String](System.getProperty("user.dir"))
+      dirRef <- Ref.of[IO, String](initialDir.getOrElse(System.getProperty("user.dir")))
       jobsRef <- Ref.of[IO, Map[String, BackgroundJob]](Map.empty)
       fiber <- startCleanupFiber(jobsRef)
       accessRef <- Clock[IO].realTime.map(_.toMillis).flatMap(Ref.of[IO, Long])

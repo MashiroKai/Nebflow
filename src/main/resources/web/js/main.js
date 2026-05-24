@@ -672,11 +672,10 @@ onMessage('sessionList', (msg) => {
 
   renderSessionSidebar(sessionsToShow, activeId);
   initHeaderModelInfo();
-  // Only restore messages on first load (before any session was active)
+  // Mark the initial session as restored — getHistory is already sent by
+  // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
   if (!restoredSessionId && activeId) {
     restoredSessionId = activeId;
-    // Try backend history first; fall back to localStorage
-    sendWs({ type: 'getHistory', sessionId: activeId, limit: 50 });
   }
   migrateLegacyIfNeeded();
   // Request agent list on first connect (no tab to trigger it now)
@@ -722,10 +721,13 @@ onMessage('historyPage', (msg) => {
   state.historyLoading = false;
   hideHistoryLoader();
 
-  // state.historyOffset is 0 only right after resetChatForActiveSession() — that's how
-  // we distinguish initial load from scroll-up pagination that happens to reach offset 0.
-  const isInitialLoad = state.historyOffset === 0;
+  // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
+  // resetChatForActiveSession sets pendingInitialLoad=true; we clear it here on first response.
+  // Subsequent historyPage responses (from duplicate getHistory) see pendingInitialLoad=false
+  // and go to the prepend path instead of clearing the DOM again.
+  const isInitialLoad = state.pendingInitialLoad;
   if (isInitialLoad) {
+    state.pendingInitialLoad = false;
     // Initial load or full refresh — replace
     state.dom.chat.innerHTML = '';
     // Clear history indicators before rendering
@@ -916,6 +918,12 @@ onMessage('historyPage', (msg) => {
     }
   } else {
     // Scroll-up pagination — prepend older messages
+    // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
+    // if the response offset is >= what we already have, skip it to avoid duplicates.
+    if (msg.offset >= state.historyOffset && state.historyOffset > 0) {
+      console.log('[historyPage] skipping duplicate response, offset:', msg.offset, '>= current:', state.historyOffset);
+      return;
+    }
     const chat = state.dom.chat;
     const prevScrollHeight = chat.scrollHeight;
     const prevScrollTop = chat.scrollTop;
@@ -1114,8 +1122,19 @@ onMessage('agentSessionList', (msg) => {
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
   // Find active session for this agent
-  const activeId = state.activeSessionId;
-  renderSessionSidebar(sessions, sessions.find(s => s.id === activeId) ? activeId : (sessions[0]?.id || null));
+  const prevActiveId = state.activeSessionId;
+  const newActiveId = sessions.find(s => s.id === prevActiveId) ? prevActiveId : (sessions[0]?.id || null);
+  // Clear memory cache when session changes so modal fetches fresh content from server
+  if (newActiveId && newActiveId !== prevActiveId) {
+    clearMemoryCache();
+  }
+  renderSessionSidebar(sessions, newActiveId);
+  // Sync backend active session when agent tab switch auto-selected a different session.
+  // Without this, getMemory/memoryStatus read backend's getActiveMeta which still
+  // points to the previous session → shows wrong memory content.
+  if (newActiveId && newActiveId !== prevActiveId) {
+    sendWs({type: 'switchSession', sessionId: newActiveId});
+  }
   initHeaderModelInfo();
 });
 

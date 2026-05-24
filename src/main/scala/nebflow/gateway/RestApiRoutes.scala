@@ -126,7 +126,7 @@ class RestApiRoutes(
             Json.obj(
               "name" -> a.name.asJson,
               "description" -> a.description.asJson,
-              "displayName" -> a.displayName.getOrElse(a.name).asJson,
+              "displayName" -> a.displayName.getOrElse(a.name).asJson
             )
           }
           Ok(Json.obj("agents" -> list.asJson))
@@ -148,7 +148,9 @@ class RestApiRoutes(
         IO.blocking {
           val configPath = nebflow.llm.Config.DefaultConfigPath
           if os.exists(configPath) then
-            parser.parse(os.read(configPath)).toOption
+            parser
+              .parse(os.read(configPath))
+              .toOption
               .flatMap(_.hcursor.downField("mcpServers").as[Map[String, Json]].toOption)
           else None
         }.flatMap {
@@ -167,7 +169,8 @@ class RestApiRoutes(
           val content = scope match
             case "user" => nebflow.service.MemoryStore.loadUserMemory.getOrElse("")
             case "agent" => nebflow.service.MemoryStore.loadAgentMemory(agentName).getOrElse("")
-            case _ => if sessionId.nonEmpty then nebflow.service.MemoryStore.loadSessionMemory(sessionId).getOrElse("") else ""
+            case _ =>
+              if sessionId.nonEmpty then nebflow.service.MemoryStore.loadSessionMemory(sessionId).getOrElse("") else ""
           Ok(Json.obj("scope" -> scope.asJson, "content" -> content.asJson))
         }
       }
@@ -178,8 +181,8 @@ class RestApiRoutes(
     else Forbidden(Json.obj("error" -> "Unauthorized".asJson))
 
   private def checkAuth(req: Request[IO]): Boolean =
-    req.headers.get[Authorization].collectFirst {
-      case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t
+    req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+      t
     } match
       case Some(t) => Auth.validateToken(t, token)
       case None =>

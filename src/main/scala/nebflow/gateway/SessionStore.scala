@@ -248,6 +248,12 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     import cats.effect.unsafe.implicits.global
     indexRef.get.map { case (_, _, folders) => folders.find(_.id == folderId).map(_.parentId) }.unsafeRunSync()
 
+  /** Get a folder's agent name by ID. Returns None if folder not found. */
+  def getFolderAgentName(folderId: String): IO[Option[String]] =
+    indexRef.get.map { case (_, _, folders) =>
+      folders.find(_.id == folderId).map(_.agentName).filter(_.nonEmpty)
+    }
+
   /** List sessions filtered by agentName. Sessions without agentName match "Nebula". */
   def listSessionsByAgent(agentName: String): IO[List[SessionMeta]] =
     indexRef.get.map { case (_, sessions, _) =>

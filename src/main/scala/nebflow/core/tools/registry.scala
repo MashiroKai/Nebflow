@@ -31,9 +31,7 @@ object ToolRegistry:
       // Task management
       "TaskCreate" -> TaskCreateTool,
       "TaskList" -> TaskListTool,
-      "TaskGet" -> TaskGetTool,
       "TaskUpdate" -> TaskUpdateTool,
-      "TaskDelete" -> TaskDeleteTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool
     )

@@ -286,12 +286,6 @@ private[agent] trait AgentCore:
             state.sessionId
           )
 
-        // Cache-optimal layout for Anthropic prompt caching (prefix order: system -> tools -> messages):
-        //   system[0]: stable system prompt + static env info  <- cache breakpoint (never changes)
-        //   tools:     tool definitions                          <- cache breakpoint (stable)
-        //   messages:  [per-turn reminders] + actual conversation (dynamic, not persisted)
-        // Env info is baked into system prompt once — git state is omitted; agent uses Bash on demand.
-        val baseSystemStable = buildSystemPrompt(agentDef, resources, state.projectRoot, state.rulesMd)
         // In compact mode, disable tools — model must respond with summary text only
         val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef)
 
@@ -327,111 +321,82 @@ private[agent] trait AgentCore:
             state.withCurrentTurnId(turnId)
         val stateForTurn = stateAfterMicro
 
-        // --- Pre-flight context budget check ---
-        // Guards against accumulated tool results + history exceeding the model's context window.
-        // ToolResultGuard handles per-tool-result truncation; this catches the cumulative overflow
-        // before the LLM call is made, forcing inline compaction instead of hitting an API error.
-        val estimatedTokens = TokenEstimator.estimate(stateForTurn.messages)
-        val maxTokens = resources.agentLibrary.globalMaxTokens
-        val safetyMargin = CompactConfig().bufferForWindow(stateForTurn.contextWindow) + maxTokens
-        val softBudget = stateForTurn.contextWindow - safetyMargin
-        if estimatedTokens > softBudget && !isCompactTurn && !isAskTurn then
-          logAgentEvent(
-            ctx,
-            agentDef,
-            depth,
-            state.sessionId,
-            state.sessionName,
-            "context-budget-exceeded",
-            s"estimated=$estimatedTokens budget=$softBudget (ctx=${stateForTurn.contextWindow} maxTokens=$maxTokens margin=$safetyMargin)"
-          )
-          startDirectCompaction(
-            agentDef,
-            resources,
-            depth,
-            parentRef,
-            stateForTurn,
-            stash,
-            ctx,
-            replyTo,
-            processing,
-            "full"
-          )
-        else
-          // --- Memory: use cached memoryBlock from state (refreshed at lifecycle points) ---
-          val memoryBlock = stateForTurn.memoryBlock
+        // NOTE: context-budget-exceeded removed — maybeAutoCompact already covers both
+        // API-reported inputTokens AND estimate-based fallback with the same threshold.
+        // Compute verification reminder from per-agent write tracker (pure, no IO needed)
+        val (verificationOpt, updatedWriteTracker) =
+          SystemReminders.computeVerificationReminder(stateForTurn.writesSinceLastRead)
+        val stateForLlm = stateForTurn.withWritesSinceLastRead(updatedWriteTracker)
 
-          // Compute verification reminder from per-agent write tracker (pure, no IO needed)
-          val (verificationOpt, updatedWriteTracker) =
-            SystemReminders.computeVerificationReminder(stateForTurn.writesSinceLastRead)
-          val stateForLlm = stateForTurn.withWritesSinceLastRead(updatedWriteTracker)
-
-          val io = for
-            // --- reminders (async) ---
-            fileChangesOpt <- resources.fileChangeTracker.checkChanges()
-            // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
-            isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
-            collectAllResult = SystemReminders.collectAll(
-              stateForLlm.compaction.highestPressureLevel,
-              stateForLlm.latestUsage,
-              state.contextWindow,
-              fileChangesOpt,
-              isUserTurn
-            )
-            reminders = collectAllResult._1
-            newHighest = collectAllResult._2
-            _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
-            loggedReminders <- SystemReminders.logAndReturn(reminders)
-            allReminders = verificationOpt.toList ++ loggedReminders
-            remindersText = SystemReminder.renderAll(allReminders)
-            // Per-turn dynamic context: only reminders (env info is now in system prompt)
-            // Skip for compact/ask turns — the reminder is already in messages
-            dynamicMsg =
-              if isCompactTurn || isAskTurn then Nil
-              else if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
-              else Nil
-            // --- LLM call ---
-            thinking <- resources.thinkingConfigRef.get
-            systemStable = baseSystemStable +
-              (if memoryBlock.nonEmpty then s"\n\n$memoryBlock" else "") +
-              stateForLlm.language
-                .map(l =>
-                  s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
-                )
-                .getOrElse("")
-            request = LlmRequest(
-              messages = stateForLlm.messages ++ dynamicMsg,
-              sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
-              agentId = agentDef.name,
-              tools = tools,
-              maxTokens = Some(resources.agentLibrary.globalMaxTokens),
-              thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(thinking)),
-              systemStable = Some(systemStable)
-            )
-            result <- resources.llm
-              .sendStream(request, onAttempt = Some(onAttemptCb))
-              .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
-              .compile
-              .toList
-              .map(aggregateChunks)
-              .attempt
-            _ <- result match
-              case Right(r) => IO(ctx.self ! LlmComplete(r, replyTo, turnId))
-              case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo, turnId))
-          yield ()
-
-          // Start the IO fiber and immediately send the fiber reference back to the actor
-          // so that Interrupt can cancel it. io.start forks immediately; StreamFiberStarted
-          // is queued in the actor mailbox before any LlmComplete can arrive.
-          val startIo = io.start.handleErrorWith { e =>
-            IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
-              IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.void.start
-          }
-          resources.dispatcher.unsafeRunAndForget(
-            startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
+        val io = for
+          // --- Unified EveryTurn refresh: agentDef, projectRoot, rulesMd, memory, thinking, fileChanges ---
+          turnCtx <- ContextRefresher.refreshTurn(stateForTurn, resources, agentDef)
+          freshDef = turnCtx.agentDef
+          baseSystemStable = buildSystemPrompt(freshDef, resources, turnCtx.projectRoot, turnCtx.rulesMd)
+          // --- reminders (async) ---
+          // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
+          isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
+          collectAllResult = SystemReminders.collectAll(
+            stateForLlm.compaction.highestPressureLevel,
+            stateForLlm.latestUsage,
+            state.contextWindow,
+            turnCtx.fileChanges,
+            isUserTurn
           )
-          processing(agentDef, resources, depth, parentRef, stateForLlm, stash, ctx)
-        end if
+          reminders = collectAllResult._1
+          newHighest = collectAllResult._2
+          _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
+          loggedReminders <- SystemReminders.logAndReturn(reminders)
+          allReminders = verificationOpt.toList ++ loggedReminders
+          remindersText = SystemReminder.renderAll(allReminders)
+          // Per-turn dynamic context: only reminders (env info is now in system prompt)
+          // Skip for compact/ask turns — the reminder is already in messages
+          dynamicMsg =
+            if isCompactTurn || isAskTurn then Nil
+            else if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
+            else Nil
+          // --- LLM call ---
+          // Use fresh agentDef from TurnContext for tools and system prompt
+          freshTools = if isCompactTurn then Some(Nil) else buildToolList(freshDef)
+          systemStable = baseSystemStable +
+            (if turnCtx.memoryBlock.nonEmpty then s"\n\n${turnCtx.memoryBlock}" else "") +
+            stateForLlm.language
+              .map(l =>
+                s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
+              )
+              .getOrElse("")
+          request = LlmRequest(
+            messages = stateForLlm.messages ++ dynamicMsg,
+            sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
+            agentId = freshDef.name,
+            tools = freshTools,
+            maxTokens = Some(resources.agentLibrary.globalMaxTokens),
+            thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
+            systemStable = Some(systemStable)
+          )
+          result <- resources.llm
+            .sendStream(request, onAttempt = Some(onAttemptCb))
+            .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
+            .compile
+            .toList
+            .map(aggregateChunks)
+            .attempt
+          _ <- result match
+            case Right(r) => IO(ctx.self ! LlmComplete(r, replyTo, turnId))
+            case Left(e) => IO(ctx.self ! LlmFailed(e, replyTo, turnId))
+        yield ()
+
+        // Start the IO fiber and immediately send the fiber reference back to the actor
+        // so that Interrupt can cancel it. io.start forks immediately; StreamFiberStarted
+        // is queued in the actor mailbox before any LlmComplete can arrive.
+        val startIo = io.start.handleErrorWith { e =>
+          IO(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}")) *>
+            IO(ctx.self ! LlmFailed(e, replyTo, turnId)) *> IO.never.void.start
+        }
+        resources.dispatcher.unsafeRunAndForget(
+          startIo.flatMap(fiber => IO(ctx.self ! StreamFiberStarted(fiber)))
+        )
+        processing(agentDef, resources, depth, parentRef, stateForLlm, stash, ctx)
     end match
   end pipeLlmCall
 
@@ -499,125 +464,123 @@ private[agent] trait AgentCore:
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
 
-    // Build ToolContext with full agent-scoped context
-    val effectiveProjectRoot = state.projectRoot.getOrElse(resources.projectRoot.toString)
-    val toolCtx = ToolContext(
-      projectRoot = effectiveProjectRoot,
-      llm = Some(resources.llm),
-      sessionStore = Some(resources.sessionStore),
-      agentActorRef = Some(ctx.self),
-      contextWindow = state.contextWindow,
-      sessionId = state.sessionId,
-      sessionName = state.sessionName,
-      taskStore = Some(resources.taskStore),
-      wsSend = Some(state.wsSend),
-      readTracker = state.readTracker,
-      fileHistory = state.fileHistory,
-      parentRef = parentRef,
-      depth = depth,
-      agentDef = Some(agentDef),
-      agentLibrary = Some(resources.agentLibrary),
-      askSemaphore = Some(resources.askSemaphore),
-      pekkoScheduler = Some(ctx.system.scheduler),
-      fileLockManager = Some(resources.fileLockManager),
-      fileChangeTracker = Some(resources.fileChangeTracker),
-      inputTokens = state.latestUsage.map(_.inputTokens),
-      hookEngine = resources.hookEngine,
-      hookContext = HookContext(
-        sessionId = state.sessionId,
+    // Build ToolContext inside the IO block so projectRoot is hot-reloadable.
+    val io = for
+      (freshProjectRoot, _) <- ContextRefresher.refreshFolderContext(state, resources, agentDef.name)
+      effectiveProjectRoot = freshProjectRoot.getOrElse(resources.projectRoot.toString)
+      toolCtx = ToolContext(
         projectRoot = effectiveProjectRoot,
-        cwd = effectiveProjectRoot
+        llm = Some(resources.llm),
+        sessionStore = Some(resources.sessionStore),
+        agentActorRef = Some(ctx.self),
+        contextWindow = state.contextWindow,
+        sessionId = state.sessionId,
+        sessionName = state.sessionName,
+        taskStore = Some(resources.taskStore),
+        wsSend = Some(state.wsSend),
+        readTracker = state.readTracker,
+        fileHistory = state.fileHistory,
+        parentRef = parentRef,
+        depth = depth,
+        agentDef = Some(agentDef),
+        agentLibrary = Some(resources.agentLibrary),
+        askSemaphore = Some(resources.askSemaphore),
+        pekkoScheduler = Some(ctx.system.scheduler),
+        fileLockManager = Some(resources.fileLockManager),
+        fileChangeTracker = Some(resources.fileChangeTracker),
+        inputTokens = state.latestUsage.map(_.inputTokens),
+        hookEngine = resources.hookEngine,
+        hookContext = HookContext(
+          sessionId = state.sessionId,
+          projectRoot = effectiveProjectRoot,
+          cwd = effectiveProjectRoot
+        )
       )
-    )
-
-    val io = filteredCalls
-      .traverse { call =>
-        // AskUserQuestion renders its own UI via askUser event — skip generic toolStart/End
-        val skipStreaming = call.name == "AskUserQuestion"
-        (if !skipStreaming then
-           emitStreamIO(
-             state.wsSend,
-             ctx,
-             AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
-             isSubagent,
-             sessionIdOpt
-           )
-         else IO.unit) *>
-          (if isSessionMemoryFile(call, state, agentDef) then
-             // Session memory files: auto-approve (agent can edit freely)
-             executeTool(call, toolCtx)
-           else if ToolReversibility.isReversible(call.name, call.input) then
-             // Reversible operations: auto-approve
-             executeTool(call, toolCtx)
-           else
-             // Irreversible operations: ask user for confirmation
-             askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
-          ) .map(r => (call, r)).attempt
-          .map {
-            case Right(pair) => pair
-            case Left(e) => (call, ToolExecResult(s"Tool error: ${e.getMessage}", isError = true))
-          }
-          .flatTap { (call, r) =>
-            // AskUserQuestion renders its own UI — skip generic toolEnd
-            if call.name != "AskUserQuestion" then
-              val summary = summarizeToolResult(call, r.content)
-              // For Card tools: frontend receives the full payload, LLM sees the summary
-              val frontendContent = r.frontendContent.getOrElse(r.content)
-              emitStreamIO(
-                state.wsSend,
-                ctx,
-                AgentStreamEvent.ToolEnd(
-                  nebflow.core.summarizeToolCall(call),
-                  summary,
-                  frontendContent,
-                  r.isError,
-                  input = Some(call.input),
-                  truncated = r.truncated
-                ),
-                isSubagent,
-                sessionIdOpt
-              )
-            else IO.unit
-          }
-      }
-      .flatMap { freshResults =>
-        // Include filtered-out tool calls as errors so the assistant message stays consistent
-        val droppedResults = droppedCalls.map { call =>
-          (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
+      freshResults <- filteredCalls
+        .traverse { call =>
+          // AskUserQuestion renders its own UI via askUser event — skip generic toolStart/End
+          val skipStreaming = call.name == "AskUserQuestion"
+          (if !skipStreaming then
+             emitStreamIO(
+               state.wsSend,
+               ctx,
+               AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
+               isSubagent,
+               sessionIdOpt
+             )
+           else IO.unit) *>
+            (if isSessionMemoryFile(call, state, agentDef) then
+               // Session memory files: auto-approve (agent can edit freely)
+               executeTool(call, toolCtx)
+             else if ToolReversibility.isReversible(call.name, call.input) then
+               // Reversible operations: auto-approve
+               executeTool(call, toolCtx)
+             else
+               // Irreversible operations: ask user for confirmation
+               askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
+            ) .map(r => (call, r)).attempt
+            .map {
+              case Right(pair) => pair
+              case Left(e) => (call, ToolExecResult(s"Tool error: ${e.getMessage}", isError = true))
+            }
+            .flatTap { (call, r) =>
+              // AskUserQuestion renders its own UI — skip generic toolEnd
+              if call.name != "AskUserQuestion" then
+                val summary = summarizeToolResult(call, r.content)
+                // For Card tools: frontend receives the full payload, LLM sees the summary
+                val frontendContent = r.frontendContent.getOrElse(r.content)
+                emitStreamIO(
+                  state.wsSend,
+                  ctx,
+                  AgentStreamEvent.ToolEnd(
+                    nebflow.core.summarizeToolCall(call),
+                    summary,
+                    frontendContent,
+                    r.isError,
+                    input = Some(call.input),
+                    truncated = r.truncated
+                  ),
+                  isSubagent,
+                  sessionIdOpt
+                )
+              else IO.unit
+            }
         }
-
-        // Track per-file write count since last read (per-agent, pure computation)
-        val readFiles = freshResults
-          .collect {
-            case (call, result) if call.name == "Read" && !result.isError =>
-              call.input("file_path").flatMap(_.asString).getOrElse("")
-          }
-          .filter(_.nonEmpty)
-          .toSet
-        val writtenFiles = freshResults
-          .collect {
-            case (call, result) if Set("Write", "Edit").contains(call.name) && !result.isError =>
-              call.input("file_path").flatMap(_.asString).getOrElse("")
-          }
-          .filter(_.nonEmpty)
-        val updatedWriteTracker = SystemReminders.updateWriteTracker(
-          state.writesSinceLastRead,
-          readFiles,
-          writtenFiles
-        )
-
-        IO(
-          ctx.self ! ToolsComplete(
-            freshResults ++ droppedResults,
-            result.text,
-            replyTo,
-            None,
-            result.thinking,
-            result.thinkingSignature,
-            updatedWriteTracker
-          )
-        )
+      // Include filtered-out tool calls as errors so the assistant message stays consistent
+      droppedResults = droppedCalls.map { call =>
+        (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
       }
+      // Track per-file write count since last read (per-agent, pure computation)
+      readFiles = freshResults
+        .collect {
+          case (call, result) if call.name == "Read" && !result.isError =>
+            call.input("file_path").flatMap(_.asString).getOrElse("")
+        }
+        .filter(_.nonEmpty)
+        .toSet
+      writtenFiles = freshResults
+        .collect {
+          case (call, result) if Set("Write", "Edit").contains(call.name) && !result.isError =>
+            call.input("file_path").flatMap(_.asString).getOrElse("")
+        }
+        .filter(_.nonEmpty)
+      updatedWriteTracker = SystemReminders.updateWriteTracker(
+        state.writesSinceLastRead,
+        readFiles,
+        writtenFiles
+      )
+      _ <- IO(
+        ctx.self ! ToolsComplete(
+          freshResults ++ droppedResults,
+          result.text,
+          replyTo,
+          None,
+          result.thinking,
+          result.thinkingSignature,
+          updatedWriteTracker
+        )
+      )
+    yield ()
 
     resources.dispatcher.unsafeRunAndForget(
       io.handleErrorWith { e =>
@@ -950,33 +913,5 @@ private[agent] trait AgentCore:
         path == MemoryStore.sessionMemoryPath(sid).toString
       }
     }
-
-  /**
-   * Build the full memory block: file contents + guide + file paths.
-   * Called at lifecycle points (new session, compact resume) — NOT every turn.
-   */
-  protected def buildMemoryBlock(agentDef: AgentDef, sessionId: Option[String]): String =
-    val userMemory = MemoryStore.loadUserMemory
-    val agentMemory = MemoryStore.loadAgentMemory(agentDef.name)
-    val sessionMemory = sessionId.flatMap(MemoryStore.loadSessionMemory)
-    val memorySections = List(
-      sessionMemory.map(c => s"# Memory — Session Context\n$c"),
-      agentMemory.map(c => s"# Memory — Agent\n$c"),
-      userMemory.map(c => s"# Memory — User Preferences\n$c")
-    ).flatten
-
-    val memoryFiles = sessionId match
-      case Some(sid) =>
-        s"""# Memory Files
-           |- Session context (auto-approved): ${MemoryStore.sessionMemoryPath(sid)}
-           |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
-           |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
-      case None =>
-        s"""# Memory Files
-           |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
-           |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
-
-    (memorySections :+ memoryFiles).mkString("\n\n")
-  end buildMemoryBlock
 
 end AgentCore
