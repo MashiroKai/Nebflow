@@ -43,6 +43,7 @@ export default {
   'agent.save': '保存',
   'memory.title': '记忆',
   'memory.session': '会话',
+  'memory.folder': '文件夹',
   'memory.agent': '智能体',
   'memory.user': '用户',
   'memory.placeholder': '# 记忆\n\n关键事实、决策、上下文...',
