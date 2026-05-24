@@ -26,14 +26,12 @@ jobs:
       - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
+          curl -fL "https://github.com/sbt/sbt/releases/download/v1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          cat > /tmp/sbt-bin/sbt << 'SCRIPT'
-          #!/bin/bash
-          exec java $SBT_OPTS -jar /tmp/sbt-launch.jar "$@"
-          SCRIPT
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
+          echo "[info] sbt-launch.jar size: $(wc -c < /tmp/sbt-launch.jar) bytes"
       - name: Compile
         shell: bash
         run: sbt compile
@@ -51,12 +49,9 @@ jobs:
       - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
+          curl -fL "https://github.com/sbt/sbt/releases/download/v1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          cat > /tmp/sbt-bin/sbt << 'SCRIPT'
-          #!/bin/bash
-          exec java $SBT_OPTS -jar /tmp/sbt-launch.jar "$@"
-          SCRIPT
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Run tests
@@ -75,12 +70,9 @@ jobs:
       - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
+          curl -fL "https://github.com/sbt/sbt/releases/download/v1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          cat > /tmp/sbt-bin/sbt << 'SCRIPT'
-          #!/bin/bash
-          exec java $SBT_OPTS -jar /tmp/sbt-launch.jar "$@"
-          SCRIPT
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Build assembly
@@ -113,8 +105,6 @@ jobs:
         id: jar
         shell: bash
         run: echo "jar=$(ls dist/nebflow-assembly-*.jar | head -1)" >> $GITHUB_OUTPUT
-
-      # --- CLI smoke tests ---
       - name: Test version command
         shell: bash
         run: java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" version 2>&1 | head -5
@@ -127,16 +117,11 @@ jobs:
       - name: Test help command
         shell: bash
         run: java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" help 2>&1 | head -20
-
-      # --- Server start + REST API tests ---
       - name: Start server and test REST API
         shell: bash
         run: |
-          # Start server in background
           java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" -s &
           SERVER_PID=$!
-
-          # Wait for server to start (up to 30s)
           for i in $(seq 1 30); do
             if curl -s http://localhost:8080/ > /dev/null 2>&1; then
               echo "Server started after ${i}s"
@@ -149,18 +134,12 @@ jobs:
             fi
             sleep 1
           done
-
           echo "--- Health check ---"
-          HEALTH=$(curl -sf http://localhost:8080/api/health 2>&1) && echo "$HEALTH" || echo "FAIL: $?"
-
+          curl -sf http://localhost:8080/api/health && echo "" || echo "FAIL"
           echo "--- Static assets ---"
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
-          echo "GET / -> $HTTP_CODE"
-
+          curl -s -o /dev/null -w "GET / -> %{http_code}\n" http://localhost:8080/
           echo "--- Config endpoint ---"
-          CONFIG=$(curl -sf http://localhost:8080/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available (expected without setup)"
-
-          # Cleanup
+          CONFIG=$(curl -sf http://localhost:8080/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available"
           kill $SERVER_PID 2>/dev/null || true
           wait $SERVER_PID 2>/dev/null || true
           echo "--- Server tests completed ---"
@@ -182,6 +161,5 @@ jobs:
           docker run -d --name nebflow-test -p 8080:8080 nebflow:test
           sleep 5
           docker logs nebflow-test 2>&1 | head -20
-          # Health check
           curl -sf http://localhost:8080/api/health || echo "Health check failed"
           docker stop nebflow-test
