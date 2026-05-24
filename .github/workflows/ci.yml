@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-13, windows-latest]
         java: [17]
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +22,13 @@ jobs:
           distribution: temurin
           java-version: ${{ matrix.java }}
           cache: sbt
+      - name: Info
+        shell: bash
+        run: |
+          java -version 2>&1
+          echo "SBT_OPTS=${SBT_OPTS:-not set}"
       - name: Compile
+        shell: bash
         run: sbt compile
 
   test:
@@ -65,7 +71,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-13, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -80,42 +86,57 @@ jobs:
         id: jar
         shell: bash
         run: echo "jar=$(ls dist/nebflow-assembly-*.jar | head -1)" >> $GITHUB_OUTPUT
+
+      # --- CLI smoke tests ---
       - name: Test version command
         shell: bash
-        run: |
-          java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" version 2>&1 | head -5
+        run: java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" version 2>&1 | head -5
       - name: Test status command
         shell: bash
-        run: |
-          java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" status 2>&1 | head -5
+        run: java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" status 2>&1 | head -5
       - name: Test doctor command
         shell: bash
-        run: |
-          java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" doctor 2>&1 | head -20
+        run: java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" doctor 2>&1 | head -20
       - name: Test help command
         shell: bash
-        run: |
-          java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" help 2>&1 | head -20
-      - name: Test start and stop
+        run: java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" help 2>&1 | head -20
+
+      # --- Server start + REST API tests ---
+      - name: Start server and test REST API
         shell: bash
         run: |
-          # Start in background
+          # Start server in background
           java --add-opens java.base/java.lang=ALL-UNNAMED -jar "${{ steps.jar.outputs.jar }}" -s &
           SERVER_PID=$!
-          # Wait for server to start
+
+          # Wait for server to start (up to 30s)
           for i in $(seq 1 30); do
             if curl -s http://localhost:8080/ > /dev/null 2>&1; then
               echo "Server started after ${i}s"
               break
             fi
+            if [ $i -eq 30 ]; then
+              echo "ERROR: Server did not start within 30s"
+              kill $SERVER_PID 2>/dev/null || true
+              exit 1
+            fi
             sleep 1
           done
-          # Test REST API health endpoint
-          curl -s http://localhost:8080/api/health || echo "Health check failed"
-          # Stop server
+
+          echo "--- Health check ---"
+          HEALTH=$(curl -sf http://localhost:8080/api/health 2>&1) && echo "$HEALTH" || echo "FAIL: $?"
+
+          echo "--- Static assets ---"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/)
+          echo "GET / -> $HTTP_CODE"
+
+          echo "--- Config endpoint ---"
+          CONFIG=$(curl -sf http://localhost:8080/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available (expected without setup)"
+
+          # Cleanup
           kill $SERVER_PID 2>/dev/null || true
           wait $SERVER_PID 2>/dev/null || true
-          echo "Smoke test completed"
+          echo "--- Server tests completed ---"
 
   docker-test:
     name: Docker Build Test
