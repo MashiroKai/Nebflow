@@ -23,7 +23,7 @@ if [ "$CHANNEL" = "beta" ]; then
     fi
     VERSION="${VERSION:-$BETA_VERSION}"
 else
-    VERSION="${VERSION:-1.05.067}"
+    VERSION="${VERSION:-1.1}"
 fi
 
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
