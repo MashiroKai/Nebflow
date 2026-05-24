@@ -19,7 +19,7 @@ object MemoryCommand extends CliCommand:
     def description = "View memory"
 
     def params = List(
-      CliParam("scope", Some('s'), "Scope: user/agent/session", required = false)
+      CliParam("scope", Some('s'), "Scope: user/agent/folder/session", required = false)
     )
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -49,7 +49,7 @@ object MemoryCommand extends CliCommand:
     def description = "Set memory content"
 
     def params = List(
-      CliParam("scope", Some('s'), "Scope: user/agent/session", required = false),
+      CliParam("scope", Some('s'), "Scope: user/agent/folder/session", required = false),
       CliParam("content", Some('c'), "Memory content", required = true)
     )
 

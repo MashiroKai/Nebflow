@@ -161,6 +161,11 @@ export default {
   // Per-session background tasks: sessionId -> [{ taskId, description, status }]
   sessionBgTasks: {},
 
+  // Per-agent aggregate state: agentName -> 'working' | 'waiting' | 'compressing' | 'complete' | 'idle'
+  agentStates: {},
+  // Debounce timer for complete state
+  agentStateTimers: {},
+
   // DOM refs (populated in main.js)
   dom: {},
 
@@ -170,7 +175,7 @@ export default {
   // Per-session model info: sessionId -> { model, contextWindow, inputTokens }
   sessionModelInfo: safeParse(localStorage.getItem('nebflow_model_info'), {}),
   updateHeaderModelInfo: null,
-  COMPACT_THRESHOLD: 0.75,
+  COMPACT_THRESHOLD: 0.90,
 
   // Card design prompt
   cardDesignPrompt: '',
