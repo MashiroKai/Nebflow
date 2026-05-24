@@ -17,8 +17,11 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-          cache: sbt
-      - uses: sbt/setup-sbt@v1
+      - name: Install sbt
+        shell: bash
+        run: |
+          curl -fL "https://github.com/sbt/sbt/releases/download/v1.10.10/sbt-1.10.10.tgz" | tar xz -C /tmp
+          echo "/tmp/sbt/bin" >> $GITHUB_PATH
       - name: Run tests
         run: sbt test
       - name: Build assembly
