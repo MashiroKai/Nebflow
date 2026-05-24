@@ -20,12 +20,9 @@ jobs:
       - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
+          curl -fL "https://github.com/sbt/sbt/releases/download/v1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          cat > /tmp/sbt-bin/sbt << 'SCRIPT'
-          #!/bin/bash
-          exec java $SBT_OPTS -jar /tmp/sbt-launch.jar "$@"
-          SCRIPT
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Run tests
