@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, master]
 
+env:
+  SBT_OPTS: "-Xms512m -Xmx2g"
+
 jobs:
   compile:
     name: Compile (${{ matrix.os }})
@@ -20,23 +23,17 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: Install sbt
+      - name: Setup sbt
         shell: bash
         run: |
-          SBT_VER="1.10.10"
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            curl -fL "https://github.com/sbt/sbt/releases/download/v${SBT_VER}/sbt-${SBT_VER}.zip" -o /tmp/sbt.zip
-            unzip -q /tmp/sbt.zip -d /tmp/
-            echo "/tmp/sbt/bin" >> $GITHUB_PATH
-          else
-            curl -fL "https://github.com/sbt/sbt/releases/download/v${SBT_VER}/sbt-${SBT_VER}.tgz" | tar xz -C /tmp
-            echo "/tmp/sbt/bin" >> $GITHUB_PATH
-          fi
-      - name: Info
-        shell: bash
-        run: |
-          java -version 2>&1
-          sbt --version 2>&1 | head -3
+          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          cat > /tmp/sbt-bin/sbt << 'SCRIPT'
+          #!/bin/bash
+          exec java $SBT_OPTS -jar /tmp/sbt-launch.jar "$@"
+          SCRIPT
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Compile
         shell: bash
         run: sbt compile
@@ -51,11 +48,17 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: Install sbt
+      - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://github.com/sbt/sbt/releases/download/v1.10.10/sbt-1.10.10.tgz" | tar xz -C /tmp
-          echo "/tmp/sbt/bin" >> $GITHUB_PATH
+          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          cat > /tmp/sbt-bin/sbt << 'SCRIPT'
+          #!/bin/bash
+          exec java $SBT_OPTS -jar /tmp/sbt-launch.jar "$@"
+          SCRIPT
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Run tests
         run: sbt test
 
@@ -69,11 +72,17 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: Install sbt
+      - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://github.com/sbt/sbt/releases/download/v1.10.10/sbt-1.10.10.tgz" | tar xz -C /tmp
-          echo "/tmp/sbt/bin" >> $GITHUB_PATH
+          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          cat > /tmp/sbt-bin/sbt << 'SCRIPT'
+          #!/bin/bash
+          exec java $SBT_OPTS -jar /tmp/sbt-launch.jar "$@"
+          SCRIPT
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Build assembly
         run: sbt assembly
       - name: Upload artifact

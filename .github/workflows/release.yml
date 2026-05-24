@@ -17,11 +17,17 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - name: Install sbt
+      - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://github.com/sbt/sbt/releases/download/v1.10.10/sbt-1.10.10.tgz" | tar xz -C /tmp
-          echo "/tmp/sbt/bin" >> $GITHUB_PATH
+          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          cat > /tmp/sbt-bin/sbt << 'SCRIPT'
+          #!/bin/bash
+          exec java $SBT_OPTS -jar /tmp/sbt-launch.jar "$@"
+          SCRIPT
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Run tests
         run: sbt test
       - name: Build assembly
