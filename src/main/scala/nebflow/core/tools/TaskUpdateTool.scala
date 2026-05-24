@@ -14,45 +14,26 @@ object TaskUpdateTool extends Tool:
 ## When to Use
 
 **Mark tasks as resolved:**
-- When you have completed the work described in a task
-- IMPORTANT: Always mark tasks as completed when you finish them
+- IMPORTANT: Always mark tasks as completed when you FULLY finish them
 - After resolving, call TaskList to find your next task
-
-- ONLY mark a task as completed when you have FULLY accomplished it
 - If you encounter errors, blockers, or cannot finish, mark as failed
-- Never mark completed if:
-  - Tests are failing
-  - Implementation is partial
-  - You encountered unresolved errors
+- Never mark completed if tests are failing, implementation is partial, or you encountered unresolved errors
 
-**Mark tasks as failed:**
-- When you cannot complete a task due to errors, blockers, or external issues
-- When a task is no longer feasible
-- `failed` is a terminal state — it cannot transition back
-
-**Update task details:**
-- When establishing dependencies between tasks
-- When correcting dependency relationships (use removeBlocks/removeBlockedBy)
+**Update task details or dependencies:**
+- Set status to `in_progress` when starting work on a task
+- Use `addBlockedBy`/`removeBlockedBy` to manage dependencies
 
 ## Status Workflow
 
-Status progresses: `pending` -> `in_progress` -> `completed` or `failed`
+`pending` -> `in_progress` -> `completed` or `failed`
 
-Valid transitions:
-- `pending` -> `in_progress`
-- `pending` -> `completed` (for trivial tasks)
-- `pending` -> `failed`
-- `in_progress` -> `completed`
-- `in_progress` -> `failed`
-- `completed` cannot be changed to any other state
-- `failed` cannot be changed to any other state
+Terminal states: `completed` and `failed` cannot transition to any other state.
 
 ## Dependency Management
 
-- `addBlockedBy`: Add task IDs that must complete before this one can start
-- `addBlocks`: Add task IDs that this task blocks
-- `removeBlockedBy`: Remove blocking dependencies
-- `removeBlocks`: Remove blocked tasks
+- `addBlockedBy`: Task IDs that must complete before this one can start
+- `addBlocks`: Task IDs that this task blocks
+- `removeBlockedBy`/`removeBlocks`: Remove dependencies
 - Circular dependencies are detected and rejected automatically
 
 ## Examples

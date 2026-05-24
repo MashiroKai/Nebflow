@@ -23,8 +23,6 @@ object ToolReversibility:
     "AskUserQuestion",
     "TaskCreate",
     "TaskUpdate",
-    "TaskGet",
-    "TaskDelete",
     "TaskList",
     "Card",
     "RemoveUnnecessary"
@@ -36,8 +34,11 @@ object ToolReversibility:
     if AlwaysReversible.contains(toolName) then true
     else if toolName.startsWith("mcp__") then true
     else if toolName == "Bash" then
-      // Non-dangerous bash commands are considered reversible
-      input("command").flatMap(_.asString).forall(cmd => !BashTool.isDangerous(cmd))
+      // Dangerous commands (rm -rf, DROP TABLE, etc.) and injection patterns
+      // ($(...), `...`, IFS=, null byte) both require user confirmation
+      input("command").flatMap(_.asString).forall { cmd =>
+        !BashTool.isDangerous(cmd) && BashTool.checkInjection(cmd).isEmpty
+      }
     else if toolName == "Curl" then
       // Only read-only HTTP methods are reversible
       input("method").flatMap(_.asString).forall(m => SafeHttpMethods.contains(m.toUpperCase))

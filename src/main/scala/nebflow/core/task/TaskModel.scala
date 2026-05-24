@@ -1,7 +1,7 @@
 package nebflow.core.task
 
+import io.circe.Codec
 import io.circe.generic.semiauto.deriveCodec
-import io.circe.{Codec, Json}
 
 enum TaskStatus:
   case Pending, InProgress, Completed, Failed
@@ -34,7 +34,6 @@ case class Task(
   status: TaskStatus = TaskStatus.Pending,
   blocks: List[String] = Nil,
   blockedBy: List[String] = Nil,
-  metadata: Option[Map[String, Json]] = None,
   createdAt: Option[String] = None,
   updatedAt: Option[String] = None
 )
@@ -45,8 +44,7 @@ object Task:
 case class TaskCreateInput(
   subject: String,
   description: String,
-  activeForm: Option[String] = None,
-  metadata: Option[Map[String, Json]] = None
+  activeForm: Option[String] = None
 )
 
 object TaskCreateInput:
@@ -60,8 +58,7 @@ case class TaskUpdateInput(
   addBlocks: Option[List[String]] = None,
   addBlockedBy: Option[List[String]] = None,
   removeBlocks: Option[List[String]] = None,
-  removeBlockedBy: Option[List[String]] = None,
-  metadata: Option[Map[String, Json]] = None
+  removeBlockedBy: Option[List[String]] = None
 )
 
 object TaskUpdateInput:

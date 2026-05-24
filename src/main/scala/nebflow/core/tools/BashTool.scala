@@ -30,6 +30,7 @@ Usage:
 
 Background execution (run_in_background):
 - Use for long-running commands (builds, tests, servers, deploys, remote SSH operations, etc.).
+- **Use `run_in_background: true`, never `&` or `nohup`.** Shell backgrounding (`&`) bypasses Nebflow's task tracking — you won't be notified when it finishes, and the frontend won't show the background indicator.
 - You will be automatically notified when the job finishes. DO NOT poll or use sleep loops.
 - After starting a background job, continue with other work or finish your turn.
 - If a foreground command exceeds 2 minutes, it is automatically moved to background — same rules apply.
@@ -74,10 +75,6 @@ Git safety:
         "run_in_background" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
           "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you.".asJson
-        ),
-        "dangerouslyDisableSandbox" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "ONLY use when absolutely necessary. This bypasses injection pattern checks (e.g. command substitution). Permanently dangerous commands (rm -rf, git push --force, etc.) remain blocked regardless. Use with extreme caution.".asJson
         ),
         "background_job_id" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -141,7 +138,7 @@ Git safety:
     ("""git\s+add\s+-i\b""".r, "Interactive staging. Use `git add <file>` instead.")
   )
 
-  // Injection patterns: default block, bypass with dangerouslyDisableSandbox
+  // Injection patterns: gated by ToolReversibility — requires user confirmation
   private val InjectionPatterns = List(
     ("""\$\(\s*.*?\brm\b""".r, "Command substitution containing rm detected"),
     ("""`\s*.*?\brm\b""".r, "Backtick substitution containing rm detected"),
@@ -175,10 +172,8 @@ Git safety:
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.contains("[Command timed out") then "Timed out"
-    else if result.startsWith("[Blocked by sandbox") then "Blocked"
     else if result.startsWith("[Interactive command]") then "Interactive blocked"
     else if result.startsWith("[Background job") then "Background"
-    else if result.startsWith("[Sandbox bypassed]") then "Sandbox bypassed"
     else if result.startsWith("[moved to background]") then "Auto-background"
     else if result.startsWith("[Command executed successfully with no output]") then "No output"
     else
@@ -197,7 +192,6 @@ Git safety:
     val command = commandOpt.getOrElse("")
     val background = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
     val desc = input("description").flatMap(_.asString)
-    val bypass = input("dangerouslyDisableSandbox").flatMap(_.asBoolean).getOrElse(false)
     val bgJobId = input("background_job_id").flatMap(_.asString)
     val cancelBg = input("cancel_background_job").flatMap(_.asBoolean).getOrElse(false)
 
@@ -207,7 +201,7 @@ Git safety:
     // If background_job_id is provided, enter query/cancel mode
     bgJobId match
       case Some(jobId) =>
-        ShellSession.forSession(sessionId).flatMap { shell =>
+        ShellSession.forSession(sessionId, Some(ctx.projectRoot)).flatMap { shell =>
           if cancelBg then
             shell.cancelBackgroundJob(jobId).map { cancelled =>
               if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
@@ -257,40 +251,21 @@ Git safety:
               )
             )
           else
-            val injectionWarning = checkInjection(command)
-            (injectionWarning, bypass) match
-              case (Some(warning), false) =>
-                IO.pure(Left(ToolError(s"[Blocked by sandbox] Injection detected: $warning")))
-              case _ =>
-                val sandboxMark = injectionWarning.map(_ => "[Sandbox bypassed] ").getOrElse("")
-                if bypass then
-                  val agentName = ctx.agentDef.map(_.name).getOrElse("-")
-                  val sessionName = ctx.sessionName.getOrElse("-")
-                  NebflowLogger
-                    .forName("nebflow.tool.bash")
-                    .infoSync(
-                      s"Sandbox bypassed",
-                      "agent" -> agentName,
-                      "session" -> sessionName,
-                      "command" -> command.take(120)
-                    )
-                ShellSession.forSession(sessionId).flatMap { shell =>
-                  if background then
-                    val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
-                    val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
-                    val bgDescription = desc.getOrElse(firstLine)
-                    for
-                      // generate jobId first so we can pass it to the notify callback
-                      jobId <- IO.randomUUID.map(_.toString.take(8))
-                      onComplete = makeNotifyCallback(command, desc, ctx, jobId)
-                      _ <- shell.executeBackground(command, timeoutDuration, desc, onComplete, onHeartbeat, Some(jobId))
-                      _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
-                    yield Right(
-                      s"$sandboxMark[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
-                    )
-                  else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, sandboxMark, ctx)
-                }
-            end match
+            ShellSession.forSession(sessionId, Some(ctx.projectRoot)).flatMap { shell =>
+              if background then
+                val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
+                val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+                val bgDescription = desc.getOrElse(firstLine)
+                for
+                  jobId <- IO.randomUUID.map(_.toString.take(8))
+                  onComplete = makeNotifyCallback(command, desc, ctx, jobId)
+                  _ <- shell.executeBackground(command, timeoutDuration, desc, onComplete, onHeartbeat, Some(jobId))
+                  _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
+                yield Right(
+                  s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
+                )
+              else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, ctx)
+            }
           end if
     end match
   end call
@@ -306,7 +281,6 @@ Git safety:
     command: String,
     timeout: FiniteDuration,
     desc: Option[String],
-    sandboxMark: String,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     val threshold = AutoBackgroundThresholdMs.millis
@@ -366,13 +340,13 @@ Git safety:
     yield
       if !didThresholdWin then
         resultOpt match
-          case Some(Right(pr)) => formatResult(pr, desc, sandboxMark)
+          case Some(Right(pr)) => formatResult(pr, desc)
           case Some(Left(_: TimeoutException)) => Left(ToolError(s"[Command timed out after ${timeout.toMillis}ms]"))
           case Some(Left(e)) => Left(ToolError(s"Error: ${e.getMessage}"))
           case None => Left(ToolError("[Unexpected: no result from foreground command]"))
       else
         Right(
-          s"$sandboxMark[Command moved to background] It has been running for over ${threshold.toSeconds}s and will continue in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
+          s"[Command moved to background] It has been running for over ${threshold.toSeconds}s and will continue in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
         )
     end for
 
@@ -380,8 +354,7 @@ Git safety:
 
   private def formatResult(
     result: ProcessResult,
-    desc: Option[String],
-    sandboxMark: String
+    desc: Option[String]
   ): Either[ToolError, String] =
     val prefix = desc.map(d => s"[$d]\n").getOrElse("")
     val dirLine = s"(cwd: ${result.cwd})\n"
@@ -389,8 +362,8 @@ Git safety:
     val cleanedErr = cleanOutput(result.stderr)
     val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
     val output = cleanedOut + errLine
-    val full = sandboxMark + prefix + dirLine + output
-    if full.trim.isEmpty then Right(sandboxMark + "[Command executed successfully with no output]")
+    val full = prefix + dirLine + output
+    if full.trim.isEmpty then Right("[Command executed successfully with no output]")
     else Right(full)
 
   /**

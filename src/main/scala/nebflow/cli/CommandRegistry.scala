@@ -5,6 +5,7 @@ package nebflow.cli
  * Add new CliCommand implementations here.
  */
 object CommandRegistry:
+
   private lazy val commands: Map[String, CliCommand] =
     List[CliCommand](
       // System commands (offline)
@@ -27,8 +28,9 @@ object CommandRegistry:
       AgentCommand,
       SkillCommand,
       FeishuCommand,
-      MemoryCommand,
+      MemoryCommand
     ).map(c => c.name -> c).toMap
 
   def get(name: String): Option[CliCommand] = commands.get(name)
   def all: List[CliCommand] = commands.values.toList.sortBy(_.name)
+end CommandRegistry

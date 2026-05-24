@@ -9,16 +9,18 @@ object ConfigCommand extends CliCommand:
   def name = "config"
   def description = "Manage configuration"
   def subcommands = List(ConfigGet, ConfigSet, ConfigShow, ConfigEdit)
+
   def examples = List(
     "nebflow config show",
     "nebflow config get llm.model.default",
-    "nebflow config set llm.model.default openai/gpt-4o",
+    "nebflow config set llm.model.default openai/gpt-4o"
   )
 
   private object ConfigGet extends CliSubcommand:
     def name = "get"
     def description = "Get a config value"
     def params = List(CliParam("key", None, "Config key (dot-separated path)", required = false))
+
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
@@ -31,9 +33,9 @@ object ConfigCommand extends CliCommand:
                 // Navigate dot-separated path
                 io.circe.parser.parse(configStr) match
                   case Right(json) =>
-                    val value = k.split("\\.").foldLeft(json)((j, segment) =>
-                      j.hcursor.downField(segment).as[Json].getOrElse(Json.Null)
-                    )
+                    val value = k
+                      .split("\\.")
+                      .foldLeft(json)((j, segment) => j.hcursor.downField(segment).as[Json].getOrElse(Json.Null))
                     if ctx.json then CliResult.Json(value)
                     else CliResult.text(value.spaces2)
                   case Left(_) => CliResult.Error("Failed to parse config")
@@ -42,13 +44,17 @@ object ConfigCommand extends CliCommand:
                 else CliResult.text(configStr)
           }
 
+  end ConfigGet
+
   private object ConfigSet extends CliSubcommand:
     def name = "set"
     def description = "Set a config value"
+
     def params = List(
       CliParam("key", None, "Config key", required = true),
-      CliParam("value", None, "Config value", required = true),
+      CliParam("value", None, "Config value", required = true)
     )
+
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
@@ -59,10 +65,14 @@ object ConfigCommand extends CliCommand:
           else
             // Build a nested JSON from dot-separated key
             val configJson = buildNestedJson(key.split("\\.").toList, value)
-            client.command(Json.obj(
-              "type" -> "updateConfig".asJson,
-              "config" -> configJson.spaces2.asJson,
-            )).as(CliResult.text(s"Config updated: $key = $value"))
+            client
+              .command(
+                Json.obj(
+                  "type" -> "updateConfig".asJson,
+                  "config" -> configJson.spaces2.asJson
+                )
+              )
+              .as(CliResult.text(s"Config updated: $key = $value"))
 
     private def buildNestedJson(path: List[String], value: String): Json =
       path match
@@ -73,10 +83,13 @@ object ConfigCommand extends CliCommand:
         case head :: tail =>
           Json.obj(head -> buildNestedJson(tail, value))
 
+  end ConfigSet
+
   private object ConfigShow extends CliSubcommand:
     def name = "show"
     def description = "Show full configuration (API keys redacted)"
     def params = Nil
+
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
@@ -90,6 +103,7 @@ object ConfigCommand extends CliCommand:
     def name = "edit"
     def description = "Open config in $EDITOR"
     def params = Nil
+
     def run(ctx: CliContext): IO[CliResult] =
       val configPath = os.home / ".nebflow" / "nebflow.json"
       val editor = sys.env.getOrElse("EDITOR", sys.env.getOrElse("VISUAL", "vi"))
@@ -97,3 +111,4 @@ object ConfigCommand extends CliCommand:
         val pb = new ProcessBuilder((editor.split("\\s+").toList :+ configPath.toString)*)
         pb.inheritIO().start().waitFor()
       }.as(CliResult.ok)
+end ConfigCommand

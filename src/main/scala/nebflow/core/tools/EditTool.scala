@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathSandbox}
+import nebflow.core.NebflowLogger
 
 import java.nio.file.{Files, Path, Paths}
 
@@ -122,35 +122,29 @@ Edit patterns:
     val newString = input("new_string").flatMap(_.asString).getOrElse("")
     val replaceAll = input("replace_all").flatMap(_.asBoolean).getOrElse(false)
 
-    // Phase 0: PathSandbox check — only allow edits within project root
-    val sandboxCheck = PathSandbox.isAllowed(filePath.toString, ctx.projectRoot)
-    sandboxCheck.flatMap { allowed =>
-      if !allowed then IO.pure(Left(ToolError(s"File is outside project root and cannot be edited: $filePath")))
-      else
-        // Phase 1: lock-free pre-validation
-        validateInput(filePath, input) match
-          case Left(err) => IO.pure(Left(err))
-          case Right(()) =>
-            // Snapshot file before editing (if it exists)
-            val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath))
-            val editIO = (snapshot *> IO.blocking(doEdit(filePath, oldString, newString, replaceAll)))
-              .handleErrorWith { e =>
-                val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-                logger.warn(s"Error editing file $filePath: ${e.getClass.getSimpleName}: $msg") *>
-                  IO.pure(Left(ToolError(s"Error editing file: $msg")))
-              }
-            val lockedEdit = ctx.fileLockManager match
-              case Some(lm) => lm.withWriteLock(filePath)(editIO)
-              case None => editIO
-            lockedEdit.flatMap {
-              case Right(result) =>
-                val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
-                  ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
-                record.as(Right(result))
-              case left => IO.pure(left)
-            }
-        end match
-    }
+    // lock-free pre-validation
+    validateInput(filePath, input) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(()) =>
+        // Snapshot file before editing (if it exists)
+        val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath))
+        val editIO = (snapshot *> IO.blocking(doEdit(filePath, oldString, newString, replaceAll)))
+          .handleErrorWith { e =>
+            val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+            logger.warn(s"Error editing file $filePath: ${e.getClass.getSimpleName}: $msg") *>
+              IO.pure(Left(ToolError(s"Error editing file: $msg")))
+          }
+        val lockedEdit = ctx.fileLockManager match
+          case Some(lm) => lm.withWriteLock(filePath)(editIO)
+          case None => editIO
+        lockedEdit.flatMap {
+          case Right(result) =>
+            val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
+              ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
+            record.as(Right(result))
+          case left => IO.pure(left)
+        }
+    end match
   end call
 
   // ---------------------------------------------------------------------------
