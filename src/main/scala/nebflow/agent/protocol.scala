@@ -200,10 +200,16 @@ enum AgentStreamEvent:
   case Thinking
   case ToolCallDetected(name: String)
   case RetryStatus(message: String)
-  case Done(model: Option[String] = None, contextWindow: Option[Int] = None, inputTokens: Option[Int] = None)
+
+  case Done(
+    model: Option[String] = None,
+    contextWindow: Option[Int] = None,
+    inputTokens: Option[Int] = None,
+    compactThreshold: Option[Double] = None
+  )
 
   /** Emitted after each LlmComplete round to keep frontend context bar up to date in real time. */
-  case UsageUpdate(inputTokens: Int, contextWindow: Int)
+  case UsageUpdate(inputTokens: Int, contextWindow: Int, compactThreshold: Double)
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   case CompactComplete(before: Int, after: Int, reportPath: Option[String] = None)
   case CompactFailed(reason: String, attempt: Int, maxAttempts: Int)
@@ -266,19 +272,21 @@ enum AgentStreamEvent:
       if isSubagent then
         Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
       else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
-    case Done(model, contextWindow, inputTokens) =>
+    case Done(model, contextWindow, inputTokens, compactThreshold) =>
       val base =
         if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
         else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
       val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
       val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
-      inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
-    case UsageUpdate(inputTokens, contextWindow) =>
+      val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
+      compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
+    case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
       Json.obj(
         "type" -> "usageUpdate".asJson,
         "sessionId" -> sessionId.asJson,
         "inputTokens" -> inputTokens.asJson,
-        "contextWindow" -> contextWindow.asJson
+        "contextWindow" -> contextWindow.asJson,
+        "compactThreshold" -> compactThreshold.asJson
       )
     case CompactStart(mode, inputTokens, threshold) =>
       if isSubagent then

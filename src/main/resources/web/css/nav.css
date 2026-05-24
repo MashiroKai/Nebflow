@@ -59,6 +59,7 @@
 }
 .nav-agent.active .nav-agent-icon {
   color: var(--color-primary);
+  filter: drop-shadow(0 0 2px rgba(0,0,0,0.18)) brightness(1.1);
 }
 .nav-agent-icon svg {
   width: 20px;
@@ -79,9 +80,6 @@
 }
 
 /* Notification dot on agent avatar */
-.nav-agent {
-  position: relative;
-}
 .agent-notif-dot {
   position: absolute;
   top: 4px;
@@ -91,6 +89,43 @@
   border-radius: 50%;
   background: var(--color-primary);
   pointer-events: none;
+  z-index: 2;
+}
+
+/* ---------- Agent State Animations ---------- */
+
+/* Base: hide all animation frames, show only f0 (idle) */
+.nav-agent-icon svg.agent-pixels g { opacity: 0; }
+.nav-agent-icon svg.agent-pixels g.f0 { opacity: 1; }
+
+/* ===== All agents — pixel frame animation ===== */
+/* Any active state triggers the same expand/contract cycle (f0→f1→f2) */
+.nav-agent.state-working .nav-agent-icon svg.agent-pixels g,
+.nav-agent.state-waiting .nav-agent-icon svg.agent-pixels g,
+.nav-agent.state-compressing .nav-agent-icon svg.agent-pixels g {
+  animation-duration: 0.9s;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+.nav-agent.state-working .nav-agent-icon svg.agent-pixels g.f0,
+.nav-agent.state-waiting .nav-agent-icon svg.agent-pixels g.f0,
+.nav-agent.state-compressing .nav-agent-icon svg.agent-pixels g.f0 { animation-name: af0; }
+.nav-agent.state-working .nav-agent-icon svg.agent-pixels g.f1,
+.nav-agent.state-waiting .nav-agent-icon svg.agent-pixels g.f1,
+.nav-agent.state-compressing .nav-agent-icon svg.agent-pixels g.f1 { animation-name: af1; }
+.nav-agent.state-working .nav-agent-icon svg.agent-pixels g.f2,
+.nav-agent.state-waiting .nav-agent-icon svg.agent-pixels g.f2,
+.nav-agent.state-compressing .nav-agent-icon svg.agent-pixels g.f2 { animation-name: af2; }
+
+/* 3-frame cycle keyframes (33.33% each) */
+@keyframes af0 { 0%,33.33%{opacity:1} 33.34%,100%{opacity:0} }
+@keyframes af1 { 0%,33.33%{opacity:0} 33.34%,66.66%{opacity:1} 66.67%,100%{opacity:0} }
+@keyframes af2 { 0%,66.66%{opacity:0} 66.67%,100%{opacity:1} }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .nav-agent-icon svg.agent-pixels g { animation: none !important; opacity: 0; }
+  .nav-agent-icon svg.agent-pixels g.f0 { opacity: 1 !important; }
 }
 
 /* + button for new agent */

@@ -87,7 +87,7 @@ object ConfigCommand extends CliCommand:
 
   private object ConfigShow extends CliSubcommand:
     def name = "show"
-    def description = "Show full configuration (API keys redacted)"
+    def description = "Show full configuration"
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =

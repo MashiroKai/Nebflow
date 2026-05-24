@@ -781,6 +781,11 @@ export function renderAskError(msg) {
 }
 
 // ---------- Thinking bubble rendering ----------
+// Throttle thinking rendering to ~60fps using rAF. Without this, fast thinking
+// streams re-render the entire accumulated text on every delta, which gets
+// O(n^2) slow as text grows and keeps the main thread busy — causing visible
+// lag when user tries to interact (e.g. switching agents).
+let _pendingThinkingRAF = null;
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   state.thinkingText += delta;
@@ -810,15 +815,30 @@ export function appendThinkingDelta(delta) {
     chat.appendChild(row);
     state.currentThinkingBubble = bubble;
   }
-  const contentEl = state.currentThinkingBubble.querySelector('.thinking-content');
-  if (contentEl) {
-    const cursor = '<span class="cursor"></span>';
-    contentEl.innerHTML = renderMarkdownWithMath(state.thinkingText || '') + cursor;
+  // Schedule a rAF render if one isn't already pending — caps re-render rate
+  // and coalesces multiple deltas into a single DOM update.
+  if (!_pendingThinkingRAF) {
+    _pendingThinkingRAF = requestAnimationFrame(() => {
+      _pendingThinkingRAF = null;
+      const contentEl = state.currentThinkingBubble?.querySelector('.thinking-content');
+      if (contentEl) {
+        contentEl.innerHTML = renderMarkdownWithMath(state.thinkingText || '') + '<span class="cursor"></span>';
+      }
+      smartScroll();
+    });
   }
-  smartScroll();
+}
+
+// Cancel pending rAF — called by persist on cleanup when no active session.
+export function cancelThinkingRAF() {
+  if (_pendingThinkingRAF) {
+    cancelAnimationFrame(_pendingThinkingRAF);
+    _pendingThinkingRAF = null;
+  }
 }
 
 export function finishThinking() {
+  cancelThinkingRAF();
   if (state.currentThinkingBubble) {
     const contentEl = state.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {

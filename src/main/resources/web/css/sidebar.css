@@ -87,7 +87,6 @@
   display: none;
   flex: 1;
   overflow-y: auto;
-  scrollbar-width: thin;
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #search-results.active {
@@ -210,7 +209,6 @@
 #session-list {
   flex: 1;
   overflow-y: auto;
-  scrollbar-width: thin;
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .session-item {
@@ -762,7 +760,6 @@
   flex: 1;
   overflow-y: auto;
   padding: 12px;
-  scrollbar-width: thin;
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .settings-section {
@@ -851,7 +848,6 @@
   font-family: ui-monospace, SFMono-Regular, monospace;
   line-height: 1.5;
   resize: vertical;
-  scrollbar-width: thin;
   scrollbar-color: var(--color-frame-border) transparent;
 }
 #config-editor:focus { outline: none; border-color: var(--color-frame-text-muted); }

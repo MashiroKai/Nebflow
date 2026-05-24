@@ -17,26 +17,40 @@ import nebflow.service.{MemoryStore, RulesStore}
  */
 object ContextRefresher:
 
-  /** Build the full memory block: file contents + guide + file paths.
-   *  Uses mtime-cached reads — cheap to call every turn (3 stat() syscalls if unchanged).
+  /**
+   * Build the full memory block: file contents + guide + file paths.
+   *  Uses mtime-cached reads — cheap to call every turn (3-4 stat() syscalls if unchanged).
    */
-  def buildMemoryBlock(agentDef: AgentDef, sessionId: Option[String]): String =
+  def buildMemoryBlock(agentDef: AgentDef, sessionId: Option[String], folderId: Option[String] = None): String =
     val userMemory = MemoryStore.loadUserMemory
     val agentMemory = MemoryStore.loadAgentMemory(agentDef.name)
+    val folderMemory = folderId.flatMap(MemoryStore.loadFolderMemory)
     val sessionMemory = sessionId.flatMap(MemoryStore.loadSessionMemory)
     val memorySections = List(
       sessionMemory.map(c => s"# Memory — Session Context\n$c"),
+      folderMemory.map(c => s"# Memory — Folder\n$c"),
       agentMemory.map(c => s"# Memory — Agent\n$c"),
       userMemory.map(c => s"# Memory — User Preferences\n$c")
     ).flatten
 
-    val memoryFiles = sessionId match
-      case Some(sid) =>
+    val memoryFiles = (sessionId, folderId) match
+      case (Some(sid), Some(_)) =>
+        s"""# Memory Files
+           |- Session context (auto-approved): ${MemoryStore.sessionMemoryPath(sid)}
+           |- Folder knowledge (auto-approved): ${folderId.map(MemoryStore.folderMemoryPath).getOrElse("")}
+           |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
+           |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
+      case (Some(sid), None) =>
         s"""# Memory Files
            |- Session context (auto-approved): ${MemoryStore.sessionMemoryPath(sid)}
            |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
            |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
-      case None =>
+      case (None, Some(_)) =>
+        s"""# Memory Files
+           |- Folder knowledge (auto-approved): ${folderId.map(MemoryStore.folderMemoryPath).getOrElse("")}
+           |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
+           |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
+      case _ =>
         s"""# Memory Files
            |- Agent knowledge (requires approval): ${MemoryStore.agentMemoryPath(agentDef.name)}
            |- User preferences (requires approval): ${MemoryStore.userMemoryPath}""".stripMargin
@@ -44,7 +58,8 @@ object ContextRefresher:
     (memorySections :+ memoryFiles).mkString("\n\n")
   end buildMemoryBlock
 
-  /** Resolve projectRoot and rulesMd from the session's folder chain.
+  /**
+   * Resolve projectRoot and rulesMd from the session's folder chain.
    *  Called every turn so folder-level config changes take effect immediately.
    */
   def refreshFolderContext(
@@ -85,8 +100,8 @@ object ContextRefresher:
       freshDef = freshDefOpt.getOrElse(agentDef)
       // projectRoot + rulesMd from folder chain
       (projectRoot, rulesMd) <- refreshFolderContext(state, resources, freshDef.name)
-      // memory from files (mtime-cached — 3 cheap stat() calls per turn)
-      memoryBlock = buildMemoryBlock(freshDef, state.sessionId)
+      // memory from files (mtime-cached — 3-4 cheap stat() calls per turn)
+      memoryBlock = buildMemoryBlock(freshDef, state.sessionId, state.folderId)
       // thinking config from global ref
       thinkingConfig <- resources.thinkingConfigRef.get
       // file change detection (5s debounce)

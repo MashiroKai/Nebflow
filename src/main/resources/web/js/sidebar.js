@@ -4,7 +4,7 @@ import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { showAgentModal, startInlineNewSession, showBatchDeleteModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
-import { finishAgent, setStatus, renderToolPending } from './chat.js';
+import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
@@ -150,6 +150,87 @@ export function renderAgentList() {
     list.appendChild(el);
   });
   lucide.createIcons();
+  computeAgentStates();
+}
+
+// ---------- Agent State Animations ----------
+
+/** Apply a visual state class to an agent nav element. */
+function applyAgentState(agentName, stateClass) {
+  const el = document.querySelector(`#nav-agent-list .nav-agent[data-name="${agentName}"]`);
+  if (!el) return;
+  el.classList.remove('state-working', 'state-waiting', 'state-compressing', 'state-complete');
+  if (stateClass !== 'idle') {
+    el.classList.add('state-' + stateClass);
+  }
+}
+
+/**
+ * Recompute aggregate state for each agent based on all their sessions.
+ * Priority order: waiting (attention) > working (busy) > compressing > idle.
+ * Detects busy→idle transitions and triggers a brief 'complete' animation.
+ */
+export function computeAgentStates() {
+  // Use sessionAgentMap (contains ALL sessions) instead of state.sessions (filtered by selectedAgent)
+  const agentSessionIds = {};
+  Object.entries(state.sessionAgentMap).forEach(([sid, agent]) => {
+    if (!agentSessionIds[agent]) agentSessionIds[agent] = [];
+    agentSessionIds[agent].push(sid);
+  });
+
+  // Ensure agents with no sessions still get 'idle'
+  state.agentsData.forEach(a => {
+    if (!agentSessionIds[a.name]) agentSessionIds[a.name] = [];
+  });
+
+  const newStates = {};
+
+  Object.keys(agentSessionIds).forEach(agent => {
+    const sids = agentSessionIds[agent];
+    let hasAttention = false;
+    let hasBusy = false;
+    let hasCompacting = false;
+
+    sids.forEach(sid => {
+      if (state.attentionSessions.has(sid)) hasAttention = true;
+      if (state.busySessionIds.has(sid)) hasBusy = true;
+      if (state.compactingSessionIds.has(sid)) hasCompacting = true;
+    });
+
+    // Priority: attention > busy > compacting > idle
+    if (hasAttention) {
+      newStates[agent] = 'waiting';
+    } else if (hasBusy) {
+      newStates[agent] = 'working';
+    } else if (hasCompacting) {
+      newStates[agent] = 'compressing';
+    } else {
+      newStates[agent] = 'idle';
+    }
+
+    // Detect complete transition: was working, now idle
+    const prevState = state.agentStates[agent];
+    if (prevState === 'working' && newStates[agent] === 'idle') {
+      newStates[agent] = 'complete';
+      // Clear any existing timer
+      if (state.agentStateTimers[agent]) {
+        clearTimeout(state.agentStateTimers[agent]);
+      }
+      // Schedule return to idle after animation completes
+      state.agentStateTimers[agent] = setTimeout(() => {
+        applyAgentState(agent, 'idle');
+        state.agentStates[agent] = 'idle';
+      }, 600);
+    }
+  });
+
+  // Apply state changes
+  Object.keys(newStates).forEach(agent => {
+    if (state.agentStates[agent] !== newStates[agent] || newStates[agent] === 'complete') {
+      state.agentStates[agent] = newStates[agent];
+      applyAgentState(agent, newStates[agent]);
+    }
+  });
 }
 
 /** Select an agent and load its sessions. */
@@ -641,7 +722,7 @@ function showProviderModal(existingName, existingData, onSave) {
     fields: [
       {key: 'name', label: t('provider.id'), type: 'text', value: existingName || '', placeholder: t('provider.idPlaceholder'), disabled: isEdit},
       {key: 'baseUrl', label: t('provider.baseUrl'), type: 'text', value: p.baseUrl || '', placeholder: 'https://api.example.com/v1'},
-      {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey || '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
+      {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey && p.apiKey !== '***' ? p.apiKey : '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
       {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
     ],
@@ -1110,6 +1191,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     sessionNameEl.textContent = '';
     sessionNameEl.style.display = 'none';
   }
+  computeAgentStates();
 }
 
 // Persist sessionInputDrafts to localStorage
@@ -1168,10 +1250,10 @@ export function resetChatForActiveSession() {
   state.historyHasMore = false;
   state.historyLoading = false;
   state.pendingInitialLoad = true;
+  cancelThinkingRAF();
   state.dom.chat.innerHTML = '';
   // Clear any history loader/end indicators (they live in chat, but belt-and-suspenders)
   state.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
-  smartScroll();
 
   const sid = state.activeSessionId;
   const isStreaming = state.busySessionIds.has(sid);
@@ -1790,10 +1872,12 @@ function reorderSessionToTop(sessionId) {
 // Listen for state changes from other modules (dispatched via CustomEvent)
 window.addEventListener('session-busy', (e) => {
   updateSessionStatus(e.detail.sessionId);
+  computeAgentStates();
 });
 
 window.addEventListener('session-attention', (e) => {
   setSessionAttention(e.detail.sessionId, e.detail.attention);
+  computeAgentStates();
 });
 
 window.addEventListener('session-unread', (e) => {
@@ -1803,6 +1887,7 @@ window.addEventListener('session-unread', (e) => {
 
 window.addEventListener('session-compacting', (e) => {
   updateSessionStatus(e.detail.sessionId);
+  computeAgentStates();
 });
 
 // ===== Feishu Group ID — Inline Bubble =====
@@ -1872,9 +1957,11 @@ onMessage('feishuGlobalConfig', (data) => {
   if (!appIdInput) return;
   if (data.configured) {
     appIdInput.value = data.appId || '';
-    secretInput.value = data.appSecret || '';
-    if (data.hasAppSecret && !data.appSecret) {
-      // Fallback: placeholder when secret isn't sent
+    if (data.appSecret && data.appSecret !== '***') {
+      secretInput.value = data.appSecret;
+    } else if (data.hasAppSecret) {
+      // Secret exists but was redacted — show placeholder instead of "***"
+      secretInput.value = '';
       secretInput.placeholder = '••••••••';
     }
   }

@@ -400,7 +400,7 @@ function updateHeaderModelInfo() {
   if (ratio > 0.5) barColor = '#d4a030'; // amber
   if (ratio > 0.75) barColor = '#e53935'; // red
 
-  const thresholdPct = Math.round(state.COMPACT_THRESHOLD * 100);
+  const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
   const tooltip = info.inputTokens != null
     ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)`
     : `${formatTokens(info.contextWindow)} context window`;
@@ -410,13 +410,90 @@ function updateHeaderModelInfo() {
       <div class="ctx-bar-track">
         <div class="ctx-bar-fill" style="width:${pct}%;background:${barColor};"></div>
         <div class="ctx-bar-threshold" style="left:${thresholdPct}%;"></div>
+        <div class="ctx-bar-threshold-label" style="left:${thresholdPct}%;">${thresholdPct}%</div>
       </div>
       <span class="ctx-bar-label">${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}</span>
     </div>
   `;
   el.style.display = 'inline-flex';
+
+  // Attach drag handler to the outer wrap for a larger hit area
+  const wrap = el.querySelector('.ctx-bar-wrap');
+  if (!wrap) return;
+  setupThresholdDrag(wrap, info, sid);
 }
 state.updateHeaderModelInfo = updateHeaderModelInfo;
+
+/** Set up drag-to-adjust on the threshold line. */
+function setupThresholdDrag(wrap, info, sid) {
+  const track = wrap.querySelector('.ctx-bar-track');
+  const thresholdEl = track?.querySelector('.ctx-bar-threshold');
+  const labelEl = track?.querySelector('.ctx-bar-threshold-label');
+  if (!track || !thresholdEl) return;
+
+  const onStart = (e) => {
+    e.preventDefault();
+    const rect = track.getBoundingClientRect();
+    track.classList.add('dragging');
+
+    const movePct = (ev) => {
+      const pct = Math.max(5, Math.min(95, ((ev.clientX - rect.left) / rect.width) * 100));
+      thresholdEl.style.left = pct + '%';
+      if (labelEl) {
+        labelEl.style.left = pct + '%';
+        labelEl.textContent = Math.round(pct) + '%';
+        labelEl.classList.add('visible');
+      }
+    };
+
+    // Set initial position from click
+    const initPct = Math.max(5, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
+    thresholdEl.style.left = initPct + '%';
+    if (labelEl) {
+      labelEl.style.left = initPct + '%';
+      labelEl.textContent = Math.round(initPct) + '%';
+      labelEl.classList.add('visible');
+    }
+
+    const onMove = (ev) => movePct(ev);
+
+    const onUp = (ev) => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      track.classList.remove('dragging');
+      if (labelEl) labelEl.classList.remove('visible');
+
+      const finalPct = Math.max(5, Math.min(95, ((ev.clientX - rect.left) / rect.width) * 100));
+
+      // Compute new bufferRatio: bufferRatio = 1.0 - thresholdPosition
+      const newBufferRatio = Math.round((1.0 - finalPct / 100) * 100) / 100;
+      const clampedRatio = Math.max(0.01, Math.min(0.50, newBufferRatio));
+
+      // Persist to nebflow.json
+      if (!state.parsedConfig) state.parsedConfig = {};
+      if (!state.parsedConfig.compact) state.parsedConfig.compact = {};
+      state.parsedConfig.compact.bufferRatio = clampedRatio;
+      // Update in-memory threshold for immediate display
+      const newThreshold = 1.0 - clampedRatio;
+      if (state.sessionModelInfo[sid]) {
+        state.sessionModelInfo[sid].compactThreshold = newThreshold;
+      }
+
+      // Debounce save
+      clearTimeout(state._thresholdSaveTimer);
+      state._thresholdSaveTimer = setTimeout(() => {
+        const json = JSON.stringify(state.parsedConfig, null, 2);
+        state.configText = json;
+        sendWs({type: 'updateConfig', config: json});
+      }, 300);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
+  wrap.addEventListener('mousedown', onStart);
+}
 
 // Real-time usage update after each LLM round (multi-round tool calling)
 onMessage('usageUpdate', (msg) => {
@@ -425,7 +502,8 @@ onMessage('usageUpdate', (msg) => {
     state.sessionModelInfo[sid] = {
       model: state.sessionModelInfo[sid]?.model,
       contextWindow: msg.contextWindow,
-      inputTokens: msg.inputTokens
+      inputTokens: msg.inputTokens,
+      compactThreshold: msg.compactThreshold
     };
     if (sid === state.activeSessionId) updateHeaderModelInfo();
   }
@@ -448,7 +526,8 @@ onMessage('done', (msg) => {
     state.sessionModelInfo[sid] = {
       model: msg.model || state.sessionModelInfo[sid]?.model,
       contextWindow: msg.contextWindow || state.sessionModelInfo[sid]?.contextWindow,
-      inputTokens: msg.inputTokens != null ? msg.inputTokens : state.sessionModelInfo[sid]?.inputTokens
+      inputTokens: msg.inputTokens != null ? msg.inputTokens : state.sessionModelInfo[sid]?.inputTokens,
+      compactThreshold: msg.compactThreshold != null ? msg.compactThreshold : state.sessionModelInfo[sid]?.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
     if (isActive(msg)) updateHeaderModelInfo();
@@ -626,6 +705,13 @@ onMessage('askUser', (msg) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
   if (isActive(msg)) {
+    // Defensive: finalize any in-flight AI bubble before rendering the question.
+    // Normally roundComplete (sent before askUser by the backend) handles this,
+    // but guard against edge cases where the bubble is still pending.
+    if (state.currentAiBubble) {
+      const prevData = finishAi();
+      if (prevData) saveMsg(prevData, sid);
+    }
     const data = renderAskUser(msg.items, msg.sessionId);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
@@ -1553,6 +1639,27 @@ initMemory();
       localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
     }
   });
+})();
+
+// ---------- Scrollbar auto-slim: scroll → expand, 3s idle → re-slim ----------
+(function initScrollbarAutoSlim() {
+  const SLIM_CLASS = 'scrollbar-slim';
+  const IDLE_MS = 3000;
+  let timer;
+
+  const onInteraction = () => {
+    document.body.classList.remove(SLIM_CLASS);
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      document.body.classList.add(SLIM_CLASS);
+    }, IDLE_MS);
+  };
+
+  // Use capture phase — scroll events do NOT bubble (event.dispatch flag)
+  document.addEventListener('scroll', onInteraction, { passive: true, capture: true });
+
+  // Initial state: slim
+  document.body.classList.add(SLIM_CLASS);
 })();
 
 // Re-apply locale when language changes

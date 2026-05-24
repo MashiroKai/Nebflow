@@ -27,6 +27,11 @@ case class CompactConfig(
   def bufferForWindow(contextWindow: Int): Int =
     math.max(bufferTokens, (contextWindow * bufferRatio).toInt)
 
+  /** Compaction trigger ratio: tokens above this fraction of contextWindow trigger compaction. */
+  def compactionTriggerRatio(contextWindow: Int): Double =
+    val thresholdTokens = contextWindow - bufferForWindow(contextWindow)
+    thresholdTokens.toDouble / contextWindow
+
   /**
    * Exponential backoff: delay = compactionRetryDelayMs * 2^(failures - 1)
    * Returns 0 for failures=0 (no backoff needed).
@@ -56,6 +61,7 @@ object CompactConfig:
           microKeepRecent = compact.downField("microKeepRecent").as[Int].toOption.getOrElse(5),
           circuitBreakerMax = compact.downField("circuitBreakerMax").as[Int].toOption.getOrElse(3),
           bufferTokens = compact.downField("bufferTokens").as[Int].toOption.getOrElse(13000),
+          bufferRatio = compact.downField("bufferRatio").as[Double].toOption.getOrElse(0.10),
           emergencyKeepMessages = compact.downField("emergencyKeepMessages").as[Int].toOption.getOrElse(20)
         )
       catch case _: Exception => new CompactConfig()

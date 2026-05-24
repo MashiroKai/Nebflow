@@ -43,6 +43,7 @@ export default {
   'agent.save': 'Save',
   'memory.title': 'Memory',
   'memory.session': 'Session',
+  'memory.folder': 'Folder',
   'memory.agent': 'Agent',
   'memory.user': 'User',
   'memory.placeholder': '# Memory\n\nKey facts, decisions, context...',

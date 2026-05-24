@@ -699,13 +699,14 @@ private[agent] trait AgentCore:
                           s"$logCtx Tool $summary result truncated: ${result.length} → ${guarded.length} chars"
                         )
                       val isCard = call.name == "Card"
+                      val isFileEdit = call.name == "Edit" || call.name == "Write"
                       // --- PostToolUse hook operates on LLM-visible content ---
                       hookEngine
                         .afterTool(call.name, finalInput, guarded, true, hookCtx)
                         .map { postResult =>
                           val hookSuffix = postResult.additionalContext.getOrElse("")
-                          // Card tool: LLM sees a compact summary (not the guarded HTML)
                           if isCard then
+                            // Card tool: LLM sees a compact summary (not the guarded HTML)
                             val title = call.input("title").flatMap(_.asString).getOrElse("")
                             val llmSummary = s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
                             ToolExecResult(
@@ -713,12 +714,22 @@ private[agent] trait AgentCore:
                               frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
                               truncated = wasTruncated
                             )
+                          else if isFileEdit then
+                            // Edit/Write: LLM already knows what it wrote — no need to echo the diff.
+                            // Full diff is preserved in frontendContent for the user to review.
+                            val llmSummary = nebflow.core.summarizeToolResult(call, result)
+                            ToolExecResult(
+                              llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
+                              truncated = false
+                            )
                           else
                             ToolExecResult(
                               guarded + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
                               frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
                               truncated = wasTruncated
                             )
+                          end if
                         }
                   }
                   .handleErrorWith {

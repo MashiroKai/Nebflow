@@ -416,11 +416,12 @@ object AgentActor extends AgentCore with AgentSession:
           val isSubagent = depth > 0
           updatedState.latestUsage.foreach { usage =>
             if !isSubagent then
+              val compactThreshold = CompactConfig().compactionTriggerRatio(updatedState.contextWindow)
               emitStream(
                 resources.dispatcher,
                 state.wsSend,
                 ctx,
-                AgentStreamEvent.UsageUpdate(usage.inputTokens, updatedState.contextWindow),
+                AgentStreamEvent.UsageUpdate(usage.inputTokens, updatedState.contextWindow, compactThreshold),
                 isSubagent = false,
                 state.sessionId
               )
@@ -1024,6 +1025,14 @@ object AgentActor extends AgentCore with AgentSession:
 
       // --- AskUser from tool (blocking AskUserQuestion) ---
       case AgentCommand.AskUser(requestId, items, replyToOpt) =>
+        // Before sending askUser, finalize any in-flight streaming text bubble.
+        // When the LLM outputs both text and AskUserQuestion in one response, the text
+        // has already been streamed via textDelta but never finalized (toolCallDetected
+        // is suppressed for AskUserQuestion, so finishAi() never ran). Send roundComplete
+        // so the frontend commits the text bubble before rendering the question UI.
+        val roundCompleteJson = state.sessionId.map { sid =>
+          io.circe.Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
+        }
         val askJson = io.circe.Json.obj(
           "type" -> "askUser".asJson,
           "sessionId" -> state.sessionId.asJson,
@@ -1051,10 +1060,14 @@ object AgentActor extends AgentCore with AgentSession:
           execution = state.execution.copy(interaction = updatedInteraction)
         )
         resources.dispatcher.unsafeRunAndForget(
-          state.wsSend(askJson).handleErrorWith { e =>
-            replyToOpt.foreach(replyTo => IO(replyTo ! Nil))
-            IO.unit
-          }
+          (roundCompleteJson
+            .map(state.wsSend)
+            .getOrElse(IO.unit))
+            .handleErrorWith(_ => IO.unit) *>
+            state.wsSend(askJson).handleErrorWith { e =>
+              replyToOpt.foreach(replyTo => IO(replyTo ! Nil))
+              IO.unit
+            }
         )
         processing(agentDef, resources, depth, parentRef, updatedState, stash, ctx)
 
@@ -1220,11 +1233,16 @@ object AgentActor extends AgentCore with AgentSession:
       )
     else
       // No pending events — send done + sessionBusy(false) to end the turn.
-      // Build Done event with model, contextWindow, and inputTokens
+      // Build Done event with model, contextWindow, inputTokens, and compactThreshold
+      val doneCompactThreshold =
+        if !isSubagent then
+          Some(CompactConfig().compactionTriggerRatio(state.contextWindow))
+        else None
       val doneEvent = AgentStreamEvent.Done(
         model.orElse(state.lastModel),
         contextWindow = if !isSubagent then Some(state.contextWindow) else None,
-        inputTokens = if !isSubagent then state.latestUsage.map(_.inputTokens) else None
+        inputTokens = if !isSubagent then state.latestUsage.map(_.inputTokens) else None,
+        compactThreshold = doneCompactThreshold
       )
       // For root agent: await Done event delivery to guarantee frontend receives it
       // For sub-agent: fire-and-forget (parent handles the done signal)

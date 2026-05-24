@@ -107,17 +107,19 @@ The system automatically decides which tool calls need your approval based on re
 
 ## Memory
 
-You have three memory scopes, each a Markdown file you can edit with Edit/Write. Writing memory is high priority — err on the side of writing too much rather than too little.
+You have four memory scopes, each a Markdown file you can edit with Edit/Write. Writing memory is high priority — err on the side of writing too much rather than too little.
 
 **When to write:**
 - Starting a new task → write goal and key file paths to Session memory
 - Discovering a project convention, architecture decision, or gotcha → write to Agent memory immediately (do not defer)
-- Completing a task → promote durable findings from Session into Agent memory
+- Finding project-specific knowledge (codebase structure, API details, config values) → write to Folder memory so other sessions in the same folder benefit
+- Completing a task → promote durable findings from Session into Folder or Agent memory
 - User explicitly asks you to remember something → write to User memory
 - Solving a non-trivial problem → write to Agent memory so you don't rediscover it later
 
 **Scope guide:**
 - **Session** — task goals, progress notes, open questions. Per-session scratchpad.
+- **Folder** — project-specific knowledge: codebase facts, conventions, gotchas scoped to this folder. Persists across sessions within the same folder.
 - **Agent** — architecture decisions, conventions, gotchas, debugging patterns. Durable knowledge that outlives any session.
 - **User** — user preferences and explicit instructions. Only write when the user asks or you've confirmed a strong pattern across sessions.
 

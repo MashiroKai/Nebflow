@@ -5,9 +5,10 @@ import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable.StringBuilder
 
-/** Shared helpers for running ripgrep (rg) subprocesses.
-  * Used by GrepTool and GlobTool to avoid duplicating process management and output limiting logic.
-  */
+/**
+ * Shared helpers for running ripgrep (rg) subprocesses.
+ * Used by GrepTool and GlobTool to avoid duplicating process management and output limiting logic.
+ */
 object RgHelper:
 
   private val MAX_STDOUT_BYTES = 500 * 1024
@@ -33,9 +34,10 @@ object RgHelper:
     sb.toString
   end readWithLimit
 
-  /** Run rg with the given args. Returns (stdout, stderr, exitCode) or a ToolError.
-    * Enforces 60s timeout and 500KB output limit.
-    */
+  /**
+   * Run rg with the given args. Returns (stdout, stderr, exitCode) or a ToolError.
+   * Enforces 60s timeout and 500KB output limit.
+   */
   def runRg(args: List[String], workDir: String): Either[ToolError, (String, String, Int)] =
     try
       val proc = new ProcessBuilder(("rg" :: args)*)

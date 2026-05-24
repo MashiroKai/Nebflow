@@ -5,12 +5,13 @@ import cats.effect.unsafe.implicits.global
 import nebflow.shared.{MtimeCache, MtimeFileCache}
 
 /**
- * Three-level memory store backed by Markdown files.
+ * Four-level memory store backed by Markdown files.
  *
  * Levels:
- *   - User Preference:  ~/.nebflow/NEBFLOW.md           (global, all agents)
- *   - Agent:            ~/.nebflow/agents/{name}/memory.md  (per agent)
- *   - Session:          ~/.nebflow/sessions/{sid}.memory.md (per session)
+ *   - User Preference:  ~/.nebflow/NEBFLOW.md                    (global, all agents)
+ *   - Agent:            ~/.nebflow/agents/{name}/memory.md       (per agent)
+ *   - Folder:           ~/.nebflow/folders/{fid}.memory.md       (per folder)
+ *   - Session:          ~/.nebflow/sessions/{sid}.memory.md      (per session)
  *
  * All reads use mtime-based caching: files are only re-read from disk
  * when their modification time changes. Edits to memory files take
@@ -25,6 +26,9 @@ object MemoryStore:
   def agentMemoryPath(agentName: String): os.Path =
     os.home / ".nebflow" / "agents" / agentName / "memory.md"
 
+  def folderMemoryPath(folderId: String): os.Path =
+    os.home / ".nebflow" / "folders" / s"$folderId.memory.md"
+
   def sessionMemoryPath(sessionId: String): os.Path =
     os.home / ".nebflow" / "sessions" / s"$sessionId.memory.md"
 
@@ -38,10 +42,15 @@ object MemoryStore:
 
   private val agentCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
 
+  private val folderCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
+
   private val sessionCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
 
   private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
     agentCaches.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
+
+  private def getFolderCache(folderId: String): MtimeFileCache[Option[String]] =
+    folderCaches.getOrElseUpdate(folderId, MtimeCache.file(folderMemoryPath(folderId), parseMemory))
 
   private def getSessionCache(sessionId: String): MtimeFileCache[Option[String]] =
     sessionCaches.getOrElseUpdate(sessionId, MtimeCache.file(sessionMemoryPath(sessionId), parseMemory))
@@ -53,6 +62,9 @@ object MemoryStore:
 
   def loadAgentMemory(agentName: String): Option[String] =
     getAgentCache(agentName).get.unsafeRunSync().flatten
+
+  def loadFolderMemory(folderId: String): Option[String] =
+    getFolderCache(folderId).get.unsafeRunSync().flatten
 
   def loadSessionMemory(sessionId: String): Option[String] =
     getSessionCache(sessionId).get.unsafeRunSync().flatten
@@ -67,6 +79,9 @@ object MemoryStore:
 
   def saveAgentMemory(agentName: String, content: String): IO[Unit] =
     saveFile(agentMemoryPath(agentName), content, () => getAgentCache(agentName).invalidate)
+
+  def saveFolderMemory(folderId: String, content: String): IO[Unit] =
+    saveFile(folderMemoryPath(folderId), content, () => getFolderCache(folderId).invalidate)
 
   def saveSessionMemory(sessionId: String, content: String): IO[Unit] =
     saveFile(sessionMemoryPath(sessionId), content, () => getSessionCache(sessionId).invalidate)
@@ -89,6 +104,7 @@ object MemoryStore:
 
   def userPreview: Option[String] = preview(userMemoryPath)
   def agentPreview(agentName: String): Option[String] = preview(agentMemoryPath(agentName))
+  def folderPreview(folderId: String): Option[String] = preview(folderMemoryPath(folderId))
   def sessionPreview(sessionId: String): Option[String] = preview(sessionMemoryPath(sessionId))
 
   // --- Exists check ---
@@ -98,6 +114,7 @@ object MemoryStore:
 
   def userExists: Boolean = fileExists(userMemoryPath)
   def agentExists(agentName: String): Boolean = fileExists(agentMemoryPath(agentName))
+  def folderExists(folderId: String): Boolean = fileExists(folderMemoryPath(folderId))
   def sessionExists(sessionId: String): Boolean = fileExists(sessionMemoryPath(sessionId))
 
 end MemoryStore

@@ -21,8 +21,7 @@ object ConfigService:
   }
 
   def getConfig: IO[String] = IO.blocking {
-    val content = if os.exists(configPath) then os.read(configPath) else "{}"
-    redactSensitiveFields(content)
+    if os.exists(configPath) then os.read(configPath) else "{}"
   }
 
   /** Validate config JSON — returns list of errors. Empty list means valid. */
@@ -100,32 +99,6 @@ object ConfigService:
         .map(_.leftMap(_.getMessage).void)
 
   private val sensitiveKeyPattern = "(?i)(api[_-]?key|secret|app[_-]?secret|encrypt[_-]?key|token|password)".r
-
-  /** Redact sensitive string values (matching sensitiveKeyPattern) to "***" for frontend display. */
-  private def redactSensitiveFields(raw: String): String =
-    parse(raw) match
-      case Right(json) => redactJson(json).spaces2
-      case Left(_) => raw // can't parse — return as-is
-
-  private def redactJson(json: Json): Json =
-    json.fold(
-      jsonNull = Json.Null,
-      jsonBoolean = b => Json.fromBoolean(b),
-      jsonNumber = n => Json.fromJsonNumber(n),
-      jsonString = s => Json.fromString(s),
-      jsonArray = arr => Json.fromValues(arr.map(redactJson)),
-      jsonObject = obj =>
-        Json.fromJsonObject(
-          io.circe.JsonObject.fromIterable(
-            obj.toList.map { case (k, v) =>
-              val redacted = v.asString match
-                case Some(_) if sensitiveKeyPattern.findFirstIn(k).isDefined => Json.fromString("***")
-                case _ => redactJson(v)
-              k -> redacted
-            }
-          )
-        )
-    )
 
   /**
    * Merge new config into existing, preserving secret values that were redacted as "***".

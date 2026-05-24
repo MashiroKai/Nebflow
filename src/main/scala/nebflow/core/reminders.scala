@@ -4,6 +4,7 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import nebflow.agent.WriteTrackerEntry
 import nebflow.core.NebflowLogger
+import nebflow.core.compact.CompactConfig
 import nebflow.shared.TokenUsage
 
 import java.time.LocalDateTime
@@ -39,8 +40,10 @@ object SystemReminders:
       val pct = (ratio * 100).toInt
       val newHighest = PressureLevels.filter(l => pct >= l).maxOption.getOrElse(0)
       if newHighest > highestLevel then
+        val triggerPct = (CompactConfig().compactionTriggerRatio(contextWindow) * 100).toInt
         val suggestion =
-          if newHighest >= 80 then "\nContext is approaching the limit. Compression will be triggered automatically."
+          if newHighest >= 80 then
+            s"\nContext is approaching the limit. Compression will be triggered automatically when usage exceeds ${triggerPct}%."
           else ""
         (
           Some(
@@ -52,6 +55,8 @@ object SystemReminders:
           newHighest
         )
       else (None, highestLevel)
+
+      end if
 
   private def currentTime(): SystemReminder =
     val now = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
