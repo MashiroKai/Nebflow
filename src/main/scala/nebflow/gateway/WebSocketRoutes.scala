@@ -1097,8 +1097,10 @@ class WebSocketRoutes(
               .setFolderProjectRoot(folderId, projectRoot)
               .flatMap {
                 case Right(_) =>
-                  sessionStore.getActiveMeta.flatMap { metaOpt =>
-                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+                  // Use the folder's own agent name, not the active session's,
+                  // to ensure the frontend receives the update regardless of which agent tab is active.
+                  sessionStore.getFolderAgentName(folderId).flatMap { agentOpt =>
+                    val agentName = agentOpt.getOrElse("Nebula")
                     sendAgentSessionListByName(wsSend, agentName)
                   }
                 case Left(err) =>

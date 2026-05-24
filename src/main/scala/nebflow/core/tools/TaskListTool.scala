@@ -20,15 +20,7 @@ object TaskListTool extends Tool:
 
 ## Output
 
-Returns each task's id, subject, status, and blockedBy (open blockers only).
-
-## Task System Overview
-
-- Status progresses: `pending` -> `in_progress` -> `completed` or `failed`
-- Valid transitions: pending -> in_progress, pending -> completed, pending -> failed, in_progress -> completed, in_progress -> failed
-- `completed` and `failed` cannot go back to any other state
-- Use TaskUpdate to change status and manage dependencies
-- Use TaskDelete to permanently remove a task (irreversible)"""
+Returns each task's id, subject, status, and dependency info (blockedBy, blocks)."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -54,8 +46,12 @@ Returns each task's id, subject, status, and blockedBy (open blockers only).
                 case TaskStatus.InProgress => "in_progress"
                 case TaskStatus.Completed => "completed"
                 case TaskStatus.Failed => "failed"
-              val blocked = if t.blockedBy.nonEmpty then s" [blocked by #${t.blockedBy.mkString(", #")}]" else ""
-              s"#${t.id} [$status] ${t.subject}$blocked"
+              val deps = List(
+                if t.blockedBy.nonEmpty then s"blockedBy: #${t.blockedBy.mkString(", #")}" else "",
+                if t.blocks.nonEmpty then s"blocks: #${t.blocks.mkString(", #")}" else ""
+              ).filter(_.nonEmpty).mkString(", ")
+              val depStr = if deps.nonEmpty then s" ($deps)" else ""
+              s"#${t.id} [$status] ${t.subject}$depStr"
             }
             Right(lines.mkString("\n"))
         }

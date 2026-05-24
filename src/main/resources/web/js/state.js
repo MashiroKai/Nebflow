@@ -118,6 +118,10 @@ export default {
   historyTotal: 0,
   historyHasMore: false,
   historyLoading: false,
+  // Set true by resetChatForActiveSession, consumed by historyPage handler to distinguish
+  // initial load from scroll-up pagination. Prevents double chat.innerHTML='' from
+  // duplicate getHistory responses when offset happens to be 0.
+  pendingInitialLoad: false,
 
   // IME
   composing: false,
@@ -170,4 +174,7 @@ export default {
 
   // Card design prompt
   cardDesignPrompt: '',
+
+  // Feishu global config cache (survives DOM recreation)
+  feishuGlobalConfig: null,
 };

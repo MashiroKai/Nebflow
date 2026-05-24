@@ -97,7 +97,6 @@ object FileTaskStore extends TaskStore:
         description = input.description,
         activeForm = input.activeForm,
         status = TaskStatus.Pending,
-        metadata = input.metadata,
         createdAt = Some(now),
         updatedAt = Some(now)
       )
@@ -202,7 +201,6 @@ object FileTaskStore extends TaskStore:
             status = newStatus,
             blocks = newBlocks,
             blockedBy = newBlockedBy,
-            metadata = updates.metadata.orElse(existing.metadata),
             updatedAt = Some(Instant.now().toString)
           )
 

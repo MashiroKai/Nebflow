@@ -31,6 +31,8 @@ object CliRouter:
           case Some(cmd) =>
             dispatchCommand(cmd, rest, jsonMode, quietMode)
 
+  end run
+
   private def dispatchCommand(
     cmd: CliCommand,
     args: List[String],
@@ -49,10 +51,8 @@ object CliRouter:
         cmd.subcommands.find(_.name == subName) match
           case None =>
             // Check for --help
-            if subName == "--help" || subName == "-h" then
-              printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
-            else if subName.startsWith("-") then
-              IO.println(s"Unknown option: $subName").as(ExitCode.Error)
+            if subName == "--help" || subName == "-h" then printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
+            else if subName.startsWith("-") then IO.println(s"Unknown option: $subName").as(ExitCode.Error)
             else
               // Treat as default subcommand with positional args (e.g. "nebflow chat query")
               cmd.subcommands.headOption match
@@ -64,14 +64,15 @@ object CliRouter:
             executeSubcommand(cmd, sub, rest, jsonMode, quietMode)
 
   private def showCommandHelp(cmd: CliCommand, jsonMode: Boolean): IO[ExitCode] =
-    if jsonMode then
-      IO.println(Json.obj("error" -> "Missing subcommand".asJson).spaces2: String).as(ExitCode.Error)
+    if jsonMode then IO.println(Json.obj("error" -> "Missing subcommand".asJson).spaces2: String).as(ExitCode.Error)
     else
       IO.println(s"Command: ${cmd.name}") *>
         IO.println(s"Description: ${cmd.description}") *>
-        IO.println(s"Subcommands:") *> cmd.subcommands.traverse_ { sc =>
-          IO.println(s"  ${sc.name.padTo(16, ' ')}${sc.description}")
-        }.as(ExitCode.Error)
+        IO.println(s"Subcommands:") *> cmd.subcommands
+          .traverse_ { sc =>
+            IO.println(s"  ${sc.name.padTo(16, ' ')}${sc.description}")
+          }
+          .as(ExitCode.Error)
 
   private def executeSubcommand(
     cmd: CliCommand,
@@ -87,8 +88,7 @@ object CliRouter:
       cmd.name == "start" || cmd.name == "stop" || cmd.name == "status"
 
     val ctxIO: IO[CliContext] =
-      if isOffline then
-        IO.pure(CliContext(named, positional, jsonMode, quietMode, None, os.home / ".nebflow"))
+      if isOffline then IO.pure(CliContext(named, positional, jsonMode, quietMode, None, os.home / ".nebflow"))
       else
         GatewayClient.create.map {
           case Some(client) => CliContext(named, positional, jsonMode, quietMode, Some(client), os.home / ".nebflow")
@@ -100,8 +100,7 @@ object CliRouter:
         if jsonMode then
           IO.println(Json.obj("error" -> "Gateway not running. Start with 'nebflow start'".asJson).spaces2: String)
             .as(ExitCode.Error)
-        else
-          IO.println("Gateway not running. Start with 'nebflow start'").as(ExitCode.Error)
+        else IO.println("Gateway not running. Start with 'nebflow start'").as(ExitCode.Error)
       else
         // Validate required params
         val missing = sub.params.filter(_.required).filterNot { p =>
@@ -109,20 +108,24 @@ object CliRouter:
         }
         if missing.nonEmpty && positional.isEmpty then
           if jsonMode then
-            IO.println(Json.obj("error" -> s"Missing required params: ${missing.map(_.name).mkString(", ")}".asJson).spaces2: String)
-              .as(ExitCode.Error)
+            IO.println(
+              Json
+                .obj("error" -> s"Missing required params: ${missing.map(_.name).mkString(", ")}".asJson)
+                .spaces2: String
+            ).as(ExitCode.Error)
           else
             IO.println(s"Missing required params: ${missing.map(_.name).mkString(", ")}")
               .as(ExitCode.Error)
         else
           sub.run(ctx).map(renderResult(_, jsonMode, quietMode)).handleErrorWith { e =>
             val msg = Option(e.getMessage).getOrElse("Unknown error")
-            if jsonMode then
-              IO.println(Json.obj("error" -> msg.asJson).spaces2: String).as(ExitCode.Error)
-            else
-              IO.println(s"Error: $msg").as(ExitCode.Error)
+            if jsonMode then IO.println(Json.obj("error" -> msg.asJson).spaces2: String).as(ExitCode.Error)
+            else IO.println(s"Error: $msg").as(ExitCode.Error)
           }
+        end if
     }
+
+  end executeSubcommand
 
   private def renderResult(result: CliResult, jsonMode: Boolean, quietMode: Boolean): ExitCode =
     result match
@@ -177,8 +180,10 @@ object CliRouter:
       else
         positional += arg
         i += 1
+      end if
     end while
     (named.toMap, positional.toList)
+  end parseArgs
 
   // ===== Help =====
 

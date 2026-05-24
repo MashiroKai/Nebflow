@@ -635,29 +635,36 @@
 .folder-status.unread {
   display: flex;
 }
+/* All inner indicators hidden by default */
+.folder-status .status-spinner,
+.folder-status .status-compact-spinner { display: none; }
 .folder-status svg {
   width: 12px;
   height: 12px;
 }
-.folder-status.busy svg {
+.folder-status.busy .status-spinner { display: flex; }
+.folder-status.busy .status-spinner svg {
   color: var(--color-primary, #07c160);
   animation: spin 1.5s linear infinite;
 }
-.folder-status.compacting svg {
+.folder-status.compacting .status-compact-spinner { display: flex; }
+.folder-status.compacting .status-compact-spinner svg {
   color: var(--color-primary, #07c160);
   animation: compactPulse 1.2s ease-in-out infinite;
 }
 .folder-status-dot {
-  display: block;
+  display: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
 }
 .folder-status.attention .folder-status-dot {
+  display: block;
   background: #e8a735;
   animation: statusPulse 2s ease-in-out infinite;
 }
 .folder-status.unread .folder-status-dot {
+  display: block;
   background: var(--color-primary);
 }
 
@@ -993,6 +1000,20 @@
   border-radius: 4px;
   background: var(--color-frame-border);
   color: var(--color-frame-text);
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  transition: transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+}
+.cfg-tag:active { cursor: grabbing; }
+.cfg-tag.dragging {
+  opacity: 0.4;
+  transform: scale(0.95);
+}
+.cfg-tag.drag-over {
+  box-shadow: 0 0 0 2px var(--color-primary);
+  transform: scale(1.05);
 }
 .cfg-tag-remove {
   cursor: pointer;
