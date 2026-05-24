@@ -17,10 +17,14 @@ object ToolResultGuard:
 
   // Rough token estimation: 1 token ≈ 4 chars
   private val CharsPerToken = 4
-  // Context pressure threshold — truncate if projected usage exceeds this fraction
-  private val PressureLimit = 0.8
   // Minimum chars to keep even when truncating
   private val MinKeepChars = 500
+  // Margin below the compaction trigger: truncation starts this fraction before compaction
+  private val TruncationMargin = 0.05
+
+  /** Compute the truncation pressure limit from CompactConfig, slightly below the compaction trigger. */
+  private def pressureLimit(contextWindow: Int): Double =
+    math.max(0.5, CompactConfig().compactionTriggerRatio(contextWindow) - TruncationMargin)
 
   sealed trait GuardResult
   case class Ok(content: String) extends GuardResult
@@ -34,7 +38,8 @@ object ToolResultGuard:
   def guard(content: String, toolName: String, ctx: ToolContext): GuardResult =
     val currentTokens = ctx.inputTokens.getOrElse(0)
     val resultTokens = estimateTokens(content.length)
-    val threshold = (ctx.contextWindow * PressureLimit).toInt
+    val limit = pressureLimit(ctx.contextWindow)
+    val threshold = (ctx.contextWindow * limit).toInt
     val projected = currentTokens + resultTokens
 
     if projected <= threshold then Ok(content)

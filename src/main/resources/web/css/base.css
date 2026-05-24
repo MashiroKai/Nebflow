@@ -70,6 +70,14 @@ body {
     --color-frame-input-border: #333;
     --color-frame-input-text: #ccc;
   }
+
+  /* Dark mode scrollbar */
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.25);
+  }
 }
 
 /* ---------- Sidebar Collapse ---------- */
@@ -111,11 +119,51 @@ body.sidebar-collapsed #sidebar-panel {
   background: var(--color-frame-hover);
 }
 
-/* Scrollbar styles */
+/* ── Scrollbar: auto-slim (slim by default, system-width on interaction, auto re-slim after 3s) ── */
+/* Default state: body has .scrollbar-slim. JS removes class on any scroll, adds back after 3s idle. */
+
+/* WebKit: global thumb/track styles (width controlled by body class below) */
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0,0,0,0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0,0,0,0.25);
+}
+
+/* Slim state: all elements get thin scrollbar */
+body.scrollbar-slim * {
+  scrollbar-width: thin;
+}
+body.scrollbar-slim *::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+/* Exception: nav scroller stays hidden */
+body.scrollbar-slim #nav-agent-list {
+  scrollbar-width: none;
+}
+body.scrollbar-slim #nav-agent-list::-webkit-scrollbar {
+  display: none;
+}
+/* Exception: code blocks and tool cards — even thinner (4px) */
+body.scrollbar-slim .bubble.ai pre::-webkit-scrollbar {
+  height: 4px;
+}
+body.scrollbar-slim .tool-card .body.open::-webkit-scrollbar,
+body.scrollbar-slim .tool-card .body pre::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+/* scrollbar-color always applies (only affects color, not width) */
 #session-list,
 #nav-agent-list,
 #settings-content,
-#config-editor {
-  scrollbar-width: thin;
+#config-editor,
+#chat {
   scrollbar-color: var(--color-frame-border) transparent;
 }

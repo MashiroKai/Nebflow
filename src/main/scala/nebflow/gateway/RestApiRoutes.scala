@@ -166,9 +166,12 @@ class RestApiRoutes(
         sessionStore.getActiveMeta.flatMap { metaOpt =>
           val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
           val sessionId = metaOpt.map(_.id).getOrElse("")
+          val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
           val content = scope match
             case "user" => nebflow.service.MemoryStore.loadUserMemory.getOrElse("")
             case "agent" => nebflow.service.MemoryStore.loadAgentMemory(agentName).getOrElse("")
+            case "folder" =>
+              if folderId.nonEmpty then nebflow.service.MemoryStore.loadFolderMemory(folderId).getOrElse("") else ""
             case _ =>
               if sessionId.nonEmpty then nebflow.service.MemoryStore.loadSessionMemory(sessionId).getOrElse("") else ""
           Ok(Json.obj("scope" -> scope.asJson, "content" -> content.asJson))

@@ -7,7 +7,7 @@ import { sendWs } from './ws.js';
 let activeScope = 'session';
 
 /** Cache per-scope content so tab switches don't re-fetch within same session. */
-const cache = { user: null, agent: null, session: null };
+const cache = { user: null, agent: null, folder: null, session: null };
 
 /** Show the Memory button in header. */
 export function showMemoryButton() {
@@ -22,6 +22,7 @@ export function showMemoryButton() {
 export function clearMemoryCache() {
   cache.user = null;
   cache.agent = null;
+  cache.folder = null;
   cache.session = null;
 }
 
