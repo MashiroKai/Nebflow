@@ -91,8 +91,8 @@ Usage:
     else
       val isNew = !Files.exists(filePath)
 
-      // Snapshot existing file before overwriting
-      val snapshot = if !isNew then ctx.fileHistory.traverse_(_.snapshot(filePath)) else IO.unit
+      // Snapshot existing file before overwriting (with agent identity)
+      val snapshot = if !isNew then ctx.fileHistory.traverse_(_.snapshot(filePath, ctx.mailboxAddress)) else IO.unit
 
       val writeIO = snapshot *> IO.blocking {
         try

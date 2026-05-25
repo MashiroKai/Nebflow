@@ -122,19 +122,26 @@ body.sidebar-collapsed #sidebar-panel {
 /* ── Scrollbar: auto-slim (slim by default, system-width on interaction, auto re-slim after 3s) ── */
 /* Default state: body has .scrollbar-slim. JS removes class on any scroll, adds back after 3s idle. */
 
-/* WebKit: global thumb/track styles (width controlled by body class below) */
+/* WebKit: base width (expanded state) + smooth transitions */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+  transition: width 0.3s ease, height 0.3s ease;
+}
 ::-webkit-scrollbar-track {
   background: transparent;
+  transition: background 0.3s ease;
 }
 ::-webkit-scrollbar-thumb {
   background: rgba(0,0,0,0.15);
   border-radius: 3px;
+  transition: background 0.2s ease;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.25);
 }
 
-/* Slim state: all elements get thin scrollbar */
+/* Slim state: all elements get thin scrollbar (transition inherited from base rule) */
 body.scrollbar-slim * {
   scrollbar-width: thin;
 }

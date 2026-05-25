@@ -116,9 +116,14 @@ object AgentCommand:
   /** Update per-session highest context-pressure level (isolated from other sessions). */
   case class UpdateHighestPressureLevel(level: Int) extends AgentCommand
 
-  // Peer communication (root agent to root agent via ActorRef)
-  case class MessageToAgent(
-    targetRef: org.apache.pekko.actor.typed.ActorRef[AgentCommand],
+  /** Clear pendingTaskCheck flag after it has been consumed by pipeLlmCall. */
+  case object ClearTaskCheck extends AgentCommand
+
+  // --- Inter-agent communication via PostOffice ---
+
+  /** Message received from another agent via PostOffice. */
+  case class AgentMessageReceived(
+    fromMailbox: AgentMailbox,
     payload: String,
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = None
   ) extends AgentCommand
@@ -459,7 +464,9 @@ case class SessionContext(
   /** Resolved inherited rules.md content from folder chain. None → no rules. */
   rulesMd: Option[String] = None,
   /** This session's folder ID (for rules re-resolution). */
-  folderId: Option[String] = None
+  folderId: Option[String] = None,
+  /** This session's unique mailbox address for inter-agent communication. */
+  mailbox: Option[AgentMailbox] = None
 )
 
 /** Pending user interaction deferreds. */
@@ -480,7 +487,9 @@ case class ExecutionContext(
   /** Queued external events to inject after turn. */
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
   /** Retry count for LLM empty responses within a single turn. */
-  emptyResponseRetries: Int = 0
+  emptyResponseRetries: Int = 0,
+  /** Flag set when LLM used TaskUpdate or had text+tools — triggers active task reminder in next pipeLlmCall. */
+  pendingTaskCheck: Boolean = false
 )
 
 object ExecutionContext:
@@ -541,7 +550,8 @@ object AgentState:
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
-    folderId: Option[String] = None
+    folderId: Option[String] = None,
+    mailbox: Option[AgentMailbox] = None
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -559,7 +569,8 @@ object AgentState:
         contextWindow,
         folderId = folderId,
         projectRoot = projectRoot,
-        rulesMd = rulesMd
+        rulesMd = rulesMd,
+        mailbox = mailbox
       ),
       ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
@@ -598,6 +609,7 @@ extension (s: AgentState)
   def projectRoot: Option[String] = s.session.projectRoot
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
+  def mailbox: Option[AgentMailbox] = s.session.mailbox
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
@@ -658,6 +670,9 @@ extension (s: AgentState)
 
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
+
+  def withPendingTaskCheck(flag: Boolean): AgentState =
+    s.copy(execution = s.execution.copy(pendingTaskCheck = flag))
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
