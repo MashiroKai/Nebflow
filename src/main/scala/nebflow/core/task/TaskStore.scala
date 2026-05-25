@@ -14,6 +14,7 @@ trait TaskStore:
   def create(sessionId: String, input: TaskCreateInput): IO[String]
   def get(sessionId: String, taskId: String): IO[Option[Task]]
   def list(sessionId: String): IO[List[Task]]
+  def listActive(sessionId: String): IO[List[Task]]
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
@@ -217,6 +218,11 @@ object FileTaskStore extends TaskStore:
           }
         end if
     }
+
+  def listActive(sessionId: String): IO[List[Task]] =
+    list(sessionId).map(_.filter(t =>
+      t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress
+    ))
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file
   def delete(sessionId: String, taskId: String): IO[Boolean] =

@@ -11,6 +11,8 @@ import scala.concurrent.TimeoutException
 import scala.concurrent.duration.*
 
 object BashTool extends Tool:
+  private val logger = NebflowLogger(getClass)
+
   val DEFAULT_TIMEOUT = 120_000L // 2 minutes
   val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
   /** Foreground commands running longer than this are automatically moved to background. */
@@ -398,19 +400,12 @@ Git safety:
 
   /**
    * Clean raw command output before passing to the LLM.
-   * Removes ANSI escape codes, collapses excessive blank lines,
-   * and trims trailing whitespace on each line.
+   * Collapses excessive blank lines and trims trailing whitespace.
+   * ANSI escape codes are preserved for frontend rendering.
    */
   private def cleanOutput(raw: String): String =
-    val noAnsi = stripAnsiCodes(raw)
-    val collapsed = collapseBlankLines(noAnsi)
+    val collapsed = collapseBlankLines(raw)
     trimTrailingWhitespace(collapsed)
-
-  /** Strip ANSI escape sequences (colors, cursor moves, progress bars, etc.). */
-  private def stripAnsiCodes(s: String): String =
-    // ANSI escape sequences: ESC [ ... m  (SGR) and ESC [ ... (CSI sequences)
-    val ansiPattern = """\u001b\[[0-9;]*m|\u001b\[[0-9;]*[A-Za-z]""".r
-    ansiPattern.replaceAllIn(s, "")
 
   /** Collapse 3+ consecutive blank lines into 2 blank lines. */
   private def collapseBlankLines(s: String): String =
@@ -420,7 +415,7 @@ Git safety:
   private def trimTrailingWhitespace(s: String): String =
     s.split("\n").map(_.replaceAll("[ \t]+$", "")).mkString("\n")
 
-  /** Build an on_complete callback that sends ExternalEvent to the agent actor. */
+  /** Build an on_complete callback that notifies agent + frontend + logs. */
   private def makeNotifyCallback(
     command: String,
     desc: Option[String],
@@ -430,30 +425,32 @@ Git safety:
     ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       val description = desc.getOrElse(firstLine)
-      val (eventType, payload, metadata) = result match
+      val (eventType, payload, metadata, exitInfo) = result match
         case Right(pr) =>
           val out = cleanOutput(sanitizeCardOutput(pr.stdout))
           val cleanedErr = cleanOutput(pr.stderr)
           val output = out + (if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else "")
-          val exitInfo = if pr.exitCode != 0 then s" (exit code ${pr.exitCode})" else ""
+          val exitTxt = if pr.exitCode != 0 then s" (exit ${pr.exitCode})" else ""
           (
             "completed",
-            s"[Background task completed] \"$description\"$exitInfo:\n$output",
+            s"[Background task completed] \"$description\"$exitTxt:\n$output",
             JsonObject(
               "description" -> description.asJson,
               "exitCode" -> pr.exitCode.asJson,
               "output" -> output.asJson
-            )
+            ),
+            exitTxt
           )
         case Left(e) =>
+          val errInfo = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
           (
             "failed",
-            s"[Background task failed] \"$description\":\n${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
-            JsonObject(
-              "description" -> description.asJson
-            )
+            s"[Background task failed] \"$description\":\n$errInfo",
+            JsonObject("description" -> description.asJson),
+            s" ($errInfo)"
           )
 
+      // Notify agent via ExternalEvent
       val notifyAgent = IO(
         ref ! AgentCommand.ExternalEvent(
           source = "background-task",
@@ -476,13 +473,15 @@ Git safety:
         ).handleErrorWith(_ => IO.unit)
       }
 
-      notifyFrontend *> notifyAgent
+      notifyFrontend *> notifyAgent *>
+        logger.info(s"Background job $jobId \"$description\" $eventType$exitInfo",
+          "sessionId" -> ctx.sessionId.getOrElse(""))
     }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
     ctx.wsSend.fold(
-      IO.println(s"[BgTask] wsSend is None — cannot notify frontend for job $jobId")
+      logger.warn(s"Cannot notify frontend for background job $jobId: no wsSend")
     ) { send =>
       val json = io.circe.Json.obj(
         "type" -> "backgroundTaskUpdate".asJson,
@@ -492,18 +491,17 @@ Git safety:
         "status" -> "running".asJson,
         "startedAt" -> System.currentTimeMillis().asJson
       )
-      IO.println(s"[BgTask] Sending backgroundTaskUpdate: jobId=$jobId sessionId=${ctx.sessionId}") *>
-        send(json).handleErrorWith(e => IO.println(s"[BgTask] WS send failed: ${e.getMessage}"))
+      logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>
+        send(json).handleErrorWith(e => logger.warn(s"WS send failed for job $jobId: ${e.getMessage}"))
     }
 
-  /** Build a heartbeat callback that sends WS updates to frontend and stuck notifications to agent. */
+  /** Build a heartbeat callback that sends WS updates to frontend. */
   private def makeHeartbeatCallback(
     command: String,
     desc: Option[String],
     ctx: ToolContext
   ): Option[(String, JobHealth) => IO[Unit]] =
-    // Only create callback if there's a way to report (WS or agent actor)
-    ctx.wsSend.orElse(ctx.agentActorRef).map { _ => (jobId: String, health: JobHealth) =>
+    ctx.wsSend.map { send => (jobId: String, health: JobHealth) =>
       val proc = health.processRef.get()
       val alive = proc != null && proc.isAlive
       val now = System.currentTimeMillis()
@@ -511,8 +509,16 @@ Git safety:
       val runningMs = now - health.startedAtMs.get()
       val lines = health.outputLineCount.get()
 
-      // Send WS heartbeat to frontend
-      val wsUpdate = ctx.wsSend.fold(IO.unit) { send =>
+      // Log if idle for a while (possible stuck indicator)
+      val logStuck =
+        if alive && idleMs > Defaults.BgStuckThresholdSec * 1000L then
+          logger.warn(
+            s"Background job $jobId idle for ${idleMs / 1000}s (running ${runningMs / 1000}s, $lines lines)",
+            "sessionId" -> ctx.sessionId.getOrElse("")
+          )
+        else IO.unit
+
+      logStuck *>
         send(
           io.circe.Json.obj(
             "type" -> "backgroundTaskUpdate".asJson,
@@ -527,33 +533,6 @@ Git safety:
             )
           )
         ).handleErrorWith(_ => IO.unit)
-      }
-
-      // If idle beyond threshold, notify agent (once only)
-      val stuckThreshold = Defaults.BgStuckThresholdSec * 1000L
-      val stuckNotify =
-        if alive && idleMs > stuckThreshold && !health.stuckNotified.get() then
-          IO(health.stuckNotified.set(true)) *>
-            ctx.agentActorRef.fold(IO.unit) { ref =>
-              val stuckMsg =
-                s"Process has produced no output for ${idleMs / 1000}s (running ${runningMs / 1000}s, $lines lines output). Process alive: $alive. Consider cancelling if the command is stuck. Use cancel_background_job: true to kill it."
-              IO(
-                ref ! AgentCommand.ExternalEvent(
-                  source = "background-task",
-                  eventType = "stuck",
-                  payload = s"[Background task may be stuck] \"${desc.getOrElse(command.take(80))}\":\n$stuckMsg",
-                  metadata = JsonObject(
-                    "taskId" -> jobId.asJson,
-                    "idleMs" -> idleMs.asJson,
-                    "runningMs" -> runningMs.asJson
-                  ),
-                  correlationId = Some(jobId)
-                )
-              )
-            }
-        else IO.unit
-
-      wsUpdate *> stuckNotify
     }
 
   /**

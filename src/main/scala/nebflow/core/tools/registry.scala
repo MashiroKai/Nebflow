@@ -33,7 +33,12 @@ object ToolRegistry:
       "TaskList" -> TaskListTool,
       "TaskUpdate" -> TaskUpdateTool,
       // Agent lifecycle — always available, no tool whitelist filtering
-      "RemoveUnnecessary" -> RemoveUnnecessaryTool
+      "RemoveUnnecessary" -> RemoveUnnecessaryTool,
+      // Inter-agent communication
+      "SendMessage" -> SendMessageTool,
+      "ListMailboxes" -> ListMailboxesTool,
+      // Memory
+      "WriteMemory" -> WriteMemoryTool
     )
     tools.putAll(builtins.asJava)
   }
@@ -44,21 +49,9 @@ object ToolRegistry:
     ToolDefinition(t.name, t.description, t.inputSchema)
   }.toList
 
-  /** Tools that are always included regardless of agent tool whitelist. */
-  val AlwaysAvailable: Set[String] = Set.empty[String]
-
-  /** Tools always available except on the compaction agent itself (to prevent recursion). */
-  val AlwaysAvailableNonCompact: Set[String] = Set("RemoveUnnecessary")
-
-  /** Tools that users can select in agent configuration UI. */
-  val UserConfigurable: Set[String] = AlwaysAvailableNonCompact
-
-  /** Tool definitions for the user-configurable set (sent to frontend). */
-  def userConfigurableTools: List[ToolDefinition] =
-    TOOL_MAP.values
-      .filterNot(t => UserConfigurable.contains(t.name))
-      .map(t => ToolDefinition(t.name, t.description, t.inputSchema))
-      .toList
+  /** Builtin tool names (non-MCP), used by frontend to build configurable tool list. */
+  def builtinToolNames: List[String] =
+    tools.asScala.keys.filterNot(_.startsWith("mcp__")).toList.sorted
 
   def registerTool(tool: Tool): Unit =
     tools.put(tool.name, tool)

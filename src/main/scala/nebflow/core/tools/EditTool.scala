@@ -126,8 +126,8 @@ Edit patterns:
     validateInput(filePath, input) match
       case Left(err) => IO.pure(Left(err))
       case Right(()) =>
-        // Snapshot file before editing (if it exists)
-        val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath))
+        // Snapshot file before editing (if it exists, with agent identity)
+        val snapshot = ctx.fileHistory.traverse_(_.snapshot(filePath, ctx.mailboxAddress))
         val editIO = (snapshot *> IO.blocking(doEdit(filePath, oldString, newString, replaceAll)))
           .handleErrorWith { e =>
             val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)

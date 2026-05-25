@@ -263,6 +263,7 @@ export default {
   // === Background tasks ===
   'bg.header': 'Background tasks',
   'bg.cancel': 'Cancel',
+  'bg.cancelling': 'Cancelling...',
   'bg.running': 'Running',
   'bg.ended': 'Process ended',
   'bg.stuck': 'No output for 10+ min',

@@ -500,8 +500,8 @@ function bindSettingsEvents(content, cfg, allModels) {
   compactInputs.forEach(id => {
     document.getElementById(id)?.addEventListener('change', () => {
       if (!state.parsedConfig) state.parsedConfig = {};
-      const ttl = parseInt(document.getElementById('cfg-compact-ttl')?.value) || 120;
-      const keep = parseInt(document.getElementById('cfg-compact-keep')?.value) || 5;
+      const ttl = parseInt(document.getElementById('cfg-compact-ttl')?.value) ?? 120;
+      const keep = parseInt(document.getElementById('cfg-compact-keep')?.value) ?? 5;
       state.parsedConfig.compact = {
         ...(state.parsedConfig.compact || {}),
         microCacheTtlMinutes: ttl,
@@ -811,7 +811,7 @@ function showModal({title, fields, onConfirm}) {
               ${f.value.map((m, i) => renderModelRow(m, i)).join('')}
               <button class="cfg-model-add" type="button">${t('model.add')}</button>
             </div>` :
-            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="password" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="new-password" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeSvg}</button></div>` :
+            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" style="-webkit-text-security:disc" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeSvg}</button></div>` :
             `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
           </div>
         `).join('')}
@@ -840,13 +840,13 @@ function showModal({title, fields, onConfirm}) {
     btn.addEventListener('click', () => btn.closest('.cfg-model-row').remove());
   });
 
-  // Wire up password eye toggle
+  // Wire up eye toggle
   overlay.querySelectorAll('.cfg-eye-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const input = btn.parentElement.querySelector('input');
-      const isPassword = input.type === 'password';
-      input.type = isPassword ? 'text' : 'password';
-      btn.innerHTML = isPassword ? eyeOffSvg : eyeSvg;
+      const isMasked = input.style.webkitTextSecurity !== 'none';
+      input.style.webkitTextSecurity = isMasked ? 'none' : 'disc';
+      btn.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
     });
   });
 
@@ -1769,6 +1769,11 @@ function updateFolderStatus(folderId) {
   const el = folderEl.querySelector('.folder-status');
   if (!el) return;
   el.className = 'folder-status ' + getFolderStatusClass(folderId);
+  // Cascade up to parent folder
+  const folder = (state.folders || []).find(f => f.id === folderId);
+  if (folder && folder.parentId) {
+    updateFolderStatus(folder.parentId);
+  }
 }
 
 export function updateSessionStatus(sessionId) {
@@ -2055,9 +2060,22 @@ function persistPinnedFolders() {
   } catch(e) {}
 }
 
+// Collect all descendant folder IDs (including the folder itself) recursively
+function getAllDescendantFolderIds(folderId) {
+  const allFolders = state.folders || [];
+  const result = new Set([folderId]);
+  const children = allFolders.filter(f => f.parentId === folderId);
+  for (const child of children) {
+    const desc = getAllDescendantFolderIds(child.id);
+    desc.forEach(id => result.add(id));
+  }
+  return result;
+}
+
 function getFolderStatusClass(folderId, sessions) {
   const allSessions = sessions || (state.sessions || []);
-  const folderSessions = allSessions.filter(s => s.folderId === folderId);
+  const descendantIds = getAllDescendantFolderIds(folderId);
+  const folderSessions = allSessions.filter(s => descendantIds.has(s.folderId));
   for (const s of folderSessions) {
     if (state.attentionSessions.has(s.id)) return 'attention';
   }

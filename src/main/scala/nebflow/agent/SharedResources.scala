@@ -35,5 +35,8 @@ case class SharedResources(
   sessionModelOverrides: cats.effect.Ref[IO, Map[String, ModelCandidate]],
   providerRegistry: ProviderRegistry,
   hookEngine: HookEngine = HookEngine.noop,
-  bridgeManager: Option[BridgeManager] = None
+  bridgeManager: Option[BridgeManager] = None,
+  memoryAgentManager: Option[MemoryAgentManager] = None,
+  /** Central routing registry for inter-agent communication. */
+  postOffice: PostOffice = PostOffice.stub
 )

@@ -195,6 +195,13 @@ object GatewayMain extends IOApp.Simple:
                               nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                 val hooksConfig = HooksConfigLoader.load(os.pwd)
                                 val hookEngine = HookEngine(hooksConfig)
+                                // Actor system must be created before SharedResources
+                                // because MemoryAgentManager needs it
+                                val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
+                                val memoryAgentManager = new MemoryAgentManager(
+                                  actorSystem, handle, dispatcher, sessionStore
+                                )
+                                nebflow.agent.PostOffice.create().flatMap { postOffice =>
                                 val sharedResources = SharedResources(
                                   llm = handle,
                                   dispatcher = dispatcher,
@@ -211,9 +218,10 @@ object GatewayMain extends IOApp.Simple:
                                   fileLockManager = fileLockMgr,
                                   sessionModelOverrides = sessionModelOverrides,
                                   providerRegistry = registry,
-                                  hookEngine = hookEngine
+                                  hookEngine = hookEngine,
+                                  memoryAgentManager = Some(memoryAgentManager),
+                                  postOffice = postOffice
                                 )
-                                val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
                                 val sessionService = new SessionService(sessionStore)
                                 val agentService = new AgentService(agentLibrary)
                                 val configService = ConfigService
@@ -350,6 +358,7 @@ object GatewayMain extends IOApp.Simple:
                                         }).void
                                     )
                                 }
+                                } // end postOffice
                               } // end fileLockMgr
                             } // end askSemaphore
                           } // end dispatcher.use

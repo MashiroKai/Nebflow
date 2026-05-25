@@ -2,7 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
-import { renderMarkdownWithMath, escapeHtml, formatDiff, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 
@@ -281,12 +281,11 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // Fallback to default rendering
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-  const diffHtml = formatDiff(content);
   const detailHtml = buildToolDetail(inputJson, label);
-  // Render full content in body (no truncation). Body is hidden by default,
-  // click to expand shows full content with scroll for long output.
-  const bodyText = diffHtml ? '' : (content ? escapeHtml(content) : '');
-  const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre class="tool-body-pre">' + bodyText + '</pre>' : ''))) || '';
+  // Render full content in body with syntax highlighting or ANSI color rendering.
+  // Body is hidden by default, click to expand shows full content with scroll for long output.
+  const highlightHtml = content ? renderHighlightedContent(content, label) : null;
+  const bodyHtml = (detailHtml + (highlightHtml || (content ? '<pre class="tool-body-pre">' + escapeHtml(content) + '</pre>' : ''))) || '';
   const hasBody = !!bodyHtml;
   const localLabel = localizeToolLabel(label);
   const localSummary = localizeToolSummary(summary, label);

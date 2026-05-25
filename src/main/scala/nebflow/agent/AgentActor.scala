@@ -44,7 +44,8 @@ object AgentActor extends AgentCore with AgentSession:
     contextWindow: Int = Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
-    folderId: Option[String] = None
+    folderId: Option[String] = None,
+    mailbox: Option[AgentMailbox] = None
   ): Behavior[AgentCommand] =
     Behaviors
       .supervise(
@@ -81,7 +82,8 @@ object AgentActor extends AgentCore with AgentSession:
                 contextWindow = contextWindow,
                 projectRoot = projectRoot,
                 rulesMd = rulesMd,
-                folderId = folderId
+                folderId = folderId,
+                mailbox = mailbox
               ),
               stash,
               context
@@ -119,6 +121,18 @@ object AgentActor extends AgentCore with AgentSession:
     stash: StashBuffer[AgentCommand],
     ctx: ActorContext[AgentCommand]
   ): Behavior[AgentCommand] =
+    // NOTE: always emit sessionBusy(false) for root agents when entering idle.
+    // This covers the critical case where Pekko supervision restarts the actor
+    // after a crash (e.g. StashOverflowException) — without this, the frontend
+    // stays stuck with busySessionIds=true and rejects new user input until
+    // the 10-minute safety timeout fires.
+    if depth == 0 then
+      state.sessionId.foreach { sid =>
+        resources.dispatcher.unsafeRunAndForget(
+          emitSessionBusy(state.wsSend, sid, busy = false)
+        )
+      }
+
     Behaviors.receiveMessage:
       case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks) =>
         // Dedup check (root agent session management)
@@ -328,6 +342,39 @@ object AgentActor extends AgentCore with AgentSession:
           None
         )
 
+      // --- Inter-agent message received ---
+      case AgentCommand.AgentMessageReceived(fromMailbox, payload, _) =>
+        logAgentEvent(
+          ctx,
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "agent-message-received",
+          s"from=${fromMailbox.display}"
+        )
+        emitStream(
+          resources.dispatcher,
+          state.wsSend,
+          ctx,
+          AgentStreamEvent.ExternalEventReceived("agent", fromMailbox.agentName, None),
+          isSubagent = depth > 0,
+          state.sessionId
+        )
+        val senderInfo = s"[Message from agent ${fromMailbox.display}]"
+        val userMsg = Message(MessageRole.User, Left(s"$senderInfo\n$payload"))
+        val newMessages = state.messages :+ userMsg
+        pipeLlmCall(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state.withMessages(newMessages),
+          stash,
+          ctx,
+          None
+        )
+
       // --- User answered: route to blocking replyTo ---
       case AgentCommand.UserAnswered(answers) =>
         state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
@@ -355,6 +402,30 @@ object AgentActor extends AgentCore with AgentSession:
             d.complete(Left("Compaction result arrived after agent returned to idle")).handleErrorWith(_ => IO.unit)
           )
         })
+        Behaviors.same
+
+      // --- Permission answered while idle: only route if we have a pending deferred ---
+      case AgentCommand.PermissionAnswered(approved) =>
+        state.pendingPermission match
+          case Some(deferred) =>
+            resources.dispatcher.unsafeRunAndForget(
+              deferred.complete(approved).handleErrorWith(_ => IO.unit)
+            )
+            Behaviors.same
+          case None => Behaviors.same
+
+      // --- Stale internal messages from previous turns: discard, don't stash ---
+      // These accumulate in the stash over many turns and eventually cause
+      // StashOverflowException when legitimate user messages arrive during
+      // a long LLM call. All are handled in processing state — in idle they are stale.
+      case _: AgentCommand.StreamFiberStarted |
+           _: AgentCommand.UpdateHighestPressureLevel |
+           _: AgentCommand.LlmComplete |
+           _: AgentCommand.LlmFailed |
+           _: AgentCommand.ToolsComplete |
+           _: AgentCommand.SetPermissionDeferred |
+           _: AgentCommand.ReplaceToolResults |
+           AgentCommand.ClearTaskCheck =>
         Behaviors.same
 
       case msg =>
@@ -391,6 +462,9 @@ object AgentActor extends AgentCore with AgentSession:
           stash,
           ctx
         )
+
+      case AgentCommand.ClearTaskCheck =>
+        processing(agentDef, resources, depth, parentRef, state.withPendingTaskCheck(false), stash, ctx)
 
       // --- LLM completed ---
       case LlmComplete(result, replyTo, turnId) =>
@@ -463,8 +537,12 @@ object AgentActor extends AgentCore with AgentSession:
               result.model
             )
           // Tool calls (normal or ask mode) — execute tools
+          // If LLM also produced text alongside tool calls, flag for task reminder
           else if result.toolCalls.nonEmpty then
-            pipeToolExecutions(agentDef, resources, depth, parentRef, updatedState, stash, ctx, result, replyTo)
+            val stateWithFlag =
+              if result.text.nonEmpty then updatedState.withPendingTaskCheck(true)
+              else updatedState
+            pipeToolExecutions(agentDef, resources, depth, parentRef, stateWithFlag, stash, ctx, result, replyTo)
           // Has text or thinking content — normal completion
           else if result.text.nonEmpty || result.thinking.nonEmpty then
             finishTurn(
@@ -667,6 +745,7 @@ object AgentActor extends AgentCore with AgentSession:
             "llm-fail",
             s"err=${error.getMessage.take(80)}"
           )
+          // Auto-fail active tasks since LLM failed unexpectedly
           val agentError =
             AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
           // Emit error to frontend so the user knows what happened, then Done to clear the spinner
@@ -756,12 +835,14 @@ object AgentActor extends AgentCore with AgentSession:
         else Nil
         val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ eventMessages
 
+        val hasTaskUpdate = toolCalls.exists(_.name == "TaskUpdate")
         val updatedState = state
           .copy(
             execution = state.execution.copy(
               messages = newMessages,
               interaction = None,
-              pendingEvents = Nil // consumed
+              pendingEvents = Nil, // consumed
+              pendingTaskCheck = state.execution.pendingTaskCheck || hasTaskUpdate
             )
           )
           .withWritesSinceLastRead(tc.updatedWriteTracker)
@@ -1023,6 +1104,32 @@ object AgentActor extends AgentCore with AgentSession:
         )
         processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), stash, ctx)
 
+      // --- Inter-agent message received while processing: queue as ExternalEvent ---
+      case AgentCommand.AgentMessageReceived(fromMailbox, payload, _) =>
+        logAgentEvent(
+          ctx,
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "agent-message-queued",
+          s"from=${fromMailbox.display}"
+        )
+        emitStream(
+          resources.dispatcher,
+          state.wsSend,
+          ctx,
+          AgentStreamEvent.ExternalEventReceived("agent", fromMailbox.agentName, None),
+          isSubagent = depth > 0,
+          state.sessionId
+        )
+        val senderInfo = s"[Message from agent ${fromMailbox.display}]"
+        val event = AgentCommand.ExternalEvent("agent", fromMailbox.agentName, s"$senderInfo\n$payload")
+        val updatedExec = state.execution.copy(
+          pendingEvents = state.execution.pendingEvents :+ event
+        )
+        processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), stash, ctx)
+
       // --- AskUser from tool (blocking AskUserQuestion) ---
       case AgentCommand.AskUser(requestId, items, replyToOpt) =>
         // Before sending askUser, finalize any in-flight streaming text bubble.
@@ -1235,8 +1342,7 @@ object AgentActor extends AgentCore with AgentSession:
       // No pending events — send done + sessionBusy(false) to end the turn.
       // Build Done event with model, contextWindow, inputTokens, and compactThreshold
       val doneCompactThreshold =
-        if !isSubagent then
-          Some(CompactConfig().compactionTriggerRatio(state.contextWindow))
+        if !isSubagent then Some(CompactConfig().compactionTriggerRatio(state.contextWindow))
         else None
       val doneEvent = AgentStreamEvent.Done(
         model.orElse(state.lastModel),

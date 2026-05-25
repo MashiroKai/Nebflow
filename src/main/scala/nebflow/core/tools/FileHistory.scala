@@ -11,10 +11,14 @@ import scala.jdk.CollectionConverters.*
  * VS Code-style file history: snapshots file content before overwrites.
  *
  * Storage layout:
- *   ~/.nebflow/history/{pathHash}/{timestamp}
+ *   ~/.nebflow/history/{pathHash}/{timestamp}           — snapshot content
+ *   ~/.nebflow/history/{pathHash}/{timestamp}.identity   — agent identity (optional)
  *
  * Each file keeps up to `maxEntries` snapshots; oldest are evicted first.
  * Files larger than `maxFileSizeBytes` are skipped.
+ *
+ * The .identity file records which agent/session made the edit, enabling
+ * cross-agent attribution in file history.
  */
 class FileHistory private (
   private[tools] val historyRoot: Path,
@@ -27,8 +31,11 @@ class FileHistory private (
   /**
    * Snapshot a file's current content before it gets overwritten.
    * No-op if the file doesn't exist or exceeds the size limit.
+   *
+   * @param filePath the file to snapshot
+   * @param identity optional agent mailbox address (e.g. "Nebula/a296f1da/my-project")
    */
-  def snapshot(filePath: Path): IO[Unit] =
+  def snapshot(filePath: Path, identity: Option[String] = None): IO[Unit] =
     // Phase 1: Copy file to history dir (blocking I/O)
     IO.blocking {
       if !Files.exists(filePath) || Files.isDirectory(filePath) then None
@@ -41,6 +48,11 @@ class FileHistory private (
         val ts = System.nanoTime()
         val dest = dir.resolve(ts.toString)
         Files.copy(filePath, dest)
+        // Write identity metadata alongside the snapshot (if provided)
+        identity.foreach { id =>
+          val metaDest = dir.resolve(s"$ts.identity")
+          Files.writeString(metaDest, id)
+        }
         Some((key, dir, ts))
     }.flatMap {
       case None => IO.unit
@@ -87,9 +99,14 @@ class FileHistory private (
       .iterator()
       .asScala
       .toList
-      .filter(f => Files.isRegularFile(f))
+      .filter(f => Files.isRegularFile(f) && !f.getFileName.toString.endsWith(".identity"))
       .sortBy(f => f.getFileName.toString.toLongOption.getOrElse(0L))(Ordering[Long].reverse)
-    if files.size > maxEntries then files.drop(maxEntries).foreach(f => Files.deleteIfExists(f))
+    if files.size > maxEntries then files.drop(maxEntries).foreach { f =>
+      Files.deleteIfExists(f)
+      // Also clean up associated .identity file
+      val identityFile = dir.resolve(s"${f.getFileName}.identity")
+      Files.deleteIfExists(identityFile)
+    }
 
 end FileHistory
 

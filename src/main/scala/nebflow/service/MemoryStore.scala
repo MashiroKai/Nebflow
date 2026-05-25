@@ -86,6 +86,27 @@ object MemoryStore:
   def saveSessionMemory(sessionId: String, content: String): IO[Unit] =
     saveFile(sessionMemoryPath(sessionId), content, () => getSessionCache(sessionId).invalidate)
 
+  /** Append a line to session memory (reads current, appends, writes back). */
+  def appendSessionMemory(sessionId: String, line: String): IO[Unit] =
+    val path = sessionMemoryPath(sessionId)
+    val cache = getSessionCache(sessionId)
+    for
+      existing <- IO.blocking(if os.exists(path) then os.read(path) else "")
+      updated = if existing.trim.isEmpty then line else s"${existing.trim}\n$line"
+      _ <- saveFile(path, updated, () => cache.invalidate)
+    yield ()
+
+  // --- Cache invalidation (for Memory Agent direct file edits) ---
+
+  def invalidateUserCache(): Unit =
+    userCache.invalidate.unsafeRunSync()
+
+  def invalidateAgentCache(agentName: String): Unit =
+    getAgentCache(agentName).invalidate.unsafeRunSync()
+
+  def invalidateFolderCache(folderId: String): Unit =
+    getFolderCache(folderId).invalidate.unsafeRunSync()
+
   // --- Preview (first non-heading, non-empty line, max 80 chars) ---
 
   def preview(path: os.Path): Option[String] =

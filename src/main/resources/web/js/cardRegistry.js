@@ -52,7 +52,9 @@ function buildHeightScript(id) {
       var d=document.documentElement,b=document.body,w=document.getElementById('nf-wrap');
       if(!w)return;
       var vw=d.clientWidth;
-      var cw=w.scrollWidth;
+      // scrollWidth on body is reliable for detecting overflow — wrap.scrollWidth
+      // may equal clientWidth when overflow:visible hides the overflow extent.
+      var cw=Math.max(w.scrollWidth,b.scrollWidth,d.scrollWidth);
       var s=cw>vw?vw/cw:1;
       w.style.transform=s<1?'scale('+s+')':'';
       var reportW=s<1?vw:w.offsetWidth;
@@ -134,7 +136,7 @@ function renderHtmlCard(container, html, title) {
   // Wrap user HTML in #nf-wrap for auto-scaling.
   // The wrapper carries transform-origin so transform:scale() can shrink content
   // to fit the iframe viewport when it's wider than available space.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);}*,*:before,*:after{box-sizing:inherit;}img,svg,video{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="transform-origin:top left;width:fit-content;max-width:100%">${html}</div>${heightScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}img,svg,video{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="transform-origin:top left;width:fit-content;max-width:100%">${html}</div>${heightScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';
