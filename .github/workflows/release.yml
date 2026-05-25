@@ -81,11 +81,10 @@ jobs:
       - name: Upload JAR to COS
         run: |
           JAR=$(ls nebflow-assembly-*.jar | head -1)
-          echo "Uploading $JAR to COS..."
-          coscmd upload "$JAR" "/$JAR"
-          echo "Upload complete."
-          # Verify
-          coscmd list "/"
+          echo "Uploading $JAR ($(wc -c < $JAR) bytes) to COS..."
+          coscmd upload "$JAR" "$JAR" -f 2>&1
+          echo "---"
+          coscmd list 2>&1
 
   update-website:
     name: Update website version
