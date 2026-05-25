@@ -4,7 +4,7 @@
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, formatDiff, buildToolDetail, attachToolClick, esc, localizeToolLabel, localizeToolSummary } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { pickThinkingPhrase } from './chat.js';
 
@@ -169,10 +169,9 @@ export function restoreFromStorage() {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-        const diffHtml = formatDiff(m.content);
         const detailHtml = buildToolDetail(m.input, m.label);
-        const bodyText = diffHtml ? '' : (m.content ? esc(m.content) : '');
-        const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre class="tool-body-pre">' + bodyText + '</pre>' : ''))) || '';
+        const highlightHtml = renderHighlightedContent(m.content, m.label);
+        const bodyHtml = (detailHtml + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
         const truncBadge = m.truncated ? '<span class="truncated-badge" title="' + esc(t('tool.result.truncatedTitle')) + '">' + esc(t('tool.result.truncated')) + '</span>' : '';
         const localLabel = localizeToolLabel(m.label);
@@ -432,10 +431,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-        const diffHtml = formatDiff(m.content);
         const detailHtml = buildToolDetail(parsedInput, m.label);
-        const bodyText = diffHtml ? '' : (m.content ? esc(m.content) : '');
-        const bodyHtml = (detailHtml + (diffHtml || (bodyText ? '<pre class="tool-body-pre">' + bodyText + '</pre>' : ''))) || '';
+        const highlightHtml = renderHighlightedContent(m.content, m.label);
+        const bodyHtml = (detailHtml + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
         const truncBadge = m.truncated ? '<span class="truncated-badge" title="' + esc(t('tool.result.truncatedTitle')) + '">' + esc(t('tool.result.truncated')) + '</span>' : '';
         const localLabel = localizeToolLabel(m.label);

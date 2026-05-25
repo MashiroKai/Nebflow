@@ -346,6 +346,9 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                       (updated, ())
                     }
                     .as(Nil)
+                case Some("signature_delta") =>
+                  val sig = json.hcursor.downField("delta").downField("signature").as[String].getOrElse("")
+                  IO.pure(if sig.nonEmpty then List(StreamChunk.ThinkingSignature(sig)) else Nil)
                 case _ => IO.pure(Nil)
             case "content_block_start" =>
               json.hcursor.downField("content_block").downField("type").as[String].toOption match
@@ -357,8 +360,11 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                     .update(_ + (idx -> (id, name, new StringBuilder)))
                     .as(List(StreamChunk.ToolCallStart(name)))
                 case Some("thinking") =>
+                  // Some providers (DeepSeek) send empty signature in content_block_start
+                  // and the real signature later via signature_delta. Filter out empty to avoid
+                  // collectFirst in aggregateChunks picking the useless empty string.
                   val sig = json.hcursor.downField("content_block").downField("signature").as[String].toOption
-                  IO.pure(sig.map(s => List(StreamChunk.ThinkingSignature(s))).getOrElse(Nil))
+                  IO.pure(sig.filter(_.nonEmpty).map(s => List(StreamChunk.ThinkingSignature(s))).getOrElse(Nil))
                 case _ => IO.pure(Nil)
             case "content_block_stop" =>
               val idx = json.hcursor.downField("index").as[Int].getOrElse(0)

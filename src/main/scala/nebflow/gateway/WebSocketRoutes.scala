@@ -15,7 +15,8 @@ import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
 import nebflow.shared.*
-import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
+import org.apache.pekko.actor.typed.scaladsl.Behaviors
+import org.apache.pekko.actor.typed.{ActorRef, ActorSystem, Behavior, Terminated}
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -45,6 +46,22 @@ class WebSocketRoutes(
   /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
   private val rootAgents: Ref[IO, Map[String, ActorRef[AgentCommand]]] =
     Ref.unsafe(Map.empty)
+
+  /** Reflect rootAgents for death watcher: ActorRef -> sessionId lookup. */
+  private val refToSession: Ref[IO, Map[ActorRef[AgentCommand], String]] =
+    Ref.unsafe(Map.empty)
+
+  /**
+   * Death-watcher actor: watches root AgentActor refs and cleans up
+   * rootAgents/refToSession when an actor stops permanently (exceeds
+   * supervision restart limit). Without this, dead refs stay in the map
+   * and all future UserInput messages go to DeadLetters silently.
+   */
+  private val deathWatcher: ActorRef[DeathWatcher.Command] =
+    actorSystem.systemActorOf(
+      DeathWatcher(rootAgents, refToSession, sharedResources.dispatcher, wsHub, sharedResources.postOffice),
+      "agent-death-watcher"
+    )
 
   /** Get or create a root AgentActor for the given session. Idempotent. */
   private def ensureRootAgent(sessionId: String): IO[ActorRef[AgentCommand]] =
@@ -104,6 +121,11 @@ class WebSocketRoutes(
               )
             }.flatten
           yield
+            val mailbox = AgentMailbox(
+              agentName = agentName,
+              sessionId = sessionId,
+              sessionName = metaOpt.map(_.name).getOrElse("Session")
+            )
             val ref = actorSystem.systemActorOf(
               AgentActor(
                 agentDef,
@@ -119,12 +141,13 @@ class WebSocketRoutes(
                 contextWindow = contextWindow,
                 projectRoot = effectiveProjectRoot,
                 rulesMd = resolvedRules,
-                folderId = folderId
+                folderId = folderId,
+                mailbox = Some(mailbox)
               ),
               s"agent-$sessionId"
             )
-            (ref, effectiveProjectRoot.getOrElse(""))
-          agentIo.flatMap { case (ref, pr) =>
+            (ref, effectiveProjectRoot.getOrElse(""), mailbox)
+          agentIo.flatMap { case (ref, pr, mailbox) =>
             val hookCtx = nebflow.core.hooks.HookContext(
               sessionId = Some(sessionId),
               projectRoot = pr,
@@ -138,7 +161,11 @@ class WebSocketRoutes(
                   .warn(s"SessionStart hook failed: ${e.getMessage}")
                   .as(nebflow.core.hooks.HookResult.allow)
               }
-              .void *> rootAgents.update(_ + (sessionId -> ref)).as(ref)
+              .void *>
+              sharedResources.postOffice.register(mailbox, ref) *>
+              refToSession.update(_ + (ref -> sessionId)) *>
+              IO(deathWatcher ! DeathWatcher.Watch(sessionId, ref)) *>
+              rootAgents.update(_ + (sessionId -> ref)).as(ref)
           }
     }
 
@@ -148,7 +175,9 @@ class WebSocketRoutes(
       agents.get(sessionId) match
         case Some(ref) =>
           ref ! AgentCommand.Stop(s"session $sessionId deleted")
-          (agents - sessionId, IO.unit)
+          (agents - sessionId, IO(deathWatcher ! DeathWatcher.Unwatch(sessionId)) *>
+            sharedResources.postOffice.unregister(sessionId) *>
+            refToSession.update(_ - ref))
         case None => (agents, IO.unit)
     }.flatten
 
@@ -231,7 +260,7 @@ class WebSocketRoutes(
           sendStream = Stream.fromQueueUnterminated(outbound)
           _ <- logger.info("WebSocket client connected")
           thinkingCfg <- sharedResources.thinkingConfigRef.get
-          toolsList = ToolRegistry.userConfigurableTools.map(t =>
+          toolsList = ToolRegistry.ALL_TOOLS.map(t =>
             io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
           )
           mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
@@ -364,7 +393,7 @@ class WebSocketRoutes(
   end logInputHistory
 
   private def broadcastServerConfig: IO[Unit] =
-    val toolsList = ToolRegistry.userConfigurableTools.map(t =>
+    val toolsList = ToolRegistry.ALL_TOOLS.map(t =>
       io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
     )
     for
@@ -847,27 +876,32 @@ class WebSocketRoutes(
               .forSession(cancelSessionId)
               .flatMap { shell =>
                 shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
-                  // Notify the agent so it can process cancellation
-                  routeToAgent(cancelSessionId) { ref =>
-                    IO(
-                      ref ! AgentCommand.ExternalEvent(
-                        source = "background-task",
-                        eventType = "cancelled",
-                        payload = s"[Background task cancelled] Job ID: $jobId",
-                        metadata = io.circe.JsonObject(
-                          "jobId" -> jobId.asJson
-                        ),
-                        correlationId = Some(jobId)
+                  val logMsg =
+                    if cancelled then s"Cancelled background job $jobId"
+                    else s"Background job $jobId not found or already completed"
+                  logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
+                    // Notify agent so it can process cancellation
+                    routeToAgent(cancelSessionId) { ref =>
+                      IO(
+                        ref ! AgentCommand.ExternalEvent(
+                          source = "background-task",
+                          eventType = "cancelled",
+                          payload = s"[Background task cancelled] Job ID: $jobId",
+                          metadata = io.circe.JsonObject(
+                            "jobId" -> jobId.asJson
+                          ),
+                          correlationId = Some(jobId)
+                        )
                       )
-                    )
-                  } *>
+                    } *>
+                    // Send completion update to frontend so the task is removed from the dropdown
                     wsSend(
                       io.circe.Json.obj(
                         "type" -> "backgroundTaskUpdate".asJson,
                         "sessionId" -> cancelSessionId.asJson,
                         "taskId" -> jobId.asJson,
                         "description" -> "".asJson,
-                        "status" -> "completed".asJson // always report completed, regardless of whether the job was found
+                        "status" -> "completed".asJson
                       )
                     )
                 }
@@ -954,15 +988,8 @@ class WebSocketRoutes(
 
         case "listAgents" =>
           agentService.listAgents.flatMap { agents =>
-            // Configurable builtin tools — exclude MCP tools (controlled via mcpServers) and auto-injected tools
-            val isMcpTool = (name: String) => name.startsWith("mcp__")
-            val autoInjected =
-              ToolRegistry.AlwaysAvailableNonCompact
-            val configurableTools = ToolRegistry.TOOL_MAP.keys
-              .filterNot(n => isMcpTool(n) || autoInjected.contains(n))
-              .toList
-              .sorted
-            val autoTools = autoInjected.toList.sorted
+            // All builtin tools are configurable — MCP tools controlled via mcpServers
+            val configurableTools = ToolRegistry.builtinToolNames
             val agentsJson = agents.map { a =>
               io.circe.Json.obj(
                 "name" -> a.name.asJson,
@@ -977,8 +1004,7 @@ class WebSocketRoutes(
               io.circe.Json.obj(
                 "type" -> "agentList".asJson,
                 "agents" -> agentsJson.asJson,
-                "availableTools" -> configurableTools.asJson,
-                "autoTools" -> autoTools.asJson
+                "availableTools" -> configurableTools.asJson
               )
             )
           }
@@ -1850,3 +1876,63 @@ class WebSocketRoutes(
           .map(_.id)
 
 end WebSocketRoutes
+
+/**
+ * Death-watcher actor: monitors root AgentActor refs via Pekko's death-watch
+ * mechanism. When a root agent stops permanently (exceeds supervision restart
+ * limit), its ref is removed from the rootAgents map so future messages
+ * trigger creation of a fresh actor rather than going to DeadLetters.
+ */
+private object DeathWatcher:
+  sealed trait Command
+  case class Watch(sessionId: String, ref: ActorRef[AgentCommand]) extends Command
+  case class Unwatch(sessionId: String) extends Command
+
+  def apply(
+    rootAgents: Ref[IO, Map[String, ActorRef[AgentCommand]]],
+    refToSession: Ref[IO, Map[ActorRef[AgentCommand], String]],
+    dispatcher: cats.effect.std.Dispatcher[IO],
+    wsHub: WsHub,
+    postOffice: nebflow.agent.PostOffice
+  ): Behavior[Command] = Behaviors.setup { ctx =>
+    def behavior(refMap: Map[ActorRef[AgentCommand], String]): Behavior[Command] =
+      Behaviors
+        .receiveMessage[Command] {
+          case Watch(sessionId, ref) =>
+            ctx.watch(ref)
+            behavior(refMap + (ref -> sessionId))
+          case Unwatch(sessionId) =>
+            refMap.find(_._2 == sessionId) match
+              case Some((ref, _)) => behavior(refMap - ref)
+              case None => Behaviors.same
+        }
+        .receiveSignal {
+          case (_, Terminated(deadRef)) =>
+            // Terminated.ref is ActorRef[Nothing] — cast is safe because
+            // ActorRef identity is by path, not type parameter
+            val agentRef: ActorRef[AgentCommand] = deadRef.asInstanceOf[ActorRef[AgentCommand]]
+            refMap.get(agentRef) match
+              case Some(sid) =>
+                dispatcher.unsafeRunAndForget(
+                  rootAgents.update(_ - sid) *>
+                    postOffice.unregister(sid) *>
+                    refToSession.update(_ - agentRef) *>
+                    // Broadcast sessionBusy(false) to all frontend clients so the
+                    // session's blocked state is cleared immediately — without this,
+                    // the frontend would wait up to 10 minutes for the safety timeout
+                    // before the user can send a new message (which triggers creation
+                    // of a fresh actor via ensureRootAgent).
+                    wsHub.broadcast(
+                      io.circe.Json.obj(
+                        "type" -> "sessionBusy".asJson,
+                        "sessionId" -> sid.asJson,
+                        "busy" -> false.asJson
+                      )
+                    )
+                )
+                behavior(refMap - agentRef)
+              case None => Behaviors.same
+        }
+    behavior(Map.empty)
+  }
+end DeathWatcher

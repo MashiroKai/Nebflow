@@ -20,8 +20,8 @@ private[tools] class JobHealth(
   val lastActivityMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
   val outputLineCount: AtomicInteger = new AtomicInteger(0),
   val startedAtMs: AtomicLong = new AtomicLong(System.currentTimeMillis()),
-  /** Whether a "stuck" notification has already been sent — prevents spam. */
-  val stuckNotified: AtomicBoolean = new AtomicBoolean(false)
+  /** Whether a "process dead" notification has already been sent — prevents spam. */
+  val deadNotified: AtomicBoolean = new AtomicBoolean(false)
 )
 
 /** Snapshot of a running background job's health. */
@@ -37,6 +37,7 @@ case class BackgroundJobHealth(
 private case class BackgroundJob(
   fiber: Fiber[IO, Throwable, Unit],
   heartbeatFiber: Option[Fiber[IO, Throwable, Unit]],
+  healthCheckFiber: Option[Fiber[IO, Throwable, Unit]],
   deferred: Deferred[IO, Either[Throwable, ProcessResult]],
   command: String,
   description: Option[String] = None,
@@ -115,9 +116,11 @@ final class ShellSession private (
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
           case None => IO.pure(None)
+        hcFiber <- startJobHealthCheck(jobId, deferred, health)
         job = BackgroundJob(
           fiber,
           hbFiber,
+          hcFiber,
           deferred,
           command,
           description,
@@ -195,9 +198,11 @@ final class ShellSession private (
         _ <- (fiber.joinWithNever.attempt.flatMap { result =>
           deferred.complete(result.map(_ => ProcessResult("", "", 0, ""))).void
         }).start
+        hcFiber <- startJobHealthCheck(jobId, deferred, health, isRegisteredJob = true)
         job = BackgroundJob(
           fiber = fiber,
           heartbeatFiber = None,
+          healthCheckFiber = hcFiber,
           deferred = deferred,
           command = command,
           health = health
@@ -233,9 +238,9 @@ final class ShellSession private (
                 // 2) Complete the deferred so any waiters get the cancellation signal
                 val completeDeferred =
                   job.deferred.complete(Left(new InterruptedException("Cancelled"))).attempt.void
-                // 3) Cancel the cats-effect fibers (command + heartbeat)
+                // 3) Cancel the cats-effect fibers (command + heartbeat + health check)
                 val cancelFibers =
-                  job.fiber.cancel *> job.heartbeatFiber.traverse(_.cancel)
+                  job.fiber.cancel *> job.heartbeatFiber.traverse(_.cancel) *> job.healthCheckFiber.traverse(_.cancel)
                 // 4) Remove from map
                 val remove = backgroundJobs.update(_ - jobId)
 
@@ -259,6 +264,7 @@ final class ShellSession private (
           job.deferred.complete(Left(new InterruptedException("Session killed"))).attempt.void *>
             job.fiber.cancel *>
             job.heartbeatFiber.traverse(_.cancel) *>
+            job.healthCheckFiber.traverse(_.cancel) *>
             job.fiber.join.void.timeout(5.seconds).attempt.void
         )
         _ <- cleanupFiber.cancel *> cleanupFiber.join.void.timeout(5.seconds).attempt.void
@@ -366,6 +372,61 @@ final class ShellSession private (
 
   end startHeartbeat
 
+  /**
+   * Start a health check fiber that periodically verifies the OS process is alive.
+   *
+   * - Normal background job (executeBackground): the backgroundExecute fiber manages
+   *   the process lifecycle and completes the deferred when the process exits.
+   *   If the process crashes, backgroundExecute unblocks naturally (proc.waitFor()
+   *   returns), so we just log and do nothing.
+   *
+   * - Registered job (registerBackgroundJob): used for auto-backgrounded commands.
+   *   The watcher fiber uses fiber.joinWithNever, which may never complete if the
+   *   task fiber is stuck on a blocking op. If the process dies, we must complete
+   *   the deferred here to unblock cleanup.
+   *
+   * This fiber does NOT auto-kill processes that are idle — long-running servers
+   * (web servers, sleep commands, etc.) produce no output by design and should
+   * not be killed. Only the agent/LLM can decide to cancel a stuck job via the
+   * existing heartbeat stuck notification (10 min idle).
+   */
+  private def startJobHealthCheck(
+    jobId: String,
+    deferred: Deferred[IO, Either[Throwable, ProcessResult]],
+    health: JobHealth,
+    isRegisteredJob: Boolean = false
+  ): IO[Option[Fiber[IO, Throwable, Unit]]] =
+    val intervalSec = Defaults.BgHealthCheckIntervalSec
+    def loop: IO[Unit] =
+      IO.sleep(intervalSec.seconds) *>
+        deferred.tryGet.flatMap {
+          case Some(_) => IO.unit // job already finished — stop checking
+          case None =>
+            val proc = health.processRef.get()
+            if proc == null then loop // process not yet started
+            else if !proc.isAlive() then
+              if isRegisteredJob && health.deadNotified.compareAndSet(false, true) then
+                // Only complete deferred for registered (auto-backgrounded) jobs,
+                // where the watcher fiber may not detect the death
+                IO.println(
+                  s"[ShellSession] Job $jobId process died unexpectedly (exit: ${proc.exitValue()}) — completing deferred"
+                ) *>
+                  deferred
+                    .complete(
+                      Left(new RuntimeException("Process died unexpectedly (exit code: " + proc.exitValue() + ")"))
+                    )
+                    .attempt
+                    .void
+              else
+                // Normal job: backgroundExecute will handle completion via waitFor()
+                IO.unit
+            else loop // process still alive, keep checking
+            end if
+        }
+    loop.start.map(Some(_))
+
+  end startJobHealthCheck
+
   private def readStream(is: java.io.InputStream, onLine: String => Unit = _ => ()): String =
     Using.resource(new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) { reader =>
       val sb = new StringBuilder
@@ -464,7 +525,7 @@ object ShellSession:
           .flatMap { completed =>
             // Cancel heartbeat fibers for completed jobs
             completed.traverse_ { case (_, job) =>
-              job.heartbeatFiber.traverse(_.cancel)
+              job.heartbeatFiber.traverse(_.cancel) *> job.healthCheckFiber.traverse(_.cancel)
             } *> jobsRef.update(_ -- completed.map(_._1))
           }
     }

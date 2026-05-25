@@ -347,8 +347,36 @@ private[agent] trait AgentCore:
           newHighest = collectAllResult._2
           _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
           loggedReminders <- SystemReminders.logAndReturn(reminders)
+          // --- Active task reminder ---
+          // Only when pendingTaskCheck is set (LLM had text+tools or used TaskUpdate).
+          // Load active tasks and inject a reminder so LLM updates remaining tasks.
+          taskReminder <- (
+            if isCompactTurn || isAskTurn || !stateForLlm.execution.pendingTaskCheck then IO.pure("")
+            else
+              resources.taskStore
+                .listActive(stateForLlm.sessionId.getOrElse(""))
+                .map { activeTasks =>
+                  if activeTasks.isEmpty then ""
+                  else
+                    val lines = activeTasks.map { t =>
+                      val st = t.status match
+                        case nebflow.core.task.TaskStatus.InProgress => "in_progress"
+                        case _ => "pending"
+                      s"  #${t.id} [$st] ${t.subject}"
+                    }
+                    s"""\n<system-reminder>
+                       |You still have ${activeTasks.size} active task(s):
+                       |${lines.mkString("\n")}
+                       |
+                       |Please call TaskUpdate to mark tasks as completed or failed when done.
+                       |</system-reminder>""".stripMargin
+                }
+                .handleError(_ => "")
+          )
+          // Clear the flag after reading
+          _ <- IO(ctx.self ! AgentCommand.ClearTaskCheck)
           allReminders = verificationOpt.toList ++ loggedReminders
-          remindersText = SystemReminder.renderAll(allReminders)
+          remindersText = SystemReminder.renderAll(allReminders) + taskReminder
           // Per-turn dynamic context: only reminders (env info is now in system prompt)
           // Skip for compact/ask turns — the reminder is already in messages
           dynamicMsg =
@@ -364,7 +392,9 @@ private[agent] trait AgentCore:
               .map(l =>
                 s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
               )
-              .getOrElse("")
+              .getOrElse("") +
+            // NOTE: active task reminder — if you created tasks, clean them up when done
+            "\n\n# Task Management\n- After creating a task with TaskCreate, use TaskUpdate to update its status when you finish or abandon it.\n- Mark tasks as `completed` when done, `failed` if blocked or abandoned.\n- If a task is no longer relevant (e.g. user changed their mind), mark it as `failed`.\n- Never leave tasks in `in_progress` status at the end of your work."
           request = LlmRequest(
             messages = stateForLlm.messages ++ dynamicMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -376,6 +406,7 @@ private[agent] trait AgentCore:
           )
           result <- resources.llm
             .sendStream(request, onAttempt = Some(onAttemptCb))
+            .through(withInactivityTimeout(Defaults.LlmStreamInactivitySec.seconds))
             .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
             .compile
             .toList
@@ -494,7 +525,11 @@ private[agent] trait AgentCore:
           sessionId = state.sessionId,
           projectRoot = effectiveProjectRoot,
           cwd = effectiveProjectRoot
-        )
+        ),
+        memoryAgentManager = resources.memoryAgentManager,
+        folderId = state.folderId,
+        postOffice = resources.postOffice,
+        mailboxAddress = state.session.mailbox.map(_.address)
       )
       freshResults <- filteredCalls
         .traverse { call =>
@@ -513,11 +548,11 @@ private[agent] trait AgentCore:
                // Session memory files: auto-approve (agent can edit freely)
                executeTool(call, toolCtx)
              else if ToolReversibility.isReversible(call.name, call.input) then
-               // Reversible operations: auto-approve
-               executeTool(call, toolCtx)
-             else
-               // Irreversible operations: ask user for confirmation
-               askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
+                // Reversible operations: auto-approve
+                executeTool(call, toolCtx)
+              else
+                // Irreversible operations: ask user for confirmation
+                askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
             ) .map(r => (call, r)).attempt
             .map {
               case Right(pair) => pair
@@ -763,8 +798,6 @@ private[agent] trait AgentCore:
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(isMcpTool).toSet
       case names => names.toSet
     // Include MCP tools enabled by this agent via mcpServers config.
-    // Each serverId maps to tools registered as mcp__{serverId}__{toolName}
-    // mcpServers: ["*"] means all MCP tools; specific serverIds filter by prefix.
     val mcpToolNames = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool)
     val mcpTools =
       if agentDef.mcpServers == List("*") then mcpToolNames.toSet
@@ -773,10 +806,7 @@ private[agent] trait AgentCore:
           val prefix = s"mcp__${serverId}__"
           mcpToolNames.filter(_.startsWith(prefix))
         }.toSet
-    val always =
-      if agentDef.name == "context-manage" then ToolRegistry.AlwaysAvailable
-      else ToolRegistry.AlwaysAvailableNonCompact
-    base ++ mcpTools ++ always
+    base ++ mcpTools
 
   end buildAllowedToolSet
 
@@ -885,6 +915,39 @@ private[agent] trait AgentCore:
     )
   end aggregateChunks
 
+  /**
+   * Stream pipe: raises TimeoutException if no element passes through within `d`.
+   * Resets the timer on each element. Detects hung LLM connections (e.g. after Mac sleep/wake).
+   *
+   * Uses System.currentTimeMillis() (not nanoTime) because nanoTime freezes during
+   * Mac sleep/wake, which would prevent timeout detection after wake.
+   * The concurrent watchdog runs alongside the main stream and is cancelled when the
+   * main stream completes normally. Watchdog errors propagate via Concurrent semantics.
+   */
+  private def withInactivityTimeout[O](d: FiniteDuration): fs2.Pipe[IO, O, O] =
+    val timeoutEx = new java.util.concurrent.TimeoutException(
+      s"LLM stream inactive for ${d.toSeconds}s"
+    )
+    in =>
+      fs2.Stream.eval(IO.ref(System.currentTimeMillis())).flatMap { lastActivity =>
+        val main = in.evalTap(_ => lastActivity.set(System.currentTimeMillis()))
+        // Check at half the timeout interval for timely detection (min 5s, max 30s)
+        val checkInterval = math.max(math.min(d.toMillis / 5, 30000L), 5000L).millis
+        val watchdog = fs2.Stream
+          .awakeEvery[IO](checkInterval)
+          .evalMap { _ =>
+            IO(System.currentTimeMillis()).flatMap { now =>
+              lastActivity.get.flatMap { last =>
+                if now - last > d.toMillis then IO.raiseError(timeoutEx)
+                else IO.unit
+              }
+            }
+          }
+          .drain
+        main.concurrently(watchdog)
+      }
+  end withInactivityTimeout
+
   // ============================================================
   // Prompt / tool helpers
   // ============================================================
@@ -904,14 +967,20 @@ private[agent] trait AgentCore:
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$prefix$agentPrompt\n\n$envInfo$rulesBlock"
 
-  /** Platform-level system prompt, mandatory for all agents, shipped inside the JAR. */
+  /** Platform-level system prompt. Checks filesystem first (live-editable), falls back to JAR resource. */
   private def loadPlatformPrefix(): String =
-    val is = getClass.getResourceAsStream("/system-prefix.md")
-    if is != null then
-      val content = scala.io.Source.fromInputStream(is)(scala.io.Codec.UTF8).mkString.trim
-      is.close()
-      if content.nonEmpty then content + "\n\n" else ""
-    else ""
+    val fsPath = os.home / ".nebflow" / "system-prefix.md"
+    val content =
+      if os.exists(fsPath) then os.read(fsPath)
+      else
+        val is = getClass.getResourceAsStream("/system-prefix.md")
+        if is != null then
+          val s = scala.io.Source.fromInputStream(is)(scala.io.Codec.UTF8).mkString
+          is.close()
+          s
+        else ""
+    val trimmed = content.trim
+    if trimmed.nonEmpty then trimmed + "\n\n" else ""
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
