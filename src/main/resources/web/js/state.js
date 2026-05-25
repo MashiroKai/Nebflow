@@ -74,9 +74,8 @@ export default {
   settingsShowJson: false,   // toggle advanced JSON editor
   // Available tools (loaded from backend ToolRegistry via serverConfig)
   availableTools: [],
-  // Agent-configurable tools + auto-tools (from agentList)
+  // Agent-configurable tools (from agentList)
   agentAvailableTools: [],
-  agentAutoTools: [],
   // Per-agent unread count: { agentName: count }
   agentUnreadCounts: {},
   // sessionId -> agentName mapping (across all agents)

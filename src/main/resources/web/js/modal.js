@@ -174,42 +174,15 @@ export function showAgentModal(name, configJson, systemMd) {
   const grid = document.getElementById('agent-tools-grid');
   grid.innerHTML = '';
   const allTools = state.agentAvailableTools || [];
-  const autoTools = new Set(state.agentAutoTools || []);
 
   if (allTools.length === 0) {
     grid.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">' + t('agent.loadingTools') + '</div>';
     return;
   }
 
-  // Auto-injected tools (non-editable, always present)
-  const autoToolsArr = [...autoTools].sort();
-  if (autoToolsArr.length > 0) {
-    const sectionLabel = document.createElement('div');
-    sectionLabel.className = 'agent-built-in-label';
-    sectionLabel.textContent = t('agent.autoIncluded');
-    grid.appendChild(sectionLabel);
-    autoToolsArr.forEach(tool => {
-      const label = document.createElement('label');
-      label.className = 'agent-tool-check checked builtin';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.value = tool;
-      cb.checked = true;
-      cb.disabled = true;
-      label.appendChild(cb);
-      label.appendChild(document.createTextNode(tool));
-      grid.appendChild(label);
-    });
-  }
-
-  // Configurable tools
-  const configurableTools = allTools.filter(t => !autoTools.has(t));
-  if (configurableTools.length > 0) {
-    const sectionLabel = document.createElement('div');
-    sectionLabel.className = 'agent-built-in-label';
-    sectionLabel.textContent = t('agent.configurable');
-    grid.appendChild(sectionLabel);
-    configurableTools.forEach(tool => {
+  // All tools are configurable
+  if (allTools.length > 0) {
+    allTools.sort().forEach(tool => {
       const label = document.createElement('label');
       const checked = isWildcard || selectedTools.includes(tool);
       label.className = 'agent-tool-check' + (checked ? ' checked' : '');

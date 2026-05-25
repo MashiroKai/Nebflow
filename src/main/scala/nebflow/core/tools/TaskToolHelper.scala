@@ -5,7 +5,7 @@ import io.circe.syntax.*
 import nebflow.core.task.TaskStore
 
 /** Shared helper for task-related tools to emit taskListUpdate events. */
-private[tools] object TaskToolHelper:
+object TaskToolHelper:
 
   def emitTaskListUpdate(store: TaskStore, sessionId: String, ctx: ToolContext): IO[Unit] =
     ctx.wsSend match

@@ -202,8 +202,8 @@ onMessage('thinkingDelta', (msg) => {
   // Accumulate thinking text for ALL sessions
   if (sid) state.sessionThinkingBuffers[sid] = (state.sessionThinkingBuffers[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
+  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
-    if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     // Remove the generic thinking placeholder if it exists
     const existing = state.dom.chat.querySelector('.thinking-placeholder');
     if (existing) {
@@ -227,8 +227,8 @@ onMessage('textDelta', (msg) => {
   // Accumulate text for ALL sessions
   if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
+  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
-    if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
     // Finish thinking bubble before first text delta
     if (state.currentThinkingBubble) finishThinking();
@@ -263,8 +263,8 @@ onMessage('thinking', (msg) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   resetStreamTimeout(sid);
+  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
-    if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     // Guard against duplicate thinking bubbles: check both state ref and DOM.
     const existing = state.dom.chat.querySelector('.thinking-placeholder');
     if (!state.currentAiBubble && !existing) {
@@ -302,8 +302,8 @@ onMessage('toolCallDetected', (msg) => {
     if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
   }
 
+  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
-    if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
     if (state.currentThinkingBubble) finishThinking();
     // Flush thinking buffer for active sessions to prevent cross-turn concatenation.
@@ -1183,7 +1183,6 @@ onMessage('compactFailed', (msg) => {
 onMessage('agentList', (msg) => {
   state.agentsData = msg.agents || [];
   if (msg.availableTools) state.agentAvailableTools = msg.availableTools;
-  if (msg.autoTools) state.agentAutoTools = msg.autoTools;
   renderAgentList();
   // Auto-select first agent if none selected
   if (!state.selectedAgent && state.agentsData.length > 0) {
@@ -1326,32 +1325,31 @@ onMessage('bridgeUser', (msg) => {
 
 // --- Session busy state (backend authority) ---
 onMessage('sessionBusy', (msg) => {
-  if (isActive(msg)) {
-    const sid = msg.sessionId || state.activeSessionId;
-    if (msg.busy) {
-      setBusy(msg.sessionId);
-      // Server explicitly set busy — mark as expecting a turn (e.g. pendingEvents round)
-      if (sid) state.turnExpecting[sid] = true;
-    } else {
-      clearBusy(msg.sessionId);
-      // Defensive: if the 'done' event was lost but backend sent busy=false,
-      // finish any active streaming bubble so the cursor disappears and the
-      // duration badge is rendered.
-      delete state.sessionPendingTools[sid];
-      delete state.sessionPendingAiMessages[sid];
-      delete state.pendingRestore[sid];
-      if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
-      if (state.currentAiBubble) {
-        const durationMs = consumeTurnDuration(sid);
-        const model = state.sessionModelInfo[sid]?.model || null;
-        const data = finishAi(durationMs, model);
-        if (data) saveMsg(data, sid);
-        Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
-        state.agentBubbles = {};
-        state.activeAgentId = null;
-        clearStatus();
-      }
-    }
+  const sid = msg.sessionId || state.activeSessionId;
+  if (msg.busy) {
+    setBusy(msg.sessionId);
+    // Server explicitly set busy — mark as expecting a turn (e.g. pendingEvents round)
+    if (sid) state.turnExpecting[sid] = true;
+  } else {
+    clearBusy(msg.sessionId);
+    // Defensive: if the 'done' event was lost but backend sent busy=false,
+    // finish any active streaming bubble so the cursor disappears and the
+    // duration badge is rendered.
+    delete state.sessionPendingTools[sid];
+    delete state.sessionPendingAiMessages[sid];
+    delete state.pendingRestore[sid];
+    if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
+  }
+  // DOM-related cleanup only for active session
+  if (isActive(msg) && !msg.busy && state.currentAiBubble) {
+    const durationMs = consumeTurnDuration(sid);
+    const model = state.sessionModelInfo[sid]?.model || null;
+    const data = finishAi(durationMs, model);
+    if (data) saveMsg(data, sid);
+    Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
+    state.agentBubbles = {};
+    state.activeAgentId = null;
+    clearStatus();
   }
 });
 
@@ -1380,16 +1378,18 @@ function renderBgDropdown() {
   const dropdown = state.dom.bgDropdownEl;
   if (!listEl || !dropdown) return;
   listEl.innerHTML = '';
-  const running = tasks.filter(t => t.status === 'running');
-  if (running.length === 0) {
+  // Show running AND cancelling tasks (cancelling tasks stay visible until backend confirms)
+  const visible = tasks.filter(t => t.status === 'running' || t.status === 'cancelling');
+  if (visible.length === 0) {
     dropdown.classList.add('hidden');
     stopBgTimer();
     return;
   }
   const now = Date.now();
-  running.forEach(task => {
+  visible.forEach(task => {
     const row = document.createElement('div');
     row.className = 'bg-task-row';
+    if (task.status === 'cancelling') row.classList.add('bg-task-cancelling');
     const info = document.createElement('div');
     info.className = 'bg-task-info';
     const desc = document.createElement('span');
@@ -1405,11 +1405,11 @@ function renderBgDropdown() {
     durationSpan.dataset.taskId = task.taskId;
     if (task.startedAt) durationSpan.textContent = formatDuration(now - task.startedAt);
 
-    // Heartbeat status indicator
+    // Heartbeat status indicator (skip for cancelling tasks — it'll be gone soon)
     const hb = task.heartbeat;
     let statusDot = null;
     let linesSpan = null;
-    if (hb) {
+    if (hb && task.status !== 'cancelling') {
       const idleClass = hb.idleMs > 600000 ? 'bg-status-stuck' : (hb.idleMs > 120000 ? 'bg-status-idle' : 'bg-status-active');
       statusDot = document.createElement('span');
       statusDot.className = `bg-task-status ${idleClass}`;
@@ -1430,10 +1430,19 @@ function renderBgDropdown() {
     cancelBtn.textContent = t('bg.cancel');
     cancelBtn.onclick = (e) => {
       e.stopPropagation();
-      sendWs({ type: 'cancelBackgroundJob', sessionId: state.activeSessionId, jobId: task.taskId });
+      // Immediate visual feedback — optimistically show cancelling state
       cancelBtn.disabled = true;
-      cancelBtn.textContent = '...';
+      cancelBtn.classList.add('cancelling');
+      cancelBtn.textContent = task.status === 'cancelling' ? t('bg.cancelling') : '...';
+      task.status = 'cancelling';
+      sendWs({ type: 'cancelBackgroundJob', sessionId: state.activeSessionId, jobId: task.taskId });
     };
+    // If already cancelling, show the cancelling state
+    if (task.status === 'cancelling') {
+      cancelBtn.disabled = true;
+      cancelBtn.classList.add('cancelling');
+      cancelBtn.textContent = t('bg.cancelling');
+    }
     row.appendChild(info);
     row.appendChild(cancelBtn);
     listEl.appendChild(row);
@@ -1460,14 +1469,14 @@ function stopBgTimer() {
 
 function updateBgTasksUI() {
   const tasks = state.sessionBgTasks[state.activeSessionId] || [];
-  const running = tasks.filter(task => task.status === 'running');
+  const active = tasks.filter(task => task.status === 'running' || task.status === 'cancelling');
   const el = state.dom.bgIndicatorEl;
   const countEl = state.dom.bgCountEl;
   const dropdown = state.dom.bgDropdownEl;
   if (!el || !countEl) return;
-  if (running.length > 0) {
+  if (active.length > 0) {
     el.classList.remove('hidden');
-    countEl.textContent = running.length;
+    countEl.textContent = active.length;
   } else {
     el.classList.add('hidden');
     if (dropdown) dropdown.classList.add('hidden');
@@ -1525,9 +1534,13 @@ onMessage('backgroundTaskUpdate', (msg) => {
   }
   // Remove completed/failed tasks after a brief delay so user sees the count update
   if (msg.status === 'completed' || msg.status === 'failed') {
+    const taskId = msg.taskId;
     setTimeout(() => {
-      state.sessionBgTasks[sid] = state.sessionBgTasks[sid].filter(t => t.status === 'running');
-      updateBgTasksUI();
+      const existing = state.sessionBgTasks[sid];
+      if (existing) {
+        state.sessionBgTasks[sid] = existing.filter(t => t.taskId !== taskId);
+        updateBgTasksUI();
+      }
     }, 3000);
   }
   updateBgTasksUI();
