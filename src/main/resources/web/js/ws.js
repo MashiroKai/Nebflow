@@ -14,12 +14,6 @@ export function sendWs(msg) {
   }
 }
 
-// ---------- Stale session tracking ----------
-// When WS disconnects while sessions are busy, those agents may be stuck
-// (e.g. Mac sleep/wake kills the LLM streaming connection but the agent
-// stays in processing state). On reconnect, we interrupt them to force recovery.
-let staleBusySessionIds = new Set();
-
 // ---------- Connect ----------
 export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -53,31 +47,14 @@ export function connect() {
         sendWs({type: 'ping'});
       }
     }, 30000);
-    // Interrupt agents that were busy before disconnect — their LLM streams
-    // are likely dead after a network interruption (Mac sleep, etc).
-    if (staleBusySessionIds.size > 0) {
-      console.log('[ws] interrupting stale busy sessions:', [...staleBusySessionIds]);
-      for (const sid of staleBusySessionIds) {
-        sendWs({type: 'interrupt', sessionId: sid});
-        state.busySessionIds.delete(sid);
-        if (state.sessionBusyTimeouts[sid]) {
-          clearTimeout(state.sessionBusyTimeouts[sid]);
-          delete state.sessionBusyTimeouts[sid];
-        }
-      }
-      staleBusySessionIds.clear();
-      import('./chat.js').then(({ clearBusy, clearStatus }) => {
-        if (state.activeSessionId && !state.busySessionIds.has(state.activeSessionId)) {
-          clearStatus();
-        }
-      });
-    }
+    // Note: previously we auto-interrupted stale busy sessions here, but that caused
+    // false interrupts when the WS briefly disconnected during normal processing.
+    // The frontend's safety timeout (sessionBusyTimeouts) will clear stale busy state
+    // automatically. Users can also manually interrupt via the stop button.
   };
 
   state.ws.onclose = () => {
     console.log('[ws] disconnected');
-    // Snapshot currently-busy sessions — these may have stuck agents after reconnect
-    staleBusySessionIds = new Set(state.busySessionIds);
     state.dom.connEl.classList.add('off');
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     setTimeout(connect, 2000);
@@ -96,7 +73,7 @@ export function connect() {
         'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
         'agentConfig', 'agentCreated', 'agentUpdated',
         'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
-        'memoryData', 'memorySaved', 'memoryStatus', 'searchResults',
+        'memoryData', 'memorySaved', 'memoryStatus',
         'cardDesignData', 'cardDesignSaved',
         'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
         'browseResult'

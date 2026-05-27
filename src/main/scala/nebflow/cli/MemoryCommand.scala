@@ -19,14 +19,14 @@ object MemoryCommand extends CliCommand:
     def description = "View memory"
 
     def params = List(
-      CliParam("scope", Some('s'), "Scope: user/agent/folder/session", required = false)
+      CliParam("scope", Some('s'), "Scope: user/agent/folder", required = false)
     )
 
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val scope = ctx.args.getOrElse("scope", "session")
+          val scope = ctx.args.getOrElse("scope", "agent")
           client
             .command(
               Json.obj(
@@ -49,7 +49,7 @@ object MemoryCommand extends CliCommand:
     def description = "Set memory content"
 
     def params = List(
-      CliParam("scope", Some('s'), "Scope: user/agent/folder/session", required = false),
+      CliParam("scope", Some('s'), "Scope: user/agent/folder", required = false),
       CliParam("content", Some('c'), "Memory content", required = true)
     )
 
@@ -57,7 +57,7 @@ object MemoryCommand extends CliCommand:
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val scope = ctx.args.getOrElse("scope", "session")
+          val scope = ctx.args.getOrElse("scope", "agent")
           val content = ctx.args.getOrElse("content", ctx.positionalArgs.headOption.getOrElse(""))
           if content.isEmpty then IO.pure(CliResult.Error("Content required"))
           else

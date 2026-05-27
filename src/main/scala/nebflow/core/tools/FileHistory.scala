@@ -101,12 +101,14 @@ class FileHistory private (
       .toList
       .filter(f => Files.isRegularFile(f) && !f.getFileName.toString.endsWith(".identity"))
       .sortBy(f => f.getFileName.toString.toLongOption.getOrElse(0L))(Ordering[Long].reverse)
-    if files.size > maxEntries then files.drop(maxEntries).foreach { f =>
-      Files.deleteIfExists(f)
-      // Also clean up associated .identity file
-      val identityFile = dir.resolve(s"${f.getFileName}.identity")
-      Files.deleteIfExists(identityFile)
-    }
+    if files.size > maxEntries then
+      files.drop(maxEntries).foreach { f =>
+        Files.deleteIfExists(f)
+        // Also clean up associated .identity file
+        val identityFile = dir.resolve(s"${f.getFileName}.identity")
+        Files.deleteIfExists(identityFile)
+      }
+  end cleanupOld
 
 end FileHistory
 

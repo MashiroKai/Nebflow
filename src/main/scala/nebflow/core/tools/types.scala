@@ -36,11 +36,7 @@ case class ToolContext(
   // Hook system
   hookEngine: HookEngine = HookEngine.noop,
   hookContext: HookContext = HookContext(None, "", ""),
-  // Memory Agent system
-  memoryAgentManager: Option[nebflow.agent.MemoryAgentManager] = None,
   folderId: Option[String] = None,
-  // Inter-agent communication
-  postOffice: nebflow.agent.PostOffice = nebflow.agent.PostOffice.stub,
   // Agent identity for file history attribution
   mailboxAddress: Option[String] = None
 )

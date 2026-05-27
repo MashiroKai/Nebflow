@@ -305,65 +305,6 @@ export function smartScroll() {
   });
 }
 
-// === ANSI escape code → HTML renderer ===
-// Converts ANSI SGR codes to styled <span> elements.
-// Supports: 0(reset), 1(bold), 3(italic), 4(underline), 30-37/90-97(fg), 40-47/100-107(bg)
-const ANSI_COLORS = {
-  30:'#1a1a2e',31:'#c41e3a',32:'#2e7d32',33:'#b8860b',34:'#1565c0',35:'#7b1fa2',36:'#00838f',37:'#ccc',
-  90:'#666',91:'#e53935',92:'#43a047',93:'#fdd835',94:'#1e88e5',95:'#8e24aa',96:'#00acc1',97:'#eee',
-  40:'#1a1a2e',41:'#c62828',42:'#2e7d32',43:'#f9a825',44:'#1565c0',45:'#6a1b9a',46:'#00838f',47:'#ccc',
-  100:'#333',101:'#b71c1c',102:'#1b5e20',103:'#f57f17',104:'#0d47a1',105:'#4a148c',106:'#004d40',107:'#bbb'
-};
-
-export function renderAnsiCodes(text) {
-  if (!text || text.indexOf('\x1b[') === -1) return null;
-  // Split on ANSI sequences, keeping the sequences as tokens
-  const parts = text.split(/(\x1b\[[0-9;]*m)/);
-  const stack = [];  // current styles
-  let html = '';
-
-  function closeSpan() { if (stack.length > 0) { html += '</span>'; stack.pop(); } }
-  function openSpan(style) { html += '<span style="' + style + '">'; stack.push('span'); }
-
-  for (const part of parts) {
-    const m = part.match(/^\x1b\[([0-9;]*)m$/);
-    if (m) {
-      const codes = m[1] ? m[1].split(';').map(Number) : [0];
-      for (const code of codes) {
-        if (code === 0) {
-          // Reset: close all spans
-          while (stack.length > 0) closeSpan();
-        } else if (code === 1) {
-          openSpan('font-weight:bold');
-        } else if (code === 3) {
-          openSpan('font-style:italic');
-        } else if (code === 4) {
-          openSpan('text-decoration:underline');
-        } else if (code === 7) {
-          openSpan('filter:invert(1)');
-        } else if (code === 9) {
-          openSpan('text-decoration:line-through');
-        } else if (code >= 30 && code <= 37) {
-          openSpan('color:' + (ANSI_COLORS[code] || '#ccc'));
-        } else if (code >= 90 && code <= 97) {
-          openSpan('color:' + (ANSI_COLORS[code] || '#eee') + ';font-weight:bold');
-        } else if (code >= 40 && code <= 47) {
-          openSpan('background:' + (ANSI_COLORS[code] || '#333'));
-        } else if (code >= 100 && code <= 107) {
-          openSpan('background:' + (ANSI_COLORS[code] || '#555'));
-        }
-        // Ignore unsupported codes (22, 23, 24, etc.)
-      }
-    } else if (part) {
-      html += esc(part);
-    }
-  }
-  // Close any remaining open spans
-  while (stack.length > 0) closeSpan();
-
-  return '<pre class="tool-body-pre ansi-rendered">' + html + '</pre>';
-}
-
 // === Syntax highlighting for code (highlight.js) ===
 const EXT_TO_LANG = {
   js:'javascript',jsx:'javascript',ts:'typescript',tsx:'typescript',mjs:'javascript',cjs:'javascript',
@@ -402,20 +343,21 @@ export function detectLangFromLabel(label) {
 
 export function highlightCode(code, label) {
   if (!code || typeof hljs === 'undefined') return null;
-  // Check if code looks like plain hex/text (not code)
   if (code.length < 10) return null;
-  // Try detect from label first
+  // Strip Read tool line number prefixes ("1\t", " 42\t") before passing to hljs
+  const clean = code.replace(/^[ \t]*\d+\t/gm, '');
+  if (clean.length < 10) return null;
   const lang = detectLangFromLabel(label || '');
   try {
     let result;
     if (lang) {
       if (hljs.getLanguage(lang)) {
-        result = hljs.highlight(code, { language: lang, ignoreIllegals: true });
+        result = hljs.highlight(clean, { language: lang, ignoreIllegals: true });
       } else {
-        result = hljs.highlightAuto(code);
+        result = hljs.highlightAuto(clean);
       }
     } else {
-      result = hljs.highlightAuto(code);
+      result = hljs.highlightAuto(clean);
     }
     if (result && result.value) {
       return '<pre class="tool-body-pre hljs"><code class="hljs language-' + (result.language || '') + '">' + result.value + '</code></pre>';
@@ -429,17 +371,12 @@ export function highlightCode(code, label) {
 /**
  * Render tool content with appropriate highlighting.
  * Returns HTML string for the body, or null if no special rendering applies.
- * Priority: diff > ANSI > syntax highlight(Read/Grep only) > null(plain text)
+ * Priority: diff > syntax highlight (Read/Grep only) > null (plain text)
  */
 export function renderHighlightedContent(content, label) {
   if (!content) return null;
-  // 1. Try diff first (already handles its own <pre>)
   const diffHtml = formatDiff(content);
   if (diffHtml) return diffHtml;
-  // 2. Try ANSI rendering
-  const ansiHtml = renderAnsiCodes(content);
-  if (ansiHtml) return ansiHtml;
-  // 3. Try syntax highlighting — only for Read/Grep tools which show source code
   const toolName = label ? label.replace(/\(.*$/, '').trim() : '';
   if (toolName === 'Read' || toolName === 'Grep') {
     const hlHtml = highlightCode(content, label);

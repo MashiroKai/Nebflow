@@ -15,8 +15,8 @@ import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
 import nebflow.shared.*
+import org.apache.pekko.actor.typed.*
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
-import org.apache.pekko.actor.typed.{ActorRef, ActorSystem, Behavior, Terminated}
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -59,7 +59,7 @@ class WebSocketRoutes(
    */
   private val deathWatcher: ActorRef[DeathWatcher.Command] =
     actorSystem.systemActorOf(
-      DeathWatcher(rootAgents, refToSession, sharedResources.dispatcher, wsHub, sharedResources.postOffice),
+      DeathWatcher(rootAgents, refToSession, sharedResources.dispatcher, wsHub),
       "agent-death-watcher"
     )
 
@@ -121,11 +121,6 @@ class WebSocketRoutes(
               )
             }.flatten
           yield
-            val mailbox = AgentMailbox(
-              agentName = agentName,
-              sessionId = sessionId,
-              sessionName = metaOpt.map(_.name).getOrElse("Session")
-            )
             val ref = actorSystem.systemActorOf(
               AgentActor(
                 agentDef,
@@ -141,13 +136,12 @@ class WebSocketRoutes(
                 contextWindow = contextWindow,
                 projectRoot = effectiveProjectRoot,
                 rulesMd = resolvedRules,
-                folderId = folderId,
-                mailbox = Some(mailbox)
+                folderId = folderId
               ),
               s"agent-$sessionId"
             )
-            (ref, effectiveProjectRoot.getOrElse(""), mailbox)
-          agentIo.flatMap { case (ref, pr, mailbox) =>
+            (ref, effectiveProjectRoot.getOrElse(""))
+          agentIo.flatMap { case (ref, pr) =>
             val hookCtx = nebflow.core.hooks.HookContext(
               sessionId = Some(sessionId),
               projectRoot = pr,
@@ -162,7 +156,6 @@ class WebSocketRoutes(
                   .as(nebflow.core.hooks.HookResult.allow)
               }
               .void *>
-              sharedResources.postOffice.register(mailbox, ref) *>
               refToSession.update(_ + (ref -> sessionId)) *>
               IO(deathWatcher ! DeathWatcher.Watch(sessionId, ref)) *>
               rootAgents.update(_ + (sessionId -> ref)).as(ref)
@@ -175,9 +168,11 @@ class WebSocketRoutes(
       agents.get(sessionId) match
         case Some(ref) =>
           ref ! AgentCommand.Stop(s"session $sessionId deleted")
-          (agents - sessionId, IO(deathWatcher ! DeathWatcher.Unwatch(sessionId)) *>
-            sharedResources.postOffice.unregister(sessionId) *>
-            refToSession.update(_ - ref))
+          (
+            agents - sessionId,
+            IO(deathWatcher ! DeathWatcher.Unwatch(sessionId)) *>
+              refToSession.update(_ - ref)
+          )
         case None => (agents, IO.unit)
     }.flatten
 
@@ -393,9 +388,8 @@ class WebSocketRoutes(
   end logInputHistory
 
   private def broadcastServerConfig: IO[Unit] =
-    val toolsList = ToolRegistry.ALL_TOOLS.map(t =>
-      io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
-    )
+    val toolsList =
+      ToolRegistry.ALL_TOOLS.map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
@@ -468,10 +462,6 @@ class WebSocketRoutes(
           "agent" -> io.circe.Json.obj(
             "exists" -> MemoryStore.agentExists(agentName).asJson,
             "preview" -> MemoryStore.agentPreview(agentName).asJson
-          ),
-          "session" -> io.circe.Json.obj(
-            "exists" -> MemoryStore.sessionExists(sessionId).asJson,
-            "preview" -> MemoryStore.sessionPreview(sessionId).asJson
           )
         )
       )
@@ -815,28 +805,6 @@ class WebSocketRoutes(
             }
           else IO.unit
 
-        case "searchHistory" =>
-          val query = parse(text).flatMap(_.hcursor.downField("query").as[String]).getOrElse("")
-          if query.trim.nonEmpty then
-            sessionStore.searchHistory(query).flatMap { hits =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "searchResults".asJson,
-                  "query" -> query.asJson,
-                  "results" -> hits.asJson
-                )
-              )
-            }
-          else
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "searchResults".asJson,
-                "query" -> "".asJson,
-                "results" -> List.empty[SearchHit].asJson
-              )
-            )
-          end if
-
         case "getSkills" =>
           SkillService.listSkills().flatMap { skills =>
             wsSend(
@@ -860,6 +828,82 @@ class WebSocketRoutes(
                   "type" -> "skillError".asJson,
                   "sessionId" -> skillSessionId.asJson,
                   "message" -> s"Skill failed: ${e.getMessage.take(200)}".asJson
+                )
+              )
+            }
+          else IO.unit
+
+        // ===== Reminder Management =====
+
+        case "createReminder" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val crContent = hc.downField("content").as[String].getOrElse("")
+          val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
+          val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
+          if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
+            val reminder = nebflow.core.reminder.Reminder.create(crSessionId, crContent, crTriggerAt, crRefPath)
+            sharedResources.reminderStore.addReminder(reminder).flatMap { _ =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "reminderCreated".asJson,
+                  "reminder" -> io.circe.Json.obj(
+                    "id" -> reminder.id.asJson,
+                    "content" -> reminder.content.asJson,
+                    "triggerAt" -> reminder.triggerAt.asJson,
+                    "createdAt" -> reminder.createdAt.asJson,
+                    "referencePath" -> reminder.referencePath.asJson
+                  )
+                )
+              )
+            }
+          else
+            val reason =
+              if crSessionId.isEmpty then "missing sessionId"
+              else if crContent.isEmpty then "missing content"
+              else if crTriggerAt <= System.currentTimeMillis() then "triggerAt must be in the future"
+              else "unknown"
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid reminder: $reason".asJson))
+          end if
+
+        case "listReminders" =>
+          val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+          if lrSessionId.nonEmpty then
+            sharedResources.reminderStore.loadReminders(lrSessionId).flatMap { reminders =>
+              val reminderJsons = reminders.map { r =>
+                io.circe.Json.obj(
+                  "id" -> r.id.asJson,
+                  "content" -> r.content.asJson,
+                  "triggerAt" -> r.triggerAt.asJson,
+                  "createdAt" -> r.createdAt.asJson,
+                  "triggered" -> r.triggered.asJson,
+                  "triggeredAt" -> r.triggeredAt.asJson,
+                  "referencePath" -> r.referencePath.asJson
+                )
+              }
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "reminderList".asJson,
+                  "reminders" -> reminderJsons.asJson,
+                  "sessionId" -> lrSessionId.asJson
+                )
+              )
+            }
+          else IO.unit
+          end if
+
+        case "deleteReminder" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val drSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val drId = json.hcursor.downField("id").as[String].getOrElse("")
+          if drSessionId.nonEmpty && drId.nonEmpty then
+            sharedResources.reminderStore.deleteReminder(drSessionId, drId).flatMap { _ =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "reminderDeleted".asJson,
+                  "id" -> drId.asJson,
+                  "sessionId" -> drSessionId.asJson
                 )
               )
             }
@@ -1296,8 +1340,6 @@ class WebSocketRoutes(
                 case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
                 case "folder" =>
                   if folderId.nonEmpty then MemoryStore.loadFolderMemory(folderId).getOrElse("") else ""
-                case "session" =>
-                  if sessionId.nonEmpty then MemoryStore.loadSessionMemory(sessionId).getOrElse("") else ""
                 case _ => ""
               wsSend(
                 io.circe.Json.obj(
@@ -1328,8 +1370,6 @@ class WebSocketRoutes(
                 case "agent" => MemoryStore.saveAgentMemory(agentName, content)
                 case "folder" =>
                   if folderId.nonEmpty then MemoryStore.saveFolderMemory(folderId, content) else IO.unit
-                case "session" =>
-                  if sessionId.nonEmpty then MemoryStore.saveSessionMemory(sessionId, content) else IO.unit
                 case _ => IO.unit
               save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
             })
@@ -1359,10 +1399,6 @@ class WebSocketRoutes(
                 "folder" -> io.circe.Json.obj(
                   "exists" -> (folderId.nonEmpty && MemoryStore.folderExists(folderId)).asJson,
                   "preview" -> (if folderId.nonEmpty then MemoryStore.folderPreview(folderId) else None).asJson
-                ),
-                "session" -> io.circe.Json.obj(
-                  "exists" -> (sessionId.nonEmpty && MemoryStore.sessionExists(sessionId)).asJson,
-                  "preview" -> (if sessionId.nonEmpty then MemoryStore.sessionPreview(sessionId) else None).asJson
                 )
               )
             )
@@ -1892,8 +1928,7 @@ private object DeathWatcher:
     rootAgents: Ref[IO, Map[String, ActorRef[AgentCommand]]],
     refToSession: Ref[IO, Map[ActorRef[AgentCommand], String]],
     dispatcher: cats.effect.std.Dispatcher[IO],
-    wsHub: WsHub,
-    postOffice: nebflow.agent.PostOffice
+    wsHub: WsHub
   ): Behavior[Command] = Behaviors.setup { ctx =>
     def behavior(refMap: Map[ActorRef[AgentCommand], String]): Behavior[Command] =
       Behaviors
@@ -1906,32 +1941,31 @@ private object DeathWatcher:
               case Some((ref, _)) => behavior(refMap - ref)
               case None => Behaviors.same
         }
-        .receiveSignal {
-          case (_, Terminated(deadRef)) =>
-            // Terminated.ref is ActorRef[Nothing] — cast is safe because
-            // ActorRef identity is by path, not type parameter
-            val agentRef: ActorRef[AgentCommand] = deadRef.asInstanceOf[ActorRef[AgentCommand]]
-            refMap.get(agentRef) match
-              case Some(sid) =>
-                dispatcher.unsafeRunAndForget(
-                  rootAgents.update(_ - sid) *>
-                    postOffice.unregister(sid) *>
-                    refToSession.update(_ - agentRef) *>
-                    // Broadcast sessionBusy(false) to all frontend clients so the
-                    // session's blocked state is cleared immediately — without this,
-                    // the frontend would wait up to 10 minutes for the safety timeout
-                    // before the user can send a new message (which triggers creation
-                    // of a fresh actor via ensureRootAgent).
-                    wsHub.broadcast(
-                      io.circe.Json.obj(
-                        "type" -> "sessionBusy".asJson,
-                        "sessionId" -> sid.asJson,
-                        "busy" -> false.asJson
-                      )
+        .receiveSignal { case (_, Terminated(deadRef)) =>
+          // Terminated.ref is ActorRef[Nothing] — cast is safe because
+          // ActorRef identity is by path, not type parameter
+          val agentRef: ActorRef[AgentCommand] = deadRef.asInstanceOf[ActorRef[AgentCommand]]
+          refMap.get(agentRef) match
+            case Some(sid) =>
+              dispatcher.unsafeRunAndForget(
+                rootAgents.update(_ - sid) *>
+                  refToSession.update(_ - agentRef) *>
+                  // Broadcast sessionBusy(false) to all frontend clients so the
+                  // session's blocked state is cleared immediately — without this,
+                  // the frontend would wait up to 10 minutes for the safety timeout
+                  // before the user can send a new message (which triggers creation
+                  // of a fresh actor via ensureRootAgent).
+                  wsHub.broadcast(
+                    io.circe.Json.obj(
+                      "type" -> "sessionBusy".asJson,
+                      "sessionId" -> sid.asJson,
+                      "busy" -> false.asJson
                     )
-                )
-                behavior(refMap - agentRef)
-              case None => Behaviors.same
+                  )
+              )
+              behavior(refMap - agentRef)
+            case None => Behaviors.same
+          end match
         }
     behavior(Map.empty)
   }

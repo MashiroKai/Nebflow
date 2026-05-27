@@ -2,20 +2,28 @@ package nebflow.service
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import io.circe.Json
+import io.circe.syntax.*
 import nebflow.shared.{MtimeCache, MtimeFileCache}
 
 /**
- * Four-level memory store backed by Markdown files.
+ * Three-level memory store backed by Markdown files.
  *
  * Levels:
- *   - User Preference:  ~/.nebflow/NEBFLOW.md                    (global, all agents)
- *   - Agent:            ~/.nebflow/agents/{name}/memory.md       (per agent)
- *   - Folder:           ~/.nebflow/folders/{fid}.memory.md       (per folder)
- *   - Session:          ~/.nebflow/sessions/{sid}.memory.md      (per session)
+ *   - User:    ~/.nebflow/NEBFLOW.md                    (global, all agents)
+ *   - Agent:   ~/.nebflow/agents/{name}/memory.md       (per agent)
+ *   - Folder:  ~/.nebflow/folders/{fid}.memory.md       (per folder)
  *
- * All reads use mtime-based caching: files are only re-read from disk
- * when their modification time changes. Edits to memory files take
- * effect on the next LLM call without needing a new session.
+ * Detail files: ~/.nebflow/memory/{hash}.md
+ *   - When an entry has detail content, MemoryAgent stores it in a separate file
+ *     named by the SHA-256 hash of the entry content (first 12 hex chars).
+ *   - The index entry carries a →hash reference so agents can find it.
+ *
+ * Write flow:
+ *   WriteMemoryTool → staging area (~/.nebflow/memory-staging.jsonl)
+ *   Dream cycle → MemoryAgent processes staging → final memory files
+ *
+ * All reads use mtime-based caching.
  */
 object MemoryStore:
 
@@ -29,8 +37,64 @@ object MemoryStore:
   def folderMemoryPath(folderId: String): os.Path =
     os.home / ".nebflow" / "folders" / s"$folderId.memory.md"
 
-  def sessionMemoryPath(sessionId: String): os.Path =
-    os.home / ".nebflow" / "sessions" / s"$sessionId.memory.md"
+  /** Directory for detail files. */
+  def detailDir: os.Path = os.home / ".nebflow" / "memory"
+
+  /** Path for a detail file given its hash. */
+  def detailPath(hash: String): os.Path = detailDir / s"$hash.md"
+
+  /** Staging area path. */
+  def stagingPath: os.Path = os.home / ".nebflow" / "memory-staging.jsonl"
+
+  /** List all folder memory files that exist on disk. */
+  def allFolderMemoryPaths: Seq[os.Path] =
+    val dir = os.home / ".nebflow" / "folders"
+    if !os.exists(dir) then Seq.empty
+    else os.list(dir).filter(_.last.endsWith(".memory.md")).toSeq
+
+  // --- Hash utility ---
+
+  /** Compute a 12-char hex hash from content. */
+  def contentHash(content: String): String =
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    digest.update(content.getBytes("UTF-8"))
+    digest.digest().take(6).map(b => String.format("%02x", b)).mkString
+
+  // --- Staging area ---
+
+  /** Append an entry to the staging area (called by WriteMemoryTool). */
+  def appendStaging(
+    scope: String,
+    content: String,
+    detail: Option[String],
+    source: String,
+    folderId: Option[String]
+  ): IO[Unit] =
+    IO.blocking {
+      val hash = detail.filter(_.trim.nonEmpty).map(_ => contentHash(content))
+      val entry = Json.obj(
+        "ts" -> java.time.LocalDateTime.now().toString.asJson,
+        "scope" -> scope.asJson,
+        "content" -> content.asJson,
+        "detail" -> detail.asJson,
+        "hash" -> hash.asJson,
+        "source" -> source.asJson,
+        "folder" -> folderId.asJson
+      )
+      val line = entry.noSpaces + "\n"
+      os.write.append(stagingPath, line, createFolders = true)
+    }
+
+  /** Load all staging entries. Returns empty string if no staging file. */
+  def loadStaging: IO[String] = IO.blocking {
+    if !os.exists(stagingPath) then ""
+    else os.read(stagingPath).trim
+  }
+
+  /** Clear the staging area after processing. */
+  def clearStaging: IO[Unit] = IO.blocking {
+    if os.exists(stagingPath) then os.remove(stagingPath)
+  }
 
   // --- Mtime-cached file reads ---
 
@@ -44,18 +108,13 @@ object MemoryStore:
 
   private val folderCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
 
-  private val sessionCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
-
   private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
     agentCaches.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
 
   private def getFolderCache(folderId: String): MtimeFileCache[Option[String]] =
     folderCaches.getOrElseUpdate(folderId, MtimeCache.file(folderMemoryPath(folderId), parseMemory))
 
-  private def getSessionCache(sessionId: String): MtimeFileCache[Option[String]] =
-    sessionCaches.getOrElseUpdate(sessionId, MtimeCache.file(sessionMemoryPath(sessionId), parseMemory))
-
-  // --- Load (mtime-cached — called during system prompt build) ---
+  // --- Load (mtime-cached) — injected into system prompts ---
 
   def loadUserMemory: Option[String] =
     userCache.get.unsafeRunSync().flatten
@@ -66,10 +125,7 @@ object MemoryStore:
   def loadFolderMemory(folderId: String): Option[String] =
     getFolderCache(folderId).get.unsafeRunSync().flatten
 
-  def loadSessionMemory(sessionId: String): Option[String] =
-    getSessionCache(sessionId).get.unsafeRunSync().flatten
-
-  // --- Save (async — called from WS routes / tools, invalidates cache) ---
+  // --- Save (called from WS routes / Dream agent, invalidates cache) ---
 
   private def saveFile(path: os.Path, content: String, invalidateCache: () => IO[Unit]): IO[Unit] =
     IO.blocking(os.write.over(path, content, createFolders = true)) *> invalidateCache()
@@ -83,20 +139,15 @@ object MemoryStore:
   def saveFolderMemory(folderId: String, content: String): IO[Unit] =
     saveFile(folderMemoryPath(folderId), content, () => getFolderCache(folderId).invalidate)
 
-  def saveSessionMemory(sessionId: String, content: String): IO[Unit] =
-    saveFile(sessionMemoryPath(sessionId), content, () => getSessionCache(sessionId).invalidate)
+  // --- Detail files (called by Dream agent via Write tool) ---
 
-  /** Append a line to session memory (reads current, appends, writes back). */
-  def appendSessionMemory(sessionId: String, line: String): IO[Unit] =
-    val path = sessionMemoryPath(sessionId)
-    val cache = getSessionCache(sessionId)
-    for
-      existing <- IO.blocking(if os.exists(path) then os.read(path) else "")
-      updated = if existing.trim.isEmpty then line else s"${existing.trim}\n$line"
-      _ <- saveFile(path, updated, () => cache.invalidate)
-    yield ()
+  /** Write a detail file to ~/.nebflow/memory/{hash}.md. */
+  def writeDetailFile(hash: String, content: String): IO[Unit] =
+    IO.blocking {
+      os.write.over(detailPath(hash), content, createFolders = true)
+    }
 
-  // --- Cache invalidation (for Memory Agent direct file edits) ---
+  // --- Cache invalidation ---
 
   def invalidateUserCache(): Unit =
     userCache.invalidate.unsafeRunSync()
@@ -126,7 +177,6 @@ object MemoryStore:
   def userPreview: Option[String] = preview(userMemoryPath)
   def agentPreview(agentName: String): Option[String] = preview(agentMemoryPath(agentName))
   def folderPreview(folderId: String): Option[String] = preview(folderMemoryPath(folderId))
-  def sessionPreview(sessionId: String): Option[String] = preview(sessionMemoryPath(sessionId))
 
   // --- Exists check ---
 
@@ -136,6 +186,5 @@ object MemoryStore:
   def userExists: Boolean = fileExists(userMemoryPath)
   def agentExists(agentName: String): Boolean = fileExists(agentMemoryPath(agentName))
   def folderExists(folderId: String): Boolean = fileExists(folderMemoryPath(folderId))
-  def sessionExists(sessionId: String): Boolean = fileExists(sessionMemoryPath(sessionId))
 
 end MemoryStore

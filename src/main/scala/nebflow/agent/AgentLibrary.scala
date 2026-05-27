@@ -64,11 +64,13 @@ class AgentLibrary(
   def seedDefaults(): IO[Unit] = IO.blocking {
     defaults.foreach { case DefaultAgent(name, agentJson, systemMd) =>
       val dir = agentsDir / name
+      os.makeDir.all(dir)
       if !os.exists(dir / "agent.json") then
-        os.makeDir.all(dir)
         os.write.over(dir / "agent.json", agentJson)
-        os.write.over(dir / "system.md", systemMd)
         logger.info(s"Seeded default agent: $name")
+      // Always ensure system.md exists if the default provides one.
+      // This handles existing installations where agent.json exists but system.md doesn't.
+      if systemMd.nonEmpty && !os.exists(dir / "system.md") then os.write.over(dir / "system.md", systemMd)
     }
   }
 
@@ -77,13 +79,18 @@ class AgentLibrary(
   private val defaults = List(
     DefaultAgent(
       "Nebula",
-      """{"name":"Nebula","displayName":"Nebula","description":"AI coding assistant with full tool access","avatar":"<i data-lucide=\\"sparkles\\"></i>","tools":["*"],"mcpServers":["*"]}""",
+      """{"name":"Nebula","displayName":"Nebula","description":"AI coding assistant with full tool access","avatar":"<i data-lucide=\"sparkles\"></i>","tools":["*"],"mcpServers":["*"]}""",
       """You are Nebula, an AI coding assistant running inside Nebflow.
 
 ## Session Management
 
 - If the user asks for help, direct them to `/help`.
 - The Companion (Pickle) is a separate system. When the user addresses Pickle, stay out of the way — respond in one line or less for any part meant for you. Do not explain that you're not Pickle."""
+    ),
+    DefaultAgent(
+      "MemoryAgent",
+      """{"name":"MemoryAgent","description":"Internal memory management agent","tools":["Read","Write","Edit"]}""",
+      MemoryAgentPrompts.systemPrompt
     )
   )
 

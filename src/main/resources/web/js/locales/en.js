@@ -9,8 +9,6 @@ export default {
   'sidebar.sessions': 'Sessions',
   'sidebar.newFolder': 'New Folder — create a session group',
   'sidebar.newSession': 'New Session — start a new conversation',
-  'sidebar.searchPlaceholder': 'Search chats...',
-  'search.clear': 'Clear — clear the search',
   'sidebar.toggle': 'Collapse or expand sidebar — show or hide the session panel',
   'sidebar.edgeToggle': 'Toggle sidebar — expand or collapse',
   'sidebar.settingsTitle': 'Settings',
@@ -272,16 +270,6 @@ export default {
   // === Time ===
   'time.yesterday': 'Yesterday',
 
-  // === Search ===
-  'search.noResults': 'No results found',
-  'search.folder': 'Folder',
-  'search.session': 'Session',
-  'search.user': 'User',
-  'search.ai': 'AI',
-  'search.tool': 'Tool',
-  'search.agent': 'Agent',
-  'search.ask': 'Ask',
-
   // === Task list ===
   'task.expand': 'Expand',
   'task.collapse': 'Collapse',
@@ -338,4 +326,21 @@ export default {
   'tool.result.truncatedTitle': 'Output was too large and has been truncated to prevent context overflow',
   'tool.result.taskCreated': 'Task #{id} created',
   'tool.result.ofLines': '{current} of {total} lines',
+
+  // === Reminders ===
+  'reminder.empty': 'No reminders',
+  'reminder.emptyHint': 'Click empty area or press + to create',
+  'reminder.create': 'New Reminder',
+  'reminder.cancel': 'Cancel',
+  'reminder.inputPlaceholder': 'Enter reminder...',
+  'reminder.timeLabel': 'Trigger Time',
+  'reminder.refLabel': 'Reference',
+  'reminder.refPlaceholder': 'File path (optional, LLM will read this file)',
+  'reminder.pendingCount': '{count} pending',
+  'reminder.triggered': 'Triggered',
+  'reminder.triggerTitle': 'Reminder Triggered',
+  'reminder.scheduledAt': 'Scheduled at {time}, executing...',
+  'reminder.today': 'Today',
+  'reminder.tomorrow': 'Tomorrow',
+  'reminder.yesterday': 'Yesterday',
 };

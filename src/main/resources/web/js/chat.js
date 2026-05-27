@@ -282,7 +282,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const detailHtml = buildToolDetail(inputJson, label);
-  // Render full content in body with syntax highlighting or ANSI color rendering.
+  // Render full content in body with syntax highlighting (Read/Grep only).
   // Body is hidden by default, click to expand shows full content with scroll for long output.
   const highlightHtml = content ? renderHighlightedContent(content, label) : null;
   const bodyHtml = (detailHtml + (highlightHtml || (content ? '<pre class="tool-body-pre">' + escapeHtml(content) + '</pre>' : ''))) || '';
@@ -317,8 +317,11 @@ export function renderToolPending(label, sessionId) {
 
   // If a pending card already exists for this session, update it in-place
   // to avoid spinner flicker between toolCallDetected → toolStart events.
+  // Defense: if the DOM node was removed (e.g. historyPage cleared innerHTML
+  // without clearing sessionToolCards), treat it as non-existent so a fresh
+  // card is created.
   const existing = state.sessionToolCards[sid];
-  if (existing) {
+  if (existing && existing.isConnected) {
     const labelEl = existing.querySelector('.label');
     if (labelEl) {
       const localLabel = localizeToolLabel(label);

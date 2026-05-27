@@ -44,8 +44,7 @@ object AgentActor extends AgentCore with AgentSession:
     contextWindow: Int = Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
-    folderId: Option[String] = None,
-    mailbox: Option[AgentMailbox] = None
+    folderId: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors
       .supervise(
@@ -82,8 +81,7 @@ object AgentActor extends AgentCore with AgentSession:
                 contextWindow = contextWindow,
                 projectRoot = projectRoot,
                 rulesMd = rulesMd,
-                folderId = folderId,
-                mailbox = mailbox
+                folderId = folderId
               ),
               stash,
               context
@@ -164,6 +162,16 @@ object AgentActor extends AgentCore with AgentSession:
             case Some(bl) => Message(MessageRole.User, Right(bl))
             case None => Message(MessageRole.User, Left(text))
           val newMessages = stateWithLang.messages :+ userMsg
+          // Notify frontend immediately that this session is busy (not only
+          // when LLM starts streaming).  This matters for multi-tab scenarios
+          // and sidebar session indicators — without it, other clients only
+          // see the busy state after the first thinking/text delta arrives.
+          if depth == 0 then
+            stateWithLang.sessionId.foreach { sid =>
+              resources.dispatcher.unsafeRunAndForget(
+                emitSessionBusy(stateWithLang.wsSend, sid, busy = true)
+              )
+            }
           // Memory is loaded EveryTurn via TurnContext — no need to preload here
           pipeLlmCall(
             agentDef,
@@ -208,6 +216,13 @@ object AgentActor extends AgentCore with AgentSession:
         resources.dispatcher.unsafeRunAndForget(
           resources.sessionStore.appendUiMessages(state.sessionId.getOrElse(""), List(sysMsg))
         )
+        // Notify frontend immediately that this session is busy (same as UserInput)
+        if depth == 0 then
+          state.sessionId.foreach { sid =>
+            resources.dispatcher.unsafeRunAndForget(
+              emitSessionBusy(state.wsSend, sid, busy = true)
+            )
+          }
         logAgentEvent(
           ctx,
           agentDef,
@@ -342,39 +357,6 @@ object AgentActor extends AgentCore with AgentSession:
           None
         )
 
-      // --- Inter-agent message received ---
-      case AgentCommand.AgentMessageReceived(fromMailbox, payload, _) =>
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "agent-message-received",
-          s"from=${fromMailbox.display}"
-        )
-        emitStream(
-          resources.dispatcher,
-          state.wsSend,
-          ctx,
-          AgentStreamEvent.ExternalEventReceived("agent", fromMailbox.agentName, None),
-          isSubagent = depth > 0,
-          state.sessionId
-        )
-        val senderInfo = s"[Message from agent ${fromMailbox.display}]"
-        val userMsg = Message(MessageRole.User, Left(s"$senderInfo\n$payload"))
-        val newMessages = state.messages :+ userMsg
-        pipeLlmCall(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state.withMessages(newMessages),
-          stash,
-          ctx,
-          None
-        )
-
       // --- User answered: route to blocking replyTo ---
       case AgentCommand.UserAnswered(answers) =>
         state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
@@ -418,19 +400,15 @@ object AgentActor extends AgentCore with AgentSession:
       // These accumulate in the stash over many turns and eventually cause
       // StashOverflowException when legitimate user messages arrive during
       // a long LLM call. All are handled in processing state — in idle they are stale.
-      case _: AgentCommand.StreamFiberStarted |
-           _: AgentCommand.UpdateHighestPressureLevel |
-           _: AgentCommand.LlmComplete |
-           _: AgentCommand.LlmFailed |
-           _: AgentCommand.ToolsComplete |
-           _: AgentCommand.SetPermissionDeferred |
-           _: AgentCommand.ReplaceToolResults |
-           AgentCommand.ClearTaskCheck =>
+      case _: AgentCommand.StreamFiberStarted | _: AgentCommand.UpdateHighestPressureLevel |
+          _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
+          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults | AgentCommand.ClearTaskCheck =>
         Behaviors.same
 
       case msg =>
         stash.stash(msg)
         Behaviors.same
+  end idle
 
   // ============================================================
   // Processing state — LLM or tools in flight
@@ -867,6 +845,16 @@ object AgentActor extends AgentCore with AgentSession:
         state.pendingCompaction.foreach(_.replyDeferred.foreach { d =>
           resources.dispatcher.unsafeRunAndForget(d.complete(Left("Interrupted by user")).handleErrorWith(_ => IO.unit))
         })
+        // Emit interrupted event so frontend can clear attention state (AskUser yellow dot),
+        // clean up streaming state, and reset UI for the active session.
+        emitStream(
+          resources.dispatcher,
+          state.wsSend,
+          ctx,
+          AgentStreamEvent.Interrupted,
+          isSubagent = depth > 0,
+          state.sessionId
+        )
         stash.unstashAll(idle(agentDef, resources, depth, parentRef, interruptedState, stash, ctx))
 
       // --- Stop ---
@@ -888,6 +876,15 @@ object AgentActor extends AgentCore with AgentSession:
           resources.dispatcher.unsafeRunAndForget(f.cancel.handleErrorWith(_ => IO.unit))
         )
         state.readTracker.foreach(t => resources.dispatcher.unsafeRunAndForget(t.clear()))
+        // Emit interrupted event so frontend clears attention state (AskUser yellow dot)
+        emitStream(
+          resources.dispatcher,
+          state.wsSend,
+          ctx,
+          AgentStreamEvent.Interrupted,
+          isSubagent = depth > 0,
+          state.sessionId
+        )
         val resetState = state
           .withMessages(Nil)
           .withLatestUsage(None)
@@ -1099,32 +1096,6 @@ object AgentActor extends AgentCore with AgentSession:
           state.sessionId
         )
         val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
-        val updatedExec = state.execution.copy(
-          pendingEvents = state.execution.pendingEvents :+ event
-        )
-        processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), stash, ctx)
-
-      // --- Inter-agent message received while processing: queue as ExternalEvent ---
-      case AgentCommand.AgentMessageReceived(fromMailbox, payload, _) =>
-        logAgentEvent(
-          ctx,
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "agent-message-queued",
-          s"from=${fromMailbox.display}"
-        )
-        emitStream(
-          resources.dispatcher,
-          state.wsSend,
-          ctx,
-          AgentStreamEvent.ExternalEventReceived("agent", fromMailbox.agentName, None),
-          isSubagent = depth > 0,
-          state.sessionId
-        )
-        val senderInfo = s"[Message from agent ${fromMailbox.display}]"
-        val event = AgentCommand.ExternalEvent("agent", fromMailbox.agentName, s"$senderInfo\n$payload")
         val updatedExec = state.execution.copy(
           pendingEvents = state.execution.pendingEvents :+ event
         )

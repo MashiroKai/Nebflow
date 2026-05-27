@@ -557,11 +557,6 @@
 .tool-card .body pre.tool-body-pre {
   white-space: pre;
 }
-.tool-card .body pre.ansi-rendered {
-  white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.5;
-}
 /* highlight.js overrides for tool card body */
 .tool-card .body pre.hljs {
   white-space: pre-wrap;

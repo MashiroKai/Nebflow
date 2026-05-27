@@ -119,15 +119,6 @@ object AgentCommand:
   /** Clear pendingTaskCheck flag after it has been consumed by pipeLlmCall. */
   case object ClearTaskCheck extends AgentCommand
 
-  // --- Inter-agent communication via PostOffice ---
-
-  /** Message received from another agent via PostOffice. */
-  case class AgentMessageReceived(
-    fromMailbox: AgentMailbox,
-    payload: String,
-    replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentCommand]] = None
-  ) extends AgentCommand
-
   /**
    * Background task completed — inject result into message history and resume.
    *  Retained as a convenience during the Phase 1 coexistence period; internally
@@ -225,6 +216,9 @@ enum AgentStreamEvent:
     eventType: String,
     correlationId: Option[String]
   )
+
+  /** User interrupted the agent — clears attention/busy state on frontend. */
+  case Interrupted
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
     case TextDelta(text) =>
@@ -363,6 +357,11 @@ enum AgentStreamEvent:
         else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
       correlationId.fold(withSession)(id => withSession.deepMerge(Json.obj("correlationId" -> id.asJson)))
 
+    case Interrupted =>
+      val base = Json.obj("type" -> "interrupted".asJson)
+      if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
+      else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+
 end AgentStreamEvent
 
 // ============================================================
@@ -429,9 +428,13 @@ case class CompactionJob(
  * at the start of each pipeLlmCall via ContextRefresher.
  *
  * All resources are EveryTurn — mtime-cached so unchanged reads cost only stat() syscalls.
+ *
+ * @param systemPrefix  System prefix text (~/.nebflow/system-prefix.md + "\n\n")
+ *                      Empty if no prefix is configured. Mtime-cached.
  */
 case class TurnContext(
   agentDef: AgentDef,
+  systemPrefix: String,
   projectRoot: Option[String],
   rulesMd: Option[String],
   memoryBlock: String,
@@ -464,9 +467,7 @@ case class SessionContext(
   /** Resolved inherited rules.md content from folder chain. None → no rules. */
   rulesMd: Option[String] = None,
   /** This session's folder ID (for rules re-resolution). */
-  folderId: Option[String] = None,
-  /** This session's unique mailbox address for inter-agent communication. */
-  mailbox: Option[AgentMailbox] = None
+  folderId: Option[String] = None
 )
 
 /** Pending user interaction deferreds. */
@@ -550,8 +551,7 @@ object AgentState:
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
-    folderId: Option[String] = None,
-    mailbox: Option[AgentMailbox] = None
+    folderId: Option[String] = None
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -569,8 +569,7 @@ object AgentState:
         contextWindow,
         folderId = folderId,
         projectRoot = projectRoot,
-        rulesMd = rulesMd,
-        mailbox = mailbox
+        rulesMd = rulesMd
       ),
       ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
@@ -609,7 +608,6 @@ extension (s: AgentState)
   def projectRoot: Option[String] = s.session.projectRoot
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
-  def mailbox: Option[AgentMailbox] = s.session.mailbox
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)

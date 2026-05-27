@@ -220,9 +220,7 @@ object FileTaskStore extends TaskStore:
     }
 
   def listActive(sessionId: String): IO[List[Task]] =
-    list(sessionId).map(_.filter(t =>
-      t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress
-    ))
+    list(sessionId).map(_.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress))
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file
   def delete(sessionId: String, taskId: String): IO[Boolean] =
