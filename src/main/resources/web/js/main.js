@@ -32,11 +32,11 @@ import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migra
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
-import { initSearch, renderSearchResults } from './search.js';
 import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from './memory.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
+import { initReminder, refreshReminders } from './reminder.js';
 
 // Randomized cosmic thinking bubble text
 const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
@@ -816,6 +816,11 @@ onMessage('historyPage', (msg) => {
     state.pendingInitialLoad = false;
     // Initial load or full refresh — replace
     state.dom.chat.innerHTML = '';
+    // Reset sessionToolCards — innerHTML clear above removes all tool pending
+    // card DOM nodes, but renderToolPending uses sessionToolCards[sid] as an
+    // existence check. A stale DOM reference causes it to skip card creation
+    // (update-in-place on a detached node), leaving no spinner visible.
+    Object.keys(state.sessionToolCards).forEach(sid => delete state.sessionToolCards[sid]);
     // Clear history indicators before rendering
     clearHistoryIndicators();
     state.historyOffset = msg.offset;
@@ -987,21 +992,6 @@ onMessage('historyPage', (msg) => {
       }
     });
 
-    // Handle search navigation: scroll to a specific message after history loads
-    if (state.searchNavigateTarget && state.searchNavigateTarget.sessionId === sid) {
-      const target = state.searchNavigateTarget;
-      state.searchNavigateTarget = null;
-      // messageIndex is in the full array; adjust by the loaded page offset
-      const domIdx = target.messageIndex - msg.offset;
-      const rows = state.dom.chat.querySelectorAll('.row');
-      if (domIdx >= 0 && domIdx < rows.length) {
-        const targetRow = rows[domIdx];
-        targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        targetRow.style.transition = 'background 0.3s';
-        targetRow.style.background = 'rgba(7,193,96,0.15)';
-        setTimeout(() => { targetRow.style.background = ''; }, 2000);
-      }
-    }
   } else {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
@@ -1609,11 +1599,6 @@ onMessage('browseResult', (msg) => handleBrowseResult(msg));
 onMessage('cardDesignData', (msg) => { state.cardDesignPrompt = msg.content || ''; });
 onMessage('cardDesignSaved', () => { /* saved confirmation */ });
 
-// --- Search results ---
-onMessage('searchResults', (msg) => {
-  renderSearchResults(msg.query, msg.results || []);
-});
-
 
 // ---------- 4. Cross-module wiring ----------
 window.__showDeleteModal = showDeleteModal;
@@ -1627,9 +1612,9 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput();
-initSearch();
 initFeishuPanel();
 initMemory();
+initReminder();
 
 // Sidebar collapse toggle
 (function initSidebarToggle() {

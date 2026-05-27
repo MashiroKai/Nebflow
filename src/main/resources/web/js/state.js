@@ -155,7 +155,7 @@ export default {
   slashMatches: [],
 
   // Search navigation target: { sessionId, messageIndex } or null
-  searchNavigateTarget: null,
+
 
   // Per-session background tasks: sessionId -> [{ taskId, description, status }]
   sessionBgTasks: {},

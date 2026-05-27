@@ -9,8 +9,6 @@ export default {
   'sidebar.sessions': '会话',
   'sidebar.newFolder': '新建文件夹 — 创建会话分组',
   'sidebar.newSession': '新建会话 — 开始一段新的对话',
-  'sidebar.searchPlaceholder': '搜索聊天记录',
-  'search.clear': '清除 — 清空搜索内容',
   'sidebar.toggle': '收起或展开会话栏 — 隐藏或显示左侧会话面板',
   'sidebar.edgeToggle': '展开或收起侧边栏',
   'sidebar.settingsTitle': '设置',
@@ -52,8 +50,8 @@ export default {
   // === Settings panel ===
   'settings.runtime': '运行时',
   'settings.thinkingMode': '思考模式',
-  'settings.thinkingBudget': '思考 Token 预算',
-  'settings.thinkingBudgetHint': '模型内部思考可使用的最大 token 数。调高提升复杂推理质量，但增加延迟和成本。',
+  'settings.thinkingBudget': '思考词元预算',
+  'settings.thinkingBudgetHint': '模型内部思考可使用的最大词元数。调高提升复杂推理质量，但增加延迟和成本。',
   'settings.language': '语言',
   'settings.compaction': '上下文压缩',
   'settings.compactTtl': '微压缩缓存 TTL',
@@ -126,7 +124,7 @@ export default {
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',
-  'model.maxTokensPlaceholder': '最大 Tokens',
+  'model.maxTokensPlaceholder': '最大词元',
   'model.contextPlaceholder': '上下文',
   'model.add': '+ 添加模型',
 
@@ -272,16 +270,6 @@ export default {
   // === Time ===
   'time.yesterday': '昨天',
 
-  // === Search ===
-  'search.noResults': '未找到相关记录',
-  'search.folder': '文件夹',
-  'search.session': '会话',
-  'search.user': '用户',
-  'search.ai': 'AI',
-  'search.tool': '工具',
-  'search.agent': '智能体',
-  'search.ask': '询问',
-
   // === Task list ===
   'task.expand': '展开',
   'task.collapse': '收起',
@@ -339,4 +327,22 @@ export default {
   'tool.result.taskCreated': '任务 #{id} 已创建',
   'tool.result.created': '已创建',
   'tool.result.ofLines': '{current} / {total} 行',
+
+  // === Reminders ===
+  'reminder.panelTitle': '定时任务',
+  'reminder.empty': '暂无定时任务',
+  'reminder.emptyHint': '点击空白处或按 + 创建',
+  'reminder.create': '新建定时任务',
+  'reminder.cancel': '取消',
+  'reminder.inputPlaceholder': '输入任务内容...',
+  'reminder.timeLabel': '触发时间',
+  'reminder.refLabel': '参考文档',
+  'reminder.refPlaceholder': '文件路径（可选，LLM 会读取此文件）',
+  'reminder.pendingCount': '{count} 项待执行',
+  'reminder.triggered': '已触发',
+  'reminder.triggerTitle': '定时任务已触发',
+  'reminder.scheduledAt': '预定于 {time} 触发，正在执行...',
+  'reminder.today': '今天',
+  'reminder.tomorrow': '明天',
+  'reminder.yesterday': '昨天',
 };
