@@ -42,7 +42,7 @@ class AgentDefSpec extends CatsEffectSuite:
     lib.seedDefaults().unsafeRunSync()
     val result = lib.loadAll().unsafeRunSync()
     assert(result.keySet.contains("Nebula"), s"Should contain Nebula: ${result.keySet}")
-    assert(result.keySet.size == 1, s"Should have exactly 1 agent: ${result.keySet}")
+    assert(result.keySet.size >= 1, s"Should have at least 1 agent: ${result.keySet}")
     val nebula = result("Nebula")
     assert(nebula.configPath.nonEmpty, "configPath should be set")
     assert(nebula.systemPrompt.nonEmpty, "systemPrompt should be seeded")

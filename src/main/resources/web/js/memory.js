@@ -1,13 +1,13 @@
-// memory.js — Memory modal with User / Agent / Session tabs
+// memory.js — Memory modal with Folder / Agent / User tabs
 
 import state from './state.js';
 import { sendWs } from './ws.js';
 
 /** Currently active tab scope. */
-let activeScope = 'session';
+let activeScope = 'folder';
 
 /** Cache per-scope content so tab switches don't re-fetch within same session. */
-const cache = { user: null, agent: null, folder: null, session: null };
+const cache = { user: null, agent: null, folder: null };
 
 /** Show the Memory button in header. */
 export function showMemoryButton() {
@@ -23,7 +23,6 @@ export function clearMemoryCache() {
   cache.user = null;
   cache.agent = null;
   cache.folder = null;
-  cache.session = null;
 }
 
 /** Open the memory modal, fetch active tab content. */

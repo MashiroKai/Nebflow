@@ -9,7 +9,6 @@ import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
 import nebflow.core.tools.{ToolContext, ToolRegistry, ToolResultGuard}
-import nebflow.service.MemoryStore
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
@@ -332,7 +331,13 @@ private[agent] trait AgentCore:
           // --- Unified EveryTurn refresh: agentDef, projectRoot, rulesMd, memory, thinking, fileChanges ---
           turnCtx <- ContextRefresher.refreshTurn(stateForTurn, resources, agentDef)
           freshDef = turnCtx.agentDef
-          baseSystemStable = buildSystemPrompt(freshDef, resources, turnCtx.projectRoot, turnCtx.rulesMd)
+          baseSystemStable = buildSystemPrompt(
+            freshDef,
+            resources,
+            turnCtx.systemPrefix,
+            turnCtx.projectRoot,
+            turnCtx.rulesMd
+          )
           // --- reminders (async) ---
           // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
@@ -350,29 +355,30 @@ private[agent] trait AgentCore:
           // --- Active task reminder ---
           // Only when pendingTaskCheck is set (LLM had text+tools or used TaskUpdate).
           // Load active tasks and inject a reminder so LLM updates remaining tasks.
-          taskReminder <- (
-            if isCompactTurn || isAskTurn || !stateForLlm.execution.pendingTaskCheck then IO.pure("")
-            else
-              resources.taskStore
-                .listActive(stateForLlm.sessionId.getOrElse(""))
-                .map { activeTasks =>
-                  if activeTasks.isEmpty then ""
-                  else
-                    val lines = activeTasks.map { t =>
-                      val st = t.status match
-                        case nebflow.core.task.TaskStatus.InProgress => "in_progress"
-                        case _ => "pending"
-                      s"  #${t.id} [$st] ${t.subject}"
-                    }
-                    s"""\n<system-reminder>
+          taskReminder <-
+            (
+              if isCompactTurn || isAskTurn || !stateForLlm.execution.pendingTaskCheck then IO.pure("")
+              else
+                resources.taskStore
+                  .listActive(stateForLlm.sessionId.getOrElse(""))
+                  .map { activeTasks =>
+                    if activeTasks.isEmpty then ""
+                    else
+                      val lines = activeTasks.map { t =>
+                        val st = t.status match
+                          case nebflow.core.task.TaskStatus.InProgress => "in_progress"
+                          case _ => "pending"
+                        s"  #${t.id} [$st] ${t.subject}"
+                      }
+                      s"""\n<system-reminder>
                        |You still have ${activeTasks.size} active task(s):
                        |${lines.mkString("\n")}
                        |
                        |Please call TaskUpdate to mark tasks as completed or failed when done.
                        |</system-reminder>""".stripMargin
-                }
-                .handleError(_ => "")
-          )
+                  }
+                  .handleError(_ => "")
+            )
           // Clear the flag after reading
           _ <- IO(ctx.self ! AgentCommand.ClearTaskCheck)
           allReminders = verificationOpt.toList ++ loggedReminders
@@ -392,9 +398,7 @@ private[agent] trait AgentCore:
               .map(l =>
                 s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
               )
-              .getOrElse("") +
-            // NOTE: active task reminder — if you created tasks, clean them up when done
-            "\n\n# Task Management\n- After creating a task with TaskCreate, use TaskUpdate to update its status when you finish or abandon it.\n- Mark tasks as `completed` when done, `failed` if blocked or abandoned.\n- If a task is no longer relevant (e.g. user changed their mind), mark it as `failed`.\n- Never leave tasks in `in_progress` status at the end of your work."
+              .getOrElse("")
           request = LlmRequest(
             messages = stateForLlm.messages ++ dynamicMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -526,10 +530,8 @@ private[agent] trait AgentCore:
           projectRoot = effectiveProjectRoot,
           cwd = effectiveProjectRoot
         ),
-        memoryAgentManager = resources.memoryAgentManager,
         folderId = state.folderId,
-        postOffice = resources.postOffice,
-        mailboxAddress = state.session.mailbox.map(_.address)
+        mailboxAddress = state.session.sessionId
       )
       freshResults <- filteredCalls
         .traverse { call =>
@@ -544,42 +546,40 @@ private[agent] trait AgentCore:
                sessionIdOpt
              )
            else IO.unit) *>
-            (if isSessionMemoryFile(call, state, agentDef) then
-               // Session memory files: auto-approve (agent can edit freely)
+            (if ToolReversibility.isReversible(call.name, call.input) then
+               // Reversible operations: auto-approve
                executeTool(call, toolCtx)
-             else if ToolReversibility.isReversible(call.name, call.input) then
-                // Reversible operations: auto-approve
-                executeTool(call, toolCtx)
-              else
-                // Irreversible operations: ask user for confirmation
-                askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
-            ) .map(r => (call, r)).attempt
-            .map {
-              case Right(pair) => pair
-              case Left(e) => (call, ToolExecResult(s"Tool error: ${e.getMessage}", isError = true))
-            }
-            .flatTap { (call, r) =>
-              // AskUserQuestion renders its own UI — skip generic toolEnd
-              if call.name != "AskUserQuestion" then
-                val summary = summarizeToolResult(call, r.content)
-                // For Card tools: frontend receives the full payload, LLM sees the summary
-                val frontendContent = r.frontendContent.getOrElse(r.content)
-                emitStreamIO(
-                  state.wsSend,
-                  ctx,
-                  AgentStreamEvent.ToolEnd(
-                    nebflow.core.summarizeToolCall(call),
-                    summary,
-                    frontendContent,
-                    r.isError,
-                    input = Some(call.input),
-                    truncated = r.truncated
-                  ),
-                  isSubagent,
-                  sessionIdOpt
-                )
-              else IO.unit
-            }
+             else
+               // Irreversible operations: ask user for confirmation
+               askUserPermission(call, state, permissionDeferredRef, ctx, toolCtx)
+            ).map(r => (call, r))
+              .attempt
+              .map {
+                case Right(pair) => pair
+                case Left(e) => (call, ToolExecResult(s"Tool error: ${e.getMessage}", isError = true))
+              }
+              .flatTap { (call, r) =>
+                // AskUserQuestion renders its own UI — skip generic toolEnd
+                if call.name != "AskUserQuestion" then
+                  val summary = summarizeToolResult(call, r.content)
+                  // For Card tools: frontend receives the full payload, LLM sees the summary
+                  val frontendContent = r.frontendContent.getOrElse(r.content)
+                  emitStreamIO(
+                    state.wsSend,
+                    ctx,
+                    AgentStreamEvent.ToolEnd(
+                      nebflow.core.summarizeToolCall(call),
+                      summary,
+                      frontendContent,
+                      r.isError,
+                      input = Some(call.input),
+                      truncated = r.truncated
+                    ),
+                    isSubagent,
+                    sessionIdOpt
+                  )
+                else IO.unit
+              }
         }
       // Include filtered-out tool calls as errors so the assistant message stays consistent
       droppedResults = droppedCalls.map { call =>
@@ -955,43 +955,19 @@ private[agent] trait AgentCore:
   protected def buildSystemPrompt(
     agentDef: AgentDef,
     resources: SharedResources,
+    systemPrefix: String,
     sessionProjectRoot: Option[String] = None,
     sessionRulesMd: Option[String] = None
   ): String =
-    val prefix = loadPlatformPrefix()
     val agentPrompt =
       if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
       else Repl.loadSystemPrompt()
     val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
     val envInfo = Repl.buildEnvInfo(effectiveRoot)
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
-    s"$prefix$agentPrompt\n\n$envInfo$rulesBlock"
-
-  /** Platform-level system prompt. Checks filesystem first (live-editable), falls back to JAR resource. */
-  private def loadPlatformPrefix(): String =
-    val fsPath = os.home / ".nebflow" / "system-prefix.md"
-    val content =
-      if os.exists(fsPath) then os.read(fsPath)
-      else
-        val is = getClass.getResourceAsStream("/system-prefix.md")
-        if is != null then
-          val s = scala.io.Source.fromInputStream(is)(scala.io.Codec.UTF8).mkString
-          is.close()
-          s
-        else ""
-    val trimmed = content.trim
-    if trimmed.nonEmpty then trimmed + "\n\n" else ""
+    s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
-
-  /** Check if an Edit/Write call targets the current session's memory file. */
-  private def isSessionMemoryFile(call: ToolCall, state: AgentState, agentDef: AgentDef): Boolean =
-    val pathOpt = call.input("file_path").flatMap(_.asString)
-    (call.name == "Edit" || call.name == "Write") && pathOpt.exists { path =>
-      path.endsWith(".memory.md") && state.sessionId.exists { sid =>
-        path == MemoryStore.sessionMemoryPath(sid).toString
-      }
-    }
 
 end AgentCore

@@ -8,6 +8,7 @@ import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
+import { refreshReminders } from './reminder.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -1130,29 +1131,23 @@ export function renderSessionSidebar(sessionData, activeId) {
     return fa === effectiveAgent || (fa === '' && effectiveAgent === 'Nebula');
   });
   const agentFolders = allAgentFolders.filter(f => !f.parentId);
+  // Sort root folders alphabetically by name
+  agentFolders.sort((a, b) => a.name.localeCompare(b.name));
 
-  // Compute effective updatedAt for each folder recursively (sessions + subfolders)
-  const folderEffectiveTime = (f) => {
-    const children = sessionsByFolder[f.id] || [];
-    const childMax = children.reduce((mx, s) => Math.max(mx, s.updatedAt || s.createdAt || 0), 0);
-    const subFolders = allAgentFolders.filter(sub => sub.parentId === f.id);
-    const subFolderMax = subFolders.reduce((mx, sub) => Math.max(mx, folderEffectiveTime(sub)), 0);
-    return Math.max(f.updatedAt || 0, childMax, subFolderMax);
-  };
-
-  // Build a mixed list of root sessions and folders, each with a pinned flag and effective time
+  // Build a mixed list of root sessions and folders, each with a pinned flag
   const mixedItems = [];
   sortedRoots.forEach(s => {
     mixedItems.push({ type: 'session', data: s, pinned: state.pinnedSessions.has(s.id), time: s.updatedAt || s.createdAt || 0 });
   });
   agentFolders.forEach(f => {
-    mixedItems.push({ type: 'folder', data: f, pinned: state.pinnedFolders.has(f.id), time: folderEffectiveTime(f) });
+    mixedItems.push({ type: 'folder', data: f, pinned: state.pinnedFolders.has(f.id) });
   });
 
-  // Sort: pinned first, then folders before sessions, then by time descending (VSCode-style)
+  // Sort: pinned first, then folders before sessions, then alphabetically for folders / by time for sessions
   mixedItems.sort((a, b) => {
     if (b.pinned !== a.pinned) return b.pinned ? 1 : -1;
     if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+    if (a.type === 'folder') return a.data.name.localeCompare(b.data.name);
     return b.time - a.time;
   });
 
@@ -1260,16 +1255,7 @@ export function resetChatForActiveSession() {
 
   // Request history from backend (historyPage handler in main.js will render it)
   if (sid) {
-    if (state.searchNavigateTarget && state.searchNavigateTarget.sessionId === sid) {
-      // Search navigation: request a page that includes the target message
-      const targetIdx = state.searchNavigateTarget.messageIndex;
-      const limit = 100;
-      // Center the target message in the loaded page
-      const beforeIndex = targetIdx + Math.floor(limit / 2);
-      sendWs({ type: 'getHistory', sessionId: sid, limit, beforeIndex });
-    } else {
-      sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
-    }
+    sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
   }
 
   // Restore buffered thinking + text.
@@ -1383,6 +1369,8 @@ export function switchSession(sessionId) {
   restoreInputDraft(sessionId);
   // Task list and bg task indicator are restored inside resetChatForActiveSession()
   sendWs({type: 'switchSession', sessionId});
+  // Refresh reminders for the new session
+  if (typeof refreshReminders === 'function') refreshReminders(sessionId);
 }
 
 export function deleteSession(sessionId) {
@@ -2208,10 +2196,10 @@ function renderFolderItem(folder, sessions, container) {
       childrenContainer.appendChild(rulesItem);
     }
 
-    // Sub-folders
+    // Sub-folders — alphabetically sorted
     const subFolders = (state.folders || [])
       .filter(f => f.parentId === folder.id)
-      .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      .sort((a, b) => a.name.localeCompare(b.name));
     subFolders.forEach(sub => {
       const subSessions = (state.sessions || []).filter(s => s.folderId === sub.id)
         .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
