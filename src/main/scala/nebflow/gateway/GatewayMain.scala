@@ -11,6 +11,7 @@ import nebflow.bridge.feishu.*
 import nebflow.core.*
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
+import nebflow.core.reminder.{ReminderScheduler, ReminderStore}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.*
@@ -198,10 +199,6 @@ object GatewayMain extends IOApp.Simple:
                                 // Actor system must be created before SharedResources
                                 // because MemoryAgentManager needs it
                                 val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
-                                val memoryAgentManager = new MemoryAgentManager(
-                                  actorSystem, handle, dispatcher, sessionStore
-                                )
-                                nebflow.agent.PostOffice.create().flatMap { postOffice =>
                                 val sharedResources = SharedResources(
                                   llm = handle,
                                   dispatcher = dispatcher,
@@ -218,15 +215,22 @@ object GatewayMain extends IOApp.Simple:
                                   fileLockManager = fileLockMgr,
                                   sessionModelOverrides = sessionModelOverrides,
                                   providerRegistry = registry,
-                                  hookEngine = hookEngine,
-                                  memoryAgentManager = Some(memoryAgentManager),
-                                  postOffice = postOffice
+                                  hookEngine = hookEngine
                                 )
                                 val sessionService = new SessionService(sessionStore)
                                 val agentService = new AgentService(agentLibrary)
                                 val configService = ConfigService
 
                                 val wsHub = new WsHub()
+
+                                // Dream scheduler: periodic memory consolidation + pattern extraction
+                                val memoryAgentManager = new MemoryAgentManager(
+                                  actorSystem,
+                                  dispatcher,
+                                  sessionStore
+                                )
+                                memoryAgentManager.setSharedResources(sharedResources)
+                                memoryAgentManager.setWsHub(wsHub)
 
                                 // --- Bridge Manager (plugins: feishu, telegram, etc.) ---
                                 val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
@@ -321,6 +325,19 @@ object GatewayMain extends IOApp.Simple:
                                           else IO.unit
                                         )
                                         _ <- bridgeManager.startAll.start // start in background
+                                        // --- Start Reminder Scheduler ---
+                                        _ <- ReminderScheduler
+                                          .start(
+                                            sharedResources.reminderStore,
+                                            (sid, event) =>
+                                              wsRoutesHolder match
+                                                case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
+                                                case None => IO.unit,
+                                            wsHub,
+                                            sessionStore
+                                          )
+                                          .flatMap(_ => IO.unit)
+                                          .start
                                         _ <- openBrowser(url)
                                         // --- Background init: MCP servers ---
                                         _ <- startMcpServers(config, mcpManager, agentLibrary)
@@ -358,7 +375,6 @@ object GatewayMain extends IOApp.Simple:
                                         }).void
                                     )
                                 }
-                                } // end postOffice
                               } // end fileLockMgr
                             } // end askSemaphore
                           } // end dispatcher.use

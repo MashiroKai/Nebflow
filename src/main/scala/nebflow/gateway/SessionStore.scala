@@ -314,6 +314,28 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         indexRef.set((activeId, meta :: sessions, folders)) *> saveIndex *> meta.pure[IO]
     }
 
+  /**
+   * Get an existing session by ID, or create one with that exact ID.
+   * Used by MemoryAgentManager to maintain persistent sessions across restarts.
+   * Returns (meta, wasCreated).
+   */
+  def getOrCreateSession(
+    id: String,
+    name: String,
+    agentName: Option[String] = None
+  ): IO[(SessionMeta, Boolean)] =
+    indexRef.get.flatMap { case (_, sessions, _) =>
+      sessions.find(_.id == id) match
+        case Some(meta) => IO.pure((meta, false))
+        case None =>
+          val now = System.currentTimeMillis()
+          val meta = SessionMeta(id, name, now, now, hasUnread = false, agentName = agentName)
+          indexRef.get.flatMap { case (activeId, sessions, folders) =>
+            saveSessionMessages(id, Nil) *>
+              indexRef.set((activeId, meta :: sessions, folders)) *> saveIndex *> IO.pure((meta, true))
+          }
+    }
+
   def deleteSession(id: String): IO[Unit] =
     indexRef
       .modify { case (activeId, sessions, folders) =>
@@ -507,6 +529,9 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       case Some(sem) => IO.pure(sem)
       case None => Semaphore[IO](1).flatTap(sem => appendSemaphores.update(_.updated(sessionId, sem))))
 
+  /** Maximum number of UI messages kept per session. */
+  private val MaxUiMessagesPerSession = 200
+
   /** Append UI messages to a session. Creates the file if it doesn't exist. */
   def appendUiMessages(sessionId: String, msgs: List[UiMessage]): IO[Unit] =
     if msgs.isEmpty then IO.unit
@@ -514,7 +539,10 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       getAppendSemaphore(sessionId).flatMap { sem =>
         sem.permit.use { _ =>
           loadUiMessages(sessionId).flatMap { existing =>
-            saveUiMessages(sessionId, existing ++ msgs)
+            val combined = existing ++ msgs
+            val trimmed =
+              if combined.size > MaxUiMessagesPerSession then combined.takeRight(MaxUiMessagesPerSession) else combined
+            saveUiMessages(sessionId, trimmed)
           }
         }
       }
@@ -540,151 +568,4 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       if os.exists(f) then os.remove(f)
     }
 
-  /**
-   * Search across sessions: session name, agent name, and message content.
-   * Results include three hit types: "session", "agent", "message".
-   */
-  def searchHistory(query: String, maxResults: Int = 50): IO[List[SearchHit]] =
-    if query.trim.isEmpty then IO.pure(Nil)
-    else
-      IO.blocking {
-        import scala.util.control.Breaks.{break, breakable}
-        val q = query.toLowerCase
-        val sessions =
-          try
-            val raw = os.read(indexFile)
-            val json = decode[Json](raw).getOrElse(Json.obj())
-            json.hcursor.downField("sessions").as[List[SessionMeta]].getOrElse(Nil)
-          catch case _: Exception => Nil
-
-        // Round 1: collect session name and agent name matches (high priority)
-        val nameHits = scala.collection.mutable.ListBuffer.empty[SearchHit]
-        breakable {
-          sessions.foreach { meta =>
-            if nameHits.size >= maxResults then break
-            if meta.name.toLowerCase.contains(q) then
-              nameHits += SearchHit(meta.id, meta.name, meta.agentName, "session", None, snippet(meta.name, q), None)
-            meta.agentName.foreach { an =>
-              if an.toLowerCase.contains(q) then
-                nameHits += SearchHit(meta.id, meta.name, meta.agentName, "agent", None, snippet(an, q), None)
-            }
-          }
-        }
-
-        // Round 2: collect message matches (fill remaining quota)
-        val msgHits = scala.collection.mutable.ListBuffer.empty[SearchHit]
-        val remaining = maxResults - nameHits.size
-        if remaining > 0 then
-          breakable {
-            sessions.foreach { meta =>
-              if msgHits.size >= remaining then break
-              val f = uiFile(meta.id)
-              if os.exists(f) then
-                try
-                  val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
-                  msgs.zipWithIndex.foreach { case (msg, idx) =>
-                    if msgHits.size >= remaining then break
-                    msg match
-                      case UiMessage.User(text, _, _) if text.toLowerCase.contains(q) =>
-                        msgHits += SearchHit(
-                          meta.id,
-                          meta.name,
-                          meta.agentName,
-                          "message",
-                          Some(idx),
-                          snippet(text, q),
-                          Some("user")
-                        )
-                      case UiMessage.Ai(text, _, _, _) if text.toLowerCase.contains(q) =>
-                        msgHits += SearchHit(
-                          meta.id,
-                          meta.name,
-                          meta.agentName,
-                          "message",
-                          Some(idx),
-                          snippet(text, q),
-                          Some("ai")
-                        )
-                      case UiMessage.Agent(_, text) if text.toLowerCase.contains(q) =>
-                        msgHits += SearchHit(
-                          meta.id,
-                          meta.name,
-                          meta.agentName,
-                          "message",
-                          Some(idx),
-                          snippet(text, q),
-                          Some("agent")
-                        )
-                      case UiMessage.Tool(label, summary, content, _, _, _) =>
-                        val combined = s"$label $summary $content"
-                        if combined.toLowerCase.contains(q) then
-                          msgHits += SearchHit(
-                            meta.id,
-                            meta.name,
-                            meta.agentName,
-                            "message",
-                            Some(idx),
-                            snippet(combined, q),
-                            Some("tool")
-                          )
-                      case UiMessage.Ask(question, answer, _, _) =>
-                        val combined = s"$question $answer"
-                        if combined.toLowerCase.contains(q) then
-                          msgHits += SearchHit(
-                            meta.id,
-                            meta.name,
-                            meta.agentName,
-                            "message",
-                            Some(idx),
-                            snippet(combined, q),
-                            Some("ask")
-                          )
-                      case _ => ()
-                    end match
-                  }
-                catch case _: Exception => ()
-              end if
-            }
-          }
-        end if
-
-        nameHits.toList ++ msgHits.toList
-      }
-
-  /** Extract a short snippet around the first match occurrence. */
-  private def snippet(text: String, queryLower: String, contextLen: Int = 60): String =
-    val textLower = text.toLowerCase
-    val idx = textLower.indexOf(queryLower)
-    if idx < 0 then text.take(120)
-    else
-      val start = Math.max(0, idx - contextLen)
-      val end = Math.min(text.length, idx + queryLower.length + contextLen)
-      val prefix = if start > 0 then "..." else ""
-      val suffix = if end < text.length then "..." else ""
-      prefix + text.substring(start, end) + suffix
-
 end SessionStore
-
-case class SearchHit(
-  sessionId: String,
-  sessionName: String,
-  agentName: Option[String],
-  hitType: String,
-  messageIndex: Option[Int],
-  snippet: String,
-  messageType: Option[String]
-)
-
-object SearchHit:
-
-  given Encoder[SearchHit] = Encoder.instance { h =>
-    val base = Json.obj(
-      "sessionId" -> h.sessionId.asJson,
-      "sessionName" -> h.sessionName.asJson,
-      "hitType" -> h.hitType.asJson,
-      "snippet" -> h.snippet.asJson
-    )
-    val withAgent = h.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
-    val withIdx = h.messageIndex.fold(withAgent)(i => withAgent.deepMerge(Json.obj("messageIndex" -> i.asJson)))
-    h.messageType.fold(withIdx)(t => withIdx.deepMerge(Json.obj("messageType" -> t.asJson)))
-  }

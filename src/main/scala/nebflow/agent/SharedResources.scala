@@ -6,6 +6,7 @@ import nebflow.bridge.BridgeManager
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.hooks.{HookEngine, HooksConfig}
+import nebflow.core.reminder.ReminderStore
 import nebflow.core.task.TaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore}
@@ -36,7 +37,5 @@ case class SharedResources(
   providerRegistry: ProviderRegistry,
   hookEngine: HookEngine = HookEngine.noop,
   bridgeManager: Option[BridgeManager] = None,
-  memoryAgentManager: Option[MemoryAgentManager] = None,
-  /** Central routing registry for inter-agent communication. */
-  postOffice: PostOffice = PostOffice.stub
+  reminderStore: ReminderStore = new ReminderStore(os.home / ".nebflow" / "reminders")
 )

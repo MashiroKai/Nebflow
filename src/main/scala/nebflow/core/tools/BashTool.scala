@@ -401,7 +401,7 @@ Git safety:
   /**
    * Clean raw command output before passing to the LLM.
    * Collapses excessive blank lines and trims trailing whitespace.
-   * ANSI escape codes are preserved for frontend rendering.
+   * Collapses excessive blank lines and trims trailing whitespace.
    */
   private def cleanOutput(raw: String): String =
     val collapsed = collapseBlankLines(raw)
@@ -474,8 +474,10 @@ Git safety:
       }
 
       notifyFrontend *> notifyAgent *>
-        logger.info(s"Background job $jobId \"$description\" $eventType$exitInfo",
-          "sessionId" -> ctx.sessionId.getOrElse(""))
+        logger.info(
+          s"Background job $jobId \"$description\" $eventType$exitInfo",
+          "sessionId" -> ctx.sessionId.getOrElse("")
+        )
     }
 
   /** Emit a WS event so the frontend shows the background task indicator. */

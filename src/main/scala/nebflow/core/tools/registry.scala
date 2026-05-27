@@ -34,9 +34,6 @@ object ToolRegistry:
       "TaskUpdate" -> TaskUpdateTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
-      // Inter-agent communication
-      "SendMessage" -> SendMessageTool,
-      "ListMailboxes" -> ListMailboxesTool,
       // Memory
       "WriteMemory" -> WriteMemoryTool
     )
