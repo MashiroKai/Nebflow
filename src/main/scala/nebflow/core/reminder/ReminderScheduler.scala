@@ -61,7 +61,9 @@ object ReminderScheduler:
           )
 
           for
-            _ <- logger.info(s"Triggering reminder ${reminder.id} for session ${reminder.sessionId}: ${reminder.content.take(60)}")
+            _ <- logger.info(
+              s"Triggering reminder ${reminder.id} for session ${reminder.sessionId}: ${reminder.content.take(60)}"
+            )
             _ <- reminderStore.markTriggered(reminder.sessionId, reminder.id)
             _ <- routeToAgent(reminder.sessionId, event).handleErrorWith { e =>
               logger.warn(s"Failed to route reminder to agent: ${e.getMessage}")
@@ -80,6 +82,7 @@ object ReminderScheduler:
               )
             )
           yield ()
+          end for
         }
     }
 

@@ -137,20 +137,33 @@
 }
 .bg-count { font-weight: 600; }
 
-/* Background tasks dropdown — Nebflow design language */
+/* Background tasks dropdown — sapphire glass */
 #bg-dropdown {
   position: absolute;
   top: 100%;
   right: 0;
   margin-top: 6px;
-  background: var(--color-header-bg);
-  border: 1px solid var(--color-frame-border);
-  border-radius: 10px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--sapphire-edge);
+  border-radius: 12px;
   min-width: 280px;
   max-width: 380px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  box-shadow:
+    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
+    0px 4px 16px rgba(0, 0, 0, 0.08),
+    0px 8px 32px rgba(0, 0, 0, 0.06);
   z-index: 100;
   overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  #bg-dropdown {
+    box-shadow:
+      inset 0 1px 0 0 rgba(91, 127, 191, 0.05),
+      0px 4px 16px rgba(0, 0, 0, 0.30),
+      0px 8px 32px rgba(0, 0, 0, 0.45);
+  }
 }
 #bg-dropdown.hidden { display: none; }
 .bg-dropdown-header {
@@ -475,15 +488,77 @@
   margin-top: 0;
 }
 
-/* ---------- Duration Badge ("✻ Thought for X") ---------- */
-.row.ai .duration-badge {
-  font-size: 11px;
-  color: rgba(0,0,0,0.35);
-  margin-top: 2px;
-  padding-left: 2px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  letter-spacing: 0.2px;
+/* ---------- Duration Badge (pill style) ---------- */
+.duration-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 2px 8px 2px 6px;
+  background: var(--color-surface);
+  border-radius: 6px;
+  box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
   user-select: none;
+  width: fit-content;
+}
+.duration-badge-text {
+  font-size: 11px;
+  color: var(--color-text);
+  opacity: 0.45;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 260px;
+}
+.duration-badge-divider {
+  width: 1px;
+  height: 10px;
+  background: currentColor;
+  opacity: 0.2;
+  flex-shrink: 0;
+}
+.duration-badge-model {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text);
+  opacity: 0.35;
+  letter-spacing: 0.1px;
+}
+
+/* ---------- Thinking Indicator (live timer) ---------- */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.thinking-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  opacity: 0.4;
+  animation: thinkingPulse 1.2s ease-in-out infinite;
+}
+@keyframes thinkingPulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.85); }
+  50% { opacity: 0.85; transform: scale(1.1); }
+}
+.thinking-indicator-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  margin-left: 2px;
+}
+.thinking-timer {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  opacity: 0.5;
 }
 
 
@@ -518,19 +593,6 @@
 .tool-card .content { flex: 1; min-width: 0; }
 .tool-card .label { color: #555; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; }
 .tool-card .label .tool-detail { color: #999; font-size: 11px; }
-.truncated-badge {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 6px;
-  font-size: 10px;
-  font-weight: 600;
-  color: #b8941e;
-  background: rgba(217,165,65,0.12);
-  border: 1px solid rgba(217,165,65,0.25);
-  border-radius: 3px;
-  vertical-align: middle;
-  cursor: help;
-}
 .tool-card .body {
   color: #333;
   font-size: 11px;
@@ -665,12 +727,12 @@
   .history-end { color: #555; }
 
   .option-box { background: rgba(255,255,255,0.06); }
-  .option-btn { background: #2a2a2a; border-color: #444; }
-  .option-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
-  .option-custom-input { background: #2a2a2a; border-color: #444; }
-  .option-cancel { background: #2a2a2a; border-color: #444; }
-  .option-cancel:disabled { border-color: #333; }
-  .option-confirm:disabled { background: #444; }
+  .option-btn { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
+  .option-btn:hover { border-color: rgba(145,170,210,0.38); color: rgba(160,185,225,0.9); }
+  .option-custom-input { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
+  .option-cancel { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
+  .option-cancel:disabled { border-color: rgba(255,255,255,0.08); }
+  .option-confirm:disabled { background: rgba(255,255,255,0.10); }
 
   .error-card { background: rgba(244,67,54,0.12); color: #ef5350; }
 
@@ -690,7 +752,12 @@
     background: rgba(102,187,106,0.12);
   }
 
-  .row.ai .duration-badge { color: rgba(255,255,255,0.35); }
+  .duration-badge {
+    background: rgba(255,255,255,0.04);
+    box-shadow: 0px 0px 0px 1px rgba(255,255,255,0.06);
+  }
+  .duration-badge-text { opacity: 0.55; }
+  .duration-badge-model { opacity: 0.28; }
 
   #status-wrap { background: rgba(30,30,30,0.9); }
 
@@ -719,14 +786,22 @@
 }
 .option-btn {
   padding: 5px 12px;
-  border: 1px solid var(--color-border);
+  border: 1px solid rgba(145, 170, 210, 0.25);
   border-radius: 14px;
-  background: var(--color-bubble-ai);
+  background: rgba(145, 170, 210, 0.04);
   font-size: 13px;
   cursor: pointer;
   color: var(--color-text);
+  transition: all 0.25s ease;
 }
-.option-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.option-btn:hover {
+  border-color: rgba(145, 170, 210, 0.45);
+  color: rgba(91, 127, 191, 0.85);
+  background: rgba(145, 170, 210, 0.08);
+  box-shadow:
+    0 0 8px rgba(145, 170, 210, 0.06),
+    0 0 20px rgba(145, 170, 210, 0.03);
+}
 .option-btn.picked {
   background: var(--color-primary);
   color: #fff;
@@ -756,7 +831,7 @@
   color: var(--color-frame-input-text);
 }
 .option-custom-input:focus {
-  border-color: var(--color-primary);
+  border-color: rgba(145, 170, 210, 0.45);
 }
 .option-btn-row {
   display: flex;
@@ -783,7 +858,7 @@
   padding: 7px;
   border: none;
   border-radius: 10px;
-  background: var(--color-primary);
+  background: rgba(91, 127, 191, 0.65);
   color: #fff;
   font-size: 13px;
   cursor: pointer;
@@ -791,6 +866,10 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
+  transition: background 0.2s;
+}
+.option-confirm:hover {
+  background: rgba(91, 127, 191, 0.80);
 }
 .option-confirm:disabled {
   background: var(--color-frame-active);

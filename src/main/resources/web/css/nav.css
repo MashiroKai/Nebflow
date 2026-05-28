@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
 /* ---------- Nav Bar — agent icon strip ---------- */
 #nav-bar {
   width: 54px;
@@ -64,6 +66,18 @@
 .nav-agent-icon svg {
   width: 20px;
   height: 20px;
+}
+.agent-letter-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-family: 'Press Start 2P', monospace;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 1;
+  letter-spacing: 0;
 }
 .nav-agent-label {
   font-size: 9px;

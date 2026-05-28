@@ -38,34 +38,27 @@ function extractThemeVars(themeCSS) {
   return themeCSS.replace(':root{', '').replace('}', '').trim();
 }
 
-/** Build the auto-scale + height-reporting script to inject into srcdoc.
- *  #nf-wrap uses width:fit-content so the card shrinks to content width.
- *  Reports both width and height; parent adjusts accordingly.
- *  Also listens for _nfThemeVars messages from parent to live-update theme
- *  when the system switches between light and dark mode. */
+/** Build the height + width reporting script to inject into srcdoc.
+ *  #nf-wrap uses width:fit-content so narrow cards stay compact.
+ *  No transform:scale() — it causes SVG flowchart lines to misalign due to
+ *  sub-pixel rounding. Wide content is constrained by max-width:100% on
+ *  img/svg/video and overflow:hidden on body.
+ *  Reports content width (so parent can size the wrap) and height. */
 function buildHeightScript(id) {
   return `<script>
 (function(){
   var id=${id};
   function send(){
     try{
-      var d=document.documentElement,b=document.body,w=document.getElementById('nf-wrap');
+      var w=document.getElementById('nf-wrap');
       if(!w)return;
-      var vw=d.clientWidth;
-      // scrollWidth on body is reliable for detecting overflow — wrap.scrollWidth
-      // may equal clientWidth when overflow:visible hides the overflow extent.
-      var cw=Math.max(w.scrollWidth,b.scrollWidth,d.scrollWidth);
-      var s=cw>vw?vw/cw:1;
-      w.style.transform=s<1?'scale('+s+')':'';
-      var reportW=s<1?vw:w.offsetWidth;
-      // body.scrollHeight includes all content + margins (getBoundingClientRect misses child margins)
-      var reportH=Math.ceil(document.body.scrollHeight*s);
-      parent.postMessage({_nfCardW:reportW,_nfCardH:reportH,id:id},"*");
+      var cw=w.offsetWidth;
+      var h=document.documentElement.scrollHeight||document.body.scrollHeight;
+      parent.postMessage({_nfCardW:cw,_nfCardH:h,id:id},"*");
     }catch(e){}
   }
   new ResizeObserver(send).observe(document.body);
   send();setTimeout(send,100);setTimeout(send,500);
-  // Listen for live theme updates from parent window
   window.addEventListener('message',function(e){
     if(e.data&&e.data._nfThemeVars){
       var s=document.getElementById('nf-card-theme');
@@ -120,6 +113,23 @@ window.addEventListener('message', (e) => {
   }
 });
 
+/** Read the nebflow auth token from cookie (set by ws.js on connect). */
+function getNfToken() {
+  const match = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+/** Inject auth token into /api/nf-file URLs so the sandboxed iframe can fetch them.
+ *  The iframe lacks allow-same-origin, so cookies are not sent — token must be
+ *  in the query string. */
+function injectFileTokens(html) {
+  const token = getNfToken();
+  if (!token) return html;
+  return html.replace(/(\/api\/nf-file\?path=[^"'\s]+)/g, (url) => {
+    return url + '&token=' + encodeURIComponent(token);
+  });
+}
+
 /** Render HTML content inside a sandboxed iframe.
  *  Creates the iframe immediately (no lazy loading) — the browser handles srcdoc
  *  parsing asynchronously, so this is safe even with many cards. */
@@ -133,10 +143,13 @@ function renderHtmlCard(container, html, title) {
   const themeCSS = buildThemeVarsCSS();
   const heightScript = buildHeightScript(id);
 
-  // Wrap user HTML in #nf-wrap for auto-scaling.
-  // The wrapper carries transform-origin so transform:scale() can shrink content
-  // to fit the iframe viewport when it's wider than available space.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:13px;line-height:1.45;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}img,svg,video{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="transform-origin:top left;width:fit-content;max-width:100%">${html}</div>${heightScript}</body></html>`;
+  // Inject auth tokens into /api/nf-file URLs (sandboxed iframe can't use cookies)
+  const processedHtml = injectFileTokens(html);
+
+  // #nf-wrap: fit-content keeps narrow cards compact, min-width prevents tiny cards.
+  // SVG defaults to width:100% — most SVGs in cards are diagrams meant to fill space.
+  // No transform:scale() — it causes SVG flowchart lines to misalign.
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{width:100%;height:auto;}img,video{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="width:fit-content;max-width:100%;min-width:280px">${processedHtml}</div>${heightScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';

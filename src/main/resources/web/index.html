@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="css/input.css">
   <link rel="stylesheet" href="css/taskList.css">
   <link rel="stylesheet" href="css/reminder.css">
+  <link rel="stylesheet" href="css/sapphire.css">
 </head>
 <body>
   <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
@@ -60,20 +61,7 @@
       <div class="header-center"><span id="session-name"></span><button id="memory-btn" class="memory-btn" style="display:none">Memory</button></div>
       <div class="header-right">
         <span id="header-model-info"></span>
-        <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="notebook-pen"></i></button>
-        <div id="reminder-panel">
-          <div class="reminder-panel-header">
-            <div class="reminder-panel-title">Scheduled Tasks</div>
-            <span class="reminder-panel-count"></span>
-          </div>
-          <div class="reminder-panel-body"></div>
-          <div class="reminder-panel-footer">
-            <button class="reminder-create-btn" id="reminder-create-btn">
-              <i data-lucide="plus"></i>
-              <span>New Scheduled Task</span>
-            </button>
-          </div>
-        </div>
+        <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="clock"></i></button>
         <div id="bg-indicator" class="hidden">
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
@@ -84,6 +72,19 @@
         </div>
         <div class="conn off" id="conn"></div>
       </div>
+    </div>
+    <div id="reminder-panel">
+      <div class="reminder-panel-header">
+        <div class="reminder-panel-title">Scheduled Tasks</div>
+        <div class="reminder-panel-header-right">
+          <span class="reminder-panel-count"></span>
+          <button class="reminder-create-btn" id="reminder-create-btn" title="New Task">
+            <i data-lucide="plus"></i>
+          </button>
+        </div>
+      </div>
+      <div class="reminder-panel-body"></div>
+      <div class="reminder-panel-footer"></div>
     </div>
     <div id="task-list"></div>
     <div id="chat"></div>

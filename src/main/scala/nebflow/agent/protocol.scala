@@ -119,6 +119,9 @@ object AgentCommand:
   /** Clear pendingTaskCheck flag after it has been consumed by pipeLlmCall. */
   case object ClearTaskCheck extends AgentCommand
 
+  /** Cache lifecycle prompt content (system-prefix, agentDef, memory, rules) — sent on first turn. */
+  case class UpdateLifecycle(lc: LifecycleContext) extends AgentCommand
+
   /**
    * Background task completed — inject result into message history and resume.
    *  Retained as a convenience during the Phase 1 coexistence period; internally
@@ -188,8 +191,7 @@ enum AgentStreamEvent:
     summary: String,
     content: String,
     isError: Boolean,
-    input: Option[JsonObject] = None,
-    truncated: Boolean = false
+    input: Option[JsonObject] = None
   )
   case AgentStart(agentName: String, agentType: String)
   case AgentEnd(agentName: String)
@@ -229,7 +231,7 @@ enum AgentStreamEvent:
       if isSubagent then
         Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
       else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
-    case ToolEnd(label, summary, content, isError, input, truncated) =>
+    case ToolEnd(label, summary, content, isError, input) =>
       val base =
         if isSubagent then
           Json.obj(
@@ -249,8 +251,7 @@ enum AgentStreamEvent:
             "content" -> content.asJson,
             "isError" -> isError.asJson
           )
-      val withInput = input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
-      if truncated then withInput.deepMerge(Json.obj("truncated" -> true.asJson)) else withInput
+      input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
     case AgentStart(name, agentType) =>
       Json.obj(
         "type" -> "agentStart".asJson,
@@ -424,13 +425,11 @@ case class CompactionJob(
 // ============================================================
 
 /**
- * Per-turn resolved context — all values are freshly resolved from disk/config
- * at the start of each pipeLlmCall via ContextRefresher.
+ * Per-turn resolved context — built from Lifecycle cache + EveryTurn sources.
  *
- * All resources are EveryTurn — mtime-cached so unchanged reads cost only stat() syscalls.
- *
- * @param systemPrefix  System prefix text (~/.nebflow/system-prefix.md + "\n\n")
- *                      Empty if no prefix is configured. Mtime-cached.
+ * Lifecycle fields (systemPrefix, agentDef, memoryBlock, rulesMd, projectRoot)
+ * are resolved once per session lifecycle and cached in [[LifecycleContext]].
+ * EveryTurn fields (thinkingConfig, fileChanges) are re-resolved every turn.
  */
 case class TurnContext(
   agentDef: AgentDef,
@@ -444,6 +443,25 @@ case class TurnContext(
 
 /** Per-file write tracking entry for verification reminders. */
 case class WriteTrackerEntry(writeCount: Int, remindCount: Int)
+
+/**
+ * Lifecycle-cached prompt content — resolved once per session lifecycle (first turn),
+ * reused on all subsequent turns. Changes to source files (system-prefix, system.md,
+ * memory, rules) only take effect after a session reset.
+ *
+ * @param systemPrefix  Platform prefix text
+ * @param agentDef      Agent definition (includes system.md)
+ * @param memoryBlock   Concatenated memory index layer (folder + agent + user)
+ * @param rulesMd       Inherited rules.md content from folder chain
+ * @param projectRoot   Resolved project root from folder chain
+ */
+case class LifecycleContext(
+  systemPrefix: String,
+  agentDef: AgentDef,
+  memoryBlock: String,
+  rulesMd: Option[String],
+  projectRoot: Option[String]
+)
 
 /** Session-level persistent state — survives across turns. */
 case class SessionContext(
@@ -467,7 +485,9 @@ case class SessionContext(
   /** Resolved inherited rules.md content from folder chain. None → no rules. */
   rulesMd: Option[String] = None,
   /** This session's folder ID (for rules re-resolution). */
-  folderId: Option[String] = None
+  folderId: Option[String] = None,
+  /** Lifecycle-cached prompt content. Resolved on first turn, reused until session reset. */
+  lifecycle: Option[LifecycleContext] = None
 )
 
 /** Pending user interaction deferreds. */
@@ -608,6 +628,7 @@ extension (s: AgentState)
   def projectRoot: Option[String] = s.session.projectRoot
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
+  def lifecycle: Option[LifecycleContext] = s.session.lifecycle
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
@@ -671,6 +692,12 @@ extension (s: AgentState)
 
   def withPendingTaskCheck(flag: Boolean): AgentState =
     s.copy(execution = s.execution.copy(pendingTaskCheck = flag))
+
+  def withLifecycle(lc: LifecycleContext): AgentState =
+    s.copy(session = s.session.copy(lifecycle = Some(lc)))
+
+  def withLifecycleCleared: AgentState =
+    s.copy(session = s.session.copy(lifecycle = None))
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))

@@ -37,6 +37,7 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initReminder, refreshReminders } from './reminder.js';
+import { formatLiveDuration } from './chat.js';
 
 // Randomized cosmic thinking bubble text
 const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
@@ -47,6 +48,67 @@ function randomThinkingText() {
   _lastThinkingIdx = idx;
   return t('chat.thinking.' + idx);
 }
+
+// ---------- Live thinking timer ----------
+let _thinkingTimerInterval = null;
+let _thinkingTimerEl = null;
+
+function startThinkingTimer() {
+  stopThinkingTimer(); // clean any previous
+  const sid = state.activeSessionId;
+  const startTime = state.turnStartTimes[sid];
+  if (!startTime) return;
+
+  // Insert timer element into the existing thinking placeholder
+  const placeholder = state.dom.chat.querySelector('.thinking-placeholder');
+  if (!placeholder) return;
+
+  // Remove old thinking text, replace with indicator structure
+  placeholder.innerHTML = '';
+  const indicator = document.createElement('div');
+  indicator.className = 'thinking-indicator';
+
+  // Animated dots
+  for (let i = 0; i < 3; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'thinking-dot';
+    if (i === 1) dot.style.animationDelay = '0.15s';
+    if (i === 2) dot.style.animationDelay = '0.3s';
+    indicator.appendChild(dot);
+  }
+
+  // Label
+  const label = document.createElement('span');
+  label.className = 'thinking-indicator-label';
+  label.textContent = t('chat.thinking.now') || '思考中';
+  indicator.appendChild(label);
+
+  // Live timer
+  const timer = document.createElement('span');
+  timer.className = 'thinking-timer';
+  timer.textContent = formatLiveDuration(Date.now() - startTime);
+  indicator.appendChild(timer);
+
+  placeholder.appendChild(indicator);
+  _thinkingTimerEl = timer;
+
+  // Tick every second
+  _thinkingTimerInterval = setInterval(() => {
+    if (_thinkingTimerEl) {
+      _thinkingTimerEl.textContent = formatLiveDuration(Date.now() - startTime);
+    }
+  }, 1000);
+}
+
+function stopThinkingTimer() {
+  if (_thinkingTimerInterval) {
+    clearInterval(_thinkingTimerInterval);
+    _thinkingTimerInterval = null;
+  }
+  _thinkingTimerEl = null;
+}
+// Expose for cross-module cleanup (input.js)
+window.__stopThinkingTimer = stopThinkingTimer;
 
 // ---------- 1. Populate DOM refs ----------
 state.dom = {
@@ -204,6 +266,7 @@ onMessage('thinkingDelta', (msg) => {
   resetStreamTimeout(sid);
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
+    stopThinkingTimer();
     // Remove the generic thinking placeholder if it exists
     const existing = state.dom.chat.querySelector('.thinking-placeholder');
     if (existing) {
@@ -229,6 +292,7 @@ onMessage('textDelta', (msg) => {
   resetStreamTimeout(sid);
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
+    stopThinkingTimer();
     clearRetryStatus();
     // Finish thinking bubble before first text delta
     if (state.currentThinkingBubble) finishThinking();
@@ -239,10 +303,12 @@ onMessage('textDelta', (msg) => {
 onMessage('textDone', (msg) => {
   const sid = msg.sessionId;
   if (isActive(msg)) {
+    stopThinkingTimer();
     if (state.currentThinkingBubble) finishThinking();
     const tThinking = state.sessionThinkingBuffers[sid] || '';
     if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
-    const data = finishAi();
+    const durationMs = consumeTurnDuration(sid);
+    const data = finishAi(durationMs);
     if (data) {
       data.thinking = tThinking || undefined;
       saveMsg(data, sid);
@@ -273,10 +339,11 @@ onMessage('thinking', (msg) => {
       row.className = 'row ai';
       state.currentAiBubble = document.createElement('div');
       state.currentAiBubble.className = 'bubble ai thinking-placeholder';
-      state.currentAiBubble.innerHTML = '<span class="thinking-text">' + randomThinkingText() + '</span>';
       row.appendChild(state.currentAiBubble);
       chat.appendChild(row);
       smartScroll();
+      // Start live timer after a brief moment so DOM is settled
+      requestAnimationFrame(() => startThinkingTimer());
     }
   }
 });
@@ -364,10 +431,10 @@ onMessage('toolEnd', (msg) => {
   const toolEndSid = msg.sessionId;
   if (toolEndSid) delete state.sessionPendingTools[toolEndSid];
   if (isActive(msg)) {
-    const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId, msg.truncated);
+    const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
     if (data) saveMsg(data, msg.sessionId);
   } else {
-    saveMsg({type: 'tool', label: msg.label, summary: msg.summary, content: msg.content, isError: msg.isError, input: msg.input, truncated: msg.truncated}, msg.sessionId);
+    saveMsg({type: 'tool', label: msg.label, summary: msg.summary, content: msg.content, isError: msg.isError, input: msg.input}, msg.sessionId);
   }
 });
 
@@ -558,6 +625,7 @@ onMessage('done', (msg) => {
     }
   }
   if (isActive(msg)) {
+    stopThinkingTimer();
     // Clean up per-session pending tool card for this session
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
@@ -1074,7 +1142,7 @@ onMessage('agentToolEnd', (msg) => {
   const aSid3 = msg.sessionId;
   if (aSid3) delete state.sessionPendingTools[aSid3];
   if (!isActive(msg)) return;
-  const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId, msg.truncated);
+  const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
   if (data) saveMsg(data, msg.sessionId);
 });
 onMessage('agentEnd', (msg) => {
@@ -1333,8 +1401,14 @@ onMessage('sessionBusy', (msg) => {
   // DOM-related cleanup only for active session
   if (isActive(msg) && !msg.busy && state.currentAiBubble) {
     const durationMs = consumeTurnDuration(sid);
-    const model = state.sessionModelInfo[sid]?.model || null;
-    const data = finishAi(durationMs, model);
+    // IMPORTANT: do NOT use sessionModelInfo[sid]?.model here.
+    // If the user switched models (e.g. deepseek → glm), sessionModelInfo still
+    // holds the PREVIOUS turn's model. When sessionBusy(false) wins the race
+    // against 'done' (backend acknowledges this can happen), using the cache
+    // renders the wrong model name on the duration badge. Passing null means
+    // the badge shows the phrase without a model — the correct model comes from
+    // history when the user switches sessions.
+    const data = finishAi(durationMs, null);
     if (data) saveMsg(data, sid);
     Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
     state.agentBubbles = {};

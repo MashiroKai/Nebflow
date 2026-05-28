@@ -201,7 +201,7 @@ class MemoryAgentManager(
         if fullCycle then "Run full consolidation and pattern extraction as described above."
         else "Quick cycle — skip consolidation, only process staging."
       }
-       |3. After processing, DELETE the staging file using Bash: rm ~/.nebflow/memory-staging.jsonl.
+       |3. After processing, call ClearStaging with confirm=true to delete the staging file.
        |4. Respond DONE when finished.""".stripMargin
   end buildDreamPayload
 

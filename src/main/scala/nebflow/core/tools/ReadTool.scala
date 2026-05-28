@@ -10,7 +10,6 @@ import java.nio.file.{Files, Path, Paths}
 object ReadTool extends Tool:
   val MAX_LINE_COUNT = 2000
   val MAX_FILE_BYTES = 512 * 1024 // 512KB — approx 128k tokens, well within context
-  // Context pressure check is handled centrally by ToolResultGuard in executeTool
 
   val name = "Read"
 

@@ -14,14 +14,20 @@ import java.util.Base64
  * with theme variables injected, so dark mode works automatically.
  *
  * Local file references (src="...") pointing to image/video/audio/font/PDF files
- * on disk are automatically inlined as base64 data URIs (up to 200 MB each).
+ * on disk are handled in two ways:
+ *   - Small files (< DataUriThreshold) → inlined as base64 data URIs (instant, no network)
+ *   - Large files (>= DataUriThreshold) → served via /api/nf-file?path=... endpoint
+ *     The frontend injects the auth token into these URLs before rendering.
  * Only whitelisted media extensions are processed — arbitrary files are skipped.
  */
 object CardTool extends Tool:
 
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.card")
 
-  /** Max file size for data URI embedding (200 MB). */
+  /** Files smaller than this are base64-embedded; larger files use the HTTP endpoint. */
+  private val DataUriThreshold = 1024 * 1024 // 1 MB
+
+  /** Max file size for HTTP-served files (200 MB). */
   private val MaxFileSize = 200 * 1024 * 1024
 
   /** Allowed media extensions — prevents reading arbitrary non-media files via src=. */
@@ -141,12 +147,13 @@ object CardTool extends Tool:
   /** Result of attempting to embed a local file. */
   private enum EmbedResult:
     case DataUri(value: String)
+    case HttpUrl(url: String) // served via /api/nf-file endpoint
     case TooLarge(fileName: String)
     case Skip // not a local path, not an image, file not found, etc.
 
   /**
-   * Try to convert a local file to a data URI.
-   * Security: only image extensions are allowed; non-image files are silently skipped.
+   * Try to convert a local file to either a data URI (small files) or an HTTP URL (large files).
+   * Security: only whitelisted extensions are allowed; other files are silently skipped.
    */
   private def tryEmbed(value: String): EmbedResult =
     if !isLocalFilePath(value) || !isAllowedImage(value) then EmbedResult.Skip
@@ -157,7 +164,12 @@ object CardTool extends Tool:
           try
             if !Files.exists(path) || !Files.isRegularFile(path) then EmbedResult.Skip
             else if Files.size(path) > MaxFileSize then EmbedResult.TooLarge(path.getFileName.toString)
+            else if Files.size(path) >= DataUriThreshold then
+              // Large file — serve via HTTP endpoint (supports Range for video seeking)
+              val encoded = java.net.URLEncoder.encode(path.toString, "UTF-8")
+              EmbedResult.HttpUrl(s"/api/nf-file?path=$encoded")
             else
+              // Small file — base64 inline (instant, no network round-trip)
               val bytes = Files.readAllBytes(path)
               val mime = ExtensionToMime.getOrElse(fileExtension(path.toString), "application/octet-stream")
               val b64 = Base64.getEncoder.encodeToString(bytes)
@@ -165,10 +177,13 @@ object CardTool extends Tool:
           catch case _: Exception => EmbedResult.Skip
 
   /**
-   * Scan HTML for src= attributes pointing to local image files,
-   * and replace paths with base64 data URIs.
-   * - Non-image files are silently skipped (left as-is).
-   * - Files exceeding the size limit get an SVG placeholder.
+   * Scan HTML for src= attributes pointing to local media files,
+   * and replace paths with either base64 data URIs or HTTP URLs.
+   * - Non-media files are silently skipped (left as-is).
+   * - Small files (< DataUriThreshold) → base64 data URI
+   * - Large files (>= DataUriThreshold) → /api/nf-file?path=... URL
+   *   (frontend injects auth token before rendering)
+   * - Files exceeding MaxFileSize → SVG placeholder
    */
   private def embedLocalFiles(html: String): String =
     val replacements = SrcAttrRegex
@@ -177,6 +192,7 @@ object CardTool extends Tool:
         val value = m.group(1)
         tryEmbed(value) match
           case EmbedResult.DataUri(uri) => Some((m.start(1), m.end(1), uri))
+          case EmbedResult.HttpUrl(url) => Some((m.start(1), m.end(1), url))
           case EmbedResult.TooLarge(name) => Some((m.start(1), m.end(1), tooLargePlaceholder(name)))
           case EmbedResult.Skip => None
       }
@@ -192,8 +208,12 @@ object CardTool extends Tool:
         lastEnd = end
       sb.append(html, lastEnd, html.length)
       val result = sb.toString
-      if result != html then logger.debug(s"Embedded ${replacements.size} local file(s) as data URIs")
+      if result != html then
+        val dataUriCount = replacements.count { case (_, _, r) => r.startsWith("data:") }
+        val httpUrlCount = replacements.size - dataUriCount
+        logger.debug(s"Processed ${replacements.size} local file(s): $dataUriCount base64, $httpUrlCount HTTP")
       result
+    end if
   end embedLocalFiles
 
   val name = "Card"
@@ -231,13 +251,27 @@ Recommended use cases:
 
 CRITICAL: This tool must NOT be used for text-heavy content. If the card's primary information carrier is text (paragraphs, lists, explanations), use Markdown instead. Cards should be dominated by visual elements — shapes, lines, colors, spatial arrangement — with text kept to minimal annotations and labels.
 
+Typography rules (IMPORTANT — follow these strictly):
+- Body text: minimum 15px. Use 15-16px for readable content.
+- Labels/annotations on diagrams: minimum 14px.
+- Headings: 18-22px.
+- NEVER use font-size below 14px for any visible text.
+- Line height: 1.5 for body text, 1.2 for headings.
+
+Color rules (IMPORTANT — text must be readable in BOTH light and dark mode):
+- ALWAYS use CSS variables for text/fill colors: var(--color-text), var(--color-primary), var(--color-surface), etc.
+- For SVG <text> on colored backgrounds: use style="fill:var(--color-text)" or fill="white" (if background is dark).
+- NEVER hardcode gray colors like #999, #666, #ccc, #aaa — they are invisible in one of the themes.
+- NEVER use opacity below 0.85 on text — low-opacity text is unreadable, especially in dark mode.
+- For secondary/muted text, use var(--color-text) at full opacity. If you need visual hierarchy, use font-size or font-weight, NOT reduced opacity or gray color.
+
 Parameters:
 - html (string, required): HTML with inline CSS. Supports dark mode via var(--color-*) CSS variables. JavaScript does NOT execute (sandboxed iframe), but CSS animations work.
 - title (string, optional): Short title above the card.
 
 Example:
 {
-  "html": "<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"13\">Client</text><line x1=\"90\" y1=\"80\" x2=\"180\" y2=\"80\" stroke=\"var(--color-text)\" stroke-width=\"2\" stroke-dasharray=\"5,3\"/><text x=\"135\" y=\"70\" text-anchor=\"middle\" fill=\"var(--color-text)\" font-size=\"11\" opacity=\"0.6\">SYN</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"13\">Server</text></svg><p style=\"margin:8px 0 0;font-size:12px;color:var(--color-text);opacity:0.6;text-align:center\">TCP 三次握手：Client → SYN → Server</p></div>",
+  "html": "<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><line x1=\"90\" y1=\"80\" x2=\"180\" y2=\"80\" stroke=\"var(--color-text)\" stroke-width=\"2\" stroke-dasharray=\"5,3\"/><text x=\"135\" y=\"72\" text-anchor=\"middle\" fill=\"var(--color-text)\" font-size=\"14\">SYN</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg><p style=\"margin:8px 0 0;font-size:15px;color:var(--color-text);text-align:center\">TCP handshake: Client → SYN → Server</p></div>",
   "title": "TCP 握手示意"
 }"""
 

@@ -337,15 +337,28 @@
 .session-delete:hover { color: var(--color-error); }
 .session-delete svg { width: 14px; height: 14px; }
 
-/* Session context menu */
+/* Session context menu — sapphire glass */
 .session-ctx-menu {
   position: fixed;
   z-index: 1000;
-  background: var(--color-modal-bg);
-  border: 1px solid var(--color-frame-border);
-  border-radius: 6px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--sapphire-edge);
+  border-radius: 10px;
   padding: 4px 0;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow:
+    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
+    0px 4px 16px rgba(0, 0, 0, 0.08),
+    0px 8px 32px rgba(0, 0, 0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  .session-ctx-menu {
+    box-shadow:
+      inset 0 1px 0 0 rgba(91, 127, 191, 0.05),
+      0px 4px 16px rgba(0, 0, 0, 0.30),
+      0px 8px 32px rgba(0, 0, 0, 0.45);
+  }
 }
 .session-ctx-menu .ctx-item {
   padding: 6px 14px;
@@ -373,13 +386,25 @@
   position: absolute;
   left: 100%;
   top: 0;
-  background: var(--color-modal-bg);
-  border: 1px solid var(--color-frame-border);
-  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid var(--sapphire-edge);
+  border-radius: 10px;
   padding: 4px 0;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow:
+    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
+    0px 4px 16px rgba(0, 0, 0, 0.08),
+    0px 8px 32px rgba(0, 0, 0, 0.06);
   min-width: 140px;
   z-index: 1001;
+}
+@media (prefers-color-scheme: dark) {
+  .ctx-submenu {
+    background: #1c202a;
+    box-shadow:
+      inset 0 1px 0 0 rgba(91, 127, 191, 0.05),
+      0px 4px 16px rgba(0, 0, 0, 0.30),
+      0px 8px 32px rgba(0, 0, 0, 0.45);
+  }
 }
 .ctx-sub {
   padding: 6px 14px;
@@ -659,7 +684,7 @@
   transition: border-color 0.2s;
 }
 .settings-text-input:focus {
-  border-color: var(--color-primary);
+  border-color: rgba(91, 127, 191, 0.5);
 }
 .settings-text-input::placeholder {
   color: var(--color-frame-text-muted);
@@ -675,7 +700,7 @@
   cursor: pointer;
   transition: background 0.2s;
 }
-.toggle.on { background: var(--color-primary); }
+.toggle.on { background: #22c55e; }
 .toggle::after {
   content: '';
   position: absolute;
@@ -724,8 +749,8 @@
   transition: all 0.15s;
 }
 .config-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
-.config-actions .btn-save { border-color: var(--color-primary); color: var(--color-primary); }
-.config-actions .btn-save:hover { background: #07c16020; }
+.config-actions .btn-save { border-color: rgba(91, 127, 191, 0.35); color: rgb(91, 127, 191); }
+.config-actions .btn-save:hover { background: rgba(91, 127, 191, 0.08); }
 /* About section */
 .about-info {
   font-size: 12px;
@@ -742,7 +767,7 @@
   cursor: pointer;
   transition: border-color 0.15s;
 }
-.cfg-card:hover { border-color: var(--color-primary); }
+.cfg-card:hover { border-color: rgba(91, 127, 191, 0.35); }
 .cfg-card-header {
   display: flex;
   align-items: center;
@@ -804,10 +829,10 @@
   width: 100%;
   border-style: dashed;
   margin-top: 4px;
-  color: var(--color-primary);
-  border-color: var(--color-primary);
+  color: var(--color-frame-text-muted);
+  border-color: var(--color-frame-border);
 }
-.cfg-btn-add:hover { background: #07c16015; }
+.cfg-btn-add:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
 
 /* ── Config Select / Tag List ────────────────────────────────────────────── */
 .cfg-form-group { margin-bottom: 10px; }
@@ -835,7 +860,12 @@
   outline: none;
   cursor: pointer;
 }
-.cfg-select:focus { border-color: var(--color-primary); }
+.cfg-select:focus {
+  border-color: rgba(91, 127, 191, 0.5);
+  box-shadow:
+    0 0 0 2px rgba(91, 127, 191, 0.08),
+    0 0 0 4px rgba(91, 127, 191, 0.04);
+}
 .cfg-select-sm { margin-top: 6px; }
 .cfg-tag-list {
   display: flex;
@@ -864,7 +894,7 @@
   transform: scale(0.95);
 }
 .cfg-tag.drag-over {
-  box-shadow: 0 0 0 2px var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.5);
   transform: scale(1.05);
 }
 .cfg-tag-remove {
@@ -879,7 +909,7 @@
 .cfg-modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -888,14 +918,50 @@
 }
 @keyframes cfg-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .cfg-modal {
-  background: var(--color-bg);
-  border: 1px solid var(--color-frame-border);
-  border-radius: 10px;
+  position: relative;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--sapphire-edge);
+  border-radius: 14px;
   width: 400px;
   max-width: 92vw;
   max-height: 85vh;
   overflow-y: auto;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+  box-shadow:
+    inset 0 -1px 0 0 rgba(91, 127, 191, 0.03),
+    inset 1px 0 0 0 rgba(91, 127, 191, 0.02),
+    inset -1px 0 0 0 rgba(91, 127, 191, 0.02),
+    0px 0px 0px 1px rgba(0, 0, 0, 0.04),
+    0px 4px 16px rgba(0, 0, 0, 0.06),
+    0px 8px 40px rgba(0, 0, 0, 0.08);
+}
+/* Top refraction line */
+.cfg-modal::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+@media (prefers-color-scheme: dark) {
+  .cfg-modal {
+    box-shadow:
+      inset 0 -1px 0 0 rgba(91, 127, 191, 0.04),
+      inset 1px 0 0 0 rgba(91, 127, 191, 0.03),
+      inset -1px 0 0 0 rgba(91, 127, 191, 0.03),
+      0px 0px 0px 1px rgba(255, 255, 255, 0.04),
+      0px 4px 16px rgba(0, 0, 0, 0.25),
+      0px 8px 40px rgba(0, 0, 0, 0.40);
+  }
 }
 .cfg-modal-title {
   font-size: 14px;
@@ -909,18 +975,31 @@
 .cfg-modal-body .cfg-label { margin-bottom: 5px; }
 .cfg-input {
   width: 100%;
-  background: var(--color-frame-input-bg);
+  background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 5px;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
   padding: 6px 8px;
   font-size: 12px;
   font-family: inherit;
   outline: none;
   box-sizing: border-box;
-  transition: border-color 0.15s;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.cfg-input:focus { border-color: var(--color-primary); }
+.cfg-input:focus {
+  border-color: rgba(91, 127, 191, 0.5);
+  box-shadow:
+    0 0 0 2px rgba(91, 127, 191, 0.08),
+    0 0 0 4px rgba(91, 127, 191, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  .cfg-input:focus {
+    border-color: rgba(91, 127, 191, 0.4);
+    box-shadow:
+      0 0 0 2px rgba(91, 127, 191, 0.12),
+      0 0 0 4px rgba(91, 127, 191, 0.06);
+  }
+}
 .cfg-input:disabled { opacity: 0.5; cursor: not-allowed; }
 .cfg-textarea {
   min-height: 64px;
@@ -997,8 +1076,8 @@
   background: var(--color-frame-hover);
 }
 .cfg-model-add:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+  border-color: rgba(91, 127, 191, 0.45);
+  color: rgb(91, 127, 191);
 }
 .cfg-modal-actions {
   display: flex;
@@ -1009,10 +1088,16 @@
 }
 .cfg-modal-actions .cfg-btn { padding: 6px 16px; }
 .cfg-btn-save {
-  border-color: var(--color-primary) !important;
-  color: var(--color-primary) !important;
+  border-color: rgba(91, 127, 191, 0.35) !important;
+  color: rgb(91, 127, 191) !important;
 }
-.cfg-btn-save:hover { background: #07c16020 !important; }
+.cfg-btn-save:hover {
+  background: rgba(91, 127, 191, 0.12) !important;
+  border-color: rgba(91, 127, 191, 0.55) !important;
+  box-shadow:
+    0 0 12px rgba(120, 160, 220, 0.15),
+    0 0 24px rgba(120, 160, 220, 0.08) !important;
+}
 
 /* ── Config Toast (validation errors) ─────────────────────────────── */
 .cfg-toast {

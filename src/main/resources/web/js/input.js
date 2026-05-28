@@ -407,11 +407,12 @@ export function send() {
   // Immediately clear the draft for this session so it is not restored after refresh
   saveInputDraft(state.activeSessionId);
   setBusy(state.activeSessionId);
-  // Start turn timer (for "✻ Thought for X" badge)
+  // Start turn timer
   state.turnStartTimes[state.activeSessionId] = Date.now();
   // Release send lock after a short debounce to prevent double-click / rapid Enter
   setTimeout(() => { state.isSending = false; }, 300);
   // Clean up any orphaned thinking placeholders from previous incomplete streams
+  if (window.__stopThinkingTimer) window.__stopThinkingTimer();
   state.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
     const row = el.closest('.row');
     if (row) row.remove();
@@ -716,8 +717,32 @@ export function initInput() {
       }
       const current = voiceFinal + interimText;
       voiceText.textContent = current || t('voice.listening');
+
+      // Dynamic cursor tracking: re-read cursor position each time
+      const cursorNow = (input.selectionStart !== null && input.selectionStart !== undefined)
+        ? input.selectionStart : input.value.length;
+      // Calculate length of old voice text currently in input.value
+      const oldVoiceLen = Math.max(0, input.value.length - (voiceBefore.length + voiceAfter.length));
+      // Map cursor position from current value (which includes old voice text) to raw text position
+      let rawCursor;
+      if (cursorNow <= voiceBefore.length) {
+        rawCursor = cursorNow; // cursor before voice region
+      } else if (cursorNow >= voiceBefore.length + oldVoiceLen) {
+        rawCursor = cursorNow - oldVoiceLen; // cursor after voice region
+      } else {
+        rawCursor = voiceBefore.length; // cursor inside voice region — keep at insertion point
+      }
+      // Extract raw text (without old voice text) and re-split at new cursor position
+      const rawText = input.value.substring(0, voiceBefore.length)
+        + input.value.substring(voiceBefore.length + oldVoiceLen);
+      voiceBefore = rawText.substring(0, rawCursor);
+      voiceAfter = rawText.substring(rawCursor);
+
       const sep = voiceBefore && !voiceBefore.endsWith(' ') ? ' ' : '';
       input.value = voiceBefore + sep + current + voiceAfter;
+      // Place cursor at the end of the newly inserted voice text
+      const cursorEnd = voiceBefore.length + (sep ? 1 : 0) + current.length;
+      input.setSelectionRange(cursorEnd, cursorEnd);
     };
 
     rec.onerror = (ev) => {
@@ -750,7 +775,7 @@ export function initInput() {
       return;
     }
     voiceActive = true;
-    const pos = input.selectionStart || input.value.length;
+    const pos = (input.selectionStart !== null && input.selectionStart !== undefined) ? input.selectionStart : input.value.length;
     voiceBefore = input.value.substring(0, pos);
     voiceAfter = input.value.substring(pos);
     voiceFinal = '';

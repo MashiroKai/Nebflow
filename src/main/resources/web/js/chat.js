@@ -113,6 +113,7 @@ export function appendAiText(text) {
   const chat = state.dom.chat;
   state.aiText += text;
   if (state.currentAiBubble && state.currentAiBubble.classList.contains('thinking-placeholder')) {
+    if (window.__stopThinkingTimer) window.__stopThinkingTimer();
     state.currentAiBubble.classList.remove('thinking-placeholder');
     state.currentAiBubble.innerHTML = '';
   }
@@ -170,6 +171,20 @@ export function formatDuration(ms) {
   return minutes + 'm ' + seconds + 's';
 }
 
+/**
+ * Format duration for live timer display (always ticking, no rounding).
+ * e.g. 3500 -> "3s", 65000 -> "1m 5s", 3700000 -> "1h 1m 40s"
+ */
+export function formatLiveDuration(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return totalSeconds + 's';
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) return minutes + 'm ' + seconds + 's';
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return hours + 'h ' + mins + 'm ' + seconds + 's';
+}
 
 /**
  * Cosmology-themed thinking phrases — now powered by i18n.
@@ -178,10 +193,11 @@ export function formatDuration(ms) {
 const THINKING_COUNT = 19;
 
 /**
- * Pick a cosmology-themed thinking phrase via i18n.
- * @param {number} durationMs - Duration in milliseconds.
- * @param {number} [seed] - Optional seed for deterministic selection.
- * @returns {string} The full badge text including the ✻ prefix.
+ * Pick a cosmology-themed thinking phrase with duration embedded.
+ * e.g. "Counted some stars for 12s"
+ * @param {number} durationMs
+ * @param {number} [seed]
+ * @returns {string} The full phrase text with duration.
  */
 export function pickThinkingPhrase(durationMs, seed) {
   const idx = seed != null
@@ -191,17 +207,43 @@ export function pickThinkingPhrase(durationMs, seed) {
 }
 
 /**
+ * Create a duration badge DOM element (pill style).
+ * Shows the full phrase with duration embedded, plus optional model tag.
+ * @param {number} durationMs
+ * @param {string} [model]
+ * @param {number} [seed]
+ * @returns {HTMLElement}
+ */
+export function createDurationBadgeElement(durationMs, model, seed) {
+  const badge = document.createElement('div');
+  badge.className = 'duration-badge';
+
+  const phraseSpan = document.createElement('span');
+  phraseSpan.className = 'duration-badge-text';
+  phraseSpan.textContent = pickThinkingPhrase(durationMs, seed);
+  badge.appendChild(phraseSpan);
+
+  if (model) {
+    const div = document.createElement('span');
+    div.className = 'duration-badge-divider';
+    badge.appendChild(div);
+    const modelSpan = document.createElement('span');
+    modelSpan.className = 'duration-badge-model';
+    modelSpan.textContent = model;
+    badge.appendChild(modelSpan);
+  }
+
+  return badge;
+}
+
+/**
  * Render a subtle duration badge below an AI bubble.
  */
 export function renderDurationBadge(bubble, durationMs, model, seed) {
   if (!bubble) return;
   const row = bubble.closest('.row');
   if (!row) return;
-  const badge = document.createElement('div');
-  badge.className = 'duration-badge';
-  let text = pickThinkingPhrase(durationMs, seed);
-  if (model) text += ' · ' + model;
-  badge.textContent = text;
+  const badge = createDurationBadgeElement(durationMs, model, seed);
   row.appendChild(badge);
 }
 
@@ -247,7 +289,7 @@ export function finishAgent(agentId) {
 }
 
 // ---------- Tool rendering ----------
-export function renderTool(label, summary, content, isError, inputJson, sessionId, truncated) {
+export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || state.activeSessionId;
   // Guard: do not render into a different session's chat
   if (sid && sid !== state.activeSessionId) return null;
@@ -273,11 +315,6 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     return { type: 'tool', label, summary, content, isError, input: inputJson };
   }
 
-  // Truncation warning badge
-  const truncBadge = truncated
-    ? '<span class="truncated-badge" title="' + escapeHtml(t('tool.result.truncatedTitle')) + '">' + escapeHtml(t('tool.result.truncated')) + '</span>'
-    : '';
-
   // Fallback to default rendering
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
@@ -290,6 +327,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const localLabel = localizeToolLabel(label);
   const localSummary = localizeToolSummary(summary, label);
   const labelParts = localLabel.split('\n', 2);
+  const truncBadge = ''; // placeholder for future truncated content indicator
   const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(localSummary) + truncBadge
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
@@ -300,7 +338,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   smartScroll();
 
   if (hasBody) attachToolClick(card);
-  return { type: 'tool', label, summary, content, isError, input: inputJson, truncated: !!truncated };
+  return { type: 'tool', label, summary, content, isError, input: inputJson };
 }
 
 export function renderToolPending(label, sessionId) {
@@ -309,6 +347,7 @@ export function renderToolPending(label, sessionId) {
   if (sid && sid !== state.activeSessionId) return;
   const chat = state.dom.chat;
   if (state.currentAiBubble && state.currentAiBubble.classList.contains('thinking-placeholder')) {
+    if (window.__stopThinkingTimer) window.__stopThinkingTimer();
     const row = state.currentAiBubble.closest('.row');
     if (row) row.remove();
     state.currentAiBubble = null;

@@ -79,7 +79,7 @@ class AgentLibrary(
   private val defaults = List(
     DefaultAgent(
       "Nebula",
-      """{"name":"Nebula","displayName":"Nebula","description":"AI coding assistant with full tool access","avatar":"<i data-lucide=\"sparkles\"></i>","tools":["*"],"mcpServers":["*"]}""",
+      """{"name":"Nebula","displayName":"Nebula","description":"AI coding assistant with full tool access","tools":["*"],"mcpServers":["*"]}""",
       """You are Nebula, an AI coding assistant running inside Nebflow.
 
 ## Session Management
@@ -89,7 +89,7 @@ class AgentLibrary(
     ),
     DefaultAgent(
       "MemoryAgent",
-      """{"name":"MemoryAgent","description":"Internal memory management agent","tools":["Read","Write","Edit"]}""",
+      """{"name":"MemoryAgent","description":"Internal memory management agent","tools":["Read","Write","Edit","Glob","Grep","ClearStaging"]}""",
       MemoryAgentPrompts.systemPrompt
     )
   )

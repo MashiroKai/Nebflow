@@ -38,7 +38,7 @@ object NebflowBackup:
     // Agent memory files
     _.matches("agents/[^/]+/memory\\.md"),
     _.matches("agents/[^/]+/agent\\.json"),
-    _.matches("agents/[^/]+/system\\.md"),
+    _.matches("agents/[^/]+/system\\.md")
   )
 
   /** File patterns to exclude (even if matched by include). */
@@ -51,7 +51,7 @@ object NebflowBackup:
     _.startsWith("uploads/"),
     _.startsWith("tasks/"),
     _.startsWith("backups/"),
-    _.startsWith("projects/"),
+    _.startsWith("projects/")
   )
 
   private def shouldBackup(relPath: String): Boolean =
@@ -121,7 +121,6 @@ object NebflowBackup:
           val ts = LocalDateTime.parse(name, fmt)
           val hours = java.time.Duration.between(ts, LocalDateTime.now(ZoneId.systemDefault())).toHours
           hours >= 24
-        catch
-          case _: Exception => true // malformed name, run backup
+        catch case _: Exception => true // malformed name, run backup
 
 end NebflowBackup
