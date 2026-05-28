@@ -54,9 +54,32 @@ jobs:
           else
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
-      - name: Create GitHub Release
+      - name: Create GitHub Release (source repo)
         uses: softprops/action-gh-release@v2
         with:
           files: nebflow-assembly-*.jar
           prerelease: ${{ steps.prerelease.outputs.prerelease }}
           generate_release_notes: true
+
+  public-release:
+    name: Sync to Public Repo
+    needs: github-release
+    runs-on: ubuntu-latest
+    if: "!contains(github.ref, '-beta')"
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nebflow-jar
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Publish to public release repo
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" \
+            --repo MashiroKai/Nebflow-Release \
+            --title "$TAG" \
+            --notes "Nebflow $TAG" \
+            nebflow-assembly-*.jar

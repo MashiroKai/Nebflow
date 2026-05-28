@@ -29,7 +29,7 @@ fi
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 JAR_NAME="nebflow-assembly-${VERSION}.jar"
 COS_URL="https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/${JAR_NAME}"
-GH_URL="https://github.com/MashiroKai/Nebflow/releases/download/v${VERSION}/${JAR_NAME}"
+GH_URL="https://github.com/MashiroKai/Nebflow-Release/releases/download/v${VERSION}/${JAR_NAME}"
 GH_BETA_URL="https://github.com/MashiroKai/Nebflow/releases/download/v${VERSION}-beta/${JAR_NAME}"
 
 echo ""
@@ -175,7 +175,7 @@ download_jar() {
 
     case "$REGION" in
         cn)
-            # China: COS first, GitHub fallback
+            # China: COS first (fast domestic CDN), GitHub fallback
             if _download "${COS_URL}" "${target}"; then
                 return 0
             fi
@@ -186,7 +186,7 @@ download_jar() {
             }
             ;;
         *)
-            # Global: GitHub first, COS fallback
+            # Global: GitHub first (fast via public release repo), COS fallback
             if _download "${GH_URL}" "${target}"; then
                 return 0
             fi
