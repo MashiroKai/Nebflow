@@ -15,6 +15,8 @@ import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
 import org.apache.pekko.actor.typed.{ActorRef, Behavior, SupervisorStrategy}
 
+import scala.concurrent.duration.*
+
 /**
  * Core agent actor — the heart of the multi-agent system.
  *
@@ -119,20 +121,31 @@ object AgentActor extends AgentCore with AgentSession:
     stash: StashBuffer[AgentCommand],
     ctx: ActorContext[AgentCommand]
   ): Behavior[AgentCommand] =
-    // NOTE: always emit sessionBusy(false) for root agents when entering idle.
-    // This covers the critical case where Pekko supervision restarts the actor
-    // after a crash (e.g. StashOverflowException) — without this, the frontend
-    // stays stuck with busySessionIds=true and rejects new user input until
-    // the 10-minute safety timeout fires.
+    // NOTE: emit sessionBusy(false) for root agents when entering idle to cover
+    // crash recovery (Pekko supervision restart). DELAY by 800ms so that the
+    // normal finishTurn chain (done → sessionBusy) arrives first — without this
+    // delay, the duplicate sessionBusy(false) from here can win the race because
+    // its recording step is IO.unit (instant) while done's recording writes to
+    // the session store (async IO), causing the frontend to finalize the AI
+    // bubble with a stale cached model name after a model switch.
+    // The cancelToken allows UserInput/AskQuestion handlers to cancel the
+    // delayed sessionBusy(false) so it doesn't clear the busy state that was
+    // just set by the new turn.
+    val idleBusyCancelToken = new java.util.concurrent.atomic.AtomicBoolean(false)
     if depth == 0 then
       state.sessionId.foreach { sid =>
         resources.dispatcher.unsafeRunAndForget(
-          emitSessionBusy(state.wsSend, sid, busy = false)
+          cats.effect.IO.sleep(800.millis) *>
+            IO.delay(idleBusyCancelToken.get()).flatMap { cancelled =>
+              if cancelled then IO.unit else emitSessionBusy(state.wsSend, sid, busy = false)
+            }
         )
       }
 
     Behaviors.receiveMessage:
       case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks) =>
+        // Cancel the delayed sessionBusy(false) from idle entry — a new turn is starting
+        idleBusyCancelToken.set(true)
         // Dedup check (root agent session management)
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
         if isDuplicate then
@@ -186,6 +199,8 @@ object AgentActor extends AgentCore with AgentSession:
         end if
 
       case AgentCommand.AskQuestion(question, askSessionId) =>
+        // Cancel the delayed sessionBusy(false) from idle entry
+        idleBusyCancelToken.set(true)
         // Inline /ask: inject ask-reminder into current messages, reuse agent's cached LLM context
         val askReminder = AskService.buildAskReminder(question)
         val askMessages = state.messages :+ askReminder
@@ -199,6 +214,8 @@ object AgentActor extends AgentCore with AgentSession:
         pipeLlmCall(agentDef, resources, depth, parentRef, askState, stash, ctx, None)
 
       case AgentCommand.SkillActivate(skillName, input, skillSessionId, skillContent, skillBaseDir) =>
+        // Cancel the delayed sessionBusy(false) from idle entry
+        idleBusyCancelToken.set(true)
         // Skill activation: prepend skill content + user input as a new user message
         val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
         val userMsg = Message(MessageRole.User, Left(combinedText))
@@ -271,7 +288,8 @@ object AgentActor extends AgentCore with AgentSession:
           .withWritesSinceLastRead(Map.empty)
           .withRecentMessageIds(Nil)
           .withCompaction(state.compaction.copy(highestPressureLevel = 0))
-        // agentDef is refreshed EveryTurn via TurnContext — no lifecycle refresh needed
+          .withLifecycleCleared
+        // Lifecycle sources will be re-resolved from disk on next turn
         stash.unstashAll(idle(agentDef, resources, depth, parentRef, resetState, stash, ctx))
 
       case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
@@ -290,7 +308,7 @@ object AgentActor extends AgentCore with AgentSession:
         )
 
       case AgentCommand.UpdateContextWindow(window) =>
-        val newState = state.withContextWindow(window)
+        val newState = state.withContextWindow(window).withLifecycleCleared
         // Model switched: check if current messages exceed the new context window
         val estimatedTokens = TokenEstimator.estimate(newState.messages)
         val config = CompactConfig()
@@ -443,6 +461,10 @@ object AgentActor extends AgentCore with AgentSession:
 
       case AgentCommand.ClearTaskCheck =>
         processing(agentDef, resources, depth, parentRef, state.withPendingTaskCheck(false), stash, ctx)
+
+      // --- Cache lifecycle prompt content (from first turn's IO fiber) ---
+      case AgentCommand.UpdateLifecycle(lc) =>
+        processing(agentDef, resources, depth, parentRef, state.withLifecycle(lc), stash, ctx)
 
       // --- LLM completed ---
       case LlmComplete(result, replyTo, turnId) =>
@@ -894,8 +916,9 @@ object AgentActor extends AgentCore with AgentSession:
           .withWritesSinceLastRead(Map.empty)
           .withRecentMessageIds(Nil)
           .withCompaction(state.compaction.copy(highestPressureLevel = 0))
+          .withLifecycleCleared
           .resetToIdle(Nil)
-        // agentDef is refreshed EveryTurn via TurnContext — no lifecycle refresh needed
+        // Lifecycle sources will be re-resolved from disk on next turn
         stash.unstashAll(idle(agentDef, resources, depth, parentRef, resetState, stash, ctx))
 
       // --- ReplaceToolResults: agent-driven context management ---
@@ -987,8 +1010,7 @@ object AgentActor extends AgentCore with AgentSession:
                 .withCompactionFailures(0)
                 .withEmptyResponseRetries(0)
                 .withLatestUsage(None) // Clear stale usage to prevent maybeAutoCompact re-trigger
-              // Memory is loaded EveryTurn via TurnContext — no need to refresh here
-              // agentDef is refreshed EveryTurn via TurnContext — no lifecycle refresh needed
+                .withLifecycleCleared // Re-resolve lifecycle sources on next turn
               if pending.exists(_.resumeAfterCompact) then
                 // Auto/LLM-triggered: resume LLM call with compacted messages
                 pipeLlmCall(
@@ -1196,7 +1218,15 @@ object AgentActor extends AgentCore with AgentSession:
 
       // --- Session model switched: update contextWindow for compaction threshold ---
       case AgentCommand.UpdateContextWindow(window) =>
-        processing(agentDef, resources, depth, parentRef, state.withContextWindow(window), stash, ctx)
+        processing(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state.withContextWindow(window).withLifecycleCleared,
+          stash,
+          ctx
+        )
 
       case msg =>
         stash.stash(msg)

@@ -43,7 +43,7 @@ For each entry:
 - Only extract patterns seen at least 2-3 times
 
 ### Step 4: Cleanup
-- Delete the staging file after processing all entries
+- Call ClearStaging with confirm=true to delete the staging file after all entries are processed
 
 ## Rules
 - Less is more: when in doubt, remove rather than add

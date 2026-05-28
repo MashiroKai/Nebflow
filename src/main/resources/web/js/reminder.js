@@ -1,9 +1,12 @@
-// reminder.js — Session Scheduled Tasks UI (Apple Reminders style)
+// reminder.js — Session Scheduled Tasks UI (iPhone Reminders style)
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
-import { renderSystemBubble } from './chat.js';
 import { t } from './i18n.js';
-import { escapeHtml } from './utils.js';
+
+// Inline locale getter to avoid caching issues with module imports
+function getLocale() {
+  return document.documentElement.lang || navigator.language || 'en';
+}
 
 // ── State ──────────────────────────────────────────────────────────────
 let reminders = [];
@@ -13,21 +16,24 @@ let panelOpen = false;
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function $(sel) { return document.querySelector(sel); }
-function $$(sel) { return document.querySelectorAll(sel); }
 
 function formatTriggerTime(epochMs) {
   const d = new Date(epochMs);
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const target = new Date(d.getFullYear(), d.getMonth(), now.getDate());
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
   const diffDays = Math.round((target - today) / 86400000);
 
-  const time = d.toLocaleTimeString(getLocale() === 'zh-CN' ? 'zh-CN' : 'en', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const time = d.toLocaleTimeString(getLocale() === 'zh-CN' ? 'zh-CN' : 'en', {
+    hour: '2-digit', minute: '2-digit', hour12: false
+  });
 
   if (diffDays === 0) return t('reminder.today') + ' ' + time;
   if (diffDays === 1) return t('reminder.tomorrow') + ' ' + time;
   if (diffDays === -1) return t('reminder.yesterday') + ' ' + time;
-  const dateStr = d.toLocaleDateString(getLocale() === 'zh-CN' ? 'zh-CN' : 'en', { month: 'short', day: 'numeric' });
+  const dateStr = d.toLocaleDateString(getLocale() === 'zh-CN' ? 'zh-CN' : 'en', {
+    month: 'short', day: 'numeric'
+  });
   return dateStr + ' ' + time;
 }
 
@@ -40,6 +46,7 @@ function pendingCount() {
 }
 
 function defaultTriggerAt() {
+  // Always recalculate from NOW to avoid stale past times
   const d = new Date(Date.now() + 3600000);
   d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0);
   return d;
@@ -48,6 +55,12 @@ function defaultTriggerAt() {
 function toLocalDatetimeString(d) {
   const pad = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
 }
 
 // ── Badge ──────────────────────────────────────────────────────────────
@@ -82,92 +95,143 @@ function renderList() {
   const countEl = $('#reminder-panel .reminder-panel-count');
   if (countEl) countEl.textContent = pending.length > 0 ? t('reminder.pendingCount', { count: pending.length }) : '';
 
-  // Build list HTML
-  let html = '';
-
-  if (isCreating) html += renderInlineCreate();
+  // Clear and rebuild
+  body.innerHTML = '';
 
   if (reminders.length === 0 && !isCreating) {
-    html += renderEmptyState();
+    body.appendChild(buildEmptyState());
   } else {
-    for (const r of pending) html += renderRow(r, false);
-    for (const r of triggered.slice(0, 5)) html += renderRow(r, true);
+    for (const r of pending) body.appendChild(buildRow(r, false));
+    for (const r of triggered.slice(0, 3)) body.appendChild(buildRow(r, true));
   }
 
-  body.innerHTML = html;
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  // Create form (always at bottom)
+  if (isCreating) {
+    body.appendChild(buildInlineCreate());
+  }
 
-  // Bind events inside body
-  bindBodyEvents();
+  if (typeof lucide !== 'undefined') lucide.createIcons();
 
   // Focus inline input if creating
   if (isCreating) {
-    const input = $('#reminder-inline-input');
-    if (input) setTimeout(() => input.focus(), 50);
+    const input = body.querySelector('#reminder-inline-input');
+    if (input) requestAnimationFrame(() => input.focus());
   }
 }
 
-function renderEmptyState() {
-  return `
-    <div class="reminder-empty" id="reminder-empty-area">
-      <div class="reminder-empty-text">${t('reminder.empty')}</div>
-      <div class="reminder-empty-hint">${t('reminder.emptyHint')}</div>
-    </div>`;
+// ── DOM builders (returns elements, not HTML strings, for reliable event binding) ──
+
+function buildEmptyState() {
+  const el = document.createElement('div');
+  el.className = 'reminder-empty';
+  el.innerHTML = `
+    <div class="reminder-empty-text">${t('reminder.empty')}</div>
+    <div class="reminder-empty-hint">${t('reminder.emptyHint')}</div>`;
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    startInlineCreate();
+  });
+  return el;
 }
 
-function renderRow(r, isTriggered) {
-  const cls = isTriggered ? 'reminder-row triggered' : 'reminder-row';
-  const timeCls = !isTriggered && isOverdue(r) ? 'reminder-row-time overdue' : 'reminder-row-time';
-  const checkSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+function buildRow(r, isTriggered) {
+  const row = document.createElement('div');
+  row.className = 'reminder-row' + (isTriggered ? ' triggered' : '');
+  if (!isTriggered && isOverdue(r)) row.classList.add('overdue');
+  row.dataset.id = r.id;
 
-  const refHtml = r.referencePath
-    ? `<div class="reminder-row-ref"><i data-lucide="file-text"></i>${escapeHtml(r.referencePath)}</div>`
-    : '';
-
+  // Circle button
+  const circle = document.createElement('button');
+  circle.className = 'reminder-circle';
   if (isTriggered) {
-    return `<div class="${cls}" data-id="${r.id}">
-      <button class="reminder-complete-btn completing">${checkSvg}</button>
-      <div class="reminder-row-content">
-        <div class="${timeCls}">${t('reminder.triggered')} ${formatTriggerTime(r.triggerAt)}</div>
-        <div class="reminder-row-text">${escapeHtml(r.content)}</div>
-        ${refHtml}
-      </div>
-    </div>`;
+    circle.classList.add('completed');
+    circle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+    circle.disabled = true;
+  } else {
+    circle.dataset.action = 'delete';
+    circle.dataset.id = r.id;
+    circle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteReminder(r.id);
+    });
   }
 
-  return `<div class="${cls}" data-id="${r.id}">
-    <button class="reminder-complete-btn" data-action="delete" data-id="${r.id}">${checkSvg}</button>
-    <div class="reminder-row-content">
-      <div class="${timeCls}"><i data-lucide="clock"></i> ${formatTriggerTime(r.triggerAt)}</div>
-      <div class="reminder-row-text">${escapeHtml(r.content)}</div>
-      ${refHtml}
-    </div>
-  </div>`;
+  // Content area — single line
+  const content = document.createElement('div');
+  content.className = 'reminder-row-content';
+
+  const textSpan = document.createElement('span');
+  textSpan.className = 'reminder-row-text';
+  textSpan.textContent = r.content;
+
+  const timeSpan = document.createElement('span');
+  timeSpan.className = 'reminder-row-time';
+  if (isTriggered) {
+    timeSpan.textContent = t('reminder.triggered') + ' ' + formatTriggerTime(r.triggerAt);
+  } else {
+    timeSpan.textContent = formatTriggerTime(r.triggerAt);
+    if (isOverdue(r)) {
+      const tag = document.createElement('span');
+      tag.className = 'reminder-overdue-tag';
+      tag.textContent = t('reminder.overdue');
+      timeSpan.appendChild(tag);
+    }
+  }
+
+  content.appendChild(textSpan);
+  content.appendChild(timeSpan);
+
+  row.appendChild(circle);
+  row.appendChild(content);
+  return row;
 }
 
-function renderInlineCreate() {
+function buildInlineCreate() {
+  const wrap = document.createElement('div');
+  wrap.className = 'reminder-inline-create';
+  wrap.id = 'reminder-inline-create';
+
   const dtStr = toLocalDatetimeString(defaultTriggerAt());
   const minStr = toLocalDatetimeString(new Date());
-  return `<div class="reminder-inline-create" id="reminder-inline-create">
-    <div class="reminder-inline-row">
-      <span class="reminder-complete-btn" style="border-style:dashed;opacity:0.4;pointer-events:none"></span>
+
+  wrap.innerHTML = `
+    <div class="reminder-inline-main">
+      <span class="reminder-circle ghost"></span>
       <input type="text" class="reminder-inline-input" id="reminder-inline-input"
         placeholder="${t('reminder.inputPlaceholder')}" autocomplete="off">
-      <button class="reminder-inline-cancel" id="reminder-inline-cancel" title="${t('reminder.cancel')}">
-        <i data-lucide="x"></i>
-      </button>
     </div>
     <div class="reminder-inline-detail">
       <div class="reminder-time-row">
-        <label><i data-lucide="clock"></i> ${t('reminder.timeLabel')}</label>
+        <i data-lucide="clock"></i>
         <input type="datetime-local" id="reminder-time-input" value="${dtStr}" min="${minStr}">
       </div>
-      <div class="reminder-ref-row">
-        <label><i data-lucide="file-text"></i> ${t('reminder.refLabel')}</label>
-        <input type="text" id="reminder-ref-input" placeholder="${t('reminder.refPlaceholder')}" autocomplete="off">
-      </div>
-    </div>
-  </div>`;
+    </div>`;
+
+  // Bind events
+  const input = wrap.querySelector('#reminder-inline-input');
+  const timeInput = wrap.querySelector('#reminder-time-input');
+
+  if (input) {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        saveInlineReminder();
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelInlineCreate();
+      }
+    });
+  }
+
+  // Update min when time input is focused (prevents stale past-time validation)
+  if (timeInput) {
+    timeInput.addEventListener('focus', () => {
+      timeInput.min = toLocalDatetimeString(new Date());
+    });
+  }
+
+  return wrap;
 }
 
 // ── Actions ────────────────────────────────────────────────────────────
@@ -179,13 +243,9 @@ function openPanel() {
   isCreating = false;
   panel.classList.add('open');
 
-  // Apply i18n to panel elements
   const title = panel.querySelector('.reminder-panel-title');
   if (title) title.textContent = t('reminder.panelTitle');
-  const createSpan = panel.querySelector('#reminder-create-btn span');
-  if (createSpan) createSpan.textContent = t('reminder.create');
-  const createIcon = panel.querySelector('#reminder-create-btn i');
-  if (createIcon && typeof lucide !== 'undefined') lucide.createIcons();
+  if (typeof lucide !== 'undefined') lucide.createIcons();
 
   if (state.activeSessionId) {
     sendWs({ type: 'listReminders', sessionId: state.activeSessionId });
@@ -217,9 +277,8 @@ function cancelInlineCreate() {
 }
 
 function saveInlineReminder() {
-  const input = $('#reminder-inline-input');
-  const timeInput = $('#reminder-time-input');
-  const refInput = $('#reminder-ref-input');
+  const input = document.querySelector('#reminder-inline-input');
+  const timeInput = document.querySelector('#reminder-time-input');
   if (!input || !timeInput) return;
 
   const content = input.value.trim();
@@ -229,32 +288,47 @@ function saveInlineReminder() {
   }
 
   const triggerAt = new Date(timeInput.value).getTime();
-  if (!triggerAt || isNaN(triggerAt) || triggerAt <= Date.now()) {
+  if (!triggerAt || isNaN(triggerAt)) {
     timeInput.focus();
     return;
   }
 
-  const refPath = refInput ? refInput.value.trim() : '';
+  // If time is in the past, auto-bump to 5 min from now
+  const now = Date.now();
+  const effectiveTriggerAt = triggerAt <= now
+    ? (() => { const d = new Date(now + 300000); d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0); return d.getTime(); })()
+    : triggerAt;
 
   sendWs({
     type: 'createReminder',
     sessionId: state.activeSessionId,
     content: content,
-    triggerAt: triggerAt,
-    referencePath: refPath || undefined
+    triggerAt: effectiveTriggerAt,
+    referencePath: undefined
   });
 
+  // Optimistic add — append to end
+  reminders.push({
+    id: 'temp-' + Date.now(),
+    content: content,
+    triggerAt: effectiveTriggerAt,
+    createdAt: Date.now(),
+    triggered: false,
+    triggeredAt: null,
+    referencePath: null
+  });
   isCreating = false;
-  // Will re-render when reminderCreated message comes back
+  renderList();
+  updateBadge();
 }
 
 function deleteReminder(id) {
   if (!state.activeSessionId) return;
 
-  const row = $(`.reminder-row[data-id="${id}"]`);
+  const row = document.querySelector(`.reminder-row[data-id="${id}"]`);
   if (row) {
-    const btn = row.querySelector('.reminder-complete-btn');
-    if (btn) btn.classList.add('completing');
+    const circle = row.querySelector('.reminder-circle');
+    if (circle) circle.classList.add('completing');
     row.classList.add('removing');
     setTimeout(() => {
       sendWs({ type: 'deleteReminder', sessionId: state.activeSessionId, id: id });
@@ -264,50 +338,9 @@ function deleteReminder(id) {
     }, 350);
   } else {
     sendWs({ type: 'deleteReminder', sessionId: state.activeSessionId, id: id });
-  }
-}
-
-// ── Event Binding ──────────────────────────────────────────────────────
-
-function bindBodyEvents() {
-  // Empty area click → start create
-  const empty = $('#reminder-empty-area');
-  if (empty) empty.addEventListener('click', (e) => {
-    e.stopPropagation();
-    startInlineCreate();
-  });
-
-  // Delete buttons on rows
-  $$('.reminder-complete-btn[data-action="delete"]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const id = btn.getAttribute('data-id');
-      if (id) deleteReminder(id);
-    });
-  });
-
-  // Inline create events
-  const input = $('#reminder-inline-input');
-  const cancel = $('#reminder-inline-cancel');
-
-  if (input) {
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        saveInlineReminder();
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        cancelInlineCreate();
-      }
-    });
-  }
-
-  if (cancel) {
-    cancel.addEventListener('click', (e) => {
-      e.stopPropagation();
-      cancelInlineCreate();
-    });
+    reminders = reminders.filter(r => r.id !== id);
+    renderList();
+    updateBadge();
   }
 }
 
@@ -373,23 +406,27 @@ onMessage('reminderTriggered', (msg) => {
 export function initReminder() {
   const btn = $('#reminder-btn');
   if (btn) {
+    btn.title = t('reminder.panelTitle');
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       togglePanel();
     });
   }
 
-  // Footer create button — use event delegation since it's stable HTML
-  const footer = $('#reminder-panel .reminder-panel-footer');
-  if (footer) {
-    footer.addEventListener('click', (e) => {
+  // "+" button in panel header — use direct event listener (not delegation)
+  const createBtn = $('#reminder-create-btn');
+  if (createBtn) {
+    createBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (isCreating) saveInlineReminder();
-      else startInlineCreate();
+      if (isCreating) {
+        saveInlineReminder();
+      } else {
+        startInlineCreate();
+      }
     });
   }
 
-  // Body click for Apple Reminders style: click empty area to create/save
+  // Body click: click empty area to create/save
   const body = $('#reminder-panel .reminder-panel-body');
   if (body) {
     body.addEventListener('click', (e) => {

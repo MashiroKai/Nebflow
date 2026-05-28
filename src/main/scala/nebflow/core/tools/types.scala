@@ -17,7 +17,6 @@ case class ToolContext(
   sessionStore: Option[nebflow.gateway.SessionStore] = None,
   agentActorRef: Option[ActorRef[AgentCommand]] = None,
   contextWindow: Int = Defaults.ContextWindow,
-  inputTokens: Option[Int] = None,
   sessionId: Option[String] = None,
   sessionName: Option[String] = None,
   taskStore: Option[TaskStore] = None,

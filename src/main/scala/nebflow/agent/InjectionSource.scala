@@ -1,14 +1,13 @@
 package nebflow.agent
 
 import cats.effect.IO
-import cats.syntax.all.*
 import nebflow.shared.MtimeCache
 
 /**
  * Injection mode: controls when a source is re-evaluated.
  *
- *   - [[EveryTurn]] — mtime checked on every `pipeLlmCall`; edits take effect immediately.
- *   - [[Lifecycle]] — resolved once per session lifecycle; subsequent turns reuse value.
+ *   - [[EveryTurn]] — re-resolved every turn; edits take effect immediately.
+ *   - [[Lifecycle]] — resolved once per session lifecycle; cached until reset.
  */
 enum InjectionMode derives CanEqual:
   case EveryTurn
@@ -17,28 +16,19 @@ enum InjectionMode derives CanEqual:
 /**
  * A named, mtime-tracked source of prompt injection content.
  *
- * Each source can be independently cached and invalidated. File-backed sources
- * use [[MtimeFileCache]] so unchanged files cost only a stat() syscall.
- * In-memory / computed sources skip disk I/O entirely.
- *
- * == Lifecycle management ==
- * Sources in [[InjectionMode.EveryTurn]] are re-checked at every `refreshTurn()`.
- * Sources in [[InjectionMode.Lifecycle]] are resolved once and stored; call
- * [[resetLifecycle()]] on the container to force re-resolution (e.g. on session switch).
+ * File-backed sources use [[MtimeFileCache]] so unchanged files cost
+ * only a stat() syscall. Lifecycle sources are cached in [[LifecycleContext]]
+ * and only re-read on lifecycle reset (/clear, compact, model switch).
  */
 trait InjectionSource:
   def name: String
   def mode: InjectionMode
   def get: IO[String]
 
-// ============================================================
-// Concrete implementations
-// ============================================================
-
 /**
  * File-backed source with mtime caching.
- * Only re-reads the file when its modification time changes.
- * If the file does not exist, returns [[fallback]] (empty string by default).
+ * Only re-reads when its modification time changes.
+ * Returns [[fallback]] when the file does not exist.
  */
 class FileInjectionSource(
   val name: String,
@@ -56,67 +46,4 @@ class FileInjectionSource(
     }
 
   def invalidate: IO[Unit] = cache.invalidate
-
-/**
- * In-memory constant source — value is fixed at construction time.
- */
-class ConstInjectionSource(
-  val name: String,
-  val mode: InjectionMode,
-  value: String
-) extends InjectionSource:
-  def get: IO[String] = IO.pure(value)
-
-/**
- * Lazy-computed source — value is recomputed on every [[get]] call.
- * Suitable for purely dynamic content (e.g. env info) that has no file backing.
- */
-class DynamicInjectionSource(
-  val name: String,
-  val mode: InjectionMode,
-  compute: () => String
-) extends InjectionSource:
-  def get: IO[String] = IO(compute())
-
-// ============================================================
-// Registry / container
-// ============================================================
-
-/**
- * Holds all [[InjectionSource]] instances for the current session.
- *
- * Provides:
- *   - [[injections]] — the full list of registered sources
- *   - [[buildEveryTurnBlock]] — concatenates all [[EveryTurn]] sources into one text block
- *   - [[resetLifecycle]] — forces re-resolution of all [[Lifecycle]] sources on next call
- *
- * Currently all sources are registered as [[EveryTurn]]. Classification
- * into [[Lifecycle]] will happen in a follow-up step.
- */
-class InjectionSources(sources: List[InjectionSource]):
-
-  /** All registered sources. */
-  def all: List[InjectionSource] = sources
-
-  /** Filter by mode. */
-  def byMode(m: InjectionMode): List[InjectionSource] = sources.filter(_.mode == m)
-
-  /**
-   * Concatenate all EveryTurn sources into a single text block.
-   * Each source is separated by a blank line. Empty sources are skipped.
-   */
-  def buildEveryTurnBlock: IO[String] =
-    sources
-      .filter(_.mode == InjectionMode.EveryTurn)
-      .traverse(_.get)
-      .map(_.filter(_.nonEmpty).mkString("\n"))
-
-  /** Force invalidate all Lifecycle sources (e.g. on session switch). */
-  def resetLifecycle: IO[Unit] =
-    sources
-      .filter(_.mode == InjectionMode.Lifecycle)
-      .collect { case f: FileInjectionSource => f.invalidate }
-      .sequence_
-      .void
-
-end InjectionSources
+end FileInjectionSource
