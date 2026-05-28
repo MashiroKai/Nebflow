@@ -294,6 +294,59 @@ class WebSocketRoutes(
       if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
       else handleInject(req)
 
+    // --- Local file serving for card iframes ---
+    // GET /api/nf-file?path=xxx&token=xxx — serves whitelisted media files from disk.
+    // Used by card iframes to display local images/videos/audio without base64 embedding.
+    // Supports Range requests for video seeking.
+    case req @ GET -> Root / "api" / "nf-file" =>
+      val provided = extractToken(req)
+      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
+      else
+        val rawPath = req.params.get("path").getOrElse("")
+        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
+        else
+          // Resolve and validate path
+          val expanded = if rawPath.startsWith("~") then sys.props("user.home") + rawPath.substring(1) else rawPath
+          val path = java.nio.file.Paths.get(expanded).normalize()
+          val ext = path.toString.lastIndexOf('.') match
+            case -1 => ""
+            case i => path.toString.substring(i + 1).toLowerCase
+          // Only allow whitelisted media extensions
+          val allowedExt = Set(
+            "png",
+            "jpg",
+            "jpeg",
+            "gif",
+            "svg",
+            "webp",
+            "ico",
+            "bmp",
+            "avif",
+            "tiff",
+            "tif",
+            "mp4",
+            "webm",
+            "ogg",
+            "ogv",
+            "mov",
+            "mp3",
+            "wav",
+            "oga",
+            "flac",
+            "aac",
+            "m4a",
+            "woff",
+            "woff2",
+            "ttf",
+            "otf",
+            "pdf"
+          )
+          if !allowedExt.contains(ext) then BadRequest("File type not allowed")
+          else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
+          else StaticFile.fromPath(fs2.io.file.Path(path.toString), Some(req)).getOrElseF(NotFound())
+        end if
+      end if
+
     case req @ GET -> Root =>
       StaticFile.fromResource("web/index.html", Some(req)).getOrElseF(NotFound())
 
@@ -1700,10 +1753,9 @@ class WebSocketRoutes(
         val content = hc.downField("content").as[String].getOrElse("")
         val isError = hc.downField("isError").as[Boolean].getOrElse(false)
         val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
-        val truncated = hc.downField("truncated").as[Boolean].getOrElse(false)
         sharedResources.sessionStore.appendUiMessages(
           sessionId,
-          List(UiMessage.Tool(label, summary, content, isError, input, truncated))
+          List(UiMessage.Tool(label, summary, content, isError, input))
         )
 
       case "agentEnd" =>
