@@ -157,11 +157,11 @@
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   .task-card {
-    background: #242424;
+    background: #1c1f27;
     box-shadow: 0 1px 4px rgba(0,0,0,0.3);
   }
   .task-toggle:hover {
     background: rgba(255,255,255,0.06);
-    color: #ddd;
+    color: #d8dae0;
   }
 }
