@@ -56,23 +56,20 @@ class SessionRecorder private (
         val content = hc.downField("content").as[String].getOrElse("")
         val isError = hc.downField("isError").as[Boolean].getOrElse(false)
         val input = hc.downField("input").as[Json].getOrElse(Json.Null).noSpaces
-        val truncated = hc.downField("truncated").as[Boolean].getOrElse(false)
         sessionStore.appendUiMessages(
           sessionId,
-          List(UiMessage.Tool(label, summary, content, isError, input, truncated))
+          List(UiMessage.Tool(label, summary, content, isError, input))
         )
 
       case "system" =>
         val content = hc.downField("content").as[String].getOrElse("")
-        if content.nonEmpty then
-          sessionStore.appendUiMessages(sessionId, List(UiMessage.System(content)))
+        if content.nonEmpty then sessionStore.appendUiMessages(sessionId, List(UiMessage.System(content)))
         else IO.unit
 
       case "user" =>
         val text = hc.downField("text").as[String].getOrElse("")
         val injected = hc.downField("injected").as[Boolean].getOrElse(false)
-        if text.nonEmpty then
-          sessionStore.appendUiMessages(sessionId, List(UiMessage.User(text, injected = injected)))
+        if text.nonEmpty then sessionStore.appendUiMessages(sessionId, List(UiMessage.User(text, injected = injected)))
         else IO.unit
 
       case _ => IO.unit
@@ -82,6 +79,7 @@ class SessionRecorder private (
     ) *> underlying(json).handleErrorWith(e =>
       IO(SessionRecorder.logger.warn(s"Failed to broadcast for session $sessionId: ${e.getMessage}"))
     )
+  end apply
 
   // -- helpers --
 
@@ -94,8 +92,7 @@ class SessionRecorder private (
             List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking)))
           )
         }
-      else
-        thinkingBuf.set("") *> IO.unit
+      else thinkingBuf.set("") *> IO.unit
     }
 
   private def flushTextWithMeta(model: Option[String]): IO[Unit] =
@@ -105,9 +102,10 @@ class SessionRecorder private (
       thinking <- thinkingBuf.getAndSet("")
       durationMs = start.map(s => System.currentTimeMillis() - s)
       thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
-      _ <- if text.nonEmpty || thinkingOpt.isDefined then
-        sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text, durationMs, model, thinkingOpt)))
-      else IO.unit
+      _ <-
+        if text.nonEmpty || thinkingOpt.isDefined then
+          sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text, durationMs, model, thinkingOpt)))
+        else IO.unit
     yield ()
 
 end SessionRecorder
@@ -128,3 +126,4 @@ object SessionRecorder:
       thinkingBuf = Ref.unsafe[IO, String](""),
       turnStart = Ref.unsafe[IO, Option[Long]](None)
     )
+end SessionRecorder

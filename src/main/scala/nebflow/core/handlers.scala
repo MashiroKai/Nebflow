@@ -6,16 +6,14 @@ import nebflow.core.tools.*
 import nebflow.shared.*
 
 /**
- * @param content         Content visible to the LLM (may be truncated/summarized).
+ * @param content         Content visible to the LLM.
  * @param isError         Whether the tool execution failed.
- * @param truncated       Whether the content was truncated by ToolResultGuard.
  * @param frontendContent Full content for frontend rendering (e.g. card HTML).
  *                        When present, the frontend receives this instead of `content`.
  */
 case class ToolExecResult(
   content: String,
   isError: Boolean = false,
-  truncated: Boolean = false,
   frontendContent: Option[String] = None
 )
 

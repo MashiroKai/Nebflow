@@ -8,7 +8,7 @@ import nebflow.agent.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
-import nebflow.core.tools.{ToolContext, ToolRegistry, ToolResultGuard}
+import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
@@ -328,8 +328,11 @@ private[agent] trait AgentCore:
         val stateForLlm = stateForTurn.withWritesSinceLastRead(updatedWriteTracker)
 
         val io = for
-          // --- Unified EveryTurn refresh: agentDef, projectRoot, rulesMd, memory, thinking, fileChanges ---
-          turnCtx <- ContextRefresher.refreshTurn(stateForTurn, resources, agentDef)
+          // --- Context refresh: Lifecycle sources cached after first turn, EveryTurn sources always fresh ---
+          (turnCtx, newLifecycle) <- ContextRefresher.refreshTurn(stateForTurn, resources, agentDef)
+          _ <- newLifecycle match
+            case Some(lc) => IO(ctx.self ! AgentCommand.UpdateLifecycle(lc))
+            case None => IO.unit
           freshDef = turnCtx.agentDef
           baseSystemStable = buildSystemPrompt(
             freshDef,
@@ -499,9 +502,9 @@ private[agent] trait AgentCore:
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
 
-    // Build ToolContext inside the IO block so projectRoot is hot-reloadable.
+    // Build ToolContext — projectRoot from Lifecycle cache if available.
     val io = for
-      (freshProjectRoot, _) <- ContextRefresher.refreshFolderContext(state, resources, agentDef.name)
+      freshProjectRoot <- ContextRefresher.resolveProjectRootForTool(state, resources, agentDef)
       effectiveProjectRoot = freshProjectRoot.getOrElse(resources.projectRoot.toString)
       toolCtx = ToolContext(
         projectRoot = effectiveProjectRoot,
@@ -523,7 +526,6 @@ private[agent] trait AgentCore:
         pekkoScheduler = Some(ctx.system.scheduler),
         fileLockManager = Some(resources.fileLockManager),
         fileChangeTracker = Some(resources.fileChangeTracker),
-        inputTokens = state.latestUsage.map(_.inputTokens),
         hookEngine = resources.hookEngine,
         hookContext = HookContext(
           sessionId = state.sessionId,
@@ -572,8 +574,7 @@ private[agent] trait AgentCore:
                       summary,
                       frontendContent,
                       r.isError,
-                      input = Some(call.input),
-                      truncated = r.truncated
+                      input = Some(call.input)
                     ),
                     isSubagent,
                     sessionIdOpt
@@ -724,30 +725,23 @@ private[agent] trait AgentCore:
                           ToolExecResult(appended, isError = true)
                         }
                     case Right(result) =>
-                      // ToolResultGuard truncates LLM-facing content to protect context window.
-                      // Raw result is always preserved in frontendContent for correct frontend rendering.
-                      val guarded = ToolResultGuard.guard(result, call.name, ctx) match
-                        case ToolResultGuard.Ok(c) => c
-                      val wasTruncated = guarded.length < result.length
-                      if wasTruncated then
-                        logger.warn(
-                          s"$logCtx Tool $summary result truncated: ${result.length} → ${guarded.length} chars"
-                        )
+                      // No preemptive truncation — oversized results are handled by maybeAutoCompact
+                      // before the next LLM call. Raw result is always preserved in frontendContent
+                      // for correct frontend rendering.
                       val isCard = call.name == "Card"
                       val isFileEdit = call.name == "Edit" || call.name == "Write"
                       // --- PostToolUse hook operates on LLM-visible content ---
                       hookEngine
-                        .afterTool(call.name, finalInput, guarded, true, hookCtx)
+                        .afterTool(call.name, finalInput, result, true, hookCtx)
                         .map { postResult =>
                           val hookSuffix = postResult.additionalContext.getOrElse("")
                           if isCard then
-                            // Card tool: LLM sees a compact summary (not the guarded HTML)
+                            // Card tool: LLM sees a compact summary (not the raw HTML)
                             val title = call.input("title").flatMap(_.asString).getOrElse("")
                             val llmSummary = s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
                             ToolExecResult(
                               llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
-                              truncated = wasTruncated
+                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
                             )
                           else if isFileEdit then
                             // Edit/Write: LLM already knows what it wrote — no need to echo the diff.
@@ -755,14 +749,12 @@ private[agent] trait AgentCore:
                             val llmSummary = nebflow.core.summarizeToolResult(call, result)
                             ToolExecResult(
                               llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
-                              truncated = false
+                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
                             )
                           else
                             ToolExecResult(
-                              guarded + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
-                              truncated = wasTruncated
+                              result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
                             )
                           end if
                         }
@@ -779,7 +771,7 @@ private[agent] trait AgentCore:
                 logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
               else
                 logger.info(
-                  s"$logCtx Tool $summary OK (${elapsed}ms)" + (if result.truncated then " [truncated]" else "")
+                  s"$logCtx Tool $summary OK (${elapsed}ms)"
                 )
             }
         }

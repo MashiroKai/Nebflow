@@ -141,7 +141,7 @@ export function renderAgentList() {
     el.title = displayName;
     const iconHtml = avatar
       ? `<span class="nav-agent-icon">${avatar}</span>`
-      : '<i data-lucide="bot" class="nav-agent-icon" style="color:#888"></i>';
+      : `<span class="nav-agent-icon agent-letter-icon">${escapeHtml(displayName.charAt(0).toUpperCase())}</span>`;
     el.innerHTML = `${iconHtml}<span class="nav-agent-label">${escapeHtml(displayName.slice(0, 6))}</span>`;
     el.addEventListener('click', () => selectAgent(a.name));
     el.addEventListener('contextmenu', (e) => {
@@ -1752,12 +1752,14 @@ document.addEventListener('contextmenu', (e) => {
 }, true);
 
 function updateFolderStatus(folderId) {
+  // Update this folder's DOM element if it exists (may be absent when parent is collapsed)
   const folderEl = state.dom.sessionList.querySelector(`.folder-item[data-folder-id="${folderId}"]`);
-  if (!folderEl) return;
-  const el = folderEl.querySelector('.folder-status');
-  if (!el) return;
-  el.className = 'folder-status ' + getFolderStatusClass(folderId);
-  // Cascade up to parent folder
+  if (folderEl) {
+    const el = folderEl.querySelector('.folder-status');
+    if (el) el.className = 'folder-status ' + getFolderStatusClass(folderId);
+  }
+  // Always cascade up to parent folder — even if this folder's DOM element is absent,
+  // the status should still propagate to ancestors that ARE rendered.
   const folder = (state.folders || []).find(f => f.id === folderId);
   if (folder && folder.parentId) {
     updateFolderStatus(folder.parentId);
@@ -1814,9 +1816,12 @@ function updateAgentNotificationDotExternal(agentName) {
   }
 }
 
-/** Move a session item to the top of the non-pinned group in the sidebar (like WeChat). */
-function reorderSessionToTop(sessionId) {
-  // Don't reorder if session is busy (in progress)
+/** Update a session's activity timestamp without reordering it.
+ *  Visual indicators (bold/unread dot) are handled by updateSessionStatus separately.
+ *  Root sessions never move above folders — sorting is handled by renderSessionList.
+ *  In-folder sessions update their folder's latest activity time for folder-level sorting. */
+function markSessionActivity(sessionId) {
+  // Don't update if session is busy (in progress)
   if (state.busySessionIds.has(sessionId)) return;
 
   // Update updatedAt in state.sessions so future renders stay sorted
@@ -1832,31 +1837,14 @@ function reorderSessionToTop(sessionId) {
   const timeEl = item.querySelector('.session-time');
   if (timeEl) timeEl.textContent = formatSessionTime(session.updatedAt);
 
-  // Don't reorder if session is inside a folder — moving it out would visually
-  // "detach" it from the folder. The folder will be re-rendered on the next
-  // full sessionList update.
-  if (item.classList.contains('in-folder')) return;
-
-  const isPinned = state.pinnedSessions.has(sessionId);
-
-  if (isPinned) {
-    // Pinned items stay in their group; just move to top of pinned group
-    const firstItem = sessionList.querySelector('.session-item.pinned');
-    if (firstItem && firstItem !== item) {
-      sessionList.insertBefore(item, firstItem);
-    }
-  } else {
-    // Find insertion point: after divider (start of non-pinned group) or top of list
-    const divider = sessionList.querySelector('.session-divider');
-    if (divider) {
-      const nextSibling = divider.nextSibling;
-      if (nextSibling !== item) {
-        sessionList.insertBefore(item, nextSibling);
-      }
-    } else {
-      // No pinned sessions — insert at the very top
-      if (sessionList.firstChild !== item) {
-        sessionList.insertBefore(item, sessionList.firstChild);
+  // In-folder sessions: also update the folder's latestActivity so the folder
+  // itself sorts correctly among root sessions on next render.
+  if (item.classList.contains('in-folder')) {
+    const folderEl = item.closest('.folder-section');
+    if (folderEl) {
+      const folderId = folderEl.dataset.id;
+      if (folderId && state.folders[folderId]) {
+        state.folders[folderId].latestActivity = session.updatedAt;
       }
     }
   }
@@ -1875,7 +1863,7 @@ window.addEventListener('session-attention', (e) => {
 
 window.addEventListener('session-unread', (e) => {
   updateSessionStatus(e.detail.sessionId);
-  reorderSessionToTop(e.detail.sessionId);
+  markSessionActivity(e.detail.sessionId);
 });
 
 window.addEventListener('session-compacting', (e) => {
@@ -2094,7 +2082,9 @@ function renderFolderItem(folder, sessions, container) {
   folderEl.dataset.folderId = folder.id;
   folderEl.draggable = true;
 
-  const statusCls = getFolderStatusClass(folder.id, sessions);
+  // Always use state.sessions (not the passed-in direct children) so subfolder
+  // sessions are included in the status calculation.
+  const statusCls = getFolderStatusClass(folder.id);
 
   folderEl.innerHTML =
     '<div class="folder-arrow">' +

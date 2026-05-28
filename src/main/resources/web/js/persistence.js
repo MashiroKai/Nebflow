@@ -6,7 +6,7 @@ import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from '.
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
-import { pickThinkingPhrase } from './chat.js';
+import { createDurationBadgeElement } from './chat.js';
 
 const MAX_MSGS_PER_SESSION = 200;
 
@@ -143,11 +143,7 @@ export function restoreFromStorage() {
         bubble.innerHTML = renderMarkdownWithMath(m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = document.createElement('div');
-          badge.className = 'duration-badge';
-          let text = pickThinkingPhrase(m.durationMs, i);
-          if (m.model) text += ' · ' + m.model;
-          badge.textContent = text;
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
           row.appendChild(badge);
         }
         chat.appendChild(row);
@@ -173,11 +169,10 @@ export function restoreFromStorage() {
         const highlightHtml = renderHighlightedContent(m.content, m.label);
         const bodyHtml = (detailHtml + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
-        const truncBadge = m.truncated ? '<span class="truncated-badge" title="' + esc(t('tool.result.truncatedTitle')) + '">' + esc(t('tool.result.truncated')) + '</span>' : '';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
-        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + truncBadge
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div>' +
@@ -271,11 +266,7 @@ export function restoreFromStorage() {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = document.createElement('div');
-          badge.className = 'duration-badge';
-          let text = pickThinkingPhrase(m.durationMs, i);
-          if (m.model) text += ' · ' + m.model;
-          badge.textContent = text;
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
           aRow.appendChild(badge);
         }
         chat.appendChild(aRow);
@@ -404,11 +395,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         bubble.innerHTML = renderMarkdownWithMath(m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = document.createElement('div');
-          badge.className = 'duration-badge';
-          let text = pickThinkingPhrase(m.durationMs, i);
-          if (m.model) text += ' · ' + m.model;
-          badge.textContent = text;
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
           row.appendChild(badge);
         }
         fragment.appendChild(row);
@@ -435,11 +422,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         const highlightHtml = renderHighlightedContent(m.content, m.label);
         const bodyHtml = (detailHtml + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
-        const truncBadge = m.truncated ? '<span class="truncated-badge" title="' + esc(t('tool.result.truncatedTitle')) + '">' + esc(t('tool.result.truncated')) + '</span>' : '';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
-        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + truncBadge
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div>' +
@@ -541,11 +527,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = document.createElement('div');
-          badge.className = 'duration-badge';
-          let text = pickThinkingPhrase(m.durationMs, i);
-          if (m.model) text += ' · ' + m.model;
-          badge.textContent = text;
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
           aRow.appendChild(badge);
         }
         fragment.appendChild(aRow);
