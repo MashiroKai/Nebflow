@@ -6,6 +6,10 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.shared.{MtimeCache, MtimeFileCache}
 
+import java.util.concurrent.ConcurrentHashMap
+
+import scala.jdk.CollectionConverters.*
+
 /**
  * Three-level memory store backed by Markdown files.
  *
@@ -104,15 +108,15 @@ object MemoryStore:
 
   private val userCache = MtimeCache.file[Option[String]](userMemoryPath, parseMemory)
 
-  private val agentCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
+  private val agentCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
 
-  private val folderCaches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
+  private val folderCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
 
   private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
-    agentCaches.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
+    agentCaches.asScala.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
 
   private def getFolderCache(folderId: String): MtimeFileCache[Option[String]] =
-    folderCaches.getOrElseUpdate(folderId, MtimeCache.file(folderMemoryPath(folderId), parseMemory))
+    folderCaches.asScala.getOrElseUpdate(folderId, MtimeCache.file(folderMemoryPath(folderId), parseMemory))
 
   // --- Load (mtime-cached) — injected into system prompts ---
 

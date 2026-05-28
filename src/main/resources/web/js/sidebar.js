@@ -2118,6 +2118,7 @@ function renderFolderItem(folder, sessions, container) {
   // VSCode-style: click selects folder + expand/collapse
   folderEl.addEventListener('click', (e) => {
     if (e.target.closest('.folder-delete')) return;
+    if (e.target.closest('.folder-name[contenteditable="true"]')) return;
     setActiveFolder(folder.id);
     toggleFolder(folder.id);
   });
@@ -2126,6 +2127,39 @@ function renderFolderItem(folder, sessions, container) {
   folderEl.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     showFolderCtxMenu(e.clientX, e.clientY, folder.id);
+  });
+
+  // Double-click to rename folder (inline, same as session)
+  const folderNameEl = folderEl.querySelector('.folder-name');
+  const startFolderRename = () => {
+    folderNameEl.contentEditable = true;
+    folderNameEl.focus();
+    const range = document.createRange();
+    range.selectNodeContents(folderNameEl);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+  folderNameEl.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    startFolderRename();
+  });
+  const finishFolderRename = () => {
+    folderNameEl.contentEditable = false;
+    const newName = folderNameEl.textContent.trim();
+    if (newName && newName !== folder.name) {
+      sendWs({ type: 'renameFolder', folderId: folder.id, name: newName });
+    } else {
+      folderNameEl.textContent = folder.name;
+    }
+  };
+  folderNameEl.addEventListener('blur', finishFolderRename);
+  folderNameEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      if (e.isComposing || e.keyCode === 229) return;
+      e.preventDefault(); folderNameEl.blur();
+    }
+    if (e.key === 'Escape') { folderNameEl.textContent = folder.name; folderNameEl.blur(); }
   });
 
   // Delete button
@@ -2283,12 +2317,20 @@ function showFolderCtxMenu(x, y, folderId) {
   });
 
   menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
-    if (!folder) return;
-    const newName = prompt(t('session.renameFolder'), folder.name);
-    if (newName && newName.trim() && newName.trim() !== folder.name) {
-      sendWs({ type: 'renameFolder', folderId, name: newName.trim() });
-    }
     dismissCtxMenu();
+    if (!folder) return;
+    // Trigger inline edit on the folder name element
+    const folderEl = state.dom.sessionList.querySelector(`.folder-item[data-folder-id="${folderId}"]`);
+    const nameEl = folderEl ? folderEl.querySelector('.folder-name') : null;
+    if (nameEl) {
+      nameEl.contentEditable = true;
+      nameEl.focus();
+      const range = document.createRange();
+      range.selectNodeContents(nameEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
   });
 
   menu.querySelector('[data-action="new-subfolder"]').addEventListener('click', () => {

@@ -732,7 +732,7 @@
   .option-custom-input { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
   .option-cancel { background: rgba(255,255,255,0.04); border-color: rgba(145,170,210,0.18); }
   .option-cancel:disabled { border-color: rgba(255,255,255,0.08); }
-  .option-confirm:disabled { background: rgba(255,255,255,0.10); }
+  .option-confirm:disabled { background: rgba(7,193,96,0.25); }
 
   .error-card { background: rgba(244,67,54,0.12); color: #ef5350; }
 
@@ -858,7 +858,7 @@
   padding: 7px;
   border: none;
   border-radius: 10px;
-  background: rgba(91, 127, 191, 0.65);
+  background: var(--color-primary);
   color: #fff;
   font-size: 13px;
   cursor: pointer;
@@ -869,7 +869,7 @@
   transition: background 0.2s;
 }
 .option-confirm:hover {
-  background: rgba(91, 127, 191, 0.80);
+  background: var(--color-primary-hover);
 }
 .option-confirm:disabled {
   background: var(--color-frame-active);

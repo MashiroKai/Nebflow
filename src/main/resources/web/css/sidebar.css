@@ -499,6 +499,16 @@
   font-weight: 500;
 }
 .folder-item:hover .folder-name { color: var(--color-frame-text-bright); }
+.folder-name[contenteditable="true"] {
+  overflow: visible;
+  text-overflow: unset;
+  outline: none;
+  cursor: text;
+  background: var(--color-frame-bg);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin: 0 -4px;
+}
 
 /* Folder status badge — aggregated from child sessions */
 .folder-status {

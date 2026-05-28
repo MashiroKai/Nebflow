@@ -27,20 +27,20 @@
 /* ── Badge ────────────────────────────────────────────────────────────── */
 .reminder-badge {
   position: absolute;
-  top: -3px;
-  right: -4px;
-  min-width: 16px;
-  height: 16px;
-  background: rgb(91, 127, 191);
+  top: -2px;
+  right: -3px;
+  min-width: 14px;
+  height: 14px;
+  background: var(--color-primary);
   color: #fff;
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 14px;
   text-align: center;
-  border-radius: 8px;
-  padding: 0 4px;
+  border-radius: 7px;
+  padding: 0 3px;
   pointer-events: none;
-  box-shadow: 0 1px 4px rgba(91, 127, 191, 0.25);
+  box-shadow: 0 1px 3px rgba(7, 193, 96, 0.25);
 }
 
 /* ── Panel Container (sapphire glass) ─────────────────────────────────── */
