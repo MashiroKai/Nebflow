@@ -4,6 +4,10 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import nebflow.shared.{MtimeCache, MtimeFileCache}
 
+import java.util.concurrent.ConcurrentHashMap
+
+import scala.jdk.CollectionConverters.*
+
 /**
  * Per-folder rules store backed by Markdown files.
  *
@@ -27,10 +31,10 @@ object RulesStore:
     val trimmed = content.trim
     if trimmed.nonEmpty then Some(trimmed) else None
 
-  private val caches = scala.collection.mutable.Map[String, MtimeFileCache[Option[String]]]()
+  private val caches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
 
   private def getCache(folderId: String): MtimeFileCache[Option[String]] =
-    caches.getOrElseUpdate(folderId, MtimeCache.file(rulesPath(folderId), parseRules))
+    caches.asScala.getOrElseUpdate(folderId, MtimeCache.file(rulesPath(folderId), parseRules))
 
   // --- Load single folder rules (mtime-cached) ---
 
