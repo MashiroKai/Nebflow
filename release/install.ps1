@@ -158,8 +158,17 @@ Write-Host "[2/4] Downloading Nebflow v$Version..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $jarPath = Join-Path $InstallDir $JarName
 
+# Clean up old versions (keep .nebflow user data untouched)
+$oldJars = Get-ChildItem (Join-Path $InstallDir "nebflow-assembly-*.jar") -ErrorAction SilentlyContinue
+foreach ($old in $oldJars) {
+    if ($old.FullName -ne $jarPath) {
+        Remove-Item $old.FullName -Force -ErrorAction SilentlyContinue
+        Write-Host "       Removed old: $($old.Name)" -ForegroundColor DarkGray
+    }
+}
+
 if (Test-Path $jarPath) {
-    Write-Host "       Already exists, skipping. (Delete $jarPath to re-download)" -ForegroundColor DarkGray
+    Write-Host "       Already up-to-date, skipping download." -ForegroundColor Green
 } else {
     # Auto-detect region for download source selection
     if (-not $Region) {

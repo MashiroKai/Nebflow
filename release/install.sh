@@ -161,6 +161,14 @@ download_jar() {
     local target="${INSTALL_DIR}/${JAR_NAME}"
     echo "==> Downloading ${JAR_NAME}..."
 
+    # Remove old JAR files (keep .nebflow user data untouched)
+    local old_jars
+    old_jars=$(ls "${INSTALL_DIR}"/nebflow-assembly-*.jar 2>/dev/null || true)
+    if [ -n "$old_jars" ]; then
+        echo "    Removing old version(s)..."
+        rm -f "${INSTALL_DIR}"/nebflow-assembly-*.jar
+    fi
+
     # Beta always from GitHub
     if [ "$CHANNEL" = "beta" ]; then
         _download "${GH_BETA_URL}" "${target}" || {
