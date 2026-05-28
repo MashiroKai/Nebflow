@@ -14,7 +14,7 @@ object ClearStagingTool extends Tool:
 
   val description =
     "Delete the memory staging file after all entries have been processed. " +
-    "Call this once you have finished writing all staging entries to memory files."
+      "Call this once you have finished writing all staging entries to memory files."
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -35,8 +35,6 @@ object ClearStagingTool extends Tool:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val confirmed = input("confirm").flatMap(_.asBoolean).getOrElse(false)
-    if !confirmed then
-      IO.pure(Left(ToolError("Set confirm=true to delete the staging file")))
-    else
-      MemoryStore.clearStaging.as(Right("Staging file deleted."))
+    if !confirmed then IO.pure(Left(ToolError("Set confirm=true to delete the staging file")))
+    else MemoryStore.clearStaging.as(Right("Staging file deleted."))
 end ClearStagingTool
