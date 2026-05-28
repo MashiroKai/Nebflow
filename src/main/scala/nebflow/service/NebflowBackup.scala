@@ -64,9 +64,9 @@ object NebflowBackup:
     var count = 0
 
     def copyFile(relPath: String): Unit =
-      val src = home / relPath
+      val src = home / os.RelPath(relPath)
       if os.exists(src) then
-        val dst = targetDir / relPath
+        val dst = targetDir / os.RelPath(relPath)
         os.copy.over(src, dst, createFolders = true)
         count += 1
 
