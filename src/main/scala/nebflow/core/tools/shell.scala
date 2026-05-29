@@ -284,11 +284,19 @@ final class ShellSession private (
     val pb =
       if isWindows then new ProcessBuilder("cmd.exe", "/c", command)
       else new ProcessBuilder("bash", "-c", command)
-    pb.directory(new File(cwd))
+    // Empty or invalid working directory causes cmd.exe to fail on Windows
+    // with "文件名、目录名或卷标语法不正确". Fall back to user home.
+    val safeCwd =
+      if cwd == null || cwd.isEmpty || !new File(cwd).exists() then
+        sys.props.getOrElse("user.home", if isWindows then "C:\\" else "/tmp")
+      else cwd
+    pb.directory(new File(safeCwd))
     if isWindows then pb.redirectInput(ProcessBuilder.Redirect.PIPE)
     else pb.redirectInput(new File("/dev/null"))
     pb.redirectErrorStream(false) // stdout/stderr separated
     pb
+
+  end buildProcessBuilder
 
   private def runProcess(
     command: String,
@@ -506,7 +514,14 @@ object ShellSession:
 
   private[tools] def create(sessionId: String, initialDir: Option[String] = None): IO[ShellSession] =
     for
-      dirRef <- Ref.of[IO, String](initialDir.getOrElse(System.getProperty("user.dir")))
+      dirRef <- Ref.of[IO, String](
+        initialDir.getOrElse {
+          val userDir = System.getProperty("user.dir")
+          if userDir == null || userDir.isEmpty then
+            sys.props.getOrElse("user.home", if isWindows then "C:\\" else "/tmp")
+          else userDir
+        }
+      )
       jobsRef <- Ref.of[IO, Map[String, BackgroundJob]](Map.empty)
       fiber <- startCleanupFiber(jobsRef)
       accessRef <- Clock[IO].realTime.map(_.toMillis).flatMap(Ref.of[IO, Long])
