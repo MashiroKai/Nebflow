@@ -51,7 +51,7 @@ class FileHistory private (
         // where Files.copy may fail with "different root" error
         try Files.copy(filePath, dest)
         catch
-          case _: java.nio.file.FileSystemException | _: java.nio.file.FileAlreadyExistsException =>
+          case _: Exception =>
             // Fallback: read-write buffer copy (works cross-drive)
             java.nio.file.Files.copy(filePath, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         // Write identity metadata alongside the snapshot (if provided)
