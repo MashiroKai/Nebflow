@@ -23,7 +23,7 @@ if [ "$CHANNEL" = "beta" ]; then
     fi
     VERSION="${VERSION:-$BETA_VERSION}"
 else
-    VERSION="${VERSION:-1.00.005}"
+    VERSION="${VERSION:-1.00.006}"
 fi
 
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.nebflow/bin}"
@@ -159,6 +159,8 @@ detect_region() {
 # Download with automatic source selection
 download_jar() {
     local target="${INSTALL_DIR}/${JAR_NAME}"
+    mkdir -p "${INSTALL_DIR}"
+
     echo "==> Downloading ${JAR_NAME}..."
 
     # Remove old JAR files (keep .nebflow user data untouched)
@@ -210,9 +212,9 @@ download_jar() {
 _download() {
     local url="$1" target="$2"
     if command -v curl &> /dev/null; then
-        curl -fsSL --connect-timeout 10 --max-time 120 --progress-bar "${url}" -o "${target}"
+        curl -fsSL --connect-timeout 10 --max-time 120 "${url}" -o "${target}"
     elif command -v wget &> /dev/null; then
-        wget --connect-timeout=10 --timeout=120 --show-progress -q "${url}" -O "${target}"
+        wget --connect-timeout=10 --timeout=120 -q "${url}" -O "${target}"
     else
         echo "ERROR: curl or wget is required."
         exit 1

@@ -83,6 +83,8 @@ export default {
   'settings.connected': 'Connected',
   'settings.disconnected': 'Disconnected',
   'settings.checkUpdate': 'Check for Updates',
+  'settings.channelStable': 'Stable',
+  'settings.channelBeta': 'Beta',
   'settings.checking': 'Checking...',
   'settings.upToDate': 'You are on the latest version',
   'settings.updateAvailable': 'New version available: {version}',

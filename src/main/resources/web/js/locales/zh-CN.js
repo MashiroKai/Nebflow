@@ -83,6 +83,8 @@ export default {
   'settings.connected': '已连接',
   'settings.disconnected': '已断开',
   'settings.checkUpdate': '检查更新',
+  'settings.channelStable': '稳定版',
+  'settings.channelBeta': '测试版',
   'settings.checking': '检查中...',
   'settings.upToDate': '已是最新版本',
   'settings.updateAvailable': '发现新版本：{version}',

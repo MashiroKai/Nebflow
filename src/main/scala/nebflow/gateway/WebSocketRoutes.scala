@@ -1488,35 +1488,55 @@ class WebSocketRoutes(
           }
 
         case "checkUpdate" =>
+          val updateJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val channel = updateJson.hcursor.downField("channel").as[String].getOrElse("stable")
           val currentVer = nebflow.Version.string
-          // Check latest stable release from public repo
           val result = IO
             .blocking {
               try
-                val url = new java.net.URL(
-                  "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases/latest"
-                )
-                val conn = url.openConnection()
+                val (url, extract: (io.circe.Json => Option[(String, String)])) =
+                  if channel == "beta" then
+                    // Beta: list all releases, find first prerelease with -beta tag
+                    (
+                      "https://api.github.com/repos/MashiroKai/Nebflow/releases",
+                      (arr: io.circe.Json) => {
+                        val all = arr.hcursor.as[Vector[io.circe.Json]].getOrElse(Vector.empty)
+                        all.find { r =>
+                          r.hcursor.downField("prerelease").as[Boolean].getOrElse(false) &&
+                          r.hcursor.downField("tag_name").as[String].toOption.exists(_.endsWith("-beta"))
+                        }.flatMap { r =>
+                          for
+                            tag <- r.hcursor.downField("tag_name").as[String].toOption
+                            name <- r.hcursor.downField("name").as[String].toOption
+                          yield (tag, name)
+                        }
+                      }
+                    )
+                  else
+                    // Stable: releases/latest
+                    (
+                      "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases/latest",
+                      (j: io.circe.Json) =>
+                        for
+                          tag <- j.hcursor.downField("tag_name").as[String].toOption
+                          name <- j.hcursor.downField("name").as[String].toOption
+                        yield (tag, name)
+                    )
+                val conn = new java.net.URL(url).openConnection()
                 conn.setConnectTimeout(5000)
                 conn.setReadTimeout(5000)
-                val json = io.circe.parser.parse(
-                  new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
-                )
-                json.toOption.flatMap { j =>
-                  for
-                    tag <- j.hcursor.downField("tag_name").as[String].toOption
-                    name <- j.hcursor.downField("name").as[String].toOption
-                  yield (tag, name)
-                }
+                val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                io.circe.parser.parse(raw).toOption.flatMap(extract)
               catch case _: Exception => None
             }
             .flatMap {
               case Some((tag, releaseName)) =>
-                val latestVer = tag.stripPrefix("v")
+                val latestVer = tag.stripPrefix("v").stripSuffix("-beta")
                 val hasUpdate = latestVer != currentVer
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "updateCheckResult".asJson,
+                    "channel" -> channel.asJson,
                     "currentVersion" -> currentVer.asJson,
                     "latestVersion" -> latestVer.asJson,
                     "hasUpdate" -> hasUpdate.asJson,
@@ -1527,6 +1547,7 @@ class WebSocketRoutes(
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "updateCheckResult".asJson,
+                    "channel" -> channel.asJson,
                     "currentVersion" -> currentVer.asJson,
                     "error" -> "Failed to check for updates".asJson
                   )
