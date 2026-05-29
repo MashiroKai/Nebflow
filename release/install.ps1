@@ -27,7 +27,7 @@ if ($Channel -eq "beta") {
     }
     $Version = if ($env:VERSION) { $env:VERSION } else { $BetaVersion }
 } else {
-    $Version = if ($env:VERSION) { $env:VERSION } else { "1.00.007" }
+    $Version = if ($env:VERSION) { $env:VERSION } else { "1.00.008" }
 }
 
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\Nebflow" }

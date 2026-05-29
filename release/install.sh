@@ -23,7 +23,7 @@ if [ "$CHANNEL" = "beta" ]; then
     fi
     VERSION="${VERSION:-$BETA_VERSION}"
 else
-    VERSION="${VERSION:-1.00.007}"
+    VERSION="${VERSION:-1.00.008}"
 fi
 
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.nebflow/bin}"
