@@ -1673,6 +1673,43 @@ onMessage('browseResult', (msg) => handleBrowseResult(msg));
 onMessage('cardDesignData', (msg) => { state.cardDesignPrompt = msg.content || ''; });
 onMessage('cardDesignSaved', () => { /* saved confirmation */ });
 
+// --- Update check ---
+onMessage('updateCheckResult', (msg) => {
+  const statusEl = document.getElementById('update-status');
+  const actionEl = document.getElementById('update-action');
+  if (!statusEl) return;
+  if (msg.error) {
+    statusEl.textContent = t('settings.updateError');
+    return;
+  }
+  if (msg.hasUpdate) {
+    statusEl.textContent = t('settings.updateAvailable', { version: msg.latestVersion });
+    actionEl.style.display = 'block';
+  } else {
+    statusEl.textContent = t('settings.upToDate');
+    actionEl.style.display = 'none';
+  }
+});
+
+onMessage('updateStarted', () => {
+  const statusEl = document.getElementById('update-status');
+  if (statusEl) statusEl.textContent = t('settings.updating');
+});
+
+onMessage('updateCompleted', (msg) => {
+  const btn = document.getElementById('btn-do-update');
+  const statusEl = document.getElementById('update-status');
+  if (btn) { btn.textContent = t('settings.checkUpdate'); btn.disabled = false; }
+  if (statusEl) {
+    if (msg.success) {
+      statusEl.textContent = '✓ ' + t('settings.upToDate');
+      document.getElementById('update-action').style.display = 'none';
+    } else {
+      statusEl.textContent = '✗ ' + (msg.error || t('settings.updateError'));
+    }
+  }
+});
+
 
 // ---------- 4. Cross-module wiring ----------
 window.__showDeleteModal = showDeleteModal;
