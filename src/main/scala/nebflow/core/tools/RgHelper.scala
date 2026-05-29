@@ -26,7 +26,12 @@ object RgHelper:
   private val rgLocalPath: String =
     sys.props("user.home") + File.separator + ".nebflow" + File.separator + "bin" + File.separator + rgBinName
 
-  /** Resolve rg path: PATH lookup first, then ~/.nebflow/bin/rg */
+  private val rgWinInstallPath: Option[String] =
+    if isWindows then
+      Option(System.getenv("LOCALAPPDATA")).map(_ + File.separator + "Nebflow" + File.separator + rgBinName)
+    else None
+
+  /** Resolve rg path: PATH lookup → local nebflow bin (~/.nebflow/bin) → Windows install dir */
   private def resolveRgPath: Option[String] =
     val pathEnv = sys.env.getOrElse("PATH", "")
     // 1. PATH lookup
@@ -36,9 +41,11 @@ object RgHelper:
       .map(d => new File(d, rgBinName))
       .find(_.isFile)
       .map(_.getAbsolutePath)
-    // 2. Local nebflow bin
+    // 2. Local nebflow bin (macOS/Linux: ~/.nebflow/bin/rg)
     val fromCache = Some(new File(rgLocalPath)).filter(_.isFile).map(_.getAbsolutePath)
-    fromPath.orElse(fromCache)
+    // 3. Windows install dir (%LOCALAPPDATA%\Nebflow\rg.exe)
+    val fromWinInstall = rgWinInstallPath.flatMap(p => Some(new File(p)).filter(_.isFile).map(_.getAbsolutePath))
+    fromPath.orElse(fromCache).orElse(fromWinInstall)
 
   /** Read an InputStream line-by-line, throwing OutputTooLargeException if it exceeds 500KB. */
   def readWithLimit(is: java.io.InputStream): String =
