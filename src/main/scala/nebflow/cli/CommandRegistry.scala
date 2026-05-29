@@ -14,6 +14,9 @@ object CommandRegistry:
       StopCommand,
       StatusCommand,
       DoctorCommand,
+      HelpCommand,
+      UpdateCommand,
+      UninstallCommand,
       // Gateway commands
       ChatCommand,
       AskCommand,

@@ -61,6 +61,11 @@ object RgHelper:
           )
         )
       case e: Exception =>
-        Left(ToolError(s"Failed to run rg: ${e.getMessage}"))
+        val msg = e.getMessage
+        if msg != null && msg.contains("Cannot run program") then
+          Left(
+            ToolError("rg (ripgrep) not found. Install it to enable Glob/Grep: https://github.com/BurntSushi/ripgrep")
+          )
+        else Left(ToolError(s"Failed to run rg: ${e.getMessage}"))
 
 end RgHelper

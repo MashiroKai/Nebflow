@@ -60,7 +60,7 @@ Usage:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val filePath =
-      if filePathStr.startsWith("/") then Paths.get(filePathStr)
+      if java.nio.file.Paths.get(filePathStr).isAbsolute then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
     IO.blocking {

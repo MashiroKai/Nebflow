@@ -67,7 +67,7 @@ Usage:
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val content = input("content").flatMap(_.asString).getOrElse("")
     val filePath =
-      if filePathStr.startsWith("/") then Paths.get(filePathStr)
+      if java.nio.file.Paths.get(filePathStr).isAbsolute then Paths.get(filePathStr)
       else Paths.get(ctx.projectRoot, filePathStr)
 
     doWrite(filePath, content, ctx)
