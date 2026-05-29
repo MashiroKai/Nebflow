@@ -34,3 +34,4 @@ scripts/
 *.env
 *.secret
 credentials.json
+dist/
