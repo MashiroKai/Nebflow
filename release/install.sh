@@ -249,6 +249,13 @@ install_rg() {
     local tmp_archive=$(mktemp)
     echo "       Downloading rg ${rg_ver}..."
     if _download "$url" "$tmp_archive"; then
+        true
+    else
+        local mirror_url="https://ghproxy.net/${url}"
+        echo "       GitHub timeout, trying mirror..."
+        _download "$mirror_url" "$tmp_archive"
+    fi
+    if [ -s "$tmp_archive" ]; then
         tar xzf "$tmp_archive" --to-stdout --wildcards "*/rg" > "$rg_local" 2>/dev/null && chmod +x "$rg_local"
         rm -f "$tmp_archive"
         if [ -f "$rg_local" ]; then
