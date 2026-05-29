@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import java.io.{BufferedReader, File, FileOutputStream, InputStreamReader}
+import java.io.*
 import java.net.URL
 import java.nio.channels.Channels
 import java.nio.file.{Files, Paths}
@@ -49,25 +49,28 @@ object RgHelper:
 
   /** Resolve rg path: PATH → local cache → auto-download */
   private def resolveRgPath: Either[String, String] =
-    // 1. PATH lookup
     val pathEnv = sys.env.getOrElse("PATH", "")
-    val inPath = pathEnv
+    // 1. PATH lookup
+    val fromPath = pathEnv
       .split(File.pathSeparator)
       .iterator
       .map(d => new File(d, rgBinName))
       .find(_.isFile)
       .map(_.getAbsolutePath)
-    if inPath.isDefined then return Right(inPath.get)
-
+      .map(Right(_))
     // 2. Local cache
-    if rgLocalPath.isFile then return Right(rgLocalPath.getAbsolutePath)
-
+    val fromCache = Some(rgLocalPath).filter(_.isFile).map(_ => Right(rgLocalPath.getAbsolutePath))
     // 3. Auto-download
-    downloadRg() match
-      case Right(_) => Right(rgLocalPath.getAbsolutePath)
-      case Left(err) => Left(err)
+    fromPath.orElse(fromCache).getOrElse {
+      downloadRg().map(_ => rgLocalPath.getAbsolutePath)
+    }
 
   end resolveRgPath
+
+  private def safeExtract(f: => Unit): Either[String, Unit] =
+    try
+      f; Right(())
+    catch case e: Exception => Left(s"Extraction failed: ${e.getMessage}")
 
   /** Download and extract rg binary to nebflow bin dir. */
   private def downloadRg(): Either[String, Unit] =
@@ -82,15 +85,19 @@ object RgHelper:
           downloadFile(url, archive)
 
           println(s"[rg] Extracting...")
-          ext match
-            case "zip" => extractZip(archive, rgBinName, rgLocalPath)
-            case "tar.gz" => extractTarGzUsingTar(archive, rgBinName, rgLocalPath)
-            case _ => return Left(s"Unknown archive format: $ext")
-
-          archive.delete()
-          rgLocalPath.setExecutable(true)
-          println(s"[rg] Installed to $rgLocalPath")
-          Right(())
+          val extractResult = ext match
+            case "zip" =>
+              safeExtract(extractZip(archive, rgBinName, rgLocalPath))
+            case "tar.gz" =>
+              safeExtract(extractTarGzUsingTar(archive, rgBinName, rgLocalPath))
+            case _ =>
+              Left(s"Unknown archive format: $ext")
+          extractResult.foreach { _ =>
+            archive.delete()
+            rgLocalPath.setExecutable(true)
+            println(s"[rg] Installed to $rgLocalPath")
+          }
+          extractResult
         catch case e: Exception => Left(s"Failed to install rg: ${e.getMessage}")
 
   /** Download a file from URL to local path. */
