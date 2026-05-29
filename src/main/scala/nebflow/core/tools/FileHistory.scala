@@ -49,15 +49,17 @@ class FileHistory private (
         val dest = dir.resolve(ts.toString)
         // Use buffered copy to handle cross-drive scenarios on Windows
         // where Files.copy may fail with "different root" error
-        try Files.copy(filePath, dest)
+        try
+          java.nio.file.Files.copy(filePath, dest)
         catch
           case _: Exception =>
-            // Fallback: read-write buffer copy (works cross-drive)
-            java.nio.file.Files.copy(filePath, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            // Fallback: read-write buffer copy (always works, even cross-drive)
+            val bytes = java.nio.file.Files.readAllBytes(filePath)
+            java.nio.file.Files.write(dest, bytes)
         // Write identity metadata alongside the snapshot (if provided)
         identity.foreach { id =>
           val metaDest = dir.resolve(s"$ts.identity")
-          Files.writeString(metaDest, id)
+          java.nio.file.Files.write(metaDest, id.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         }
         Some((key, dir, ts))
     }.flatMap {
