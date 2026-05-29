@@ -518,7 +518,8 @@ object ShellSession:
         initialDir.getOrElse {
           val userDir = System.getProperty("user.dir")
           if userDir == null || userDir.isEmpty then
-            sys.props.getOrElse("user.home", if isWindows then "C:\\" else "/tmp")
+            val isWin = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+            sys.props.getOrElse("user.home", if isWin then "C:\\" else "/tmp")
           else userDir
         }
       )
