@@ -106,7 +106,10 @@ class FileChangeTracker private (
   def recordAgentModification(path: String): IO[Unit] =
     IO.blocking {
       val absPath = Paths.get(path).toAbsolutePath.normalize
-      val rel = rootPath.relativize(absPath).toString
+      // relativize fails on Windows when file is on a different drive (C: vs D:);
+      // fall back to absolute path in that case.
+      val rel = try rootPath.relativize(absPath).toString
+        catch case _: Exception => absPath.toString
       val modTime =
         try Files.getLastModifiedTime(absPath).toMillis
         catch case _: Exception => System.currentTimeMillis()
