@@ -5,7 +5,7 @@ set -e
 CHANNEL="stable"
 for arg in "$@"; do
     case "$arg" in
-        --beta) CHANNEL="beta" ;;
+        --beta|--channel=beta) CHANNEL="beta" ;;
         --cn) REGION="cn" ;;
         --global) REGION="global" ;;
     esac
@@ -26,7 +26,7 @@ else
     VERSION="${VERSION:-1.00.005}"
 fi
 
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${INSTALL_DIR:-${HOME}/.nebflow/bin}"
 JAR_NAME="nebflow-assembly-${VERSION}.jar"
 COS_URL="https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/${JAR_NAME}"
 GH_URL="https://github.com/MashiroKai/Nebflow-Release/releases/download/v${VERSION}/${JAR_NAME}"
@@ -286,7 +286,25 @@ create_config() {
         mkdir -p "${config_dir}"
         echo '{}' > "${config_file}"
         echo "    Config created: ${config_file}"
-        echo "    Run 'nebflow -s' to start and configure via web UI."
+        echo "    Run 'nebflow' to start using the CLI."
+    fi
+}
+
+# Add install dir to PATH in shell profile
+setup_path() {
+    local profile=""
+    if [ -f "${HOME}/.zshrc" ]; then
+        profile="${HOME}/.zshrc"
+    elif [ -f "${HOME}/.bashrc" ]; then
+        profile="${HOME}/.bashrc"
+    elif [ -f "${HOME}/.bash_profile" ]; then
+        profile="${HOME}/.bash_profile"
+    fi
+    if [ -n "$profile" ] && ! grep -q "\.nebflow/bin" "$profile" 2>/dev/null; then
+        echo "" >> "$profile"
+        echo "# Added by nebflow installer" >> "$profile"
+        echo "export PATH=\"\$HOME/.nebflow/bin:\$PATH\"" >> "$profile"
+        echo "    Added ~/.nebflow/bin to PATH in $profile"
     fi
 }
 
@@ -296,8 +314,10 @@ download_jar
 install_rg
 create_wrapper
 create_config
+setup_path
 
 echo ""
 echo "==> Done! Nebflow v${VERSION} installed."
 echo "    Run: nebflow --help"
 echo "    Config: ~/.nebflow/nebflow.json"
+echo "    Please restart your terminal or run: export PATH=\"\$HOME/.nebflow/bin:\$PATH\""

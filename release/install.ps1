@@ -2,9 +2,11 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 # Parse flags
-$Channel = "stable"
+$Channel = if ($env:CHANNEL) { $env:CHANNEL } else { "stable" }
 $Region = ""
+# Also check command-line args (for direct execution, not via iex)
 if ($args -contains "-Beta") { $Channel = "beta" }
+if ($args -contains "--channel=beta") { $Channel = "beta" }
 if ($args -contains "-Cn") { $Region = "cn" }
 if ($args -contains "-Global") { $Region = "global" }
 
