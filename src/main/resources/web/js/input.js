@@ -10,6 +10,7 @@ import { saveInputDraft } from './sidebar.js';
 import { renderTaskList } from './taskList.js';
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
+import { addNotification } from './notificationBanner.js';
 
 // ---------- Slash Commands ----------
 const slashCommands = {
@@ -321,6 +322,8 @@ export function send() {
     sendWs({ type: 'skill', skillName, input: text, sessionId: state.activeSessionId });
     renderSystemBubble(t('slash.skillActivated', { skill: skillName }));
     renderUserBubble(text);
+    // Show persistent notification so skill name stays visible after session switch
+    addNotification('skill', t('slash.skillActivated', { skill: skillName }), { dismissAfter: 20000 });
     saveMsg({type:'user', text, attachments: (state.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
     input.value = '';
     saveInputDraft(state.activeSessionId);
