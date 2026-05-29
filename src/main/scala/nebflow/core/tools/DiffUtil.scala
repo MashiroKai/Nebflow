@@ -26,15 +26,17 @@ object DiffUtil:
   def detectLineSep(content: String): String =
     if content.contains("\r\n") then "\r\n" else "\n"
 
-  /** Read file content as UTF-8. */
+  /** Read file content as UTF-8. Uses readAllBytes + String ctor to avoid
+   *  Files.readString windows cross-drive decoder issue ("Input length = 1"). */
   def readFile(path: Path): String =
-    Files.readString(path, StandardCharsets.UTF_8)
+    new String(Files.readAllBytes(path), StandardCharsets.UTF_8)
 
-  /** Write file content as UTF-8, preserving original line separator. */
+  /** Write file content as UTF-8, preserving original line separator.
+   *  Uses Files.write (byte array) to avoid windows cross-drive decoder issues. */
   def writeFile(path: Path, content: String, lineSep: String): Unit =
     val normalized = content.replace("\r\n", "\n")
     val finalContent = if lineSep != "\n" then normalized.replace("\n", lineSep) else normalized
-    Files.writeString(path, finalContent, StandardCharsets.UTF_8)
+    Files.write(path, finalContent.getBytes(StandardCharsets.UTF_8))
 
   /**
    * Single source of truth for splitting content into lines.

@@ -78,7 +78,7 @@ Usage:
         )
       else
         try
-          val content = Files.readString(filePath)
+          val content = new String(Files.readAllBytes(filePath), java.nio.charset.StandardCharsets.UTF_8)
           val lines = content.split("\\r?\\n").toList
           val start = input("offset").flatMap(_.asNumber).flatMap(_.toInt).map(_ - 1).getOrElse(0)
           val end = input("limit").flatMap(_.asNumber).flatMap(_.toInt) match
