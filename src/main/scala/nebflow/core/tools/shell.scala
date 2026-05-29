@@ -285,7 +285,7 @@ final class ShellSession private (
       if isWindows then new ProcessBuilder("cmd.exe", "/c", command)
       else new ProcessBuilder("bash", "-c", command)
     pb.directory(new File(cwd))
-    if isWindows then pb.redirectInput(ProcessBuilder.Redirect.DISCARD)
+    if isWindows then pb.redirectInput(ProcessBuilder.Redirect.PIPE)
     else pb.redirectInput(new File("/dev/null"))
     pb.redirectErrorStream(false) // stdout/stderr separated
     pb
@@ -300,6 +300,14 @@ final class ShellSession private (
       buildProcessBuilder(command, cwd).start()
     }.bracket { proc =>
       val storeProc = health.fold(IO.unit)(h => IO(h.processRef.set(proc)))
+      // On Windows, close stdin immediately to prevent the cmd.exe process
+      // from hanging on commands that try to read stdin. This also avoids a
+      // potential JVM bug with Redirect.DISCARD on certain Windows builds.
+      val closeStdin = IO {
+        if isWindows then
+          try proc.getOutputStream().close()
+          catch case _: java.io.IOException => ()
+      }
       val stdoutIO = IO.blocking(
         readStream(
           proc.getInputStream,
@@ -316,7 +324,7 @@ final class ShellSession private (
         proc.exitValue()
       }
 
-      storeProc *> (stdoutIO, stderrIO, waitIO)
+      storeProc *> closeStdin *> (stdoutIO, stderrIO, waitIO)
         .parMapN { (out, err, code) =>
           ProcessResult(out, err, code, cwd)
         }
