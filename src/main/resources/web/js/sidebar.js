@@ -424,8 +424,16 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
-        Nebflow v${state.serverVersion || '...'}<br>
-        ${t('settings.connection')}: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? t('settings.disconnected') : t('settings.connected')}</span>
+        <div>Nebflow v${state.serverVersion || '...'}</div>
+        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? t('settings.disconnected') : t('settings.connected')}</span></div>
+        <div style="margin-top:10px">
+          <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
+          <span id="update-status" style="margin-left:8px;font-size:12px;color:var(--color-text-secondary)"></span>
+        </div>
+        <div id="update-action" style="display:none;margin-top:8px">
+          <button class="cfg-btn cfg-btn-primary" id="btn-do-update">${t('settings.updateNow')}</button>
+          <button class="cfg-btn cfg-btn-sm" id="btn-dismiss-update" style="margin-left:6px">${t('settings.updateLater')}</button>
+        </div>
       </div>
     </div>`;
 
@@ -691,6 +699,29 @@ function bindSettingsEvents(content, cfg, allModels) {
   // --- Card design prompt ---
   document.getElementById('btn-edit-card-design')?.addEventListener('click', () => {
     import('./modal.js').then(m => m.showCardDesignModal());
+  });
+
+  // --- Check for updates ---
+  document.getElementById('btn-check-update')?.addEventListener('click', () => {
+    const statusEl = document.getElementById('update-status');
+    const actionEl = document.getElementById('update-action');
+    statusEl.textContent = t('settings.checking');
+    statusEl.style.display = '';
+    actionEl.style.display = 'none';
+    sendWs({type: 'checkUpdate'});
+  });
+
+  document.getElementById('btn-do-update')?.addEventListener('click', () => {
+    const btn = document.getElementById('btn-do-update');
+    const statusEl = document.getElementById('update-status');
+    btn.textContent = t('settings.updating');
+    btn.disabled = true;
+    statusEl.textContent = '';
+    sendWs({type: 'doUpdate'});
+  });
+
+  document.getElementById('btn-dismiss-update')?.addEventListener('click', () => {
+    document.getElementById('update-action').style.display = 'none';
   });
 }
 
