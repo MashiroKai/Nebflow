@@ -22,7 +22,7 @@ if ($Channel -eq "beta") {
     } catch {}
     if (-not $BetaVersion) {
         Write-Host "ERROR: Could not find a beta release." -ForegroundColor Red
-        Write-Host "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability." -ForegroundColor Yellow
+        Write-Host "       Visit https://github.com/MashiroKai/Nebflow-Release/releases to check availability." -ForegroundColor Yellow
         exit 1
     }
     $Version = if ($env:VERSION) { $env:VERSION } else { $BetaVersion }
