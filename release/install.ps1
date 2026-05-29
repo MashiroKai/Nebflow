@@ -221,8 +221,35 @@ if (Test-Path $jarPath) {
     Write-Host "       Downloaded ($size MB) from $($Region) source" -ForegroundColor Green
 }
 
+# --- Install ripgrep (rg) for search support ---
+Write-Host "[3/4] Installing ripgrep (rg)..." -ForegroundColor Yellow
+if (Get-Command "rg" -ErrorAction SilentlyContinue) {
+    Write-Host "       rg already available in PATH." -ForegroundColor Green
+} elseif (Test-Path (Join-Path $InstallDir "rg.exe")) {
+    Write-Host "       rg already cached." -ForegroundColor Green
+} else {
+    $rgUrl = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+    $rgZip = Join-Path $InstallDir "rg.zip"
+    try {
+        Write-Host "       Downloading rg 14.1.1..." -ForegroundColor DarkGray
+        Invoke-WebRequest -Uri $rgUrl -OutFile $rgZip -UseBasicParsing -TimeoutSec 30
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($rgZip)
+        $entry = $zip.Entries | Where-Object { $_.Name -eq "rg.exe" } | Select-Object -First 1
+        if ($entry) {
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, (Join-Path $InstallDir "rg.exe"), $true)
+            Write-Host "       rg installed to $InstallDir" -ForegroundColor Green
+        }
+        $zip.Dispose()
+        Remove-Item $rgZip -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "       rg download failed: $_" -ForegroundColor DarkGray
+        Write-Host "       Search will rely on PATH install." -ForegroundColor DarkGray
+    }
+}
+
 # --- Create wrapper scripts ---
-Write-Host "[3/4] Creating launcher..." -ForegroundColor Yellow
+Write-Host "[4/4] Creating launcher..." -ForegroundColor Yellow
 
 # PowerShell wrapper
 $wrapperPath = Join-Path $InstallDir "nebflow.ps1"

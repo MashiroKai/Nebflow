@@ -219,6 +219,47 @@ _download() {
     fi
 }
 
+# Install ripgrep (rg) for Glob/Grep search support
+install_rg() {
+    if command -v rg &> /dev/null; then
+        return 0
+    fi
+    local rg_local="${INSTALL_DIR}/rg"
+    if [ -f "$rg_local" ]; then
+        return 0
+    fi
+
+    echo "==> Installing ripgrep (rg) for search support..."
+    local os arch url rg_ver="14.1.1"
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    arch="$(uname -m)"
+    case "$os" in
+        linux)  url="https://github.com/BurntSushi/ripgrep/releases/download/$rg_ver/ripgrep-$rg_ver-x86_64-unknown-linux-musl.tar.gz" ;;
+        darwin)
+            if [ "$arch" = "arm64" ] || [ "$arch" = "aarch64" ]; then
+                url="https://github.com/BurntSushi/ripgrep/releases/download/$rg_ver/ripgrep-$rg_ver-aarch64-apple-darwin.tar.gz"
+            else
+                url="https://github.com/BurntSushi/ripgrep/releases/download/$rg_ver/ripgrep-$rg_ver-x86_64-apple-darwin.tar.gz"
+            fi
+            ;;
+        *) echo "       Skipping rg auto-install on $os" ; return 0 ;;
+    esac
+    local tmp_archive=$(mktemp)
+    echo "       Downloading rg ${rg_ver}..."
+    if _download "$url" "$tmp_archive"; then
+        tar xzf "$tmp_archive" --to-stdout --wildcards "*/rg" > "$rg_local" 2>/dev/null && chmod +x "$rg_local"
+        rm -f "$tmp_archive"
+        if [ -f "$rg_local" ]; then
+            echo "       rg installed to $rg_local"
+        else
+            echo "       rg extraction failed (tar may not support --wildcards)"
+        fi
+    else
+        rm -f "$tmp_archive"
+        echo "       rg download failed (search will rely on PATH install)"
+    fi
+}
+
 # Create wrapper script
 create_wrapper() {
     local wrapper="${INSTALL_DIR}/nebflow"
@@ -252,6 +293,7 @@ create_config() {
 # Run
 check_java
 download_jar
+install_rg
 create_wrapper
 create_config
 

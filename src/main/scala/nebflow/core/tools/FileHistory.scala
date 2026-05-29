@@ -47,7 +47,13 @@ class FileHistory private (
         // Use nanoTime for unique filenames (monotonic, nanosecond precision)
         val ts = System.nanoTime()
         val dest = dir.resolve(ts.toString)
-        Files.copy(filePath, dest)
+        // Use buffered copy to handle cross-drive scenarios on Windows
+        // where Files.copy may fail with "different root" error
+        try Files.copy(filePath, dest)
+        catch
+          case _: java.nio.file.FileSystemException | _: java.nio.file.FileAlreadyExistsException =>
+            // Fallback: read-write buffer copy (works cross-drive)
+            java.nio.file.Files.copy(filePath, dest, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
         // Write identity metadata alongside the snapshot (if provided)
         identity.foreach { id =>
           val metaDest = dir.resolve(s"$ts.identity")
