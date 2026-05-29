@@ -24,12 +24,19 @@ object CliRouter:
     cmdArgs match
       case Nil =>
         printHelp(jsonMode).as(ExitCode.Success)
+      case "help" :: Nil =>
+        printHelp(jsonMode).as(ExitCode.Success)
+      case "help" :: cmdName :: Nil =>
+        CommandRegistry.get(cmdName) match
+          case Some(cmd) => printCommandHelp(cmd, jsonMode).as(ExitCode.Success)
+          case None => IO.println(s"Unknown command: $cmdName").as(ExitCode.Error)
       case cmdName :: rest =>
         CommandRegistry.get(cmdName) match
           case None =>
             IO.println(s"Unknown command: $cmdName").as(ExitCode.Error)
           case Some(cmd) =>
             dispatchCommand(cmd, rest, jsonMode, quietMode)
+    end match
 
   end run
 
