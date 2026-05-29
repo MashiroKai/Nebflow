@@ -170,7 +170,7 @@ foreach ($old in $oldJars) {
 }
 
 if (Test-Path $jarPath) {
-    Write-Host "       Already up-to-date, skipping download." -ForegroundColor Green
+    Write-Host "       Already up-to-date (v$Version), skipping download." -ForegroundColor Green
 } else {
     # Auto-detect region for download source selection
     if (-not $Region) {
@@ -231,10 +231,18 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
     Write-Host "       rg already cached." -ForegroundColor Green
 } else {
     $rgUrl = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+    $rgMirrors = @(
+        "https://ghproxy.net/https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"
+    )
     $rgZip = Join-Path $InstallDir "rg.zip"
     try {
         Write-Host "       Downloading rg 14.1.1..." -ForegroundColor DarkGray
-        Invoke-WebRequest -Uri $rgUrl -OutFile $rgZip -UseBasicParsing -TimeoutSec 30
+        try {
+            Invoke-WebRequest -Uri $rgUrl -OutFile $rgZip -UseBasicParsing -TimeoutSec 15
+        } catch {
+            Write-Host "       GitHub timeout, trying mirror..." -ForegroundColor DarkGray
+            Invoke-WebRequest -Uri $rgMirrors[0] -OutFile $rgZip -UseBasicParsing -TimeoutSec 30
+        }
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $zip = [System.IO.Compression.ZipFile]::OpenRead($rgZip)
         $entry = $zip.Entries | Where-Object { $_.Name -eq "rg.exe" } | Select-Object -First 1
@@ -309,7 +317,7 @@ Write-Host "=====================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Commands:" -ForegroundColor White
 Write-Host "    nebflow --help" -ForegroundColor Cyan
-Write-Host "    nebflow --server" -ForegroundColor Cyan
+Write-Host "    nebflow start" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  Config: $env:USERPROFILE\.nebflow\nebflow.json" -ForegroundColor DarkGray
 Write-Host ""
