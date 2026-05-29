@@ -8,6 +8,81 @@ import nebflow.service.ConfigSnapshot
 
 // ===== System Commands (Offline) =====
 
+object HelpCommand extends CliCommand:
+  def name = "help"
+  def description = "Show help information"
+  def subcommands = List(HelpShow)
+  def examples = List("nebflow help", "nebflow help session")
+
+  private object HelpShow extends CliSubcommand:
+    def name = "show"
+    def description = "Show help (default)"
+    def params = Nil
+
+    def run(ctx: CliContext): IO[CliResult] =
+      // Delegate to CliRouter's printHelp logic
+      IO.pure(
+        CliResult.text(
+          "Use 'nebflow' without arguments to show help, or 'nebflow <command> --help' for command details."
+        )
+      )
+
+end HelpCommand
+
+object UpdateCommand extends CliCommand:
+  def name = "update"
+  def description = "Update nebflow to the latest version"
+  def subcommands = List(UpdateRun)
+  def examples = List("nebflow update")
+
+  private object UpdateRun extends CliSubcommand:
+    def name = "run"
+    def description = "Run update"
+    def params = Nil
+
+    def run(ctx: CliContext): IO[CliResult] =
+      IO.blocking {
+        import sys.process.*
+        val script =
+          if System.getProperty("os.name").toLowerCase.contains("win") then
+            """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
+          else "curl -fsSL https://nebflow.space/install.sh | sh"
+        val exitCode = script.!
+        if exitCode == 0 then CliResult.text("Update completed")
+        else CliResult.Error("Update failed", exitCode)
+      }
+
+  end UpdateRun
+
+end UpdateCommand
+
+object UninstallCommand extends CliCommand:
+  def name = "uninstall"
+  def description = "Uninstall nebflow"
+  def subcommands = List(UninstallRun)
+  def examples = List("nebflow uninstall")
+
+  private object UninstallRun extends CliSubcommand:
+    def name = "run"
+    def description = "Run uninstall"
+    def params = Nil
+
+    def run(ctx: CliContext): IO[CliResult] =
+      IO.blocking {
+        import sys.process.*
+        val script =
+          if System.getProperty("os.name").toLowerCase.contains("win") then
+            """powershell -Command "& { iwr https://nebflow.space/uninstall.ps1 | iex }" """
+          else "curl -fsSL https://nebflow.space/uninstall.sh | sh"
+        val exitCode = script.!
+        if exitCode == 0 then CliResult.text("Uninstall completed")
+        else CliResult.Error("Uninstall failed", exitCode)
+      }
+
+  end UninstallRun
+
+end UninstallCommand
+
 object VersionCommand extends CliCommand:
   def name = "version"
   def description = "Show version"
