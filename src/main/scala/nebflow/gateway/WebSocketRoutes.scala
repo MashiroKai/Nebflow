@@ -1487,6 +1487,87 @@ class WebSocketRoutes(
             )
           }
 
+        case "checkUpdate" =>
+          val currentVer = nebflow.Version.string
+          // Check latest stable release from public repo
+          val result = IO
+            .blocking {
+              try
+                val url = new java.net.URL(
+                  "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases/latest"
+                )
+                val conn = url.openConnection()
+                conn.setConnectTimeout(5000)
+                conn.setReadTimeout(5000)
+                val json = io.circe.parser.parse(
+                  new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
+                )
+                json.toOption.flatMap { j =>
+                  for
+                    tag <- j.hcursor.downField("tag_name").as[String].toOption
+                    name <- j.hcursor.downField("name").as[String].toOption
+                  yield (tag, name)
+                }
+              catch case _: Exception => None
+            }
+            .flatMap {
+              case Some((tag, releaseName)) =>
+                val latestVer = tag.stripPrefix("v")
+                val hasUpdate = latestVer != currentVer
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "updateCheckResult".asJson,
+                    "currentVersion" -> currentVer.asJson,
+                    "latestVersion" -> latestVer.asJson,
+                    "hasUpdate" -> hasUpdate.asJson,
+                    "releaseName" -> releaseName.asJson
+                  )
+                )
+              case None =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "updateCheckResult".asJson,
+                    "currentVersion" -> currentVer.asJson,
+                    "error" -> "Failed to check for updates".asJson
+                  )
+                )
+            }
+          result
+
+        case "doUpdate" =>
+          val updateJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val channel = updateJson.hcursor.downField("channel").as[String].getOrElse("stable")
+          wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson)) *>
+            IO.blocking {
+              import sys.process.*
+              val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
+              val script =
+                if channel == "beta" then
+                  if isWindows then
+                    """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
+                  else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
+                else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
+                else "curl -fsSL https://nebflow.space/install.sh | sh"
+              val exitCode = script.!
+              if exitCode == 0 then
+                wsSend(io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
+              else
+                wsSend(
+                  io.circe.Json
+                    .obj(
+                      "type" -> "updateCompleted".asJson,
+                      "success" -> false.asJson,
+                      "error" -> s"Exit code: $exitCode".asJson
+                    )
+                )
+            }.flatten
+              .handleErrorWith { e =>
+                wsSend(
+                  io.circe.Json
+                    .obj("type" -> "updateCompleted".asJson, "success" -> false.asJson, "error" -> e.getMessage.asJson)
+                )
+              }
+
         case "getConfig" =>
           configService.isConfigured.flatMap { configured =>
             configService.getConfig.flatMap { cfg =>

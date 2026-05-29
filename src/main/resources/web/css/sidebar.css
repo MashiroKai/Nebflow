@@ -835,6 +835,18 @@
   transition: all 0.15s;
 }
 .cfg-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
+.cfg-btn-sm { font-size: 11px; padding: 4px 10px; }
+.cfg-btn-primary {
+  font-size: 11px; padding: 5px 14px; border-radius: 5px;
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.cfg-btn-primary:hover { opacity: 0.85; }
+.cfg-btn-primary:disabled { opacity: 0.5; cursor: default; }
 .cfg-btn-add {
   width: 100%;
   border-style: dashed;
