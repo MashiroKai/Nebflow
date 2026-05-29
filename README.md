@@ -11,20 +11,20 @@ Self-hosted AI coding assistant with inline HTML card rendering.
 
 ---
 
-Nebflow is a self-hosted AI coding assistant that runs entirely on your machine. It features a browser-based chat interface with streaming responses, native HTML card rendering, multi-provider LLM support, and a built-in agent system — all in a single JAR.
+Nebflow is a self-hosted AI coding assistant that runs entirely on your machine. It features a browser-based chat interface with streaming responses, native HTML card rendering, multi-provider LLM support, and a built-in agent system — all in a single JAR with no external dependencies beyond Java.
 
 ## Features
 
-- **Inline Card Rendering** — Agents render rich HTML cards (diagrams, charts, tables, animations) directly in chat, not just text
-- **Web UI & CLI** — Browser-based interface with streaming, syntax highlighting, and file editing, plus a terminal mode
-- **Multi-Provider LLM** — Anthropic Claude, OpenAI, and any OpenAI/Anthropic-compatible API with automatic fallback
-- **17 Built-in Tools** — File read/write/edit, bash execution, web search & fetch, code search (grep/glob), task management, curl, and more
-- **Agent System** — Customizable agents with per-agent system prompts, tool whitelists, and isolated sessions
+- **Inline Card Rendering** — Agents render rich HTML cards (diagrams, charts, tables, animations) directly in the chat, not just text
+- **Web UI & CLI** — Browser-based interface with streaming, syntax highlighting, and file editing; plus a terminal REPL mode
+- **Multi-Provider LLM** — Anthropic Claude, OpenAI, and any OpenAI/Anthropic-compatible API with automatic fallback chains
+- **17 Built-in Tools** — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Curl, Card, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, WriteMemory, ClearStaging, RemoveUnnecessary
+- **Agent System** — Multiple named agents with per-agent system prompts, tool whitelists, and isolated project workspaces
 - **MCP Support** — Connect external tools and data sources via Model Context Protocol
-- **Memory System** — Persistent memory at user, agent, and project level across conversations
+- **Three-Tier Memory** — Persistent memory at user, agent, and project (folder) scope across conversations
 - **Context Management** — Automatic and manual context compaction for long sessions
-- **Permission System** — Ask-before-execute for destructive operations, auto-approve for reads
-- **Cross-Platform** — macOS, Linux, and Windows support
+- **Permission System** — Ask-before-execute for destructive operations; auto-approve for read-only tools
+- **Cross-Platform** — macOS, Linux, and Windows with automatic ripgrep installation
 
 ## Quick Start
 
@@ -58,13 +58,6 @@ curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta
 $env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex
 ```
 
-### Docker
-
-```bash
-docker build -t nebflow .
-docker run -p 8080:8080 -v ~/.nebflow:/root/.nebflow nebflow
-```
-
 ## Usage
 
 ```bash
@@ -74,16 +67,21 @@ nebflow start
 # Start with custom port
 nebflow start --port 3000
 
-# CLI mode
+# Stop running server
+nebflow stop
+
+# CLI REPL mode
 nebflow
 
 # Show help
-nebflow --help
+nebflow help
 ```
+
+Open `http://localhost:8080` in your browser after starting the server.
 
 ## Configuration
 
-Nebflow looks for configuration at `~/.nebflow/nebflow.json`. A template is created automatically on first run.
+Nebflow stores all data in `~/.nebflow/`. Configuration lives at `~/.nebflow/nebflow.json` and is created automatically on first run.
 
 ```json
 {
@@ -107,7 +105,7 @@ Nebflow looks for configuration at `~/.nebflow/nebflow.json`. A template is crea
 }
 ```
 
-API keys can be set via environment variables (`${VAR_NAME}` syntax) or directly in the config.
+API keys can be set via environment variables (`${VAR_NAME}` syntax) or directly in the config file.
 
 ## Building from Source
 
@@ -121,7 +119,7 @@ sbt compile          # Compile
 sbt assembly         # Build fat JAR
 make install         # Install to ~/.local/bin
 sbt test             # Run tests
-make check           # Run all quality checks (compile + scalafmt + scalafix)
+make check           # All quality checks (compile + scalafmt + scalafix)
 ```
 
 The assembled JAR is output to `target/scala-3.5.2/`.
