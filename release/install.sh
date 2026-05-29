@@ -14,11 +14,11 @@ done
 # Resolve version
 if [ "$CHANNEL" = "beta" ]; then
     echo "==> Resolving latest beta version..."
-    BETA_VERSION=$(curl -fsSL "https://api.github.com/repos/MashiroKai/Nebflow/releases" \
+    BETA_VERSION=$(curl -fsSL "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases" \
         2>/dev/null | grep -m1 '"tag_name".*-beta"' | sed 's/.*"v\(.*\)-beta".*/\1/')
     if [ -z "$BETA_VERSION" ]; then
         echo "ERROR: Could not find a beta release."
-        echo "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability."
+        echo "       Visit https://github.com/MashiroKai/Nebflow-Release/releases to check availability."
         exit 1
     fi
     VERSION="${VERSION:-$BETA_VERSION}"
@@ -30,7 +30,7 @@ INSTALL_DIR="${INSTALL_DIR:-${HOME}/.nebflow/bin}"
 JAR_NAME="nebflow-assembly-${VERSION}.jar"
 COS_URL="https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/${JAR_NAME}"
 GH_URL="https://github.com/MashiroKai/Nebflow-Release/releases/download/v${VERSION}/${JAR_NAME}"
-GH_BETA_URL="https://github.com/MashiroKai/Nebflow/releases/download/v${VERSION}-beta/${JAR_NAME}"
+GH_BETA_URL="https://github.com/MashiroKai/Nebflow-Release/releases/download/v${VERSION}-beta/${JAR_NAME}"
 
 echo ""
 echo "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗"
