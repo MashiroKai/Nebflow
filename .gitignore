@@ -28,7 +28,6 @@ docs/
 /nebflow
 nul
 openclaw/
-scripts/
 
 # Sensitive
 *.env
