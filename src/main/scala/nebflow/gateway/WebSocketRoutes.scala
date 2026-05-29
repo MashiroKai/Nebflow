@@ -1498,7 +1498,7 @@ class WebSocketRoutes(
                   if channel == "beta" then
                     // Beta: list all releases, find first prerelease with -beta tag
                     (
-                      "https://api.github.com/repos/MashiroKai/Nebflow/releases",
+                      "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases",
                       (arr: io.circe.Json) => {
                         val all = arr.hcursor.as[Vector[io.circe.Json]].getOrElse(Vector.empty)
                         all.find { r =>
