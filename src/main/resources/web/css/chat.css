@@ -892,6 +892,95 @@
   font-size: 13px;
 }
 
+/* ===== Notification Banner (persistent across session switches) ===== */
+#notification-banner {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 12px 0 12px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.notif-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--color-surface);
+  box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
+  color: var(--color-text);
+  animation: notifSlideIn 0.3s ease;
+}
+@keyframes notifSlideIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.notif-item.dismissing {
+  animation: notifSlideOut 0.25s ease forwards;
+}
+@keyframes notifSlideOut {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(-8px); }
+}
+.notif-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+}
+.notif-icon.skill {
+  background: #6C8EBF;
+}
+.notif-icon.reminder {
+  background: #D4A574;
+}
+.notif-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notif-close {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  opacity: 0.35;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  padding: 0;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+.notif-close:hover {
+  opacity: 0.8;
+  background: rgba(128,128,128,0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  .notif-item {
+    background: rgba(255,255,255,0.04);
+    box-shadow: 0px 0px 0px 1px rgba(255,255,255,0.06);
+  }
+}
+
 /* ===== Thinking bubble ===== */
 .thinking-row {
   margin-bottom: 0 !important;

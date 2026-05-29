@@ -2,6 +2,7 @@
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
+import { addNotification } from './notificationBanner.js';
 
 // Inline locale getter to avoid caching issues with module imports
 function getLocale() {
@@ -366,6 +367,11 @@ onMessage('reminderDeleted', (msg) => {
 });
 
 onMessage('reminderTriggered', (msg) => {
+  // Show persistent notification regardless of active session, so it survives session switches
+  if (msg.reminder && msg.reminder.content) {
+    addNotification('reminder', msg.reminder.content, { dismissAfter: 60000 });
+  }
+
   if (msg.sessionId === state.activeSessionId) {
     reminders = reminders.map(r =>
       r.id === (msg.reminder && msg.reminder.id)
@@ -398,6 +404,14 @@ onMessage('reminderTriggered', (msg) => {
     }
 
     if (!panelOpen) openPanel();
+  } else {
+    // Non-active session: still update local reminder state so badge is correct
+    reminders = reminders.map(r =>
+      r.id === (msg.reminder && msg.reminder.id)
+        ? { ...r, triggered: true, triggeredAt: Date.now() }
+        : r
+    );
+    updateBadge();
   }
 });
 
