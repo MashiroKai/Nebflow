@@ -46,11 +46,14 @@ object UpdateCommand extends CliCommand:
     def run(ctx: CliContext): IO[CliResult] =
       IO.blocking {
         import sys.process.*
-        val betaFlag = if ctx.args.get("beta").contains("true") then " --channel=beta" else ""
+        val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
         val script =
-          if System.getProperty("os.name").toLowerCase.contains("win") then
-            s"""powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" $betaFlag"""
-          else s"curl -fsSL https://nebflow.space/install.sh | sh$betaFlag"
+          if ctx.args.get("beta").contains("true") then
+            if isWindows then
+              """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
+            else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
+          else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
+          else "curl -fsSL https://nebflow.space/install.sh | sh"
         val exitCode = script.!
         if exitCode == 0 then CliResult.text("Update completed")
         else CliResult.Error("Update failed", exitCode)
