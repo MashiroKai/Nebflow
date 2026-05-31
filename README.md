@@ -5,7 +5,7 @@
 Self-hosted AI coding assistant with inline HTML card rendering.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![GitHub Release](https://img.shields.io/github/v/release/MashiroKai/Nebflow-Release?label=stable)](https://github.com/MashiroKai/Nebflow-Release/releases/latest)
+[![GitHub Release](https://img.shields.io/github/v/release/MashiroKai/Nebflow?label=stable)](https://github.com/MashiroKai/Nebflow/releases/latest)
 
 </div>
 
@@ -17,7 +17,7 @@ Nebflow is a self-hosted AI coding assistant that runs entirely on your machine.
 
 - **Inline Card Rendering** — Agents render rich HTML cards (diagrams, charts, tables, animations) directly in the chat, not just text
 - **Web UI & CLI** — Browser-based interface with streaming, syntax highlighting, and file editing; plus a terminal REPL mode
-- **Multi-Provider LLM** — Anthropic Claude, OpenAI, and any OpenAI/Anthropic-compatible API with automatic fallback chains
+- **Multi-Provider LLM** — 智谱 GLM、通义千问、DeepSeek、百川，以及所有 OpenAI/Anthropic 兼容 API，支持自动 fallback 链
 - **17 Built-in Tools** — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Curl, Card, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, WriteMemory, ClearStaging, RemoveUnnecessary
 - **Agent System** — Multiple named agents with per-agent system prompts, tool whitelists, and isolated project workspaces
 - **MCP Support** — Connect external tools and data sources via Model Context Protocol
@@ -44,18 +44,6 @@ Open PowerShell and run:
 
 ```powershell
 irm https://nebflow.space/install.ps1 | iex
-```
-
-### Beta Channel
-
-```bash
-# macOS / Linux
-curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta
-```
-
-```powershell
-# Windows PowerShell
-$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex
 ```
 
 ## Usage
@@ -87,18 +75,21 @@ Nebflow stores all data in `~/.nebflow/`. Configuration lives at `~/.nebflow/neb
 {
   "llm": {
     "providers": {
-      "anthropic": {
-        "baseUrl": "https://api.anthropic.com",
-        "apiKey": "${ANTHROPIC_API_KEY}",
-        "protocol": "anthropic"
+      "zhipu": {
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "apiKey": "${ZHIPU_API_KEY}"
       },
-      "openai": {
-        "baseUrl": "https://api.openai.com",
-        "apiKey": "${OPENAI_API_KEY}"
+      "deepseek": {
+        "baseUrl": "https://api.deepseek.com",
+        "apiKey": "${DEEPSEEK_API_KEY}"
+      },
+      "qwen": {
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "apiKey": "${DASHSCOPE_API_KEY}"
       }
     },
     "model": {
-      "default": "anthropic/claude-sonnet-4-6"
+      "default": "zhipu/glm-5.1"
     }
   },
   "mcpServers": {}
@@ -140,7 +131,7 @@ Built with **Scala 3**, **Cats Effect 3**, and **Pekko Actors**. The web UI is s
 ## Links
 
 - **Website:** [nebflow.space](https://nebflow.space)
-- **Releases:** [Nebflow-Release](https://github.com/MashiroKai/Nebflow-Release)
+- **Releases:** [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases)
 
 ## License
 
