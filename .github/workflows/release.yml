@@ -1,8 +1,8 @@
-name: Release
+name: Beta Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*-beta"]
 
 permissions:
   contents: write
@@ -46,19 +46,11 @@ jobs:
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      - name: Determine prerelease
-        id: prerelease
-        run: |
-          if [[ "${{ steps.version.outputs.version }}" == *"-beta"* ]]; then
-            echo "prerelease=true" >> $GITHUB_OUTPUT
-          else
-            echo "prerelease=false" >> $GITHUB_OUTPUT
-          fi
       - name: Create GitHub Release (source repo)
         uses: softprops/action-gh-release@v2
         with:
           files: nebflow-assembly-*.jar
-          prerelease: ${{ steps.prerelease.outputs.prerelease }}
+          prerelease: true
           generate_release_notes: true
 
   public-release:
@@ -69,17 +61,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: nebflow-jar
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      - name: Determine prerelease
-        id: prerelease
-        run: |
-          if [[ "${{ steps.version.outputs.version }}" == *"-beta"* ]]; then
-            echo "prerelease=true" >> $GITHUB_OUTPUT
-          else
-            echo "prerelease=false" >> $GITHUB_OUTPUT
-          fi
       - name: Publish to public release repo
         env:
           GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
@@ -88,6 +69,6 @@ jobs:
           gh release create "$TAG" \
             --repo MashiroKai/Nebflow-Release \
             --title "$TAG" \
-            --prerelease=${{ steps.prerelease.outputs.prerelease }} \
+            --prerelease \
             --notes "Nebflow $TAG" \
             nebflow-assembly-*.jar
