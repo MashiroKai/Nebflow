@@ -1,21 +1,22 @@
 package nebflow.cli
 
 import cats.effect.IO
+import nebflow.core.PathUtil
 
 object ProcessManager:
-  private val PidFile: os.Path = os.home / ".nebflow" / ".pid"
+  private def pidFile: os.Path = PathUtil.dataRoot / ".pid"
 
   def readPid(): Option[Long] =
-    if os.exists(PidFile) then
-      try Some(os.read(PidFile).trim.toLong)
+    if os.exists(pidFile) then
+      try Some(os.read(pidFile).trim.toLong)
       catch case _: Exception => None
     else None
 
   def writePid(pid: Long): Unit =
-    os.write.over(PidFile, pid.toString, createFolders = true)
+    os.write.over(pidFile, pid.toString, createFolders = true)
 
   def removePid(): Unit =
-    if os.exists(PidFile) then os.remove(PidFile)
+    if os.exists(pidFile) then os.remove(pidFile)
 
   def isRunning(pid: Long): Boolean =
     java.lang.ProcessHandle.of(pid).map(_.isAlive).orElse(false)

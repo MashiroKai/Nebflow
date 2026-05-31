@@ -31,4 +31,19 @@ object PathUtil:
       catch case _: Exception => Path(java.nio.file.Paths.get(pathStr))
     else base / pathStr
 
+  /**
+   * The root data directory for Nebflow state (sessions, tasks, memory, config, etc.).
+   * Override priority: CLI --home flag > NEBFLOW_HOME env var > ~/.nebflow default.
+   */
+  private var _dataRootOverride: Option[os.Path] = None
+
+  def setDataRoot(path: os.Path): Unit = _dataRootOverride = Some(path)
+
+  def dataRoot: os.Path =
+    _dataRootOverride.getOrElse(
+      sys.env.get("NEBFLOW_HOME") match
+        case Some(home) => os.Path(home, os.pwd)
+        case None       => os.home / ".nebflow"
+    )
+
 end PathUtil

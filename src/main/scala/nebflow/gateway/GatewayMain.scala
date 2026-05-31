@@ -27,7 +27,7 @@ import scala.concurrent.duration.*
 object GatewayMain extends IOApp.Simple:
   private val logger = NebflowLogger.forName("nebflow.gateway")
 
-  private val PidFilePath = java.nio.file.Paths.get(sys.props("user.home"), ".nebflow", "nebflow.pid")
+  private def pidFilePath = java.nio.file.Paths.get(PathUtil.dataRoot.toString, "nebflow.pid")
 
   /**
    * Kill stale Nebflow processes before starting.
@@ -62,10 +62,10 @@ object GatewayMain extends IOApp.Simple:
         catch case _: Exception => ()
       end if
       // Write current PID file
-      val pidFile = PidFilePath
-      java.nio.file.Files.createDirectories(pidFile.getParent)
+      val pf = pidFilePath
+      java.nio.file.Files.createDirectories(pf.getParent)
       java.nio.file.Files.write(
-        pidFile,
+        pf,
         ProcessHandle.current.pid.toString.getBytes("UTF-8"),
         java.nio.file.StandardOpenOption.CREATE,
         java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
@@ -149,7 +149,7 @@ object GatewayMain extends IOApp.Simple:
         configRef.get.flatMap { config =>
           Auth.loadOrCreateToken.flatMap { token =>
             // Global session state shared across all connections
-            val sessionStore = new SessionStore(os.home / ".nebflow" / "sessions", os.home / ".nebflow" / "tasks")
+            val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
             val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
             sessionStore.load.flatMap { _ =>
               LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
