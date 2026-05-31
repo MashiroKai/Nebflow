@@ -7,7 +7,7 @@ ThisBuild / semanticdbVersion := scalafixSemanticdb.revision
 lazy val root = (project in file("."))
   .settings(
     name := "nebflow",
-    version := "1.00.009",
+    version := IO.read(file("VERSION")).trim,
     organization := "nebflow",
     scalaVersion := "3.5.2",
 
