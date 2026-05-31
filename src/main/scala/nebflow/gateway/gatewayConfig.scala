@@ -11,15 +11,24 @@ object GatewayConfig:
   private val HostEnv = "NEBFLOW_GATEWAY_HOST"
   private val PortEnv = "NEBFLOW_GATEWAY_PORT"
 
+  /** CLI --port override, takes priority over env var and default. */
+  private var _portOverride: Option[Int] = None
+
+  def setPort(port: Int): Unit = _portOverride = Some(port)
+
   def load: IO[GatewayConfig] = IO.delay {
     val host = sys.env
       .get(HostEnv)
       .flatMap(Host.fromString)
       .getOrElse(DefaultHost)
-    val port = sys.env
-      .get(PortEnv)
-      .flatMap(s => s.toIntOption.flatMap(Port.fromInt))
-      .getOrElse(DefaultPort)
+    val port = _portOverride
+      .flatMap(p => Port.fromInt(p))
+      .getOrElse(
+        sys.env
+          .get(PortEnv)
+          .flatMap(s => s.toIntOption.flatMap(Port.fromInt))
+          .getOrElse(DefaultPort)
+      )
     GatewayConfig(host, port)
   }
 end GatewayConfig
