@@ -2,7 +2,7 @@ name: Beta Release
 
 on:
   push:
-    tags: ["v*-beta*"]
+    branches: [beta]
 
 permissions:
   contents: write
@@ -11,17 +11,37 @@ env:
   SBT_OPTS: "-Xms512m -Xmx2g"
 
 jobs:
-  build:
-    name: Build & Test
+  beta:
+    name: Build & Release Beta
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Override version from tag
+      - name: Determine beta version
+        id: version
         run: |
-          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
-          echo "$TAG_VERSION" > VERSION
-          echo "  Beta version: $TAG_VERSION"
+          # Read current version (e.g., 1.1.5)
+          VERSION=$(cat VERSION)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          # Next minor release target (e.g., 1.2.0)
+          NEXT="$MAJOR.$((MINOR + 1)).0"
+
+          # Find next beta iteration by checking existing tags
+          LAST_N=0
+          for tag in $(git tag -l "v${NEXT}-beta.*"); do
+            N=$(echo "$tag" | sed "s/.*-beta\.//")
+            if [ "$N" -gt "$LAST_N" ] 2>/dev/null; then
+              LAST_N=$N
+            fi
+          done
+          N=$((LAST_N + 1))
+
+          BETA_VERSION="${NEXT}-beta.${N}"
+          echo "$BETA_VERSION" > VERSION
+          echo "  $VERSION → $BETA_VERSION"
+          echo "version=$BETA_VERSION" >> $GITHUB_OUTPUT
 
       - uses: actions/setup-java@v4
         with:
@@ -43,26 +63,18 @@ jobs:
       - name: Build assembly
         run: sbt assembly
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: nebflow-jar
-          path: target/scala-3.5.2/nebflow-assembly-*.jar
+      - name: Tag and release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="v${{ steps.version.outputs.version }}"
+          git tag "$TAG"
+          git push origin "$TAG"
 
-  github-release:
-    name: GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: nebflow-jar
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: nebflow-assembly-*.jar
+          tag_name: "v${{ steps.version.outputs.version }}"
+          files: target/scala-3.5.2/nebflow-assembly-*.jar
           prerelease: true
           generate_release_notes: true

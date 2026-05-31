@@ -34,3 +34,4 @@ openclaw/
 *.secret
 credentials.json
 dist/
+beta.md
