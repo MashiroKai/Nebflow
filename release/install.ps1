@@ -27,7 +27,23 @@ if ($Channel -eq "beta") {
     }
     $Version = if ($env:VERSION) { $env:VERSION } else { $BetaVersion }
 } else {
-    $Version = if ($env:VERSION) { $env:VERSION } else { "1.00.009" }
+    Write-Host "==> Resolving latest stable version..." -ForegroundColor Yellow
+    try {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases/latest" -TimeoutSec 10
+        $LatestVersion = $release.tag_name -replace '^v', ''
+    } catch {}
+    if (-not $LatestVersion) {
+        try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" -TimeoutSec 10
+            $LatestVersion = $release.tag_name -replace '^v', ''
+        } catch {}
+    }
+    if (-not $LatestVersion) {
+        Write-Host "ERROR: Could not resolve latest version." -ForegroundColor Red
+        Write-Host "       Visit https://github.com/MashiroKai/Nebflow-Release/releases to check availability." -ForegroundColor Yellow
+        exit 1
+    }
+    $Version = if ($env:VERSION) { $env:VERSION } else { $LatestVersion }
 }
 
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\Nebflow" }
