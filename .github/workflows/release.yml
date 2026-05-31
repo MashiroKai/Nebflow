@@ -53,22 +53,3 @@ jobs:
           prerelease: true
           generate_release_notes: true
 
-  public-release:
-    name: Sync to Public Repo
-    needs: github-release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: nebflow-jar
-      - name: Publish to public release repo
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          gh release create "$TAG" \
-            --repo MashiroKai/Nebflow-Release \
-            --title "$TAG" \
-            --prerelease \
-            --notes "Nebflow $TAG" \
-            nebflow-assembly-*.jar
