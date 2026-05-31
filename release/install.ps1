@@ -17,7 +17,7 @@ if ($Channel -eq "beta") {
         $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases" -TimeoutSec 10
         $beta = $releases | Where-Object { $_.prerelease -eq $true } | Select-Object -First 1
         if ($beta) {
-            $BetaVersion = $beta.tag_name -replace '^v', '' -replace '-beta$', ''
+            $BetaVersion = $beta.tag_name -replace '^v', ''
         }
     } catch {}
     if (-not $BetaVersion) {
@@ -50,7 +50,6 @@ $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDA
 $JarName = "nebflow-assembly-$Version.jar"
 $CosUrl = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/$JarName"
 $GhUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version/$JarName"
-$GhBetaUrl = "https://github.com/MashiroKai/Nebflow/releases/download/v$Version-beta/$JarName"
 
 Write-Host ""
 Write-Host "  ███╗   ██╗███████╗██████╗ ███████╗██╗      ██████╗ ██╗    ██╗" -ForegroundColor Cyan
@@ -217,7 +216,7 @@ if (Test-Path $jarPath) {
 
     if ($Channel -eq "beta") {
         # Beta: always from GitHub
-        Invoke-WebRequest -Uri $GhBetaUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
+        Invoke-WebRequest -Uri $GhUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
     } elseif ($Region -eq "cn") {
         # China: COS first (fast domestic CDN), GitHub fallback
         try {
