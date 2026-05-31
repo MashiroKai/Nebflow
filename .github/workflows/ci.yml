@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [dev, main]
+    branches: [main]
   pull_request:
-    branches: [dev]
+    branches: [main]
 
 env:
   SBT_OPTS: "-Xms512m -Xmx2g"
