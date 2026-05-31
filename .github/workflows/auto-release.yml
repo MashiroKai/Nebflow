@@ -89,6 +89,18 @@ jobs:
           files: target/scala-3.5.2/nebflow-assembly-*.jar
           generate_release_notes: true
 
+      - name: Upload to COS (China mirror)
+        if: steps.check.outputs.skipped == 'false'
+        env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+        run: |
+          pip install coscmd 2>/dev/null
+          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b nebflow-releases-1411212853 -r ap-nanjing
+          JAR=$(ls target/scala-3.5.2/nebflow-assembly-*.jar | head -1)
+          coscmd upload "$JAR" "$(basename "$JAR")" -f
+          echo "  Uploaded $(basename "$JAR") to COS"
+
       # --- Sync version back to main ---
 
       - name: Sync version to main
