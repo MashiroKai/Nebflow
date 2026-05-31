@@ -1,0 +1,97 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  SBT_OPTS: "-Xms512m -Xmx2g"
+
+jobs:
+  auto-release:
+    name: Auto Tag & Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from build.sbt
+        id: version
+        run: |
+          VERSION=$(sed -n 's/.*version := "\([^"]*\)".*/\1/p' build.sbt | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: Could not extract version from build.sbt"
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+          echo "  Version: $VERSION"
+          echo "  Tag: v$VERSION"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git tag -l | grep -q "^v${{ steps.version.outputs.version }}$"; then
+            echo "  Tag v${{ steps.version.outputs.version }} already exists — skipping release"
+            echo "skipped=true" >> $GITHUB_OUTPUT
+          else
+            echo "skipped=false" >> $GITHUB_OUTPUT
+          fi
+
+      # --- Build & Test (only if tag doesn't exist) ---
+
+      - uses: actions/setup-java@v4
+        if: steps.check.outputs.skipped == 'false'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup sbt
+        if: steps.check.outputs.skipped == 'false'
+        shell: bash
+        run: |
+          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
+
+      - name: Run tests
+        if: steps.check.outputs.skipped == 'false'
+        run: sbt test
+
+      - name: Build assembly
+        if: steps.check.outputs.skipped == 'false'
+        run: sbt assembly
+
+      # --- Tag & Release ---
+
+      - name: Create tag
+        if: steps.check.outputs.skipped == 'false'
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        if: steps.check.outputs.skipped == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.version.outputs.version }}"
+          files: target/scala-3.5.2/nebflow-assembly-*.jar
+          generate_release_notes: true
+
+      - name: Publish to public release repo
+        if: steps.check.outputs.skipped == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.version }}"
+          gh release create "$TAG" \
+            --repo MashiroKai/Nebflow-Release \
+            --title "$TAG" \
+            --notes "Nebflow $TAG" \
+            target/scala-3.5.2/nebflow-assembly-*.jar

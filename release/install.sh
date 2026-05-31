@@ -23,7 +23,19 @@ if [ "$CHANNEL" = "beta" ]; then
     fi
     VERSION="${VERSION:-$BETA_VERSION}"
 else
-    VERSION="${VERSION:-1.00.009}"
+    echo "==> Resolving latest stable version..."
+    LATEST_VERSION=$(curl -fsSL "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases/latest" \
+        2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
+    if [ -z "$LATEST_VERSION" ]; then
+        LATEST_VERSION=$(curl -fsSL "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" \
+            2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
+    fi
+    if [ -z "$LATEST_VERSION" ]; then
+        echo "ERROR: Could not resolve latest version."
+        echo "       Visit https://github.com/MashiroKai/Nebflow-Release/releases to check availability."
+        exit 1
+    fi
+    VERSION="${VERSION:-$LATEST_VERSION}"
 fi
 
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.nebflow/bin}"
