@@ -427,12 +427,6 @@ export function renderSettings() {
         <div>Nebflow v${state.serverVersion || '...'}</div>
         <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? t('settings.disconnected') : t('settings.connected')}</span></div>
         <div style="margin-top:10px">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-            <select id="update-channel" class="cfg-btn cfg-btn-sm" style="cursor:pointer">
-              <option value="stable">${t('settings.channelStable')}</option>
-              <option value="beta">${t('settings.channelBeta')}</option>
-            </select>
-          </div>
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
           <span id="update-status" style="margin-left:8px;font-size:12px;color:var(--color-text-secondary)"></span>
         </div>
@@ -711,23 +705,19 @@ function bindSettingsEvents(content, cfg, allModels) {
   document.getElementById('btn-check-update')?.addEventListener('click', () => {
     const statusEl = document.getElementById('update-status');
     const actionEl = document.getElementById('update-action');
-    const channelEl = document.getElementById('update-channel');
-    const channel = channelEl?.value || 'stable';
     statusEl.textContent = t('settings.checking');
     statusEl.style.display = '';
     actionEl.style.display = 'none';
-    sendWs({type: 'checkUpdate', channel: channel});
+    sendWs({type: 'checkUpdate'});
   });
 
   document.getElementById('btn-do-update')?.addEventListener('click', () => {
     const btn = document.getElementById('btn-do-update');
     const statusEl = document.getElementById('update-status');
-    const channelEl = document.getElementById('update-channel');
-    const channel = channelEl?.value || 'stable';
     btn.textContent = t('settings.updating');
     btn.disabled = true;
     statusEl.textContent = '';
-    sendWs({type: 'doUpdate', channel: channel});
+    sendWs({type: 'doUpdate'});
   });
 
   document.getElementById('btn-dismiss-update')?.addEventListener('click', () => {
