@@ -89,18 +89,6 @@ jobs:
           files: target/scala-3.5.2/nebflow-assembly-*.jar
           generate_release_notes: true
 
-      - name: Publish to public release repo
-        if: steps.check.outputs.skipped == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASE_REPO_TOKEN }}
-        run: |
-          TAG="v${{ steps.version.outputs.version }}"
-          gh release create "$TAG" \
-            --repo MashiroKai/Nebflow-Release \
-            --title "$TAG" \
-            --notes "Nebflow $TAG" \
-            target/scala-3.5.2/nebflow-assembly-*.jar
-
       # --- Sync version back to main ---
 
       - name: Sync version to main
