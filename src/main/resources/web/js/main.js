@@ -1682,12 +1682,11 @@ onMessage('updateCheckResult', (msg) => {
     statusEl.textContent = t('settings.updateError');
     return;
   }
-  const channelLabel = msg.channel === 'beta' ? t('settings.channelBeta') : t('settings.channelStable');
   if (msg.hasUpdate) {
-    statusEl.textContent = `[${channelLabel}] ` + t('settings.updateAvailable', { version: msg.latestVersion });
+    statusEl.textContent = t('settings.updateAvailable', { version: msg.latestVersion });
     actionEl.style.display = 'block';
   } else {
-    statusEl.textContent = `[${channelLabel}] ` + t('settings.upToDate');
+    statusEl.textContent = t('settings.upToDate');
     actionEl.style.display = 'none';
   }
 });

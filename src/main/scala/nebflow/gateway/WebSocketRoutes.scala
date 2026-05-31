@@ -1488,40 +1488,16 @@ class WebSocketRoutes(
           }
 
         case "checkUpdate" =>
-          val updateJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val channel = updateJson.hcursor.downField("channel").as[String].getOrElse("stable")
           val currentVer = nebflow.Version.string
           val result = IO
             .blocking {
               try
-                val (url, extract: (io.circe.Json => Option[(String, String)])) =
-                  if channel == "beta" then
-                    // Beta: list all releases, find first prerelease with -beta tag
-                    (
-                      "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases",
-                      (arr: io.circe.Json) => {
-                        val all = arr.hcursor.as[Vector[io.circe.Json]].getOrElse(Vector.empty)
-                        all.find { r =>
-                          r.hcursor.downField("prerelease").as[Boolean].getOrElse(false) &&
-                          r.hcursor.downField("tag_name").as[String].toOption.exists(_.endsWith("-beta"))
-                        }.flatMap { r =>
-                          for
-                            tag <- r.hcursor.downField("tag_name").as[String].toOption
-                            name <- r.hcursor.downField("name").as[String].toOption
-                          yield (tag, name)
-                        }
-                      }
-                    )
-                  else
-                    // Stable: releases/latest
-                    (
-                      "https://api.github.com/repos/MashiroKai/Nebflow-Release/releases/latest",
-                      (j: io.circe.Json) =>
-                        for
-                          tag <- j.hcursor.downField("tag_name").as[String].toOption
-                          name <- j.hcursor.downField("name").as[String].toOption
-                        yield (tag, name)
-                    )
+                val url = "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest"
+                val extract = (j: io.circe.Json) =>
+                  for
+                    tag <- j.hcursor.downField("tag_name").as[String].toOption
+                    name <- j.hcursor.downField("name").as[String].toOption
+                  yield (tag, name)
                 val conn = new java.net.URL(url).openConnection()
                 conn.setConnectTimeout(5000)
                 conn.setReadTimeout(5000)
@@ -1531,12 +1507,11 @@ class WebSocketRoutes(
             }
             .flatMap {
               case Some((tag, releaseName)) =>
-                val latestVer = tag.stripPrefix("v").stripSuffix("-beta")
+                val latestVer = tag.stripPrefix("v")
                 val hasUpdate = latestVer != currentVer
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "updateCheckResult".asJson,
-                    "channel" -> channel.asJson,
                     "currentVersion" -> currentVer.asJson,
                     "latestVersion" -> latestVer.asJson,
                     "hasUpdate" -> hasUpdate.asJson,
@@ -1547,7 +1522,6 @@ class WebSocketRoutes(
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "updateCheckResult".asJson,
-                    "channel" -> channel.asJson,
                     "currentVersion" -> currentVer.asJson,
                     "error" -> "Failed to check for updates".asJson
                   )
@@ -1556,18 +1530,12 @@ class WebSocketRoutes(
           result
 
         case "doUpdate" =>
-          val updateJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val channel = updateJson.hcursor.downField("channel").as[String].getOrElse("stable")
           wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson)) *>
             IO.blocking {
               import sys.process.*
               val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
               val script =
-                if channel == "beta" then
-                  if isWindows then
-                    """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
-                  else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
-                else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
+                if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
                 else "curl -fsSL https://nebflow.space/install.sh | sh"
               val exitCode = script.!
               if exitCode == 0 then
