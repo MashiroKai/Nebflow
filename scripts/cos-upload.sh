@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-RELEASE_REPO="MashiroKai/Nebflow-Release"
+RELEASE_REPO="MashiroKai/Nebflow"
 COS_BUCKET="nebflow-releases-1411212853"
 COS_REGION="ap-nanjing"
 
