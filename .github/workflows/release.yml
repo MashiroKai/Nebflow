@@ -2,10 +2,13 @@ name: Beta Release
 
 on:
   push:
-    tags: ["v*-beta"]
+    tags: ["v*-beta*"]
 
 permissions:
   contents: write
+
+env:
+  SBT_OPTS: "-Xms512m -Xmx2g"
 
 jobs:
   build:
@@ -13,10 +16,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Override version from tag
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "$TAG_VERSION" > VERSION
+          echo "  Beta version: $TAG_VERSION"
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+
       - name: Setup sbt
         shell: bash
         run: |
@@ -25,10 +36,13 @@ jobs:
           printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
+
       - name: Run tests
         run: sbt test
+
       - name: Build assembly
         run: sbt assembly
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -46,10 +60,9 @@ jobs:
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      - name: Create GitHub Release (source repo)
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: nebflow-assembly-*.jar
           prerelease: true
           generate_release_notes: true
-
