@@ -61,11 +61,14 @@ class ProviderRegistry(
       // across all providers so the system works out of the box.
       if fromChain.nonEmpty then fromChain
       else
-        config.llm.providers.headOption.map { case (providerId, provider) =>
-          provider.models.headOption.map { mc =>
-            ModelCandidate(providerId, provider, mc.id, mc.maxTokens, mc.contextWindow)
+        config.llm.providers.headOption
+          .map { case (providerId, provider) =>
+            provider.models.headOption.map { mc =>
+              ModelCandidate(providerId, provider, mc.id, mc.maxTokens, mc.contextWindow)
+            }
           }
-        }.flatten.toList
+          .flatten
+          .toList
     }
 
   /** List all available models across all providers. Returns (ref, displayName) pairs. */

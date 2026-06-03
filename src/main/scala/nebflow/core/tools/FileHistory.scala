@@ -49,8 +49,7 @@ class FileHistory private (
         val dest = dir.resolve(ts.toString)
         // Use buffered copy to handle cross-drive scenarios on Windows
         // where Files.copy may fail with "different root" error
-        try
-          java.nio.file.Files.copy(filePath, dest)
+        try java.nio.file.Files.copy(filePath, dest)
         catch
           case _: Exception =>
             // Fallback: read-write buffer copy (always works, even cross-drive)

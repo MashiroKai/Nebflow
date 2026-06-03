@@ -26,6 +26,7 @@ export default {
   unreadSessions: new Set(safeParse(localStorage.getItem('nebflow_unread'), [])),
   markedUnreadSessions: new Set(safeParse(localStorage.getItem('nebflow_marked_unread'), [])),
   pinnedSessions: new Set(safeParse(localStorage.getItem('nebflow_pinned'), [])),
+  foldersWithRules: new Set(),
   pinnedFolders: new Set(safeParse(localStorage.getItem('nebflow_pinned_folders'), [])),
   attentionSessions: new Set(),
   legacyMigrated: false,

@@ -27,13 +27,37 @@ object CardTool extends Tool:
   /** Allowed media extensions — prevents reading arbitrary non-media files via src=. */
   private val AllowedExtensions = Set(
     // images
-    "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "svg",
+    "webp",
+    "ico",
+    "bmp",
+    "avif",
+    "tiff",
+    "tif",
     // video
-    "mp4", "webm", "ogg", "ogv", "mov", "avi",
+    "mp4",
+    "webm",
+    "ogg",
+    "ogv",
+    "mov",
+    "avi",
     // audio
-    "mp3", "wav", "oga", "flac", "aac", "m4a",
+    "mp3",
+    "wav",
+    "oga",
+    "flac",
+    "aac",
+    "m4a",
     // fonts
-    "woff", "woff2", "ttf", "otf", "eot",
+    "woff",
+    "woff2",
+    "ttf",
+    "otf",
+    "eot",
     // documents
     "pdf"
   )
@@ -108,8 +132,7 @@ object CardTool extends Tool:
         lastEnd = end
       sb.append(html.substring(lastEnd, html.length))
       val result = sb.toString
-      if result != html then
-        logger.debug(s"Embedded ${replacements.size} local file(s) via /api/nf-file")
+      if result != html then logger.debug(s"Embedded ${replacements.size} local file(s) via /api/nf-file")
       result
     end if
   end embedLocalFiles

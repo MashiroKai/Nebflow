@@ -887,17 +887,18 @@ class WebSocketRoutes(
                 )
               )
             ) *>
-            executeSkill(skillName, skillInput, skillSessionId, wsSend).handleErrorWith { e =>
-              logger.warn(s"Skill '$skillName' failed for session $skillSessionId: ${e.getMessage}")
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "skillError".asJson,
-                  "sessionId" -> skillSessionId.asJson,
-                  "message" -> s"Skill failed: ${e.getMessage.take(200)}".asJson
+              executeSkill(skillName, skillInput, skillSessionId, wsSend).handleErrorWith { e =>
+                logger.warn(s"Skill '$skillName' failed for session $skillSessionId: ${e.getMessage}")
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "skillError".asJson,
+                    "sessionId" -> skillSessionId.asJson,
+                    "message" -> s"Skill failed: ${e.getMessage.take(200)}".asJson
+                  )
                 )
-              )
-            }
+              }
           else IO.unit
+          end if
 
         // ===== Reminder Management =====
 

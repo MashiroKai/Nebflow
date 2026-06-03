@@ -2006,6 +2006,19 @@ export function initHeaderModelInfo() {
   }
 }
 
+/** Build a human-readable breadcrumb path for a folder ID, e.g. "项目A / 模块B". */
+export function getTargetPath(folderId) {
+  if (!folderId) return null;
+  const allFolders = state.folders || [];
+  const parts = [];
+  let current = allFolders.find(f => f.id === folderId);
+  while (current) {
+    parts.unshift(current.name);
+    current = current.parentId ? allFolders.find(f => f.id === current.parentId) : null;
+  }
+  return parts.length > 0 ? parts.join(' / ') : null;
+}
+
 /** Create a new folder inline (no prompt). Inserts an editable row into the sidebar. */
 export function createNewFolder(parentFolderId) {
   let container;
@@ -2026,14 +2039,20 @@ export function createNewFolder(parentFolderId) {
   // Remove any existing inline-new-folder input
   container.querySelectorAll('.folder-new-row').forEach(el => el.remove());
 
+  const targetPath = getTargetPath(parentFolderId);
+
   const row = document.createElement('div');
   row.className = 'folder-new-row';
-  row.innerHTML =
+  let innerHtml =
     '<div class="folder-new-row-inner">' +
     '<div class="folder-new-arrow"><i data-lucide="chevron-right"></i></div>' +
     '<div class="folder-new-icon"><i data-lucide="folder"></i></div>' +
     '<input class="folder-new-input" placeholder="' + t('folder.newPlaceholder') + '">' +
     '</div>';
+  if (targetPath) {
+    innerHtml = '<div class="creation-path">' + escapeHtml(targetPath) + ' &gt;</div>' + innerHtml;
+  }
+  row.innerHTML = innerHtml;
   container.insertBefore(row, container.firstChild);
 
   const input = row.querySelector('.folder-new-input');
