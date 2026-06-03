@@ -174,3 +174,26 @@ body.scrollbar-slim .tool-card .body pre::-webkit-scrollbar {
 #chat {
   scrollbar-color: var(--color-frame-border) transparent;
 }
+
+/* ===== Bypass Badge ===== */
+.bypass-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--color-error);
+  white-space: nowrap;
+  line-height: 1.5;
+  animation: bypassBadgeIn 0.3s ease;
+}
+.bypass-badge.hidden {
+  display: none;
+}
+@keyframes bypassBadgeIn {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
