@@ -492,7 +492,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   questions.forEach((item, qi) => {
     const q = document.createElement('div');
     q.className = 'option-q';
-    q.textContent = item.question;
+    q.innerHTML = item.question;
     box.appendChild(q);
 
     const optsDiv = document.createElement('div');
@@ -680,35 +680,41 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
 
   // Danger level decorations
   const level = dangerLevel || 0;
-  const dangerLabels = {
-    1: { cls: 'perm-warning', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>', label: 'May cause data loss' },
-    2: { cls: 'perm-dangerous', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>', label: 'Dangerous operation' },
-    3: { cls: 'perm-critical', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>', label: 'Critical operation — may damage system' }
+
+  // Parse input to extract detail and check danger
+  let detail = '';
+  let isDangerous = level >= 2;
+  try {
+    const input = JSON.parse(inputJson || '{}');
+    if (input.command) {
+      detail = input.command;
+    } else if (input.file_path) detail = input.file_path;
+    else if (input.url) detail = input.url;
+  } catch (e) {}
+
+  // Danger icons (shared SVG shapes, no text — text comes from i18n)
+  const warningIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+  const dangerIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+  const criticalIcon = dangerIcon; // same icon, text differentiates
+
+  const dangerConfigs = {
+    1: { cls: 'perm-warning', icon: warningIcon, i18nKey: 'chat.permLevel.warning' },
+    2: { cls: 'perm-dangerous', icon: dangerIcon, i18nKey: 'chat.permLevel.dangerous' },
+    3: { cls: 'perm-critical', icon: criticalIcon, i18nKey: 'chat.permLevel.critical' }
   };
-  const dangerInfo = dangerLabels[level];
-  if (dangerInfo) {
-    bubble.classList.add(dangerInfo.cls);
-    // Insert danger banner at top of bubble
+  const dangerConf = dangerConfigs[level];
+  if (dangerConf) {
+    bubble.classList.add(dangerConf.cls);
     const banner = document.createElement('div');
     banner.className = 'perm-danger-banner';
-    banner.innerHTML = dangerInfo.icon + '<span>' + dangerInfo.label + '</span>';
+    // i18n label with {detail} placeholder for dangerous/critical levels
+    const bannerText = t(dangerConf.i18nKey, { detail: detail || '' });
+    banner.innerHTML = dangerConf.icon + '<span>' + escapeHtml(bannerText) + '</span>';
     bubble.appendChild(banner);
   }
 
   row.appendChild(bubble);
   chat.appendChild(row);
-
-  // Show tool details
-  let detail = '';
-  let isDangerous = false;
-  try {
-    const input = JSON.parse(inputJson || '{}');
-    if (input.command) {
-      detail = 'Command: ' + input.command;
-      isDangerous = level >= 2;
-    } else if (input.file_path) detail = 'File: ' + input.file_path;
-    else if (input.url) detail = 'URL: ' + input.url;
-  } catch (e) {}
 
   const targetSid = permSessionId || state.activeSessionId;
 
@@ -717,7 +723,6 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: true }));
     }
-    // Show a small auto-approved indicator
     const autoBadge = document.createElement('div');
     autoBadge.className = 'perm-auto-approved';
     autoBadge.textContent = t('chat.autoApproved');
@@ -727,17 +732,18 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     return;
   }
 
-  // Build the question text: include the full command detail prominently for dangerous ops
+  // Build the question text
   let questionText = t('chat.allowTool', { tool: toolName });
-  if (isDangerous && detail) {
-    questionText = detail;
+  if (detail) {
+    questionText = t('chat.allowTool', { tool: toolName }) + '  <code class="perm-detail-code">' + escapeHtml(detail) + '</code>';
   }
 
   const allowLabel = t('chat.allow');
+  const allowDesc = isDangerous ? t('chat.permExecCmd') : (summary || '');
   const items = [{
     question: questionText,
     options: [
-      { label: allowLabel, desc: isDangerous ? 'Execute this command' : summary + (detail ? ' — ' + detail : '') },
+      { label: allowLabel, desc: allowDesc },
       { label: t('chat.deny'), desc: t('chat.skipTool') }
     ]
   }];
