@@ -136,69 +136,31 @@ object CardTool extends Tool:
 
   /** Base description without user design prompt. */
   private val baseDescription =
-    """Renders an interactive visual explanation in the chat — use this when a diagram, animation, or spatial layout conveys the idea better than paragraphs of text.
+    """Renders HTML in a sandboxed iframe. For diagrams, animations, spatial layouts — not text.
+If Markdown suffices, do NOT use this tool.
 
-This tool is for "a picture is worth a thousand words" scenarios. If the content works equally well as Markdown text, do NOT use this tool.
+## Plots & charts: use Python/ROOT, not SVG
 
-Recommended use cases:
-- Complex concept visualization — physical processes (e.g. how a heat pump works, TCP handshake), algorithm flows, data transformations, system architectures
-- Design demos — UI mockups, layout previews, before/after comparisons, interactive prototypes
-- Animated explanations — CSS-animated diagrams showing state changes over time, data flow, or causal chains
-- Spatial relationships — anything where the position/size/color of elements carries meaning (hierarchy, dependency, timeline, distribution)
-- Side-by-side comparisons — showing two states, versions, or alternatives visually
+For any data visualization (plots, charts, histograms), run Python+matplotlib via Bash first, save to /tmp/xxx.png, then embed with this tool. Only use hand-written SVG for simple flowcharts/schematics.
 
-CRITICAL: This tool must NOT be used for text-heavy content. If the card's primary information carrier is text (paragraphs, lists, explanations), use Markdown instead. Cards should be dominated by visual elements — shapes, lines, colors, spatial arrangement — with text kept to minimal annotations and labels.
+## Style rules
 
-## How to generate plots and charts
+Images: default structure — `<div style="padding:16px"><img src="/tmp/plot.png" style="width:100%;max-width:800px;height:auto;display:block;margin:0 auto"></div>`. System CSS auto-sizes images, but explicit styles are preferred.
 
-For data plots, scientific figures, or any quantitative visualization (charts, graphs, histograms, scatter plots, etc.), you MUST use a professional plotting tool (matplotlib, ROOT, gnuplot, etc.) to produce the image, then embed it. Do NOT hand-draw SVG paths for data visualization.
+Typography: body ≥15px, labels ≥14px, headings 18-22px. Line-height: body 1.5, headings 1.2.
 
-Workflow:
-1. Use Bash to run Python/matplotlib (or ROOT/gnuplot) to create the plot
-2. Save the output to a local file (e.g. /tmp/plot.png)
-3. Use this Card tool with `<img src="/tmp/plot.png">` to embed it
+Colors: ALWAYS use CSS variables (var(--color-text), var(--color-primary), var(--color-surface)). NEVER hardcode grays (#999 etc.) — invisible in one theme. NEVER opacity <0.85 on text.
 
-Hand-written SVG is ONLY appropriate for simple diagrams, flowcharts, or schematic illustrations where precision data is not needed.
+## Parameters
 
-## Image sizing rules (IMPORTANT — follow these strictly)
+- html (string, required): HTML with inline CSS. Dark mode via var(--color-*). No JS execution.
+- title (string, optional): title above card.
 
-Embedded images (plots, photos) are often too small by default. You MUST:
-- Wrap every `<img>` in a container with explicit width: `<div style="width:100%;max-width:800px;margin:0 auto">`
-- For plots and charts, the img tag should use: `style="width:100%;height:auto;display:block"`
-- For scientific figures, add padding around the image: wrap in `<div style="padding:16px;background:var(--color-surface)">`
-- NEVER use fixed pixel widths on images (e.g. width="400px") — they break on different screen sizes
-- A good default structure for plot embedding:
-  `<div style="padding:16px"><img src="/tmp/plot.png" style="width:100%;max-width:800px;height:auto;display:block;margin:0 auto"></div>`
+Example (plot):
+{"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;max-width:800px;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}
 
-Typography rules (IMPORTANT — follow these strictly):
-- Body text: minimum 15px. Use 15-16px for readable content.
-- Labels/annotations on diagrams: minimum 14px.
-- Headings: 18-22px.
-- NEVER use font-size below 14px for any visible text.
-- Line height: 1.5 for body text, 1.2 for headings.
-
-Color rules (IMPORTANT — text must be readable in BOTH light and dark mode):
-- ALWAYS use CSS variables for text/fill colors: var(--color-text), var(--color-primary), var(--color-surface), etc.
-- For SVG <text> on colored backgrounds: use style="fill:var(--color-text)" or fill="white" (if background is dark).
-- NEVER hardcode gray colors like #999, #666, #ccc, #aaa — they are invisible in one of the themes.
-- NEVER use opacity below 0.85 on text — low-opacity text is unreadable, especially in dark mode.
-- For secondary/muted text, use var(--color-text) at full opacity. If you need visual hierarchy, use font-size or font-weight, NOT reduced opacity or gray color.
-
-Parameters:
-- html (string, required): HTML with inline CSS. Supports dark mode via var(--color-*) CSS variables. JavaScript does NOT execute (sandboxed iframe), but CSS animations work.
-- title (string, optional): Short title above the card.
-
-Example (embedding a plot):
-{
-  "html": "<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;max-width:800px;height:auto;display:block;margin:0 auto\"></div>",
-  "title": "Bethe-Bloch Curve"
-}
-
-Example (SVG diagram):
-{
-  "html": "<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><line x1=\"90\" y1=\"80\" x2=\"180\" y2=\"80\" stroke=\"var(--color-text)\" stroke-width=\"2\" stroke-dasharray=\"5,3\"/><text x=\"135\" y=\"72\" text-anchor=\"middle\" fill=\"var(--color-text)\" font-size=\"14\">SYN</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg><p style=\"margin:8px 0 0;font-size:15px;color:var(--color-text);text-align:center\">TCP handshake: Client → SYN → Server</p></div>",
-  "title": "TCP 握手示意"
-}"""
+Example (SVG):
+{"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}"""
 
   /** Dynamic description: base tool description + user design prompt (if present). */
   def description: String =
