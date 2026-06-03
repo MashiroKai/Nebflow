@@ -88,13 +88,32 @@ object GatewayMain extends IOApp.Simple:
    * Block until user types a quit command on stdin.
    * If stdin is closed (EOF — common under sbt run / non-interactive shells), wait
    * forever instead of exiting, so the server is only killed by SIGINT/SIGTERM.
+   *
+   * On Windows, StdIn.readLine() may not be interrupted by Thread.interrupt() from
+   * Ctrl+C. Use a polling approach with a short sleep to allow cancellation.
    */
   private def waitForQuit: IO[Unit] =
-    IO.blocking(Option(scala.io.StdIn.readLine())).flatMap {
-      case None => IO.never // stdin closed — keep running until cancelled
+    val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+    if isWindows then pollStdinLoop
+    else
+      IO.interruptible(Option(scala.io.StdIn.readLine())).flatMap {
+        case None => IO.never // stdin closed — keep running until cancelled
+        case Some(line) =>
+          if QuitCommands.contains(line.trim.toLowerCase) then IO.unit
+          else waitForQuit
+      }
+
+  /** Windows-compatible stdin polling: non-blocking check + short sleep. */
+  private def pollStdinLoop: IO[Unit] =
+    IO.blocking {
+      if System.in.available() > 0 then Option(scala.io.StdIn.readLine())
+      else null
+    }.flatMap {
       case Some(line) =>
         if QuitCommands.contains(line.trim.toLowerCase) then IO.unit
-        else waitForQuit
+        else pollStdinLoop
+      case _ =>
+        IO.sleep(300.millis) *> pollStdinLoop
     }
 
   /** Load MCP configs and start all servers on an existing McpManager. */

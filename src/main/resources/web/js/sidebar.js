@@ -550,7 +550,17 @@ function bindSettingsEvents(content, cfg, allModels) {
       if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}, model: {default: ''}}};
       if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
       if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
+      if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
       state.parsedConfig.llm.providers[name] = data;
+      // Auto-set default model if it's empty or points to a non-existent provider
+      const currentDefault = state.parsedConfig.llm.model.default || '';
+      const defaultProvider = currentDefault.split('/')[0];
+      if (!currentDefault || !state.parsedConfig.llm.providers[defaultProvider]) {
+        const firstModel = (data.models || [])[0];
+        if (firstModel) {
+          state.parsedConfig.llm.model.default = `${name}/${firstModel.id}`;
+        }
+      }
       state.configDirty = true;
       flushConfigToServer();
     });
