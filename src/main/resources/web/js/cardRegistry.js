@@ -149,7 +149,11 @@ function renderHtmlCard(container, html, title) {
   // #nf-wrap: fit-content keeps narrow cards compact, min-width prevents tiny cards.
   // SVG defaults to width:100% — most SVGs in cards are diagrams meant to fill space.
   // No transform:scale() — it causes SVG flowchart lines to misalign.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{width:100%;height:auto;}img,video{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="width:fit-content;max-width:100%;min-width:280px">${processedHtml}</div>${heightScript}</body></html>`;
+  // img default: width:100% ensures plots/photos fill the card; images with explicit
+  // inline width/height are respected via [style] attribute selector. max-width prevents
+  // any image from overflowing. This is the system-level sizing guarantee — LLM hints
+  // in the HTML provide a second layer of control.
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;width:100%;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{width:100%;height:auto;}img{max-width:100%;height:auto;}img:not([style*="width"]){width:100%;}</style></head><body><div id="nf-wrap" style="width:fit-content;max-width:100%;min-width:280px">${processedHtml}</div>${heightScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';

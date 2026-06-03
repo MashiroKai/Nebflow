@@ -149,6 +149,27 @@ Recommended use cases:
 
 CRITICAL: This tool must NOT be used for text-heavy content. If the card's primary information carrier is text (paragraphs, lists, explanations), use Markdown instead. Cards should be dominated by visual elements — shapes, lines, colors, spatial arrangement — with text kept to minimal annotations and labels.
 
+## How to generate plots and charts
+
+For data plots, scientific figures, or any quantitative visualization (charts, graphs, histograms, scatter plots, etc.), you MUST use a professional plotting tool (matplotlib, ROOT, gnuplot, etc.) to produce the image, then embed it. Do NOT hand-draw SVG paths for data visualization.
+
+Workflow:
+1. Use Bash to run Python/matplotlib (or ROOT/gnuplot) to create the plot
+2. Save the output to a local file (e.g. /tmp/plot.png)
+3. Use this Card tool with `<img src="/tmp/plot.png">` to embed it
+
+Hand-written SVG is ONLY appropriate for simple diagrams, flowcharts, or schematic illustrations where precision data is not needed.
+
+## Image sizing rules (IMPORTANT — follow these strictly)
+
+Embedded images (plots, photos) are often too small by default. You MUST:
+- Wrap every `<img>` in a container with explicit width: `<div style="width:100%;max-width:800px;margin:0 auto">`
+- For plots and charts, the img tag should use: `style="width:100%;height:auto;display:block"`
+- For scientific figures, add padding around the image: wrap in `<div style="padding:16px;background:var(--color-surface)">`
+- NEVER use fixed pixel widths on images (e.g. width="400px") — they break on different screen sizes
+- A good default structure for plot embedding:
+  `<div style="padding:16px"><img src="/tmp/plot.png" style="width:100%;max-width:800px;height:auto;display:block;margin:0 auto"></div>`
+
 Typography rules (IMPORTANT — follow these strictly):
 - Body text: minimum 15px. Use 15-16px for readable content.
 - Labels/annotations on diagrams: minimum 14px.
@@ -167,7 +188,13 @@ Parameters:
 - html (string, required): HTML with inline CSS. Supports dark mode via var(--color-*) CSS variables. JavaScript does NOT execute (sandboxed iframe), but CSS animations work.
 - title (string, optional): Short title above the card.
 
-Example:
+Example (embedding a plot):
+{
+  "html": "<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;max-width:800px;height:auto;display:block;margin:0 auto\"></div>",
+  "title": "Bethe-Bloch Curve"
+}
+
+Example (SVG diagram):
 {
   "html": "<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><line x1=\"90\" y1=\"80\" x2=\"180\" y2=\"80\" stroke=\"var(--color-text)\" stroke-width=\"2\" stroke-dasharray=\"5,3\"/><text x=\"135\" y=\"72\" text-anchor=\"middle\" fill=\"var(--color-text)\" font-size=\"14\">SYN</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg><p style=\"margin:8px 0 0;font-size:15px;color:var(--color-text);text-align:center\">TCP handshake: Client → SYN → Server</p></div>",
   "title": "TCP 握手示意"
