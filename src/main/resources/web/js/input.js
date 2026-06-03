@@ -69,6 +69,7 @@ const slashCommands = {
           const confirmed = answers[0] === (isEnabled ? t('slash.bypassDisable') : t('slash.bypassEnable'));
           if (confirmed) {
             state.bypassAllPermission = !isEnabled;
+            updateBypassBadge(state.bypassAllPermission);
             renderSystemBubble(
               state.bypassAllPermission ? t('slash.bypassEnabled') : t('slash.bypassDisabled')
             );
@@ -78,6 +79,23 @@ const slashCommands = {
     }
   }
 };
+
+/**
+ * Show or hide the bypass badge in the header.
+ * Called when bypass mode is toggled.
+ */
+function updateBypassBadge(enabled) {
+  const badge = document.getElementById('bypass-badge');
+  if (!badge) return;
+  const textEl = badge.querySelector('.bypass-badge-text');
+  if (enabled) {
+    badge.classList.remove('hidden');
+    if (textEl) textEl.textContent = t('chat.bypassBadge');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+  } else {
+    badge.classList.add('hidden');
+  }
+}
 
 /** Register skill commands from the server-provided skill list. */
 export function registerSkillCommands(skills) {

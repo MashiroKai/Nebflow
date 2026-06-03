@@ -211,6 +211,7 @@ export default {
   'chat.askLabel': 'Ask',
   'chat.allowTool': 'Allow {tool}?',
   'chat.autoApproved': 'Auto-approved (bypass all)',
+  'chat.bypassBadge': 'Bypass',
   'chat.copied': 'Copied!',
   'chat.copy': 'Copy',
   'chat.noMoreMessages': '— No more messages —',
