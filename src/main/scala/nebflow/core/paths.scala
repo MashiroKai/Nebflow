@@ -43,7 +43,7 @@ object PathUtil:
     _dataRootOverride.getOrElse(
       sys.env.get("NEBFLOW_HOME") match
         case Some(home) => os.Path(home, os.pwd)
-        case None       => os.home / ".nebflow"
+        case None => os.home / ".nebflow"
     )
 
 end PathUtil

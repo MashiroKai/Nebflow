@@ -43,6 +43,8 @@ object LlmInterface:
         main.concurrently(watchdog)
       }
 
+  end inactivityTimeout
+
   def createLlm(
     sessionOverrides: Ref[IO, Map[String, ModelCandidate]],
     options: Option[LlmOptions] = None,
@@ -72,9 +74,11 @@ object LlmInterface:
                     val cappedThinking = req.thinking.map { t =>
                       t.hcursor.downField("budget_tokens").as[Int] match
                         case Right(budget) if budget > candidate.maxTokens / 2 =>
-                          t.deepMerge(io.circe.Json.obj(
-                            "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
-                          ))
+                          t.deepMerge(
+                            io.circe.Json.obj(
+                              "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
+                            )
+                          )
                         case _ => t
                     }
                     registry
@@ -93,7 +97,8 @@ object LlmInterface:
                             Some(req.agentId)
                           )
                         )
-                      ),
+                      )
+                  ,
                   onAttempt = None
                 )
                 .flatMap { result =>
@@ -190,9 +195,11 @@ object LlmInterface:
                               t.hcursor.downField("budget_tokens").as[Int] match
                                 case Right(budget) if budget > candidate.maxTokens / 2 =>
                                   // Cap thinking budget to half of maxTokens (leaving room for output)
-                                  t.deepMerge(io.circe.Json.obj(
-                                    "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
-                                  ))
+                                  t.deepMerge(
+                                    io.circe.Json.obj(
+                                      "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
+                                    )
+                                  )
                                 case _ => t
                             }
                             val stream = fs2.Stream.force(
@@ -265,9 +272,9 @@ object LlmInterface:
                                     if classification.permanence == ErrorPermanence.Permanent then
                                       fs2.Stream.eval(
                                         resetLock *>
-                                        logger.warn(
-                                          s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
-                                        )
+                                          logger.warn(
+                                            s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
+                                          )
                                           *> failureRef.update(_ :+ attempt)
                                           *> notify
                                       ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
@@ -283,7 +290,9 @@ object LlmInterface:
                                       ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
                                     else
                                       // Timeout or retries exhausted — try next provider
-                                      val skipMsg = if isTimeout then "inactivity timeout, skipping to next provider" else "retries exhausted"
+                                      val skipMsg =
+                                        if isTimeout then "inactivity timeout, skipping to next provider"
+                                        else "retries exhausted"
                                       fs2.Stream.eval(
                                         resetLock *> logger.warn(
                                           s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
