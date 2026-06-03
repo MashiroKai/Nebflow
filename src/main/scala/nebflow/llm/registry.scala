@@ -43,7 +43,7 @@ class ProviderRegistry(
   def getCandidates(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
       val chain = config.llm.model.default :: config.llm.model.fallbacks
-      chain.flatMap { ref =>
+      val fromChain = chain.flatMap { ref =>
         // Gracefully skip invalid refs instead of throwing
         try
           val (providerId, modelId) = Config.parseModelRef(ref)
@@ -56,6 +56,16 @@ class ProviderRegistry(
             case None => None // Skip unknown provider
         catch case _: Exception => None // Skip malformed ref
       }
+      // Fallback: if model chain resolves to nothing (e.g. default points to a
+      // non-existent provider after initial setup), use the first available model
+      // across all providers so the system works out of the box.
+      if fromChain.nonEmpty then fromChain
+      else
+        config.llm.providers.headOption.map { case (providerId, provider) =>
+          provider.models.headOption.map { mc =>
+            ModelCandidate(providerId, provider, mc.id, mc.maxTokens, mc.contextWindow)
+          }
+        }.flatten.toList
     }
 
   /** List all available models across all providers. Returns (ref, displayName) pairs. */
