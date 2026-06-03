@@ -68,6 +68,15 @@ object LlmInterface:
                 .tryProviderWithFallback[AdapterResponse](
                   candidates,
                   candidate =>
+                    // Cap thinking budget to fit within candidate's maxTokens
+                    val cappedThinking = req.thinking.map { t =>
+                      t.hcursor.downField("budget_tokens").as[Int] match
+                        case Right(budget) if budget > candidate.maxTokens / 2 =>
+                          t.deepMerge(io.circe.Json.obj(
+                            "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
+                          ))
+                        case _ => t
+                    }
                     registry
                       .getAdapter(candidate.providerId)
                       .flatMap(
@@ -77,7 +86,7 @@ object LlmInterface:
                             candidate.model,
                             req.tools,
                             Some(candidate.maxTokens),
-                            req.thinking,
+                            cappedThinking,
                             req.systemStable,
                             req.systemDynamic,
                             Some(req.sessionId),
@@ -174,6 +183,18 @@ object LlmInterface:
                               }
                             )
                           case candidate :: rest =>
+                            // Cap thinking budget to fit within candidate's maxTokens.
+                            // Some providers (e.g. zhipu/glm-5.1 with maxTokens=32000) crash
+                            // when budget_tokens exceeds their limit.
+                            val cappedThinking = req.thinking.map { t =>
+                              t.hcursor.downField("budget_tokens").as[Int] match
+                                case Right(budget) if budget > candidate.maxTokens / 2 =>
+                                  // Cap thinking budget to half of maxTokens (leaving room for output)
+                                  t.deepMerge(io.circe.Json.obj(
+                                    "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
+                                  ))
+                                case _ => t
+                            }
                             val stream = fs2.Stream.force(
                               registry
                                 .getAdapter(candidate.providerId)
@@ -184,7 +205,7 @@ object LlmInterface:
                                       candidate.model,
                                       req.tools,
                                       Some(candidate.maxTokens),
-                                      req.thinking,
+                                      cappedThinking,
                                       req.systemStable,
                                       req.systemDynamic,
                                       Some(req.sessionId),
