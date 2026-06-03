@@ -874,6 +874,19 @@ class WebSocketRoutes(
           val skillInput = skillJson.hcursor.downField("input").as[String].getOrElse("")
           val skillSessionId = skillJson.hcursor.downField("sessionId").as[String].getOrElse("")
           if skillName.nonEmpty && skillSessionId.nonEmpty then
+            // Persist user message and skill activation system bubble to session history,
+            // so they survive session switching (frontend rebuilds DOM from backend history).
+            sharedResources.sessionStore.appendUiMessages(
+              skillSessionId,
+              List(
+                UiMessage.User(skillInput),
+                UiMessage.System(
+                  s"Using skill: $skillName",
+                  Some("slash.skillActivated"),
+                  Some(io.circe.Json.obj("skillName" -> skillName.asJson))
+                )
+              )
+            ) *>
             executeSkill(skillName, skillInput, skillSessionId, wsSend).handleErrorWith { e =>
               logger.warn(s"Skill '$skillName' failed for session $skillSessionId: ${e.getMessage}")
               wsSend(

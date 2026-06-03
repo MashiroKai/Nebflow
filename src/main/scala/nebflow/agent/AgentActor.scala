@@ -224,15 +224,8 @@ object AgentActor extends AgentCore with AgentSession:
         val processingState = state
           .withMessages(newMessages)
           .withStatus(AgentStatus.Processing)
-        // Persist a system bubble showing skill activation
-        val sysMsg = nebflow.shared.UiMessage.System(
-          s"Using skill: $skillName",
-          Some("slash.skillActivated"),
-          Some(io.circe.Json.obj("skillName" -> skillName.asJson))
-        )
-        resources.dispatcher.unsafeRunAndForget(
-          resources.sessionStore.appendUiMessages(state.sessionId.getOrElse(""), List(sysMsg))
-        )
+        // System bubble (UiMessage.System) is now persisted in WebSocketRoutes.executeSkill
+        // before routing to the agent, to avoid duplication.
         // Notify frontend immediately that this session is busy (same as UserInput)
         if depth == 0 then
           state.sessionId.foreach { sid =>
