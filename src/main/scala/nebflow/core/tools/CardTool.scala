@@ -27,46 +27,30 @@ object CardTool extends Tool:
   /** Max file size for HTTP-served files (200 MB). */
   private val MaxFileSize = 200 * 1024 * 1024
 
-  /** Allowed media extensions — prevents reading arbitrary non-media files via src=. */
+  /** Allowed extensions for /api/nf-file proxy — prevents reading arbitrary files via src=.
+   *  Includes media, web assets, data files, and 3D model formats for visualization. */
   private val AllowedExtensions = Set(
     // images
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "svg",
-    "webp",
-    "ico",
-    "bmp",
-    "avif",
-    "tiff",
-    "tif",
+    "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
     // video
-    "mp4",
-    "webm",
-    "ogg",
-    "ogv",
-    "mov",
-    "avi",
+    "mp4", "webm", "ogg", "ogv", "mov", "avi",
     // audio
-    "mp3",
-    "wav",
-    "oga",
-    "flac",
-    "aac",
-    "m4a",
+    "mp3", "wav", "oga", "flac", "aac", "m4a",
     // fonts
-    "woff",
-    "woff2",
-    "ttf",
-    "otf",
-    "eot",
+    "woff", "woff2", "ttf", "otf", "eot",
     // documents
-    "pdf"
+    "pdf",
+    // web assets (scripts, styles, data)
+    "js", "mjs", "css", "json", "wasm",
+    // 3D models
+    "obj", "stl", "gltf", "glb"
   )
 
   /** Regex matching src= attributes with both single and double quotes. */
   private val SrcAttrRegex = """(?i)src\s*=\s*["']([^"']+)["']""".r
+
+  /** Regex matching href= attributes — for <link> stylesheets and other references. */
+  private val HrefAttrRegex = """(?i)href\s*=\s*["']([^"']+)["']""".r
 
   private def fileExtension(path: String): String =
     path.lastIndexOf('.') match
@@ -112,18 +96,24 @@ object CardTool extends Tool:
           catch case _: Exception => None
 
   /**
-   * Scan HTML for src= attributes pointing to local media files,
+   * Scan HTML for src= and href= attributes pointing to local files,
    * and replace paths with /api/nf-file?path=... URLs.
-   * Non-media files are silently skipped (left as-is).
+   * Non-whitelisted files are silently skipped (left as-is).
    */
   private def embedLocalFiles(html: String): String =
-    val replacements = SrcAttrRegex
+    val srcReplacements = SrcAttrRegex
       .findAllMatchIn(html)
       .flatMap { m =>
         val value = m.group(1)
         tryEmbed(value).map(url => (m.start(1), m.end(1), url))
       }
-      .toSeq
+    val hrefReplacements = HrefAttrRegex
+      .findAllMatchIn(html)
+      .flatMap { m =>
+        val value = m.group(1)
+        tryEmbed(value).map(url => (m.start(1), m.end(1), url))
+      }
+    val replacements = (srcReplacements ++ hrefReplacements).toSeq
 
     if replacements.isEmpty then html
     else
@@ -162,33 +152,42 @@ object CardTool extends Tool:
 
   /** Base description without user design prompt. */
   private val baseDescription =
-    """Renders HTML in a sandboxed iframe. For diagrams, animations, spatial layouts — not text.
-If Markdown suffices, do NOT use this tool.
+    """A visual canvas with full HTML, CSS, and JavaScript support (including WebGL and CDN libraries). Use it whenever text alone can't do justice — data charts, 3D scenes, animated simulations, schematics, interactive visualizations. For plain text, use Markdown instead.
 
-## Use professional tools for complex visuals
+## Generate with tools, display with Card
 
-Do NOT hand-craft everything with raw SVG/CSS. For plots, charts, animations, simulations, or any specialized visualization, use the appropriate professional tool (matplotlib, ROOT, gnuplot, manim, D3.js, etc.) via Bash to generate the output, then embed the result here. Choose the right tool for the task — e.g. ROOT for physics spectra, manim for animated math demos. Only use hand-written SVG/CSS for simple diagrams and flowcharts.
+Card is a display container. Pick the right tool to create content, then show it here:
 
-To embed generated images: save to a local path (e.g. /tmp/xxx.png), then use `<img src="/tmp/xxx.png">`.
+- **Data & plots** → matplotlib, gnuplot, ROOT via Bash → embed as `<img>`
+- **Structure & layout** → SVG/CSS (flowcharts, architecture, state machines, schematics)
+- **Animation & interaction** → JS + CDN libraries (Three.js for 3D, D3.js for charts, p5.js for creative coding)
+
+Local files served automatically: save to any path (e.g. /tmp/plot.png), use `src="/tmp/plot.png"`.
+CDN scripts: `<script src="https://cdn.jsdelivr.net/npm/three@latest"></script>`
 
 ## Style rules
 
-Images: default structure — `<div style="padding:16px"><img src="/tmp/plot.png" style="width:100%;max-width:800px;height:auto;display:block;margin:0 auto"></div>`. System CSS auto-sizes images, but explicit styles are preferred.
+Images: default structure — `<div style="padding:16px"><img src="/tmp/plot.png" style="width:100%;max-width:800px;height:auto;display:block;margin:0 auto"></div>`.
 
 Typography: body ≥15px, labels ≥14px, headings 18-22px. Line-height: body 1.5, headings 1.2.
 
 Colors: ALWAYS use CSS variables (var(--color-text), var(--color-primary), var(--color-surface)). NEVER hardcode grays (#999 etc.) — invisible in one theme. NEVER opacity <0.85 on text.
 
+Animations: use CSS @keyframes for simple transitions (≤400ms). For JS animations, use requestAnimationFrame. Respect prefers-reduced-motion.
+
 ## Parameters
 
-- html (string, required): HTML with inline CSS. Dark mode via var(--color-*). No JS execution.
+- html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
 - title (string, optional): title above card.
 
 Example (embedded image):
 {"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;max-width:800px;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}
 
 Example (SVG diagram):
-{"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}"""
+{"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}
+
+Example (interactive 3D with Three.js):
+{"html":"<div style=\"padding:0\"><script src=\"https://cdn.jsdelivr.net/npm/three@latest/build/three.min.js\"></script><canvas id=\"c\" style=\"width:100%;height:400px;display:block\"></canvas><script>const s=new THREE.Scene();const c=document.getElementById('c');const r=new THREE.WebGLRenderer({canvas:c,antialias:true});r.setSize(c.clientWidth,400);const cam=new THREE.PerspectiveCamera(75,c.clientWidth/400,0.1,1000);cam.position.z=3;s.add(new THREE.Mesh(new THREE.SphereGeometry(1,32,32),new THREE.MeshNormalMaterial()));function f(){requestAnimationFrame(f);r.render(s,cam)}f()</script></div>","title":"3D Sphere"}"""
 
   /** Dynamic description: base tool description + user design prompt (if present). */
   def description: String =
