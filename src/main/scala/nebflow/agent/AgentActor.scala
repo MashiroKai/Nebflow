@@ -793,7 +793,21 @@ object AgentActor extends AgentCore with AgentSession:
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
         tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
         if tc.originalText.nonEmpty then assistantBlocks += ContentBlock.Text(tc.originalText)
-        toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
+        toolCalls.foreach { c =>
+          // Card tool: strip the large HTML from ToolUse input before storing in LLM history.
+          // The LLM already saw the full HTML when generating the tool call — keeping it in
+          // context wastes 500-2000 tokens per card. The actual HTML is preserved in frontendContent
+          // (via ToolExecResult) and stored in session history for the frontend.
+          val savedInput = if c.name == "Card" then
+            val title = c.input("title").flatMap(_.asString).getOrElse("")
+            val htmlLen = c.input("html").flatMap(_.asString).map(_.length).getOrElse(0)
+            JsonObject.fromMap(Map(
+              "title" -> title.asJson,
+              "_hint" -> s"[HTML: $htmlLen chars]".asJson
+            ))
+          else c.input
+          assistantBlocks += ContentBlock.ToolUse(c.id, c.name, savedInput)
+        }
         val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
         val resultBlocks = tc.results.map { (call, r) =>
           ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
