@@ -54,3 +54,9 @@ trait Tool:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]]
   def summarize(input: JsonObject): String
   def summarizeResult(input: JsonObject, result: String): String
+
+  /** Maximum result size in characters before the result is persisted to disk.
+   *  Clamped by Defaults.DefaultMaxResultSizeChars. Use Int.MaxValue to exempt
+   *  (e.g. Read tool controls its own output via the limit parameter).
+   */
+  def maxResultSizeChars: Int = Defaults.DefaultMaxResultSizeChars
