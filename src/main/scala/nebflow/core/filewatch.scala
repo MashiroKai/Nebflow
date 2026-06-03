@@ -108,7 +108,8 @@ class FileChangeTracker private (
       val absPath = Paths.get(path).toAbsolutePath.normalize
       // relativize fails on Windows when file is on a different drive (C: vs D:);
       // fall back to absolute path in that case.
-      val rel = try rootPath.relativize(absPath).toString
+      val rel =
+        try rootPath.relativize(absPath).toString
         catch case _: Exception => absPath.toString
       val modTime =
         try Files.getLastModifiedTime(absPath).toMillis
