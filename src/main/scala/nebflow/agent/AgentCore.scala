@@ -566,6 +566,8 @@ private[agent] trait AgentCore:
                   val summary = summarizeToolResult(call, r.content)
                   // For Card tools: frontend receives the full payload, LLM sees the summary
                   val frontendContent = r.frontendContent.getOrElse(r.content)
+                  if call.name == "Card" then
+                    println(s"[CARD-TRACE] frontendContent length=${frontendContent.length}, starts=${frontendContent.take(80)}")
                   emitStreamIO(
                     state.wsSend,
                     ctx,
@@ -664,12 +666,21 @@ private[agent] trait AgentCore:
           IO(ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
           IO {
             val summary = nebflow.core.summarizeToolCall(call)
+            // Determine danger level for frontend highlighting
+            val dangerLevel = if call.name == "Bash" then
+              call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
+            else if call.name == "Curl" then
+              call.input("method").flatMap(_.asString).map(_.toUpperCase) match
+                case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
+                case _ => 0
+            else 1 // Unknown tools are level 1
             Json.obj(
               "type" -> "askPermission".asJson,
               "sessionId" -> state.sessionId.asJson,
               "toolName" -> call.name.asJson,
               "summary" -> summary.asJson,
-              "input" -> call.input.asJson
+              "input" -> call.input.asJson,
+              "dangerLevel" -> dangerLevel.asJson
             )
           }.flatMap { permJson =>
             for

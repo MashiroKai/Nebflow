@@ -30,6 +30,9 @@ export default {
   attentionSessions: new Set(),
   legacyMigrated: false,
 
+  // Bypass all permission requests (auto-approve mode)
+  bypassAllPermission: false,
+
   // Chat streaming
   busySessionIds: new Set(),
   sessionBusyTimeouts: {},
