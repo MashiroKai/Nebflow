@@ -210,6 +210,7 @@ export default {
   'chat.askFailed': 'Ask failed',
   'chat.askLabel': 'Ask',
   'chat.allowTool': 'Allow {tool}?',
+  'chat.autoApproved': 'Auto-approved (bypass all)',
   'chat.copied': 'Copied!',
   'chat.copy': 'Copy',
   'chat.noMoreMessages': '— No more messages —',
@@ -266,6 +267,14 @@ export default {
   'slash.skillActivated': 'Using skill: {skill}',
   'slash.skillBadge': 'skill',
   'slash.model': 'Select model for this session',
+  'slash.bypass': 'Toggle auto-approve mode for all permission requests',
+  'slash.bypassEnable': 'Enable bypass',
+  'slash.bypassEnableQ': 'Enable bypass-all permission?',
+  'slash.bypassDisable': 'Disable bypass',
+  'slash.bypassDisableQ': 'Disable bypass-all permission?',
+  'slash.bypassDesc': 'All tools will be auto-approved without asking. Use with caution.',
+  'slash.bypassEnabled': 'Bypass mode enabled — all tools will be auto-approved.',
+  'slash.bypassDisabled': 'Bypass mode disabled — tools will ask for approval.',
 
   // === Voice ===
   'voice.listening': 'Listening...',

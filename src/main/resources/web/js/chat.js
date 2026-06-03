@@ -720,7 +720,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     // Show a small auto-approved indicator
     const autoBadge = document.createElement('div');
     autoBadge.className = 'perm-auto-approved';
-    autoBadge.textContent = 'Auto-approved (bypass all)';
+    autoBadge.textContent = t('chat.autoApproved');
     bubble.appendChild(autoBadge);
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
     smartScroll();

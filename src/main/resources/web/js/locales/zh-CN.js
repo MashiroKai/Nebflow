@@ -210,6 +210,7 @@ export default {
   'chat.askFailed': '询问失败',
   'chat.askLabel': '询问',
   'chat.allowTool': '允许 {tool}？',
+  'chat.autoApproved': '自动通过（绕过所有审批）',
   'chat.copied': '已复制！',
   'chat.copy': '复制',
   'chat.noMoreMessages': '— 没有更多消息 —',
@@ -266,6 +267,14 @@ export default {
   'slash.skillActivated': '使用技能: {skill}',
   'slash.skillBadge': '技能',
   'slash.model': '选择本次会话的模型',
+  'slash.bypass': '切换跳过所有权限审批模式',
+  'slash.bypassEnable': '启用绕过',
+  'slash.bypassEnableQ': '启用跳过所有权限审批？',
+  'slash.bypassDisable': '关闭绕过',
+  'slash.bypassDisableQ': '关闭跳过所有权限审批？',
+  'slash.bypassDesc': '所有工具将自动通过审批，无需询问。请谨慎使用。',
+  'slash.bypassEnabled': '绕过模式已开启 — 所有工具将自动通过。',
+  'slash.bypassDisabled': '绕过模式已关闭 — 工具将需要审批。',
 
   // === Voice ===
   'voice.listening': '正在聆听...',
