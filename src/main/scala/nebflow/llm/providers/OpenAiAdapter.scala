@@ -44,7 +44,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     }
 
   /** Build system message from stable + dynamic parts for OpenAI's messages format. */
-  private def buildSystemMessage(params: SendMessageParams): Option[Json] =
+  private[providers] def buildSystemMessage(params: SendMessageParams): Option[Json] =
     val stable = params.systemStable.filter(_.nonEmpty)
     val dynamic = params.systemDynamic.filter(_.nonEmpty)
     val fallback = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(_.nonEmpty)
@@ -54,8 +54,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     if text != null && text.nonEmpty then Some(Json.obj("role" -> "system".asJson, "content" -> text.asJson))
     else None
 
-  private def toOpenAiMessages(messages: List[Message]): List[Json] =
-    messages.filterNot(_.role == MessageRole.System).map { msg =>
+  private[providers] def toOpenAiMessages(messages: List[Message]): List[Json] =
+    messages.filterNot(_.role == MessageRole.System).flatMap { msg =>
       val role = msg.role match
         case MessageRole.User => "user"
         case MessageRole.Assistant => "assistant"
@@ -63,7 +63,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
       msg.content match
         case Left(text) =>
-          Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(text))
+          List(Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(text)))
         case Right(blocks) =>
           val textParts = blocks.collect { case ContentBlock.Text(t) => t }
           val imageParts = blocks.collect { case ContentBlock.Image(data, mediaType) => (data, mediaType) }
@@ -73,7 +73,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           }
 
           if toolUseParts.nonEmpty then
-            Json.obj(
+            List(Json.obj(
               "role" -> "assistant".asJson,
               "content" -> (if textParts.nonEmpty then textParts.mkString("\n").asJson else Json.Null),
               "tool_calls" -> Json.fromValues(toolUseParts.map { case (id, name, input) =>
@@ -86,21 +86,16 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                   )
                 )
               })
-            )
+            ))
           else if toolResultParts.nonEmpty then
-            if toolResultParts.size == 1 then
-              val (id, content) = toolResultParts.head
+            // OpenAI requires each tool result to be a separate message with its own tool_call_id
+            toolResultParts.map { case (id, content) =>
               Json.obj(
                 "role" -> "tool".asJson,
                 "content" -> content.asJson,
                 "tool_call_id" -> id.asJson
               )
-            else
-              Json.obj(
-                "role" -> "tool".asJson,
-                "content" -> toolResultParts.map(_._2).mkString("\n").asJson,
-                "tool_call_id" -> toolResultParts.head._1.asJson
-              )
+            }
           else
             val contentParts = scala.collection.mutable.ListBuffer.empty[Json]
             textParts.foreach(t => contentParts += Json.obj("type" -> "text".asJson, "text" -> t.asJson))
@@ -111,8 +106,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
               )
             }
             if contentParts.nonEmpty then
-              Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(contentParts.toList))
-            else Json.obj("role" -> Json.fromString(role), "content" -> textParts.mkString("\n").asJson)
+              List(Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(contentParts.toList)))
+            else List(Json.obj("role" -> Json.fromString(role), "content" -> textParts.mkString("\n").asJson))
           end if
       end match
     }
@@ -129,7 +124,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       )
     })
 
-  private def extractToolCalls(response: Json): List[ToolCall] =
+  private[providers] def extractToolCalls(response: Json): List[ToolCall] =
     response.hcursor
       .downField("choices")
       .downN(0)
@@ -304,7 +299,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       }
       .flatMap(cs => if cs.nonEmpty then Stream.emits(cs) else Stream.empty)
 
-  private def processOpenAiData(
+  private[providers] def processOpenAiData(
     data: String,
     toolCallState: Ref[IO, Map[Int, (String, String, StringBuilder)]],
     params: SendMessageParams
@@ -393,7 +388,17 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       else IO.pure(allTextDeltas ++ acc)
                     }
                 case None =>
-                  if finishReason.isDefined then
+                  // finish_reason may arrive in a chunk with empty delta (no tool_calls field).
+                  // Flush accumulated tool call state when finish_reason indicates tool use.
+                  if finishReason.exists(fr => fr.contains("tool_calls") || fr.contains("function_call")) then
+                    toolCallState.getAndSet(Map.empty).map { m =>
+                      val toolChunks = m.values.toList.map { case (id, name, sb) =>
+                        val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
+                        StreamChunk.ToolCallChunk(ToolCall(id, name, input))
+                      }
+                      allTextDeltas ++ toolChunks :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None)
+                    }
+                  else if finishReason.isDefined then
                     IO.pure(allTextDeltas :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
                   else IO.pure(allTextDeltas)
               end match
