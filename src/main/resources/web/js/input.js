@@ -91,7 +91,6 @@ function updateBypassBadge(enabled) {
   if (enabled) {
     badge.classList.remove('hidden');
     if (textEl) textEl.textContent = t('chat.bypassBadge');
-    if (typeof lucide !== 'undefined') lucide.createIcons();
   } else {
     badge.classList.add('hidden');
   }
