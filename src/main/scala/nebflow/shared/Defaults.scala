@@ -50,4 +50,24 @@ object Defaults:
 
   /** Background job idle threshold (no output) before flagging as stuck, in seconds. */
   val BgStuckThresholdSec: Int = 600
+
+  // ---- Tool Result Guard ----
+
+  /**
+   * Global cap on tool result size (chars). Individual tools may declare a lower
+   * maxResultSizeChars, but this constant acts as a system-wide cap regardless.
+   * When exceeded, the result is saved to disk and the model receives a preview
+   * with the file path instead of the full content.
+   */
+  val DefaultMaxResultSizeChars: Int = 50_000
+
+  /**
+   * Maximum aggregate size (chars) for tool_result blocks within a single turn's
+   * batch of tool results. When the total exceeds this, the largest results are
+   * persisted to disk and replaced with previews until under budget.
+   */
+  val MaxToolResultsPerMessageChars: Int = 200_000
+
+  /** Preview size in characters for persisted tool results. */
+  val ToolResultPreviewSize: Int = 2048
 end Defaults

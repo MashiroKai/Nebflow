@@ -19,6 +19,9 @@ import java.nio.file.{Files, Path, Paths}
  */
 object CardTool extends Tool:
 
+  /** Card LLM content is always a compact summary — exempt from guard. */
+  override val maxResultSizeChars: Int = Int.MaxValue
+
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.card")
 
   /** Max file size for HTTP-served files (200 MB). */

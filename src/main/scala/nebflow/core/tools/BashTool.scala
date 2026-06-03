@@ -13,6 +13,9 @@ import scala.concurrent.duration.*
 object BashTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
+  /** Bash output can be very large — persist early. */
+  override val maxResultSizeChars: Int = 30_000
+
   val DEFAULT_TIMEOUT = 120_000L // 2 minutes
   val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
   /** Foreground commands running longer than this are automatically moved to background. */
