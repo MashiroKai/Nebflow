@@ -1193,3 +1193,66 @@
   transition: opacity 0.15s ease-out;
 }
 
+/* ===== Permission Danger Levels ===== */
+.perm-danger-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.perm-danger-banner span {
+  flex: 1;
+}
+
+/* Warning level (git ops, may lose data) */
+.bubble.ai.perm-warning {
+  border: 1px solid var(--color-warning);
+  box-shadow: 0 0 0 1px rgba(255, 193, 7, 0.15);
+}
+.bubble.ai.perm-warning .perm-danger-banner {
+  background: rgba(255, 193, 7, 0.12);
+  color: var(--color-warning);
+}
+
+/* Dangerous level (deletion, kill, destructive ops) */
+.bubble.ai.perm-dangerous {
+  border: 2px solid var(--color-error);
+  box-shadow: 0 0 0 1px rgba(244, 67, 54, 0.2), 0 0 12px rgba(244, 67, 54, 0.1);
+}
+.bubble.ai.perm-dangerous .perm-danger-banner {
+  background: rgba(244, 67, 54, 0.12);
+  color: var(--color-error);
+}
+
+/* Critical level (system destruction) */
+.bubble.ai.perm-critical {
+  border: 2px solid var(--color-error);
+  box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.25), 0 0 20px rgba(244, 67, 54, 0.15);
+  animation: permCriticalPulse 1.5s ease-in-out infinite;
+}
+.bubble.ai.perm-critical .perm-danger-banner {
+  background: rgba(244, 67, 54, 0.15);
+  color: var(--color-error);
+}
+@keyframes permCriticalPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.25), 0 0 20px rgba(244, 67, 54, 0.15); }
+  50% { box-shadow: 0 0 0 3px rgba(244, 67, 54, 0.4), 0 0 30px rgba(244, 67, 54, 0.25); }
+}
+
+/* Auto-approved indicator */
+.perm-auto-approved {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  text-align: center;
+  font-style: italic;
+}
+

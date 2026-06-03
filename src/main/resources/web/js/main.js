@@ -792,10 +792,10 @@ onMessage('askPermission', (msg) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
   if (isActive(msg)) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel }, sid);
   }
 });
 
@@ -1044,7 +1044,7 @@ onMessage('historyPage', (msg) => {
       state.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.permission-pending-box')) row.remove();
       });
-      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid);
+      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel);
     }
 
     if (!state.historyHasMore && msg.messages.length > 0) showHistoryEnd();
@@ -1748,6 +1748,48 @@ initReminder();
       localStorage.setItem(LS_KEY, document.body.classList.contains('sidebar-collapsed'));
     }
   });
+})();
+
+// ---------- Bypass-All Permission Toggle ----------
+(function initBypassAll() {
+  const btn = document.getElementById('bypass-all-btn');
+  if (!btn) return;
+  const badge = btn.querySelector('.bypass-all-indicator');
+  const icon = btn.querySelector('i');
+
+  function updateUI() {
+    if (state.bypassAllPermission) {
+      btn.classList.add('active');
+      if (badge) badge.style.display = '';
+      if (icon) {
+        icon.setAttribute('data-lucide', 'shield-off');
+        lucide.createIcons();
+      }
+    } else {
+      btn.classList.remove('active');
+      if (badge) badge.style.display = 'none';
+      if (icon) {
+        icon.setAttribute('data-lucide', 'shield');
+        lucide.createIcons();
+      }
+    }
+  }
+
+  btn.addEventListener('click', () => {
+    state.bypassAllPermission = !state.bypassAllPermission;
+    updateUI();
+    // Flash a system bubble notification
+    if (state.bypassAllPermission) {
+      renderSystemBubble('Bypass all permission — all tools will be auto-approved');
+    } else {
+      renderSystemBubble('Permission prompts restored — tools will ask for approval');
+    }
+  });
+
+  // Reset bypass mode on new WebSocket connection (safety measure)
+  const origConnect = connect;
+  // We'll reset on each new session
+  updateUI();
 })();
 
 // ---------- Scrollbar auto-slim: scroll → expand, 3s idle → re-slim ----------

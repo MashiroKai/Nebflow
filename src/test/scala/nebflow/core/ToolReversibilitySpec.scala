@@ -2,6 +2,7 @@ package nebflow.core
 
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.core.tools.BashTool
 import munit.CatsEffectSuite
 
 class ToolReversibilitySpec extends CatsEffectSuite:
@@ -24,7 +25,82 @@ class ToolReversibilitySpec extends CatsEffectSuite:
     assertEquals(ToolReversibility.isReversible("WebFetch", JsonObject.empty), true)
   }
 
-  // --- Bash ---
+  // --- BashTool.isDangerous ---
+
+  test("isDangerous detects pkill") {
+    assert(BashTool.isDangerous("pkill -f java"))
+    assert(BashTool.isDangerous("pkill -f nebflow"))
+  }
+
+  test("isDangerous detects killall") {
+    assert(BashTool.isDangerous("killall java"))
+  }
+
+  test("isDangerous detects kill with PID") {
+    assert(BashTool.isDangerous("kill 12345"))
+    assert(BashTool.isDangerous("kill -9 12345"))
+  }
+
+  test("isDangerous detects git checkout branch switch") {
+    assert(BashTool.isDangerous("git checkout feature-branch"))
+  }
+
+  test("isDangerous allows git checkout -b") {
+    assert(!BashTool.isDangerous("git checkout -b new-branch"))
+  }
+
+  test("isDangerous detects git switch") {
+    assert(BashTool.isDangerous("git switch main"))
+  }
+
+  test("isDangerous detects git stash drop/clear") {
+    assert(BashTool.isDangerous("git stash drop"))
+    assert(BashTool.isDangerous("git stash clear"))
+  }
+
+  test("isDangerous detects git rebase") {
+    assert(BashTool.isDangerous("git rebase main"))
+  }
+
+  test("isDangerous detects git merge") {
+    assert(BashTool.isDangerous("git merge feature-branch"))
+  }
+
+  test("isDangerous detects systemctl stop") {
+    assert(BashTool.isDangerous("systemctl stop nebflow"))
+  }
+
+  test("isDangerous detects launchctl stop") {
+    assert(BashTool.isDangerous("launchctl stop nebflow"))
+  }
+
+  // --- dangerLevel ---
+
+  test("dangerLevel 3 for critical operations") {
+    assertEquals(BashTool.dangerLevel("rm -rf /"), 3)
+    assertEquals(BashTool.dangerLevel("pkill -f nebflow"), 3)
+    assertEquals(BashTool.dangerLevel("killall java"), 3)
+  }
+
+  test("dangerLevel 2 for dangerous operations") {
+    assertEquals(BashTool.dangerLevel("rm -rf /tmp/test"), 2)
+    assertEquals(BashTool.dangerLevel("docker system prune"), 2)
+    assertEquals(BashTool.dangerLevel("git reset --hard HEAD"), 2)
+  }
+
+  test("dangerLevel 1 for warning operations") {
+    assertEquals(BashTool.dangerLevel("git checkout feature-branch"), 1)
+    assertEquals(BashTool.dangerLevel("git switch main"), 1)
+    assertEquals(BashTool.dangerLevel("git rebase main"), 1)
+  }
+
+  test("dangerLevel 0 for safe commands") {
+    assertEquals(BashTool.dangerLevel("ls -la"), 0)
+    assertEquals(BashTool.dangerLevel("git status"), 0)
+    assertEquals(BashTool.dangerLevel("cat file.txt"), 0)
+  }
+
+  // --- ToolReversibility ---
 
   test("auto-approve safe Bash commands") {
     val input = JsonObject("command" -> "ls -la".asJson)
