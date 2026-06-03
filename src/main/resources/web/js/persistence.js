@@ -218,17 +218,17 @@ export function restoreFromStorage() {
       bubble.className = 'bubble ai';
       // Add danger level styling if applicable
       const level = m.dangerLevel || 0;
-      const dangerLabels = {
-        1: { cls: 'perm-warning', label: 'May cause data loss' },
-        2: { cls: 'perm-dangerous', label: 'Dangerous operation' },
-        3: { cls: 'perm-critical', label: 'Critical operation' }
+      const dangerI18nKeys = {
+        1: { cls: 'perm-warning', key: 'chat.permLevel.warning' },
+        2: { cls: 'perm-dangerous', key: 'chat.permLevel.dangerous' },
+        3: { cls: 'perm-critical', key: 'chat.permLevel.critical' }
       };
-      const dInfo = dangerLabels[level];
+      const dInfo = dangerI18nKeys[level];
       if (dInfo) {
         bubble.classList.add(dInfo.cls);
         const banner = document.createElement('div');
         banner.className = 'perm-danger-banner';
-        banner.innerHTML = '<span>' + dInfo.label + '</span>';
+        banner.innerHTML = '<span>' + escapeHtml(t(dInfo.key, { detail: '' })) + '</span>';
         bubble.appendChild(banner);
       }
       row.appendChild(bubble);
@@ -492,17 +492,17 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       bubble.className = 'bubble ai';
       // Add danger level styling if applicable
       const level = m.dangerLevel || 0;
-      const dangerLabels = {
-        1: { cls: 'perm-warning', label: 'May cause data loss' },
-        2: { cls: 'perm-dangerous', label: 'Dangerous operation' },
-        3: { cls: 'perm-critical', label: 'Critical operation' }
+      const dangerI18nKeys = {
+        1: { cls: 'perm-warning', key: 'chat.permLevel.warning' },
+        2: { cls: 'perm-dangerous', key: 'chat.permLevel.dangerous' },
+        3: { cls: 'perm-critical', key: 'chat.permLevel.critical' }
       };
-      const dInfo = dangerLabels[level];
+      const dInfo = dangerI18nKeys[level];
       if (dInfo) {
         bubble.classList.add(dInfo.cls);
         const banner = document.createElement('div');
         banner.className = 'perm-danger-banner';
-        banner.innerHTML = '<span>' + dInfo.label + '</span>';
+        banner.innerHTML = '<span>' + escapeHtml(t(dInfo.key, { detail: '' })) + '</span>';
         bubble.appendChild(banner);
       }
       row.appendChild(bubble);
