@@ -67,6 +67,8 @@ object Main extends IOApp:
           i += 1
     (home, port, remaining.result())
 
+  end parseGlobalFlags
+
   /** Expand ~ to user home directory. */
   private def expandHome(path: String): String =
     if path.startsWith("~/") then sys.props("user.home") + path.substring(1)

@@ -67,12 +67,14 @@ class SessionService(store: SessionStore):
       sessions <- store.listSessions
       folders <- store.listFolders(agentName)
       activeId <- store.getActiveId
+      rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
       _ <- wsSend(
         Json.obj(
           "type" -> "sessionList".asJson,
           "sessions" -> sessions.asJson,
           "folders" -> folders.asJson,
-          "activeId" -> activeId.asJson
+          "activeId" -> activeId.asJson,
+          "foldersWithRules" -> rulesFolderIds.asJson
         )
       )
     yield ()

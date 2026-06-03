@@ -645,6 +645,20 @@
 }
 .folder-new-input:focus { border-color: var(--color-frame-text-muted); }
 
+/* Creation path indicator — shown above inline inputs when creating inside a folder */
+.creation-path {
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  padding: 2px 10px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.7;
+}
+.session-item > .creation-path {
+  padding: 0 0 4px;
+}
+
 
 /* ---------- Settings Panel ---------- */
 #settings-content {

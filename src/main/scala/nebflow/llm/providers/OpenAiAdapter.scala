@@ -73,20 +73,22 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           }
 
           if toolUseParts.nonEmpty then
-            List(Json.obj(
-              "role" -> "assistant".asJson,
-              "content" -> (if textParts.nonEmpty then textParts.mkString("\n").asJson else Json.Null),
-              "tool_calls" -> Json.fromValues(toolUseParts.map { case (id, name, input) =>
-                Json.obj(
-                  "id" -> id.asJson,
-                  "type" -> "function".asJson,
-                  "function" -> Json.obj(
-                    "name" -> name.asJson,
-                    "arguments" -> Json.fromJsonObject(input).noSpaces.asJson
+            List(
+              Json.obj(
+                "role" -> "assistant".asJson,
+                "content" -> (if textParts.nonEmpty then textParts.mkString("\n").asJson else Json.Null),
+                "tool_calls" -> Json.fromValues(toolUseParts.map { case (id, name, input) =>
+                  Json.obj(
+                    "id" -> id.asJson,
+                    "type" -> "function".asJson,
+                    "function" -> Json.obj(
+                      "name" -> name.asJson,
+                      "arguments" -> Json.fromJsonObject(input).noSpaces.asJson
+                    )
                   )
-                )
-              })
-            ))
+                })
+              )
+            )
           else if toolResultParts.nonEmpty then
             // OpenAI requires each tool result to be a separate message with its own tool_call_id
             toolResultParts.map { case (id, content) =>

@@ -23,19 +23,28 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   }
 
   test("toOpenAiMessages: system messages filtered") {
-    val result = adapter.toOpenAiMessages(List(
-      Message(MessageRole.System, Left("sys")),
-      Message(MessageRole.User, Left("hi"))
-    ))
+    val result = adapter.toOpenAiMessages(
+      List(
+        Message(MessageRole.System, Left("sys")),
+        Message(MessageRole.User, Left("hi"))
+      )
+    )
     assertEquals(result.size, 1)
   }
 
   test("toOpenAiMessages: tool_use -> tool_calls array, content=null") {
-    val result = adapter.toOpenAiMessages(List(
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.ToolUse("call_1", "Read", JsonObject("file_path" -> "/test.txt".asJson))
-      )))
-    ))
+    val result = adapter.toOpenAiMessages(
+      List(
+        Message(
+          MessageRole.Assistant,
+          Right(
+            List(
+              ContentBlock.ToolUse("call_1", "Read", JsonObject("file_path" -> "/test.txt".asJson))
+            )
+          )
+        )
+      )
+    )
     assertEquals(result.size, 1)
     val m = result.head
     assertEquals(m.hcursor.downField("role").as[String].toOption, Some("assistant"))
@@ -44,24 +53,38 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   }
 
   test("toOpenAiMessages: text + tool_use") {
-    val result = adapter.toOpenAiMessages(List(
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.Text("Reading file."),
-        ContentBlock.ToolUse("call_1", "Read", JsonObject("file_path" -> "/t.txt".asJson))
-      )))
-    ))
+    val result = adapter.toOpenAiMessages(
+      List(
+        Message(
+          MessageRole.Assistant,
+          Right(
+            List(
+              ContentBlock.Text("Reading file."),
+              ContentBlock.ToolUse("call_1", "Read", JsonObject("file_path" -> "/t.txt".asJson))
+            )
+          )
+        )
+      )
+    )
     assertEquals(result.size, 1)
     assertEquals(result.head.hcursor.downField("content").as[String].toOption, Some("Reading file."))
   }
 
   test("toOpenAiMessages: CRITICAL - multiple tool_results => SEPARATE tool messages") {
-    val result = adapter.toOpenAiMessages(List(
-      Message(MessageRole.User, Right(List(
-        ContentBlock.ToolResult("c1", "content A"),
-        ContentBlock.ToolResult("c2", "content B"),
-        ContentBlock.ToolResult("c3", "content C")
-      )))
-    ))
+    val result = adapter.toOpenAiMessages(
+      List(
+        Message(
+          MessageRole.User,
+          Right(
+            List(
+              ContentBlock.ToolResult("c1", "content A"),
+              ContentBlock.ToolResult("c2", "content B"),
+              ContentBlock.ToolResult("c3", "content C")
+            )
+          )
+        )
+      )
+    )
     assertEquals(result.size, 3, s"Must produce 3 separate tool messages, got ${result.size}")
     val ids = result.map(_.hcursor.downField("tool_call_id").as[String].toOption.getOrElse(""))
     assertEquals(ids, List("c1", "c2", "c3"))
@@ -70,16 +93,28 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   }
 
   test("toOpenAiMessages: full multi-turn conversation") {
-    val result = adapter.toOpenAiMessages(List(
-      Message(MessageRole.User, Left("Read the file")),
-      Message(MessageRole.Assistant, Right(List(
-        ContentBlock.ToolUse("call_abc", "Read", JsonObject("file_path" -> "/test.txt".asJson))
-      ))),
-      Message(MessageRole.User, Right(List(
-        ContentBlock.ToolResult("call_abc", "file contents")
-      ))),
-      Message(MessageRole.Assistant, Right(List(ContentBlock.Text("Done."))))
-    ))
+    val result = adapter.toOpenAiMessages(
+      List(
+        Message(MessageRole.User, Left("Read the file")),
+        Message(
+          MessageRole.Assistant,
+          Right(
+            List(
+              ContentBlock.ToolUse("call_abc", "Read", JsonObject("file_path" -> "/test.txt".asJson))
+            )
+          )
+        ),
+        Message(
+          MessageRole.User,
+          Right(
+            List(
+              ContentBlock.ToolResult("call_abc", "file contents")
+            )
+          )
+        ),
+        Message(MessageRole.Assistant, Right(List(ContentBlock.Text("Done."))))
+      )
+    )
     assertEquals(result.size, 4)
     val roles = result.map(_.hcursor.downField("role").as[String].toOption.getOrElse(""))
     assertEquals(roles, List("user", "assistant", "tool", "assistant"))
@@ -88,8 +123,8 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   // ====== buildSystemMessage ======
 
   test("buildSystemMessage: combines stable + dynamic") {
-    val params = SendMessageParams(Nil, "gpt-4o",
-      systemStable = Some("Be helpful."), systemDynamic = Some("Time: 12:00"))
+    val params =
+      SendMessageParams(Nil, "gpt-4o", systemStable = Some("Be helpful."), systemDynamic = Some("Time: 12:00"))
     val result = adapter.buildSystemMessage(params)
     assert(result.isDefined)
     val content = result.get.hcursor.downField("content").as[String].toOption.getOrElse("")
@@ -124,10 +159,12 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
 
   test("processOpenAiData: tool call start") {
     val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
-    val data = """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"Read","arguments":""}}]},"finish_reason":null}]}"""
+    val data =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"Read","arguments":""}}]},"finish_reason":null}]}"""
     val params = SendMessageParams(Nil, "gpt-4o")
-    for chunks <- adapter.processOpenAiData(data, state, params)
-        fs <- state.get
+    for
+      chunks <- adapter.processOpenAiData(data, state, params)
+      fs <- state.get
     yield
       assertEquals(chunks.size, 1)
       assert(chunks.head.isInstanceOf[StreamChunk.ToolCallStart])
@@ -142,8 +179,9 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     )
     val data = """{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"""
     val params = SendMessageParams(Nil, "gpt-4o")
-    for chunks <- adapter.processOpenAiData(data, state, params)
-        fs <- state.get
+    for
+      chunks <- adapter.processOpenAiData(data, state, params)
+      fs <- state.get
     yield
       assert(chunks.size >= 2, s"Expected ToolCallChunk+Done, got ${chunks.size}: $chunks")
       val hasTC = chunks.exists(_.isInstanceOf[StreamChunk.ToolCallChunk])
@@ -157,7 +195,8 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
     val state = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](
       Map(0 -> ("call_1", "Read", new StringBuilder("{\"file_path\":")))
     )
-    val data = """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"/t.txt\"}"}}]},"finish_reason":"tool_calls"}]}"""
+    val data =
+      """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"/t.txt\"}"}}]},"finish_reason":"tool_calls"}]}"""
     val params = SendMessageParams(Nil, "gpt-4o")
     for chunks <- adapter.processOpenAiData(data, state, params)
     yield

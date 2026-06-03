@@ -813,6 +813,7 @@ onMessage('sessionList', (msg) => {
     sessionsToShow = allSessions.filter(s => (s.agentName || 'Nebula') === state.selectedAgent);
   }
   state.folders = allFolders;
+  state.foldersWithRules = new Set(msg.foldersWithRules || []);
 
   // Determine activeId: only use it if it belongs to the filtered (shown) sessions
   let activeId = msg.activeId;
@@ -1781,7 +1782,7 @@ window.addEventListener('locale-changed', () => {
   }
 });
 // New Folder button
-document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder());
+document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(state.activeFolderId));
 
 console.log('[main] modules initialized, connecting ws...');
 

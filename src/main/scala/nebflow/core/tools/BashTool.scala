@@ -199,6 +199,8 @@ Git safety:
     else if warningPatterns.exists(_.findFirstIn(command).isDefined) then 1
     else 0
 
+  end dangerLevel
+
   def checkInjection(command: String): Option[String] =
     InjectionPatterns.collectFirst {
       case (pattern, msg) if pattern.findFirstIn(command).isDefined => msg

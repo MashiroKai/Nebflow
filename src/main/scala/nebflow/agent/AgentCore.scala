@@ -666,13 +666,14 @@ private[agent] trait AgentCore:
           IO {
             val summary = nebflow.core.summarizeToolCall(call)
             // Determine danger level for frontend highlighting
-            val dangerLevel = if call.name == "Bash" then
-              call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
-            else if call.name == "Curl" then
-              call.input("method").flatMap(_.asString).map(_.toUpperCase) match
-                case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
-                case _ => 0
-            else 1 // Unknown tools are level 1
+            val dangerLevel =
+              if call.name == "Bash" then
+                call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
+              else if call.name == "Curl" then
+                call.input("method").flatMap(_.asString).map(_.toUpperCase) match
+                  case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
+                  case _ => 0
+              else 1 // Unknown tools are level 1
             Json.obj(
               "type" -> "askPermission".asJson,
               "sessionId" -> state.sessionId.asJson,
@@ -916,8 +917,6 @@ private[agent] trait AgentCore:
       contextWindow
     )
   end aggregateChunks
-
-
 
   // ============================================================
   // Prompt / tool helpers
