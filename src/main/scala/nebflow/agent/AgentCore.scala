@@ -566,8 +566,6 @@ private[agent] trait AgentCore:
                   val summary = summarizeToolResult(call, r.content)
                   // For Card tools: frontend receives the full payload, LLM sees the summary
                   val frontendContent = r.frontendContent.getOrElse(r.content)
-                  if call.name == "Card" then
-                    println(s"[CARD-TRACE] frontendContent length=${frontendContent.length}, starts=${frontendContent.take(80)}")
                   emitStreamIO(
                     state.wsSend,
                     ctx,

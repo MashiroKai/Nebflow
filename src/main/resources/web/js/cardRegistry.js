@@ -120,8 +120,8 @@ function getNfToken() {
 }
 
 /** Inject auth token into /api/nf-file URLs so the sandboxed iframe can fetch them.
- *  The iframe lacks allow-same-origin, so cookies are not sent — token must be
- *  in the query string. */
+ *  The iframe uses allow-same-origin, but srcdoc iframes may not send cookies
+ *  reliably — token in the query string ensures the request is authenticated. */
 function injectFileTokens(html) {
   const token = getNfToken();
   if (!token) return html;
@@ -153,7 +153,7 @@ function renderHtmlCard(container, html, title) {
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';
-  iframe.setAttribute('sandbox', 'allow-scripts');
+  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('scrolling', 'no');
   iframe.setAttribute('srcdoc', srcdoc);
   iframe.dataset.nfCardId = id;

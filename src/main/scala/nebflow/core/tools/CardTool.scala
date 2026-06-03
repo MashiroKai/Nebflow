@@ -5,7 +5,6 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 
 import java.nio.file.{Files, Path, Paths}
-import java.util.Base64
 
 /**
  * Card tool — renders arbitrary HTML in a sandboxed iframe in the chat stream.
@@ -14,18 +13,13 @@ import java.util.Base64
  * with theme variables injected, so dark mode works automatically.
  *
  * Local file references (src="...") pointing to image/video/audio/font/PDF files
- * on disk are handled in two ways:
- *   - Small files (< DataUriThreshold) → inlined as base64 data URIs (instant, no network)
- *   - Large files (>= DataUriThreshold) → served via /api/nf-file?path=... endpoint
- *     The frontend injects the auth token into these URLs before rendering.
+ * on disk are converted to /api/nf-file?path=... URLs served by the HTTP endpoint.
+ * The frontend injects the auth token into these URLs before rendering.
  * Only whitelisted media extensions are processed — arbitrary files are skipped.
  */
 object CardTool extends Tool:
 
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.tools.card")
-
-  /** Files smaller than this are base64-embedded; larger files use the HTTP endpoint. */
-  private val DataUriThreshold = 1024 * 1024 // 1 MB
 
   /** Max file size for HTTP-served files (200 MB). */
   private val MaxFileSize = 200 * 1024 * 1024
@@ -33,88 +27,16 @@ object CardTool extends Tool:
   /** Allowed media extensions — prevents reading arbitrary non-media files via src=. */
   private val AllowedExtensions = Set(
     // images
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "svg",
-    "webp",
-    "ico",
-    "bmp",
-    "avif",
-    "tiff",
-    "tif",
+    "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
     // video
-    "mp4",
-    "webm",
-    "ogg",
-    "ogv",
-    "mov",
-    "avi",
+    "mp4", "webm", "ogg", "ogv", "mov", "avi",
     // audio
-    "mp3",
-    "wav",
-    "oga",
-    "flac",
-    "aac",
-    "m4a",
+    "mp3", "wav", "oga", "flac", "aac", "m4a",
     // fonts
-    "woff",
-    "woff2",
-    "ttf",
-    "otf",
-    "eot",
+    "woff", "woff2", "ttf", "otf", "eot",
     // documents
     "pdf"
   )
-
-  private val ExtensionToMime = Map(
-    // images
-    "png" -> "image/png",
-    "jpg" -> "image/jpeg",
-    "jpeg" -> "image/jpeg",
-    "gif" -> "image/gif",
-    "svg" -> "image/svg+xml",
-    "webp" -> "image/webp",
-    "ico" -> "image/x-icon",
-    "bmp" -> "image/bmp",
-    "avif" -> "image/avif",
-    "tiff" -> "image/tiff",
-    "tif" -> "image/tiff",
-    // video
-    "mp4" -> "video/mp4",
-    "webm" -> "video/webm",
-    "ogg" -> "video/ogg",
-    "ogv" -> "video/ogg",
-    "mov" -> "video/quicktime",
-    "avi" -> "video/x-msvideo",
-    // audio
-    "mp3" -> "audio/mpeg",
-    "wav" -> "audio/wav",
-    "oga" -> "audio/ogg",
-    "flac" -> "audio/flac",
-    "aac" -> "audio/aac",
-    "m4a" -> "audio/mp4",
-    // fonts
-    "woff" -> "font/woff",
-    "woff2" -> "font/woff2",
-    "ttf" -> "font/ttf",
-    "otf" -> "font/otf",
-    "eot" -> "application/vnd.ms-fontobject",
-    // documents
-    "pdf" -> "application/pdf"
-  )
-
-  /** SVG placeholder shown when a file is too large to embed. */
-  private def tooLargePlaceholder(fileName: String): String =
-    val escaped = fileName.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    s"""data:image/svg+xml,${java.net.URLEncoder.encode(
-        s"""<svg xmlns="http://www.w3.org/2000/svg" width="200" height="40">""" +
-          s"""<rect width="200" height="40" fill="#f5f5f5" rx="4"/>""" +
-          s"""<text x="100" y="25" text-anchor="middle" fill="#999" font-size="12" font-family="sans-serif">""" +
-          s"""File too large: $escaped</text></svg>""",
-        "UTF-8"
-      )}"""
 
   /** Regex matching src= attributes with both single and double quotes. */
   private val SrcAttrRegex = """(?i)src\s*=\s*["']([^"']+)["']""".r
@@ -124,7 +46,7 @@ object CardTool extends Tool:
       case -1 => ""
       case i => path.substring(i + 1).toLowerCase
 
-  private def isAllowedImage(path: String): Boolean =
+  private def isAllowedMedia(path: String): Boolean =
     AllowedExtensions.contains(fileExtension(path))
 
   private def isLocalFilePath(s: String): Boolean =
@@ -144,74 +66,50 @@ object CardTool extends Tool:
       if p.toString.nonEmpty then Some(p) else None
     catch case _: Exception => None
 
-  /** Result of attempting to embed a local file. */
-  private enum EmbedResult:
-    case DataUri(value: String)
-    case HttpUrl(url: String) // served via /api/nf-file endpoint
-    case TooLarge(fileName: String)
-    case Skip // not a local path, not an image, file not found, etc.
-
   /**
-   * Try to convert a local file to either a data URI (small files) or an HTTP URL (large files).
-   * Security: only whitelisted extensions are allowed; other files are silently skipped.
+   * Try to convert a local file path to an /api/nf-file URL.
+   * Returns Some(url) if the file exists and is a whitelisted media file, None otherwise.
    */
-  private def tryEmbed(value: String): EmbedResult =
-    if !isLocalFilePath(value) || !isAllowedImage(value) then EmbedResult.Skip
+  private def tryEmbed(value: String): Option[String] =
+    if !isLocalFilePath(value) || !isAllowedMedia(value) then None
     else
       resolvePath(value) match
-        case None => EmbedResult.Skip
+        case None => None
         case Some(path) =>
           try
-            if !Files.exists(path) || !Files.isRegularFile(path) then EmbedResult.Skip
-            else if Files.size(path) > MaxFileSize then EmbedResult.TooLarge(path.getFileName.toString)
-            else if Files.size(path) >= DataUriThreshold then
-              // Large file — serve via HTTP endpoint (supports Range for video seeking)
-              val encoded = java.net.URLEncoder.encode(path.toString, "UTF-8")
-              EmbedResult.HttpUrl(s"/api/nf-file?path=$encoded")
+            if !Files.exists(path) || !Files.isRegularFile(path) then None
+            else if Files.size(path) > MaxFileSize then None
             else
-              // Small file — base64 inline (instant, no network round-trip)
-              val bytes = Files.readAllBytes(path)
-              val mime = ExtensionToMime.getOrElse(fileExtension(path.toString), "application/octet-stream")
-              val b64 = Base64.getEncoder.encodeToString(bytes)
-              EmbedResult.DataUri(s"data:$mime;base64,$b64")
-          catch case _: Exception => EmbedResult.Skip
+              val encoded = java.net.URLEncoder.encode(path.toString, "UTF-8")
+              Some(s"/api/nf-file?path=$encoded")
+          catch case _: Exception => None
 
   /**
    * Scan HTML for src= attributes pointing to local media files,
-   * and replace paths with either base64 data URIs or HTTP URLs.
-   * - Non-media files are silently skipped (left as-is).
-   * - Small files (< DataUriThreshold) → base64 data URI
-   * - Large files (>= DataUriThreshold) → /api/nf-file?path=... URL
-   *   (frontend injects auth token before rendering)
-   * - Files exceeding MaxFileSize → SVG placeholder
+   * and replace paths with /api/nf-file?path=... URLs.
+   * Non-media files are silently skipped (left as-is).
    */
   private def embedLocalFiles(html: String): String =
     val replacements = SrcAttrRegex
       .findAllMatchIn(html)
       .flatMap { m =>
         val value = m.group(1)
-        tryEmbed(value) match
-          case EmbedResult.DataUri(uri) => Some((m.start(1), m.end(1), uri))
-          case EmbedResult.HttpUrl(url) => Some((m.start(1), m.end(1), url))
-          case EmbedResult.TooLarge(name) => Some((m.start(1), m.end(1), tooLargePlaceholder(name)))
-          case EmbedResult.Skip => None
+        tryEmbed(value).map(url => (m.start(1), m.end(1), url))
       }
       .toSeq
 
     if replacements.isEmpty then html
     else
-      val sb = new StringBuilder(html.length + replacements.size * 256)
+      val sb = new StringBuilder(html.length + replacements.size * 128)
       var lastEnd = 0
       for (start, end, replacement) <- replacements do
-        sb.append(html, lastEnd, start)
+        sb.append(html.substring(lastEnd, start))
         sb.append(replacement)
         lastEnd = end
-      sb.append(html, lastEnd, html.length)
+      sb.append(html.substring(lastEnd, html.length))
       val result = sb.toString
       if result != html then
-        val dataUriCount = replacements.count { case (_, _, r) => r.startsWith("data:") }
-        val httpUrlCount = replacements.size - dataUriCount
-        logger.debug(s"Processed ${replacements.size} local file(s): $dataUriCount base64, $httpUrlCount HTTP")
+        logger.debug(s"Embedded ${replacements.size} local file(s) via /api/nf-file")
       result
     end if
   end embedLocalFiles
