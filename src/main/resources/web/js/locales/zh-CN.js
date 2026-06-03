@@ -211,6 +211,7 @@ export default {
   'chat.askLabel': '询问',
   'chat.allowTool': '允许 {tool}？',
   'chat.autoApproved': '自动通过（自动放行模式）',
+  'chat.bypassBadge': '自动放行',
   'chat.copied': '已复制！',
   'chat.copy': '复制',
   'chat.noMoreMessages': '— 没有更多消息 —',
