@@ -8,7 +8,7 @@ import nebflow.agent.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
-import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.core.tools.{ToolContext, ToolRegistry, ToolResultGuard}
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
@@ -582,24 +582,27 @@ private[agent] trait AgentCore:
                   )
                 else IO.unit
               }
+              // Layer 1: per-tool result size guard
+              .flatMap { (call, r) =>
+                ToolResultGuard.guardResult(call, r, state.sessionId.getOrElse("default"))
+                  .map(r => (call, r))
+              }
         }
+      // Layer 2: per-message aggregate budget guard
+      guardedBatch <- ToolResultGuard.guardBatch(freshResults, state.sessionId.getOrElse("default"))
       // Include filtered-out tool calls as errors so the assistant message stays consistent
       droppedResults = droppedCalls.map { call =>
         (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
       }
       // Track per-file write count since last read (per-agent, pure computation)
-      readFiles = freshResults
-        .collect {
-          case (call, result) if call.name == "Read" && !result.isError =>
-            call.input("file_path").flatMap(_.asString).getOrElse("")
-        }
+      readFiles: Set[String] = guardedBatch
+        .filter { pair => pair._1.name == "Read" && !pair._2.isError }
+        .map { pair => pair._1.input("file_path").flatMap(_.asString).getOrElse("") }
         .filter(_.nonEmpty)
         .toSet
-      writtenFiles = freshResults
-        .collect {
-          case (call, result) if Set("Write", "Edit").contains(call.name) && !result.isError =>
-            call.input("file_path").flatMap(_.asString).getOrElse("")
-        }
+      writtenFiles: List[String] = guardedBatch
+        .filter { pair => Set("Write", "Edit").contains(pair._1.name) && !pair._2.isError }
+        .map { pair => pair._1.input("file_path").flatMap(_.asString).getOrElse("") }
         .filter(_.nonEmpty)
       updatedWriteTracker = SystemReminders.updateWriteTracker(
         state.writesSinceLastRead,
@@ -608,7 +611,7 @@ private[agent] trait AgentCore:
       )
       _ <- IO(
         ctx.self ! ToolsComplete(
-          freshResults ++ droppedResults,
+          guardedBatch ++ droppedResults,
           result.text,
           replyTo,
           None,

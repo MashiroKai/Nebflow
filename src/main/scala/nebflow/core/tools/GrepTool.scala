@@ -9,6 +9,9 @@ object GrepTool extends Tool:
 
   val name = "Grep"
 
+  /** Grep results are typically large — lower threshold to persist early. */
+  override val maxResultSizeChars: Int = 20_000
+
   val description = """A powerful search tool built on ripgrep.
 
 Usage:
