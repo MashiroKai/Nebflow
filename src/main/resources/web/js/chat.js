@@ -305,8 +305,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   card.className = 'tool-card';
 
   // Try HTML card renderer first
-  // Card tool: pass inputJson directly ({html, title}) — renderWithRegistry handles it natively
-  const cardData = (label.startsWith('Card') && inputJson && inputJson.html) ? inputJson : (content || '');
+  // Always prefer `content` (server-processed, includes ___CARD_HTML___ marker with
+  // embedLocalFiles-processed /api/nf-file URLs). Previously inputJson.html was used
+  // for Card tools, but that's the raw LLM input before server-side file embedding.
+  const cardData = content || '';
   if (renderWithRegistry(card, cardData, label)) {
     card.classList.add('tool-card--html');
     row.appendChild(card);
@@ -669,30 +671,73 @@ export function renderAskUser(items, askSessionId) {
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel) {
   const chat = state.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
   const bubble = document.createElement('div');
   bubble.className = 'bubble ai';
+
+  // Danger level decorations
+  const level = dangerLevel || 0;
+  const dangerLabels = {
+    1: { cls: 'perm-warning', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>', label: 'May cause data loss' },
+    2: { cls: 'perm-dangerous', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>', label: 'Dangerous operation' },
+    3: { cls: 'perm-critical', icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>', label: 'Critical operation — may damage system' }
+  };
+  const dangerInfo = dangerLabels[level];
+  if (dangerInfo) {
+    bubble.classList.add(dangerInfo.cls);
+    // Insert danger banner at top of bubble
+    const banner = document.createElement('div');
+    banner.className = 'perm-danger-banner';
+    banner.innerHTML = dangerInfo.icon + '<span>' + dangerInfo.label + '</span>';
+    bubble.appendChild(banner);
+  }
+
   row.appendChild(bubble);
   chat.appendChild(row);
 
   // Show tool details
   let detail = '';
+  let isDangerous = false;
   try {
     const input = JSON.parse(inputJson || '{}');
-    if (input.command) detail = 'Command: ' + input.command;
-    else if (input.file_path) detail = 'File: ' + input.file_path;
+    if (input.command) {
+      detail = 'Command: ' + input.command;
+      isDangerous = level >= 2;
+    } else if (input.file_path) detail = 'File: ' + input.file_path;
     else if (input.url) detail = 'URL: ' + input.url;
   } catch (e) {}
 
   const targetSid = permSessionId || state.activeSessionId;
+
+  // If bypassAll is enabled, auto-approve immediately
+  if (state.bypassAllPermission) {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: true }));
+    }
+    // Show a small auto-approved indicator
+    const autoBadge = document.createElement('div');
+    autoBadge.className = 'perm-auto-approved';
+    autoBadge.textContent = 'Auto-approved (bypass all)';
+    bubble.appendChild(autoBadge);
+    window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
+    smartScroll();
+    return;
+  }
+
+  // Build the question text: include the full command detail prominently for dangerous ops
+  let questionText = t('chat.allowTool', { tool: toolName });
+  if (isDangerous && detail) {
+    questionText = detail;
+  }
+
   const allowLabel = t('chat.allow');
   const items = [{
-    question: t('chat.allowTool', { tool: toolName }),
+    question: questionText,
     options: [
-      { label: allowLabel, desc: summary + (detail ? ' — ' + detail : '') },
+      { label: allowLabel, desc: isDangerous ? 'Execute this command' : summary + (detail ? ' — ' + detail : '') },
       { label: t('chat.deny'), desc: t('chat.skipTool') }
     ]
   }];

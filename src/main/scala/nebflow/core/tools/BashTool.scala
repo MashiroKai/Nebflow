@@ -91,7 +91,7 @@ Git safety:
     )
   )
 
-  // Security rules: patterns that are blocked in sandbox mode
+  // Security rules: patterns that require user approval
   private val DangerousPatterns = List(
     """rm\s+-rf\s+""".r,
     """rm\s+-fr\s+""".r,
@@ -119,6 +119,18 @@ Git safety:
     """(?i)\btwine\s+upload""".r,
     """(?i)\bmvn\s+deploy""".r,
     """(?i)\bsbt\s+publish""".r,
+    // Process killing — prevents agent from killing nebflow or other critical processes
+    """\bpkill\b""".r,
+    """\bkillall\b""".r,
+    """(?i)\bkill\s+(-[0-9]+)?\s*\d+""".r,
+    """(?i)\bsystemctl\s+(stop|kill|restart)\b""".r,
+    """(?i)\blaunchctl\s+(stop|kill)\b""".r,
+    // Git branch switching — can lose uncommitted changes
+    """git\s+checkout\s+(?!-b\b)(?!--\s)(?!\*\.)""".r,
+    """git\s+switch\b""".r,
+    """git\s+stash\s+(drop|clear)\b""".r,
+    """git\s+rebase\b""".r,
+    """git\s+merge\b""".r,
     // Fork bomb
     """:\(\)\{\s*:\|:&\s*\}""".r,
     """fork\s+bomb""".r
@@ -150,6 +162,42 @@ Git safety:
 
   def isDangerous(command: String): Boolean =
     DangerousPatterns.exists(_.findFirstIn(command).isDefined)
+
+  /** Returns a danger level: 0 = safe, 1 = warning (git ops), 2 = dangerous (deletion/kill), 3 = critical (system destruction). */
+  def dangerLevel(command: String): Int =
+    val criticalPatterns = List(
+      """rm\s+-rf\s+/\s*$""".r,
+      """rm\s+-rf\s+/\*\s*""".r,
+      """pkill\s+(-f\s+)?.*nebflow""".r,
+      """killall\s+.*java""".r,
+      """(?i)format\s+/""".r,
+      """mkfs\b""".r,
+      """dd\s+if=.*of=/dev/""".r
+    )
+    val dangerousPatterns = List(
+      """rm\s+-rf\s+""".r,
+      """rm\s+-fr\s+""".r,
+      """\bpkill\b""".r,
+      """\bkillall\b""".r,
+      """(?i)\bkill\s+(-[0-9]+)?\s*\d+""".r,
+      """docker\s+(system|volume)\s+prune""".r,
+      """(?i)\bkubectl\s+delete\b""".r,
+      """git\s+reset\s+--hard""".r,
+      """git\s+clean\s+-f""".r
+    )
+    val warningPatterns = List(
+      """git\s+checkout\s+(?!-b\b)(?!--\s)(?!\*\.)""".r,
+      """git\s+switch\b""".r,
+      """git\s+stash\s+(drop|clear)\b""".r,
+      """git\s+rebase\b""".r,
+      """git\s+merge\b""".r,
+      """git\s+branch\s+-D""".r,
+      """git\s+push\s+.*--force""".r
+    )
+    if criticalPatterns.exists(_.findFirstIn(command).isDefined) then 3
+    else if dangerousPatterns.exists(_.findFirstIn(command).isDefined) then 2
+    else if warningPatterns.exists(_.findFirstIn(command).isDefined) then 1
+    else 0
 
   def checkInjection(command: String): Option[String] =
     InjectionPatterns.collectFirst {

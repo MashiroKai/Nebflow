@@ -154,9 +154,9 @@ export function restoreFromStorage() {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
-      // Card tool: pass input directly ({html, title}) — renderWithRegistry handles it natively
-      const isCard = m.label && m.label.startsWith('Card') && m.input && m.input.html;
-      const cardData = isCard ? m.input : { label: m.label, summary: m.summary, content: m.content || '', isError: m.isError, input: m.input, sessionId: state.activeSessionId };
+      // Card tool: use m.content (server-processed HTML with /api/nf-file URLs via ___CARD_HTML___ marker)
+      // instead of m.input (raw LLM input with unprocessed local paths).
+      const cardData = m.content || { label: m.label, summary: m.summary, content: m.content || '', isError: m.isError, input: m.input, sessionId: state.activeSessionId };
       if (renderWithRegistry(card, cardData)) {
         card.classList.add('tool-card--html');
         row.appendChild(card);
@@ -216,6 +216,21 @@ export function restoreFromStorage() {
       row.className = 'row ai';
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
+      // Add danger level styling if applicable
+      const level = m.dangerLevel || 0;
+      const dangerLabels = {
+        1: { cls: 'perm-warning', label: 'May cause data loss' },
+        2: { cls: 'perm-dangerous', label: 'Dangerous operation' },
+        3: { cls: 'perm-critical', label: 'Critical operation' }
+      };
+      const dInfo = dangerLabels[level];
+      if (dInfo) {
+        bubble.classList.add(dInfo.cls);
+        const banner = document.createElement('div');
+        banner.className = 'perm-danger-banner';
+        banner.innerHTML = '<span>' + dInfo.label + '</span>';
+        bubble.appendChild(banner);
+      }
       row.appendChild(bubble);
       chat.appendChild(row);
       const box = document.createElement('div');
@@ -405,11 +420,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
-      // Card tool: pass input directly ({html, title}) — renderWithRegistry handles it natively
-      let parsedInput = m.input;
-      try { parsedInput = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; } catch(e) {}
-      const isCard2 = m.label && m.label.startsWith('Card') && parsedInput && parsedInput.html;
-      const cardData2 = isCard2 ? parsedInput : { label: m.label, summary: m.summary, content: m.content || '', isError: m.isError, input: parsedInput, sessionId: state.activeSessionId };
+      // Card tool: use m.content (server-processed HTML with /api/nf-file URLs via ___CARD_HTML___ marker)
+      // instead of m.input (raw LLM input with unprocessed local paths).
+      const cardData2 = m.content || { label: m.label, summary: m.summary, content: m.content || '', isError: m.isError, input: m.input, sessionId: state.activeSessionId };
       if (renderWithRegistry(card, cardData2)) {
         card.classList.add('tool-card--html');
         row.appendChild(card);
@@ -418,7 +431,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-        const detailHtml = buildToolDetail(parsedInput, m.label);
+        const detailHtml = buildToolDetail(m.input, m.label);
         const highlightHtml = renderHighlightedContent(m.content, m.label);
         const bodyHtml = (detailHtml + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
@@ -477,6 +490,21 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       row.className = 'row ai';
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
+      // Add danger level styling if applicable
+      const level = m.dangerLevel || 0;
+      const dangerLabels = {
+        1: { cls: 'perm-warning', label: 'May cause data loss' },
+        2: { cls: 'perm-dangerous', label: 'Dangerous operation' },
+        3: { cls: 'perm-critical', label: 'Critical operation' }
+      };
+      const dInfo = dangerLabels[level];
+      if (dInfo) {
+        bubble.classList.add(dInfo.cls);
+        const banner = document.createElement('div');
+        banner.className = 'perm-danger-banner';
+        banner.innerHTML = '<span>' + dInfo.label + '</span>';
+        bubble.appendChild(banner);
+      }
       row.appendChild(bubble);
       fragment.appendChild(row);
       const box = document.createElement('div');
