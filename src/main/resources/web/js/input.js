@@ -41,6 +41,41 @@ const slashCommands = {
     run: () => {
       sendWs({type: 'getModelOptions', sessionId: state.activeSessionId});
     }
+  },
+  '/bypass': {
+    desc: () => t('slash.bypass'),
+    run: () => {
+      // Show a selection card to toggle bypass-all mode
+      if (!state.currentAiBubble) {
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        state.currentAiBubble = document.createElement('div');
+        state.currentAiBubble.className = 'bubble ai';
+        row.appendChild(state.currentAiBubble);
+        state.dom.chat.appendChild(row);
+      }
+      const isEnabled = state.bypassAllPermission;
+      import('./chat.js').then(({ showOptions }) => {
+        showOptions(state.currentAiBubble, [
+          {
+            question: isEnabled ? t('slash.bypassDisableQ') : t('slash.bypassEnableQ'),
+            options: [
+              { label: isEnabled ? t('slash.bypassDisable') : t('slash.bypassEnable'), desc: t('slash.bypassDesc') },
+              { label: t('chat.cancel'), desc: '' }
+            ],
+            allowOther: false
+          }
+        ], (answers) => {
+          const confirmed = answers[0] === (isEnabled ? t('slash.bypassDisable') : t('slash.bypassEnable'));
+          if (confirmed) {
+            state.bypassAllPermission = !isEnabled;
+            renderSystemBubble(
+              state.bypassAllPermission ? t('slash.bypassEnabled') : t('slash.bypassDisabled')
+            );
+          }
+        }, t('chat.apply'));
+      });
+    }
   }
 };
 
