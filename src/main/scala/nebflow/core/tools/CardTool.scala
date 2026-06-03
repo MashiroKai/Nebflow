@@ -139,9 +139,11 @@ object CardTool extends Tool:
     """Renders HTML in a sandboxed iframe. For diagrams, animations, spatial layouts — not text.
 If Markdown suffices, do NOT use this tool.
 
-## Plots & charts: use Python/ROOT, not SVG
+## Use professional tools for complex visuals
 
-For any data visualization (plots, charts, histograms), run Python+matplotlib via Bash first, save to /tmp/xxx.png, then embed with this tool. Only use hand-written SVG for simple flowcharts/schematics.
+Do NOT hand-craft everything with raw SVG/CSS. For plots, charts, animations, simulations, or any specialized visualization, use the appropriate professional tool (matplotlib, ROOT, gnuplot, manim, D3.js, etc.) via Bash to generate the output, then embed the result here. Choose the right tool for the task — e.g. ROOT for physics spectra, manim for animated math demos. Only use hand-written SVG/CSS for simple diagrams and flowcharts.
+
+To embed generated images: save to a local path (e.g. /tmp/xxx.png), then use `<img src="/tmp/xxx.png">`.
 
 ## Style rules
 
@@ -156,10 +158,10 @@ Colors: ALWAYS use CSS variables (var(--color-text), var(--color-primary), var(-
 - html (string, required): HTML with inline CSS. Dark mode via var(--color-*). No JS execution.
 - title (string, optional): title above card.
 
-Example (plot):
+Example (embedded image):
 {"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;max-width:800px;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}
 
-Example (SVG):
+Example (SVG diagram):
 {"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 400 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"50\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"80\" height=\"40\" rx=\"6\" fill=\"var(--color-primary)\"/><text x=\"220\" y=\"85\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}"""
 
   /** Dynamic description: base tool description + user design prompt (if present). */
