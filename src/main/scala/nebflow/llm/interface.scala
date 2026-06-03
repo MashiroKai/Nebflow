@@ -12,6 +12,37 @@ import scala.concurrent.duration.*
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
 
+  /**
+   * Stream pipe: raises TimeoutException if no element passes through within `d`.
+   * Resets the timer on each element. Detects hung LLM connections (e.g. provider
+   * sends initial events then stalls).
+   *
+   * Uses System.currentTimeMillis() (not nanoTime) because nanoTime freezes during
+   * Mac sleep/wake, which would prevent timeout detection after wake.
+   */
+  private def inactivityTimeout[O](d: FiniteDuration): fs2.Pipe[IO, O, O] =
+    val timeoutEx = new java.util.concurrent.TimeoutException(
+      s"LLM stream inactive for ${d.toSeconds}s"
+    )
+    in =>
+      fs2.Stream.eval(IO.ref(System.currentTimeMillis())).flatMap { lastActivity =>
+        val main = in.evalTap(_ => lastActivity.set(System.currentTimeMillis()))
+        // Check at 1/5 of the timeout interval for timely detection (min 5s, max 30s)
+        val checkInterval = math.max(math.min(d.toMillis / 5, 30000L), 5000L).millis
+        val watchdog = fs2.Stream
+          .awakeEvery[IO](checkInterval)
+          .evalMap { _ =>
+            IO(System.currentTimeMillis()).flatMap { now =>
+              lastActivity.get.flatMap { last =>
+                if now - last > d.toMillis then IO.raiseError(timeoutEx)
+                else IO.unit
+              }
+            }
+          }
+          .drain
+        main.concurrently(watchdog)
+      }
+
   def createLlm(
     sessionOverrides: Ref[IO, Map[String, ModelCandidate]],
     options: Option[LlmOptions] = None,
@@ -163,6 +194,10 @@ object LlmInterface:
                                 )
                             )
                             stream
+                              // Per-provider inactivity timeout: detect hung SSE connections
+                              // (HTTP alive but no meaningful data). Applied per-provider so
+                              // that a timeout on one provider allows the fallback to try the next.
+                              .through(inactivityTimeout(Defaults.LlmStreamInactivitySec.seconds))
                               .evalTap { chunk =>
                                 chunk match
                                   case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) |
@@ -184,10 +219,16 @@ object LlmInterface:
                                 case other => IO.pure(other)
                               }
                               .handleErrorWith { err =>
+                                val classification = Fallback.classifyError(err)
+                                // Inactivity timeout is a transient error — always allow fallback
+                                // even when lockedRef is true (provider sent partial content then hung).
+                                // For other errors, if content was already streamed (locked), propagate
+                                // upward to avoid duplicating partial output.
+                                val isTimeout = classification.reason == FailoverReason.Timeout
                                 fs2.Stream.eval(lockedRef.get).flatMap { locked =>
-                                  if locked then fs2.Stream.eval(IO.raiseError(err))
+                                  if locked && !isTimeout then fs2.Stream.eval(IO.raiseError(err))
                                   else
-                                    val classification = Fallback.classifyError(err)
+                                    val resetLock = if isTimeout && locked then lockedRef.set(false) else IO.unit
                                     val attempt = FallbackAttempt(
                                       candidate.providerId,
                                       candidate.model,
@@ -202,29 +243,35 @@ object LlmInterface:
 
                                     if classification.permanence == ErrorPermanence.Permanent then
                                       fs2.Stream.eval(
+                                        resetLock *>
                                         logger.warn(
                                           s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
                                         )
                                           *> failureRef.update(_ :+ attempt)
                                           *> notify
                                       ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
-                                    else if retriesLeft > 0 then
+                                    else if retriesLeft > 0 && !isTimeout then
+                                      // Only retry same provider for non-timeout errors.
+                                      // Timeout means the provider is unresponsive — skip to next.
                                       val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
                                       val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
                                       fs2.Stream.eval(
-                                        notify *> logger.warn(
+                                        resetLock *> notify *> logger.warn(
                                           s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
                                         ) *> IO.sleep(delay.millis)
                                       ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
                                     else
+                                      // Timeout or retries exhausted — try next provider
+                                      val skipMsg = if isTimeout then "inactivity timeout, skipping to next provider" else "retries exhausted"
                                       fs2.Stream.eval(
-                                        logger.warn(
-                                          s"Stream fallback: ${candidate.providerId}/${candidate.model} retries exhausted"
+                                        resetLock *> logger.warn(
+                                          s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
                                         )
                                           *> failureRef.update(_ :+ attempt)
                                           *> notify
                                       ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                     end if
+                                  end if
                                 }
                               }
 

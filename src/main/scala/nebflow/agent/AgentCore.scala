@@ -411,9 +411,10 @@ private[agent] trait AgentCore:
             thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
             systemStable = Some(systemStable)
           )
+          // Inactivity timeout is now per-provider inside LlmInterface.sendStream,
+          // so the fallback mechanism can switch providers on timeout.
           result <- resources.llm
             .sendStream(request, onAttempt = Some(onAttemptCb))
-            .through(withInactivityTimeout(Defaults.LlmStreamInactivitySec.seconds))
             .through(streamEmitter(stateForLlm.wsSend, ctx, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
             .compile
             .toList
@@ -916,38 +917,7 @@ private[agent] trait AgentCore:
     )
   end aggregateChunks
 
-  /**
-   * Stream pipe: raises TimeoutException if no element passes through within `d`.
-   * Resets the timer on each element. Detects hung LLM connections (e.g. after Mac sleep/wake).
-   *
-   * Uses System.currentTimeMillis() (not nanoTime) because nanoTime freezes during
-   * Mac sleep/wake, which would prevent timeout detection after wake.
-   * The concurrent watchdog runs alongside the main stream and is cancelled when the
-   * main stream completes normally. Watchdog errors propagate via Concurrent semantics.
-   */
-  private def withInactivityTimeout[O](d: FiniteDuration): fs2.Pipe[IO, O, O] =
-    val timeoutEx = new java.util.concurrent.TimeoutException(
-      s"LLM stream inactive for ${d.toSeconds}s"
-    )
-    in =>
-      fs2.Stream.eval(IO.ref(System.currentTimeMillis())).flatMap { lastActivity =>
-        val main = in.evalTap(_ => lastActivity.set(System.currentTimeMillis()))
-        // Check at half the timeout interval for timely detection (min 5s, max 30s)
-        val checkInterval = math.max(math.min(d.toMillis / 5, 30000L), 5000L).millis
-        val watchdog = fs2.Stream
-          .awakeEvery[IO](checkInterval)
-          .evalMap { _ =>
-            IO(System.currentTimeMillis()).flatMap { now =>
-              lastActivity.get.flatMap { last =>
-                if now - last > d.toMillis then IO.raiseError(timeoutEx)
-                else IO.unit
-              }
-            }
-          }
-          .drain
-        main.concurrently(watchdog)
-      }
-  end withInactivityTimeout
+
 
   // ============================================================
   // Prompt / tool helpers
