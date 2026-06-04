@@ -3,7 +3,7 @@ package nebflow.core.skill
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Encoder, Json}
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathUtil}
 
 final case class SkillInfo(name: String, description: String, filePath: String)
 
@@ -18,14 +18,56 @@ final case class SkillContent(content: String, baseDir: String)
 object SkillService:
   private val logger = NebflowLogger.forName("nebflow.skill")
 
-  private val skillsDir: os.Path =
-    os.home / ".nebflow" / "skills"
+  private def skillsDir: os.Path =
+    PathUtil.dataRoot / "skills"
+
+  /** Create skills directory and a starter template on first run. */
+  def ensureDefaults(): IO[Unit] = IO.delay {
+    if !os.isDir(skillsDir) then
+      os.makeDir.all(skillsDir)
+      val exampleDir = skillsDir / "_example"
+      val exampleFile = exampleDir / "skill.md"
+      if !os.isFile(exampleFile) then os.write(exampleFile, exampleSkillMd, createFolders = true)
+      logger.info(s"Created skills directory at $skillsDir with starter template")
+  }
+
+  private val exampleSkillMd: String =
+    """---
+      |name: example
+      |description: An example skill — copy this folder to create your own
+      |language: zh
+      |---
+      |
+      |# Example Skill
+      |
+      |This is a starter template. Replace this content with your own workflow instructions.
+      |
+      |## Purpose
+      |
+      |Describe what this skill does in one sentence.
+      |
+      |## Steps
+      |
+      |1. Step one
+      |2. Step two
+      |3. Step three
+      |
+      |## Rules
+      |
+      |- Rule one
+      |- Rule two
+      |
+      |## Output
+      |
+      |Describe the expected output format.
+      |""".stripMargin
 
   /** Scan ~/.nebflow/skills/ for skill directories. Each subdirectory must contain skill.md. */
   def listSkills(): IO[List[SkillInfo]] = IO.delay {
     if !os.isDir(skillsDir) then Nil
     else
       os.list(skillsDir)
+        .filter(_.baseName != "_example") // skip starter template
         .flatMap { subDir =>
           if !os.isDir(subDir) then None
           else

@@ -27,23 +27,56 @@ object CardTool extends Tool:
   /** Max file size for HTTP-served files (200 MB). */
   private val MaxFileSize = 200 * 1024 * 1024
 
-  /** Allowed extensions for /api/nf-file proxy — prevents reading arbitrary files via src=.
-   *  Includes media, web assets, data files, and 3D model formats for visualization. */
+  /**
+   * Allowed extensions for /api/nf-file proxy — prevents reading arbitrary files via src=.
+   *  Includes media, web assets, data files, and 3D model formats for visualization.
+   */
   private val AllowedExtensions = Set(
     // images
-    "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp", "avif", "tiff", "tif",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "svg",
+    "webp",
+    "ico",
+    "bmp",
+    "avif",
+    "tiff",
+    "tif",
     // video
-    "mp4", "webm", "ogg", "ogv", "mov", "avi",
+    "mp4",
+    "webm",
+    "ogg",
+    "ogv",
+    "mov",
+    "avi",
     // audio
-    "mp3", "wav", "oga", "flac", "aac", "m4a",
+    "mp3",
+    "wav",
+    "oga",
+    "flac",
+    "aac",
+    "m4a",
     // fonts
-    "woff", "woff2", "ttf", "otf", "eot",
+    "woff",
+    "woff2",
+    "ttf",
+    "otf",
+    "eot",
     // documents
     "pdf",
     // web assets (scripts, styles, data)
-    "js", "mjs", "css", "json", "wasm",
+    "js",
+    "mjs",
+    "css",
+    "json",
+    "wasm",
     // 3D models
-    "obj", "stl", "gltf", "glb"
+    "obj",
+    "stl",
+    "gltf",
+    "glb"
   )
 
   /** Regex matching src= attributes with both single and double quotes. */
@@ -129,7 +162,6 @@ object CardTool extends Tool:
       result
     end if
   end embedLocalFiles
-
 
   val name = "Card"
 
