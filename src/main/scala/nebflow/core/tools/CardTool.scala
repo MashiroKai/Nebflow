@@ -149,7 +149,8 @@ object CardTool extends Tool:
     )
 
     // Process svg tags: replace width:100% with viewBox width
-    val svgWithVbRegex = """(?i)(<svg\b[^>]*viewBox=["']\S+\s+(\d+(?:\.\d+)?)\s+\S+["'][^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
+    // viewBox format: "minX minY width height" — we need the 3rd number
+    val svgWithVbRegex = """(?i)(<svg\b[^>]*viewBox=["']\S+\s+\S+\s+(\d+(?:\.\d+)?)\s+\S+["'][^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
     val fixed2 = svgWithVbRegex.replaceAllIn(fixed1, m =>
       changed = true
       val vbWidth = m.group(2)
