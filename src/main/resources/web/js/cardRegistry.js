@@ -88,12 +88,19 @@ window.addEventListener('message', (e) => {
     // Track whether height actually changed (first measurement always counts as "changed")
     const heightChanged = !oldHeight || oldHeight !== newHeight;
     iframe.style.height = newHeight;
-    // On first measurement: set wrap width and reveal
-    if (isFirst) {
-      if (e.data._nfCardW) {
-        const wrap = iframe.closest('.html-card-wrap');
-        if (wrap) wrap.style.width = e.data._nfCardW + 'px';
+    // Sync wrap width: grow-only to avoid fit-content feedback loop.
+    // This handles late-loading images that expand after first measurement.
+    if (e.data._nfCardW) {
+      const wrap = iframe.closest('.html-card-wrap');
+      if (wrap) {
+        const currentWrapW = parseInt(wrap.style.width) || 0;
+        if (e.data._nfCardW > currentWrapW) {
+          wrap.style.width = e.data._nfCardW + 'px';
+        }
       }
+    }
+    // On first measurement: reveal
+    if (isFirst) {
       iframe.style.opacity = '1';
     }
     // If height changed, ensure scroll position still shows the card bottom.
