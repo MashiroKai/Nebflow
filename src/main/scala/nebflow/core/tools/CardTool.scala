@@ -130,43 +130,6 @@ object CardTool extends Tool:
     end if
   end embedLocalFiles
 
-  /**
-   * Fix width:100% on img/svg inside fit-content card.
-   * fit-content + width:100% creates a deadlock (element says "fill parent",
-   * parent says "shrink to content" → collapses to zero).
-   * For img: just strip width:100% (natural size + max-width:100% handles overflow).
-   * For svg: replace width:100% with viewBox width if available, otherwise strip.
-   */
-  private def fixFitContent(html: String): String =
-    var changed = false
-    val result = new StringBuilder(html.length)
-
-    // Process img tags: strip width:100%
-    val imgRegex = """(?i)(<img\b[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
-    val fixed1 = imgRegex.replaceAllIn(html, m =>
-      changed = true
-      s"${m.group(1)}${m.group(2)}"
-    )
-
-    // Process svg tags: replace width:100% with viewBox width
-    // viewBox format: "minX minY width height" — we need the 3rd number
-    val svgWithVbRegex = """(?i)(<svg\b[^>]*viewBox=["']\S+\s+\S+\s+(\d+(?:\.\d+)?)\s+\S+["'][^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
-    val fixed2 = svgWithVbRegex.replaceAllIn(fixed1, m =>
-      changed = true
-      val vbWidth = m.group(2)
-      s"${m.group(1)}width:${vbWidth}px;${m.group(3)}"
-    )
-
-    // Process svg tags without viewBox: strip width:100% (will use default 300px)
-    val svgNoVbRegex = """(?i)(<svg\b(?![^>]*viewBox=)[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
-    val fixed3 = svgNoVbRegex.replaceAllIn(fixed2, m =>
-      changed = true
-      s"${m.group(1)}${m.group(2)}"
-    )
-
-    if changed then logger.debug("Fixed width:100% deadlock in card HTML")
-    fixed3
-  end fixFitContent
 
   val name = "Card"
 
@@ -239,7 +202,7 @@ Example (interactive 3D with Three.js):
       case Some(rawHtml) =>
         val title = input("title").flatMap(_.asString).getOrElse("")
         IO.blocking {
-          val html = fixFitContent(embedLocalFiles(rawHtml))
+          val html = embedLocalFiles(rawHtml)
           val payload = Json
             .obj(
               "html" -> html.asJson,
