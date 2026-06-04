@@ -95,7 +95,7 @@ object Repl:
    * Static environment info — injected once into system prompt, never updated per-turn.
    * Git state is intentionally omitted; agents should use Bash to run git commands on demand.
    */
-  def buildEnvInfo(projectRoot: String): String =
+  def buildEnvInfo(projectRoot: String, chatWidth: Int = 0): String =
     val sb = new StringBuilder
     sb.append("## Environment\n\n")
     sb.append("| Property | Value |\n")
@@ -105,6 +105,7 @@ object Repl:
     sb.append(s"| Shell | ${sys.env.getOrElse("SHELL", "unknown")} |\n")
     sb.append(s"| OS Version | ${sys.props.getOrElse("os.name", "")} ${sys.props.getOrElse("os.version", "")} |\n")
     sb.append(s"| Nebflow version | v${nebflow.Version.string} |\n")
+    if chatWidth > 0 then sb.append(s"| Chat width | ~${chatWidth}px |\n")
     sb.toString
   end buildEnvInfo
 end Repl

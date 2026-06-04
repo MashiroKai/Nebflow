@@ -450,7 +450,8 @@ export function send() {
         mimeType: a.mimeType, data: a.data, name: a.name
       })),
       clientMessageId,
-      sessionId: state.activeSessionId
+      sessionId: state.activeSessionId,
+      chatWidth: document.getElementById('chat')?.clientWidth || 0
     });
   } catch (e) {
     console.error('WebSocket send failed:', e);
@@ -541,7 +542,8 @@ export function injectUserMessage(text, options = {}) {
     attachments: [],
     clientMessageId,
     sessionId,
-    injected: true
+    injected: true,
+    chatWidth: document.getElementById('chat')?.clientWidth || 0
   });
 
   // Mark session as busy

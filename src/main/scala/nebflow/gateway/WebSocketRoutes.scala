@@ -1607,6 +1607,7 @@ class WebSocketRoutes(
           val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
           val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
           val msgSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val chatWidth = json.hcursor.downField("chatWidth").as[Int].getOrElse(0)
 
           if content.nonEmpty || attachments.nonEmpty then
             rateLimiter.check("ws").flatMap { allowed =>
@@ -1689,7 +1690,7 @@ class WebSocketRoutes(
                       routeToAgent(msgSessionId)(ref =>
                         IO(
                           ref ! AgentCommand
-                            .UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty))
+                            .UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty), chatWidth)
                         )
                       )
                     }
