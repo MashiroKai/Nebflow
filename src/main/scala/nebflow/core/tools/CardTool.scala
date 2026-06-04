@@ -156,9 +156,9 @@ object CardTool extends Tool:
 
 ## Generate with tools, display with Card
 
-Card is a display container. Pick the right tool to create content, then show it here:
+Card is a display container — it does NOT draw. Pick the right tool to create content, then show it here:
 
-- **Data & plots** → matplotlib, gnuplot, ROOT via Bash → embed as `<img>`
+- **Data & plots** → matplotlib, gnuplot, ROOT via Bash → embed as `<img>`. NEVER hand-draw data charts with SVG — they are inaccurate and unreliable.
 - **Structure & layout** → SVG/CSS (flowcharts, architecture, state machines, schematics)
 - **Animation & interaction** → JS + CDN libraries (Three.js for 3D, D3.js for charts, p5.js for creative coding)
 
