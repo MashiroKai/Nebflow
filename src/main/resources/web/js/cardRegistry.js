@@ -114,6 +114,41 @@ window.addEventListener('message', (e) => {
   }
 });
 
+// ===== Card interaction: accumulate + submit =====
+const _cardAccumulator = {};
+
+/**
+ * Listen for card interaction messages.
+ * Protocol:
+ *   { _nfCardAction: 'accumulate', data: {...} }  — store data, no LLM trigger
+ *   { _nfCardAction: 'submit', data: {...} }      — send accumulated data to LLM
+ * Cards can send accumulate on each user action (select, click, etc.),
+ * then submit when the user clicks a confirm button.
+ */
+window.addEventListener('message', (e) => {
+  if (!e.data || !e.data._nfCardAction) return;
+  const action = e.data._nfCardAction;
+  const data = e.data.data || {};
+
+  if (action === 'accumulate') {
+    // Merge into accumulator (per card iframe origin)
+    const key = e.origin;
+    if (!_cardAccumulator[key]) _cardAccumulator[key] = {};
+    Object.assign(_cardAccumulator[key], data);
+  } else if (action === 'submit') {
+    // Merge any accumulated data with the submit payload
+    const key = e.origin;
+    const accumulated = _cardAccumulator[key] || {};
+    const merged = { ...accumulated, ...data };
+    delete _cardAccumulator[key];
+
+    // Send to LLM as injected user message
+    const text = `[Card Interaction] ${JSON.stringify(merged)}`;
+    import('./input.js').then(({ injectUserMessage }) => {
+      injectUserMessage(text, { silent: false });
+    });
+  }
+});
 /** Read the nebflow auth token from cookie (set by ws.js on connect). */
 function getNfToken() {
   const match = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/);
