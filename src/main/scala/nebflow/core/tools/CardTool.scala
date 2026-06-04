@@ -155,9 +155,7 @@ object CardTool extends Tool:
     """Renders HTML in a sandboxed iframe. For diagrams, animations, spatial layouts — not text.
 If Markdown suffices, do NOT use this tool.
 
-## Use professional tools for complex visuals
-
-Do NOT hand-craft everything with raw SVG/CSS. For plots, charts, animations, simulations, or any specialized visualization, use the appropriate professional tool (matplotlib, ROOT, gnuplot, manim, D3.js, etc.) via Bash to generate the output, then embed the result here. Choose the right tool for the task — e.g. ROOT for physics spectra, manim for animated math demos. Only use-hand written SVG/CSS for simple diagrams and flowcharts.
+Accuracy and correctness come first. If a visualization involves data, numbers, or precise relationships, use a professional tool (matplotlib, gnuplot, ROOT, etc.) to generate it — then embed the result as an image. Hand-drawn SVG is for layout and simple diagrams where precision is not critical.
 
 To embed generated images: save to a local path (e.g. /tmp/xxx.png), then use `<img src="/tmp/xxx.png">`.
 
