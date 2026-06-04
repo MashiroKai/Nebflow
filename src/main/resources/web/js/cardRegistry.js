@@ -189,9 +189,11 @@ function renderHtmlCard(container, html, title) {
   const processedHtml = injectFileTokens(html);
 
   // #nf-wrap: fit-content shrinks the bubble to match content size.
-  // max-width:100% prevents overflow. LLM knows Chat width from Environment table
-  // and sets explicit widths on elements that should fill.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="width:fit-content;max-width:100%">${processedHtml}</div>${heightScript}</body></html>`;
+  // max-width:100% prevents overflow.
+  // img/svg[style*="width:100%"] override: width:100% inside fit-content causes a deadlock
+  // (element says "fill parent", parent says "shrink to content" → collapses to zero).
+  // The system fixes this automatically — LLM doesn't need to know about this.
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}img[style*="width:100%"],img[style*="width: 100%"],svg[style*="width:100%"],svg[style*="width: 100%"]{width:auto !important;max-width:100% !important;}</style></head><body><div id="nf-wrap" style="width:fit-content;max-width:100%">${processedHtml}</div>${heightScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';
