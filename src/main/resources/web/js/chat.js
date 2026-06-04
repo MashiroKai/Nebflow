@@ -135,10 +135,11 @@ export function appendAiText(text) {
 
 export function finishAi(durationMs, model) {
   if (state.currentAiBubble) {
-    if (!state.aiText) {
+    if (!state.aiText || !state.aiText.trim()) {
       const row = state.currentAiBubble.closest('.row');
       if (row) row.remove();
       state.currentAiBubble = null;
+      state.aiText = '';
       return null;
     }
     const askBox = state.currentAiBubble.querySelector('.option-box');
@@ -635,7 +636,6 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
 // ---------- AskUser ----------
 export function renderAskUser(items, askSessionId) {
-  console.log('[askUser] rendering', items?.length || 0, 'questions');
   if (!Array.isArray(items) || items.length === 0) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
