@@ -337,7 +337,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
           delta match
             case None => IO.pure(Nil)
             case Some(d) =>
-              val textChunks = d.hcursor.downField("content").as[String].toOption.filter(_.nonEmpty).toList
+              val textChunks = d.hcursor.downField("content").as[String].toOption.filter(_.trim.nonEmpty).toList
               val textDeltas = textChunks.map(StreamChunk.TextDelta.apply)
               // Some OpenAI-compatible providers (GLM, DeepSeek, etc.) return reasoning/thinking
               // content in separate fields during thinking mode. Emit them as ThinkingDelta so they
@@ -347,7 +347,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                 .as[String]
                 .toOption
                 .orElse(d.hcursor.downField("thinking").as[String].toOption)
-                .filter(_.nonEmpty)
+                .filter(_.trim.nonEmpty)
               val thinkingDeltas = thinkText.map(t => List(StreamChunk.ThinkingDelta(t))).getOrElse(Nil)
               val allTextDeltas = thinkingDeltas ++ textDeltas
 
@@ -380,13 +380,21 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                     .flatMap { acc =>
                       if finishReason.contains("tool_calls") || finishReason.contains("function_call") then
                         toolCallState.getAndSet(Map.empty).map { m =>
-                          acc ++ m.values.toList.map { case (id, name, sb) =>
+                          val toolChunks = m.values.toList.map { case (id, name, sb) =>
                             val input = parse(sb.toString).flatMap(_.as[JsonObject]).getOrElse(JsonObject.empty)
                             StreamChunk.ToolCallChunk(ToolCall(id, name, input))
                           }
+                          // Include any text/thinking deltas from this chunk AND a Done chunk,
+                          // consistent with the case None branch below.
+                          allTextDeltas ++ acc ++ toolChunks :+ StreamChunk.Done(
+                            finishReason,
+                            usageOpt,
+                            Some(makeMeta),
+                            None
+                          )
                         }
                       else if finishReason.isDefined then
-                        IO.pure(acc :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
+                        IO.pure(allTextDeltas ++ acc :+ StreamChunk.Done(finishReason, usageOpt, Some(makeMeta), None))
                       else IO.pure(allTextDeltas ++ acc)
                     }
                 case None =>

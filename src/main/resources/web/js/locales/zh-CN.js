@@ -164,6 +164,9 @@ export default {
   'rules.placeholder': '输入此文件夹的项目规则…\n子文件夹会自动继承父文件夹的规则。',
   'rules.delete': '删除',
 
+  // === Path ===
+  'path.root': '根目录',
+
   // === Path Picker ===
   'pathPicker.title': '选择项目目录',
   'pathPicker.select': '选择此目录',
