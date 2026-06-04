@@ -577,8 +577,6 @@ onMessage('usageUpdate', (msg) => {
 });
 
 onMessage('done', (msg) => {
-  console.log('[done] raw msg:', JSON.stringify(msg));
-  console.log('[done] contextWindow:', msg.contextWindow, 'inputTokens:', msg.inputTokens, 'model:', msg.model);
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   // Defensive: clear attention when turn ends (in case answer callback didn't fire)
@@ -587,7 +585,6 @@ onMessage('done', (msg) => {
   delete state.sessionPendingTools[sid];
   // Turn is complete — clear turnExpecting so stray thinkingDelta won't create bubbles
   if (sid) delete state.turnExpecting[sid];
-  console.log('[done] handler', { sid, activeSessionId: state.activeSessionId, isActive: isActive(msg), hasBubble: !!state.currentAiBubble, aiTextLen: (state.aiText || '').length, durationMs });
   // Store model info for this session
   if (sid && (msg.model || msg.contextWindow || msg.inputTokens != null)) {
     state.sessionModelInfo[sid] = {
@@ -868,9 +865,6 @@ function clearHistoryIndicators() {
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg) => {
-  console.log('[historyPage] sessionId:', msg.sessionId, 'msgs:', msg.messages?.length, 'first few ai with dur:',
-    msg.messages?.filter(m => m.type === 'ai' && m.durationMs != null).slice(0, 3).map(m => ({ dur: m.durationMs, model: m.model, text: m.text?.slice(0, 30) }))
-  );
   const sid = msg.sessionId;
   if (sid !== state.activeSessionId) return;
   state.historyLoading = false;
@@ -1066,7 +1060,7 @@ onMessage('historyPage', (msg) => {
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
     // if the response offset is >= what we already have, skip it to avoid duplicates.
     if (msg.offset >= state.historyOffset && state.historyOffset > 0) {
-      console.log('[historyPage] skipping duplicate response, offset:', msg.offset, '>= current:', state.historyOffset);
+      // Skipping duplicate response
       return;
     }
     const chat = state.dom.chat;
@@ -1717,7 +1711,6 @@ window.__showDeleteModal = showDeleteModal;
 window.__showDeleteFolderModal = showDeleteFolderModal;
 
 // ---------- 5. Initialize UI modules ----------
-console.log('[main] initializing modules...');
 applyLocaleToHtml(); // Apply locale to static HTML elements
 initNavTabs();
 initModals();
@@ -1784,7 +1777,6 @@ window.addEventListener('locale-changed', () => {
 // New Folder button
 document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(state.activeFolderId));
 
-console.log('[main] modules initialized, connecting ws...');
 
 // Scroll listener
 state.dom.chat.addEventListener('scroll', () => {
