@@ -19,7 +19,8 @@ object AgentCommand:
     text: String,
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]] = None,
     clientMessageId: Option[String] = None,
-    blocks: Option[List[ContentBlock]] = None
+    blocks: Option[List[ContentBlock]] = None,
+    chatWidth: Int = 0
   ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 
@@ -487,7 +488,9 @@ case class SessionContext(
   /** This session's folder ID (for rules re-resolution). */
   folderId: Option[String] = None,
   /** Lifecycle-cached prompt content. Resolved on first turn, reused until session reset. */
-  lifecycle: Option[LifecycleContext] = None
+  lifecycle: Option[LifecycleContext] = None,
+  /** Chat container width in pixels, reported by frontend. Used by Card tool for content sizing. */
+  chatWidth: Int = 0
 )
 
 /** Pending user interaction deferreds. */

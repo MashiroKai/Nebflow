@@ -143,7 +143,7 @@ object AgentActor extends AgentCore with AgentSession:
       }
 
     Behaviors.receiveMessage:
-      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks) =>
+      case AgentCommand.UserInput(text, replyTo, clientMessageId, blocks, chatWidth) =>
         // Cancel the delayed sessionBusy(false) from idle entry — a new turn is starting
         idleBusyCancelToken.set(true)
         // Dedup check (root agent session management)
@@ -171,18 +171,23 @@ object AgentActor extends AgentCore with AgentSession:
                 case None => dedupedState
             else dedupedState
 
+          // Update chatWidth from frontend report (persists across turns in SessionContext)
+          val stateWithWidth =
+            if chatWidth > 0 then stateWithLang.copy(session = stateWithLang.session.copy(chatWidth = chatWidth))
+            else stateWithLang
+
           val userMsg = blocks.filter(_.nonEmpty) match
             case Some(bl) => Message(MessageRole.User, Right(bl))
             case None => Message(MessageRole.User, Left(text))
-          val newMessages = stateWithLang.messages :+ userMsg
+          val newMessages = stateWithWidth.messages :+ userMsg
           // Notify frontend immediately that this session is busy (not only
           // when LLM starts streaming).  This matters for multi-tab scenarios
           // and sidebar session indicators — without it, other clients only
           // see the busy state after the first thinking/text delta arrives.
           if depth == 0 then
-            stateWithLang.sessionId.foreach { sid =>
+            stateWithWidth.sessionId.foreach { sid =>
               resources.dispatcher.unsafeRunAndForget(
-                emitSessionBusy(stateWithLang.wsSend, sid, busy = true)
+                emitSessionBusy(stateWithWidth.wsSend, sid, busy = true)
               )
             }
           // Memory is loaded EveryTurn via TurnContext — no need to preload here
@@ -191,7 +196,7 @@ object AgentActor extends AgentCore with AgentSession:
             resources,
             depth,
             parentRef,
-            stateWithLang.withMessages(newMessages),
+            stateWithWidth.withMessages(newMessages),
             stash,
             ctx,
             replyTo
