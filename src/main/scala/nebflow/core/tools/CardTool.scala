@@ -134,14 +134,37 @@ object CardTool extends Tool:
    * Fix width:100% on img/svg inside fit-content card.
    * fit-content + width:100% creates a deadlock (element says "fill parent",
    * parent says "shrink to content" → collapses to zero).
-   * Replace with natural sizing so the stored HTML matches what the user sees.
+   * For img: just strip width:100% (natural size + max-width:100% handles overflow).
+   * For svg: replace width:100% with viewBox width if available, otherwise strip.
    */
-  private val Width100Regex = """(?i)(<(?:img|svg)\b[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
-
   private def fixFitContent(html: String): String =
-    val result = Width100Regex.replaceAllIn(html, m => s"${m.group(1)}${m.group(2)}")
-    if result != html then logger.debug("Fixed width:100% deadlock in card HTML")
-    result
+    var changed = false
+    val result = new StringBuilder(html.length)
+
+    // Process img tags: strip width:100%
+    val imgRegex = """(?i)(<img\b[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
+    val fixed1 = imgRegex.replaceAllIn(html, m =>
+      changed = true
+      s"${m.group(1)}${m.group(2)}"
+    )
+
+    // Process svg tags: replace width:100% with viewBox width
+    val svgWithVbRegex = """(?i)(<svg\b[^>]*viewBox=["']\S+\s+(\d+(?:\.\d+)?)\s+\S+["'][^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
+    val fixed2 = svgWithVbRegex.replaceAllIn(fixed1, m =>
+      changed = true
+      val vbWidth = m.group(2)
+      s"${m.group(1)}width:${vbWidth}px;${m.group(3)}"
+    )
+
+    // Process svg tags without viewBox: strip width:100% (will use default 300px)
+    val svgNoVbRegex = """(?i)(<svg\b(?![^>]*viewBox=)[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
+    val fixed3 = svgNoVbRegex.replaceAllIn(fixed2, m =>
+      changed = true
+      s"${m.group(1)}${m.group(2)}"
+    )
+
+    if changed then logger.debug("Fixed width:100% deadlock in card HTML")
+    fixed3
   end fixFitContent
 
   val name = "Card"
