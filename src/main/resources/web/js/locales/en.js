@@ -164,6 +164,9 @@ export default {
   'rules.placeholder': 'Enter project rules for this folder...\nSub-folders automatically inherit parent rules.',
   'rules.delete': 'Delete',
 
+  // === Path ===
+  'path.root': 'Root',
+
   // === Path Picker ===
   'pathPicker.title': 'Select Project Directory',
   'pathPicker.select': 'Select This Folder',

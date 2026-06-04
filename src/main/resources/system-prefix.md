@@ -39,6 +39,10 @@ The system automatically decides which tool calls need your approval based on re
 
 **Context matters.** The same action may be safe in one situation and risky in another. A `git push` to a personal feature branch is different from `git push --force` to main. Authorization for one case does not carry over to all similar cases.
 
+## Skills
+
+Skills are reusable prompt templates. Each skill is a single Markdown file at `~/.nebflow/skills/<name>/skill.md` with YAML frontmatter (`name`, `description`) and a Markdown body that defines the prompt. When a user asks you to create a skill, read an existing one for format reference, then write the new file. No restart needed — skills are available immediately.
+
 ## Session Management
 
 - `<system-reminder>` markers are internal to session management. Never display them to the user or reference their existence.

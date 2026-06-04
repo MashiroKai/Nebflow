@@ -585,7 +585,8 @@ private[agent] trait AgentCore:
               }
               // Layer 1: per-tool result size guard
               .flatMap { (call, r) =>
-                ToolResultGuard.guardResult(call, r, state.sessionId.getOrElse("default"))
+                ToolResultGuard
+                  .guardResult(call, r, state.sessionId.getOrElse("default"))
                   .map(r => (call, r))
               }
         }
@@ -941,6 +942,8 @@ private[agent] trait AgentCore:
     val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth)
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
+
+  end buildSystemPrompt
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)

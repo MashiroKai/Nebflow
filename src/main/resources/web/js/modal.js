@@ -41,15 +41,17 @@ export function startInlineNewSession() {
   const sessionList = state.dom.sessionList;
   if (sessionList.querySelector('.new-session-input')) return;
   const folderId = state.activeFolderId || getCurrentSessionFolderId();
-  const targetPath = getTargetPath(folderId);
+  const targetPath = getTargetPath(folderId) || t('path.root');
   const wrapper = document.createElement('div');
   wrapper.className = 'session-item';
-  if (targetPath) {
-    const pathLabel = document.createElement('div');
-    pathLabel.className = 'creation-path';
-    pathLabel.textContent = targetPath + ' >';
-    wrapper.appendChild(pathLabel);
-  }
+  wrapper.style.flexDirection = 'column';
+  wrapper.style.alignItems = 'stretch';
+  wrapper.style.gap = '2px';
+  const pathLabel = document.createElement('div');
+  pathLabel.className = 'creation-path';
+  pathLabel.style.width = '100%';
+  pathLabel.textContent = targetPath + ' >';
+  wrapper.appendChild(pathLabel);
   const input = document.createElement('input');
   input.className = 'new-session-input';
   input.type = 'text';

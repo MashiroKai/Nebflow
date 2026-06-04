@@ -537,22 +537,37 @@ function setupThresholdDrag(wrap, info, sid) {
       const clampedRatio = Math.max(0.01, Math.min(0.50, newBufferRatio));
 
       // Persist to nebflow.json
-      if (!state.parsedConfig) state.parsedConfig = {};
-      if (!state.parsedConfig.compact) state.parsedConfig.compact = {};
-      state.parsedConfig.compact.bufferRatio = clampedRatio;
       // Update in-memory threshold for immediate display
       const newThreshold = 1.0 - clampedRatio;
       if (state.sessionModelInfo[sid]) {
         state.sessionModelInfo[sid].compactThreshold = newThreshold;
       }
 
-      // Debounce save
+      // Debounce save — fetch fresh config first to avoid overwriting server-side changes
       clearTimeout(state._thresholdSaveTimer);
       state._thresholdSaveTimer = setTimeout(() => {
-        const json = JSON.stringify(state.parsedConfig, null, 2);
-        state.configText = json;
-        sendWs({type: 'updateConfig', config: json});
+        // Use a one-time listener to get the latest config from server before sending
+        const freshConfig = state._freshConfigText || state.configText;
+        try {
+          const parsed = JSON.parse(freshConfig);
+          if (!parsed.compact) parsed.compact = {};
+          parsed.compact.bufferRatio = clampedRatio;
+          const json = JSON.stringify(parsed, null, 2);
+          state.parsedConfig = parsed;
+          state.configText = json;
+          sendWs({type: 'updateConfig', config: json});
+        } catch {
+          // Fallback: send with in-memory config (mergeConfig will preserve absent keys)
+          if (!state.parsedConfig) state.parsedConfig = {};
+          if (!state.parsedConfig.compact) state.parsedConfig.compact = {};
+          state.parsedConfig.compact.bufferRatio = clampedRatio;
+          const json = JSON.stringify(state.parsedConfig, null, 2);
+          state.configText = json;
+          sendWs({type: 'updateConfig', config: json});
+        }
       }, 300);
+      // Request fresh config from server (response will update state._freshConfigText)
+      sendWs({type: 'getConfig'});
     };
 
     document.addEventListener('mousemove', onMove);
@@ -1303,6 +1318,7 @@ onMessage('mcpServersUpdate', (msg) => {
 
 onMessage('configData', (msg) => {
   state.configText = msg.config || '';
+  state._freshConfigText = state.configText; // Cache for slider's fetch-before-save
   try { state.parsedConfig = JSON.parse(state.configText); } catch { state.parsedConfig = null; }
   state.configDirty = false;
   const editor = document.getElementById('config-editor');
