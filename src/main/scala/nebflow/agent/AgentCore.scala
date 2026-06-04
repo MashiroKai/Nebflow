@@ -339,7 +339,8 @@ private[agent] trait AgentCore:
             resources,
             turnCtx.systemPrefix,
             turnCtx.projectRoot,
-            turnCtx.rulesMd
+            turnCtx.rulesMd,
+            state.session.chatWidth
           )
           // --- reminders (async) ---
           // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
@@ -930,13 +931,14 @@ private[agent] trait AgentCore:
     resources: SharedResources,
     systemPrefix: String,
     sessionProjectRoot: Option[String] = None,
-    sessionRulesMd: Option[String] = None
+    sessionRulesMd: Option[String] = None,
+    chatWidth: Int = 0
   ): String =
     val agentPrompt =
       if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
       else Repl.loadSystemPrompt()
     val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
-    val envInfo = Repl.buildEnvInfo(effectiveRoot)
+    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth)
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
 
