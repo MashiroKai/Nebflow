@@ -167,7 +167,7 @@ CDN scripts: `<script src="https://cdn.jsdelivr.net/npm/three@latest"></script>`
 
 ## Style rules
 
-Cards fill the full chat width (~700px). Design for this width — use large, readable elements.
+Available width: ~700px. Content is NOT auto-stretched — add `style="width:100%"` on images and SVGs to fill the space. Without it, elements show at natural size.
 
 Typography: body ≥15px, labels ≥14px, headings 18-22px. Line-height: body 1.5, headings 1.2. SVG text ≥14px.
 
