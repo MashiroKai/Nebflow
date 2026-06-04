@@ -1,8 +1,8 @@
 package nebflow
 
+import java.nio.file.{Files, Paths}
+
 import scala.util.Using
-import java.nio.file.Files
-import java.nio.file.Paths
 
 object Version:
 

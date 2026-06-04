@@ -12,6 +12,7 @@ import nebflow.core.*
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
 import nebflow.core.reminder.{ReminderScheduler, ReminderStore}
+import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.*
@@ -358,6 +359,11 @@ object GatewayMain extends IOApp.Simple:
                                           .flatMap(_ => IO.unit)
                                           .start
                                         _ <- openBrowser(url)
+                                        // --- Background init: skills dir, MCP servers ---
+                                        _ <- SkillService
+                                          .ensureDefaults()
+                                          .handleErrorWith(e => logger.warn(s"Skills init failed: ${e.getMessage}"))
+                                          .start
                                         // --- Background init: MCP servers ---
                                         _ <- startMcpServers(config, mcpManager, agentLibrary)
                                           .flatMap { _ =>

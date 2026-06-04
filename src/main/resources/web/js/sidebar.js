@@ -571,7 +571,8 @@ function bindSettingsEvents(content, cfg, allModels) {
     card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!confirm(t('provider.removeConfirm', { name }))) return;
-      delete state.parsedConfig.llm.providers[name];
+      // Use null instead of delete — backend mergeConfig treats null as explicit deletion
+      state.parsedConfig.llm.providers[name] = null;
       state.configDirty = true;
       flushConfigToServer();
       renderSettings();
@@ -580,7 +581,8 @@ function bindSettingsEvents(content, cfg, allModels) {
       const p = state.parsedConfig.llm.providers[name];
       showProviderModal(name, p, (newName, data) => {
         if (newName !== name) {
-          delete state.parsedConfig.llm.providers[name];
+          // Use null to signal explicit deletion of old name
+          state.parsedConfig.llm.providers[name] = null;
         }
         state.parsedConfig.llm.providers[newName] = data;
         state.configDirty = true;
@@ -2039,20 +2041,17 @@ export function createNewFolder(parentFolderId) {
   // Remove any existing inline-new-folder input
   container.querySelectorAll('.folder-new-row').forEach(el => el.remove());
 
-  const targetPath = getTargetPath(parentFolderId);
+  const targetPath = getTargetPath(parentFolderId) || t('path.root');
 
   const row = document.createElement('div');
   row.className = 'folder-new-row';
-  let innerHtml =
+  row.innerHTML =
+    '<div class="creation-path">' + escapeHtml(targetPath) + ' &gt;</div>' +
     '<div class="folder-new-row-inner">' +
     '<div class="folder-new-arrow"><i data-lucide="chevron-right"></i></div>' +
     '<div class="folder-new-icon"><i data-lucide="folder"></i></div>' +
     '<input class="folder-new-input" placeholder="' + t('folder.newPlaceholder') + '">' +
     '</div>';
-  if (targetPath) {
-    innerHtml = '<div class="creation-path">' + escapeHtml(targetPath) + ' &gt;</div>' + innerHtml;
-  }
-  row.innerHTML = innerHtml;
   container.insertBefore(row, container.firstChild);
 
   const input = row.querySelector('.folder-new-input');

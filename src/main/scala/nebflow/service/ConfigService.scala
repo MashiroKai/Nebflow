@@ -91,32 +91,42 @@ object ConfigService:
     val errors = validateConfig(incoming)
     if errors.nonEmpty then IO.pure(Left(errors.mkString("; ")))
     else
-      IO.blocking {
-        val existing = if os.exists(configPath) then os.read(configPath) else "{}"
-        val merged = mergeConfig(existing, incoming)
-        os.write.over(configPath, merged, createFolders = true)
-      }.attempt
+      // Save snapshot before every write for crash/recovery safety
+      ConfigSnapshot.save() *> IO
+        .blocking {
+          val existing = if os.exists(configPath) then os.read(configPath) else "{}"
+          val merged = mergeConfig(existing, incoming)
+          os.write.over(configPath, merged, createFolders = true)
+        }
+        .attempt
         .map(_.leftMap(_.getMessage).void)
 
   private val sensitiveKeyPattern = "(?i)(api[_-]?key|secret|app[_-]?secret|encrypt[_-]?key|token|password)".r
 
   /**
-   * Merge new config into existing, preserving secret values that were redacted as "***".
-   * For each leaf string value: if the new value is "***", keep the existing value.
-   * Also prevents empty string from overwriting an existing secret value.
+   * Deep-merge incoming config into existing file.
    *
-   * Keys absent from incoming are NOT preserved — this allows deletions
-   * (e.g. removing a provider) to take effect. Only individual "***" leaf values
-   * are carried over from the existing config.
+   * Merge rules:
+   * - Keys in existing but NOT in incoming → PRESERVED (safe for partial updates like slider)
+   * - Keys in incoming with null value → DELETED (explicit deletion, e.g. removing a provider)
+   * - Keys in both → recursive merge
+   * - Leaf "***" values → preserved from existing (secret redaction)
+   * - Empty string for sensitive keys → preserved from existing
    */
   private def mergeConfig(existing: String, incoming: String): String =
     def merge(existing: Json, incoming: Json, keyChain: List[String] = Nil): Json =
       (existing.asObject, incoming.asObject) match
         case (Some(eObj), Some(iObj)) =>
-          val merged = iObj.toMap.map { case (key, iVal) =>
-            val eVal = eObj(key).getOrElse(Json.Null)
-            key -> merge(eVal, iVal, keyChain :+ key)
+          // Start with all existing keys as base
+          val base = eObj.toMap
+          // Apply incoming updates; null values mean explicit deletion
+          val deletedKeys = iObj.toMap.filter(_._2.isNull).keys.toSet
+          val updatedKeys = iObj.toMap.collect {
+            case (key, iVal) if !iVal.isNull =>
+              val eVal = base.getOrElse(key, Json.Null)
+              key -> merge(eVal, iVal, keyChain :+ key)
           }
+          val merged = base.filterNot { case (k, _) => deletedKeys.contains(k) } ++ updatedKeys
           Json.fromFields(merged)
         case _ =>
           val currentKey = keyChain.lastOption.getOrElse("")
@@ -124,7 +134,7 @@ object ConfigService:
           incoming.asString match
             case Some(s) if s == "***" => existing
             case Some(s) if s.isEmpty && sensitiveKeyPattern.findFirstIn(currentKey).isDefined =>
-              // Don't let empty string overwrite an existing secret
+              // Don't let empty string overwrite an existing secret value
               existing
             case _ => incoming
     (parse(existing), parse(incoming)) match
