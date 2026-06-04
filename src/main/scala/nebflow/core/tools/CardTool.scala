@@ -152,28 +152,14 @@ object CardTool extends Tool:
 
   /** Base description without user design prompt. */
   private val baseDescription =
-    """A visual canvas with full HTML, CSS, and JavaScript support (including WebGL and CDN libraries). Use it whenever text alone can't do justice — data charts, 3D scenes, animated simulations, schematics, interactive visualizations. For plain text, use Markdown instead.
+    """Renders HTML in a sandboxed iframe. For diagrams, animations, spatial layouts — not text.
+If Markdown suffices, do NOT use this tool.
 
-## Generate with tools, display with Card
+## Use professional tools for complex visuals
 
-Card is a display container — it does NOT draw. Pick the right tool to create content, then show it here:
+Do NOT hand-craft everything with raw SVG/CSS. For plots, charts, animations, simulations, or any specialized visualization, use the appropriate professional tool (matplotlib, ROOT, gnuplot, manim, D3.js, etc.) via Bash to generate the output, then embed the result here. Choose the right tool for the task — e.g. ROOT for physics spectra, manim for animated math demos. Only use-hand written SVG/CSS for simple diagrams and flowcharts.
 
-- **Data & plots** → matplotlib, gnuplot, ROOT via Bash → embed as `<img>`. NEVER hand-draw data charts with SVG — they are inaccurate and unreliable.
-- **Structure & layout** → SVG/CSS (flowcharts, architecture, state machines, schematics)
-- **Animation & interaction** → JS + CDN libraries (Three.js for 3D, D3.js for charts, p5.js for creative coding)
-
-Local files served automatically: save to any path (e.g. /tmp/plot.png), use `src="/tmp/plot.png"`.
-CDN scripts: `<script src="https://cdn.jsdelivr.net/npm/three@latest"></script>`
-
-## Style rules
-
-Available width is shown in the Environment table as "Chat width". Design content for that width — add `style="width:100%"` on images and SVGs to fill it. Without it, elements show at natural size.
-
-Typography: body ≥15px, labels ≥14px, headings 18-22px. Line-height: body 1.5, headings 1.2. SVG text ≥14px.
-
-Colors: ALWAYS use CSS variables (var(--color-text), var(--color-primary), var(--color-surface)). NEVER hardcode grays (#999 etc.) — invisible in one theme. NEVER opacity <0.85 on text.
-
-Animations: use CSS @keyframes for simple transitions (≤400ms). For JS animations, use requestAnimationFrame. Respect prefers-reduced-motion.
+To embed generated images: save to a local path (e.g. /tmp/xxx.png), then use `<img src="/tmp/xxx.png">`.
 
 ## Parameters
 
