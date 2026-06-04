@@ -167,9 +167,9 @@ CDN scripts: `<script src="https://cdn.jsdelivr.net/npm/three@latest"></script>`
 
 ## Style rules
 
-Images: default structure — `<div style="padding:16px"><img src="/tmp/plot.png" style="width:100%;max-width:800px;height:auto;display:block;margin:0 auto"></div>`.
+Cards fill the full chat width (~700px). Design for this width — use large, readable elements.
 
-Typography: body ≥15px, labels ≥14px, headings 18-22px. Line-height: body 1.5, headings 1.2.
+Typography: body ≥15px, labels ≥14px, headings 18-22px. Line-height: body 1.5, headings 1.2. SVG text ≥14px.
 
 Colors: ALWAYS use CSS variables (var(--color-text), var(--color-primary), var(--color-surface)). NEVER hardcode grays (#999 etc.) — invisible in one theme. NEVER opacity <0.85 on text.
 
