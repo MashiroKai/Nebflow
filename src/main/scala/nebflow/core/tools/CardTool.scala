@@ -130,6 +130,20 @@ object CardTool extends Tool:
     end if
   end embedLocalFiles
 
+  /**
+   * Fix width:100% on img/svg inside fit-content card.
+   * fit-content + width:100% creates a deadlock (element says "fill parent",
+   * parent says "shrink to content" → collapses to zero).
+   * Replace with natural sizing so the stored HTML matches what the user sees.
+   */
+  private val Width100Regex = """(?i)(<(?:img|svg)\b[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])""".r
+
+  private def fixFitContent(html: String): String =
+    val result = Width100Regex.replaceAllIn(html, m => s"${m.group(1)}${m.group(2)}")
+    if result != html then logger.debug("Fixed width:100% deadlock in card HTML")
+    result
+  end fixFitContent
+
   val name = "Card"
 
   /** Path to user-editable card design prompt. */
@@ -201,7 +215,7 @@ Example (interactive 3D with Three.js):
       case Some(rawHtml) =>
         val title = input("title").flatMap(_.asString).getOrElse("")
         IO.blocking {
-          val html = embedLocalFiles(rawHtml)
+          val html = fixFitContent(embedLocalFiles(rawHtml))
           val payload = Json
             .obj(
               "html" -> html.asJson,
