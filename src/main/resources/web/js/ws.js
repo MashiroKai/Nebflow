@@ -25,7 +25,6 @@ export function connect() {
   }
   // Connect without token in URL — server reads from cookie
   const wsUrl = `${proto}//${location.host}/ws`;
-  console.log('[ws] connecting to', wsUrl);
   try {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
@@ -35,7 +34,6 @@ export function connect() {
   }
 
   state.ws.onopen = () => {
-    console.log('[ws] connected');
     state.dom.connEl.classList.remove('off');
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
@@ -54,7 +52,6 @@ export function connect() {
   };
 
   state.ws.onclose = () => {
-    console.log('[ws] disconnected');
     state.dom.connEl.classList.add('off');
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     setTimeout(connect, 2000);
@@ -99,9 +96,6 @@ export function connect() {
         return;
       }
       const handler = handlers[msg.type];
-      if (msg.type === 'done' || msg.type === 'error') {
-        console.log(`[ws] ${msg.type} received`, { sessionId: msg.sessionId, activeSessionId: state.activeSessionId, hasHandler: !!handler });
-      }
       if (handler) handler(msg);
     } catch (err) {
       console.error('[ws] message parse error:', err);
