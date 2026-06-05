@@ -104,11 +104,12 @@ object GatewayMain extends IOApp.Simple:
           else waitForQuit
       }
 
-  /** Windows-compatible stdin polling: non-blocking check + short sleep.
-    * On Windows CI (background process with no stdin), System.in.available()
-    * throws IOException — we catch it and fall back to a sleep loop so the
-    * server keeps running until cancelled externally.
-    */
+  /**
+   * Windows-compatible stdin polling: non-blocking check + short sleep.
+   * On Windows CI (background process with no stdin), System.in.available()
+   * throws IOException — we catch it and fall back to a sleep loop so the
+   * server keeps running until cancelled externally.
+   */
   private def pollStdinLoop: IO[Unit] =
     IO.blocking {
       if System.in.available() > 0 then Option(scala.io.StdIn.readLine())
