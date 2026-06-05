@@ -669,7 +669,8 @@ function bindSettingsEvents(content, cfg, allModels) {
     card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!confirm(t('mcp.removeConfirm', { name }))) return;
-      delete state.parsedConfig.mcpServers[name];
+      // Use null instead of delete — backend mergeConfig treats null as explicit deletion
+      state.parsedConfig.mcpServers[name] = null;
       state.configDirty = true;
       flushConfigToServer();
       renderSettings();
@@ -678,7 +679,8 @@ function bindSettingsEvents(content, cfg, allModels) {
       const s = state.parsedConfig.mcpServers[name];
       showMcpModal(name, s, (newName, data) => {
         if (newName !== name) {
-          delete state.parsedConfig.mcpServers[name];
+          // Use null to signal explicit deletion of old name
+          state.parsedConfig.mcpServers[name] = null;
         }
         state.parsedConfig.mcpServers[newName] = data;
         state.configDirty = true;
