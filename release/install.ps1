@@ -10,40 +10,50 @@ if ($args -contains "--channel=beta") { $Channel = "beta" }
 if ($args -contains "-Cn") { $Region = "cn" }
 if ($args -contains "-Global") { $Region = "global" }
 
-# Resolve version
+# Resolve version — COS version file first (China-friendly), GitHub API fallback
 if ($Channel -eq "beta") {
     Write-Host "==> Resolving latest beta version..." -ForegroundColor Yellow
-    try {
-        $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases" -TimeoutSec 10
-        $beta = $releases | Where-Object { $_.prerelease -eq $true } | Select-Object -First 1
-        if ($beta) {
-            $BetaVersion = $beta.tag_name -replace '^v', ''
+    if ($env:VERSION) {
+        $Version = $env:VERSION
+    } else {
+        try {
+            $BetaVersion = (Invoke-WebRequest -Uri "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-beta-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
+        } catch {}
+        if (-not $BetaVersion) {
+            try {
+                $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases" -TimeoutSec 15
+                $beta = $releases | Where-Object { $_.prerelease -eq $true } | Select-Object -First 1
+                if ($beta) { $BetaVersion = $beta.tag_name -replace '^v', '' }
+            } catch {}
         }
-    } catch {}
-    if (-not $BetaVersion) {
-        Write-Host "ERROR: Could not find a beta release." -ForegroundColor Red
-        Write-Host "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability." -ForegroundColor Yellow
-        exit 1
+        if (-not $BetaVersion) {
+            Write-Host "ERROR: Could not find a beta release." -ForegroundColor Red
+            Write-Host "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability." -ForegroundColor Yellow
+            exit 1
+        }
+        $Version = $BetaVersion
     }
-    $Version = if ($env:VERSION) { $env:VERSION } else { $BetaVersion }
 } else {
     Write-Host "==> Resolving latest stable version..." -ForegroundColor Yellow
-    try {
-        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" -TimeoutSec 10
-        $LatestVersion = $release.tag_name -replace '^v', ''
-    } catch {}
-    if (-not $LatestVersion) {
+    if ($env:VERSION) {
+        $Version = $env:VERSION
+    } else {
         try {
-            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" -TimeoutSec 10
-            $LatestVersion = $release.tag_name -replace '^v', ''
+            $LatestVersion = (Invoke-WebRequest -Uri "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-version.txt" -UseBasicParsing -TimeoutSec 10).Content.Trim()
         } catch {}
+        if (-not $LatestVersion) {
+            try {
+                $release = Invoke-RestMethod -Uri "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" -TimeoutSec 15
+                $LatestVersion = $release.tag_name -replace '^v', ''
+            } catch {}
+        }
+        if (-not $LatestVersion) {
+            Write-Host "ERROR: Could not resolve latest version." -ForegroundColor Red
+            Write-Host "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability." -ForegroundColor Yellow
+            exit 1
+        }
+        $Version = $LatestVersion
     }
-    if (-not $LatestVersion) {
-        Write-Host "ERROR: Could not resolve latest version." -ForegroundColor Red
-        Write-Host "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability." -ForegroundColor Yellow
-        exit 1
-    }
-    $Version = if ($env:VERSION) { $env:VERSION } else { $LatestVersion }
 }
 
 $InstallDir = if ($env:INSTALL_DIR) { $env:INSTALL_DIR } else { "$env:LOCALAPPDATA\Nebflow" }
