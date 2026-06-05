@@ -96,7 +96,7 @@ jobs:
           COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
         run: |
           pip install coscmd 2>/dev/null
-          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b nebflow-releases-1411212853 -r ap-nanjing
+          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b nebflow-releases-1411212853 -e cos.accelerate.myqcloud.com
           JAR=$(ls target/scala-3.5.2/nebflow-assembly-*.jar | head -1)
           coscmd upload "$JAR" "$(basename "$JAR")" -f
           echo "  Uploaded $(basename "$JAR") to COS"
