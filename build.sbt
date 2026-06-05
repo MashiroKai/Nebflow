@@ -9,6 +9,8 @@ lazy val root = (project in file("."))
     name := "nebflow",
     version := IO.read(file("VERSION")).trim,
     organization := "nebflow",
+    // Include VERSION file in JAR so runtime version detection works from any directory
+    Compile / unmanagedResources += baseDirectory.value / "VERSION",
     scalaVersion := "3.5.2",
 
     libraryDependencies ++= Seq(
