@@ -100,6 +100,10 @@ jobs:
           JAR=$(ls target/scala-3.5.2/nebflow-assembly-*.jar | head -1)
           coscmd upload "$JAR" "$(basename "$JAR")" -f
           echo "  Uploaded $(basename "$JAR") to COS"
+          # Write version file for install scripts (China-friendly, no GitHub API needed)
+          echo -n "${{ steps.version.outputs.version }}" > /tmp/latest-version.txt
+          coscmd upload /tmp/latest-version.txt latest-version.txt -f
+          echo "  Uploaded latest-version.txt to COS"
 
       # --- Sync version back to main ---
 
