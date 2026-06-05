@@ -11,31 +11,41 @@ for arg in "$@"; do
     esac
 done
 
-# Resolve version
+# Resolve version — COS version file first (China-friendly), GitHub API fallback
 if [ "$CHANNEL" = "beta" ]; then
     echo "==> Resolving latest beta version..."
-    BETA_TAG=$(curl -fsSL "https://api.github.com/repos/MashiroKai/Nebflow/releases" \
-        2>/dev/null | grep -m1 '"tag_name".*beta' | sed 's/.*"v\(.*beta[^"]*\)".*/\1/')
-    if [ -z "$BETA_TAG" ]; then
-        echo "ERROR: Could not find a beta release."
-        echo "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability."
-        exit 1
+    if [ -z "$VERSION" ]; then
+        BETA_TAG=$(curl -fsSL --connect-timeout 5 --max-time 10 \
+            "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-beta-version.txt" 2>/dev/null || true)
+        if [ -z "$BETA_TAG" ]; then
+            BETA_TAG=$(curl -fsSL --connect-timeout 10 --max-time 15 \
+                "https://api.github.com/repos/MashiroKai/Nebflow/releases" \
+                2>/dev/null | grep -m1 '"tag_name".*beta' | sed 's/.*"v\(.*beta[^"]*\)".*/\1/')
+        fi
+        if [ -z "$BETA_TAG" ]; then
+            echo "ERROR: Could not find a beta release."
+            echo "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability."
+            exit 1
+        fi
+        VERSION="$BETA_TAG"
     fi
-    VERSION="${VERSION:-$BETA_TAG}"
 else
     echo "==> Resolving latest stable version..."
-    LATEST_VERSION=$(curl -fsSL "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" \
-        2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
-    if [ -z "$LATEST_VERSION" ]; then
-        LATEST_VERSION=$(curl -fsSL "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" \
-            2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
+    if [ -z "$VERSION" ]; then
+        LATEST_VERSION=$(curl -fsSL --connect-timeout 5 --max-time 10 \
+            "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-version.txt" 2>/dev/null || true)
+        if [ -z "$LATEST_VERSION" ]; then
+            LATEST_VERSION=$(curl -fsSL --connect-timeout 10 --max-time 15 \
+                "https://api.github.com/repos/MashiroKai/Nebflow/releases/latest" \
+                2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"v\(.*\)".*/\1/')
+        fi
+        if [ -z "$LATEST_VERSION" ]; then
+            echo "ERROR: Could not resolve latest version."
+            echo "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability."
+            exit 1
+        fi
+        VERSION="$LATEST_VERSION"
     fi
-    if [ -z "$LATEST_VERSION" ]; then
-        echo "ERROR: Could not resolve latest version."
-        echo "       Visit https://github.com/MashiroKai/Nebflow/releases to check availability."
-        exit 1
-    fi
-    VERSION="${VERSION:-$LATEST_VERSION}"
 fi
 
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.nebflow/bin}"
