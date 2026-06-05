@@ -212,6 +212,7 @@ export default {
   'chat.waitingQuestion': '等待问题...',
   'chat.askFailed': '询问失败',
   'chat.askLabel': '询问',
+  'chat.skillLabel': 'skill: {skill}',
   'chat.allowTool': '允许 {tool}？',
   'chat.autoApproved': '自动通过（自动放行模式）',
   'chat.permLevel.warning': '注意：此操作可能导致数据丢失',

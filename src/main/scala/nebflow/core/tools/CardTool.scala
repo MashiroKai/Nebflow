@@ -171,46 +171,72 @@ object CardTool extends Tool:
   /** Cached design prompt (reloaded on each access via mtime check). */
   @volatile private var designPromptCache: (Long, String) = (0L, "")
 
-  /** Load user design prompt from disk (cached by mtime). */
+  /** Default design guidelines — written to disk on first access if file doesn't exist. */
+  private val defaultDesignPrompt: String =
+    """## Card Visual Design Guidelines
+
+Follow these strictly. They override any conflicting defaults.
+
+### Purpose
+
+Visual-first, text-minimal. Cards are for diagrams, animations, transitions, spatial layouts — not paragraphs. If the content works as Markdown, don't use Card.
+
+### Color: always use CSS variables
+
+**Never hardcode hex colors.** Always use `var(--color-text)` for body text, `var(--color-bg)`/`var(--color-surface)` for backgrounds. These guarantee maximum contrast in both light and dark mode. Use `var(--color-primary/success/error/warning)` only for status indicators. `var(--color-text-muted)` is for captions only — too low contrast for body text.
+
+### Accuracy
+
+Accuracy and correctness come first. If a visualization involves data, numbers, or precise relationships, use a professional tool (matplotlib, gnuplot, ROOT, etc.) to generate it — then embed the result as an image. Hand-drawn SVG is for layout and simple diagrams where precision is not critical.
+
+### Visual defaults
+
+- **No emoji.** Use typography and spacing for visual interest.
+- **Rounded corners:** cards 16px, buttons 10px, inputs 8px, badges 9999px.
+- **Font:** `-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif`
+- Body 13-14px / 400, headings 16-20px / 600, tight letter-spacing on headings.
+- Animations only if they aid understanding (200-400ms, ease-out for entrance). Respect prefers-reduced-motion.
+
+### Embedding external content
+
+HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local file paths in src/href are automatically served by the backend."""
+
+  /**
+   * Load user design prompt from disk (cached by mtime).
+   *  Auto-creates with defaults on first access if the file doesn't exist.
+   */
   private def loadDesignPrompt(): String =
     try
-      val mtime = java.nio.file.Files.getLastModifiedTime(designPromptPath).toMillis
-      if mtime != designPromptCache._1 then
-        val content =
-          new String(java.nio.file.Files.readAllBytes(designPromptPath), java.nio.charset.StandardCharsets.UTF_8)
-        designPromptCache = (mtime, content)
-        content
-      else designPromptCache._2
+      if !java.nio.file.Files.exists(designPromptPath) then
+        java.nio.file.Files.createDirectories(designPromptPath.getParent)
+        java.nio.file.Files
+          .write(designPromptPath, defaultDesignPrompt.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        designPromptCache = (java.nio.file.Files.getLastModifiedTime(designPromptPath).toMillis, defaultDesignPrompt)
+        defaultDesignPrompt
+      else
+        val mtime = java.nio.file.Files.getLastModifiedTime(designPromptPath).toMillis
+        if mtime != designPromptCache._1 then
+          val content =
+            new String(java.nio.file.Files.readAllBytes(designPromptPath), java.nio.charset.StandardCharsets.UTF_8)
+          designPromptCache = (mtime, content)
+          content
+        else designPromptCache._2
     catch case _: Exception => designPromptCache._2
 
   /** Base description without user design prompt. */
   private val baseDescription =
-    """Renders HTML in a sandboxed iframe. For diagrams, animations, spatial layouts — not text.
-If Markdown suffices, do NOT use this tool.
+    """Renders an interactive visual explanation in the chat — use this when a diagram, animation, or spatial layout conveys the idea better than paragraphs of text.
 
-Accuracy and correctness come first. If a visualization involves data, numbers, or precise relationships, use a professional tool (matplotlib, gnuplot, ROOT, etc.) to generate it — then embed the result as an image. Hand-drawn SVG is for layout and simple diagrams where precision is not critical.
-
-To embed generated images: save to a local path (e.g. /tmp/xxx.png), then use `<img src="/tmp/xxx.png">`.
+This tool is for "a picture is worth a thousand words" scenarios. If the content works equally well as Markdown text, do NOT use this tool.
 
 ## Parameters
 
-- html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
-- title (string, optional): title above card.
+- html (string, required): HTML with CSS and JS. Local file paths in src/href (images, scripts, etc.) are automatically served. Dark mode via var(--color-*).
+- title (string, optional): title above card."""
 
-Example (embedded image):
-{"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}
-
-Example (SVG diagram):
-{"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 600 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"70\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"240\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}
-
-Example (interactive 3D with Three.js):
-{"html":"<div style=\"padding:0\"><script src=\"https://cdn.jsdelivr.net/npm/three@latest/build/three.min.js\"></script><canvas id=\"c\" style=\"width:100%;height:400px;display:block\"></canvas><script>const s=new THREE.Scene();const c=document.getElementById('c');const r=new THREE.WebGLRenderer({canvas:c,antialias:true});r.setSize(c.clientWidth,400);const cam=new THREE.PerspectiveCamera(75,c.clientWidth/400,0.1,1000);cam.position.z=3;s.add(new THREE.Mesh(new THREE.SphereGeometry(1,32,32),new THREE.MeshNormalMaterial()));function f(){requestAnimationFrame(f);r.render(s,cam)}f()</script></div>","title":"3D Sphere"}"""
-
-  /** Dynamic description: base tool description + user design prompt (if present). */
+  /** Dynamic description: base tool description + user design prompt (always present after auto-init). */
   def description: String =
-    val prompt = loadDesignPrompt()
-    if prompt.nonEmpty then s"$baseDescription\n\n$prompt"
-    else baseDescription
+    s"$baseDescription\n\n${loadDesignPrompt()}"
 
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(

@@ -212,6 +212,7 @@ export default {
   'chat.waitingQuestion': 'Waiting for question...',
   'chat.askFailed': 'Ask failed',
   'chat.askLabel': 'Ask',
+  'chat.skillLabel': 'skill: {skill}',
   'chat.allowTool': 'Allow {tool}?',
   'chat.autoApproved': 'Auto-approved (bypass all)',
   'chat.permLevel.warning': 'Caution: may cause data loss',

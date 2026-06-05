@@ -214,10 +214,7 @@ if (Test-Path $jarPath) {
         }
     }
 
-    if ($Channel -eq "beta") {
-        # Beta: always from GitHub
-        Invoke-WebRequest -Uri $GhUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 120
-    } elseif ($Region -eq "cn") {
+    if ($Region -eq "cn") {
         # China: COS first (fast domestic CDN), GitHub fallback
         try {
             Invoke-WebRequest -Uri $CosUrl -OutFile $jarPath -UseBasicParsing -TimeoutSec 30

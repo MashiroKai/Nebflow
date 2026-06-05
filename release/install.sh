@@ -182,15 +182,6 @@ download_jar() {
         rm -f "${INSTALL_DIR}"/nebflow-assembly-*.jar
     fi
 
-    # Beta always from GitHub
-    if [ "$CHANNEL" = "beta" ]; then
-        _download "${GH_URL}" "${target}" || {
-            echo "ERROR: Download failed."
-            exit 1
-        }
-        return 0
-    fi
-
     detect_region
     echo "    Region: ${REGION} (use --cn or --global to override)"
 

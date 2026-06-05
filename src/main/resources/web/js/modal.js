@@ -353,71 +353,31 @@ export function initModals() {
 function getDefaultCardDesignPrompt() {
   return `## Card Visual Design Guidelines
 
-Follow these rules strictly when generating HTML for the Card tool. These represent the user's visual preferences and override any conflicting defaults.
+Follow these strictly. They override any conflicting defaults.
 
-### Core Style
+### Purpose
 
-- Minimalist and refined — remove anything that does not serve the content. Every element must earn its place.
-- Premium, polished feel — think Apple-style design language, not developer documentation.
-- No emoji anywhere — in text, headings, badges, or decorative elements. Use typography and spacing for visual interest.
-- No accent bars (colored left-border stripes) on cards or sections. Use surface elevation and spacing for hierarchy instead.
-- No decorative borders — use shadow-as-border technique or no border at all.
+Visual-first, text-minimal. Cards are for diagrams, animations, transitions, spatial layouts — not paragraphs. If the content works as Markdown, don't use Card.
 
-### Color & Theme
+### Color: always use CSS variables
 
-- MUST follow the system theme (light/dark). Use CSS custom properties: var(--color-bg), var(--color-surface) or var(--color-primary), var(--color-text), var(--color-success), var(--color-error), var(--color-warning).
-- For dark mode: use @media (prefers-color-scheme: dark) or rely on the injected CSS variables.
-- Light mode: white or #fafafa surfaces with soft shadows. Text #171717, not #000000.
-- Dark mode: #141516 to #1a1a1a surfaces with hairline borders (rgba(255,255,255,0.06)). Text #e0e0e0.
-- Color should be functional, not decorative. Use chromatic accents only for status, actions, or emphasis.
+**Never hardcode hex colors.** Always use var(--color-text) for body text, var(--color-bg)/var(--color-surface) for backgrounds. These guarantee maximum contrast in both light and dark mode. Use var(--color-primary/success/error/warning) only for status indicators. var(--color-text-muted) is for captions only — too low contrast for body text.
 
-### Glassmorphism & Depth
+### Accuracy
 
-- Use frosted glass (backdrop-filter blur) for cards and overlays when it enhances the visual hierarchy:
-  background: rgba(255,255,255,0.65); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.18);
-- On dark mode: background: rgba(30,30,30,0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.06);
-- Multi-layer shadow stacks for cards (border layer + subtle elevation), NOT traditional CSS borders.
+Accuracy and correctness come first. If a visualization involves data, numbers, or precise relationships, use a professional tool (matplotlib, gnuplot, ROOT, etc.) to generate it — then embed the result as an image. Hand-drawn SVG is for layout and simple diagrams where precision is not critical.
 
-### Border Radius & Shapes
+### Visual defaults
 
-- Rounded and soft — cards: 16px, buttons: 10px, inputs: 8px, badges/tags: 9999px (pill shape).
-- Avatars: 50% (fully round).
-- Never use sharp corners (0px) on interactive or card elements.
+- **No emoji.** Use typography and spacing for visual interest.
+- **Rounded corners:** cards 16px, buttons 10px, inputs 8px, badges 9999px.
+- **Font:** -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif
+- Body 13-14px / 400, headings 16-20px / 600, tight letter-spacing on headings.
+- Animations only if they aid understanding (200-400ms, ease-out for entrance). Respect prefers-reduced-motion.
 
-### Typography
+### Embedding external content
 
-- Font stack: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif
-- Use tight letter-spacing on headings (-0.02em to -0.04em at 20px+).
-- Line height: tight for headings (1.1-1.2), relaxed for body (1.5-1.6).
-- Font sizes: 13-14px for body, 16-20px for headings. Never above 24px unless it is a hero element.
-- Weights: 400 for body, 500 for UI elements, 600 for headings. Avoid 700+.
-
-### Spacing
-
-- Generous whitespace — let content breathe. 16px minimum padding on cards.
-- Use consistent spacing scale: 4, 8, 12, 16, 20, 24, 32px.
-- Group related elements tighter; separate unrelated groups with larger gaps.
-
-### Animation
-
-- Use CSS animations ONLY when they genuinely improve information communication (e.g., progress bars, state transitions, loading indicators).
-- Animations must be subtle and brief (200-400ms). Ease-out for entrances, ease-in for exits.
-- Respect prefers-reduced-motion — disable all animations when the user requests it.
-- Never animate decorative elements. If an animation does not make the content clearer, remove it.
-
-### Layout
-
-- Prefer flexbox and CSS grid for layouts. Avoid float or manual positioning.
-- Use flex-wrap: wrap for multi-column content to handle narrow chat width gracefully.
-- Max content width is constrained (~85% of chat width). Design for this constraint.
-- Use max-width: 100% on all images and media.
-
-### Specific Patterns
-
-- Status indicators: small colored dot (6-8px) + text label. No colored backgrounds or badges.
-- Progress bars: thin (4-6px height), rounded, with subtle animation for active states.
-- Tables: minimal styling, zebra striping with very subtle contrast, no heavy borders.
-- Icons: prefer simple geometric shapes or CSS-drawn icons over emoji or complex SVGs.`;
+HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local file paths in src/href are automatically served by the backend.`;
 }
 
 export function showCardDesignModal() {
