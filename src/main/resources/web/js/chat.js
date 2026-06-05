@@ -821,6 +821,24 @@ export function renderAskBubble(question) {
   smartScroll();
 }
 
+export function renderSkillBubble(skillName, text) {
+  const chat = state.dom.chat;
+  const row = document.createElement('div');
+  row.className = 'row user';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble user';
+  const label = document.createElement('div');
+  label.className = 'ask-label';
+  label.textContent = t('chat.skillLabel', { skill: skillName });
+  const content = document.createElement('div');
+  content.textContent = text;
+  bubble.appendChild(label);
+  bubble.appendChild(content);
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  smartScroll();
+}
+
 export function appendAskAnswer(delta) {
   const chat = state.dom.chat;
   state.askAnswerText += delta;

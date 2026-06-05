@@ -3,14 +3,13 @@
 
 import state, { LS_HISTORY_KEY } from './state.js';
 import { sendWs } from './ws.js';
-import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble } from './chat.js';
+import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble } from './chat.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
 import { renderTaskList } from './taskList.js';
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
-import { addNotification } from './notificationBanner.js';
 
 // ---------- Slash Commands ----------
 const slashCommands = {
@@ -372,10 +371,7 @@ export function send() {
     state.isSending = true;
     if (state.activeSessionId) state.turnExpecting[state.activeSessionId] = true;
     sendWs({ type: 'skill', skillName, input: text, sessionId: state.activeSessionId });
-    renderSystemBubble(t('slash.skillActivated', { skill: skillName }));
-    renderUserBubble(text);
-    // Show persistent notification so skill name stays visible after session switch
-    addNotification('skill', t('slash.skillActivated', { skill: skillName }), { dismissAfter: 20000 });
+    renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (state.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
     input.value = '';
     saveInputDraft(state.activeSessionId);
