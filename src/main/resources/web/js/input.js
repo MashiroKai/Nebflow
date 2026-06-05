@@ -338,17 +338,29 @@ export async function addFileAttachment(file, callback) {
     renderAttachmentPreview();
     if (callback) callback();
   } else {
-    // Non-image: save to disk on backend, no size limit needed
+    // Non-image: read as base64 and save to disk on backend
+    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+    if (file.size > MAX_FILE_SIZE) {
+      alert('File too large (max 50MB): ' + file.name);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
+      // readAsDataURL returns "data:[mimeType];base64,[data]"
+      const resultStr = reader.result;
+      const commaIdx = resultStr.indexOf(',');
+      const base64Data = commaIdx >= 0 ? resultStr.substring(commaIdx + 1) : resultStr;
       state.pendingAttachments.push({
-        type: 'text', mimeType: file.type || 'text/plain',
-        data: reader.result, name: file.name
+        type: 'text', mimeType: file.type || 'application/octet-stream',
+        data: base64Data, name: file.name
       });
       renderAttachmentPreview();
       if (callback) callback();
     };
-    reader.readAsText(file);
+    reader.onerror = () => {
+      console.warn('[input] file read failed:', reader.error);
+    };
+    reader.readAsDataURL(file);
   }
 }
 

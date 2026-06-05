@@ -256,9 +256,9 @@ This tool is for "a picture is worth a thousand words" scenarios. If the content
   )
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    input("html").flatMap(_.asString) match
+    extractHtml(input) match
       case Some(rawHtml) =>
-        val title = input("title").flatMap(_.asString).getOrElse("")
+        val title = extractTitle(input)
         IO.blocking {
           val html = embedLocalFiles(rawHtml)
           val payload = Json
@@ -271,7 +271,53 @@ This tool is for "a picture is worth a thousand words" scenarios. If the content
         }
 
       case None =>
-        IO.pure(Left(ToolError("Missing required parameter: html")))
+        val debug = input.toMap
+          .map { (k, v) =>
+            val preview = v.asString.getOrElse(v.noSpaces).take(80)
+            s"$k: $preview"
+          }
+          .mkString(", ")
+        IO.pure(
+          Left(
+            ToolError(
+              s"Card tool requires non-empty `html` parameter. Your input: {$debug}. " +
+                s"""Example: {"html": "<div>content</div>", "title": "optional"}"""
+            )
+          )
+        )
+
+  /**
+   * Try to extract valid HTML from the input with multi-level fallback:
+   *   1. html field is a non-empty string → use directly
+   *   2. html field is a non-string type → stringify and check if it looks like HTML
+   *   3. html is empty/missing, but title contains HTML → use title as html
+   */
+  private def extractHtml(input: JsonObject): Option[String] =
+    // Level 1: html field is a non-empty string
+    input("html")
+      .flatMap(_.asString)
+      .filter(_.nonEmpty)
+      // Level 2: html is non-string — try to stringify
+      .orElse(
+        input("html").filterNot(_.isString).map(_.noSpaces).filter(isHtmlLike)
+      )
+      // Level 3: html missing/empty but title looks like HTML
+      .orElse(
+        input("title").flatMap(_.asString).filter(isHtmlLike)
+      )
+
+  /** Extract title, accounting for the case where title was repurposed as html. */
+  private def extractTitle(input: JsonObject): String =
+    val htmlDirect = input("html").flatMap(_.asString).filter(_.nonEmpty)
+    val titleValue = input("title").flatMap(_.asString).getOrElse("")
+    // If html was empty/missing and title was repurposed as html, clear title
+    if htmlDirect.isEmpty && isHtmlLike(titleValue) then ""
+    else titleValue
+
+  /** Rough check: does the string look like HTML (starts with < and contains >)? */
+  private def isHtmlLike(s: String): Boolean =
+    val t = s.trim
+    t.startsWith("<") && t.contains(">")
 
   def summarize(input: JsonObject): String =
     val title = input("title").flatMap(_.asString).getOrElse("Card")

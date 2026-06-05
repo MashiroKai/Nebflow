@@ -1638,27 +1638,34 @@ class WebSocketRoutes(
                       val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
                       val fileName = s"${System.nanoTime()}_$safeName"
                       val filePath = uploadDir / fileName
-                      os.write.over(filePath, data)
+                      os.write.over(filePath, java.util.Base64.getDecoder.decode(data))
                       val absPath = filePath.toString
+                      val decodedSize = java.util.Base64.getDecoder.decode(data).length
                       // Verify the resolved path is still within uploadDir (defense in depth)
                       if absPath.startsWith(uploadDir.toString) then
                         savedPaths += absPath
                         blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                        logger.info(s"Saved attachment '$name' to $absPath (${data.length} chars)")
+                        logger.info(s"Saved attachment '$name' to $absPath ($decodedSize bytes)")
                       else
                         logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
-                        val truncated =
-                          if data.length <= 5000 then data
-                          else data.take(5000) + s"\n... (truncated, ${data.length} total chars)"
-                        blocks += ContentBlock.Text(s"[file: $name (path unsafe, inline)]\n$truncated")
+                        val decodedBytes =
+                          try java.util.Base64.getDecoder.decode(data)
+                          catch case _ => null
+                        val sizeInfo =
+                          if decodedBytes != null then s" (${decodedBytes.length} bytes)"
+                          else s" (${data.length} chars base64)"
+                        blocks += ContentBlock.Text(s"[file: $name (path unsafe)]$sizeInfo")
                     catch
                       case e: Exception =>
                         logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
-                        // Fallback: embed content directly (truncated)
-                        val truncated =
-                          if data.length <= 5000 then data
-                          else data.take(5000) + s"\n... (truncated, ${data.length} total chars)"
-                        blocks += ContentBlock.Text(s"[file: $name (保存失败，内联内容)]\n$truncated")
+                        // Fallback: embed a reference to the file (data is base64, too large to inline meaningfully)
+                        val decodedBytes =
+                          try java.util.Base64.getDecoder.decode(data)
+                          catch case _ => null
+                        val sizeInfo =
+                          if decodedBytes != null then s" (${decodedBytes.length} bytes)"
+                          else s" (${data.length} chars base64)"
+                        blocks += ContentBlock.Text(s"[file: $name (保存失败)]$sizeInfo")
                     end try
                   end if
                 }
