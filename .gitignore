@@ -28,6 +28,7 @@ docs/
 /nebflow
 nul
 openclaw/
+cloud/**/node_modules/
 
 # Sensitive
 *.env

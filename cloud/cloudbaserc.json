@@ -1,4 +1,6 @@
 {
+  "envId": "cloudbase-3gltu9is7f791a38",
+  "version": "2.0",
   "functions": [
     {
       "name": "nebflow-mesh",
@@ -9,10 +11,7 @@
         "WX_APPID": "",
         "WX_SECRET": ""
       },
-      "vpc": {
-        "vpcId": "",
-        "subnetId": ""
-      }
+      "installDependency": true
     }
   ]
 }
