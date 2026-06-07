@@ -180,20 +180,20 @@ class RestApiRoutes(
 
     // ===== Mesh API =====
 
-    // Mesh status — identity, login state, peers
+    // Mesh status — identity, pairing state, peers
     case req @ GET -> Root / "api" / "mesh" / "status" =>
       withMesh(req) { ms =>
         ms.identity.flatMap { id =>
-          ms.isLoggedIn.flatMap { loggedIn =>
+          ms.isLoggedIn.flatMap { paired =>
             ms.meshConfig.flatMap { cfg =>
               ms.peers.flatMap { peersList =>
                 Ok(Json.obj(
-                  "loggedIn" -> loggedIn.asJson,
+                  "paired" -> paired.asJson,
                   "device" -> Json.obj(
                     "id" -> id.deviceId.asJson,
                     "name" -> id.deviceName.asJson,
                     "platform" -> id.platform.asJson,
-                    "userId" -> id.nebflowUserId.asJson
+                    "groupId" -> id.groupId.asJson
                   ),
                   "cloudBaseUrl" -> cfg.cloudBaseUrl.asJson,
                   "peers" -> peersList.map(p => Json.obj(
@@ -210,17 +210,37 @@ class RestApiRoutes(
         }
       }
 
-    // Login — receives userId + JWT from cloud auth callback
-    case req @ POST -> Root / "api" / "mesh" / "login" =>
+    // Create group — first device creates a new group, gets pairing code
+    case req @ POST -> Root / "api" / "mesh" / "create-group" =>
+      withMesh(req) { ms =>
+        ms.createGroup.flatMap { (groupId, code, expiresAt) =>
+          Ok(Json.obj(
+            "groupId" -> groupId.asJson,
+            "pairingCode" -> code.asJson,
+            "expiresAt" -> expiresAt.asJson
+          ))
+        }
+      }
+
+    // Join group — other device joins with pairing code
+    case req @ POST -> Root / "api" / "mesh" / "join-group" =>
       withMesh(req) { ms =>
         req.as[Json].flatMap { body =>
-          val hc = body.hcursor
-          (hc.downField("userId").as[String], hc.downField("jwt").as[String], hc.downField("expiresAt").as[Long]) match
-            case (Right(userId), Right(jwt), Right(expiresAt)) =>
-              ms.onLogin(userId, jwt, expiresAt) *> Ok(Json.obj("ok" -> true.asJson))
-            case _ =>
-              BadRequest(Json.obj("error" -> "Missing userId, jwt, or expiresAt".asJson))
+          val codeResult = body.hcursor.downField("pairingCode").as[String]
+          codeResult match
+            case Right(code) =>
+              ms.joinGroup(code).flatMap { groupId =>
+                Ok(Json.obj("groupId" -> groupId.asJson))
+              }
+            case Left(_) =>
+              BadRequest(Json.obj("error" -> "Missing pairingCode".asJson))
         }
+      }
+
+    // Leave group — clear local groupId
+    case req @ POST -> Root / "api" / "mesh" / "leave" =>
+      withMesh(req) { ms =>
+        ms.leaveGroup *> Ok(Json.obj("ok" -> true.asJson))
       }
 
     // Mesh config update
@@ -257,6 +277,38 @@ class RestApiRoutes(
               ms.sendRelay(targetId, payload) *> Ok(Json.obj("sent" -> true.asJson))
             case _ =>
               BadRequest(Json.obj("error" -> "Missing targetDeviceId or payload".asJson))
+        }
+      }
+
+    // Remote tool execution — called by peer Nebflow devices
+    case req @ POST -> Root / "api" / "mesh" / "remote-exec" =>
+      withMesh(req) { ms =>
+        ms.groupId.flatMap { localGroupId =>
+          // Verify caller's groupId matches ours (peer trust)
+          val callerGroupId = req.headers.get[Authorization].collectFirst {
+            case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t
+          }.getOrElse("")
+          if localGroupId.isEmpty || callerGroupId != localGroupId.getOrElse("")
+          then Forbidden(Json.obj("error" -> "Group mismatch".asJson))
+          else
+            req.as[Json].flatMap { body =>
+              val hc = body.hcursor
+              val action = hc.downField("action").as[String].getOrElse("")
+              val params = hc.downField("params").as[io.circe.JsonObject].getOrElse(io.circe.JsonObject.empty)
+              val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
+              toolOpt match
+                case Some(tool) =>
+                  // Build a minimal ToolContext for remote execution
+                  val ctx = nebflow.core.tools.ToolContext(
+                    projectRoot = System.getProperty("user.dir", ".")
+                  )
+                  tool.call(params, ctx).flatMap {
+                    case Right(result) => Ok(Json.obj("output" -> result.asJson))
+                    case Left(err) => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
+                  }
+                case None =>
+                  BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
+            }
         }
       }
   }
