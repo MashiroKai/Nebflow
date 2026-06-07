@@ -16,6 +16,7 @@ import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.*
+import nebflow.mesh.*
 import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.*
 import org.apache.pekko.actor.typed.ActorSystem
@@ -84,6 +85,32 @@ object GatewayMain extends IOApp.Simple:
   }
 
   private val QuitCommands: Set[String] = Set("quit", "exit", "q")
+
+  /** Handle an incoming relay message from a remote device. */
+  private def handleRelayMessage(
+    meshService: MeshService,
+    sessionStore: SessionStore,
+    wsRoutesHolder: => Option[WebSocketRoutes]
+  )(msg: RelayMessage): IO[Unit] =
+    msg.payload match
+      case RelayPayload.ListSessions() =>
+        sessionStore.listSessions.flatMap { sessions =>
+          val summary = sessions.map(s => SessionSummary(s.id, s.name, s.agentName, s.updatedAt))
+          meshService.sendRelay(msg.fromDeviceId, RelayPayload.SessionList(summary))
+        }
+      case RelayPayload.UserInput(sessionId, content) =>
+        wsRoutesHolder match
+          case Some(routes) =>
+            routes.handleBridgeMessage(sessionId, content, Some(s"mesh:${msg.fromDeviceId}"))
+          case None => IO.unit
+      case RelayPayload.ExecuteCommand(sessionId, command) =>
+        wsRoutesHolder match
+          case Some(routes) =>
+            routes.handleBridgeMessage(sessionId, command, Some(s"mesh:${msg.fromDeviceId}"))
+          case None => IO.unit
+      case RelayPayload.SessionList(_) =>
+        // Response type — not expected as incoming, ignore
+        IO.unit
 
   /**
    * Block until user types a quit command on stdin.
@@ -295,9 +322,17 @@ object GatewayMain extends IOApp.Simple:
                                     }
                                   }
 
-                                bridgeSetup.flatMap { bridgeManager =>
+                                // Create mesh service in parallel with bridge
+                                val meshServiceF: IO[MeshService] =
+                                  MeshSyncStore.load().flatMap(store => MeshService.create(store, cfg.port.value))
+
+                                (bridgeSetup, meshServiceF).mapN { (bridgeManager, meshService) =>
+                                  // Register mesh tool for agent cross-device operations
+                                  nebflow.core.tools.MeshTool.register(meshService)
+                                  nebflow.core.tools.RemoteToolForward.init(meshService)
                                   val sharedResourcesWithBridge =
                                     sharedResources.copy(bridgeManager = Some(bridgeManager))
+                                  val relayHandler = handleRelayMessage(meshService, sessionStore, wsRoutesHolder)
                                   EmberServerBuilder
                                     .default[IO]
                                     .withHost(cfg.host)
@@ -328,7 +363,8 @@ object GatewayMain extends IOApp.Simple:
                                         configRef,
                                         sharedResourcesWithBridge,
                                         sessionStore,
-                                        wsRoutes
+                                        wsRoutes,
+                                        meshService = Some(meshService)
                                       )
 
                                       Router(
@@ -393,6 +429,13 @@ object GatewayMain extends IOApp.Simple:
                                             logger.warn(s"Background init failed: ${e.getMessage}")
                                           }
                                           .start
+                                        // --- Mesh: background sync + relay ---
+                                        _ <- meshService.startSyncLoop
+                                          .handleErrorWith(e => logger.warn(s"Mesh sync loop stopped: ${e.getMessage}"))
+                                          .start
+                                        _ <- meshService.startRelayLoop(relayHandler)
+                                          .handleErrorWith(e => logger.warn(s"Mesh relay loop stopped: ${e.getMessage}"))
+                                          .start
                                         _ <- logger.info(
                                           "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
                                         ) *> waitForQuit
@@ -407,7 +450,7 @@ object GatewayMain extends IOApp.Simple:
                                           actorSystem.whenTerminated
                                         }).void
                                     )
-                                }
+                                } // end bridgeManager + meshService
                               } // end fileLockMgr
                             } // end askSemaphore
                           } // end dispatcher.use

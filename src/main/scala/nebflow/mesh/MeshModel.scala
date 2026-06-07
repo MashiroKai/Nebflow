@@ -15,9 +15,7 @@ case class DeviceIdentity(
   deviceId: String,
   deviceName: String,
   platform: String,
-  nebflowUserId: Option[String] = None,
-  jwt: Option[String] = None,
-  jwtExpiresAt: Option[Long] = None
+  groupId: Option[String] = None
 )
 
 object DeviceIdentity:
@@ -62,13 +60,9 @@ object DeviceIdentity:
       os.write.over(devicePath, identity.asJson.spaces2, createFolders = true)
     }
 
-  /** Update JWT after login. */
-  def updateAuth(identity: DeviceIdentity, userId: String, jwt: String, expiresAt: Long): IO[DeviceIdentity] =
-    val updated = identity.copy(
-      nebflowUserId = Some(userId),
-      jwt = Some(jwt),
-      jwtExpiresAt = Some(expiresAt)
-    )
+  /** Set groupId after pairing. */
+  def setGroup(identity: DeviceIdentity, groupId: String): IO[DeviceIdentity] =
+    val updated = identity.copy(groupId = Some(groupId))
     save(updated).map(_ => updated)
 
   private def createNew(): DeviceIdentity =
@@ -86,12 +80,9 @@ case class PeerInfo(
   deviceId: String,
   deviceName: String,
   platform: String,
-  nebflowUserId: String,
-  localIP: Option[String] = None,
-  publicIP: Option[String] = None,
-  port: Int = 8080,
   online: Boolean = false,
-  lastSeen: Long = 0L
+  lastSeen: Long = 0L,
+  address: Option[String] = None
 )
 
 object PeerInfo:

@@ -939,11 +939,32 @@ private[agent] trait AgentCore:
       if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
       else Repl.loadSystemPrompt()
     val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
-    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth)
+    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth, meshDeviceInfo)
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
-
   end buildSystemPrompt
+
+  /** Build mesh device info for environment table. */
+  private def meshDeviceInfo: String =
+    val msOpt = nebflow.core.tools.RemoteToolForward.currentService
+    msOpt match
+      case None => ""
+      case Some(ms) =>
+        try
+          import cats.effect.unsafe.implicits.global
+          val id = ms.identity.unsafeRunSync()
+          val peersList = ms.peers.unsafeRunSync()
+          val sb = new StringBuilder
+          sb.append(s"| Current device | ${id.deviceName} |\n")
+          if peersList.nonEmpty then
+            val peerStr = peersList.map(p =>
+              val status = if p.online then "online" else "offline"
+              s"${p.deviceName} (${p.platform}, $status)"
+            ).mkString("; ")
+            sb.append(s"| Available devices | $peerStr |\n")
+          sb.toString
+        catch
+          case _: Exception => ""
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)

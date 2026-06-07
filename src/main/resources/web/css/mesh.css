@@ -57,38 +57,105 @@
   margin-bottom: 8px;
 }
 
-/* Login section */
-.mesh-login-prompt {
+/* Pair section */
+.mesh-pair-prompt {
   color: var(--color-text-muted);
   margin-bottom: 12px;
+  font-size: 13px;
 }
 
-.mesh-login-methods {
+.mesh-pair-actions {
   display: flex;
   gap: 8px;
   margin-bottom: 16px;
 }
 
-.mesh-login-btn {
+.mesh-pair-btn {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 8px 16px;
-  border: none;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
-  transition: opacity 0.15s;
-}
-.mesh-login-btn:hover { opacity: 0.85; }
-
-.mesh-wechat {
-  background: #07c160;
-  color: #fff;
+  background: var(--color-bg);
+  color: var(--color-text);
+  transition: border-color 0.15s;
   flex: 1;
-  justify-content: center;
 }
+.mesh-pair-btn:hover { border-color: var(--color-primary); }
+
+/* Pairing code display */
+.mesh-code-display {
+  text-align: center;
+  padding: 16px 0;
+  margin-bottom: 12px;
+  background: var(--color-bg);
+  border-radius: 8px;
+}
+
+.mesh-code-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.mesh-code-value {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: 8px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary);
+}
+
+.mesh-code-timer {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-top: 6px;
+}
+
+.mesh-code-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+}
+
+.mesh-code-expired .mesh-code-value {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+/* Join input */
+.mesh-join-input {
+  margin-bottom: 12px;
+}
+
+.mesh-code-input {
+  font-size: 24px !important;
+  letter-spacing: 6px;
+  text-align: center;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.mesh-join-submit {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-primary);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+.mesh-join-submit:hover { opacity: 0.85; }
 
 /* Setup */
 .mesh-setup {
@@ -142,7 +209,7 @@
   font-weight: 600;
 }
 
-.mesh-user-badge {
+.mesh-group-badge {
   font-size: 11px;
   color: var(--color-text-muted);
   background: var(--color-bg);
@@ -222,12 +289,12 @@
 }
 .mesh-action-btn:hover { border-color: var(--color-primary); }
 
-.mesh-logout {
+.mesh-leave {
   margin-left: auto;
   color: var(--color-error);
   border-color: transparent;
 }
-.mesh-logout:hover { border-color: var(--color-error); }
+.mesh-leave:hover { border-color: var(--color-error); }
 
 /* Sync status */
 .mesh-sync-status {
