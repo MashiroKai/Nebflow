@@ -7,10 +7,13 @@
       "handler": "index.main",
       "runtime": "Nodejs18.15",
       "timeout": 10,
-      "envVariables": {
-        "WX_APPID": "",
-        "WX_SECRET": ""
-      },
+      "installDependency": true
+    },
+    {
+      "name": "nebflow-telemetry",
+      "handler": "index.main",
+      "runtime": "Nodejs18.15",
+      "timeout": 10,
       "installDependency": true
     }
   ]
