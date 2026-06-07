@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref, Temporal}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.parser.decode
-import io.circe.{Decoder, Json, parser}
+import io.circe.{Decoder, Json}
 import nebflow.core.NebflowLogger
 import sttp.client4.*
 import sttp.model.Uri as SttpUri
@@ -12,16 +12,18 @@ import sttp.model.Uri as SttpUri
 import scala.concurrent.duration.*
 
 /**
- * Core mesh service — handles device discovery, data sync, and relay communication.
+ * Core mesh service — handles pairing, device discovery, data sync, and relay.
  *
- * Uses sttp SyncBackend (same as GatewayClient) for HTTP calls to CloudBase.
- * JSON responses decoded manually via circe (project convention).
+ * All cloud calls go through a single CloudBase cloud function URL.
+ * The action field in the JSON body routes to the right handler.
+ * groupId (obtained via pairing code) serves as the Bearer token for auth.
  */
 class MeshService private (
   identityRef: Ref[IO, DeviceIdentity],
   configRef: Ref[IO, MeshConfig],
   peersRef: Ref[IO, List[PeerInfo]],
-  syncStore: MeshSyncStore
+  syncStore: MeshSyncStore,
+  serverPort: Int
 ):
   private val logger = NebflowLogger.forName("nebflow.mesh")
 
@@ -30,25 +32,75 @@ class MeshService private (
   def identity: IO[DeviceIdentity] = identityRef.get
 
   def isLoggedIn: IO[Boolean] =
-    identityRef.get.map(d => d.jwt.isDefined && d.nebflowUserId.isDefined)
+    identityRef.get.map(_.groupId.isDefined)
 
-  def isJwtExpired: IO[Boolean] =
-    identityRef.get.map { d =>
-      d.jwtExpiresAt.exists(_ < System.currentTimeMillis())
-    }
+  /** Group ID (= cloud userId) for this device. */
+  def groupId: IO[Option[String]] =
+    identityRef.get.map(_.groupId)
 
-  /** Update auth after successful login. */
-  def onLogin(userId: String, jwt: String, expiresAt: Long): IO[Unit] =
-    identityRef.get.flatMap { current =>
-      val updated = current.copy(
-        nebflowUserId = Some(userId),
-        jwt = Some(jwt),
-        jwtExpiresAt = Some(expiresAt)
+  // ===== Pairing =====
+
+  /** Create a new device group. Returns (groupId, pairingCode, expiresAt). */
+  def createGroup: IO[(String, String, Long)] =
+    for
+      id <- identityRef.get
+      cloudUrl <- getCloudUrl
+      localAddr <- detectLocalAddress
+      resp <- callCloud(cloudUrl, Json.obj(
+        "action" -> "auth/create-group".asJson,
+        "deviceId" -> id.deviceId.asJson,
+        "deviceName" -> id.deviceName.asJson,
+        "platform" -> id.platform.asJson,
+        "nebflowUrl" -> localAddr.asJson
+      ), "")
+      groupIdStr <- IO.fromEither(
+        resp.hcursor.downField("groupId").as[String].leftMap(_ => new RuntimeException("Missing groupId in response"))
       )
-      DeviceIdentity.save(updated) *> identityRef.set(updated) *> logger.info(
-        s"Logged in as $userId on device ${current.deviceName}"
+      code <- IO.fromEither(
+        resp.hcursor.downField("pairingCode").as[String].leftMap(_ => new RuntimeException("Missing pairingCode"))
       )
-    }
+      expiresAt <- IO.fromEither(
+        resp.hcursor.downField("expiresAt").as[Long].leftMap(_ => new RuntimeException("Missing expiresAt"))
+      )
+      _ <- DeviceIdentity.setGroup(id, groupIdStr)
+      _ <- identityRef.set(id.copy(groupId = Some(groupIdStr)))
+      _ <- logger.info(s"Created group $groupIdStr, pairing code: $code")
+    yield (groupIdStr, code, expiresAt)
+
+  /** Join an existing group with a pairing code. Returns groupId. */
+  def joinGroup(pairingCode: String): IO[String] =
+    for
+      id <- identityRef.get
+      cloudUrl <- getCloudUrl
+      localAddr <- detectLocalAddress
+      resp <- callCloud(cloudUrl, Json.obj(
+        "action" -> "auth/join-group".asJson,
+        "pairingCode" -> pairingCode.asJson,
+        "deviceId" -> id.deviceId.asJson,
+        "deviceName" -> id.deviceName.asJson,
+        "platform" -> id.platform.asJson,
+        "nebflowUrl" -> localAddr.asJson
+      ), "")
+      groupIdStr <- IO.fromEither(
+        resp.hcursor.downField("groupId").as[String].leftMap(_ => new RuntimeException("Invalid pairing code or expired"))
+      )
+      _ <- DeviceIdentity.setGroup(id, groupIdStr)
+      _ <- identityRef.set(id.copy(groupId = Some(groupIdStr)))
+      // Store peers from join response
+      peersResult = resp.hcursor.downField("peers").as[List[PeerInfo]].getOrElse(List.empty)
+      _ <- peersRef.set(peersResult)
+      _ <- logger.info(s"Joined group $groupIdStr, ${peersResult.size} peers")
+    yield groupIdStr
+
+  /** Leave the current group (clear local groupId). */
+  def leaveGroup: IO[Unit] =
+    for
+      id <- identityRef.get
+      _ <- DeviceIdentity.save(id.copy(groupId = None))
+      _ <- identityRef.set(id.copy(groupId = None))
+      _ <- peersRef.set(Nil)
+      _ <- logger.info("Left group")
+    yield ()
 
   // ===== Config =====
 
@@ -68,13 +120,13 @@ class MeshService private (
   def refreshPeers: IO[List[PeerInfo]] =
     for
       id <- identityRef.get
-      jwt <- IO.fromOption(id.jwt)(new RuntimeException("Not logged in"))
+      gid <- IO.fromOption(id.groupId)(new RuntimeException("Not paired"))
       cloudUrl <- getCloudUrl
-      uri = cloudUrl.withPath("device" :: "list" :: Nil)
-      peers <- cloudGet[List[PeerInfo]](uri, jwt)
-      _ <- peersRef.set(peers)
-      _ <- logger.debug(s"Refreshed peers: ${peers.size} devices")
-    yield peers
+      resp <- callCloudAuth(cloudUrl, gid, Json.obj("action" -> "device/list".asJson))
+      peerList = resp.as[List[PeerInfo]].getOrElse(List.empty)
+      _ <- peersRef.set(peerList)
+      _ <- logger.debug(s"Refreshed peers: ${peerList.size} devices")
+    yield peerList
 
   // ===== Sync =====
 
@@ -153,12 +205,15 @@ class MeshService private (
   def uploadFile(relPath: String): IO[Unit] =
     for
       id <- identityRef.get
-      jwt <- IO.fromOption(id.jwt)(new RuntimeException("Not logged in"))
+      gid <- IO.fromOption(id.groupId)(new RuntimeException("Not paired"))
       cloudUrl <- getCloudUrl
       absPath = os.home / ".nebflow" / relPath
       content <- IO.blocking(os.read.bytes(absPath))
-      uri = cloudUrl.withPath("sync" :: "upload" :: Nil)
-      _ <- cloudPost(uri, jwt, Json.obj("path" -> relPath.asJson, "content" -> java.util.Base64.getEncoder.encodeToString(content).asJson))
+      _ <- callCloudAuth(cloudUrl, gid, Json.obj(
+        "action" -> "sync/upload".asJson,
+        "path" -> relPath.asJson,
+        "content" -> java.util.Base64.getEncoder.encodeToString(content).asJson
+      ))
       fp <- IO.blocking(FileFingerprint.compute(absPath))
       _ <- fp.traverse(fp => syncStore.updateSnapshot(relPath, fp))
       _ <- logger.debug(s"Uploaded: $relPath")
@@ -168,13 +223,15 @@ class MeshService private (
   def downloadFile(relPath: String): IO[Unit] =
     for
       id <- identityRef.get
-      jwt <- IO.fromOption(id.jwt)(new RuntimeException("Not logged in"))
+      gid <- IO.fromOption(id.groupId)(new RuntimeException("Not paired"))
       cloudUrl <- getCloudUrl
       absPath = os.home / ".nebflow" / relPath
-      uri = cloudUrl.withPath("sync" :: "download" :: Nil).withParam("path", relPath)
-      response <- cloudGet[Json](uri, jwt)
+      resp <- callCloudAuth(cloudUrl, gid, Json.obj(
+        "action" -> "sync/download".asJson,
+        "path" -> relPath.asJson
+      ))
       contentStr <- IO.fromEither(
-        response.hcursor.downField("content").as[String].leftMap(_ => new RuntimeException("Invalid download response"))
+        resp.hcursor.downField("content").as[String].leftMap(_ => new RuntimeException("Invalid download response"))
       )
       _ <- IO.blocking {
         val tmp = absPath / os.up / s"${absPath.last}.tmp"
@@ -189,8 +246,8 @@ class MeshService private (
   /** Full sync cycle: compare -> upload -> download -> update snapshots. */
   def sync: IO[Unit] =
     for
-      loggedIn <- isLoggedIn
-      _ <- if !loggedIn then logger.debug("Skipping sync: not logged in")
+      paired <- isLoggedIn
+      _ <- if !paired then logger.debug("Skipping sync: not paired")
       else
         for
           local <- computeLocalFingerprints
@@ -208,19 +265,21 @@ class MeshService private (
   def pollRelay: IO[List[RelayMessage]] =
     for
       id <- identityRef.get
-      jwt <- IO.fromOption(id.jwt)(new RuntimeException("Not logged in"))
+      gid <- IO.fromOption(id.groupId)(new RuntimeException("Not paired"))
       cloudUrl <- getCloudUrl
-      uri = cloudUrl.withPath("relay" :: "poll" :: Nil).withParam("deviceId", id.deviceId)
-      messages <- cloudGet[List[RelayMessage]](uri, jwt)
+      resp <- callCloudAuth(cloudUrl, gid, Json.obj(
+        "action" -> "relay/poll".asJson,
+        "deviceId" -> id.deviceId.asJson
+      ))
+      messages = resp.as[List[RelayMessage]].getOrElse(List.empty)
     yield messages
 
   /** Send a relay message to a remote device. */
   def sendRelay(targetDeviceId: String, payload: RelayPayload): IO[Unit] =
     for
       id <- identityRef.get
-      jwt <- IO.fromOption(id.jwt)(new RuntimeException("Not logged in"))
+      gid <- IO.fromOption(id.groupId)(new RuntimeException("Not paired"))
       cloudUrl <- getCloudUrl
-      uri = cloudUrl.withPath("relay" :: "send" :: Nil)
       msg = RelayMessage(
         id = java.util.UUID.randomUUID().toString,
         fromDeviceId = id.deviceId,
@@ -228,7 +287,14 @@ class MeshService private (
         payload = payload,
         createdAt = System.currentTimeMillis()
       )
-      _ <- cloudPost(uri, jwt, msg.asJson)
+      _ <- callCloudAuth(cloudUrl, gid, Json.obj(
+        "action" -> "relay/send".asJson,
+        "fromDeviceId" -> msg.fromDeviceId.asJson,
+        "toDeviceId" -> msg.toDeviceId.asJson,
+        "payload" -> msg.payload.asJson,
+        "id" -> msg.id.asJson,
+        "createdAt" -> msg.createdAt.asJson
+      ))
     yield ()
 
   // ===== Background Loops =====
@@ -256,63 +322,78 @@ class MeshService private (
     configRef.get.flatMap { cfg =>
       IO.fromOption(
         cfg.cloudBaseUrl.flatMap(url => SttpUri.parse(url).toOption)
-      )(new RuntimeException("CloudBase URL not configured"))
+      )(new RuntimeException("Cloud URL not configured — set it in Mesh panel"))
     }
 
   private def fetchRemoteFingerprints: IO[Map[String, FileFingerprint]] =
     for
       id <- identityRef.get
-      jwt <- IO.fromOption(id.jwt)(new RuntimeException("Not logged in"))
+      gid <- IO.fromOption(id.groupId)(new RuntimeException("Not paired"))
       cloudUrl <- getCloudUrl
-      uri = cloudUrl.withPath("sync" :: "status" :: Nil)
-      result <- cloudGet[Map[String, FileFingerprint]](uri, jwt)
+      resp <- callCloudAuth(cloudUrl, gid, Json.obj("action" -> "sync/status".asJson))
+      result = resp.as[Map[String, FileFingerprint]].getOrElse(Map.empty)
     yield result
 
-  /** GET a cloud endpoint, decode JSON response as [A]. */
-  private def cloudGet[A: Decoder](uri: SttpUri, jwt: String): IO[A] =
+  /**
+   * Call the cloud function.
+   * @param gid groupId for auth header. Empty string = no auth.
+   */
+  private def callCloud(uri: SttpUri, body: Json, gid: String): IO[Json] =
     IO.blocking {
-      val resp = basicRequest
-        .get(uri)
-        .auth.bearer(jwt)
-        .response(asStringAlways)
-        .send(backend)
-      decodeResponse[A](resp.body, uri.toString)
-    }
-
-  /** POST JSON to a cloud endpoint, fire-and-forget (checks status only). */
-  private def cloudPost(uri: SttpUri, jwt: String, body: Json): IO[Unit] =
-    IO.blocking {
-      val resp = basicRequest
+      val req = basicRequest
         .post(uri)
-        .auth.bearer(jwt)
         .contentType("application/json")
         .body(body.noSpaces)
         .response(asStringAlways)
-        .send(backend)
+      val reqWithAuth = if gid.nonEmpty then req.auth.bearer(gid) else req
+      val resp = reqWithAuth.send(backend)
       if !resp.code.isSuccess then
-        throw new RuntimeException(s"Cloud API ${resp.code}: ${resp.body.take(200)}")
+        throw new RuntimeException(s"Cloud API ${resp.code}: ${resp.body.take(300)}")
+      decode[Json](resp.body) match
+        case Right(json) =>
+          // Check for cloud function error response
+          json.hcursor.downField("code").as[Int] match
+            case Right(200) =>
+              json.hcursor.downField("data").as[Json] match
+                case Right(data) => data
+                case Left(_) => json
+            case Right(errCode) =>
+              val msg = json.hcursor.downField("message").as[String].getOrElse("Unknown error")
+              throw new RuntimeException(s"Cloud error $errCode: $msg")
+            case Left(_) => json
+        case Left(err) =>
+          throw new RuntimeException(s"JSON decode error: ${err.getMessage}")
     }
 
-  private def decodeResponse[A: Decoder](body: String, context: String): A =
-    if body.startsWith("{") || body.startsWith("[") then
-      decode[A](body) match
-        case Right(value) => value
-        case Left(err) => throw new RuntimeException(s"JSON decode error at $context: ${err.getMessage}")
-    else
-      throw new RuntimeException(s"Cloud API non-JSON response at $context: ${body.take(200)}")
+  /** Convenience: call cloud with auth (requires groupId). */
+  private def callCloudAuth(uri: SttpUri, gid: String, body: Json): IO[Json] =
+    callCloud(uri, body, gid)
 
   private lazy val backend = DefaultSyncBackend()
+
+  /** Detect this device's Nebflow URL (local IP + port). */
+  private def detectLocalAddress: IO[String] =
+    IO.blocking {
+      try
+        val socket = new java.net.DatagramSocket()
+        socket.connect(java.net.InetAddress.getByName("8.8.8.8"), 53)
+        val ip = socket.getLocalAddress.getHostAddress
+        socket.close()
+        s"http://$ip:$serverPort"
+      catch
+        case _: Exception => s"http://localhost:$serverPort"
+    }
 
 end MeshService
 
 object MeshService:
   /** Create and initialize the MeshService. */
-  def create(syncStore: MeshSyncStore): IO[MeshService] =
+  def create(syncStore: MeshSyncStore, serverPort: Int = 8080): IO[MeshService] =
     for
       identity <- DeviceIdentity.loadOrCreate
       config <- MeshConfig.load
       idRef <- Ref.of[IO, DeviceIdentity](identity)
       cfgRef <- Ref.of[IO, MeshConfig](config)
       peersRef <- Ref.of[IO, List[PeerInfo]](Nil)
-    yield new MeshService(idRef, cfgRef, peersRef, syncStore)
+    yield new MeshService(idRef, cfgRef, peersRef, syncStore, serverPort)
 end MeshService

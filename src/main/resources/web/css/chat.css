@@ -1158,6 +1158,35 @@
 }
 
 
+/* ===== Mesh tool row ===== */
+.row.tool.mesh-row {
+  position: relative;
+}
+.row.tool.mesh-row .tool-card {
+  border-left: 3px solid var(--color-primary);
+}
+.row.tool.mesh-row .tool-card .label::before {
+  content: 'MESH';
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  background: var(--color-primary);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.row.tool.mesh-row .tool-card.tool-card--pending .label::before {
+  animation: mesh-pulse 1.5s ease-in-out infinite;
+}
+@keyframes mesh-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
 /* ===== /ask command label ===== */
 .ask-label {
   font-size: 10px;

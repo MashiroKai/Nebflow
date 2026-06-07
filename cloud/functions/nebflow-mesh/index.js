@@ -61,7 +61,7 @@ async function route(action, event, groupId, context) {
 // ===== Auth — Pairing Code =====
 
 async function authCreateGroup(event) {
-  const { deviceId, deviceName, platform } = event
+  const { deviceId, deviceName, platform, nebflowUrl } = event
   if (!deviceId) throw { status: 400, message: 'Missing deviceId' }
 
   const groupId = generateId()
@@ -84,6 +84,7 @@ async function authCreateGroup(event) {
     deviceId,
     deviceName: deviceName || 'Unknown',
     platform: platform || 'unknown',
+    nebflowUrl: nebflowUrl || '',
     localIP: event.localIP || '',
     publicIP: event.publicIP || '',
     online: true,
@@ -95,7 +96,7 @@ async function authCreateGroup(event) {
 }
 
 async function authJoinGroup(event) {
-  const { pairingCode, deviceId, deviceName, platform } = event
+  const { pairingCode, deviceId, deviceName, platform, nebflowUrl } = event
   if (!pairingCode) throw { status: 400, message: 'Missing pairingCode' }
   if (!deviceId) throw { status: 400, message: 'Missing deviceId' }
 
@@ -122,6 +123,7 @@ async function authJoinGroup(event) {
     await col.doc(existing[0]._id).update({
       deviceName: deviceName || existing[0].deviceName,
       platform: platform || existing[0].platform,
+      nebflowUrl: nebflowUrl || existing[0].nebflowUrl || '',
       online: true,
       lastSeen: now
     })
@@ -131,6 +133,7 @@ async function authJoinGroup(event) {
       deviceId,
       deviceName: deviceName || 'Unknown',
       platform: platform || 'unknown',
+      nebflowUrl: nebflowUrl || '',
       localIP: event.localIP || '',
       publicIP: event.publicIP || '',
       online: true,
@@ -154,7 +157,8 @@ async function authJoinGroup(event) {
       deviceName: d.deviceName,
       platform: d.platform,
       online: d.online,
-      lastSeen: d.lastSeen
+      lastSeen: d.lastSeen,
+      address: d.nebflowUrl || ''
     }))
   }
 }
@@ -205,7 +209,8 @@ async function deviceList(groupId) {
     online: d.online,
     lastSeen: d.lastSeen,
     localIP: d.localIP,
-    publicIP: d.publicIP
+    publicIP: d.publicIP,
+    address: d.nebflowUrl || ''
   }))
 }
 
