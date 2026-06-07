@@ -6,6 +6,7 @@ import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
 import nebflow.llm.NebflowServiceConfig
+import nebflow.mesh.MeshService
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -21,7 +22,8 @@ class RestApiRoutes(
   configRef: cats.effect.Ref[IO, NebflowServiceConfig],
   sharedResources: SharedResources,
   sessionStore: SessionStore,
-  wsRoutes: WebSocketRoutes
+  wsRoutes: WebSocketRoutes,
+  meshService: Option[MeshService] = None
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
@@ -175,11 +177,100 @@ class RestApiRoutes(
           Ok(Json.obj("scope" -> scope.asJson, "content" -> content.asJson))
         }
       }
+
+    // ===== Mesh API =====
+
+    // Mesh status — identity, login state, peers
+    case req @ GET -> Root / "api" / "mesh" / "status" =>
+      withMesh(req) { ms =>
+        ms.identity.flatMap { id =>
+          ms.isLoggedIn.flatMap { loggedIn =>
+            ms.meshConfig.flatMap { cfg =>
+              ms.peers.flatMap { peersList =>
+                Ok(Json.obj(
+                  "loggedIn" -> loggedIn.asJson,
+                  "device" -> Json.obj(
+                    "id" -> id.deviceId.asJson,
+                    "name" -> id.deviceName.asJson,
+                    "platform" -> id.platform.asJson,
+                    "userId" -> id.nebflowUserId.asJson
+                  ),
+                  "cloudBaseUrl" -> cfg.cloudBaseUrl.asJson,
+                  "peers" -> peersList.map(p => Json.obj(
+                    "deviceId" -> p.deviceId.asJson,
+                    "deviceName" -> p.deviceName.asJson,
+                    "platform" -> p.platform.asJson,
+                    "online" -> p.online.asJson,
+                    "lastSeen" -> p.lastSeen.asJson
+                  )).asJson
+                ))
+              }
+            }
+          }
+        }
+      }
+
+    // Login — receives userId + JWT from cloud auth callback
+    case req @ POST -> Root / "api" / "mesh" / "login" =>
+      withMesh(req) { ms =>
+        req.as[Json].flatMap { body =>
+          val hc = body.hcursor
+          (hc.downField("userId").as[String], hc.downField("jwt").as[String], hc.downField("expiresAt").as[Long]) match
+            case (Right(userId), Right(jwt), Right(expiresAt)) =>
+              ms.onLogin(userId, jwt, expiresAt) *> Ok(Json.obj("ok" -> true.asJson))
+            case _ =>
+              BadRequest(Json.obj("error" -> "Missing userId, jwt, or expiresAt".asJson))
+        }
+      }
+
+    // Mesh config update
+    case req @ PATCH -> Root / "api" / "mesh" / "config" =>
+      withMesh(req) { ms =>
+        req.as[Json].flatMap { body =>
+          val cloudUrl = body.hcursor.downField("cloudBaseUrl").as[Option[String]].toOption.flatten
+          val syncInterval = body.hcursor.downField("syncIntervalSec").as[Option[Int]].toOption.flatten
+          val relayInterval = body.hcursor.downField("relayPollIntervalSec").as[Option[Int]].toOption.flatten
+          ms.updateConfig { cfg =>
+            cfg.copy(
+              enabled = true,
+              cloudBaseUrl = cloudUrl.orElse(cfg.cloudBaseUrl),
+              syncIntervalSec = syncInterval.getOrElse(cfg.syncIntervalSec),
+              relayPollIntervalSec = relayInterval.getOrElse(cfg.relayPollIntervalSec)
+            )
+          } *> Ok(Json.obj("ok" -> true.asJson))
+        }
+      }
+
+    // Trigger sync
+    case req @ POST -> Root / "api" / "mesh" / "sync" =>
+      withMesh(req) { ms =>
+        ms.sync *> Ok(Json.obj("synced" -> true.asJson))
+      }
+
+    // Send relay message to remote device
+    case req @ POST -> Root / "api" / "mesh" / "relay" =>
+      withMesh(req) { ms =>
+        req.as[Json].flatMap { body =>
+          val hc = body.hcursor
+          (hc.downField("targetDeviceId").as[String], hc.downField("payload").as[nebflow.mesh.RelayPayload]) match
+            case (Right(targetId), Right(payload)) =>
+              ms.sendRelay(targetId, payload) *> Ok(Json.obj("sent" -> true.asJson))
+            case _ =>
+              BadRequest(Json.obj("error" -> "Missing targetDeviceId or payload".asJson))
+        }
+      }
   }
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     if checkAuth(req) then f
     else Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+
+  /** Run block only if MeshService is available and request is authenticated. */
+  private def withMesh(req: Request[IO])(f: MeshService => IO[Response[IO]]): IO[Response[IO]] =
+    if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+    else meshService match
+      case Some(ms) => f(ms)
+      case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
 
   private def checkAuth(req: Request[IO]): Boolean =
     req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
