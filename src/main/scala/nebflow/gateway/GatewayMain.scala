@@ -14,6 +14,7 @@ import nebflow.core.mcp.*
 import nebflow.core.reminder.{ReminderScheduler, ReminderStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
+import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.*
 import nebflow.service.{ConfigSnapshot, *}
@@ -245,6 +246,12 @@ object GatewayMain extends IOApp.Simple:
                                   providerRegistry = registry,
                                   hookEngine = hookEngine
                                 )
+                                // Initialize telemetry (opt-out aware, fire-and-forget on failure)
+                                val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
+                                  logger.warn(s"Telemetry init failed: ${e.getMessage}").as(None)
+                                }
+                                telemetryIO.flatMap { telemetry =>
+                                val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
                                 val sessionService = new SessionService(sessionStore)
                                 val agentService = new AgentService(agentLibrary)
                                 val configService = ConfigService
@@ -257,7 +264,7 @@ object GatewayMain extends IOApp.Simple:
                                   dispatcher,
                                   sessionStore
                                 )
-                                memoryAgentManager.setSharedResources(sharedResources)
+                                memoryAgentManager.setSharedResources(sharedResourcesWithTelemetry)
                                 memoryAgentManager.setWsHub(wsHub)
 
                                 // --- Bridge Manager (plugins: feishu, telegram, etc.) ---
@@ -297,7 +304,7 @@ object GatewayMain extends IOApp.Simple:
 
                                 bridgeSetup.flatMap { bridgeManager =>
                                   val sharedResourcesWithBridge =
-                                    sharedResources.copy(bridgeManager = Some(bridgeManager))
+                                    sharedResourcesWithTelemetry.copy(bridgeManager = Some(bridgeManager))
                                   EmberServerBuilder
                                     .default[IO]
                                     .withHost(cfg.host)
@@ -346,6 +353,8 @@ object GatewayMain extends IOApp.Simple:
                                       wireBridge *> (for
                                         _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
                                         _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
+                                        // Telemetry: app_start
+                                        _ <- telemetry.fold(IO.unit)(_.record("app_start", io.circe.JsonObject.empty))
                                         // Register bridge as WsHub listener for agent events
                                         _ <- wsHub.register(json =>
                                           val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
@@ -356,7 +365,7 @@ object GatewayMain extends IOApp.Simple:
                                         // --- Start Reminder Scheduler ---
                                         _ <- ReminderScheduler
                                           .start(
-                                            sharedResources.reminderStore,
+                                            sharedResourcesWithTelemetry.reminderStore,
                                             (sid, event) =>
                                               wsRoutesHolder match
                                                 case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
@@ -400,6 +409,7 @@ object GatewayMain extends IOApp.Simple:
                                     }
                                     .guarantee(
                                       logger.info("shutting down...") *>
+                                        telemetry.fold(IO.unit)(_.shutdown) *>
                                         mcpManager.stopAll() *>
                                         releaseBackend *>
                                         IO.fromFuture(IO {
@@ -408,6 +418,7 @@ object GatewayMain extends IOApp.Simple:
                                         }).void
                                     )
                                 }
+                                } // end telemetry.flatMap
                               } // end fileLockMgr
                             } // end askSemaphore
                           } // end dispatcher.use

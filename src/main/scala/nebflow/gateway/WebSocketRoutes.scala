@@ -656,11 +656,15 @@ class WebSocketRoutes(
         case "switchSession" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if sessionId.nonEmpty then
+            val tel = sharedResources.telemetry
             sessionService
               .switchSession(sessionId)
               .flatMap { _ =>
+                val telStart = tel.fold(IO.unit)(_.record("session_start",
+                  io.circe.JsonObject("session_id" -> sessionId.asJson)
+                ))
                 sendAgentSessionList(wsSend, sessionId) *>
-                  sendMemoryStatus(wsSend, sessionId)
+                  sendMemoryStatus(wsSend, sessionId) *> telStart
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -674,9 +678,13 @@ class WebSocketRoutes(
           val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
           sessionService
             .createSession(name, agentName = agentName, folderId = folderId)
-            .flatMap { _ =>
+            .flatMap { meta =>
+              val tel = sharedResources.telemetry
+              val telStart = tel.fold(IO.unit)(_.record("session_start",
+                io.circe.JsonObject("session_id" -> meta.id.asJson)
+              ))
               // Send filtered session list for the agent tab
-              agentName match
+              val sendList = agentName match
                 case Some(an) =>
                   (sessionStore.listSessionsByAgent(an), sessionStore.listFolders(an)).flatMapN { (sessions, folders) =>
                     wsSend(
@@ -690,6 +698,7 @@ class WebSocketRoutes(
                   }
                 case None =>
                   sessionService.sendSessionList(wsSend, "Nebula")
+              sendList *> telStart
             }
             .handleErrorWith { e =>
               wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
