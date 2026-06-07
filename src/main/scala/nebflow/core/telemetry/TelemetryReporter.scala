@@ -58,10 +58,11 @@ class TelemetryReporter private (
   private def persistQueue: IO[Unit] =
     queue.get.flatMap { events =>
       if events.isEmpty then IO.unit
-      else IO.blocking {
-        val json = TelemetryEvent.encodeBatch(events, clientId, appVersion, osName)
-        os.write.over(queueFile, json.noSpaces, createFolders = true)
-      }
+      else
+        IO.blocking {
+          val json = TelemetryEvent.encodeBatch(events, clientId, appVersion, osName)
+          os.write.over(queueFile, json.noSpaces, createFolders = true)
+        }
     }
 
 end TelemetryReporter
@@ -90,11 +91,10 @@ object TelemetryReporter:
             content.linesIterator.exists { line =>
               val trimmed = line.trim
               trimmed.startsWith("telemetry:") &&
-                trimmed.substring("telemetry:".length).trim.toLowerCase == "false"
+              trimmed.substring("telemetry:".length).trim.toLowerCase == "false"
             } == false // if telemetry: false exists, return false
           else true
-        catch
-          case _: Exception => true
+        catch case _: Exception => true
 
   /** Detect simplified OS name. */
   def detectOs: String =
@@ -132,19 +132,23 @@ object TelemetryReporter:
       if os.exists(qFile) then
         try
           val raw = os.read(qFile)
-          io.circe.parser.parse(raw).toOption
+          io.circe.parser
+            .parse(raw)
+            .toOption
             .flatMap { json =>
               // Try batch envelope format: { "events": [...] }
-              json.hcursor.downField("events").as[List[TelemetryEvent]].toOption
+              json.hcursor
+                .downField("events")
+                .as[List[TelemetryEvent]]
+                .toOption
                 .orElse(json.asArray.map(_.flatMap(_.as[TelemetryEvent].toOption).toList))
             }
             .getOrElse(Nil)
-        catch
-          case _: Exception => Nil
+        catch case _: Exception => Nil
       else Nil
+      end if
     }.flatMap { events =>
-      if events.nonEmpty then
-        IO.blocking(os.remove(dataRoot / "telemetry-queue.json")).as(events)
+      if events.nonEmpty then IO.blocking(os.remove(dataRoot / "telemetry-queue.json")).as(events)
       else IO.pure(Nil)
     }
 

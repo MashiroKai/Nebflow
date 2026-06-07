@@ -35,3 +35,4 @@ object TelemetryEvent:
       "os" -> os.asJson,
       "events" -> events.map(_.asJson).asJson
     )
+end TelemetryEvent

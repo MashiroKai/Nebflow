@@ -664,9 +664,9 @@ class WebSocketRoutes(
             } *> sessionService
               .switchSession(sessionId)
               .flatMap { _ =>
-                val telStart = sharedResources.telemetry.fold(IO.unit)(_.record("session_start",
-                  io.circe.JsonObject("session_id" -> sessionId.asJson)
-                ))
+                val telStart = sharedResources.telemetry.fold(IO.unit)(
+                  _.record("session_start", io.circe.JsonObject("session_id" -> sessionId.asJson))
+                )
                 sendAgentSessionList(wsSend, sessionId) *>
                   sendMemoryStatus(wsSend, sessionId) *> telStart
               }
@@ -674,6 +674,7 @@ class WebSocketRoutes(
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
               }
           else IO.unit
+          end if
 
         case "createSession" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -684,9 +685,8 @@ class WebSocketRoutes(
             .createSession(name, agentName = agentName, folderId = folderId)
             .flatMap { meta =>
               val tel = sharedResources.telemetry
-              val telStart = tel.fold(IO.unit)(_.record("session_start",
-                io.circe.JsonObject("session_id" -> meta.id.asJson)
-              ))
+              val telStart =
+                tel.fold(IO.unit)(_.record("session_start", io.circe.JsonObject("session_id" -> meta.id.asJson)))
               // Send filtered session list for the agent tab
               val sendList = agentName match
                 case Some(an) =>
@@ -718,8 +718,8 @@ class WebSocketRoutes(
                 val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
                 // Emit session_end telemetry before cleanup
                 emitSessionEnd(sessionId).handleErrorWith(_ => IO.unit) *>
-                // Clean up text buffers for deleted session to prevent memory leak
-                sessionTextBuffers.update(_ - sessionId) *>
+                  // Clean up text buffers for deleted session to prevent memory leak
+                  sessionTextBuffers.update(_ - sessionId) *>
                   sessionThinkingBuffers.update(_ - sessionId) *>
                   sessionTurnStarts.update(_ - sessionId) *>
                   removeRootAgent(sessionId) *> sessionService
@@ -1708,27 +1708,46 @@ class WebSocketRoutes(
                          .appendUiMessages(msgSessionId, List(UiMessage.User(content, attJson, injected)))
                          .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
                      else IO.unit) *> {
-                      // Track turn count for telemetry
-                      sessionTurnCounts.update(m =>
-                        m.updated(msgSessionId, m.getOrElse(msgSessionId, 0) + 1)
-                      ).handleErrorWith(_ => IO.unit) *> {
-                      // Telemetry: message_sent (structural features only, no content)
-                      sharedResources.telemetry.fold(IO.unit)(_.record("message_sent",
-                        JsonObject.fromIterable(List(
-                          "session_id" -> msgSessionId.asJson,
-                          "prompt_length" -> content.length.asJson,
-                          "language_hint" -> (if content.exists(_ > 0x4E00) then "chinese" else "english").asJson,
-                          "has_code_block" -> content.contains("```").asJson,
-                        ))
-                      ).handleErrorWith(_ => IO.unit)) *> {
-                      val blocksList = blocks.toList
-                      routeToAgent(msgSessionId)(ref =>
-                        IO(
-                          ref ! AgentCommand
-                            .UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty), chatWidth)
-                        )
-                      )
-                      }}}
+                      // Track turn count + session start time for telemetry
+                      sessionTurnCounts
+                        .update(m => m.updated(msgSessionId, m.getOrElse(msgSessionId, 0) + 1))
+                        .handleErrorWith(_ => IO.unit) *>
+                        sessionStartTimes
+                          .update { m =>
+                            if m.contains(msgSessionId) then m else m.updated(msgSessionId, System.currentTimeMillis())
+                          }
+                          .handleErrorWith(_ => IO.unit) *> {
+                          // Telemetry: message_sent (structural features only, no content)
+                          sharedResources.telemetry.fold(IO.unit)(
+                            _.record(
+                              "message_sent",
+                              JsonObject.fromIterable(
+                                List(
+                                  "session_id" -> msgSessionId.asJson,
+                                  "prompt_length" -> content.length.asJson,
+                                  "language_hint" -> (if content.exists(_ > 0x4e00) then "chinese"
+                                                      else "english").asJson,
+                                  "has_code_block" -> content.contains("```").asJson
+                                )
+                              )
+                            ).handleErrorWith(_ => IO.unit)
+                          ) *> {
+                            val blocksList = blocks.toList
+                            routeToAgent(msgSessionId)(ref =>
+                              IO(
+                                ref ! AgentCommand
+                                  .UserInput(
+                                    content,
+                                    None,
+                                    clientMessageId,
+                                    Some(blocksList).filter(_.nonEmpty),
+                                    chatWidth
+                                  )
+                              )
+                            )
+                          }
+                        }
+                    }
                 }
             }
           else IO.unit
@@ -1792,15 +1811,18 @@ class WebSocketRoutes(
           _ <- cleanupSessionTelemetry(sessionId)
           durationSec = startTime.map(s => (System.currentTimeMillis() - s) / 1000).getOrElse(0L)
           inferredTask = TaskInferencer.infer(profile, turns)
-          props = JsonObject.fromIterable(List(
-            "session_id" -> sessionId.asJson,
-            "duration_sec" -> durationSec.asJson,
-            "turn_count" -> turns.asJson,
-            "tool_profile" -> TaskInferencer.toolProfileJson(profile).asJson,
-            "inferred_task" -> inferredTask.asJson,
-            "model_used" -> model.asJson,
-          ))
+          props = JsonObject.fromIterable(
+            List(
+              "session_id" -> sessionId.asJson,
+              "duration_sec" -> durationSec.asJson,
+              "turn_count" -> turns.asJson,
+              "tool_profile" -> TaskInferencer.toolProfileJson(profile).asJson,
+              "inferred_task" -> inferredTask.asJson,
+              "model_used" -> model.asJson
+            )
+          )
           _ <- reporter.record("session_end", props)
+          _ <- reporter.flush
         yield ()
 
   /** Clean up per-session telemetry tracking state. */
@@ -1905,7 +1927,7 @@ class WebSocketRoutes(
         val trackModel = model match
           case Some(m) => sessionModels.update(_.updated(sessionId, m))
           case None => IO.unit
-        trackModel *>        sessionTurnStarts
+        trackModel *> sessionTurnStarts
           .modify { m =>
             val start = m.getOrElse(sessionId, 0L)
             (m - sessionId, start)

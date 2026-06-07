@@ -38,8 +38,7 @@ object HttpTelemetrySender extends TelemetrySender:
             .response(asStringAlways)
           try
             val response = request.send(SharedBackend.instance)
-            if !response.code.isSuccess then
-              logger.warnSync(s"Telemetry server returned ${response.code}")
+            if !response.code.isSuccess then logger.warnSync(s"Telemetry server returned ${response.code}")
           catch
             case e: Exception =>
               logger.warnSync(s"Telemetry send failed: ${e.getMessage}")
@@ -47,8 +46,6 @@ object HttpTelemetrySender extends TelemetrySender:
 
 end HttpTelemetrySender
 
-/**
- * No-op sender for testing or when telemetry is disabled.
- */
+/** No-op sender for testing or when telemetry is disabled. */
 object NoOpTelemetrySender extends TelemetrySender:
   def send(endpoint: String, payload: Json): IO[Unit] = IO.unit
