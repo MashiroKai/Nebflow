@@ -225,15 +225,33 @@ HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local 
 
   /** Base description without user design prompt. */
   private val baseDescription =
-    """Renders an interactive visual explanation in the chat — use this when a diagram, animation, or spatial layout conveys the idea better than paragraphs of text.
+    """Renders an interactive HTML card embedded in the chat.
 
-This tool is for "a picture is worth a thousand words" scenarios. If the content works equally well as Markdown text, do NOT use this tool.
+Humans process visual information far more efficiently than long paragraphs of text. Use this tool to optimize your output — present relationships, structure, and data visually when doing so makes your answer easier to understand.
+
+Accuracy and correctness come first. if your answer involves data, numbers, or precise relationships, use a plotting library (matplotlib, gnuplot, ROOT, etc.) to generate a visualization, then embed it as an image. Hand-drawn SVG is for layout and simple diagrams where precision is not critical.
+
+## What it can do
+
+- **Diagrams & charts**: flowcharts, architecture diagrams, org charts, bar/pie/line charts, heatmaps, network topologies
+- **Animations & simulations**: physics simulations, algorithm step-throughs, state machine transitions, progress indicators
+- **Spatial layouts**: UI mockups, floor plans, image galleries, comparison grids, annotated screenshots
+- **Interactive widgets**: clickable prototypes, drag-and-drop exercises, parameter sliders, input forms, quizzes
+- **Embedded media**: local images, generated plots (matplotlib/gnuplot), videos, 3D models (OBJ/STL/GLTF)
 
 ## Parameters
 
-- html (string, required): HTML with CSS and JS. Local file paths in src/href (images, scripts, etc.) are automatically served. Dark mode via var(--color-*).
-- title (string, optional): title above card."""
+- html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
+- title (string, optional): title above card.
 
+Example (embedded image):
+{"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}
+
+Example (SVG diagram):
+{"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 600 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"70\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"240\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}
+
+Example (interactive 3D with Three.js):
+{"html":"<div style=\"padding:0\"><script src=\"https://cdn.jsdelivr.net/npm/three@latest/build/three.min.js\"></script><canvas id=\"c\" style=\"width:100%;height:400px;display:block\"></canvas><script>const s=new THREE.Scene();const c=document.getElementById('c');const r=new THREE.WebGLRenderer({canvas:c,antialias:true});r.setSize(c.clientWidth,400);const cam=new THREE.PerspectiveCamera(75,c.clientWidth/400,0.1,1000);cam.position.z=3;s.add(new THREE.Mesh(new THREE.SphereGeometry(1,32,32),new THREE.MeshNormalMaterial()));function f(){requestAnimationFrame(f);r.render(s,cam)}f()</script></div>","title":"3D Sphere"}"""
   /** Dynamic description: base tool description + user design prompt (always present after auto-init). */
   def description: String =
     s"$baseDescription\n\n${loadDesignPrompt()}"

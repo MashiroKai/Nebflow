@@ -1,12 +1,45 @@
-/* ---------- Sidebar Panel (220px) ---------- */
+/* ---------- Sidebar — unified floating glass card ---------- */
+#sidebar {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  margin: 8px;
+  max-height: calc(100vh - 16px);
+  border-radius: 20px;
+  overflow: hidden;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  #sidebar {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+/* Divider between nav and session list */
+.sidebar-divider {
+  width: 1px;
+  background: var(--glass-border);
+  flex-shrink: 0;
+}
+
+/* ---------- Sidebar Panel — inner column inside #sidebar ---------- */
 #sidebar-panel {
   width: 220px;
-  background: var(--color-sidebar-bg);
   color: var(--color-frame-text);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  height: 100vh;
+  overflow: hidden;
+  min-height: 0;
 }
 .panel {
   display: none;
@@ -20,7 +53,7 @@
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--color-frame-border);
+  border-bottom: 1px solid var(--glass-border);
 }
 .panel-title {
   font-size: 13px;
@@ -40,12 +73,12 @@
 }
 .panel-btn {
   background: none;
-  border: 1px solid var(--color-frame-border);
+  border: 1px solid var(--glass-border);
   color: var(--color-frame-text-muted);
   font-size: 13px;
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -76,7 +109,7 @@
   gap: 8px;
   position: relative;
   transition: background 0.15s;
-  border-radius: 4px;
+  border-radius: 10px;
 }
 .session-item:hover { background: var(--color-frame-hover); }
 .session-item.active { background: var(--color-frame-active); }
@@ -344,8 +377,8 @@
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--sapphire-edge);
-  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
   padding: 4px 0;
   box-shadow:
     inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
@@ -387,8 +420,8 @@
   left: 100%;
   top: 0;
   background: #ffffff;
-  border: 1px solid var(--sapphire-edge);
-  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
   padding: 4px 0;
   box-shadow:
     inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
@@ -446,18 +479,14 @@
   color: var(--color-frame-text-bright);
 }
 .folder-item.active {
-  background: rgba(7,193,96,0.08);
-  outline: 1.5px solid var(--color-primary);
-  outline-offset: -1.5px;
+  background: var(--color-frame-active);
   color: var(--color-frame-text-bright);
 }
 .folder-item.active:hover {
-  background: rgba(7,193,96,0.12);
+  background: var(--color-frame-hover);
 }
 .folder-item.drag-over {
-  background: rgba(7,193,96,0.08);
-  outline: 1.5px dashed var(--color-primary);
-  outline-offset: -1.5px;
+  background: var(--color-frame-hover);
 }
 .folder-item.pinned {
   background: var(--color-frame-input-bg);
@@ -958,19 +987,16 @@
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--sapphire-edge);
-  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
   width: 400px;
   max-width: 92vw;
   max-height: 85vh;
   overflow-y: auto;
   box-shadow:
-    inset 0 -1px 0 0 rgba(91, 127, 191, 0.03),
-    inset 1px 0 0 0 rgba(91, 127, 191, 0.02),
-    inset -1px 0 0 0 rgba(91, 127, 191, 0.02),
-    0px 0px 0px 1px rgba(0, 0, 0, 0.04),
-    0px 4px 16px rgba(0, 0, 0, 0.06),
-    0px 8px 40px rgba(0, 0, 0, 0.08);
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
 }
 /* Top refraction line */
 .cfg-modal::before {
