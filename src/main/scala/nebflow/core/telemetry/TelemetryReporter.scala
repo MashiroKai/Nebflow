@@ -72,8 +72,8 @@ object TelemetryReporter:
 
   private def dataRoot: os.Path = nebflow.core.PathUtil.dataRoot
 
-  /** Default telemetry endpoint. */
-  val DefaultEndpoint = "https://nebflow.space/api/telemetry/events"
+  /** Default telemetry endpoint (CloudBase). */
+  val DefaultEndpoint = "https://cloudbase-3gltu9is7f791a38.service.tcloudbase.com/nebflow-telemetry"
 
   /** Check if telemetry is enabled via env or config. */
   def isEnabled: Boolean =
