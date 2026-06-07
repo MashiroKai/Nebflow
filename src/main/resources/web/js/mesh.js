@@ -1,14 +1,13 @@
 /**
- * Mesh panel — multi-device status, login, sync, remote control.
+ * Mesh panel — multi-device pairing, sync, remote control.
  * Imported by main.js, adds a button to the header.
  */
 import state from './state.js';
-import { escapeHtml, renderMarkdownWithMath } from './utils.js';
-import { t } from './i18n.js';
+import { escapeHtml } from './utils.js';
 
 // ---- Mesh state ----
 let meshState = {
-  loggedIn: false,
+  paired: false,
   device: null,
   peers: [],
   cloudBaseUrl: null,
@@ -18,7 +17,6 @@ let meshState = {
 
 // ---- Init ----
 export function initMesh() {
-  // Add mesh button to header (before conn indicator)
   const headerRight = document.querySelector('.header-right');
   if (!headerRight) return;
 
@@ -38,18 +36,15 @@ export function initMesh() {
 
   // Close on outside click
   document.addEventListener('click', (e) => {
-    const panel = document.getElementById('mesh-panel');
-    if (panel && !panel.classList.contains('hidden') &&
-        !panel.contains(e.target) && e.target.id !== 'mesh-btn' &&
+    const p = document.getElementById('mesh-panel');
+    if (p && !p.classList.contains('hidden') &&
+        !p.contains(e.target) && e.target.id !== 'mesh-btn' &&
         !e.target.closest('#mesh-btn')) {
-      panel.classList.add('hidden');
+      p.classList.add('hidden');
     }
   });
 
-  // Bind events
   bindPanelEvents();
-
-  // Fetch initial status
   fetchMeshStatus();
 }
 
@@ -62,27 +57,50 @@ function buildPanelHTML() {
         <button class="mesh-close-btn" id="mesh-close">&times;</button>
       </div>
 
-      <!-- Not logged in -->
-      <div id="mesh-login-section" class="mesh-section">
-        <div class="mesh-login-prompt">Login to sync across devices</div>
-        <div class="mesh-login-methods">
-          <button class="mesh-login-btn mesh-wechat" id="mesh-login-wechat">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 0 1 .213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 0 0 .167-.054l1.903-1.114a.864.864 0 0 1 .717-.098 10.16 10.16 0 0 0 2.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178A1.17 1.17 0 0 1 4.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 0 1-1.162 1.178 1.17 1.17 0 0 1-1.162-1.178c0-.651.52-1.18 1.162-1.18zm3.68 4.025c-3.694 0-6.963 2.507-6.963 5.812 0 3.327 3.269 5.835 6.963 5.835.724 0 1.42-.103 2.083-.29a.722.722 0 0 1 .578.08l1.396.82a.26.26 0 0 0 .131.043c.13 0 .24-.11.24-.245 0-.06-.023-.118-.038-.176l-.287-1.088a.488.488 0 0 1 .169-.546C21.725 19.352 22.756 17.65 22.756 15.828c0-3.305-3.269-5.812-6.963-5.812h-.315zm-2.56 3.183c.527 0 .955.434.955.97a.963.963 0 0 1-.955.97.963.963 0 0 1-.956-.97c0-.536.428-.97.956-.97zm4.806 0c.527 0 .955.434.955.97a.963.963 0 0 1-.955.97.963.963 0 0 1-.956-.97c0-.536.429-.97.956-.97z"/></svg>
-            WeChat Login
+      <!-- Not paired yet -->
+      <div id="mesh-pair-section" class="mesh-section">
+        <div class="mesh-pair-prompt">Pair devices to sync data</div>
+
+        <div class="mesh-pair-actions">
+          <button class="mesh-pair-btn mesh-create" id="mesh-create-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+            Create Group
+          </button>
+          <button class="mesh-pair-btn mesh-join" id="mesh-join-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+            Join Group
           </button>
         </div>
+
+        <!-- Pairing code display (after create) -->
+        <div id="mesh-code-display" class="mesh-code-display hidden">
+          <div class="mesh-code-label">Pairing Code</div>
+          <div class="mesh-code-value" id="mesh-code-value"></div>
+          <div class="mesh-code-timer" id="mesh-code-timer"></div>
+          <div class="mesh-code-hint">Enter this code on another device</div>
+        </div>
+
+        <!-- Join input -->
+        <div id="mesh-join-input" class="mesh-join-input hidden">
+          <label class="mesh-label">Enter Pairing Code</label>
+          <input type="text" id="mesh-pairing-code" class="mesh-input mesh-code-input"
+                 placeholder="000000" maxlength="6" inputmode="numeric" pattern="[0-9]*">
+          <button class="mesh-join-submit" id="mesh-join-submit">Pair</button>
+        </div>
+
         <div class="mesh-setup">
           <label class="mesh-label">Cloud URL</label>
-          <input type="text" id="mesh-cloud-url" class="mesh-input" placeholder="https://xxx.ap-shanghai.tcb.qcloud.la">
+          <input type="text" id="mesh-cloud-url" class="mesh-input"
+                 placeholder="https://xxx.service.tcloudbase.com/nebflow-mesh">
           <button class="mesh-save-btn" id="mesh-save-config">Save</button>
         </div>
       </div>
 
-      <!-- Logged in -->
+      <!-- Paired -->
       <div id="mesh-status-section" class="mesh-section hidden">
         <div class="mesh-device-info">
           <span class="mesh-device-name" id="mesh-device-name"></span>
-          <span class="mesh-user-badge" id="mesh-user-badge"></span>
+          <span class="mesh-group-badge" id="mesh-group-badge"></span>
         </div>
 
         <div class="mesh-section-title">Devices</div>
@@ -93,7 +111,7 @@ function buildPanelHTML() {
             <i data-lucide="refresh-cw" style="width:14px;height:14px"></i>
             Sync Now
           </button>
-          <button class="mesh-action-btn mesh-logout" id="mesh-logout">Logout</button>
+          <button class="mesh-action-btn mesh-leave" id="mesh-leave">Leave</button>
         </div>
       </div>
 
@@ -111,16 +129,23 @@ function bindPanelEvents() {
   document.getElementById('mesh-close')?.addEventListener('click', () => {
     document.getElementById('mesh-panel')?.classList.add('hidden');
   });
-
   document.getElementById('mesh-save-config')?.addEventListener('click', saveConfig);
-  document.getElementById('mesh-login-wechat')?.addEventListener('click', loginWechat);
+  document.getElementById('mesh-create-group')?.addEventListener('click', doCreateGroup);
+  document.getElementById('mesh-join-group')?.addEventListener('click', showJoinInput);
+  document.getElementById('mesh-join-submit')?.addEventListener('click', doJoinGroup);
   document.getElementById('mesh-sync-now')?.addEventListener('click', triggerSync);
-  document.getElementById('mesh-logout')?.addEventListener('click', logout);
+  document.getElementById('mesh-leave')?.addEventListener('click', doLeave);
+
+  // Auto-uppercase + auto-submit on 6 digits
+  document.getElementById('mesh-pairing-code')?.addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/[^0-9]/g, '').slice(0, 6);
+    if (e.target.value.length === 6) doJoinGroup();
+  });
 }
 
-// ---- API calls (via existing REST API) ----
+// ---- API ----
 async function meshApi(path, method = 'GET', body = null) {
-  const token = await getLocalToken();
+  const token = localStorage.getItem('nebflow_token') || '';
   const headers = { 'Authorization': `Bearer ${token}` };
   if (body) headers['Content-Type'] = 'application/json';
 
@@ -132,17 +157,6 @@ async function meshApi(path, method = 'GET', body = null) {
   return resp.json();
 }
 
-async function getLocalToken() {
-  // Read from the existing auth token (stored by Nebflow gateway)
-  try {
-    const resp = await fetch('/api/health');
-    // Token is passed as query param or header — use the stored one
-    return localStorage.getItem('nebflow_token') || '';
-  } catch {
-    return '';
-  }
-}
-
 // ---- Actions ----
 async function fetchMeshStatus() {
   try {
@@ -150,7 +164,6 @@ async function fetchMeshStatus() {
     meshState = { ...meshState, ...data };
     updateUI();
   } catch (e) {
-    // Mesh not enabled — hide button
     document.getElementById('mesh-btn')?.classList.add('hidden');
   }
 }
@@ -159,43 +172,36 @@ function updateUI() {
   const btn = document.getElementById('mesh-btn');
   if (!btn) return;
 
-  // Update button appearance
-  if (meshState.loggedIn) {
+  if (meshState.paired) {
     btn.classList.remove('mesh-off');
     btn.classList.add('mesh-on');
     const peerCount = meshState.peers.filter(p => p.online).length;
-    btn.title = `Mesh: ${peerCount} device${peerCount !== 1 ? 's' : ''} online`;
+    btn.title = `Mesh: ${peerCount + 1} device${peerCount !== 0 ? 's' : ''}`;
   } else {
     btn.classList.remove('mesh-on');
     btn.classList.add('mesh-off');
-    btn.title = 'Mesh: Not logged in';
+    btn.title = 'Mesh: Not paired';
   }
 
-  // Update panel sections
-  const loginSection = document.getElementById('mesh-login-section');
+  const pairSection = document.getElementById('mesh-pair-section');
   const statusSection = document.getElementById('mesh-status-section');
 
-  if (meshState.loggedIn) {
-    loginSection?.classList.add('hidden');
+  if (meshState.paired) {
+    pairSection?.classList.add('hidden');
     statusSection?.classList.remove('hidden');
 
-    // Device info
     const nameEl = document.getElementById('mesh-device-name');
-    const badgeEl = document.getElementById('mesh-user-badge');
+    const badgeEl = document.getElementById('mesh-group-badge');
     if (nameEl && meshState.device) {
       nameEl.textContent = meshState.device.name || 'Unknown Device';
     }
-    if (badgeEl) {
-      badgeEl.textContent = `User: ${(meshState.device?.userId || '').slice(0, 8)}...`;
+    if (badgeEl && meshState.device?.groupId) {
+      badgeEl.textContent = `Group: ${meshState.device.groupId.slice(0, 8)}...`;
     }
-
-    // Peers list
     renderPeers();
   } else {
-    loginSection?.classList.remove('hidden');
+    pairSection?.classList.remove('hidden');
     statusSection?.classList.add('hidden');
-
-    // Restore cloud URL if saved
     if (meshState.cloudBaseUrl) {
       const input = document.getElementById('mesh-cloud-url');
       if (input) input.value = meshState.cloudBaseUrl;
@@ -207,7 +213,6 @@ function renderPeers() {
   const container = document.getElementById('mesh-peers-list');
   if (!container) return;
 
-  // Include local device + peers
   const allDevices = [
     { ...meshState.device, deviceId: 'local', online: true },
     ...meshState.peers
@@ -226,43 +231,94 @@ function renderPeers() {
 async function saveConfig() {
   const url = document.getElementById('mesh-cloud-url')?.value?.trim();
   if (!url) return;
-
   try {
     await meshApi('config', 'PATCH', { cloudBaseUrl: url });
     meshState.cloudBaseUrl = url;
     showSyncStatus('Config saved');
   } catch (e) {
-    showSyncStatus('Failed to save config: ' + e.message);
+    showSyncStatus('Failed: ' + e.message);
   }
 }
 
-async function loginWechat() {
+async function doCreateGroup() {
   if (!meshState.cloudBaseUrl) {
-    showSyncStatus('Please set Cloud URL first');
+    showSyncStatus('Set Cloud URL first');
     return;
   }
-  // Redirect to cloud function for WeChat OAuth
-  const loginUrl = `${meshState.cloudBaseUrl}/auth/wechat-login`;
-  window.open(loginUrl, '_blank', 'width=600,height=500');
+  try {
+    showSyncStatus('Creating group...');
+    const data = await meshApi('create-group', 'POST');
+    if (data.error) {
+      showSyncStatus(data.error);
+      return;
+    }
+    meshState.paired = true;
+    meshState.device = { ...meshState.device, groupId: data.groupId };
+    showPairingCode(data.pairingCode, data.expiresAt);
+    updateUI();
+  } catch (e) {
+    showSyncStatus('Failed: ' + e.message);
+  }
 }
 
-// Called from the OAuth callback page
-window.__nebflowMeshLogin = async function(userId, jwt, expiresAt) {
-  try {
-    await meshApi('login', 'POST', { userId, jwt, expiresAt });
-    meshState.loggedIn = true;
-    await fetchMeshStatus();
-    showSyncStatus('Logged in!');
-  } catch (e) {
-    showSyncStatus('Login failed: ' + e.message);
+function showPairingCode(code, expiresAt) {
+  const display = document.getElementById('mesh-code-display');
+  const valueEl = document.getElementById('mesh-code-value');
+  const timerEl = document.getElementById('mesh-code-timer');
+  if (!display || !valueEl || !timerEl) return;
+
+  // Format as XXX-XXX
+  valueEl.textContent = code.slice(0, 3) + ' ' + code.slice(3);
+  display.classList.remove('hidden');
+
+  // Countdown
+  const update = () => {
+    const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+    if (remaining <= 0) {
+      timerEl.textContent = 'Expired';
+      display.classList.add('mesh-code-expired');
+      return;
+    }
+    const min = Math.floor(remaining / 60);
+    const sec = remaining % 60;
+    timerEl.textContent = `${min}:${sec.toString().padStart(2, '0')}`;
+    setTimeout(update, 1000);
+  };
+  update();
+}
+
+function showJoinInput() {
+  const input = document.getElementById('mesh-join-input');
+  if (input) {
+    input.classList.remove('hidden');
+    document.getElementById('mesh-pairing-code')?.focus();
   }
-};
+}
+
+async function doJoinGroup() {
+  const code = document.getElementById('mesh-pairing-code')?.value?.trim();
+  if (!code || code.length !== 6) return;
+
+  try {
+    showSyncStatus('Pairing...');
+    const data = await meshApi('join-group', 'POST', { pairingCode: code });
+    if (data.error) {
+      showSyncStatus(data.error);
+      return;
+    }
+    meshState.paired = true;
+    meshState.device = { ...meshState.device, groupId: data.groupId };
+    showSyncStatus('Paired!');
+    updateUI();
+  } catch (e) {
+    showSyncStatus('Failed: ' + e.message);
+  }
+}
 
 async function triggerSync() {
   if (meshState.syncing) return;
   meshState.syncing = true;
   showSyncStatus('Syncing...');
-
   try {
     await meshApi('sync', 'POST');
     meshState.lastSyncAt = Date.now();
@@ -274,12 +330,24 @@ async function triggerSync() {
   }
 }
 
-function logout() {
-  // Clear local JWT
-  meshApi('config', 'PATCH', { enabled: false }).catch(() => {});
-  meshState.loggedIn = false;
-  meshState.peers = [];
-  updateUI();
+async function doLeave() {
+  if (!confirm('Leave this device group? Synced data stays in the cloud.')) return;
+  try {
+    await meshApi('config', 'PATCH', { enabled: false });
+    // Reset local state
+    meshState.paired = false;
+    meshState.peers = [];
+    meshState.device = { ...meshState.device, groupId: null };
+    // Call backend to clear groupId
+    fetch('/api/mesh/leave', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${localStorage.getItem('nebflow_token') || ''}` }
+    }).catch(() => {});
+    updateUI();
+    showSyncStatus('Left group');
+  } catch (e) {
+    showSyncStatus('Failed: ' + e.message);
+  }
 }
 
 function showSyncStatus(text) {
@@ -295,7 +363,6 @@ function toggleMeshPanel() {
   const panel = document.getElementById('mesh-panel');
   if (!panel) return;
   panel.classList.toggle('hidden');
-  // Refresh status when opening
   if (!panel.classList.contains('hidden')) {
     fetchMeshStatus();
   }
