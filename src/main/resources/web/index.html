@@ -18,34 +18,40 @@
 </head>
 <body>
   <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
-  <!-- Nav Bar — agent icons + settings at bottom -->
-  <div id="nav-bar">
-    <div id="nav-agent-list"></div>
-    <button id="new-agent-btn" class="nav-add-btn">+</button>
-    <div class="nav-spacer"></div>
-    <div class="nav-item" data-tab="settings">
-      <i data-lucide="settings"></i>
+  <!-- Sidebar — unified glass card (nav + session list) -->
+  <div id="sidebar">
+    <!-- Nav Bar — agent icons + settings at bottom -->
+    <div id="nav-bar">
+      <div id="nav-agent-list"></div>
+      <button id="new-agent-btn" class="nav-add-btn">+</button>
+      <div class="nav-spacer"></div>
+      <div class="nav-item" data-tab="settings">
+        <i data-lucide="settings"></i>
+      </div>
     </div>
-  </div>
 
-  <!-- Sidebar — session list for selected agent -->
-  <div id="sidebar-panel">
-    <div id="panel-sessions" class="panel active">
-      <div class="panel-header">
-        <span class="panel-title">Sessions</span>
-        <div class="panel-actions">
-          <button id="new-folder-btn" class="panel-btn"><i data-lucide="folder"></i></button>
-          <button id="new-session-btn" class="panel-btn">+</button>
+    <!-- Divider between nav and session list -->
+    <div class="sidebar-divider"></div>
+
+    <!-- Session list for selected agent -->
+    <div id="sidebar-panel">
+      <div id="panel-sessions" class="panel active">
+        <div class="panel-header">
+          <span class="panel-title">Sessions</span>
+          <div class="panel-actions">
+            <button id="new-folder-btn" class="panel-btn"><i data-lucide="folder"></i></button>
+            <button id="new-session-btn" class="panel-btn">+</button>
+          </div>
         </div>
-      </div>
 
-      <div id="session-list"></div>
-    </div>
-    <div id="panel-settings" class="panel">
-      <div class="panel-header">
-        <span class="panel-title">Settings</span>
+        <div id="session-list"></div>
       </div>
-      <div id="settings-content"></div>
+      <div id="panel-settings" class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Settings</span>
+        </div>
+        <div id="settings-content"></div>
+      </div>
     </div>
   </div>
 
@@ -94,7 +100,7 @@
       <div id="lottie-spinner"></div>
       <span id="status-text"></span>
     </div>
-    <div id="input-area" style="position:relative;">
+    <div id="input-area">
       <div class="voice-overlay" id="voice-overlay">
         <div class="voice-wave"><i data-lucide="mic"></i></div>
         <div class="voice-text" id="voice-text">Listening...</div>
