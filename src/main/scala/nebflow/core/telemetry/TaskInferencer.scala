@@ -10,12 +10,12 @@ import io.circe.{Json, JsonObject}
 object TaskInferencer:
 
   enum InferredTask(val label: String):
-    case Coding       extends InferredTask("coding")
-    case Debug        extends InferredTask("debug")
-    case CodeReview   extends InferredTask("code_review")
-    case Research     extends InferredTask("research")
-    case Ops          extends InferredTask("ops")
-    case ProjectInit  extends InferredTask("project_init")
+    case Coding extends InferredTask("coding")
+    case Debug extends InferredTask("debug")
+    case CodeReview extends InferredTask("code_review")
+    case Research extends InferredTask("research")
+    case Ops extends InferredTask("ops")
+    case ProjectInit extends InferredTask("project_init")
     case Conversation extends InferredTask("conversation")
 
   /**
@@ -29,12 +29,13 @@ object TaskInferencer:
     val total = toolProfile.values.sum
     if total == 0 then return InferredTask.Conversation.label
 
-    val edit    = toolProfile.getOrElse("Edit", 0) + toolProfile.getOrElse("Write", 0)
-    val read    = toolProfile.getOrElse("Read", 0)
-    val grep    = toolProfile.getOrElse("Grep", 0)
-    val bash    = toolProfile.getOrElse("Bash", 0)
-    val web     = toolProfile.getOrElse("WebSearch", 0) + toolProfile.getOrElse("WebFetch", 0) + toolProfile.getOrElse("Curl", 0)
-    val write   = toolProfile.getOrElse("Write", 0)
+    val edit = toolProfile.getOrElse("Edit", 0) + toolProfile.getOrElse("Write", 0)
+    val read = toolProfile.getOrElse("Read", 0)
+    val grep = toolProfile.getOrElse("Grep", 0)
+    val bash = toolProfile.getOrElse("Bash", 0)
+    val web =
+      toolProfile.getOrElse("WebSearch", 0) + toolProfile.getOrElse("WebFetch", 0) + toolProfile.getOrElse("Curl", 0)
+    val write = toolProfile.getOrElse("Write", 0)
     val readSearch = read + grep
 
     // Rule 1: Web research dominant
@@ -46,10 +47,8 @@ object TaskInferencer:
     // Rule 3: Project initialization — lots of Write, little Read
     if pct(write, total) > 0.40 && pct(read, total) < 0.20 then return InferredTask.ProjectInit.label
 
-    // Rule 4: Active coding — significant edits with tests
-    if edit > 0 && pct(edit, readSearch) > 0.4 then
-      if bash > 0 then return InferredTask.Coding.label
-      else return InferredTask.Coding.label
+    // Rule 4: Active coding — significant edits relative to reading
+    if edit > 0 && pct(edit, readSearch) > 0.4 then return InferredTask.Coding.label
 
     // Rule 5: Debug — heavy search, some edits
     if pct(readSearch, total) > 0.50 && edit > 0 && edit <= 3 then return InferredTask.Debug.label
@@ -68,9 +67,7 @@ object TaskInferencer:
   private def pct(part: Int, total: Int): Double =
     if total == 0 then 0.0 else part.toDouble / total
 
-  /**
-   * Build a tool_profile JsonObject suitable for the session_end event.
-   */
+  /** Build a tool_profile JsonObject suitable for the session_end event. */
   def toolProfileJson(profile: Map[String, Int]): JsonObject =
     JsonObject.fromMap(profile.map { case (k, v) => k -> io.circe.Json.fromInt(v) })
 
