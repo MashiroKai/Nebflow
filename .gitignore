@@ -29,6 +29,7 @@ docs/
 nul
 openclaw/
 cloud/**/node_modules/
+cloud/node_modules/
 
 # Sensitive
 *.env
