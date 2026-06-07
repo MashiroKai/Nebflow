@@ -21,7 +21,7 @@ object TelemetryEvent:
   given Encoder[TelemetryEvent] = deriveEncoder
   given Decoder[TelemetryEvent] = deriveDecoder
 
-  /** Encode a batch of events as the API request body. */
+  /** Encode a batch of events as the CloudBase API request body. */
   def encodeBatch(
     events: List[TelemetryEvent],
     clientId: String,
@@ -29,6 +29,7 @@ object TelemetryEvent:
     os: String
   ): Json =
     Json.obj(
+      "action" -> "events".asJson,
       "client_id" -> clientId.asJson,
       "app_version" -> appVersion.asJson,
       "os" -> os.asJson,
