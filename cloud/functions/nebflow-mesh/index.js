@@ -1,14 +1,18 @@
 /**
  * Nebflow Mesh — CloudBase 云函数（单入口路由）
  *
+ * 认证方式：邀请码配对（Pairing Code）
+ *   - 第一台设备调用 auth/create-group 生成 6 位邀请码（10 分钟有效）
+ *   - 其他设备调用 auth/join-group 输入邀请码加入同一用户组
+ *   - groupId 作为所有设备共享的 userId
+ *
  * 调用方式：
- *   tcb.callFunction({ name: 'nebflow-mesh', data: { action: 'auth/wechat-login', ... } })
- *   或 HTTP 触发: POST https://{envId}.service.tcloudbase.com/nebflow-mesh
- *     Body: { action: 'device/register', ... }
- *     Headers: Authorization: Bearer <userId>
+ *   HTTP 触发: POST https://{envId}.service.tcloudbase.com/nebflow-mesh
+ *     Body: { action: 'auth/create-group', ... }
+ *     Headers: Authorization: Bearer <groupId>
  *
  * 数据库集合（需在控制台创建）：
- *   - users: 用户信息
+ *   - groups: 用户组（groupId, pairingCode, expiresAt）
  *   - devices: 设备注册
  *   - relay_messages: 中继消息
  */
@@ -20,10 +24,10 @@ const db = app.database()
 // ===== 主入口 =====
 exports.main = async (event, context) => {
   const action = event.action || event.path || ''
-  const userId = extractUserId(event, context)
+  const groupId = extractGroupId(event, context)
 
   try {
-    const result = await route(action, event, userId, context)
+    const result = await route(action, event, groupId, context)
     return { code: 200, data: result }
   } catch (err) {
     console.error(`[nebflow-mesh] ${action} error:`, err)
@@ -31,123 +35,206 @@ exports.main = async (event, context) => {
   }
 }
 
-async function route(action, event, userId, context) {
+async function route(action, event, groupId, context) {
   switch (action) {
-    // Auth
-    case 'auth/wechat-login': return authWechatLogin(event)
+    // Auth (no group required)
+    case 'auth/create-group': return authCreateGroup(event)
+    case 'auth/join-group':   return authJoinGroup(event)
 
-    // Device
-    case 'device/register': requireAuth(userId); return deviceRegister(event, userId)
-    case 'device/list':     requireAuth(userId); return deviceList(userId)
+    // Device (require groupId)
+    case 'device/register': requireAuth(groupId); return deviceRegister(event, groupId)
+    case 'device/list':     requireAuth(groupId); return deviceList(groupId)
 
-    // Sync
-    case 'sync/status':   requireAuth(userId); return syncStatus(event, userId)
-    case 'sync/upload':   requireAuth(userId); return syncUpload(event, userId)
-    case 'sync/download': requireAuth(userId); return syncDownload(event, userId)
+    // Sync (require groupId)
+    case 'sync/status':   requireAuth(groupId); return syncStatus(event, groupId)
+    case 'sync/upload':   requireAuth(groupId); return syncUpload(event, groupId)
+    case 'sync/download': requireAuth(groupId); return syncDownload(event, groupId)
 
-    // Relay
-    case 'relay/send': requireAuth(userId); return relaySend(event, userId)
-    case 'relay/poll': requireAuth(userId); return relayPoll(event, userId)
+    // Relay (require groupId)
+    case 'relay/send': requireAuth(groupId); return relaySend(event, groupId)
+    case 'relay/poll': requireAuth(groupId); return relayPoll(event, groupId)
 
     default: throw { status: 400, message: `Unknown action: ${action}` }
   }
 }
 
-// ===== Auth =====
+// ===== Auth — Pairing Code =====
 
-async function authWechatLogin(event) {
-  const { code } = event
-  if (!code) throw { status: 400, message: 'Missing code' }
+async function authCreateGroup(event) {
+  const { deviceId, deviceName, platform } = event
+  if (!deviceId) throw { status: 400, message: 'Missing deviceId' }
 
-  const wxResp = await fetch(
-    `https://api.weixin.qq.com/sns/oauth2/access_token?appid=${process.env.WX_APPID}&secret=${process.env.WX_SECRET}&code=${code}&grant_type=authorization_code`
-  )
-  const wxData = await wxResp.json()
-  if (wxData.errcode) throw { status: 400, message: `WeChat error: ${wxData.errmsg}` }
+  const groupId = generateId()
+  const pairingCode = generatePairingCode()
+  const now = Date.now()
+  const expiresAt = now + 10 * 60 * 1000 // 10 minutes
 
-  const { openid, unionid, access_token } = wxData
-  const uid = unionid || openid
+  // Create group
+  await db.collection('groups').add({
+    groupId,
+    pairingCode,
+    createdAt: now,
+    expiresAt,
+    createdBy: deviceId
+  })
 
-  // Get user info
-  let nickname = 'Nebflow User', avatar = ''
-  try {
-    const userResp = await fetch(`https://api.weixin.qq.com/sns/userinfo?access_token=${access_token}&openid=${openid}`)
-    const userData = await userResp.json()
-    nickname = userData.nickname || nickname
-    avatar = userData.headimgurl || avatar
-  } catch (e) { /* non-critical */ }
+  // Auto-register the creating device
+  await db.collection('devices').add({
+    groupId,
+    deviceId,
+    deviceName: deviceName || 'Unknown',
+    platform: platform || 'unknown',
+    localIP: event.localIP || '',
+    publicIP: event.publicIP || '',
+    online: true,
+    registeredAt: now,
+    lastSeen: now
+  })
 
-  // Upsert user
-  const usersCol = db.collection('users')
-  const { data: existing } = await usersCol.where({ uid }).get()
+  return { groupId, pairingCode, expiresAt }
+}
 
-  let userId
-  if (existing.length > 0) {
-    userId = existing[0]._id
-    await usersCol.doc(userId).update({ nickname, avatar, lastLoginAt: Date.now() })
-  } else {
-    const result = await usersCol.add({ uid, nickname, avatar, loginMethods: { wechat: { openid, unionid } }, createdAt: Date.now(), lastLoginAt: Date.now() })
-    userId = result.id
+async function authJoinGroup(event) {
+  const { pairingCode, deviceId, deviceName, platform } = event
+  if (!pairingCode) throw { status: 400, message: 'Missing pairingCode' }
+  if (!deviceId) throw { status: 400, message: 'Missing deviceId' }
+
+  // Find group by pairing code
+  const { data: groups } = await db.collection('groups')
+    .where({ pairingCode })
+    .get()
+
+  if (groups.length === 0) throw { status: 404, message: 'Invalid pairing code' }
+
+  const group = groups[0]
+  if (Date.now() > group.expiresAt) {
+    throw { status: 410, message: 'Pairing code expired' }
   }
 
-  // Generate CloudBase custom auth ticket
-  const ticket = app.auth().createTicket(userId, { refresh: 3600 * 24 * 30 })
+  const groupId = group.groupId
+  const now = Date.now()
 
-  return { userId, nickname, avatar, ticket, expiresIn: 3600 * 24 * 7 }
+  // Register the joining device
+  const col = db.collection('devices')
+  const { data: existing } = await col.where({ groupId, deviceId }).get()
+
+  if (existing.length > 0) {
+    await col.doc(existing[0]._id).update({
+      deviceName: deviceName || existing[0].deviceName,
+      platform: platform || existing[0].platform,
+      online: true,
+      lastSeen: now
+    })
+  } else {
+    await col.add({
+      groupId,
+      deviceId,
+      deviceName: deviceName || 'Unknown',
+      platform: platform || 'unknown',
+      localIP: event.localIP || '',
+      publicIP: event.publicIP || '',
+      online: true,
+      registeredAt: now,
+      lastSeen: now
+    })
+  }
+
+  // Invalidate pairing code after successful join
+  await db.collection('groups').doc(group._id).update({
+    expiresAt: now // expire immediately
+  })
+
+  // Return group info + peer list
+  const { data: peers } = await col.where({ groupId, deviceId: db.RegExp({ neq: deviceId }) }).get()
+
+  return {
+    groupId,
+    peers: peers.map(d => ({
+      deviceId: d.deviceId,
+      deviceName: d.deviceName,
+      platform: d.platform,
+      online: d.online,
+      lastSeen: d.lastSeen
+    }))
+  }
 }
 
 // ===== Device =====
 
-async function deviceRegister(event, userId) {
+async function deviceRegister(event, groupId) {
   const { deviceName, platform, localIP, deviceId: existingDeviceId } = event
   const deviceId = existingDeviceId || generateId()
 
   const col = db.collection('devices')
-  const { data: existing } = await col.where({ userId, deviceId }).get()
+  const { data: existing } = await col.where({ groupId, deviceId }).get()
 
-  const update = { deviceName, platform, localIP: localIP || '', publicIP: event.publicIP || '', online: true, lastSeen: Date.now() }
+  const now = Date.now()
+  const update = {
+    deviceName, platform,
+    localIP: localIP || '',
+    publicIP: event.publicIP || '',
+    online: true,
+    lastSeen: now
+  }
+
   if (existing.length > 0) {
     await col.doc(existing[0]._id).update(update)
   } else {
-    await col.add({ userId, deviceId, ...update, registeredAt: Date.now() })
+    await col.add({ groupId, deviceId, ...update, registeredAt: now })
   }
 
-  const { data: peers } = await col.where({ userId, deviceId: db.RegExp({ neq: deviceId }) }).get()
-  return { deviceId, peers: peers.map(d => ({ deviceId: d.deviceId, deviceName: d.deviceName, platform: d.platform, online: d.online, lastSeen: d.lastSeen })) }
+  const { data: peers } = await col.where({ groupId, deviceId: db.RegExp({ neq: deviceId }) }).get()
+  return {
+    deviceId,
+    peers: peers.map(d => ({
+      deviceId: d.deviceId,
+      deviceName: d.deviceName,
+      platform: d.platform,
+      online: d.online,
+      lastSeen: d.lastSeen
+    }))
+  }
 }
 
-async function deviceList(userId) {
-  const { data: devices } = await db.collection('devices').where({ userId }).get()
-  return devices.map(d => ({ deviceId: d.deviceId, deviceName: d.deviceName, platform: d.platform, online: d.online, lastSeen: d.lastSeen, localIP: d.localIP, publicIP: d.publicIP }))
+async function deviceList(groupId) {
+  const { data: devices } = await db.collection('devices').where({ groupId }).get()
+  return devices.map(d => ({
+    deviceId: d.deviceId,
+    deviceName: d.deviceName,
+    platform: d.platform,
+    online: d.online,
+    lastSeen: d.lastSeen,
+    localIP: d.localIP,
+    publicIP: d.publicIP
+  }))
 }
 
 // ===== Sync =====
 
-async function syncStatus(event, userId) {
-  // Return remote fingerprints from cloud storage index
+async function syncStatus(event, groupId) {
   try {
-    const result = await app.downloadFile({ fileID: `nebflow-sync/${userId}/_sync_index.json` })
+    const result = await app.downloadFile({ fileID: `nebflow-sync/${groupId}/_sync_index.json` })
     if (result && result.fileContent) return JSON.parse(result.fileContent.toString('utf-8'))
   } catch (e) { /* index doesn't exist yet */ }
   return {}
 }
 
-async function syncUpload(event, userId) {
+async function syncUpload(event, groupId) {
   const { path: filePath, content } = event
   if (!filePath || content === undefined) throw { status: 400, message: 'Missing path or content' }
 
   const buffer = Buffer.from(content, 'base64')
-  await app.uploadFile({ cloudPath: `nebflow-sync/${userId}/${filePath}`, fileContent: buffer })
-  await updateSyncIndex(userId, filePath, buffer)
+  await app.uploadFile({ cloudPath: `nebflow-sync/${groupId}/${filePath}`, fileContent: buffer })
+  await updateSyncIndex(groupId, filePath, buffer)
   return { ok: true }
 }
 
-async function syncDownload(event, userId) {
+async function syncDownload(event, groupId) {
   const { path: filePath } = event
   if (!filePath) throw { status: 400, message: 'Missing path' }
 
   try {
-    const result = await app.downloadFile({ fileID: `nebflow-sync/${userId}/${filePath}` })
+    const result = await app.downloadFile({ fileID: `nebflow-sync/${groupId}/${filePath}` })
     return { content: result.fileContent.toString('utf-8'), path: filePath }
   } catch (e) {
     throw { status: 404, message: 'File not found' }
@@ -156,20 +243,32 @@ async function syncDownload(event, userId) {
 
 // ===== Relay =====
 
-async function relaySend(event, userId) {
+async function relaySend(event, groupId) {
   const { fromDeviceId, toDeviceId, payload } = event
   if (!toDeviceId || !payload) throw { status: 400, message: 'Missing toDeviceId or payload' }
 
-  await db.collection('relay_messages').add({ userId, id: event.id || generateId(), fromDeviceId: fromDeviceId || '', toDeviceId, payload, createdAt: event.createdAt || Date.now(), delivered: false })
+  await db.collection('relay_messages').add({
+    groupId,
+    id: event.id || generateId(),
+    fromDeviceId: fromDeviceId || '',
+    toDeviceId,
+    payload,
+    createdAt: event.createdAt || Date.now(),
+    delivered: false
+  })
   return { ok: true }
 }
 
-async function relayPoll(event, userId) {
+async function relayPoll(event, groupId) {
   const { deviceId } = event
   if (!deviceId) throw { status: 400, message: 'Missing deviceId' }
 
   const col = db.collection('relay_messages')
-  const { data: messages } = await col.where({ userId, toDeviceId: deviceId, delivered: false }).orderBy('createdAt', 'asc').limit(50).get()
+  const { data: messages } = await col
+    .where({ groupId, toDeviceId: deviceId, delivered: false })
+    .orderBy('createdAt', 'asc')
+    .limit(50)
+    .get()
 
   if (messages.length > 0) {
     for (const msg of messages) {
@@ -177,16 +276,22 @@ async function relayPoll(event, userId) {
     }
   }
 
-  return messages.map(m => ({ id: m.id, fromDeviceId: m.fromDeviceId, toDeviceId: m.toDeviceId, payload: m.payload, createdAt: m.createdAt }))
+  return messages.map(m => ({
+    id: m.id,
+    fromDeviceId: m.fromDeviceId,
+    toDeviceId: m.toDeviceId,
+    payload: m.payload,
+    createdAt: m.createdAt
+  }))
 }
 
 // ===== Helpers =====
 
-function extractUserId(event, context) {
+function extractGroupId(event, context) {
   // From CloudBase custom auth
   if (context && context.openId) return context.openId
   if (context && context.customUserId) return context.customUserId
-  // From HTTP header (fallback)
+  // From HTTP header
   if (event && event.headers) {
     const auth = event.headers['authorization'] || event.headers['Authorization'] || ''
     if (auth.startsWith('Bearer ')) return auth.slice(7)
@@ -194,8 +299,8 @@ function extractUserId(event, context) {
   return null
 }
 
-function requireAuth(userId) {
-  if (!userId) throw { status: 401, message: 'Unauthorized' }
+function requireAuth(groupId) {
+  if (!groupId) throw { status: 401, message: 'Unauthorized — no groupId' }
 }
 
 function generateId() {
@@ -205,16 +310,24 @@ function generateId() {
   })
 }
 
-async function updateSyncIndex(userId, filePath, buffer) {
+function generatePairingCode() {
+  // 6-digit numeric code
+  return String(Math.floor(100000 + Math.random() * 900000))
+}
+
+async function updateSyncIndex(groupId, filePath, buffer) {
   const crypto = require('crypto')
   const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 12)
 
   let index = {}
   try {
-    const result = await app.downloadFile({ fileID: `nebflow-sync/${userId}/_sync_index.json` })
+    const result = await app.downloadFile({ fileID: `nebflow-sync/${groupId}/_sync_index.json` })
     if (result && result.fileContent) index = JSON.parse(result.fileContent.toString('utf-8'))
   } catch (e) { /* doesn't exist */ }
 
   index[filePath] = { hash, mtime: Date.now(), size: buffer.length }
-  await app.uploadFile({ cloudPath: `nebflow-sync/${userId}/_sync_index.json`, fileContent: Buffer.from(JSON.stringify(index, null, 2)) })
+  await app.uploadFile({
+    cloudPath: `nebflow-sync/${groupId}/_sync_index.json`,
+    fileContent: Buffer.from(JSON.stringify(index, null, 2))
+  })
 }
