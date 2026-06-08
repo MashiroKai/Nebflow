@@ -374,4 +374,23 @@ export default {
   'reminder.today': 'Today',
   'reminder.tomorrow': 'Tomorrow',
   'reminder.yesterday': 'Yesterday',
+
+  // Mesh
+  'mesh.title': 'Nebflow Account',
+  'mesh.username': 'Username',
+  'mesh.password': 'Password',
+  'mesh.login': 'Login',
+  'mesh.register': 'Register',
+  'mesh.logout': 'Logout',
+  'mesh.createAccount': 'Create Account',
+  'mesh.noAccount': "Don't have an account?",
+  'mesh.hasAccount': 'Already have an account?',
+  'mesh.fillBoth': 'Please enter username and password',
+  'mesh.usernameShort': 'Username must be at least 3 characters',
+  'mesh.passwordShort': 'Password must be at least 6 characters',
+  'mesh.usernameAvailable': 'Username available',
+  'mesh.usernameTaken': 'Username already taken',
+  'mesh.devices': 'Devices',
+  'mesh.thisDevice': 'This device',
+  'mesh.connected': 'Connected',
 };

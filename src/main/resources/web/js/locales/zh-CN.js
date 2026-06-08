@@ -375,4 +375,23 @@ export default {
   'reminder.today': '今天',
   'reminder.tomorrow': '明天',
   'reminder.yesterday': '昨天',
+
+  // Mesh
+  'mesh.title': 'Nebflow 账号',
+  'mesh.username': '用户名',
+  'mesh.password': '密码',
+  'mesh.login': '登录',
+  'mesh.register': '注册',
+  'mesh.logout': '退出登录',
+  'mesh.createAccount': '创建账号',
+  'mesh.noAccount': '没有账号？',
+  'mesh.hasAccount': '已有账号？',
+  'mesh.fillBoth': '请输入用户名和密码',
+  'mesh.usernameShort': '用户名至少 3 个字符',
+  'mesh.passwordShort': '密码至少 6 个字符',
+  'mesh.usernameAvailable': '用户名可用',
+  'mesh.usernameTaken': '用户名已被占用',
+  'mesh.devices': '设备',
+  'mesh.thisDevice': '本机',
+  'mesh.connected': '已连接',
 };
