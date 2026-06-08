@@ -37,6 +37,7 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initReminder, refreshReminders } from './reminder.js';
+import { initMesh } from './mesh.js';
 import { formatLiveDuration } from './chat.js';
 
 // Randomized cosmic thinking bubble text
@@ -1736,6 +1737,7 @@ initInput();
 initFeishuPanel();
 initMemory();
 initReminder();
+initMesh();
 
 // Sidebar collapse toggle
 (function initSidebarToggle() {

@@ -17,6 +17,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.ToolRegistry
 import nebflow.llm.*
+import nebflow.mesh.*
 import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.*
 import org.apache.pekko.actor.typed.ActorSystem
@@ -305,10 +306,17 @@ object GatewayMain extends IOApp.Simple:
                                       }
                                     }
 
+                                  // Create mesh service (sequential to avoid compute pool starvation inside Dispatcher.use)
+                                  val meshServiceF: IO[MeshService] =
+                                    MeshSyncStore.load().flatMap(store => MeshService.create(store, cfg.port.value))
+
                                   bridgeSetup.flatMap { bridgeManager =>
-                                    val sharedResourcesWithBridge =
-                                      sharedResourcesWithTelemetry.copy(bridgeManager = Some(bridgeManager))
-                                    EmberServerBuilder
+                                    meshServiceF.flatMap { meshService =>
+                                      // Register mesh tool for agent cross-device operations
+                                      nebflow.core.tools.MeshTool.register(meshService)
+                                      val sharedResourcesWithBridge =
+                                        sharedResourcesWithTelemetry.copy(bridgeManager = Some(bridgeManager))
+                                      EmberServerBuilder
                                       .default[IO]
                                       .withHost(cfg.host)
                                       .withPort(cfg.port)
@@ -338,7 +346,8 @@ object GatewayMain extends IOApp.Simple:
                                           configRef,
                                           sharedResourcesWithBridge,
                                           sessionStore,
-                                          wsRoutes
+                                          wsRoutes,
+                                          meshService = Some(meshService)
                                         )
 
                                         Router(
@@ -405,6 +414,22 @@ object GatewayMain extends IOApp.Simple:
                                               logger.warn(s"Background init failed: ${e.getMessage}")
                                             }
                                             .start
+                                          // --- Mesh: UDP discovery + sync ---
+                                          _ <- meshService.discovery.startBroadcast
+                                            .handleErrorWith(e =>
+                                              logger.warn(s"Mesh broadcast stopped: ${e.getMessage}")
+                                            )
+                                            .start
+                                          _ <- meshService.discovery.startListen
+                                            .handleErrorWith(e =>
+                                              logger.warn(s"Mesh listener stopped: ${e.getMessage}")
+                                            )
+                                            .start
+                                          _ <- meshService.startSyncLoop
+                                            .handleErrorWith(e =>
+                                              logger.warn(s"Mesh sync loop stopped: ${e.getMessage}")
+                                            )
+                                            .start
                                           _ <- logger.info(
                                             "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
                                           ) *> waitForQuit
@@ -420,7 +445,8 @@ object GatewayMain extends IOApp.Simple:
                                             actorSystem.whenTerminated
                                           }).void
                                       )
-                                  }
+                                  } // end meshService
+                                } // end bridgeManager
                                 } // end telemetry.flatMap
                               } // end fileLockMgr
                             } // end askSemaphore
