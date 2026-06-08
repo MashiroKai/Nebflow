@@ -18,6 +18,7 @@ import nebflow.service.{MemoryStore, RulesStore}
  * == EveryTurn sources (re-resolved every turn) ==
  *   • thinkingConfig — global Ref[IO, ThinkingConfig]
  *   • fileChanges    — FileChangeTracker (5s debounce)
+ *   • gitBranch      — git rev-parse --abbrev-ref HEAD
  *
  * == Lifecycle reset triggers ==
  *   • /clear (ResetSession) — clears messages + lifecycle
@@ -111,6 +112,65 @@ object ContextRefresher:
     yield LifecycleContext(systemPrefix, freshDef, memoryBlock, rulesMd, projectRoot)
 
   // ============================================================
+  // Git branch detection (EveryTurn source)
+  // ============================================================
+
+  /**
+   * Detect current git branch for the given project root.
+   * Returns None if the directory is not a git repo.
+   */
+  private def detectGitBranch(projectRoot: Option[String]): IO[Option[String]] =
+    projectRoot match
+      case Some(root) =>
+        IO.blocking {
+          try
+            val pb = new ProcessBuilder("git", "rev-parse", "--abbrev-ref", "HEAD")
+            pb.directory(new java.io.File(root))
+            pb.redirectErrorStream(true)
+            val proc = pb.start()
+            val output = scala.io.Source.fromInputStream(proc.getInputStream)(scala.io.Codec.UTF8).mkString.trim
+            proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+            if proc.exitValue() == 0 && output.nonEmpty && !output.startsWith("fatal:") then Some(output)
+            else None
+          catch
+            case _: Exception => None
+        }
+      case None => IO.pure(None)
+
+  /**
+   * Check for git branch change and produce a reminder if the branch has changed.
+   * Returns (reminder, currentBranch).
+   */
+  private def checkBranchChange(
+    projectRoot: Option[String],
+    lastBranch: Option[String]
+  ): IO[(Option[SystemReminder], Option[String])] =
+    detectGitBranch(projectRoot).map { currentBranch =>
+      if currentBranch != lastBranch then
+        val reminder = (lastBranch, currentBranch) match
+          case (Some(old), Some(current)) =>
+            Some(SystemReminder(
+              "gitBranch",
+              s"Git branch changed from \"$old\" to \"$current\". All subsequent file operations now apply to the new branch. " +
+                "If you have uncommitted work, verify it is on the intended branch before making changes."
+            ))
+          case (None, Some(current)) =>
+            // First detection — just record, no alarm
+            None
+          case (Some(old), None) =>
+            // Was a git repo, now not — could be worrying
+            Some(SystemReminder(
+              "gitBranch",
+              s"Git branch was \"$old\" but the project is no longer detected as a git repository. " +
+                "File operations will continue but version control tracking may be lost."
+            ))
+          case (None, None) => None
+        (reminder, currentBranch)
+      else
+        (None, currentBranch)
+    }
+
+  // ============================================================
   // Main entry point
   // ============================================================
 
@@ -135,6 +195,7 @@ object ContextRefresher:
         for
           thinkingConfig <- resources.thinkingConfigRef.get
           fileChanges <- resources.fileChangeTracker.checkChanges()
+          (branchReminder, currentBranch) <- checkBranchChange(lc.projectRoot, state.gitBranch)
         yield (
           TurnContext(
             lc.agentDef,
@@ -143,7 +204,9 @@ object ContextRefresher:
             lc.rulesMd,
             lc.memoryBlock,
             thinkingConfig,
-            fileChanges
+            fileChanges,
+            branchReminder,
+            currentBranch
           ),
           None
         )
@@ -153,6 +216,7 @@ object ContextRefresher:
           lc <- resolveLifecycle(state, resources, agentDef)
           thinkingConfig <- resources.thinkingConfigRef.get
           fileChanges <- resources.fileChangeTracker.checkChanges()
+          (branchReminder, currentBranch) <- checkBranchChange(lc.projectRoot, state.gitBranch)
         yield (
           TurnContext(
             lc.agentDef,
@@ -161,7 +225,9 @@ object ContextRefresher:
             lc.rulesMd,
             lc.memoryBlock,
             thinkingConfig,
-            fileChanges
+            fileChanges,
+            branchReminder,
+            currentBranch
           ),
           Some(lc)
         )
