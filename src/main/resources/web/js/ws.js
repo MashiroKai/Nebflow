@@ -7,6 +7,19 @@ export function onMessage(type, handler) {
   handlers[type] = handler;
 }
 
+// ---------- Reconnection state ----------
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 10;
+const BASE_RECONNECT_DELAY = 2000;
+const MAX_RECONNECT_DELAY = 30000;
+
+function reconnectDelay() {
+  // Exponential backoff: 2s, 4s, 8s, 16s, 30s, 30s, ...
+  const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
+  // Add jitter (±20%) to avoid thundering herd
+  return delay * (0.8 + Math.random() * 0.4);
+}
+
 // ---------- Send ----------
 export function sendWs(msg) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
@@ -29,11 +42,16 @@ export function connect() {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
     console.error('[ws] WebSocket constructor failed:', e);
-    setTimeout(connect, 3000);
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      const delay = reconnectDelay();
+      reconnectAttempts++;
+      setTimeout(connect, delay);
+    }
     return;
   }
 
   state.ws.onopen = () => {
+    reconnectAttempts = 0; // Reset backoff on successful connection
     state.dom.connEl.classList.remove('off');
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
@@ -54,11 +72,19 @@ export function connect() {
   state.ws.onclose = () => {
     state.dom.connEl.classList.add('off');
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
-    setTimeout(connect, 2000);
+    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      const delay = reconnectDelay();
+      reconnectAttempts++;
+      setTimeout(connect, delay);
+    }
   };
 
-  state.ws.onerror = (e) => {
-    console.error('[ws] error:', e);
+  state.ws.onerror = () => {
+    // Silence expected errors during reconnection — onclose handles the retry logic.
+    // Only log on the first few attempts to avoid console spam.
+    if (reconnectAttempts < 3) {
+      console.warn('[ws] connection failed, reconnecting...');
+    }
     state.dom.connEl.classList.add('off');
   };
 
