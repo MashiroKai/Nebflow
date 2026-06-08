@@ -85,6 +85,14 @@ function buildPanelHTML() {
           </button>
           <button class="mesh-action-btn mesh-leave" id="mesh-leave">Leave</button>
         </div>
+
+        <div class="mesh-section-title" style="margin-top:12px">Cross-Network</div>
+        <div class="mesh-cloud-config">
+          <input type="text" id="mesh-cloud-url" class="mesh-input"
+                 placeholder="Cloud discovery URL (optional)">
+          <button class="mesh-save-btn" id="mesh-save-cloud">Save</button>
+        </div>
+        <div class="mesh-hint">Optional. Set a cloud function URL to discover peers across different networks (e.g. different WiFi, NAT). LAN peers are found automatically via UDP.</div>
       </div>
 
       <!-- Status message -->
@@ -103,6 +111,7 @@ function bindPanelEvents() {
   document.getElementById('mesh-pair-btn')?.addEventListener('click', doPair);
   document.getElementById('mesh-leave')?.addEventListener('click', doLeave);
   document.getElementById('mesh-sync-now')?.addEventListener('click', triggerSync);
+  document.getElementById('mesh-save-cloud')?.addEventListener('click', saveCloudUrl);
 
   // Enter key in token input
   document.getElementById('mesh-token-input')?.addEventListener('keydown', (e) => {
@@ -179,6 +188,11 @@ function updateUI() {
       badgeEl.textContent = t.length > 8 ? `Token: ${t.slice(0, 4)}${'*'.repeat(Math.min(t.length - 8, 8))}${t.slice(-4)}` : `Token: ${'*'.repeat(t.length)}`;
     }
     renderPeers();
+    // Populate cloud URL input
+    if (meshState.cloudDiscoveryUrl) {
+      const input = document.getElementById('mesh-cloud-url');
+      if (input) input.value = meshState.cloudDiscoveryUrl;
+    }
   } else {
     pairSection?.classList.remove('hidden');
     statusSection?.classList.add('hidden');
@@ -246,6 +260,16 @@ async function triggerSync() {
     fetchMeshStatus();
   } catch (e) {
     showStatus('Sync failed: ' + e.message);
+  }
+}
+
+async function saveCloudUrl() {
+  const url = document.getElementById('mesh-cloud-url')?.value?.trim();
+  try {
+    await meshApi('config', 'PATCH', { cloudDiscoveryUrl: url || null });
+    showStatus(url ? 'Cloud URL saved' : 'Cloud URL cleared');
+  } catch (e) {
+    showStatus('Failed: ' + e.message);
   }
 }
 
