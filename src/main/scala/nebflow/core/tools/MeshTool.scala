@@ -103,7 +103,7 @@ Available devices are listed in the environment info table.""".stripMargin
       else
         val current = s"- ${id.deviceName} (${id.platform}) [THIS DEVICE]"
         val peerLines = peers.map { p =>
-          s"- ${p.deviceName} (${p.platform}) ${if p.address.nonEmpty then "" else "[no address]"}"
+          s"- ${p.deviceName} (${p.platform})"
         }
         Right(s"Devices in group:\n$current\n${peerLines.mkString("\n")}")
 
@@ -115,17 +115,17 @@ Available devices are listed in the environment info table.""".stripMargin
       result <- peer match
         case Left(err) => IO.pure(Left(err))
         case Right(p) =>
-          p.address.filter(_.nonEmpty) match
-            case None => IO.pure(Left(ToolError(s"Device '${p.deviceName}' has no registered address.")))
-            case Some(addr) =>
-              // Verify reachability first
-              checkReachable(addr).flatMap {
-                case Left(err) => IO.pure(Left(err))
-                case Right(_) =>
-                  // Build params for the target tool
-                  val params = buildParams(action, input)
-                  callRemote(addr, action, params, gid.getOrElse(""))
-              }
+          val addr = p.address
+          if addr.isEmpty then IO.pure(Left(ToolError(s"Device '${p.deviceName}' has no registered address.")))
+          else
+            // Verify reachability first
+            checkReachable(addr).flatMap {
+              case Left(err) => IO.pure(Left(err))
+              case Right(_) =>
+                // Build params for the target tool
+                val params = buildParams(action, input)
+                callRemote(addr, action, params, gid.getOrElse(""))
+            }
     yield result
 
   // ---- Helpers ----

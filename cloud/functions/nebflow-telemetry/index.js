@@ -155,6 +155,11 @@ async function handleMetrics(event) {
       return { code: 200, data };
     }
 
+    case "pageviews": {
+      const data = await queryPageViews(collection, since);
+      return { code: 200, data };
+    }
+
     default:
       return { code: 400, message: `Unknown metric: ${metric}` };
   }
@@ -219,4 +224,44 @@ async function querySessionEnd(collection, since) {
     .get();
 
   return result.data;
+}
+
+/** 查询网站 page_view 事件，返回每日 PV/UV + 页面排行 */
+async function queryPageViews(collection, since) {
+  const result = await collection
+    .where({
+      event: "page_view",
+      timestamp: db.command.gte(since),
+    })
+    .field({ client_id: true, properties: true, timestamp: true })
+    .limit(10000)
+    .get();
+
+  // 按天分组统计 PV/UV
+  const byDay = {};
+  // 按路径分组统计
+  const byPath = {};
+  for (const row of result.data) {
+    const day = new Date(row.timestamp).toISOString().slice(0, 10);
+    const path = (row.properties && row.properties.path) || "/";
+
+    if (!byDay[day]) byDay[day] = { pv: 0, clients: new Set() };
+    byDay[day].pv++;
+    byDay[day].clients.add(row.client_id);
+
+    if (!byPath[path]) byPath[path] = { pv: 0, clients: new Set() };
+    byPath[path].pv++;
+    byPath[path].clients.add(row.client_id);
+  }
+
+  const daily = Object.entries(byDay)
+    .map(([date, d]) => ({ date, pv: d.pv, uv: d.clients.size }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  const pages = Object.entries(byPath)
+    .map(([path, d]) => ({ path, pv: d.pv, uv: d.clients.size }))
+    .sort((a, b) => b.pv - a.pv)
+    .slice(0, 20);
+
+  return { daily, pages };
 }
