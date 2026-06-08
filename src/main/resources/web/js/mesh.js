@@ -143,9 +143,15 @@ function bindPanelEvents() {
   });
 }
 
+// Read auth token from cookie (where ws.js stores it)
+function getAuthToken() {
+  const m = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
 // ---- API ----
 async function meshApi(path, method = 'GET', body = null) {
-  const token = localStorage.getItem('nebflow_token') || '';
+  const token = getAuthToken();
   const headers = { 'Authorization': `Bearer ${token}` };
   if (body) headers['Content-Type'] = 'application/json';
 
@@ -154,6 +160,10 @@ async function meshApi(path, method = 'GET', body = null) {
     headers,
     body: body ? JSON.stringify(body) : null
   });
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    throw new Error(`Mesh API ${resp.status}: ${text.slice(0, 100)}`);
+  }
   return resp.json();
 }
 
@@ -164,7 +174,9 @@ async function fetchMeshStatus() {
     meshState = { ...meshState, ...data };
     updateUI();
   } catch (e) {
-    document.getElementById('mesh-btn')?.classList.add('hidden');
+    // API failed — still show the button but mark as not paired
+    meshState.paired = false;
+    updateUI();
   }
 }
 
@@ -341,7 +353,7 @@ async function doLeave() {
     // Call backend to clear groupId
     fetch('/api/mesh/leave', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('nebflow_token') || ''}` }
+      headers: { 'Authorization': `Bearer ${getAuthToken()}` }
     }).catch(() => {});
     updateUI();
     showSyncStatus('Left group');
