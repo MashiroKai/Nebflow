@@ -959,8 +959,7 @@ private[agent] trait AgentCore:
           if peersList.nonEmpty then
             val peerStr = peersList
               .map(p =>
-                val status = if p.online then "online" else "offline"
-                s"${p.deviceName} (${p.platform}, $status)"
+                s"${p.deviceName} (${p.platform})"
               )
               .mkString("; ")
             sb.append(s"| Available devices | $peerStr |\n")
