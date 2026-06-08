@@ -2,8 +2,8 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import io.circe.JsonObject
-import io.circe.syntax.*
 import io.circe.parser.decode
+import io.circe.syntax.*
 import nebflow.mesh.MeshService
 import sttp.client4.*
 
@@ -51,7 +51,10 @@ Available devices are listed in the environment info table.""".stripMargin
         "content" -> Map("type" -> "string".asJson, "description" -> "File content (for Write).".asJson).asJson,
         "old_string" -> Map("type" -> "string".asJson, "description" -> "Text to find (for Edit).".asJson).asJson,
         "new_string" -> Map("type" -> "string".asJson, "description" -> "Replacement text (for Edit).".asJson).asJson,
-        "pattern" -> Map("type" -> "string".asJson, "description" -> "Glob or search pattern (for Glob/Grep).".asJson).asJson,
+        "pattern" -> Map(
+          "type" -> "string".asJson,
+          "description" -> "Glob or search pattern (for Glob/Grep).".asJson
+        ).asJson,
         "glob" -> Map("type" -> "string".asJson, "description" -> "File filter for Grep.".asJson).asJson
       ).asJson,
       "required" -> List("action").asJson
@@ -81,7 +84,8 @@ Available devices are listed in the environment info table.""".stripMargin
       case "list_peers" => listPeers
       case "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep" =>
         val device = input("device").flatMap(_.asString).getOrElse("")
-        if device.isEmpty then IO.pure(Left(ToolError("Missing device parameter. Use list_peers to find available devices.")))
+        if device.isEmpty then
+          IO.pure(Left(ToolError("Missing device parameter. Use list_peers to find available devices.")))
         else remoteExec(device, action, input)
       case _ =>
         IO.pure(Left(ToolError(s"Unknown action: $action. Use list_peers, Bash, Read, Write, Edit, Glob, or Grep.")))
@@ -95,8 +99,7 @@ Available devices are listed in the environment info table.""".stripMargin
     yield
       if id.groupId.isEmpty then
         Left(ToolError("Not paired — no mesh group. Use the Mesh panel to pair devices first."))
-      else if peers.isEmpty then
-        Right("No peer devices. Only this device is in the group.\nCurrent: " + id.deviceName)
+      else if peers.isEmpty then Right("No peer devices. Only this device is in the group.\nCurrent: " + id.deviceName)
       else
         val current = s"- ${id.deviceName} (${id.platform}) [THIS DEVICE]"
         val peerLines = peers.map { p =>
@@ -127,21 +130,27 @@ Available devices are listed in the environment info table.""".stripMargin
 
   // ---- Helpers ----
 
-  private def resolvePeer(deviceName: String, peers: List[nebflow.mesh.PeerInfo]): IO[Either[ToolError, nebflow.mesh.PeerInfo]] =
+  private def resolvePeer(
+    deviceName: String,
+    peers: List[nebflow.mesh.PeerInfo]
+  ): IO[Either[ToolError, nebflow.mesh.PeerInfo]] =
     val peer = peers.find(p =>
       p.deviceName.equalsIgnoreCase(deviceName) ||
-      p.deviceId.startsWith(deviceName) ||
-      p.deviceName.toLowerCase.contains(deviceName.toLowerCase)
+        p.deviceId.startsWith(deviceName) ||
+        p.deviceName.toLowerCase.contains(deviceName.toLowerCase)
     )
     IO.pure(peer match
       case Some(p) => Right(p)
       case None =>
         val available = peers.map(p => s"${p.deviceName}")
-        Left(ToolError(
-          if peers.isEmpty then "No peer devices found."
-          else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
+        Left(
+          ToolError(
+            if peers.isEmpty then "No peer devices found."
+            else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
+          )
         ))
-    )
+
+  end resolvePeer
 
   /** Check if the remote device is reachable via /api/health. */
   private def checkReachable(address: String): IO[Either[ToolError, Unit]] =
@@ -151,7 +160,7 @@ Available devices are listed in the environment info table.""".stripMargin
           .get(sttp.model.Uri.unsafeParse(s"$address/api/health"))
           .readTimeout(5.seconds)
           .response(asStringAlways)
-          .send(backend)
+          .send(meshService.httpBackend)
         if resp.code.isSuccess then Right(())
         else Left(ToolError(s"Device at $address returned HTTP ${resp.code}. It may be offline."))
       catch
@@ -167,7 +176,10 @@ Available devices are listed in the environment info table.""".stripMargin
       case "Read" =>
         JsonObject("file_path" -> input("path").getOrElse("".asJson))
       case "Write" =>
-        JsonObject("file_path" -> input("path").getOrElse("".asJson), "content" -> input("content").getOrElse("".asJson))
+        JsonObject(
+          "file_path" -> input("path").getOrElse("".asJson),
+          "content" -> input("content").getOrElse("".asJson)
+        )
       case "Edit" =>
         JsonObject(
           "file_path" -> input("path").getOrElse("".asJson),
@@ -178,25 +190,30 @@ Available devices are listed in the environment info table.""".stripMargin
       case "Glob" =>
         JsonObject("pattern" -> input("pattern").getOrElse("".asJson))
       case "Grep" =>
-        val builder = JsonObject("pattern" -> input("pattern").getOrElse("".asJson))
-        input("glob").foreach(g => builder.add("glob", g))
-        builder
+        val base = JsonObject("pattern" -> input("pattern").getOrElse("".asJson))
+        input("glob").map(g => base.add("glob", g)).getOrElse(base)
       case _ => JsonObject.empty
 
   /** Call remote device's /api/mesh/remote-exec. */
-  private def callRemote(address: String, toolName: String, params: JsonObject, groupId: String): IO[Either[ToolError, String]] =
+  private def callRemote(
+    address: String,
+    toolName: String,
+    params: JsonObject,
+    groupId: String
+  ): IO[Either[ToolError, String]] =
     IO.blocking {
       val body = io.circe.Json.obj("action" -> toolName.asJson, "params" -> params.asJson)
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(s"$address/api/mesh/remote-exec"))
-        .auth.bearer(groupId)
+        .auth
+        .bearer(groupId)
         .contentType("application/json")
         .body(body.noSpaces)
+        .readTimeout(60.seconds)
         .response(asStringAlways)
-        .send(backend)
+        .send(meshService.httpBackend)
 
-      if !resp.code.isSuccess then
-        Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
+      if !resp.code.isSuccess then Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
       else
         decode[io.circe.Json](resp.body) match
           case Right(json) =>
@@ -208,11 +225,16 @@ Available devices are listed in the environment info table.""".stripMargin
             Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
     }
 
-  private lazy val backend = DefaultSyncBackend()
-
 end MeshTool
 
 object MeshTool:
+
+  private var meshServiceOpt: Option[MeshService] = None
+
+  /** Expose current MeshService for env info injection. */
+  def currentService: Option[MeshService] = meshServiceOpt
+
   /** Create and register the mesh tool with the tool registry. */
   def register(meshService: MeshService): Unit =
+    meshServiceOpt = Some(meshService)
     ToolRegistry.registerTool(new MeshTool(meshService))
