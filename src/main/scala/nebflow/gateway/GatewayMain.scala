@@ -151,6 +151,9 @@ object GatewayMain extends IOApp.Simple:
     // Read port from config first, then kill stale processes on that port
     GatewayConfig.load.flatMap { cfg =>
       ensureSingleInstance(cfg.port.value) *> GatewayConfig.load.flatMap { cfg =>
+        // Expose resolved gateway port and PID to agent via system properties
+        System.setProperty("nebflow.gateway.port", cfg.port.value.toString)
+        System.setProperty("nebflow.gateway.pid", ProcessHandle.current.pid.toString)
         // Safe config load — never crash on bad config; auto-restore from snapshot on corruption
         val configRef: Ref[IO, NebflowServiceConfig] = Ref.unsafe {
           try

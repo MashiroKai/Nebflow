@@ -418,7 +418,8 @@ object AgentActor extends AgentCore with AgentSession:
       // a long LLM call. All are handled in processing state — in idle they are stale.
       case _: AgentCommand.StreamFiberStarted | _: AgentCommand.UpdateHighestPressureLevel |
           _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
-          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults | AgentCommand.ClearTaskCheck =>
+          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults | AgentCommand.ClearTaskCheck |
+          _: AgentCommand.UpdateGitBranch =>
         Behaviors.same
 
       case msg =>
@@ -463,6 +464,10 @@ object AgentActor extends AgentCore with AgentSession:
       // --- Cache lifecycle prompt content (from first turn's IO fiber) ---
       case AgentCommand.UpdateLifecycle(lc) =>
         processing(agentDef, resources, depth, parentRef, state.withLifecycle(lc), stash, ctx)
+
+      // --- Update git branch tracking (from ContextRefresher branch detection) ---
+      case AgentCommand.UpdateGitBranch(branch) =>
+        processing(agentDef, resources, depth, parentRef, state.withGitBranch(branch), stash, ctx)
 
       // --- LLM completed ---
       case LlmComplete(result, replyTo, turnId) =>
