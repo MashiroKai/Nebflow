@@ -1,32 +1,32 @@
 # Nebflow Mesh — 设计文档
 
-> 状态：Phase 1-3 已完成
+> 状态：账号系统实施中
 > 分支：feature/mesh
 > 更新：2026-06-08
 
 ## 1. 目标
 
-让多台 Nebflow 实例通过一个共享 token 自动发现彼此、直连通信。
+让多台 Nebflow 实例通过 Nebflow 账号自动发现彼此、直连通信。
 
 核心场景：用户在 Mac 上写 Verilog 代码，agent 通过 MeshTool 直接在 Windows 上执行 Vivado。
 
 设计原则：
 
-1. **零配置配对** — 用户只需输入一个 token，不填 IP、不填邀请码
-2. **云当电话簿不当中转站** — 腾讯云只做发现服务和用户数据存储，实时通信走 P2P
+1. **账号登录** — 注册 Nebflow 账号，任意设备登录即自动配对
+2. **云当电话簿不当中转站** — 腾讯云只做账号、发现和用户数据存储，实时通信走 P2P
 3. **设备平等** — 没有主从关系，每台设备地位相同
 4. **数据本地** — 每台设备存储完整数据副本，同步只传差异
 
 ## 2. 架构
 
 ```
- LAN（UDP 广播自动发现）           腾讯云（仅发现 + 数据存储）
+ LAN（UDP 广播自动发现）           腾讯云（账号 + 发现）
 ┌──────────┐◄───────────────────►┌──────────┐     ┌──────────────────┐
 │  Mac     │                     │ Windows  │     │  Cloud Function  │
 │  :8082   │◄── HTTP 直连 ─────►│  :8080   │     │  - register()    │
-└──────────┘                     └──────────┘     │  - lookup()      │
-      ▲                                           │  - userData()    │
-      │  token = "kaiyu-lab-2025"                 └──────────────────┘
+└──────────┘                     └──────────┘     │  - login()       │
+      ▲                                           │  - discover()    │
+      │  userId = "abc123"                        └──────────────────┘
       ▼
 ┌──────────┐
 │  Linux   │   数据流：设备 ←→ 设备（直连）
@@ -34,142 +34,104 @@
 └──────────┘
 ```
 
-### 2.1 配对流程
+### 2.1 账号系统
 
-**用户操作（1 步）：**
+**注册流程：**
 
-每台设备的 Mesh 面板输入同一个 token（如 `kaiyu-lab-2025`）。
+1. 用户在 Mesh 面板输入用户名 + 密码
+2. Nebflow 调用云函数 `auth/register`
+3. 云函数检查用户名唯一性，bcrypt 哈希密码，创建账号
+4. 返回 `{ userId, sessionToken }`
+5. Nebflow 本地保存 `~/.nebflow/mesh/account.json`
 
-**自动流程：**
+**登录流程：**
 
-1. 设备计算 `SHA-256(token)` 作为 tokenHash
-2. LAN：每 10 秒 UDP 广播 `{ tokenHash, port }` 到 `255.255.255.255:19876`
-3. 同 token 设备收到广播后回应自己的 Nebflow 地址
-4. 双方 HTTP 直连，Bearer token 认证
-5. 建立信任关系，开始同步和远程执行
+1. 用户在 Mesh 面板输入用户名 + 密码
+2. Nebflow 调用云函数 `auth/login`
+3. 云函数验证密码，生成 sessionToken（有效期 30 天）
+4. 返回 `{ userId, sessionToken }`
+5. Nebflow 本地保存账号信息，开始 UDP 广播 + 云发现
+
+**认证模型：**
+
+- `userId` 替代原来的 `token` 作为设备分组标识
+- `sessionToken` 用于调用云函数（注册/查询设备）
+- 设备间直连认证用 `userId`（同账号即信任）
+- UDP 广播用 `SHA-256(userId)` 匹配
 
 ### 2.2 设备发现
 
-**LAN 发现（默认，Phase 1）：**
+**LAN 发现：**
 
 ```
 设备 A 每隔 10 秒广播：
   UDP → 255.255.255.255:19876
-  Body: { "type": "discover", "tokenHash": "sha256(token)", "port": 8082 }
+  Body: { "type": "discover", "userIdHash": "sha256(userId)", "port": 8082 }
 
 设备 B 收到广播：
-  1. 计算 sha256(自己的 token)
+  1. 计算 sha256(自己的 userId)
   2. 匹配 → 回复 HTTP handshake
   3. POST → http://{sender_ip}:{sender_port}/api/mesh/handshake
-     Authorization: Bearer {token}
-     Body: { "deviceId": "...", "deviceName": "...", "platform": "..." }
-
-设备 A 收到 handshake：
-  1. 验证 token 一致
-  2. 添加到 peer 列表
-  3. 开始同步
+     Authorization: Bearer {userId}
+     Body: { "deviceId": "...", "deviceName": "...", "platform": "...", "port": ... }
 ```
 
-**跨网络发现（Phase 3）：**
+**跨网络发现（云函数）：**
 
-设备通过 HTTPS 端点注册和查询：
-- `POST /register { tokenHash, address }` — 注册自己的地址
-- `POST /lookup { tokenHash }` — 查找同组其他设备的地址
-
-只交换地址，不传输数据。
+```
+POST cloud-function { action: "discover/register", userId, sessionToken, address, deviceId, ... }
+POST cloud-function { action: "discover/lookup", userId, sessionToken, deviceId }
+```
 
 ### 2.3 通信模型
 
-所有设备间通信走 HTTP，Bearer token 认证：
+所有设备间通信走 HTTP，`userId` 做 Bearer 认证（同账号即信任）：
 
 ```
 POST /api/mesh/remote-exec
-Authorization: Bearer kaiyu-lab-2025
+Authorization: Bearer {userId}
 { "action": "Bash", "params": { "command": "vivado ..." } }
 ```
 
-```
-GET /api/mesh/fingerprints
-Authorization: Bearer kaiyu-lab-2025
-→ 返回所有同步文件的 SHA-256 哈希 + mtime
-```
+### 2.4 同步协议
 
-```
-GET /api/mesh/file?path=agents/Nebula/memory.md
-Authorization: Bearer kaiyu-lab-2025
-→ 返回文件内容
-```
-
-### 2.4 同步协议（Phase 2）
-
-1. 设备 A 请求设备 B 的文件指纹表（路径 → SHA-256 + mtime）
-2. 对比本地指纹，找出差异文件
-3. 下载缺失/过期的文件，上传新增/更新的文件
-4. 冲突：mtime 更新的覆盖旧的（last-write-wins）
-5. 被覆盖版本存入 `~/.nebflow/mesh/history/` 保留 7 天
-
-**同步范围：**
-
-| 类别 | 路径 | 说明 |
-|------|------|------|
-| 用户记忆 | `NEBFLOW.md` | 全局用户记忆 |
-| Agent 记忆 | `agents/{name}/memory.md` | 每个 agent 的记忆 |
-| 文件夹记忆 | `folders/{id}.memory.md` | 项目级记忆 |
-| 记忆详情 | `memory/{hash}.md` | 记忆详情 |
-| 技能 | `skills/{name}/skill.md` | 技能定义 |
-
-**不同步的：** Session 数据、认证 token、MCP 配置、PID 文件、运行时状态
+与之前相同：指纹对比 → 差异传输 → mtime wins。
 
 ## 3. 数据模型
 
-### 3.1 DeviceIdentity
+### 3.1 AccountInfo（新增）
+
+```scala
+case class AccountInfo(
+  userId: String,
+  username: String,
+  sessionToken: String,
+  loggedInAt: Long
+)
+```
+
+存储：`~/.nebflow/mesh/account.json`
+
+### 3.2 DeviceIdentity
 
 ```scala
 case class DeviceIdentity(
-  deviceId: String,       // UUID，设备唯一标识（首次启动生成）
+  deviceId: String,       // UUID
   deviceName: String,     // "MacBook-Pro (macOS)"
   platform: String,       // "macOS" / "Windows" / "Linux"
-  groupId: Option[String] // 共享 token（None = 未配对）
 )
 ```
 
-存储：`~/.nebflow/device.json`
-
-### 3.2 PeerInfo
-
-```scala
-case class PeerInfo(
-  deviceId: String,
-  deviceName: String,
-  platform: String,
-  address: String,        // "192.168.1.100:8080"
-  lastSeen: Long          // 最后在线时间戳
-)
-```
+不再有 `groupId` — 分组信息由 `AccountInfo.userId` 提供。
 
 ### 3.3 MeshConfig
 
 ```scala
 case class MeshConfig(
   enabled: Boolean = false,
-  syncIntervalSec: Int = 300
+  syncIntervalSec: Int = 300,
+  cloudUrl: Option[String] = None  // 云函数地址
 )
-```
-
-不再需要 `cloudBaseUrl` 和 `relayPollIntervalSec`。
-
-### 3.4 FileFingerprint
-
-```scala
-case class FileFingerprint(mtime: Long, size: Long, hash: String)
-```
-
-`hash` = SHA-256 前 12 hex 字符。
-
-### 3.5 SyncDiff
-
-```scala
-case class SyncDiff(needUpload: List[String], needDownload: List[String], unchanged: List[String])
 ```
 
 ## 4. API 端点
@@ -178,113 +140,60 @@ case class SyncDiff(needUpload: List[String], needDownload: List[String], unchan
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/mesh/status` | 本机配对状态 + peer 列表 |
-| POST | `/api/mesh/pair` | 设置 token 并开始广播发现 `{ "token": "..." }` |
-| POST | `/api/mesh/handshake` | 被发现设备调用，验证 token 并添加 peer |
-| POST | `/api/mesh/leave` | 清除 token，退出 mesh |
-| GET | `/api/mesh/health` | 健康检查（供其他设备探测可达性） |
+| GET | `/api/mesh/status` | 账号状态 + peer 列表 |
+| POST | `/api/mesh/register` | 注册 Nebflow 账号 |
+| POST | `/api/mesh/login` | 登录 Nebflow 账号 |
+| POST | `/api/mesh/logout` | 退出登录，停止发现 |
+| POST | `/api/mesh/handshake` | 被发现设备调用，验证 userId |
+| PATCH | `/api/mesh/config` | 更新配置（cloudUrl 等） |
 
-### 同步（Phase 2）
+### 同步 & 远程执行（不变）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/mesh/fingerprints` | 返回本机文件指纹表 |
-| GET | `/api/mesh/file` | 下载指定文件 `?path=xxx` |
-| PUT | `/api/mesh/file` | 上传文件（body = 内容） |
+| GET | `/api/mesh/file` | 下载指定文件 |
+| PUT | `/api/mesh/file` | 上传文件 |
 | POST | `/api/mesh/sync` | 触发完整同步 |
+| POST | `/api/mesh/remote-exec` | 在本机执行工具 |
 
-### 远程工具执行
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/mesh/remote-exec` | 在本机执行工具（Bearer token 认证） |
-
-## 5. MeshTool（agent 工具）
-
-Agent 通过 MeshTool 操作远程设备，接口不变：
+## 5. 云函数 API
 
 ```
-action: "list_peers"                         → 列出设备
-action: "Bash", device: "windows-pc", ...    → 远程执行
-action: "Read" / "Write" / "Edit" / "Glob" / "Grep"  → 远程文件操作
+POST cloud-url
+Content-Type: application/json
+
+auth/register: { username, password }                     → { userId, sessionToken }
+auth/login:    { username, password }                     → { userId, sessionToken }
+discover/register: { userId, sessionToken, deviceId, ... } → { ok }
+discover/lookup:   { userId, sessionToken, deviceId }      → { peers: [...] }
 ```
 
-执行流程：
-1. `resolvePeer` — 按 deviceName 在 peer 列表中匹配
-2. `checkReachable` — GET `{address}/api/mesh/health`
-3. `callRemote` — POST `{address}/api/mesh/remote-exec`
+数据库集合：
+- `mesh_users`: { userId, username, passwordHash, createdAt }
+- `mesh_discovery`: { userId, deviceId, deviceName, platform, address, expiresAt }
 
 ## 6. 前端 UI
 
-**未配对时：**
-- 一个输入框：输入 Group Token
-- 一个按钮：Join
-- 说明文字："在所有设备上输入相同的 token 即可自动配对"
+**未登录时：**
 
-**已配对时：**
-- 当前 token 显示（脱敏）
-- 已发现的设备列表（名称、平台、在线状态）
-- 上次同步时间
-- Sync Now 按钮（Phase 2）
-- Leave 按钮
+- 两个 tab：注册 / 登录
+- 注册：用户名 + 密码 + 确认密码
+- 登录：用户名 + 密码
+- 底部：云函数 URL 配置（高级选项）
 
-## 7. 实施计划
+**已登录时：**
 
-### Phase 1 — 核心配对 + 远程执行（当前）
+- 用户名显示
+- 已发现的设备列表
+- Sync Now 按钮
+- Logout 按钮
 
-**删除：**
-
-| 内容 | 行数 |
-|------|------|
-| `MeshService` 中 `callCloud` / `callCloudAuth` / `getCloudUrl` | ~60 |
-| `MeshService` 中 `createGroup` / `joinGroup`（邀请码配对） | ~70 |
-| `MeshService` 中 relay 相关（`pollRelay` / `sendRelay` / `startRelayLoop`） | ~60 |
-| `MeshService` 中云同步（`uploadFile` / `downloadFile` / `fetchRemoteFingerprints`） | ~90 |
-| `MeshModel` 中 `RelayMessage` / `RelayPayload` / `SessionSummary` | ~80 |
-| `MeshModel` 中 `MeshConfig.cloudBaseUrl` / `relayPollIntervalSec` | ~5 |
-| `RestApiRoutes` 中 create-group / join-group / relay / config-cloud 端点 | ~40 |
-| `GatewayMain` 中 relay loop + `handleRelayMessage` | ~30 |
-| `mesh.js` 中邀请码 UI（create-group / join-group / pairing-code / cloud-url） | ~80 |
-| `cloud/functions/nebflow-mesh/index.js` | ~338 |
-
-**新增：**
-
-| 内容 | 行数 |
-|------|------|
-| `UdpDiscovery.scala` — UDP 广播发现 + 监听 | ~150 |
-| `MeshService` 中 token 配对（`pair`）+ handshake + 直连 peer 管理 | ~100 |
-| `RestApiRoutes` 中 pair / handshake 端点 | ~30 |
-| `mesh.js` 中 token 输入 UI | ~40 |
-
-**修改：**
-
-| 内容 | 说明 |
-|------|------|
-| `MeshService` | 配对改为 token-based，peer 管理改为本地发现 |
-| `MeshConfig` | 删除 `cloudBaseUrl`、`relayPollIntervalSec` |
-| `MeshModel` | 删除 relay 相关类型 |
-| `GatewayMain` | 删除 relay loop，添加 UDP 发现启动 |
-| `mesh.js` | 简化为 token 输入 |
-
-### Phase 2 — 文件同步
-
-- 文件指纹计算（复用现有 `computeLocalFingerprints`）
-- 直连同步：请求 peer 的 fingerprints → 对比 → 直连下载/上传
-- mtime 冲突解决 + 历史版本保留
-- 后台定时同步
-
-### Phase 3 — 跨网络发现
-
-- 轻量云函数（~80 行）：register + lookup
-- Tailscale 虚拟 LAN（100.x.x.x）优先
-- NAT 穿透（可选 STUN relay）
-
-## 8. 关键决策记录
+## 7. 关键决策记录
 
 | 决策 | 理由 |
 |------|------|
-| Token 明文做 Bearer 认证 | 威胁模型是防止同网段随机用户连接，SHA-256(token) 做广播发现已避免明文暴露 |
-| mtime wins 冲突解决 | 同步范围是记忆文件，冲突概率极低；被覆盖版本保留 7 天可恢复 |
-| LAN UDP 广播优先于云发现 | 零延迟、零成本、零依赖；跨网才需要云 |
-| 不用邀请码 | 用户只需记住一个 token，不需要两步操作 |
-| Tailscale 做 NAT 穿透 | 已在用，零配置，Phase 3 再考虑通用 NAT 穿透 |
+| 用户名+密码（无邮箱验证） | 零外部依赖，面向开发者，后续可扩展 OAuth |
+| sessionToken 有效期 30 天 | 减少登录频率，设备长期运行 |
+| userId 做设备间 Bearer 认证 | 简单直接，同账号即信任 |
+| 密码 bcrypt 存储 | 标准安全实践 |
