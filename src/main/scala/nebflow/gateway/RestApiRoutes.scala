@@ -220,11 +220,13 @@ class RestApiRoutes(
           val tokenResult = body.hcursor.downField("token").as[String]
           tokenResult match
             case Right(token) =>
-              ms.pair(token).flatMap { _ =>
-                Ok(Json.obj("ok" -> true.asJson))
-              }.handleErrorWith { e =>
-                BadRequest(Json.obj("error" -> e.getMessage.asJson))
-              }
+              ms.pair(token)
+                .flatMap { _ =>
+                  Ok(Json.obj("ok" -> true.asJson))
+                }
+                .handleErrorWith { e =>
+                  BadRequest(Json.obj("error" -> e.getMessage.asJson))
+                }
             case Left(_) =>
               BadRequest(Json.obj("error" -> "Missing token".asJson))
         }
@@ -254,19 +256,25 @@ class RestApiRoutes(
               val port = hc.downField("port").as[Int].getOrElse(8080)
               if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
               else
-                ms.handleHandshake(callerToken, deviceId, deviceName, platform, callerIp, port).flatMap { _ =>
-                  // Respond with own identity so the initiator also adds us
-                  ms.identity.map { id =>
-                    Json.obj(
-                      "deviceId" -> id.deviceId.asJson,
-                      "deviceName" -> id.deviceName.asJson,
-                      "platform" -> id.platform.asJson
-                    )
-                  }.flatMap(Ok(_))
-                }.handleErrorWith { e =>
-                  Forbidden(Json.obj("error" -> e.getMessage.asJson))
-                }
+                ms.handleHandshake(callerToken, deviceId, deviceName, platform, callerIp, port)
+                  .flatMap { _ =>
+                    // Respond with own identity so the initiator also adds us
+                    ms.identity
+                      .map { id =>
+                        Json.obj(
+                          "deviceId" -> id.deviceId.asJson,
+                          "deviceName" -> id.deviceName.asJson,
+                          "platform" -> id.platform.asJson
+                        )
+                      }
+                      .flatMap(Ok(_))
+                  }
+                  .handleErrorWith { e =>
+                    Forbidden(Json.obj("error" -> e.getMessage.asJson))
+                  }
+              end if
             }
+          end if
 
     // Leave group — clear token, stop discovery
     case req @ POST -> Root / "api" / "mesh" / "leave" =>
