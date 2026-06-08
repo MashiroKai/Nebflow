@@ -79,6 +79,10 @@ function buildPanelHTML() {
         <div id="mesh-peers-list" class="mesh-peers-list"></div>
 
         <div class="mesh-actions">
+          <button class="mesh-action-btn" id="mesh-sync-now">
+            <i data-lucide="refresh-cw" style="width:14px;height:14px"></i>
+            Sync Now
+          </button>
           <button class="mesh-action-btn mesh-leave" id="mesh-leave">Leave</button>
         </div>
       </div>
@@ -98,6 +102,7 @@ function bindPanelEvents() {
   });
   document.getElementById('mesh-pair-btn')?.addEventListener('click', doPair);
   document.getElementById('mesh-leave')?.addEventListener('click', doLeave);
+  document.getElementById('mesh-sync-now')?.addEventListener('click', triggerSync);
 
   // Enter key in token input
   document.getElementById('mesh-token-input')?.addEventListener('keydown', (e) => {
@@ -230,6 +235,17 @@ async function doLeave() {
     showStatus('Left group');
   } catch (e) {
     showStatus('Failed: ' + e.message);
+  }
+}
+
+async function triggerSync() {
+  try {
+    showStatus('Syncing...');
+    await meshApi('sync', 'POST');
+    showStatus('Sync complete');
+    fetchMeshStatus();
+  } catch (e) {
+    showStatus('Sync failed: ' + e.message);
   }
 }
 
