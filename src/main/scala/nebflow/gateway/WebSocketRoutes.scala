@@ -1635,11 +1635,15 @@ class WebSocketRoutes(
                     val data = att.hcursor.downField("data").as[String].getOrElse("")
                     val name = att.hcursor.downField("name").as[String].getOrElse("")
                     val hash = att.hcursor.downField("hash").as[String].getOrElse("")
+                    val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
                     if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
                     else if data.nonEmpty then
-                      // Try to find the file locally by name + hash first
-                      val searchPaths = projectRoot.toList ::: List(os.home.toString)
-                      val localPath = if hash.nonEmpty then findLocalFile(name, hash, searchPaths) else None
+                      // Try to find the file locally by name + size + hash
+                      // Search priority: project root → common user dirs → full home
+                      val home = os.home.toString
+                      val commonDirs = List("Downloads", "Desktop", "Documents").map(d => s"$home/$d").filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
+                      val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
+                      val localPath = if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
                       localPath match
                         case Some(path) =>
                           savedPaths += path
@@ -1712,43 +1716,50 @@ class WebSocketRoutes(
   // Local file search for smart attachment resolution
   // ============================================================
 
-  /** Directories to skip during filesystem search. */
+  /** Directories to skip during filesystem search — build artifacts, caches, system dirs. */
   private val skipDirs = Set(
     "node_modules", ".git", "build", "target", "dist", ".cache",
     "__pycache__", ".gradle", ".idea", ".vscode", ".nebflow",
-    "Library", "Applications", "Trash", ".Trash"
+    "Library", "Applications", "Trash", ".Trash", ".npm", ".yarn",
+    ".pnpm-store", ".cargo", ".rustup", ".conda", ".venv", "venv",
+    "DerivedData", ".gradle", ".m2", ".ivy2", ".sbt", ".coursier",
+    "Pods", ".gradle", "vendor", "bower_components"
   )
 
   /**
    * Search for a file by name and verify its SHA-256 hash matches.
-   * Searches directories in order, returns the first match or best candidate.
+   * Searches directories in priority order, no depth limit (skipDirs filters noise).
+   * First matches by filename + size (cheap), then verifies by SHA-256 (expensive).
    *
    * @param name filename to search for
    * @param expectedHash SHA-256 hex hash of the uploaded file
+   * @param expectedSize file size in bytes (used for fast pre-filtering)
    * @param searchPaths directories to search in priority order
    * @return absolute path of a matching local file, or None
    */
-  private def findLocalFile(name: String, expectedHash: String, searchPaths: List[String]): Option[String] =
+  private def findLocalFile(name: String, expectedHash: String, expectedSize: Long, searchPaths: List[String]): Option[String] =
     import java.nio.file.{FileVisitResult, Files, Path, SimpleFileVisitor}
     import java.security.MessageDigest
 
     val targetName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+    if targetName.isEmpty then return None
 
-    val candidates = scala.collection.mutable.ListBuffer.empty[(Path, Long)]
+    val candidates = scala.collection.mutable.ListBuffer.empty[(Path, Long, Long)] // (path, mtime, size)
 
     for searchRoot <- searchPaths if candidates.isEmpty do
       val rootPath = Path.of(searchRoot)
       if Files.isDirectory(rootPath) then
         try
-          Files.walkFileTree(rootPath, java.util.EnumSet.of(java.nio.file.FileVisitOption.FOLLOW_LINKS), 8,
+          Files.walkFileTree(rootPath, java.util.EnumSet.of(java.nio.file.FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE,
             new SimpleFileVisitor[Path]:
               override def preVisitDirectory(dir: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
                 if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
                 else FileVisitResult.CONTINUE
 
               override def visitFile(file: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
-                if file.getFileName.toString == targetName && attrs.isRegularFile then
-                  candidates += ((file, attrs.lastModifiedTime.toMillis))
+                // Fast filter: match filename + size before expensive hash computation
+                if file.getFileName.toString == targetName && attrs.isRegularFile && attrs.size == expectedSize then
+                  candidates += ((file, attrs.lastModifiedTime.toMillis, attrs.size))
                 FileVisitResult.CONTINUE
           )
         catch
@@ -1756,8 +1767,8 @@ class WebSocketRoutes(
 
     if candidates.isEmpty then None
     else
-      // Compute SHA-256 for each candidate and find matches
-      val hashMatches = candidates.toList.filter { (path, _) =>
+      // Verify SHA-256 for each candidate (already pre-filtered by name + size)
+      val hashMatches = candidates.toList.filter { (path, _, _) =>
         try
           val bytes = Files.readAllBytes(path)
           val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
@@ -1769,10 +1780,10 @@ class WebSocketRoutes(
 
       hashMatches match
         case Nil => None
-        case (p, _) :: Nil => Some(p.toString)
+        case (p, _, _) :: Nil => Some(p.toString)
         case multiple =>
           // Multiple identical copies: pick the most recently modified with shortest path
-          val sorted = multiple.sortBy { (path, mtime) =>
+          val sorted = multiple.sortBy { (path, mtime, _) =>
             (-mtime, path.toString.length)
           }
           val chosen = sorted.head._1.toString
