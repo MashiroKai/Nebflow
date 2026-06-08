@@ -362,11 +362,12 @@ class MeshService private (
   // ===== Background Loops =====
 
   def startSyncLoop: IO[Nothing] =
-    configRef.get.flatMap { cfg =>
-      Temporal[IO].sleep(cfg.syncIntervalSec.seconds) *>
-        (syncAll *> cloudDiscover).handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}")) *>
-        startSyncLoop
-    }
+    configRef.get
+      .flatMap { cfg =>
+        Temporal[IO].sleep(cfg.syncIntervalSec.seconds) *>
+          (syncAll *> cloudDiscover).handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}"))
+      }
+      .flatMap(_ => startSyncLoop)
 
   // ===== Cloud Discovery (Phase 3) =====
 
