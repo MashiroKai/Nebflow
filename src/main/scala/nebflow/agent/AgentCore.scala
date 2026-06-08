@@ -958,9 +958,7 @@ private[agent] trait AgentCore:
           sb.append(s"| Current device | ${id.deviceName} |\n")
           if peersList.nonEmpty then
             val peerStr = peersList
-              .map(p =>
-                s"${p.deviceName} (${p.platform})"
-              )
+              .map(p => s"${p.deviceName} (${p.platform})")
               .mkString("; ")
             sb.append(s"| Available devices | $peerStr |\n")
           sb.toString

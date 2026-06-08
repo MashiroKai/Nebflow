@@ -3,13 +3,14 @@ package nebflow.mesh
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
+import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import io.circe.Json
 import nebflow.core.NebflowLogger
 
-import java.net.{DatagramPacket, DatagramSocket, InetAddress, NetworkInterface}
+import java.net.*
 import java.nio.charset.StandardCharsets
+
 import scala.concurrent.duration.*
 
 /**
@@ -104,14 +105,10 @@ object UdpDiscovery:
 
   /** Check if an IP address belongs to a local network interface. */
   def isOwnAddress(addr: String): Boolean =
-    val interfaces = NetworkInterface.getNetworkInterfaces
-    while interfaces.hasMoreElements do
-      val iface = interfaces.nextElement()
-      val addresses = iface.getInetAddresses
-      while addresses.hasMoreElements do
-        val inetAddr = addresses.nextElement()
-        if inetAddr.getHostAddress == addr then return true
-    false
+    import scala.jdk.CollectionConverters.*
+    NetworkInterface.getNetworkInterfaces.asScala.exists { iface =>
+      iface.getInetAddresses.asScala.exists(_.getHostAddress == addr)
+    }
 
   /** Create a UdpDiscovery instance. */
   def create(
@@ -121,3 +118,4 @@ object UdpDiscovery:
     cats.effect.Ref.of[IO, Option[String]](None).map { ref =>
       new UdpDiscovery(nebflowPort, ref, onPeerDiscovered)
     }
+end UdpDiscovery

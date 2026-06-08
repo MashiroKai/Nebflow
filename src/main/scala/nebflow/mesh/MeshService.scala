@@ -123,7 +123,8 @@ class MeshService private (
       )
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(s"$address/api/mesh/handshake"))
-        .auth.bearer(token)
+        .auth
+        .bearer(token)
         .contentType("application/json")
         .body(body.noSpaces)
         .readTimeout(10.seconds)
@@ -196,6 +197,7 @@ class MeshService private (
         case (None, None) =>
     }
     SyncDiff(upload.result(), download.result(), unchanged.result())
+  end computeSyncDiff
 
   // ===== Background Loops =====
 
@@ -246,9 +248,7 @@ object MeshService:
       peersRef <- Ref.of[IO, Map[String, PeerInfo]](Map.empty)
       // Ref to hold the peer-discovered callback — breaks the circular dependency
       callbackRef <- Ref.of[IO, (String, Int) => IO[Unit]]((_, _) => IO.unit)
-      udp <- UdpDiscovery.create(serverPort, (addr, port) =>
-        callbackRef.get.flatMap(cb => cb(addr, port))
-      )
+      udp <- UdpDiscovery.create(serverPort, (addr, port) => callbackRef.get.flatMap(cb => cb(addr, port)))
       service = new MeshService(idRef, cfgRef, peersRef, syncStore, udp, serverPort)
       // Wire the callback to the service's onPeerDiscovered method
       _ <- callbackRef.set((addr: String, port: Int) => service.onPeerDiscovered(addr, port))
