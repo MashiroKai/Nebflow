@@ -364,9 +364,91 @@ class MeshService private (
   def startSyncLoop: IO[Nothing] =
     configRef.get.flatMap { cfg =>
       Temporal[IO].sleep(cfg.syncIntervalSec.seconds) *>
-        syncAll.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}")) *>
+        (syncAll *> cloudDiscover).handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}")) *>
         startSyncLoop
     }
+
+  // ===== Cloud Discovery (Phase 3) =====
+
+  /** Register this device with the cloud discovery service and lookup peers. */
+  def cloudDiscover: IO[Unit] =
+    for
+      id <- identityRef.get
+      gidOpt = id.groupId
+      _ <- gidOpt match
+        case None => IO.unit
+        case Some(token) =>
+          configRef.get.flatMap { cfg =>
+            cfg.cloudDiscoveryUrl match
+              case None => IO.unit // no cloud URL configured, skip
+              case Some(url) =>
+                val hash = UdpDiscovery.hashToken(token)
+                for
+                  addr <- detectLocalAddress
+                  _ <- cloudRegister(url, hash, id, addr)
+                  _ <- cloudLookup(url, hash, id)
+                yield ()
+          }
+    yield ()
+
+  private def cloudRegister(
+    cloudUrl: String,
+    tokenHash: String,
+    id: DeviceIdentity,
+    address: String
+  ): IO[Unit] =
+    IO.blocking {
+      val body = Json.obj(
+        "action" -> "discover/register".asJson,
+        "tokenHash" -> tokenHash.asJson,
+        "deviceId" -> id.deviceId.asJson,
+        "deviceName" -> id.deviceName.asJson,
+        "platform" -> id.platform.asJson,
+        "address" -> address.asJson
+      )
+      val resp = basicRequest
+        .post(sttp.model.Uri.unsafeParse(cloudUrl))
+        .contentType("application/json")
+        .body(body.noSpaces)
+        .readTimeout(10.seconds)
+        .response(asStringAlways)
+        .send(httpBackend)
+      if !resp.code.isSuccess then throw new RuntimeException(s"Cloud register failed: ${resp.code}")
+    }.handleErrorWith(e => logger.debug(s"Cloud register: ${e.getMessage}"))
+
+  private def cloudLookup(cloudUrl: String, tokenHash: String, id: DeviceIdentity): IO[Unit] =
+    IO.blocking {
+      val body = Json.obj(
+        "action" -> "discover/lookup".asJson,
+        "tokenHash" -> tokenHash.asJson,
+        "deviceId" -> id.deviceId.asJson
+      )
+      val resp = basicRequest
+        .post(sttp.model.Uri.unsafeParse(cloudUrl))
+        .contentType("application/json")
+        .body(body.noSpaces)
+        .readTimeout(10.seconds)
+        .response(asStringAlways)
+        .send(httpBackend)
+      if resp.code.isSuccess then resp.body
+      else ""
+    }.flatMap { body =>
+      if body.isEmpty then IO.unit
+      else
+        io.circe.parser.decode[Json](body) match
+          case Right(json) =>
+            val data = json.hcursor.downField("data")
+            val peersResult = data.downField("peers").as[List[PeerInfo]]
+            peersResult match
+              case Right(cloudPeers) =>
+                // Merge cloud-discovered peers into local peers (don't remove UDP-discovered ones)
+                peersRef.update { existing =>
+                  val cloudMap = cloudPeers.map(p => p.deviceId -> p).toMap
+                  existing ++ cloudMap
+                }
+              case Left(_) => IO.unit
+          case Left(_) => IO.unit
+    }.handleErrorWith(e => logger.debug(s"Cloud lookup: ${e.getMessage}"))
 
   /** Expose UDP discovery for starting background loops. */
   private[nebflow] def discovery: UdpDiscovery = udpDiscovery

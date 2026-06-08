@@ -134,7 +134,8 @@ object SyncDiff:
 /** Mesh configuration stored in ~/.nebflow/mesh/config.json. */
 case class MeshConfig(
   enabled: Boolean = false,
-  syncIntervalSec: Int = 300
+  syncIntervalSec: Int = 300,
+  cloudDiscoveryUrl: Option[String] = None
 )
 
 object MeshConfig:

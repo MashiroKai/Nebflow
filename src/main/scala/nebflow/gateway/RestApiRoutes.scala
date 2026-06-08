@@ -185,31 +185,34 @@ class RestApiRoutes(
       withMesh(req) { ms =>
         ms.identity.flatMap { id =>
           ms.isPaired.flatMap { paired =>
-            ms.peers.flatMap { peersList =>
-              Ok(
-                Json.obj(
-                  "paired" -> paired.asJson,
-                  "device" -> Json.obj(
-                    "id" -> id.deviceId.asJson,
-                    "name" -> id.deviceName.asJson,
-                    "platform" -> id.platform.asJson,
-                    "groupId" -> id.groupId
-                      .map(g => s"${g.take(4)}${"*".repeat(Math.max(g.length - 4, 0))}")
-                      .asJson
-                  ),
-                  "peers" -> peersList
-                    .map(p =>
-                      Json.obj(
-                        "deviceId" -> p.deviceId.asJson,
-                        "deviceName" -> p.deviceName.asJson,
-                        "platform" -> p.platform.asJson,
-                        "address" -> p.address.asJson,
-                        "lastSeen" -> p.lastSeen.asJson
+            ms.meshConfig.flatMap { cfg =>
+              ms.peers.flatMap { peersList =>
+                Ok(
+                  Json.obj(
+                    "paired" -> paired.asJson,
+                    "device" -> Json.obj(
+                      "id" -> id.deviceId.asJson,
+                      "name" -> id.deviceName.asJson,
+                      "platform" -> id.platform.asJson,
+                      "groupId" -> id.groupId
+                        .map(g => s"${g.take(4)}${"*".repeat(Math.max(g.length - 4, 0))}")
+                        .asJson
+                    ),
+                    "cloudDiscoveryUrl" -> cfg.cloudDiscoveryUrl.asJson,
+                    "peers" -> peersList
+                      .map(p =>
+                        Json.obj(
+                          "deviceId" -> p.deviceId.asJson,
+                          "deviceName" -> p.deviceName.asJson,
+                          "platform" -> p.platform.asJson,
+                          "address" -> p.address.asJson,
+                          "lastSeen" -> p.lastSeen.asJson
+                        )
                       )
-                    )
-                    .asJson
+                      .asJson
+                  )
                 )
-              )
+              }
             }
           }
         }
@@ -288,6 +291,21 @@ class RestApiRoutes(
     case req @ POST -> Root / "api" / "mesh" / "sync" =>
       withMesh(req) { ms =>
         ms.syncAll *> Ok(Json.obj("synced" -> true.asJson))
+      }
+
+    // Update mesh config (e.g. cloudDiscoveryUrl)
+    case req @ PATCH -> Root / "api" / "mesh" / "config" =>
+      withMesh(req) { ms =>
+        req.as[Json].flatMap { body =>
+          val cloudUrl = body.hcursor.downField("cloudDiscoveryUrl").as[Option[String]].toOption.flatten
+          val syncInterval = body.hcursor.downField("syncIntervalSec").as[Option[Int]].toOption.flatten
+          ms.updateConfig { cfg =>
+            cfg.copy(
+              cloudDiscoveryUrl = cloudUrl.orElse(cfg.cloudDiscoveryUrl),
+              syncIntervalSec = syncInterval.getOrElse(cfg.syncIntervalSec)
+            )
+          } *> Ok(Json.obj("ok" -> true.asJson))
+        }
       }
 
     // Fingerprints — returns local file fingerprints for peer sync
