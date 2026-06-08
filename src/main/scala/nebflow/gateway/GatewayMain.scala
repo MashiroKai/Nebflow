@@ -413,6 +413,11 @@ object GatewayMain extends IOApp.Simple:
                                               logger.warn(s"Mesh listener stopped: ${e.getMessage}")
                                             )
                                             .start
+                                          _ <- meshService.startSyncLoop
+                                            .handleErrorWith(e =>
+                                              logger.warn(s"Mesh sync loop stopped: ${e.getMessage}")
+                                            )
+                                            .start
                                           _ <- logger.info(
                                             "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
                                           ) *> waitForQuit

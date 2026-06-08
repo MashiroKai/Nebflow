@@ -149,7 +149,7 @@ class MeshService private (
           case Left(_) => IO.unit
     }.handleErrorWith(e => logger.debug(s"Handshake to $address failed: ${e.getMessage}"))
 
-  // ===== Sync (Phase 2) =====
+  // ===== Sync =====
 
   def computeLocalFingerprints: IO[Map[String, FileFingerprint]] =
     IO.blocking {
@@ -213,11 +213,158 @@ class MeshService private (
     SyncDiff(upload.result(), download.result(), unchanged.result())
   end computeSyncDiff
 
+  /** Validate that relPath doesn't escape ~/.nebflow/ (no ../ traversal). */
+  private def validateRelPath(relPath: String): Option[String] =
+    val normalized = java.nio.file.Paths.get(relPath).normalize
+    if normalized.startsWith("..") || normalized.isAbsolute then None
+    else Some(normalized.toString)
+
+  /** Read a local file for sync. Returns (content bytes, fingerprint) or None. */
+  def readLocalFile(relPath: String): IO[Option[(Array[Byte], FileFingerprint)]] =
+    validateRelPath(relPath) match
+      case None => IO.pure(None)
+      case Some(safePath) =>
+        IO.blocking {
+          val absPath = os.home / ".nebflow" / safePath
+          FileFingerprint.compute(absPath).map { fp =>
+            (os.read.bytes(absPath), fp)
+          }
+        }
+
+  /** Write a file received from a peer. Backs up existing file to history before overwriting. */
+  def writeLocalFile(relPath: String, content: Array[Byte]): IO[Unit] =
+    validateRelPath(relPath) match
+      case None => IO.raiseError(new RuntimeException(s"Invalid path: $relPath"))
+      case Some(safePath) =>
+        val absPath = os.home / ".nebflow" / safePath
+        IO.blocking {
+          // Backup existing file to history before overwriting
+          if os.exists(absPath) then
+            val historyDir = os.home / ".nebflow" / "mesh" / "history"
+            val timestamp = System.currentTimeMillis()
+            val backupName = s"${absPath.last}.${timestamp}.bak"
+            os.write.over(historyDir / backupName, os.read.bytes(absPath), createFolders = true)
+          // Write new content atomically
+          val tmp = absPath / os.up / s"${absPath.last}.tmp"
+          os.write.over(tmp, content, createFolders = true)
+          os.move.over(tmp, absPath)
+        }.flatMap { _ =>
+          IO.blocking(FileFingerprint.compute(absPath)).flatMap {
+            case Some(fp) => syncStore.updateSnapshot(relPath, fp)
+            case None => IO.unit
+          }
+        }
+
+  /** Fetch fingerprints from a peer device via direct HTTP. */
+  def fetchPeerFingerprints(peer: PeerInfo, token: String): IO[Map[String, FileFingerprint]] =
+    IO.blocking {
+      val resp = basicRequest
+        .get(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/fingerprints"))
+        .auth
+        .bearer(token)
+        .readTimeout(15.seconds)
+        .response(asStringAlways)
+        .send(httpBackend)
+      if resp.code.isSuccess then resp.body
+      else throw new RuntimeException(s"Peer ${peer.deviceName} returned ${resp.code}")
+    }.flatMap { body =>
+      IO.fromEither(io.circe.parser.decode[Map[String, FileFingerprint]](body))
+    }
+
+  /** Download a file from a peer device. Returns decoded file bytes. */
+  def downloadFromPeer(peer: PeerInfo, token: String, relPath: String): IO[Array[Byte]] =
+    IO.blocking {
+      val encodedPath = java.net.URLEncoder.encode(relPath, "UTF-8")
+      val resp = basicRequest
+        .get(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/file?path=$encodedPath"))
+        .auth
+        .bearer(token)
+        .readTimeout(30.seconds)
+        .response(asStringAlways)
+        .send(httpBackend)
+      if resp.code.isSuccess then resp.body
+      else throw new RuntimeException(s"Download $relPath failed: ${resp.code}")
+    }.flatMap { body =>
+      // Response is JSON with base64-encoded content
+      IO.fromEither(io.circe.parser.decode[Json](body)).flatMap { json =>
+        val contentB64 = json.hcursor.downField("content").as[String]
+        IO.fromEither(contentB64).map(java.util.Base64.getDecoder.decode)
+      }
+    }
+
+  /** Upload a file to a peer device. */
+  def uploadToPeer(peer: PeerInfo, token: String, relPath: String, content: Array[Byte]): IO[Unit] =
+    IO.blocking {
+      val body = Json.obj(
+        "path" -> relPath.asJson,
+        "content" -> java.util.Base64.getEncoder.encodeToString(content).asJson
+      )
+      val resp = basicRequest
+        .put(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/file"))
+        .auth
+        .bearer(token)
+        .contentType("application/json")
+        .body(body.noSpaces)
+        .readTimeout(30.seconds)
+        .response(asStringAlways)
+        .send(httpBackend)
+      if resp.code.isSuccess then ()
+      else throw new RuntimeException(s"Upload $relPath failed: ${resp.code}")
+    }
+
+  /** Full sync with a single peer. */
+  def syncWithPeer(peer: PeerInfo): IO[Unit] =
+    for
+      tokenOpt <- groupId
+      token <- IO.fromOption(tokenOpt)(new RuntimeException("Not paired"))
+      localFps <- computeLocalFingerprints
+      remoteFps <- fetchPeerFingerprints(peer, token)
+      diff = computeSyncDiff(localFps, remoteFps)
+      _ <- logger.info(
+        s"Sync with ${peer.deviceName}: upload ${diff.needUpload.size}, download ${diff.needDownload.size}, unchanged ${diff.unchanged.size}"
+      )
+      // Upload files we have that the peer doesn't or peer has older
+      _ <- diff.needUpload.traverse_ { relPath =>
+        readLocalFile(relPath).flatMap {
+          case Some((content, _)) =>
+            uploadToPeer(peer, token, relPath, content).handleErrorWith { e =>
+              logger.warn(s"Upload $relPath to ${peer.deviceName} failed: ${e.getMessage}")
+            }
+          case None => IO.unit
+        }
+      }
+      // Download files the peer has that we don't or we have older
+      _ <- diff.needDownload.traverse_ { relPath =>
+        downloadFromPeer(peer, token, relPath)
+          .flatMap(content => writeLocalFile(relPath, content))
+          .handleErrorWith { e =>
+            logger.warn(s"Download $relPath from ${peer.deviceName} failed: ${e.getMessage}")
+          }
+      }
+    yield ()
+
+  /** Sync with all connected peers. */
+  def syncAll: IO[Unit] =
+    for
+      paired <- isPaired
+      _ <-
+        if !paired then IO.unit
+        else
+          peersRef.get.flatMap { peersMap =>
+            peersMap.values.toList.traverse_ { peer =>
+              syncWithPeer(peer).handleErrorWith { e =>
+                logger.warn(s"Sync with ${peer.deviceName} failed: ${e.getMessage}")
+              }
+            }
+          }
+    yield ()
+
   // ===== Background Loops =====
 
   def startSyncLoop: IO[Nothing] =
     configRef.get.flatMap { cfg =>
       Temporal[IO].sleep(cfg.syncIntervalSec.seconds) *>
+        syncAll.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}")) *>
         startSyncLoop
     }
 
