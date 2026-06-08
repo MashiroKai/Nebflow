@@ -322,137 +322,141 @@ object GatewayMain extends IOApp.Simple:
                                     }
                                   }
 
-                                // Create mesh service in parallel with bridge
+                                // Create mesh service (sequential to avoid compute pool starvation inside Dispatcher.use)
                                 val meshServiceF: IO[MeshService] =
                                   MeshSyncStore.load().flatMap(store => MeshService.create(store, cfg.port.value))
 
-                                (bridgeSetup, meshServiceF).mapN { (bridgeManager, meshService) =>
-                                  // Register mesh tool for agent cross-device operations
-                                  nebflow.core.tools.MeshTool.register(meshService)
-                                  val sharedResourcesWithBridge =
-                                    sharedResources.copy(bridgeManager = Some(bridgeManager))
-                                  val relayHandler = handleRelayMessage(meshService, sessionStore, wsRoutesHolder)
-                                  EmberServerBuilder
-                                    .default[IO]
-                                    .withHost(cfg.host)
-                                    .withPort(cfg.port)
-                                    .withIdleTimeout(1.hour)
-                                    .withHttpWebSocketApp { wsb =>
-                                      val wsRoutes = new WebSocketRoutes(
-                                        wsb,
-                                        sessionService,
-                                        agentService,
-                                        configService,
-                                        configRef,
-                                        rateLimiter,
-                                        token,
-                                        fileTracker,
-                                        sessionStore,
-                                        wsHub,
-                                        actorSystem,
-                                        contextWindow,
-                                        sharedResourcesWithBridge,
-                                        mcpManager
-                                      )
-                                      wsRoutesHolder = Some(wsRoutes)
-
-                                      // REST API routes for CLI consumption
-                                      val restApiRoutes = new RestApiRoutes(
-                                        token,
-                                        configRef,
-                                        sharedResourcesWithBridge,
-                                        sessionStore,
-                                        wsRoutes,
-                                        meshService = Some(meshService)
-                                      )
-
-                                      Router(
-                                        "/api" -> (chatRoutes.routes <+> restApiRoutes.routes),
-                                        "/" -> wsRoutes.routes
-                                      ).orNotFound
-                                    }
-                                    .build
-                                    .use { _ =>
-                                      // Wire bridge inject ref
-                                      val wireBridge = wsRoutesHolder match
-                                        case Some(wsRoutes) =>
-                                          bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
-                                        case None => IO.unit
-                                      wireBridge *> (for
-                                        _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
-                                        _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
-                                        // Register bridge as WsHub listener for agent events
-                                        _ <- wsHub.register(json =>
-                                          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-                                          if sessionId.nonEmpty then bridgeManager.dispatchAgentEvent(sessionId, json)
-                                          else IO.unit
+                                bridgeSetup.flatMap { bridgeManager =>
+                                  meshServiceF.flatMap { meshService =>
+                                    // Register mesh tool for agent cross-device operations
+                                    nebflow.core.tools.MeshTool.register(meshService)
+                                    val sharedResourcesWithBridge =
+                                      sharedResources.copy(bridgeManager = Some(bridgeManager))
+                                    val relayHandler = handleRelayMessage(meshService, sessionStore, wsRoutesHolder)
+                                    EmberServerBuilder
+                                      .default[IO]
+                                      .withHost(cfg.host)
+                                      .withPort(cfg.port)
+                                      .withIdleTimeout(1.hour)
+                                      .withHttpWebSocketApp { wsb =>
+                                        val wsRoutes = new WebSocketRoutes(
+                                          wsb,
+                                          sessionService,
+                                          agentService,
+                                          configService,
+                                          configRef,
+                                          rateLimiter,
+                                          token,
+                                          fileTracker,
+                                          sessionStore,
+                                          wsHub,
+                                          actorSystem,
+                                          contextWindow,
+                                          sharedResourcesWithBridge,
+                                          mcpManager
                                         )
-                                        _ <- bridgeManager.startAll.start // start in background
-                                        // --- Start Reminder Scheduler ---
-                                        _ <- ReminderScheduler
-                                          .start(
-                                            sharedResources.reminderStore,
-                                            (sid, event) =>
-                                              wsRoutesHolder match
-                                                case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
-                                                case None => IO.unit,
-                                            wsHub,
-                                            sessionStore
+                                        wsRoutesHolder = Some(wsRoutes)
+
+                                        // REST API routes for CLI consumption
+                                        val restApiRoutes = new RestApiRoutes(
+                                          token,
+                                          configRef,
+                                          sharedResourcesWithBridge,
+                                          sessionStore,
+                                          wsRoutes,
+                                          meshService = Some(meshService)
+                                        )
+
+                                        Router(
+                                          "/api" -> (chatRoutes.routes <+> restApiRoutes.routes),
+                                          "/" -> wsRoutes.routes
+                                        ).orNotFound
+                                      }
+                                      .build
+                                      .use { _ =>
+                                        // Wire bridge inject ref
+                                        val wireBridge = wsRoutesHolder match
+                                          case Some(wsRoutes) =>
+                                            bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
+                                          case None => IO.unit
+                                        wireBridge *> (for
+                                          _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
+                                          _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
+                                          // Register bridge as WsHub listener for agent events
+                                          _ <- wsHub.register(json =>
+                                            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+                                            if sessionId.nonEmpty then bridgeManager.dispatchAgentEvent(sessionId, json)
+                                            else IO.unit
                                           )
-                                          .flatMap(_ => IO.unit)
-                                          .start
-                                        _ <- openBrowser(url)
-                                        // --- Background init: skills dir, MCP servers ---
-                                        _ <- SkillService
-                                          .ensureDefaults()
-                                          .handleErrorWith(e => logger.warn(s"Skills init failed: ${e.getMessage}"))
-                                          .start
-                                        // --- Background init: MCP servers ---
-                                        _ <- startMcpServers(config, mcpManager, agentLibrary)
-                                          .flatMap { _ =>
-                                            // Broadcast updated MCP server list to all connected clients
-                                            mcpManager.listServers
-                                              .map(_.map { case (id, enabled) =>
-                                                io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
-                                              })
-                                              .flatMap { mcpJson =>
-                                                wsHub.broadcast(
-                                                  io.circe.Json.obj(
-                                                    "type" -> "mcpServersUpdate".asJson,
-                                                    "mcpServers" -> mcpJson.asJson
+                                          _ <- bridgeManager.startAll.start // start in background
+                                          // --- Start Reminder Scheduler ---
+                                          _ <- ReminderScheduler
+                                            .start(
+                                              sharedResources.reminderStore,
+                                              (sid, event) =>
+                                                wsRoutesHolder match
+                                                  case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
+                                                  case None => IO.unit,
+                                              wsHub,
+                                              sessionStore
+                                            )
+                                            .flatMap(_ => IO.unit)
+                                            .start
+                                          _ <- openBrowser(url)
+                                          // --- Background init: skills dir, MCP servers ---
+                                          _ <- SkillService
+                                            .ensureDefaults()
+                                            .handleErrorWith(e => logger.warn(s"Skills init failed: ${e.getMessage}"))
+                                            .start
+                                          // --- Background init: MCP servers ---
+                                          _ <- startMcpServers(config, mcpManager, agentLibrary)
+                                            .flatMap { _ =>
+                                              // Broadcast updated MCP server list to all connected clients
+                                              mcpManager.listServers
+                                                .map(_.map { case (id, enabled) =>
+                                                  io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+                                                })
+                                                .flatMap { mcpJson =>
+                                                  wsHub.broadcast(
+                                                    io.circe.Json.obj(
+                                                      "type" -> "mcpServersUpdate".asJson,
+                                                      "mcpServers" -> mcpJson.asJson
+                                                    )
                                                   )
-                                                )
-                                              }
-                                          }
-                                          .handleErrorWith { e =>
-                                            logger.warn(s"Background init failed: ${e.getMessage}")
-                                          }
-                                          .start
-                                        // --- Mesh: background sync + relay ---
-                                        _ <- meshService.startSyncLoop
-                                          .handleErrorWith(e => logger.warn(s"Mesh sync loop stopped: ${e.getMessage}"))
-                                          .start
-                                        _ <- meshService
-                                          .startRelayLoop(relayHandler)
-                                          .handleErrorWith(e =>
-                                            logger.warn(s"Mesh relay loop stopped: ${e.getMessage}")
-                                          )
-                                          .start
-                                        _ <- logger.info(
-                                          "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
-                                        ) *> waitForQuit
-                                      yield ())
-                                    }
-                                    .guarantee(
-                                      logger.info("shutting down...") *>
-                                        mcpManager.stopAll() *>
-                                        releaseBackend *>
-                                        IO.fromFuture(IO {
-                                          actorSystem.terminate()
-                                          actorSystem.whenTerminated
-                                        }).void
-                                    )
-                                } // end bridgeManager + meshService
+                                                }
+                                            }
+                                            .handleErrorWith { e =>
+                                              logger.warn(s"Background init failed: ${e.getMessage}")
+                                            }
+                                            .start
+                                          // --- Mesh: background sync + relay ---
+                                          _ <- meshService.startSyncLoop
+                                            .handleErrorWith(e =>
+                                              logger.warn(s"Mesh sync loop stopped: ${e.getMessage}")
+                                            )
+                                            .start
+                                          _ <- meshService
+                                            .startRelayLoop(relayHandler)
+                                            .handleErrorWith(e =>
+                                              logger.warn(s"Mesh relay loop stopped: ${e.getMessage}")
+                                            )
+                                            .start
+                                          _ <- logger.info(
+                                            "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
+                                          ) *> waitForQuit
+                                        yield ())
+                                      }
+                                      .guarantee(
+                                        logger.info("shutting down...") *>
+                                          mcpManager.stopAll() *>
+                                          releaseBackend *>
+                                          IO.fromFuture(IO {
+                                            actorSystem.terminate()
+                                            actorSystem.whenTerminated
+                                          }).void
+                                      )
+                                  } // end meshService
+                                } // end bridgeManager
                               } // end fileLockMgr
                             } // end askSemaphore
                           } // end dispatcher.use
