@@ -86,32 +86,6 @@ object GatewayMain extends IOApp.Simple:
 
   private val QuitCommands: Set[String] = Set("quit", "exit", "q")
 
-  /** Handle an incoming relay message from a remote device. */
-  private def handleRelayMessage(
-    meshService: MeshService,
-    sessionStore: SessionStore,
-    wsRoutesHolder: => Option[WebSocketRoutes]
-  )(msg: RelayMessage): IO[Unit] =
-    msg.payload match
-      case RelayPayload.ListSessions() =>
-        sessionStore.listSessions.flatMap { sessions =>
-          val summary = sessions.map(s => SessionSummary(s.id, s.name, s.agentName, s.updatedAt))
-          meshService.sendRelay(msg.fromDeviceId, RelayPayload.SessionList(summary))
-        }
-      case RelayPayload.UserInput(sessionId, content) =>
-        wsRoutesHolder match
-          case Some(routes) =>
-            routes.handleBridgeMessage(sessionId, content, Some(s"mesh:${msg.fromDeviceId}"))
-          case None => IO.unit
-      case RelayPayload.ExecuteCommand(sessionId, command) =>
-        wsRoutesHolder match
-          case Some(routes) =>
-            routes.handleBridgeMessage(sessionId, command, Some(s"mesh:${msg.fromDeviceId}"))
-          case None => IO.unit
-      case RelayPayload.SessionList(_) =>
-        // Response type — not expected as incoming, ignore
-        IO.unit
-
   /**
    * Block until user types a quit command on stdin.
    * If stdin is closed (EOF — common under sbt run / non-interactive shells), wait
@@ -332,7 +306,6 @@ object GatewayMain extends IOApp.Simple:
                                     nebflow.core.tools.MeshTool.register(meshService)
                                     val sharedResourcesWithBridge =
                                       sharedResources.copy(bridgeManager = Some(bridgeManager))
-                                    val relayHandler = handleRelayMessage(meshService, sessionStore, wsRoutesHolder)
                                     EmberServerBuilder
                                       .default[IO]
                                       .withHost(cfg.host)
@@ -429,16 +402,15 @@ object GatewayMain extends IOApp.Simple:
                                               logger.warn(s"Background init failed: ${e.getMessage}")
                                             }
                                             .start
-                                          // --- Mesh: background sync + relay ---
-                                          _ <- meshService.startSyncLoop
+                                          // --- Mesh: UDP discovery + sync ---
+                                          _ <- meshService.discovery.startBroadcast
                                             .handleErrorWith(e =>
-                                              logger.warn(s"Mesh sync loop stopped: ${e.getMessage}")
+                                              logger.warn(s"Mesh broadcast stopped: ${e.getMessage}")
                                             )
                                             .start
-                                          _ <- meshService
-                                            .startRelayLoop(relayHandler)
+                                          _ <- meshService.discovery.startListen
                                             .handleErrorWith(e =>
-                                              logger.warn(s"Mesh relay loop stopped: ${e.getMessage}")
+                                              logger.warn(s"Mesh listener stopped: ${e.getMessage}")
                                             )
                                             .start
                                           _ <- logger.info(

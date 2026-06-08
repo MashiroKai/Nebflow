@@ -83,9 +83,8 @@ case class PeerInfo(
   deviceId: String,
   deviceName: String,
   platform: String,
-  online: Boolean = false,
-  lastSeen: Long = 0L,
-  address: Option[String] = None
+  address: String,
+  lastSeen: Long = System.currentTimeMillis()
 )
 
 object PeerInfo:
@@ -122,7 +121,7 @@ object FileFingerprint:
 
 end FileFingerprint
 
-// ===== Sync Status =====
+// ===== Sync Diff =====
 
 /** Result of comparing local vs remote fingerprints. */
 case class SyncDiff(
@@ -140,9 +139,7 @@ object SyncDiff:
 /** Mesh configuration stored in ~/.nebflow/mesh/config.json. */
 case class MeshConfig(
   enabled: Boolean = false,
-  cloudBaseUrl: Option[String] = None,
-  syncIntervalSec: Int = 300,
-  relayPollIntervalSec: Int = 30
+  syncIntervalSec: Int = 300
 )
 
 object MeshConfig:
@@ -165,71 +162,3 @@ object MeshConfig:
       os.write.over(configPath, config.asJson.spaces2, createFolders = true)
     }
 end MeshConfig
-
-// ===== Relay Message =====
-
-/** A message relayed through the cloud between devices. */
-case class RelayMessage(
-  id: String,
-  fromDeviceId: String,
-  toDeviceId: String,
-  payload: RelayPayload,
-  createdAt: Long
-)
-
-/** Payload types for cross-device communication. */
-enum RelayPayload:
-  case UserInput(sessionId: String, content: String)
-  case ListSessions()
-  case SessionList(sessions: List[SessionSummary])
-  case ExecuteCommand(sessionId: String, command: String)
-
-case class SessionSummary(
-  id: String,
-  name: String,
-  agentName: Option[String],
-  updatedAt: Long
-)
-
-object RelayPayload:
-
-  given Encoder[RelayPayload] = Encoder.instance {
-    case RelayPayload.UserInput(sid, content) =>
-      io.circe.Json.obj("type" -> "userInput".asJson, "sessionId" -> sid.asJson, "content" -> content.asJson)
-    case RelayPayload.ListSessions() =>
-      io.circe.Json.obj("type" -> "listSessions".asJson)
-    case RelayPayload.SessionList(sessions) =>
-      io.circe.Json.obj("type" -> "sessionList".asJson, "sessions" -> sessions.asJson)
-    case RelayPayload.ExecuteCommand(sid, cmd) =>
-      io.circe.Json.obj("type" -> "executeCommand".asJson, "sessionId" -> sid.asJson, "command" -> cmd.asJson)
-  }
-
-  given Decoder[RelayPayload] = Decoder.instance { c =>
-    c.downField("type").as[String].flatMap {
-      case "userInput" =>
-        for
-          sid <- c.downField("sessionId").as[String]
-          content <- c.downField("content").as[String]
-        yield RelayPayload.UserInput(sid, content)
-      case "listSessions" =>
-        Right(RelayPayload.ListSessions())
-      case "sessionList" =>
-        c.downField("sessions").as[List[SessionSummary]].map(RelayPayload.SessionList(_))
-      case "executeCommand" =>
-        for
-          sid <- c.downField("sessionId").as[String]
-          cmd <- c.downField("command").as[String]
-        yield RelayPayload.ExecuteCommand(sid, cmd)
-      case other => Left(io.circe.DecodingFailure(s"Unknown relay payload type: $other", c.history))
-    }
-  }
-
-end RelayPayload
-
-object SessionSummary:
-  given Encoder[SessionSummary] = deriveEncoder
-  given Decoder[SessionSummary] = deriveDecoder
-
-object RelayMessage:
-  given Encoder[RelayMessage] = deriveEncoder
-  given Decoder[RelayMessage] = deriveDecoder
