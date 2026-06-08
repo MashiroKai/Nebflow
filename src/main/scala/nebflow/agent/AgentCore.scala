@@ -946,7 +946,7 @@ private[agent] trait AgentCore:
 
   /** Build mesh device info for environment table. */
   private def meshDeviceInfo: String =
-    val msOpt = nebflow.core.tools.RemoteToolForward.currentService
+    val msOpt = nebflow.core.tools.MeshTool.currentService
     msOpt match
       case None => ""
       case Some(ms) =>
@@ -957,14 +957,19 @@ private[agent] trait AgentCore:
           val sb = new StringBuilder
           sb.append(s"| Current device | ${id.deviceName} |\n")
           if peersList.nonEmpty then
-            val peerStr = peersList.map(p =>
-              val status = if p.online then "online" else "offline"
-              s"${p.deviceName} (${p.platform}, $status)"
-            ).mkString("; ")
+            val peerStr = peersList
+              .map(p =>
+                val status = if p.online then "online" else "offline"
+                s"${p.deviceName} (${p.platform}, $status)"
+              )
+              .mkString("; ")
             sb.append(s"| Available devices | $peerStr |\n")
           sb.toString
-        catch
-          case _: Exception => ""
+        catch case _: Exception => ""
+
+    end match
+
+  end meshDeviceInfo
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)

@@ -292,6 +292,7 @@ Accuracy and correctness come first. **Always generate images with professional 
 
 Example (embed tool-generated image):
 {"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}"""
+
   /** Dynamic description: base tool description + user design prompt (always present after auto-init). */
   def description: String =
     s"$baseDescription\n\n${loadDesignPrompt()}"

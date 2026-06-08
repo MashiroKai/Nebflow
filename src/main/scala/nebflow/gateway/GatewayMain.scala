@@ -329,7 +329,6 @@ object GatewayMain extends IOApp.Simple:
                                 (bridgeSetup, meshServiceF).mapN { (bridgeManager, meshService) =>
                                   // Register mesh tool for agent cross-device operations
                                   nebflow.core.tools.MeshTool.register(meshService)
-                                  nebflow.core.tools.RemoteToolForward.init(meshService)
                                   val sharedResourcesWithBridge =
                                     sharedResources.copy(bridgeManager = Some(bridgeManager))
                                   val relayHandler = handleRelayMessage(meshService, sessionStore, wsRoutesHolder)
@@ -433,8 +432,11 @@ object GatewayMain extends IOApp.Simple:
                                         _ <- meshService.startSyncLoop
                                           .handleErrorWith(e => logger.warn(s"Mesh sync loop stopped: ${e.getMessage}"))
                                           .start
-                                        _ <- meshService.startRelayLoop(relayHandler)
-                                          .handleErrorWith(e => logger.warn(s"Mesh relay loop stopped: ${e.getMessage}"))
+                                        _ <- meshService
+                                          .startRelayLoop(relayHandler)
+                                          .handleErrorWith(e =>
+                                            logger.warn(s"Mesh relay loop stopped: ${e.getMessage}")
+                                          )
                                           .start
                                         _ <- logger.info(
                                           "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
