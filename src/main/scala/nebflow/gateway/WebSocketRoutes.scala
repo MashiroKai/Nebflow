@@ -1726,14 +1726,10 @@ class WebSocketRoutes(
     "Pods", "vendor", "bower_components", "Movies"
   )
 
-  /** Maximum milliseconds to spend searching before giving up. */
-  private val searchTimeoutMs: Long = 3000L
-
   /**
    * Search for a file by name and verify its SHA-256 hash matches.
    * Searches directories in priority order. Does NOT follow symlinks.
    * First matches by filename + size (cheap), then verifies by SHA-256 (expensive).
-   * Stops after searchTimeoutMs to avoid blocking message delivery.
    *
    * @param name filename to search for
    * @param expectedHash SHA-256 hex hash of the uploaded file
@@ -1748,10 +1744,9 @@ class WebSocketRoutes(
     val targetName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
     if targetName.isEmpty then return None
 
-    val deadline = System.currentTimeMillis() + searchTimeoutMs
     val candidates = scala.collection.mutable.ListBuffer.empty[(Path, Long, Long)] // (path, mtime, size)
 
-    for searchRoot <- searchPaths if candidates.isEmpty && System.currentTimeMillis() < deadline do
+    for searchRoot <- searchPaths if candidates.isEmpty do
       val rootPath = Path.of(searchRoot)
       if Files.isDirectory(rootPath) then
         try
@@ -1759,8 +1754,7 @@ class WebSocketRoutes(
           Files.walkFileTree(rootPath, java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]), Integer.MAX_VALUE,
             new SimpleFileVisitor[Path]:
               override def preVisitDirectory(dir: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
-                if System.currentTimeMillis() > deadline then FileVisitResult.TERMINATE
-                else if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
+                if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
                 else FileVisitResult.CONTINUE
 
               override def visitFile(file: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
