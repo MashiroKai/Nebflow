@@ -343,21 +343,30 @@ export async function addFileAttachment(file, callback) {
     renderAttachmentPreview();
     if (callback) callback();
   } else {
-    // Non-image: read as base64 and save to disk on backend
+    // Non-image: compute SHA-256 hash for local file search, also keep data as fallback
     const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
     if (file.size > MAX_FILE_SIZE) {
       alert('File too large (max 50MB): ' + file.name);
       return;
     }
     const reader = new FileReader();
-    reader.onload = () => {
-      // readAsDataURL returns "data:[mimeType];base64,[data]"
+    reader.onload = async () => {
       const resultStr = reader.result;
       const commaIdx = resultStr.indexOf(',');
       const base64Data = commaIdx >= 0 ? resultStr.substring(commaIdx + 1) : resultStr;
+      // Compute SHA-256 hash from the file ArrayBuffer
+      let hash = '';
+      try {
+        const buffer = await file.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      } catch (e) {
+        console.warn('[input] SHA-256 computation failed:', e);
+      }
       state.pendingAttachments.push({
         type: 'text', mimeType: file.type || 'application/octet-stream',
-        data: base64Data, name: file.name
+        data: base64Data, name: file.name, hash, size: file.size
       });
       renderAttachmentPreview();
       if (callback) callback();

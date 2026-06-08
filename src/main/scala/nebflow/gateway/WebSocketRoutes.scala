@@ -1620,57 +1620,57 @@ class WebSocketRoutes(
                     )
                   )
               else
-                val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
-                if content.nonEmpty then blocks += ContentBlock.Text(content)
+                // Resolve projectRoot for local file search before processing attachments
+                (for
+                  metaOpt <- sessionStore.getSessionMeta(msgSessionId)
+                  folderId = metaOpt.flatMap(_.folderId)
+                  projectRoot <- sessionStore.resolveProjectRoot(folderId)
+                yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
+                  val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
+                  if content.nonEmpty then blocks += ContentBlock.Text(content)
 
-                val savedPaths = scala.collection.mutable.ListBuffer.empty[String]
-                attachments.foreach { att =>
-                  val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                  val data = att.hcursor.downField("data").as[String].getOrElse("")
-                  val name = att.hcursor.downField("name").as[String].getOrElse("")
-                  if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
-                  else if data.nonEmpty then
-                    // Save file to disk, only send path reference to LLM
-                    val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                    try
-                      os.makeDir.all(uploadDir)
-                      // Sanitize filename: strip path separators and path traversal sequences
-                      val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
-                      val fileName = s"${System.nanoTime()}_$safeName"
-                      val filePath = uploadDir / fileName
-                      os.write.over(filePath, java.util.Base64.getDecoder.decode(data))
-                      val absPath = filePath.toString
-                      val decodedSize = java.util.Base64.getDecoder.decode(data).length
-                      // Verify the resolved path is still within uploadDir (defense in depth)
-                      if absPath.startsWith(uploadDir.toString) then
-                        savedPaths += absPath
-                        blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                        logger.info(s"Saved attachment '$name' to $absPath ($decodedSize bytes)")
-                      else
-                        logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
-                        val decodedBytes =
-                          try java.util.Base64.getDecoder.decode(data)
-                          catch case _ => null
-                        val sizeInfo =
-                          if decodedBytes != null then s" (${decodedBytes.length} bytes)"
-                          else s" (${data.length} chars base64)"
-                        blocks += ContentBlock.Text(s"[file: $name (path unsafe)]$sizeInfo")
-                    catch
-                      case e: Exception =>
-                        logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
-                        // Fallback: embed a reference to the file (data is base64, too large to inline meaningfully)
-                        val decodedBytes =
-                          try java.util.Base64.getDecoder.decode(data)
-                          catch case _ => null
-                        val sizeInfo =
-                          if decodedBytes != null then s" (${decodedBytes.length} bytes)"
-                          else s" (${data.length} chars base64)"
-                        blocks += ContentBlock.Text(s"[file: $name (保存失败)]$sizeInfo")
-                    end try
-                  end if
-                }
+                  val savedPaths = scala.collection.mutable.ListBuffer.empty[String]
+                  attachments.foreach { att =>
+                    val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                    val data = att.hcursor.downField("data").as[String].getOrElse("")
+                    val name = att.hcursor.downField("name").as[String].getOrElse("")
+                    val hash = att.hcursor.downField("hash").as[String].getOrElse("")
+                    if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
+                    else if data.nonEmpty then
+                      // Try to find the file locally by name + hash first
+                      val searchPaths = projectRoot.toList ::: List(os.home.toString)
+                      val localPath = if hash.nonEmpty then findLocalFile(name, hash, searchPaths) else None
+                      localPath match
+                        case Some(path) =>
+                          savedPaths += path
+                          blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                          logger.info(s"Attachment '$name' resolved to local file: $path")
+                        case None =>
+                          // Fallback: save file to disk, send path reference to LLM
+                          val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
+                          try
+                            os.makeDir.all(uploadDir)
+                            val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+                            val fileName = s"${System.nanoTime()}_$safeName"
+                            val filePath = uploadDir / fileName
+                            os.write.over(filePath, java.util.Base64.getDecoder.decode(data))
+                            val absPath = filePath.toString
+                            val decodedSize = java.util.Base64.getDecoder.decode(data).length
+                            if absPath.startsWith(uploadDir.toString) then
+                              savedPaths += absPath
+                              blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
+                              logger.info(s"Saved attachment '$name' to $absPath ($decodedSize bytes)")
+                            else
+                              logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
+                              blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
+                          catch
+                            case e: Exception =>
+                              logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
+                              blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
+                          end try
+                      end match
+                  }
 
-                sessionStore.getSessionMeta(msgSessionId).flatMap { metaOpt =>
                   val sessionName = metaOpt.map(_.name).getOrElse("-")
                   logger.info(s"${logger.hl(sessionName)} User message: ${content
                       .take(60)}${if content.length > 60 then "..." else ""}") *>
@@ -1707,6 +1707,78 @@ class WebSocketRoutes(
           end if
     end if
   end handleMessage
+
+  // ============================================================
+  // Local file search for smart attachment resolution
+  // ============================================================
+
+  /** Directories to skip during filesystem search. */
+  private val skipDirs = Set(
+    "node_modules", ".git", "build", "target", "dist", ".cache",
+    "__pycache__", ".gradle", ".idea", ".vscode", ".nebflow",
+    "Library", "Applications", "Trash", ".Trash"
+  )
+
+  /**
+   * Search for a file by name and verify its SHA-256 hash matches.
+   * Searches directories in order, returns the first match or best candidate.
+   *
+   * @param name filename to search for
+   * @param expectedHash SHA-256 hex hash of the uploaded file
+   * @param searchPaths directories to search in priority order
+   * @return absolute path of a matching local file, or None
+   */
+  private def findLocalFile(name: String, expectedHash: String, searchPaths: List[String]): Option[String] =
+    import java.nio.file.{FileVisitResult, Files, Path, SimpleFileVisitor}
+    import java.security.MessageDigest
+
+    val targetName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+
+    val candidates = scala.collection.mutable.ListBuffer.empty[(Path, Long)]
+
+    for searchRoot <- searchPaths if candidates.isEmpty do
+      val rootPath = Path.of(searchRoot)
+      if Files.isDirectory(rootPath) then
+        try
+          Files.walkFileTree(rootPath, java.util.EnumSet.of(java.nio.file.FileVisitOption.FOLLOW_LINKS), 8,
+            new SimpleFileVisitor[Path]:
+              override def preVisitDirectory(dir: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
+                if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
+                else FileVisitResult.CONTINUE
+
+              override def visitFile(file: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
+                if file.getFileName.toString == targetName && attrs.isRegularFile then
+                  candidates += ((file, attrs.lastModifiedTime.toMillis))
+                FileVisitResult.CONTINUE
+          )
+        catch
+          case _: Exception => // skip inaccessible directories
+
+    if candidates.isEmpty then None
+    else
+      // Compute SHA-256 for each candidate and find matches
+      val hashMatches = candidates.toList.filter { (path, _) =>
+        try
+          val bytes = Files.readAllBytes(path)
+          val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+          val hex = digest.map(b => String.format("%02x", b)).mkString
+          hex == expectedHash
+        catch
+          case _: Exception => false
+      }
+
+      hashMatches match
+        case Nil => None
+        case (p, _) :: Nil => Some(p.toString)
+        case multiple =>
+          // Multiple identical copies: pick the most recently modified with shortest path
+          val sorted = multiple.sortBy { (path, mtime) =>
+            (-mtime, path.toString.length)
+          }
+          val chosen = sorted.head._1.toString
+          logger.info(s"Attachment '$name': ${multiple.size} local copies with same hash, chose: $chosen")
+          Some(chosen)
+  end findLocalFile
 
   // ============================================================
   // UI Message recording — wraps wsSend to persist frontend-renderable history
