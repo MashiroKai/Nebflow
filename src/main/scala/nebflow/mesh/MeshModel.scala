@@ -63,11 +63,6 @@ object DeviceIdentity:
       os.write.over(devicePath, identity.asJson.spaces2, createFolders = true)
     }
 
-  /** Set groupId after pairing. */
-  def setGroup(identity: DeviceIdentity, groupId: String): IO[DeviceIdentity] =
-    val updated = identity.copy(groupId = Some(groupId))
-    save(updated).map(_ => updated)
-
   private def createNew(): DeviceIdentity =
     DeviceIdentity(
       deviceId = UUID.randomUUID().toString,

@@ -2,8 +2,8 @@ package nebflow.mesh
 
 import cats.effect.{IO, Ref, Temporal}
 import cats.syntax.all.*
+import io.circe.Json
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.NebflowLogger
 import sttp.client4.*
 
@@ -131,8 +131,22 @@ class MeshService private (
         .response(asStringAlways)
         .send(httpBackend)
 
-      if resp.code.isSuccess then ()
-      else ()
+      if resp.code.isSuccess then resp.body else ""
+    }.flatMap { responseBody =>
+      // Parse peer identity from handshake response and add to local peers
+      if responseBody.isEmpty then IO.unit
+      else
+        io.circe.parser.decode[Json](responseBody) match
+          case Right(json) =>
+            val peerDeviceId = json.hcursor.downField("deviceId").as[String].getOrElse("")
+            val peerName = json.hcursor.downField("deviceName").as[String].getOrElse("")
+            val peerPlatform = json.hcursor.downField("platform").as[String].getOrElse("")
+            if peerDeviceId.nonEmpty then
+              val peer = PeerInfo(peerDeviceId, peerName, peerPlatform, address)
+              peersRef.update(_ + (peerDeviceId -> peer)) *>
+                logger.info(s"Handshake complete: $peerName at $address")
+            else IO.unit
+          case Left(_) => IO.unit
     }.handleErrorWith(e => logger.debug(s"Handshake to $address failed: ${e.getMessage}"))
 
   // ===== Sync (Phase 2) =====
