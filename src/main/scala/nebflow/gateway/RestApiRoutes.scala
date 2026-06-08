@@ -193,7 +193,9 @@ class RestApiRoutes(
                     "id" -> id.deviceId.asJson,
                     "name" -> id.deviceName.asJson,
                     "platform" -> id.platform.asJson,
-                    "groupId" -> id.groupId.asJson
+                    "groupId" -> id.groupId
+                      .map(g => s"${g.take(4)}${"*".repeat(Math.max(g.length - 4, 0))}")
+                      .asJson
                   ),
                   "peers" -> peersList
                     .map(p =>
