@@ -110,7 +110,9 @@ export function registerSkillCommands(skills) {
       slashCommands[cmd] = {
         _skill: true,
         desc: () => skill.description || t('slash.skillDefault'),
-        run: () => enterSkillMode(skill.name, skill.description)
+        whenToUse: skill.whenToUse || '',
+        argumentHint: skill.argumentHint || '',
+        run: () => enterSkillMode(skill.name, skill.description, skill.argumentHint)
       };
     }
   });
@@ -137,7 +139,7 @@ function updateSlashDropdown() {
   const query = text.slice(1).toLowerCase();
   state.slashMatches = Object.entries(slashCommands)
     .filter(([cmd]) => cmd.slice(1).toLowerCase().startsWith(query))
-    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, isSkill: !!info._skill }));
+    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, whenToUse: info.whenToUse || '', isSkill: !!info._skill }));
   if (state.slashMatches.length === 0) {
     closeSlashDropdown();
     return;
@@ -148,7 +150,8 @@ function updateSlashDropdown() {
     const div = document.createElement('div');
     div.className = 'slash-item' + (i === 0 ? ' active' : '');
     const badge = item.isSkill ? '<span class="slash-badge skill">' + escapeHtml(t('slash.skillBadge')) + '</span>' : '';
-    div.innerHTML = '<div style="display:flex;align-items:center"><span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge + '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>';
+    const whenToUseHtml = item.whenToUse ? '<span class="slash-when">' + escapeHtml(item.whenToUse) + '</span>' : '';
+      div.innerHTML = '<div style="display:flex;align-items:center"><span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge + '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>' + whenToUseHtml;
     div.onclick = () => { pickSlashCommand(i); };
     div.onmouseenter = () => { setSlashHighlight(i); };
     slashDropdown.appendChild(div);
@@ -254,7 +257,7 @@ function updateInputIndicator() {
 }
 
 // ---------- Skill Mode ----------
-export function enterSkillMode(skillName, description) {
+export function enterSkillMode(skillName, description, argumentHint) {
   if (state.skillMode) {
     // Already in skill mode — if it's a different skill, switch; otherwise do nothing
     if (state.skillModeName === skillName) return;
@@ -265,8 +268,9 @@ export function enterSkillMode(skillName, description) {
   state.skillMode = true;
   state.skillModeName = skillName;
   state.skillModeDesc = description || '';
+  state.skillModeArgHint = argumentHint || '';
   updateInputIndicator();
-  state.dom.input.placeholder = t('input.skillPlaceholder');
+  state.dom.input.placeholder = argumentHint || t('input.skillPlaceholder');
   state.dom.input.focus();
 }
 
@@ -275,6 +279,7 @@ export function cancelSkillMode() {
   state.skillMode = false;
   state.skillModeName = '';
   state.skillModeDesc = '';
+  state.skillModeArgHint = '';
   updateInputIndicator();
   state.dom.input.placeholder = t('input.placeholder');
 }
@@ -494,6 +499,11 @@ export function send() {
   }
   state.sessionBusyTimeouts[sid] = setTimeout(() => {
     if (state.busySessionIds.has(sid)) {
+      // Send interrupt to backend so the agent cancels its fiber and returns to idle.
+      // Without this, the frontend clears busy but the backend keeps processing — any
+      // new user message gets stashed and the user sees no response until they manually
+      // click Stop (which does send interrupt).
+      sendWs({type: 'interrupt', sessionId: sid});
       import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
         if (sid === state.activeSessionId) renderTimeoutNotice();
         clearBusy(sid);
@@ -566,6 +576,7 @@ export function injectUserMessage(text, options = {}) {
   }
   state.sessionBusyTimeouts[sessionId] = setTimeout(() => {
     if (state.busySessionIds.has(sessionId)) {
+      sendWs({type: 'interrupt', sessionId});
       import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
         if (sessionId === state.activeSessionId) renderTimeoutNotice();
         clearBusy(sessionId);

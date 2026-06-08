@@ -74,14 +74,29 @@ export function restoreFromStorage() {
   const msgs = loadMsgs();
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
+      // Look ahead: if next message is a skill-activated system message,
+      // render as a skill bubble (with label) instead of a plain user bubble.
+      const next = msgs[i + 1];
+      const isSkillActivation = next && next.type === 'system' && next.i18nKey === 'slash.skillActivated';
+      const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
       if (m.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
-        const t = document.createElement('div');
-        t.textContent = m.text;
-        bubble.appendChild(t);
+        if (isSkillActivation && skillName) {
+          const label = document.createElement('div');
+          label.className = 'ask-label';
+          label.textContent = t('chat.skillLabel', { skill: skillName });
+          const content = document.createElement('div');
+          content.textContent = m.text;
+          bubble.appendChild(label);
+          bubble.appendChild(content);
+        } else {
+          const t = document.createElement('div');
+          t.textContent = m.text;
+          bubble.appendChild(t);
+        }
         row.appendChild(bubble);
       }
       (m.attachments || []).forEach(att => {
@@ -311,6 +326,8 @@ export function restoreFromStorage() {
     } else if (m.type === 'error') {
       // Skip error messages on restore — they're transient
     } else if (m.type === 'system') {
+      // Skill-activated system messages are rendered as skill bubbles by the user handler above
+      if (m.i18nKey === 'slash.skillActivated') return;
       const row = document.createElement('div');
       row.className = 'row error';
       const card = document.createElement('div');
@@ -337,18 +354,35 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   const { scrollToBottom = true } = opts;
   const chat = state.dom.chat;
   const fragment = document.createDocumentFragment();
-  let skipUserMsg = false;
+  let skipMsg = false;
   msgs.forEach((m, i) => {
-    if (skipUserMsg) { skipUserMsg = false; return; }
+    if (skipMsg) { skipMsg = false; return; }
     if (m.type === 'user') {
+      // Look ahead: if next message is a skill-activated system message,
+      // render as a skill bubble (with label) instead of a plain user bubble.
+      const next = msgs[i + 1];
+      const isSkillActivation = next && next.type === 'system' && next.i18nKey === 'slash.skillActivated';
+      const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
       if (m.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
-        const t = document.createElement('div');
-        t.textContent = m.text;
-        bubble.appendChild(t);
+        if (isSkillActivation && skillName) {
+          // Render as skill bubble with label
+          const label = document.createElement('div');
+          label.className = 'ask-label';
+          label.textContent = t('chat.skillLabel', { skill: skillName });
+          const content = document.createElement('div');
+          content.textContent = m.text;
+          bubble.appendChild(label);
+          bubble.appendChild(content);
+          skipMsg = true; // skip the system message on next iteration
+        } else {
+          const t = document.createElement('div');
+          t.textContent = m.text;
+          bubble.appendChild(t);
+        }
         row.appendChild(bubble);
       }
       (m.attachments || []).forEach(att => {
@@ -583,6 +617,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       row.appendChild(bubble);
       fragment.appendChild(row);
     } else if (m.type === 'system') {
+      // Skill-activated system messages are rendered as skill bubbles by the user handler above;
+      // skip them here as a safety net (e.g. if the preceding user message was missing).
+      if (m.i18nKey === 'slash.skillActivated') return;
       const row = document.createElement('div');
       row.className = 'row error';
       const card = document.createElement('div');
