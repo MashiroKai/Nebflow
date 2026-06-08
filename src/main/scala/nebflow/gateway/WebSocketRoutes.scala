@@ -1785,9 +1785,17 @@ class WebSocketRoutes(
   private val sessionStartTimes: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
 
-  /** Per-session model used. */
+  /** Per-session model used (last model). */
   private val sessionModels: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
+
+  /** Per-session all models used (accumulated). */
+  private val sessionAllModels: Ref[IO, Map[String, Set[String]]] =
+    Ref.unsafe[IO, Map[String, Set[String]]](Map.empty)
+
+  /** Per-session response times in milliseconds (per turn). */
+  private val sessionResponseTimes: Ref[IO, Map[String, List[Long]]] =
+    Ref.unsafe[IO, Map[String, List[Long]]](Map.empty)
 
   /** Record a tool call for a session's telemetry profile. */
   private def recordToolForTelemetry(sessionId: String, toolName: String): IO[Unit] =
@@ -1808,9 +1816,13 @@ class WebSocketRoutes(
           turns <- sessionTurnCounts.get.map(_.getOrElse(sessionId, 0))
           startTime <- sessionStartTimes.get.map(_.get(sessionId))
           model <- sessionModels.get.map(_.get(sessionId).getOrElse(""))
+          allModels <- sessionAllModels.get.map(_.getOrElse(sessionId, Set.empty))
+          responseTimes <- sessionResponseTimes.get.map(_.getOrElse(sessionId, Nil))
           _ <- cleanupSessionTelemetry(sessionId)
           durationSec = startTime.map(s => (System.currentTimeMillis() - s) / 1000).getOrElse(0L)
           inferredTask = TaskInferencer.infer(profile, turns)
+          avgResponseMs = if responseTimes.nonEmpty then responseTimes.sum / responseTimes.size else 0L
+          maxResponseMs = responseTimes.maxOption.getOrElse(0L)
           props = JsonObject.fromIterable(
             List(
               "session_id" -> sessionId.asJson,
@@ -1818,7 +1830,11 @@ class WebSocketRoutes(
               "turn_count" -> turns.asJson,
               "tool_profile" -> TaskInferencer.toolProfileJson(profile).asJson,
               "inferred_task" -> inferredTask.asJson,
-              "model_used" -> model.asJson
+              "model_used" -> model.asJson,
+              "models_used" -> allModels.toList.asJson,
+              "avg_response_time_ms" -> avgResponseMs.asJson,
+              "max_response_time_ms" -> maxResponseMs.asJson,
+              "response_times" -> responseTimes.asJson
             )
           )
           _ <- reporter.record("session_end", props)
@@ -1830,7 +1846,9 @@ class WebSocketRoutes(
     sessionToolProfile.update(_ - sessionId) *>
       sessionTurnCounts.update(_ - sessionId) *>
       sessionStartTimes.update(_ - sessionId) *>
-      sessionModels.update(_ - sessionId)
+      sessionModels.update(_ - sessionId) *>
+      sessionAllModels.update(_ - sessionId) *>
+      sessionResponseTimes.update(_ - sessionId)
 
   private def makeRecordingWsSend(
     sessionId: String,
@@ -1925,7 +1943,12 @@ class WebSocketRoutes(
         val model = hc.downField("model").as[Option[String]].getOrElse(None)
         // Track model for telemetry
         val trackModel = model match
-          case Some(m) => sessionModels.update(_.updated(sessionId, m))
+          case Some(m) =>
+            sessionModels.update(_.updated(sessionId, m)) *>
+              sessionAllModels.update { map =>
+                val set = map.getOrElse(sessionId, Set.empty)
+                map.updated(sessionId, set + m)
+              }
           case None => IO.unit
         trackModel *> sessionTurnStarts
           .modify { m =>
@@ -1934,27 +1957,36 @@ class WebSocketRoutes(
           }
           .flatMap { startTime =>
             val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
-            sessionTextBuffers
-              .modify { m =>
-                val text = m.getOrElse(sessionId, "")
-                (m - sessionId, text)
-              }
-              .flatMap { text =>
-                sessionThinkingBuffers
-                  .modify { m =>
-                    val thinking = m.getOrElse(sessionId, "")
-                    (m - sessionId, thinking)
-                  }
-                  .flatMap { thinking =>
-                    val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
-                    if text.nonEmpty || thinkingOpt.isDefined then
-                      sharedResources.sessionStore.appendUiMessages(
-                        sessionId,
-                        List(UiMessage.Ai(text, durationMs, model, thinkingOpt))
-                      )
-                    else IO.unit
-                  }
-              }
+            // Track response time for telemetry
+            val trackResponseTime = durationMs match
+              case Some(ms) =>
+                sessionResponseTimes.update { map =>
+                  val times = map.getOrElse(sessionId, Nil)
+                  map.updated(sessionId, times :+ ms)
+                }
+              case None => IO.unit
+            trackResponseTime *>
+              sessionTextBuffers
+                .modify { m =>
+                  val text = m.getOrElse(sessionId, "")
+                  (m - sessionId, text)
+                }
+                .flatMap { text =>
+                  sessionThinkingBuffers
+                    .modify { m =>
+                      val thinking = m.getOrElse(sessionId, "")
+                      (m - sessionId, thinking)
+                    }
+                    .flatMap { thinking =>
+                      val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
+                      if text.nonEmpty || thinkingOpt.isDefined then
+                        sharedResources.sessionStore.appendUiMessages(
+                          sessionId,
+                          List(UiMessage.Ai(text, durationMs, model, thinkingOpt))
+                        )
+                      else IO.unit
+                    }
+                }
           }
 
       case "toolEnd" =>
