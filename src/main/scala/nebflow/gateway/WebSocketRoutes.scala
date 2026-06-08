@@ -1722,14 +1722,18 @@ class WebSocketRoutes(
     "__pycache__", ".gradle", ".idea", ".vscode", ".nebflow",
     "Library", "Applications", "Trash", ".Trash", ".npm", ".yarn",
     ".pnpm-store", ".cargo", ".rustup", ".conda", ".venv", "venv",
-    "DerivedData", ".gradle", ".m2", ".ivy2", ".sbt", ".coursier",
-    "Pods", ".gradle", "vendor", "bower_components"
+    "DerivedData", ".m2", ".ivy2", ".sbt", ".coursier",
+    "Pods", "vendor", "bower_components", "Movies"
   )
+
+  /** Maximum milliseconds to spend searching before giving up. */
+  private val searchTimeoutMs: Long = 3000L
 
   /**
    * Search for a file by name and verify its SHA-256 hash matches.
-   * Searches directories in priority order, no depth limit (skipDirs filters noise).
+   * Searches directories in priority order. Does NOT follow symlinks.
    * First matches by filename + size (cheap), then verifies by SHA-256 (expensive).
+   * Stops after searchTimeoutMs to avoid blocking message delivery.
    *
    * @param name filename to search for
    * @param expectedHash SHA-256 hex hash of the uploaded file
@@ -1744,22 +1748,28 @@ class WebSocketRoutes(
     val targetName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
     if targetName.isEmpty then return None
 
+    val deadline = System.currentTimeMillis() + searchTimeoutMs
     val candidates = scala.collection.mutable.ListBuffer.empty[(Path, Long, Long)] // (path, mtime, size)
 
-    for searchRoot <- searchPaths if candidates.isEmpty do
+    for searchRoot <- searchPaths if candidates.isEmpty && System.currentTimeMillis() < deadline do
       val rootPath = Path.of(searchRoot)
       if Files.isDirectory(rootPath) then
         try
-          Files.walkFileTree(rootPath, java.util.EnumSet.of(java.nio.file.FileVisitOption.FOLLOW_LINKS), Integer.MAX_VALUE,
+          // No FOLLOW_LINKS — avoids symlink loops on macOS bundles (.fcpcache etc.)
+          Files.walkFileTree(rootPath, java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]), Integer.MAX_VALUE,
             new SimpleFileVisitor[Path]:
               override def preVisitDirectory(dir: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
-                if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
+                if System.currentTimeMillis() > deadline then FileVisitResult.TERMINATE
+                else if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
                 else FileVisitResult.CONTINUE
 
               override def visitFile(file: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
                 // Fast filter: match filename + size before expensive hash computation
                 if file.getFileName.toString == targetName && attrs.isRegularFile && attrs.size == expectedSize then
                   candidates += ((file, attrs.lastModifiedTime.toMillis, attrs.size))
+                FileVisitResult.CONTINUE
+
+              override def visitFileFailed(file: Path, exc: java.io.IOException): FileVisitResult =
                 FileVisitResult.CONTINUE
           )
         catch
