@@ -284,6 +284,99 @@ class RestApiRoutes(
         ms.leaveGroup *> Ok(Json.obj("ok" -> true.asJson))
       }
 
+    // Trigger sync with all peers
+    case req @ POST -> Root / "api" / "mesh" / "sync" =>
+      withMesh(req) { ms =>
+        ms.syncAll *> Ok(Json.obj("synced" -> true.asJson))
+      }
+
+    // Fingerprints — returns local file fingerprints for peer sync
+    // Note: uses Bearer token auth (peer trust), not Nebflow auth cookie
+    case req @ GET -> Root / "api" / "mesh" / "fingerprints" =>
+      meshService match
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case Some(ms) =>
+          val callerToken = req.headers
+            .get[Authorization]
+            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+              t
+            }
+            .getOrElse("")
+          ms.groupId.flatMap {
+            case None => Forbidden(Json.obj("error" -> "Not paired".asJson))
+            case Some(localToken) =>
+              if callerToken != localToken then Forbidden(Json.obj("error" -> "Token mismatch".asJson))
+              else
+                ms.computeLocalFingerprints.flatMap { fps =>
+                  Ok(io.circe.Json.fromFields(fps.map { case (path, fp) =>
+                    path -> fp.asJson
+                  }))
+                }
+          }
+
+    // File download — returns file content for peer sync
+    case req @ GET -> Root / "api" / "mesh" / "file" =>
+      meshService match
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case Some(ms) =>
+          val callerToken = req.headers
+            .get[Authorization]
+            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+              t
+            }
+            .getOrElse("")
+          ms.groupId.flatMap {
+            case None => Forbidden(Json.obj("error" -> "Not paired".asJson))
+            case Some(localToken) =>
+              if callerToken != localToken then Forbidden(Json.obj("error" -> "Token mismatch".asJson))
+              else
+                val relPath = req.params.getOrElse("path", "")
+                if relPath.isEmpty then BadRequest(Json.obj("error" -> "Missing path".asJson))
+                else
+                  ms.readLocalFile(relPath).flatMap {
+                    case None => NotFound(Json.obj("error" -> s"File not found: $relPath".asJson))
+                    case Some((bytes, fp)) =>
+                      val encoded = java.util.Base64.getEncoder.encodeToString(bytes)
+                      Ok(
+                        Json.obj(
+                          "path" -> relPath.asJson,
+                          "content" -> encoded.asJson,
+                          "mtime" -> fp.mtime.asJson,
+                          "hash" -> fp.hash.asJson
+                        )
+                      )
+                  }
+                end if
+          }
+
+    // File upload — receives file content from a peer
+    case req @ PUT -> Root / "api" / "mesh" / "file" =>
+      meshService match
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case Some(ms) =>
+          val callerToken = req.headers
+            .get[Authorization]
+            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+              t
+            }
+            .getOrElse("")
+          ms.groupId.flatMap {
+            case None => Forbidden(Json.obj("error" -> "Not paired".asJson))
+            case Some(localToken) =>
+              if callerToken != localToken then Forbidden(Json.obj("error" -> "Token mismatch".asJson))
+              else
+                req.as[Json].flatMap { body =>
+                  val hc = body.hcursor
+                  val relPath = hc.downField("path").as[String].getOrElse("")
+                  val contentB64 = hc.downField("content").as[String].getOrElse("")
+                  if relPath.isEmpty || contentB64.isEmpty
+                  then BadRequest(Json.obj("error" -> "Missing path or content".asJson))
+                  else
+                    val bytes = java.util.Base64.getDecoder.decode(contentB64)
+                    ms.writeLocalFile(relPath, bytes) *> Ok(Json.obj("ok" -> true.asJson))
+                }
+          }
+
     // Remote tool execution — called by peer Nebflow devices
     case req @ POST -> Root / "api" / "mesh" / "remote-exec" =>
       withMesh(req) { ms =>
