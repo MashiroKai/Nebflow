@@ -2,8 +2,8 @@ package nebflow.mesh
 
 import cats.effect.{IO, Ref, Temporal}
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.parser.decode
+import io.circe.syntax.*
 import io.circe.{Decoder, Json}
 import nebflow.core.NebflowLogger
 import sttp.client4.*
@@ -46,13 +46,17 @@ class MeshService private (
       id <- identityRef.get
       cloudUrl <- getCloudUrl
       localAddr <- detectLocalAddress
-      resp <- callCloud(cloudUrl, Json.obj(
-        "action" -> "auth/create-group".asJson,
-        "deviceId" -> id.deviceId.asJson,
-        "deviceName" -> id.deviceName.asJson,
-        "platform" -> id.platform.asJson,
-        "nebflowUrl" -> localAddr.asJson
-      ), "")
+      resp <- callCloud(
+        cloudUrl,
+        Json.obj(
+          "action" -> "auth/create-group".asJson,
+          "deviceId" -> id.deviceId.asJson,
+          "deviceName" -> id.deviceName.asJson,
+          "platform" -> id.platform.asJson,
+          "nebflowUrl" -> localAddr.asJson
+        ),
+        ""
+      )
       groupIdStr <- IO.fromEither(
         resp.hcursor.downField("groupId").as[String].leftMap(_ => new RuntimeException("Missing groupId in response"))
       )
@@ -73,16 +77,23 @@ class MeshService private (
       id <- identityRef.get
       cloudUrl <- getCloudUrl
       localAddr <- detectLocalAddress
-      resp <- callCloud(cloudUrl, Json.obj(
-        "action" -> "auth/join-group".asJson,
-        "pairingCode" -> pairingCode.asJson,
-        "deviceId" -> id.deviceId.asJson,
-        "deviceName" -> id.deviceName.asJson,
-        "platform" -> id.platform.asJson,
-        "nebflowUrl" -> localAddr.asJson
-      ), "")
+      resp <- callCloud(
+        cloudUrl,
+        Json.obj(
+          "action" -> "auth/join-group".asJson,
+          "pairingCode" -> pairingCode.asJson,
+          "deviceId" -> id.deviceId.asJson,
+          "deviceName" -> id.deviceName.asJson,
+          "platform" -> id.platform.asJson,
+          "nebflowUrl" -> localAddr.asJson
+        ),
+        ""
+      )
       groupIdStr <- IO.fromEither(
-        resp.hcursor.downField("groupId").as[String].leftMap(_ => new RuntimeException("Invalid pairing code or expired"))
+        resp.hcursor
+          .downField("groupId")
+          .as[String]
+          .leftMap(_ => new RuntimeException("Invalid pairing code or expired"))
       )
       _ <- DeviceIdentity.setGroup(id, groupIdStr)
       _ <- identityRef.set(id.copy(groupId = Some(groupIdStr)))
@@ -107,10 +118,12 @@ class MeshService private (
   def meshConfig: IO[MeshConfig] = configRef.get
 
   def updateConfig(fn: MeshConfig => MeshConfig): IO[Unit] =
-    configRef.modify { cfg =>
-      val updated = fn(cfg)
-      (updated, updated)
-    }.flatMap(updated => MeshConfig.save(updated))
+    configRef
+      .modify { cfg =>
+        val updated = fn(cfg)
+        (updated, updated)
+      }
+      .flatMap(updated => MeshConfig.save(updated))
 
   // ===== Peers =====
 
@@ -140,8 +153,7 @@ class MeshService private (
       for
         path <- List(base / "NEBFLOW.md", base / "memory.md")
         fp <- FileFingerprint.compute(path)
-      do
-        builder += path.relativeTo(base).toString -> fp
+      do builder += path.relativeTo(base).toString -> fp
 
       // Agent memories: agents/{name}/memory.md
       val agentsDir = base / "agents"
@@ -201,6 +213,8 @@ class MeshService private (
     }
     SyncDiff(upload.result(), download.result(), unchanged.result())
 
+  end computeSyncDiff
+
   /** Upload a single file to cloud storage. */
   def uploadFile(relPath: String): IO[Unit] =
     for
@@ -209,11 +223,15 @@ class MeshService private (
       cloudUrl <- getCloudUrl
       absPath = os.home / ".nebflow" / relPath
       content <- IO.blocking(os.read.bytes(absPath))
-      _ <- callCloudAuth(cloudUrl, gid, Json.obj(
-        "action" -> "sync/upload".asJson,
-        "path" -> relPath.asJson,
-        "content" -> java.util.Base64.getEncoder.encodeToString(content).asJson
-      ))
+      _ <- callCloudAuth(
+        cloudUrl,
+        gid,
+        Json.obj(
+          "action" -> "sync/upload".asJson,
+          "path" -> relPath.asJson,
+          "content" -> java.util.Base64.getEncoder.encodeToString(content).asJson
+        )
+      )
       fp <- IO.blocking(FileFingerprint.compute(absPath))
       _ <- fp.traverse(fp => syncStore.updateSnapshot(relPath, fp))
       _ <- logger.debug(s"Uploaded: $relPath")
@@ -226,10 +244,14 @@ class MeshService private (
       gid <- IO.fromOption(id.groupId)(new RuntimeException("Not paired"))
       cloudUrl <- getCloudUrl
       absPath = os.home / ".nebflow" / relPath
-      resp <- callCloudAuth(cloudUrl, gid, Json.obj(
-        "action" -> "sync/download".asJson,
-        "path" -> relPath.asJson
-      ))
+      resp <- callCloudAuth(
+        cloudUrl,
+        gid,
+        Json.obj(
+          "action" -> "sync/download".asJson,
+          "path" -> relPath.asJson
+        )
+      )
       contentStr <- IO.fromEither(
         resp.hcursor.downField("content").as[String].leftMap(_ => new RuntimeException("Invalid download response"))
       )
@@ -247,16 +269,19 @@ class MeshService private (
   def sync: IO[Unit] =
     for
       paired <- isLoggedIn
-      _ <- if !paired then logger.debug("Skipping sync: not paired")
-      else
-        for
-          local <- computeLocalFingerprints
-          remote <- fetchRemoteFingerprints
-          diff = computeSyncDiff(local, remote)
-          _ <- logger.info(s"Sync: upload ${diff.needUpload.size}, download ${diff.needDownload.size}, unchanged ${diff.unchanged.size}")
-          _ <- diff.needUpload.traverse_(uploadFile)
-          _ <- diff.needDownload.traverse_(downloadFile)
-        yield ()
+      _ <-
+        if !paired then logger.debug("Skipping sync: not paired")
+        else
+          for
+            local <- computeLocalFingerprints
+            remote <- fetchRemoteFingerprints
+            diff = computeSyncDiff(local, remote)
+            _ <- logger.info(
+              s"Sync: upload ${diff.needUpload.size}, download ${diff.needDownload.size}, unchanged ${diff.unchanged.size}"
+            )
+            _ <- diff.needUpload.traverse_(uploadFile)
+            _ <- diff.needDownload.traverse_(downloadFile)
+          yield ()
     yield ()
 
   // ===== Relay =====
@@ -267,10 +292,14 @@ class MeshService private (
       id <- identityRef.get
       gid <- IO.fromOption(id.groupId)(new RuntimeException("Not paired"))
       cloudUrl <- getCloudUrl
-      resp <- callCloudAuth(cloudUrl, gid, Json.obj(
-        "action" -> "relay/poll".asJson,
-        "deviceId" -> id.deviceId.asJson
-      ))
+      resp <- callCloudAuth(
+        cloudUrl,
+        gid,
+        Json.obj(
+          "action" -> "relay/poll".asJson,
+          "deviceId" -> id.deviceId.asJson
+        )
+      )
       messages = resp.as[List[RelayMessage]].getOrElse(List.empty)
     yield messages
 
@@ -287,14 +316,18 @@ class MeshService private (
         payload = payload,
         createdAt = System.currentTimeMillis()
       )
-      _ <- callCloudAuth(cloudUrl, gid, Json.obj(
-        "action" -> "relay/send".asJson,
-        "fromDeviceId" -> msg.fromDeviceId.asJson,
-        "toDeviceId" -> msg.toDeviceId.asJson,
-        "payload" -> msg.payload.asJson,
-        "id" -> msg.id.asJson,
-        "createdAt" -> msg.createdAt.asJson
-      ))
+      _ <- callCloudAuth(
+        cloudUrl,
+        gid,
+        Json.obj(
+          "action" -> "relay/send".asJson,
+          "fromDeviceId" -> msg.fromDeviceId.asJson,
+          "toDeviceId" -> msg.toDeviceId.asJson,
+          "payload" -> msg.payload.asJson,
+          "id" -> msg.id.asJson,
+          "createdAt" -> msg.createdAt.asJson
+        )
+      )
     yield ()
 
   // ===== Background Loops =====
@@ -311,7 +344,8 @@ class MeshService private (
   def startRelayLoop(handler: RelayMessage => IO[Unit]): IO[Nothing] =
     configRef.get.flatMap { cfg =>
       Temporal[IO].sleep(cfg.relayPollIntervalSec.seconds) *>
-        pollRelay.handleErrorWith(e => logger.warn(s"Relay poll failed: ${e.getMessage}").as(Nil))
+        pollRelay
+          .handleErrorWith(e => logger.warn(s"Relay poll failed: ${e.getMessage}").as(Nil))
           .flatMap(_.traverse_(handler)) *>
         startRelayLoop(handler)
     }
@@ -344,11 +378,11 @@ class MeshService private (
         .post(uri)
         .contentType("application/json")
         .body(body.noSpaces)
+        .readTimeout(30.seconds)
         .response(asStringAlways)
       val reqWithAuth = if gid.nonEmpty then req.auth.bearer(gid) else req
-      val resp = reqWithAuth.send(backend)
-      if !resp.code.isSuccess then
-        throw new RuntimeException(s"Cloud API ${resp.code}: ${resp.body.take(300)}")
+      val resp = reqWithAuth.send(httpBackend)
+      if !resp.code.isSuccess then throw new RuntimeException(s"Cloud API ${resp.code}: ${resp.body.take(300)}")
       decode[Json](resp.body) match
         case Right(json) =>
           // Check for cloud function error response
@@ -369,24 +403,26 @@ class MeshService private (
   private def callCloudAuth(uri: SttpUri, gid: String, body: Json): IO[Json] =
     callCloud(uri, body, gid)
 
-  private lazy val backend = DefaultSyncBackend()
+  /** Shared HTTP backend — used by MeshTool for remote calls too. */
+  private[nebflow] lazy val httpBackend = DefaultSyncBackend()
 
   /** Detect this device's Nebflow URL (local IP + port). */
   private def detectLocalAddress: IO[String] =
     IO.blocking {
       try
         val socket = new java.net.DatagramSocket()
-        socket.connect(java.net.InetAddress.getByName("8.8.8.8"), 53)
-        val ip = socket.getLocalAddress.getHostAddress
-        socket.close()
-        s"http://$ip:$serverPort"
-      catch
-        case _: Exception => s"http://localhost:$serverPort"
+        try
+          socket.connect(java.net.InetAddress.getByName("8.8.8.8"), 53)
+          val ip = socket.getLocalAddress.getHostAddress
+          s"http://$ip:$serverPort"
+        finally socket.close()
+      catch case _: Exception => s"http://localhost:$serverPort"
     }
 
 end MeshService
 
 object MeshService:
+
   /** Create and initialize the MeshService. */
   def create(syncStore: MeshSyncStore, serverPort: Int = 8080): IO[MeshService] =
     for

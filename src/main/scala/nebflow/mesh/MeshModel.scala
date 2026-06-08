@@ -1,10 +1,10 @@
 package nebflow.mesh
 
 import cats.effect.IO
-import io.circe.{Decoder, Encoder}
-import io.circe.syntax.*
-import io.circe.parser.decode
 import io.circe.generic.semiauto.*
+import io.circe.parser.decode
+import io.circe.syntax.*
+import io.circe.{Decoder, Encoder}
 
 import java.util.UUID
 
@@ -44,7 +44,7 @@ object DeviceIdentity:
       case _ => ""
     s"$hostname ($platform)"
 
-  /** Load existing device identity, or generate a new one. */
+  /** Load existing device identity, or generate and persist a new one. */
   def loadOrCreate: IO[DeviceIdentity] =
     IO.blocking {
       if os.exists(devicePath) then
@@ -52,6 +52,9 @@ object DeviceIdentity:
           case Right(d) => d
           case Left(_) => createNew()
       else createNew()
+    }.flatMap { id =>
+      // Persist new identity so deviceId survives restarts
+      if !os.exists(devicePath) then save(id).as(id) else IO.pure(id)
     }
 
   /** Save device identity to disk. */
@@ -189,6 +192,7 @@ case class SessionSummary(
 )
 
 object RelayPayload:
+
   given Encoder[RelayPayload] = Encoder.instance {
     case RelayPayload.UserInput(sid, content) =>
       io.circe.Json.obj("type" -> "userInput".asJson, "sessionId" -> sid.asJson, "content" -> content.asJson)
@@ -219,6 +223,8 @@ object RelayPayload:
       case other => Left(io.circe.DecodingFailure(s"Unknown relay payload type: $other", c.history))
     }
   }
+
+end RelayPayload
 
 object SessionSummary:
   given Encoder[SessionSummary] = deriveEncoder

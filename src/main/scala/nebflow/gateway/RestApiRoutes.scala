@@ -187,23 +187,29 @@ class RestApiRoutes(
           ms.isLoggedIn.flatMap { paired =>
             ms.meshConfig.flatMap { cfg =>
               ms.peers.flatMap { peersList =>
-                Ok(Json.obj(
-                  "paired" -> paired.asJson,
-                  "device" -> Json.obj(
-                    "id" -> id.deviceId.asJson,
-                    "name" -> id.deviceName.asJson,
-                    "platform" -> id.platform.asJson,
-                    "groupId" -> id.groupId.asJson
-                  ),
-                  "cloudBaseUrl" -> cfg.cloudBaseUrl.asJson,
-                  "peers" -> peersList.map(p => Json.obj(
-                    "deviceId" -> p.deviceId.asJson,
-                    "deviceName" -> p.deviceName.asJson,
-                    "platform" -> p.platform.asJson,
-                    "online" -> p.online.asJson,
-                    "lastSeen" -> p.lastSeen.asJson
-                  )).asJson
-                ))
+                Ok(
+                  Json.obj(
+                    "paired" -> paired.asJson,
+                    "device" -> Json.obj(
+                      "id" -> id.deviceId.asJson,
+                      "name" -> id.deviceName.asJson,
+                      "platform" -> id.platform.asJson,
+                      "groupId" -> id.groupId.asJson
+                    ),
+                    "cloudBaseUrl" -> cfg.cloudBaseUrl.asJson,
+                    "peers" -> peersList
+                      .map(p =>
+                        Json.obj(
+                          "deviceId" -> p.deviceId.asJson,
+                          "deviceName" -> p.deviceName.asJson,
+                          "platform" -> p.platform.asJson,
+                          "online" -> p.online.asJson,
+                          "lastSeen" -> p.lastSeen.asJson
+                        )
+                      )
+                      .asJson
+                  )
+                )
               }
             }
           }
@@ -214,11 +220,13 @@ class RestApiRoutes(
     case req @ POST -> Root / "api" / "mesh" / "create-group" =>
       withMesh(req) { ms =>
         ms.createGroup.flatMap { (groupId, code, expiresAt) =>
-          Ok(Json.obj(
-            "groupId" -> groupId.asJson,
-            "pairingCode" -> code.asJson,
-            "expiresAt" -> expiresAt.asJson
-          ))
+          Ok(
+            Json.obj(
+              "groupId" -> groupId.asJson,
+              "pairingCode" -> code.asJson,
+              "expiresAt" -> expiresAt.asJson
+            )
+          )
         }
       }
 
@@ -285,9 +293,12 @@ class RestApiRoutes(
       withMesh(req) { ms =>
         ms.groupId.flatMap { localGroupId =>
           // Verify caller's groupId matches ours (peer trust)
-          val callerGroupId = req.headers.get[Authorization].collectFirst {
-            case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t
-          }.getOrElse("")
+          val callerGroupId = req.headers
+            .get[Authorization]
+            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+              t
+            }
+            .getOrElse("")
           if localGroupId.isEmpty || callerGroupId != localGroupId.getOrElse("")
           then Forbidden(Json.obj("error" -> "Group mismatch".asJson))
           else
@@ -309,6 +320,7 @@ class RestApiRoutes(
                 case None =>
                   BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
             }
+          end if
         }
       }
   }
@@ -320,9 +332,10 @@ class RestApiRoutes(
   /** Run block only if MeshService is available and request is authenticated. */
   private def withMesh(req: Request[IO])(f: MeshService => IO[Response[IO]]): IO[Response[IO]] =
     if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
-    else meshService match
-      case Some(ms) => f(ms)
-      case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+    else
+      meshService match
+        case Some(ms) => f(ms)
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
 
   private def checkAuth(req: Request[IO]): Boolean =
     req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>

@@ -2,9 +2,9 @@ package nebflow.mesh
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.syntax.*
-import io.circe.parser.decode
 import io.circe.Json
+import io.circe.parser.decode
+import io.circe.syntax.*
 import nebflow.core.NebflowLogger
 
 /**
@@ -61,8 +61,6 @@ object MeshSyncStore:
           case Left(_) => Map.empty
       else Map.empty
     }.flatMap { snapshots =>
-      Ref.of[IO, Map[String, FileFingerprint]](snapshots).map(ref =>
-        new MeshSyncStore(ref, path)
-      )
+      Ref.of[IO, Map[String, FileFingerprint]](snapshots).map(ref => new MeshSyncStore(ref, path))
     }
 end MeshSyncStore
