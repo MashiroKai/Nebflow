@@ -355,6 +355,16 @@ private[agent] trait AgentCore:
           reminders = collectAllResult._1
           newHighest = collectAllResult._2
           _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
+          // --- Git branch change detection ---
+          _ <- turnCtx.branchChange match
+            case Some(_) =>
+              // Persist the current branch so we don't re-alert on subsequent turns
+              IO(ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch))
+            case None =>
+              // Still update if this is the first detection (None → Some)
+              IO.whenA(turnCtx.currentBranch != stateForLlm.gitBranch)(
+                IO(ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch))
+              )
           loggedReminders <- SystemReminders.logAndReturn(reminders)
           // --- Active task reminder ---
           // Only when pendingTaskCheck is set (LLM had text+tools or used TaskUpdate).
@@ -385,7 +395,7 @@ private[agent] trait AgentCore:
             )
           // Clear the flag after reading
           _ <- IO(ctx.self ! AgentCommand.ClearTaskCheck)
-          allReminders = verificationOpt.toList ++ loggedReminders
+          allReminders = verificationOpt.toList ++ loggedReminders ++ turnCtx.branchChange.toList
           remindersText = SystemReminder.renderAll(allReminders) + taskReminder
           // Per-turn dynamic context: only reminders (env info is now in system prompt)
           // Skip for compact/ask turns — the reminder is already in messages

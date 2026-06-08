@@ -264,6 +264,14 @@
   font-size: 12px;
   color: var(--color-text-muted);
 }
+.slash-when {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  display: block;
+  margin-top: 2px;
+  font-style: italic;
+}
 .slash-badge {
   display: inline-block;
   font-size: 10px;
