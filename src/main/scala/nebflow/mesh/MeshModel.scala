@@ -8,14 +8,46 @@ import io.circe.{Decoder, Encoder}
 
 import java.util.UUID
 
+// ===== Account Info =====
+
+/** Nebflow account credentials — stored in ~/.nebflow/mesh/account.json. */
+case class AccountInfo(
+  userId: String,
+  username: String,
+  sessionToken: String,
+  loggedInAt: Long = System.currentTimeMillis()
+)
+
+object AccountInfo:
+  given Encoder[AccountInfo] = deriveEncoder
+  given Decoder[AccountInfo] = deriveDecoder
+
+  private val accountPath = os.home / ".nebflow" / "mesh" / "account.json"
+
+  def load: IO[Option[AccountInfo]] =
+    IO.blocking {
+      if os.exists(accountPath) then
+        decode[AccountInfo](os.read(accountPath)).toOption
+      else None
+    }
+
+  def save(account: AccountInfo): IO[Unit] =
+    IO.blocking {
+      os.write.over(accountPath, account.asJson.spaces2, createFolders = true)
+    }
+
+  def clear: IO[Unit] =
+    IO.blocking {
+      if os.exists(accountPath) then os.remove(accountPath)
+    }
+
 // ===== Device Identity =====
 
 /** Local device identity — generated once, stored in ~/.nebflow/device.json. */
 case class DeviceIdentity(
   deviceId: String,
   deviceName: String,
-  platform: String,
-  groupId: Option[String] = None
+  platform: String
 )
 
 object DeviceIdentity:
@@ -24,7 +56,6 @@ object DeviceIdentity:
 
   private val devicePath = os.home / ".nebflow" / "device.json"
 
-  /** Detect current platform name. */
   private def detectPlatform: String =
     val osName = System.getProperty("os.name", "unknown").toLowerCase
     if osName.contains("mac") then "macos"
@@ -32,32 +63,28 @@ object DeviceIdentity:
     else if osName.contains("linux") then "linux"
     else "unknown"
 
-  /** Detect a human-readable device name. */
   private def detectDeviceName: String =
     val hostname = Option(System.getenv("HOSTNAME"))
       .orElse(Option(System.getenv("COMPUTERNAME")))
       .getOrElse("Unknown")
     val platform = detectPlatform match
-      case "macos" => "macOS"
+      case "macos"   => "macOS"
       case "windows" => "Windows"
-      case "linux" => "Linux"
-      case _ => ""
+      case "linux"   => "Linux"
+      case _         => ""
     s"$hostname ($platform)"
 
-  /** Load existing device identity, or generate and persist a new one. */
   def loadOrCreate: IO[DeviceIdentity] =
     IO.blocking {
       if os.exists(devicePath) then
         decode[DeviceIdentity](os.read(devicePath)) match
           case Right(d) => d
-          case Left(_) => createNew()
+          case Left(_)  => createNew()
       else createNew()
     }.flatMap { id =>
-      // Persist new identity so deviceId survives restarts
       if !os.exists(devicePath) then save(id).as(id) else IO.pure(id)
     }
 
-  /** Save device identity to disk. */
   def save(identity: DeviceIdentity): IO[Unit] =
     IO.blocking {
       os.write.over(devicePath, identity.asJson.spaces2, createFolders = true)
@@ -73,7 +100,6 @@ end DeviceIdentity
 
 // ===== Peer Info =====
 
-/** Information about a remote Nebflow peer device. */
 case class PeerInfo(
   deviceId: String,
   deviceName: String,
@@ -88,7 +114,6 @@ object PeerInfo:
 
 // ===== File Fingerprint =====
 
-/** Fingerprint for detecting file changes during sync. */
 case class FileFingerprint(
   mtime: Long,
   size: Long,
@@ -99,7 +124,6 @@ object FileFingerprint:
   given Encoder[FileFingerprint] = deriveEncoder
   given Decoder[FileFingerprint] = deriveDecoder
 
-  /** Compute fingerprint for a local file. Returns None if file doesn't exist. */
   def compute(path: os.Path): Option[FileFingerprint] =
     if !os.exists(path) then None
     else
@@ -108,7 +132,6 @@ object FileFingerprint:
       val hash = computeHash(content)
       Some(FileFingerprint(stat.mtime.toMillis, stat.size, hash))
 
-  /** SHA-256 first 12 hex chars — same algorithm as MemoryStore.contentHash. */
   def computeHash(bytes: Array[Byte]): String =
     val digest = java.security.MessageDigest.getInstance("SHA-256")
     digest.update(bytes)
@@ -118,7 +141,6 @@ end FileFingerprint
 
 // ===== Sync Diff =====
 
-/** Result of comparing local vs remote fingerprints. */
 case class SyncDiff(
   needUpload: List[String],
   needDownload: List[String],
@@ -131,11 +153,10 @@ object SyncDiff:
 
 // ===== Mesh Config =====
 
-/** Mesh configuration stored in ~/.nebflow/mesh/config.json. */
 case class MeshConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  cloudDiscoveryUrl: Option[String] = None
+  cloudUrl: Option[String] = Some("https://cloudbase-3gltu9is7f791a38-1411212853.ap-shanghai.app.tcloudbase.com/nebflow-mesh")
 )
 
 object MeshConfig:
@@ -149,7 +170,7 @@ object MeshConfig:
       if os.exists(configPath) then
         decode[MeshConfig](os.read(configPath)) match
           case Right(c) => c
-          case Left(_) => MeshConfig()
+          case Left(_)  => MeshConfig()
       else MeshConfig()
     }
 

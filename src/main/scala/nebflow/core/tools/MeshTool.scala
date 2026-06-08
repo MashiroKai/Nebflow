@@ -94,11 +94,12 @@ Available devices are listed in the environment info table.""".stripMargin
 
   private def listPeers: IO[Either[ToolError, String]] =
     for
+      loggedIn <- meshService.isLoggedIn
       id <- meshService.identity
       peers <- meshService.peers
     yield
-      if id.groupId.isEmpty then
-        Left(ToolError("Not paired — no mesh group. Use the Mesh panel to pair devices first."))
+      if !loggedIn then
+        Left(ToolError("Not logged in — use the Mesh panel to login first."))
       else if peers.isEmpty then Right("No peer devices. Only this device is in the group.\nCurrent: " + id.deviceName)
       else
         val current = s"- ${id.deviceName} (${id.platform}) [THIS DEVICE]"
@@ -110,7 +111,7 @@ Available devices are listed in the environment info table.""".stripMargin
   private def remoteExec(deviceName: String, action: String, input: JsonObject): IO[Either[ToolError, String]] =
     for
       peers <- meshService.peers
-      gid <- meshService.groupId
+      uidOpt <- meshService.userId
       peer <- resolvePeer(deviceName, peers)
       result <- peer match
         case Left(err) => IO.pure(Left(err))
@@ -118,13 +119,13 @@ Available devices are listed in the environment info table.""".stripMargin
           val addr = p.address
           if addr.isEmpty then IO.pure(Left(ToolError(s"Device '${p.deviceName}' has no registered address.")))
           else
-            // Verify reachability first
             checkReachable(addr).flatMap {
               case Left(err) => IO.pure(Left(err))
               case Right(_) =>
-                // Build params for the target tool
                 val params = buildParams(action, input)
-                callRemote(addr, action, params, gid.getOrElse(""))
+                uidOpt match
+                  case Some(uid) => callRemote(addr, action, params, uid)
+                  case None => IO.pure(Left(ToolError("Not logged in")))
             }
     yield result
 
@@ -199,14 +200,14 @@ Available devices are listed in the environment info table.""".stripMargin
     address: String,
     toolName: String,
     params: JsonObject,
-    groupId: String
+    userId: String
   ): IO[Either[ToolError, String]] =
     IO.blocking {
       val body = io.circe.Json.obj("action" -> toolName.asJson, "params" -> params.asJson)
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(s"$address/api/mesh/remote-exec"))
         .auth
-        .bearer(groupId)
+        .bearer(userId)
         .contentType("application/json")
         .body(body.noSpaces)
         .readTimeout(60.seconds)

@@ -1,228 +1,79 @@
-/* Mesh panel styles */
+/* Mesh — embedded in settings panel */
 
-.mesh-panel {
-  position: fixed;
-  top: 48px;
-  right: 16px;
-  width: 320px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
-  z-index: 1000;
-  font-size: 13px;
-  color: var(--color-text);
+/* Inline error/info messages */
+.mesh-error {
+  font-size: 12px;
+  color: var(--color-error);
+  margin-bottom: 8px;
+  word-break: break-word;
 }
-
-.mesh-panel.hidden { display: none; }
-
-.mesh-panel-content { padding: 0; }
-
-.mesh-panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.mesh-panel-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.mesh-close-btn {
-  background: none;
-  border: none;
-  color: var(--color-text-muted);
-  font-size: 18px;
-  cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
-}
-.mesh-close-btn:hover { color: var(--color-text); }
-
-.mesh-section {
-  padding: 16px;
-}
-
-.mesh-section.hidden { display: none; }
-
-.mesh-section-title {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--color-text-muted);
+.mesh-info {
+  font-size: 12px;
+  color: var(--color-success);
   margin-bottom: 8px;
 }
 
-/* Pair section */
-.mesh-pair-prompt {
-  color: var(--color-text-muted);
-  margin-bottom: 12px;
-  font-size: 13px;
+/* Auth form */
+.mesh-auth-form {
+  max-width: 260px;
 }
 
-.mesh-pair-actions {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.mesh-pair-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  background: var(--color-bg);
-  color: var(--color-text);
-  transition: border-color 0.15s;
-  flex: 1;
-}
-.mesh-pair-btn:hover { border-color: var(--color-primary); }
-
-/* Pairing code display */
-.mesh-code-display {
+.mesh-auth-switch {
   text-align: center;
-  padding: 16px 0;
-  margin-bottom: 12px;
-  background: var(--color-bg);
-  border-radius: 8px;
-}
-
-.mesh-code-label {
-  font-size: 11px;
+  margin-top: 10px;
+  font-size: 12px;
   color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 8px;
+}
+.mesh-auth-switch a {
+  color: var(--color-primary);
+  text-decoration: none;
+  cursor: pointer;
+}
+.mesh-auth-switch a:hover {
+  text-decoration: underline;
 }
 
-.mesh-code-value {
-  font-size: 32px;
-  font-weight: 700;
-  letter-spacing: 8px;
-  font-variant-numeric: tabular-nums;
+/* Logged in */
+.mesh-logged-in {
+  /* no special layout needed, flows with settings */
+}
+
+.mesh-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.mesh-user-badge {
+  font-size: 13px;
+  font-weight: 600;
   color: var(--color-primary);
 }
 
-.mesh-code-timer {
-  font-size: 12px;
-  color: var(--color-text-muted);
-  margin-top: 6px;
+.mesh-logout-btn {
+  padding: 4px 12px !important;
+  font-size: 12px !important;
+  background: transparent !important;
+  color: var(--color-error) !important;
+  border: 1px solid var(--color-border) !important;
 }
 
-.mesh-code-hint {
+.mesh-section-label {
   font-size: 11px;
-  color: var(--color-text-muted);
-  margin-top: 4px;
-}
-
-.mesh-code-expired .mesh-code-value {
-  color: var(--color-text-muted);
-  text-decoration: line-through;
-}
-
-/* Join input */
-.mesh-join-input {
-  margin-bottom: 12px;
-}
-
-.mesh-code-input {
-  font-size: 24px !important;
-  letter-spacing: 6px;
-  text-align: center;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.mesh-join-submit {
-  width: 100%;
-  margin-top: 8px;
-  padding: 8px;
-  border: none;
-  border-radius: 6px;
-  background: var(--color-primary);
-  color: #fff;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-}
-.mesh-join-submit:hover { opacity: 0.85; }
-
-/* Setup */
-.mesh-setup {
-  border-top: 1px solid var(--color-border);
-  padding-top: 12px;
-}
-
-.mesh-label {
-  display: block;
-  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   color: var(--color-text-muted);
-  margin-bottom: 4px;
-}
-
-.mesh-input {
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg);
-  color: var(--color-text);
-  font-size: 13px;
-  box-sizing: border-box;
-}
-.mesh-input:focus {
-  outline: none;
-  border-color: var(--color-primary);
-}
-
-.mesh-save-btn {
-  margin-top: 8px;
-  padding: 6px 14px;
-  border: none;
-  border-radius: 6px;
-  background: var(--color-primary);
-  color: #fff;
-  cursor: pointer;
-  font-size: 12px;
-}
-.mesh-save-btn:hover { opacity: 0.85; }
-
-/* Device info */
-.mesh-device-info {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
-
-.mesh-device-name {
-  font-weight: 600;
-}
-
-.mesh-group-badge {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  background: var(--color-bg);
-  padding: 2px 8px;
-  border-radius: 4px;
+  margin-bottom: 6px;
 }
 
 /* Peers list */
 .mesh-peers-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 200px;
+  gap: 3px;
+  max-height: 180px;
   overflow-y: auto;
 }
 
@@ -230,8 +81,9 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
 }
 .mesh-peer:hover { background: var(--color-bg); }
 
@@ -242,7 +94,6 @@
   flex-shrink: 0;
 }
 .dot-on { background: var(--color-success); }
-.dot-off { background: var(--color-text-muted); }
 
 .mesh-peer-name {
   flex: 1;
@@ -267,57 +118,24 @@
 }
 
 /* Actions */
-.mesh-actions {
+.mesh-actions-row {
   display: flex;
   gap: 8px;
+  margin-top: 10px;
+}
+
+/* Advanced (collapsible) */
+.mesh-advanced {
   margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
+  font-size: 13px;
 }
-
-.mesh-action-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-bg);
-  color: var(--color-text);
+.mesh-advanced summary {
   cursor: pointer;
-  font-size: 12px;
-}
-.mesh-action-btn:hover { border-color: var(--color-primary); }
-
-.mesh-leave {
-  margin-left: auto;
-  color: var(--color-error);
-  border-color: transparent;
-}
-.mesh-leave:hover { border-color: var(--color-error); }
-
-/* Sync status */
-.mesh-sync-status {
-  padding: 8px 16px 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
   color: var(--color-text-muted);
+  font-size: 12px;
 }
-.mesh-sync-status.hidden { display: none; }
-
-.mesh-sync-spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--color-border);
-  border-top-color: var(--color-primary);
-  border-radius: 50%;
-  animation: mesh-spin 0.6s linear infinite;
-}
-
-@keyframes mesh-spin {
-  to { transform: rotate(360deg); }
+.mesh-advanced summary:hover {
+  color: var(--color-text);
 }
 
 /* Header button */

@@ -29,11 +29,11 @@ class RestApiRoutes(
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     // Health check
-    case GET -> Root / "api" / "health" =>
+    case GET -> Root / "health" =>
       Ok(Json.obj("status" -> "ok".asJson, "version" -> nebflow.Version.string.asJson))
 
     // Generic command endpoint — mirrors WS messages
-    case req @ POST -> Root / "api" / "command" =>
+    case req @ POST -> Root / "command" =>
       withAuth(req) {
         req.as[Json].flatMap { payload =>
           val responseRef = cats.effect.Ref.unsafe[IO, Option[Json]](None)
@@ -48,7 +48,7 @@ class RestApiRoutes(
       }
 
     // Session list
-    case req @ GET -> Root / "api" / "sessions" =>
+    case req @ GET -> Root / "sessions" =>
       withAuth(req) {
         sessionStore.listSessions.flatMap { sessions =>
           sessionStore.getActiveId.flatMap { activeId =>
@@ -58,7 +58,7 @@ class RestApiRoutes(
       }
 
     // Session history
-    case req @ GET -> Root / "api" / "sessions" / sessionId / "history" =>
+    case req @ GET -> Root / "sessions" / sessionId / "history" =>
       withAuth(req) {
         sessionStore.getUiMessages(sessionId, 0, 0).flatMap { case (messages, total) =>
           Ok(Json.obj("messages" -> messages.asJson, "total" -> total.asJson, "sessionId" -> sessionId.asJson))
@@ -66,7 +66,7 @@ class RestApiRoutes(
       }
 
     // Create session
-    case req @ POST -> Root / "api" / "sessions" =>
+    case req @ POST -> Root / "sessions" =>
       withAuth(req) {
         req.as[Json].flatMap { body =>
           val name = body.hcursor.downField("name").as[String].getOrElse("New Session")
@@ -79,13 +79,13 @@ class RestApiRoutes(
       }
 
     // Delete session
-    case req @ DELETE -> Root / "api" / "sessions" / sessionId =>
+    case req @ DELETE -> Root / "sessions" / sessionId =>
       withAuth(req) {
         sessionStore.deleteSession(sessionId) *> Ok(Json.obj("deleted" -> true.asJson))
       }
 
     // Config
-    case req @ GET -> Root / "api" / "config" =>
+    case req @ GET -> Root / "config" =>
       withAuth(req) {
         ConfigService.getConfig.flatMap { cfg =>
           ConfigService.isConfigured.flatMap { configured =>
@@ -95,7 +95,7 @@ class RestApiRoutes(
       }
 
     // Update config
-    case req @ PATCH -> Root / "api" / "config" =>
+    case req @ PATCH -> Root / "config" =>
       withAuth(req) {
         req.as[Json].flatMap { body =>
           val cfgStr = body.hcursor.downField("config").as[String].getOrElse(body.noSpaces)
@@ -111,7 +111,7 @@ class RestApiRoutes(
       }
 
     // Models
-    case req @ GET -> Root / "api" / "models" =>
+    case req @ GET -> Root / "models" =>
       withAuth(req) {
         sharedResources.providerRegistry.getAllModels().flatMap { models =>
           Ok(Json.obj("models" -> models.map { case (ref, label) =>
@@ -121,7 +121,7 @@ class RestApiRoutes(
       }
 
     // Agents
-    case req @ GET -> Root / "api" / "agents" =>
+    case req @ GET -> Root / "agents" =>
       withAuth(req) {
         sharedResources.agentLibrary.loadAll().flatMap { agents =>
           val list = agents.values.toList.map { a =>
@@ -136,7 +136,7 @@ class RestApiRoutes(
       }
 
     // Folders
-    case req @ GET -> Root / "api" / "folders" =>
+    case req @ GET -> Root / "folders" =>
       withAuth(req) {
         val agentName = req.params.get("agent").getOrElse("Nebula")
         sessionStore.listFolders(agentName).flatMap { folders =>
@@ -145,7 +145,7 @@ class RestApiRoutes(
       }
 
     // MCP servers
-    case req @ GET -> Root / "api" / "mcp" =>
+    case req @ GET -> Root / "mcp" =>
       withAuth(req) {
         IO.blocking {
           val configPath = nebflow.llm.Config.DefaultConfigPath
@@ -162,7 +162,7 @@ class RestApiRoutes(
       }
 
     // Memory
-    case req @ GET -> Root / "api" / "memory" =>
+    case req @ GET -> Root / "memory" =>
       withAuth(req) {
         val scope = req.params.get("scope").getOrElse("agent")
         sessionStore.getActiveMeta.flatMap { metaOpt =>
@@ -180,78 +180,115 @@ class RestApiRoutes(
 
     // ===== Mesh API =====
 
-    // Mesh status — identity, pairing state, peers
-    case req @ GET -> Root / "api" / "mesh" / "status" =>
+    // Mesh status — identity, login state, peers
+    case req @ GET -> Root / "mesh" / "status" =>
       withMesh(req) { ms =>
         ms.identity.flatMap { id =>
-          ms.isPaired.flatMap { paired =>
-            ms.meshConfig.flatMap { cfg =>
-              ms.peers.flatMap { peersList =>
-                Ok(
-                  Json.obj(
-                    "paired" -> paired.asJson,
-                    "device" -> Json.obj(
-                      "id" -> id.deviceId.asJson,
-                      "name" -> id.deviceName.asJson,
-                      "platform" -> id.platform.asJson,
-                      "groupId" -> id.groupId
-                        .map(g => s"${g.take(4)}${"*".repeat(Math.max(g.length - 4, 0))}")
-                        .asJson
-                    ),
-                    "cloudDiscoveryUrl" -> cfg.cloudDiscoveryUrl.asJson,
-                    "peers" -> peersList
-                      .map(p =>
-                        Json.obj(
-                          "deviceId" -> p.deviceId.asJson,
-                          "deviceName" -> p.deviceName.asJson,
-                          "platform" -> p.platform.asJson,
-                          "address" -> p.address.asJson,
-                          "lastSeen" -> p.lastSeen.asJson
+          ms.isLoggedIn.flatMap { loggedIn =>
+            ms.account.flatMap { accOpt =>
+              ms.meshConfig.flatMap { cfg =>
+                ms.peers.flatMap { peersList =>
+                  Ok(
+                    Json.obj(
+                      "loggedIn" -> loggedIn.asJson,
+                      "username" -> accOpt.map(_.username).asJson,
+                      "device" -> Json.obj(
+                        "id" -> id.deviceId.asJson,
+                        "name" -> id.deviceName.asJson,
+                        "platform" -> id.platform.asJson
+                      ),
+                      "cloudUrl" -> cfg.cloudUrl.asJson,
+                      "peers" -> peersList
+                        .map(p =>
+                          Json.obj(
+                            "deviceId" -> p.deviceId.asJson,
+                            "deviceName" -> p.deviceName.asJson,
+                            "platform" -> p.platform.asJson,
+                            "address" -> p.address.asJson,
+                            "lastSeen" -> p.lastSeen.asJson
+                          )
                         )
-                      )
-                      .asJson
+                        .asJson
+                    )
                   )
-                )
+                }
               }
             }
           }
         }
       }
 
-    // Pair with a shared token
-    case req @ POST -> Root / "api" / "mesh" / "pair" =>
+    // Check username availability
+    case req @ GET -> Root / "mesh" / "check-username" =>
+      withMesh(req) { ms =>
+        val username = req.params.getOrElse("username", "")
+        ms.checkUsernameAvailable(username).flatMap { available =>
+          Ok(Json.obj("available" -> available.asJson))
+        }
+      }
+
+    // Register a new Nebflow account
+    case req @ POST -> Root / "mesh" / "register" =>
       withMesh(req) { ms =>
         req.as[Json].flatMap { body =>
-          val tokenResult = body.hcursor.downField("token").as[String]
-          tokenResult match
-            case Right(token) =>
-              ms.pair(token)
-                .flatMap { _ =>
-                  Ok(Json.obj("ok" -> true.asJson))
+          val hc = body.hcursor
+          val username = hc.downField("username").as[String].toOption.filter(_.nonEmpty)
+          val password = hc.downField("password").as[String].toOption.filter(_.nonEmpty)
+          (username, password) match
+            case (Some(u), Some(p)) =>
+              ms.register(u, p)
+                .flatMap { acc =>
+                  Ok(Json.obj("ok" -> true.asJson, "username" -> acc.username.asJson))
                 }
                 .handleErrorWith { e =>
                   BadRequest(Json.obj("error" -> e.getMessage.asJson))
                 }
-            case Left(_) =>
-              BadRequest(Json.obj("error" -> "Missing token".asJson))
+            case _ =>
+              BadRequest(Json.obj("error" -> "Missing username or password".asJson))
         }
       }
 
+    // Login to an existing account
+    case req @ POST -> Root / "mesh" / "login" =>
+      withMesh(req) { ms =>
+        req.as[Json].flatMap { body =>
+          val hc = body.hcursor
+          val username = hc.downField("username").as[String].toOption.filter(_.nonEmpty)
+          val password = hc.downField("password").as[String].toOption.filter(_.nonEmpty)
+          (username, password) match
+            case (Some(u), Some(p)) =>
+              ms.login(u, p)
+                .flatMap { acc =>
+                  Ok(Json.obj("ok" -> true.asJson, "username" -> acc.username.asJson))
+                }
+                .handleErrorWith { e =>
+                  BadRequest(Json.obj("error" -> e.getMessage.asJson))
+                }
+            case _ =>
+              BadRequest(Json.obj("error" -> "Missing username or password".asJson))
+        }
+      }
+
+    // Logout — clear account, stop discovery
+    case req @ POST -> Root / "mesh" / "logout" =>
+      withMesh(req) { ms =>
+        ms.logout *> Ok(Json.obj("ok" -> true.asJson))
+      }
+
     // Handshake — called by a discovered peer to establish trust
-    case req @ POST -> Root / "api" / "mesh" / "handshake" =>
+    case req @ POST -> Root / "mesh" / "handshake" =>
       meshService match
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
         case Some(ms) =>
-          // Extract Bearer token from Authorization header
-          val callerToken = req.headers
+          // Extract Bearer userId from Authorization header
+          val callerUserId = req.headers
             .get[Authorization]
             .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
               t
             }
             .getOrElse("")
-          if callerToken.isEmpty then Forbidden(Json.obj("error" -> "Missing token".asJson))
+          if callerUserId.isEmpty then Forbidden(Json.obj("error" -> "Missing auth".asJson))
           else
-            // Extract caller IP from the request remote address
             val callerIp = req.remoteAddr.fold("unknown")(_.toString)
             req.as[Json].flatMap { body =>
               val hc = body.hcursor
@@ -261,9 +298,8 @@ class RestApiRoutes(
               val port = hc.downField("port").as[Int].getOrElse(8080)
               if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
               else
-                ms.handleHandshake(callerToken, deviceId, deviceName, platform, callerIp, port)
+                ms.handleHandshake(callerUserId, deviceId, deviceName, platform, callerIp, port)
                   .flatMap { _ =>
-                    // Respond with own identity so the initiator also adds us
                     ms.identity
                       .map { id =>
                         Json.obj(
@@ -281,27 +317,21 @@ class RestApiRoutes(
             }
           end if
 
-    // Leave group — clear token, stop discovery
-    case req @ POST -> Root / "api" / "mesh" / "leave" =>
-      withMesh(req) { ms =>
-        ms.leaveGroup *> Ok(Json.obj("ok" -> true.asJson))
-      }
-
     // Trigger sync with all peers
-    case req @ POST -> Root / "api" / "mesh" / "sync" =>
+    case req @ POST -> Root / "mesh" / "sync" =>
       withMesh(req) { ms =>
         ms.syncAll *> Ok(Json.obj("synced" -> true.asJson))
       }
 
-    // Update mesh config (e.g. cloudDiscoveryUrl)
-    case req @ PATCH -> Root / "api" / "mesh" / "config" =>
+    // Update mesh config (e.g. cloudUrl)
+    case req @ PATCH -> Root / "mesh" / "config" =>
       withMesh(req) { ms =>
         req.as[Json].flatMap { body =>
-          val cloudUrl = body.hcursor.downField("cloudDiscoveryUrl").as[Option[String]].toOption.flatten
+          val cloudUrl = body.hcursor.downField("cloudUrl").as[Option[String]].toOption.flatten
           val syncInterval = body.hcursor.downField("syncIntervalSec").as[Option[Int]].toOption.flatten
           ms.updateConfig { cfg =>
             cfg.copy(
-              cloudDiscoveryUrl = cloudUrl.orElse(cfg.cloudDiscoveryUrl),
+              cloudUrl = cloudUrl.orElse(cfg.cloudUrl),
               syncIntervalSec = syncInterval.getOrElse(cfg.syncIntervalSec)
             )
           } *> Ok(Json.obj("ok" -> true.asJson))
@@ -309,125 +339,81 @@ class RestApiRoutes(
       }
 
     // Fingerprints — returns local file fingerprints for peer sync
-    // Note: uses Bearer token auth (peer trust), not Nebflow auth cookie
-    case req @ GET -> Root / "api" / "mesh" / "fingerprints" =>
-      meshService match
-        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
-        case Some(ms) =>
-          val callerToken = req.headers
-            .get[Authorization]
-            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-              t
-            }
-            .getOrElse("")
-          ms.groupId.flatMap {
-            case None => Forbidden(Json.obj("error" -> "Not paired".asJson))
-            case Some(localToken) =>
-              if callerToken != localToken then Forbidden(Json.obj("error" -> "Token mismatch".asJson))
-              else
-                ms.computeLocalFingerprints.flatMap { fps =>
-                  Ok(io.circe.Json.fromFields(fps.map { case (path, fp) =>
-                    path -> fp.asJson
-                  }))
-                }
+    // Auth: Bearer must contain the local userId (peer trust)
+    case req @ GET -> Root / "mesh" / "fingerprints" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(ms) =>
+          ms.computeLocalFingerprints.flatMap { fps =>
+            Ok(io.circe.Json.fromFields(fps.map { case (path, fp) =>
+              path -> fp.asJson
+            }))
           }
+      }
 
     // File download — returns file content for peer sync
-    case req @ GET -> Root / "api" / "mesh" / "file" =>
-      meshService match
-        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
-        case Some(ms) =>
-          val callerToken = req.headers
-            .get[Authorization]
-            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-              t
-            }
-            .getOrElse("")
-          ms.groupId.flatMap {
-            case None => Forbidden(Json.obj("error" -> "Not paired".asJson))
-            case Some(localToken) =>
-              if callerToken != localToken then Forbidden(Json.obj("error" -> "Token mismatch".asJson))
-              else
-                val relPath = req.params.getOrElse("path", "")
-                if relPath.isEmpty then BadRequest(Json.obj("error" -> "Missing path".asJson))
-                else
-                  ms.readLocalFile(relPath).flatMap {
-                    case None => NotFound(Json.obj("error" -> s"File not found: $relPath".asJson))
-                    case Some((bytes, fp)) =>
-                      val encoded = java.util.Base64.getEncoder.encodeToString(bytes)
-                      Ok(
-                        Json.obj(
-                          "path" -> relPath.asJson,
-                          "content" -> encoded.asJson,
-                          "mtime" -> fp.mtime.asJson,
-                          "hash" -> fp.hash.asJson
-                        )
-                      )
-                  }
-                end if
-          }
-
-    // File upload — receives file content from a peer
-    case req @ PUT -> Root / "api" / "mesh" / "file" =>
-      meshService match
-        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
-        case Some(ms) =>
-          val callerToken = req.headers
-            .get[Authorization]
-            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-              t
-            }
-            .getOrElse("")
-          ms.groupId.flatMap {
-            case None => Forbidden(Json.obj("error" -> "Not paired".asJson))
-            case Some(localToken) =>
-              if callerToken != localToken then Forbidden(Json.obj("error" -> "Token mismatch".asJson))
-              else
-                req.as[Json].flatMap { body =>
-                  val hc = body.hcursor
-                  val relPath = hc.downField("path").as[String].getOrElse("")
-                  val contentB64 = hc.downField("content").as[String].getOrElse("")
-                  if relPath.isEmpty || contentB64.isEmpty
-                  then BadRequest(Json.obj("error" -> "Missing path or content".asJson))
-                  else
-                    val bytes = java.util.Base64.getDecoder.decode(contentB64)
-                    ms.writeLocalFile(relPath, bytes) *> Ok(Json.obj("ok" -> true.asJson))
-                }
-          }
-
-    // Remote tool execution — called by peer Nebflow devices
-    case req @ POST -> Root / "api" / "mesh" / "remote-exec" =>
-      withMesh(req) { ms =>
-        ms.groupId.flatMap { localGroupId =>
-          // Verify caller's token matches ours (peer trust)
-          val callerToken = req.headers
-            .get[Authorization]
-            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-              t
-            }
-            .getOrElse("")
-          if localGroupId.isEmpty || callerToken != localGroupId.getOrElse("")
-          then Forbidden(Json.obj("error" -> "Token mismatch".asJson))
+    case req @ GET -> Root / "mesh" / "file" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(ms) =>
+          val relPath = req.params.getOrElse("path", "")
+          if relPath.isEmpty then BadRequest(Json.obj("error" -> "Missing path".asJson))
           else
-            req.as[Json].flatMap { body =>
-              val hc = body.hcursor
-              val action = hc.downField("action").as[String].getOrElse("")
-              val params = hc.downField("params").as[io.circe.JsonObject].getOrElse(io.circe.JsonObject.empty)
-              val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
-              toolOpt match
-                case Some(tool) =>
-                  val ctx = nebflow.core.tools.ToolContext(
-                    projectRoot = System.getProperty("user.dir", ".")
+            ms.readLocalFile(relPath).flatMap {
+              case None => NotFound(Json.obj("error" -> s"File not found: $relPath".asJson))
+              case Some((bytes, fp)) =>
+                val encoded = java.util.Base64.getEncoder.encodeToString(bytes)
+                Ok(
+                  Json.obj(
+                    "path" -> relPath.asJson,
+                    "content" -> encoded.asJson,
+                    "mtime" -> fp.mtime.asJson,
+                    "hash" -> fp.hash.asJson
                   )
-                  tool.call(params, ctx).flatMap {
-                    case Right(result) => Ok(Json.obj("output" -> result.asJson))
-                    case Left(err) => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
-                  }
-                case None =>
-                  BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
+                )
             }
           end if
-        }
+      }
+
+    // File upload — receives file content from a peer
+    case req @ PUT -> Root / "mesh" / "file" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(ms) =>
+          req.as[Json].flatMap { body =>
+            val hc = body.hcursor
+            val relPath = hc.downField("path").as[String].getOrElse("")
+            val contentB64 = hc.downField("content").as[String].getOrElse("")
+            if relPath.isEmpty || contentB64.isEmpty
+            then BadRequest(Json.obj("error" -> "Missing path or content".asJson))
+            else
+              val bytes = java.util.Base64.getDecoder.decode(contentB64)
+              ms.writeLocalFile(relPath, bytes) *> Ok(Json.obj("ok" -> true.asJson))
+          }
+      }
+
+    // Remote tool execution — called by peer Nebflow devices
+    case req @ POST -> Root / "mesh" / "remote-exec" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(ms) =>
+          req.as[Json].flatMap { body =>
+            val hc = body.hcursor
+            val action = hc.downField("action").as[String].getOrElse("")
+            val params = hc.downField("params").as[io.circe.JsonObject].getOrElse(io.circe.JsonObject.empty)
+            val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
+            toolOpt match
+              case Some(tool) =>
+                val ctx = nebflow.core.tools.ToolContext(
+                  projectRoot = System.getProperty("user.dir", ".")
+                )
+                tool.call(params, ctx).flatMap {
+                  case Right(result) => Ok(Json.obj("output" -> result.asJson))
+                  case Left(err) => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
+                }
+              case None =>
+                BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
+          }
       }
   }
 
@@ -442,6 +428,21 @@ class RestApiRoutes(
       meshService match
         case Some(ms) => f(ms)
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+
+  /** Verify peer-to-peer access: Bearer must match local userId. */
+  private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
+    meshService match
+      case None => IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
+      case Some(ms) =>
+        val callerUserId = req.headers
+          .get[Authorization]
+          .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t }
+          .getOrElse("")
+        ms.userId.map {
+          case Some(uid) if callerUserId == uid => Right(ms)
+          case Some(_) => Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "User mismatch".asJson)))
+          case None => Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Not logged in".asJson)))
+        }
 
   private def checkAuth(req: Request[IO]): Boolean =
     req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
