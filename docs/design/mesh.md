@@ -1,6 +1,6 @@
 # Nebflow Mesh — 设计文档
 
-> 状态：Phase 1 实施中
+> 状态：Phase 1-3 已完成
 > 分支：feature/mesh
 > 更新：2026-06-08
 
