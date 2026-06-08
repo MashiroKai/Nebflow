@@ -145,11 +145,6 @@ async function handleMetrics(event) {
       return { code: 200, data };
     }
 
-    case "retention": {
-      const data = await queryGrouped(collection, "app_start", since);
-      return { code: 200, data };
-    }
-
     case "os": {
       const data = await queryFieldDistinct(collection, "app_start", "os", since);
       return { code: 200, data };
@@ -157,6 +152,21 @@ async function handleMetrics(event) {
 
     case "pageviews": {
       const data = await queryPageViews(collection, since);
+      return { code: 200, data };
+    }
+
+    case "response_time": {
+      const data = await queryResponseTime(collection, since);
+      return { code: 200, data };
+    }
+
+    case "usage_pattern": {
+      const data = await queryUsagePattern(collection, since);
+      return { code: 200, data };
+    }
+
+    case "retention": {
+      const data = await queryRetention(collection, since);
       return { code: 200, data };
     }
 
@@ -264,4 +274,175 @@ async function queryPageViews(collection, since) {
     .slice(0, 20);
 
   return { daily, pages };
+}
+
+/** 查询平均回复时间 — 按天聚合 */
+async function queryResponseTime(collection, since) {
+  const result = await querySessionEndRaw(collection, since, {
+    properties: true,
+    timestamp: true,
+  });
+  // 按天分组，收集 avg_response_time_ms
+  const byDay = {};
+  for (const row of result) {
+    const p = row.properties || {};
+    const avgMs = p.avg_response_time_ms;
+    if (!avgMs) continue;
+    const day = new Date(row.timestamp).toISOString().slice(0, 10);
+    if (!byDay[day]) byDay[day] = { sum: 0, count: 0, max: 0 };
+    byDay[day].sum += avgMs;
+    byDay[day].count++;
+    byDay[day].max = Math.max(byDay[day].max, avgMs);
+  }
+  const daily = Object.entries(byDay)
+    .map(([date, d]) => ({
+      date,
+      avg_ms: Math.round(d.sum / d.count),
+      max_ms: d.max,
+      sessions: d.count,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // 总体统计
+  const all = daily.reduce(
+    (acc, d) => {
+      acc.totalMs += d.avg_ms * d.sessions;
+      acc.totalSessions += d.sessions;
+      acc.maxMs = Math.max(acc.maxMs, d.max_ms);
+      return acc;
+    },
+    { totalMs: 0, totalSessions: 0, maxMs: 0 }
+  );
+  const overall = {
+    avg_ms: all.totalSessions > 0 ? Math.round(all.totalMs / all.totalSessions) : 0,
+    max_ms: all.maxMs,
+    total_sessions: all.totalSessions,
+  };
+
+  return { daily, overall };
+}
+
+/** 查询使用时段分布 — 按小时聚合所有 session 活动 */
+async function queryUsagePattern(collection, since) {
+  // 同时查 app_start 和 session_end 以覆盖更多活动
+  const [starts, ends] = await Promise.all([
+    collection
+      .where({ event: "app_start", timestamp: db.command.gte(since) })
+      .field({ client_id: true, timestamp: true })
+      .limit(10000)
+      .get(),
+    collection
+      .where({ event: "session_end", timestamp: db.command.gte(since) })
+      .field({ client_id: true, properties: true, timestamp: true })
+      .limit(10000)
+      .get(),
+  ]);
+
+  const hourly = new Array(24).fill(0);
+  const dailyDuration = {}; // client_id -> { date -> total_sec }
+  const clientDays = {}; // client_id -> Set of dates
+
+  for (const row of starts.data) {
+    const h = new Date(row.timestamp).getHours();
+    hourly[h]++;
+    const day = new Date(row.timestamp).toISOString().slice(0, 10);
+    if (!clientDays[row.client_id]) clientDays[row.client_id] = new Set();
+    clientDays[row.client_id].add(day);
+  }
+
+  for (const row of ends.data) {
+    const h = new Date(row.timestamp).getHours();
+    hourly[h]++;
+    const p = row.properties || {};
+    const dur = p.duration_sec || 0;
+    const day = new Date(row.timestamp).toISOString().slice(0, 10);
+    if (!dailyDuration[row.client_id]) dailyDuration[row.client_id] = {};
+    dailyDuration[row.client_id][day] =
+      (dailyDuration[row.client_id][day] || 0) + dur;
+    if (!clientDays[row.client_id]) clientDays[row.client_id] = new Set();
+    clientDays[row.client_id].add(day);
+  }
+
+  // 计算每个用户的日均使用时长
+  const userDurations = Object.entries(dailyDuration).map(([, days]) => {
+    const totalSec = Object.values(days).reduce((a, b) => a + b, 0);
+    const numDays = Object.keys(days).length;
+    return { avg_daily_sec: numDays > 0 ? totalSec / numDays : 0 };
+  });
+  const avgDailySec =
+    userDurations.length > 0
+      ? userDurations.reduce((s, u) => s + u.avg_daily_sec, 0) /
+        userDurations.length
+      : 0;
+
+  return {
+    hourly: hourly.map((count, hour) => ({ hour, count })),
+    avg_daily_duration_sec: Math.round(avgDailySec),
+    total_clients: Object.keys(clientDays).length,
+  };
+}
+
+/** 留存率分析 — 第 N 天留存 */
+async function queryRetention(collection, since) {
+  // 查 app_start 事件获取每日活跃 client_id
+  const result = await collection
+    .where({ event: "app_start", timestamp: db.command.gte(since) })
+    .field({ client_id: true, timestamp: true })
+    .limit(10000)
+    .get();
+
+  // 找每个用户的首次活跃日
+  const firstSeen = {};
+  const clientByDay = {};
+  for (const row of result.data) {
+    const day = new Date(row.timestamp).toISOString().slice(0, 10);
+    if (!firstSeen[row.client_id] || day < firstSeen[row.client_id]) {
+      firstSeen[row.client_id] = day;
+    }
+    if (!clientByDay[day]) clientByDay[day] = new Set();
+    clientByDay[day].add(row.client_id);
+  }
+
+  // 按首次活跃日分组（cohort）
+  const cohorts = {};
+  for (const [cid, firstDay] of Object.entries(firstSeen)) {
+    if (!cohorts[firstDay]) cohorts[firstDay] = new Set();
+    cohorts[firstDay].add(cid);
+  }
+
+  // 计算各 cohort 的留存
+  const sortedDays = Object.keys(cohorts).sort();
+  const retentionDays = [1, 3, 7, 14, 30];
+  const cohortData = sortedDays.map((cohortDay) => {
+    const cohortSize = cohorts[cohortDay].size;
+    const retention = {};
+    for (const d of retentionDays) {
+      const targetDay = addDays(cohortDay, d);
+      const activeOnDay = clientByDay[targetDay] || new Set();
+      let retained = 0;
+      for (const cid of cohorts[cohortDay]) {
+        if (activeOnDay.has(cid)) retained++;
+      }
+      retention[`day${d}`] = cohortSize > 0 ? Math.round((retained / cohortSize) * 100) : 0;
+    }
+    return { date: cohortDay, users: cohortSize, ...retention };
+  });
+
+  return cohortData;
+}
+
+function addDays(dateStr, n) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** 查询 session_end 原始数据（可指定 field） */
+async function querySessionEndRaw(collection, since, fieldSpec) {
+  const result = await collection
+    .where({ event: "session_end", timestamp: db.command.gte(since) })
+    .field(fieldSpec)
+    .limit(10000)
+    .get();
+  return result.data;
 }
