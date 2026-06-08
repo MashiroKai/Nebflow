@@ -36,11 +36,11 @@ class UdpDiscovery private (
   /** Start the broadcast loop. Never returns. */
   def startBroadcast: IO[Nothing] =
     tokenHashRef.get.flatMap {
-      case None => IO.sleep(BroadcastInterval) *> startBroadcast
+      case None => IO.sleep(BroadcastInterval).flatMap(_ => startBroadcast)
       case Some(hash) =>
         IO.blocking(broadcastOnce(hash, nebflowPort))
           .handleErrorWith(e => logger.debug(s"Broadcast failed: ${e.getMessage}"))
-          .void *> IO.sleep(BroadcastInterval) *> startBroadcast
+          .flatMap(_ => IO.sleep(BroadcastInterval).flatMap(_ => startBroadcast))
     }
 
   /** Start the listener. Never returns. Each received packet is processed synchronously. */
@@ -59,7 +59,7 @@ class UdpDiscovery private (
       finally socket.close()
     }.handleErrorWith { e =>
       logger.debug(s"Listen error: ${e.getMessage}") *> IO.sleep(2.seconds)
-    } *> startListen
+    }.flatMap(_ => startListen)
 
   private def processReceived(data: String, senderAddr: String): IO[Unit] =
     tokenHashRef.get.flatMap {
