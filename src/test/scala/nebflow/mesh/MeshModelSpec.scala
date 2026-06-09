@@ -113,17 +113,22 @@ class MeshModelSpec extends CatsEffectSuite:
     val id = DeviceIdentity(
       deviceId = "dev-uuid-1234",
       deviceName = "TestMac (macOS)",
-      platform = "macos"
+      platform = "macos",
+      deviceSecret = "secret-abc-123"
     )
     val json = id.asJson.noSpaces
     val decoded = decode[DeviceIdentity](json)
-    assertEquals(decoded, Right(id), "Roundtrip should preserve all fields")
+    assertEquals(decoded, Right(id), "Roundtrip should preserve all fields including deviceSecret")
+  }
+
+  test("DeviceIdentity loadOrCreate has non-empty deviceSecret") {
+    val id = DeviceIdentity.loadOrCreate.unsafeRunSync()
+    assert(id.deviceSecret.nonEmpty, "deviceSecret should be populated after loadOrCreate")
+    assert(id.deviceSecret.length >= 36, s"deviceSecret should be at least UUID length, got ${id.deviceSecret.length}")
   }
 
   test("DeviceIdentity has valid UUID format deviceId after loadOrCreate") {
-    // loadOrCreate uses the real ~/.nebflow/device.json — just verify the result is valid
     val id = DeviceIdentity.loadOrCreate.unsafeRunSync()
-    // UUID format: 8-4-4-4-12 hex chars
     assert(id.deviceId.matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
       s"deviceId should be UUID format, got: ${id.deviceId}")
   }
@@ -142,11 +147,12 @@ class MeshModelSpec extends CatsEffectSuite:
       deviceName = "Windows-PC (Windows)",
       platform = "windows",
       address = "http://192.168.1.100:8080",
+      deviceSecret = "peer-secret-xyz",
       lastSeen = 1700000000000L
     )
     val json = peer.asJson.noSpaces
     val decoded = decode[PeerInfo](json)
-    assertEquals(decoded, Right(peer), "Roundtrip should preserve all fields")
+    assertEquals(decoded, Right(peer), "Roundtrip should preserve all fields including deviceSecret")
   }
 
   test("PeerInfo default lastSeen is current time") {
@@ -155,6 +161,11 @@ class MeshModelSpec extends CatsEffectSuite:
     val after = System.currentTimeMillis()
     assert(peer.lastSeen >= before && peer.lastSeen <= after,
       s"lastSeen ${peer.lastSeen} should be between $before and $after")
+  }
+
+  test("PeerInfo default deviceSecret is empty string") {
+    val peer = PeerInfo("d", "n", "p", "a")
+    assertEquals(peer.deviceSecret, "", "Default deviceSecret should be empty")
   }
 
   // ===== SyncDiff =====

@@ -33,6 +33,14 @@ object AccountInfo:
   def save(account: AccountInfo): IO[Unit] =
     IO.blocking {
       os.write.over(accountPath, account.asJson.spaces2, createFolders = true)
+      // Restrict file permissions to owner-only (rw-------), same as auth.json
+      try
+        val perms = java.nio.file.attribute.PosixFilePermissions.fromString("rw-------")
+        java.nio.file.Files.setPosixFilePermissions(
+          java.nio.file.Paths.get(accountPath.toString),
+          perms
+        )
+      catch case _: Exception => () // best effort on non-POSIX systems
     }
 
   def clear: IO[Unit] =
@@ -47,7 +55,8 @@ end AccountInfo
 case class DeviceIdentity(
   deviceId: String,
   deviceName: String,
-  platform: String
+  platform: String,
+  deviceSecret: String = ""
 )
 
 object DeviceIdentity:
@@ -82,11 +91,14 @@ object DeviceIdentity:
     IO.blocking {
       if os.exists(devicePath) then
         decode[DeviceIdentity](os.read(devicePath)) match
-          case Right(d) => d
+          case Right(d) => ensureSecret(d)
           case Left(_) => createNew()
       else createNew()
     }.flatMap { id =>
-      if !os.exists(devicePath) then save(id).as(id) else IO.pure(id)
+      // Persist if file doesn't exist yet, or if we just migrated (added deviceSecret)
+      val needsSave = !os.exists(devicePath) ||
+        decode[DeviceIdentity](os.read(devicePath)).toOption.exists(_.deviceSecret.isEmpty)
+      if needsSave then save(id).as(id) else IO.pure(id)
     }
 
   def save(identity: DeviceIdentity): IO[Unit] =
@@ -98,8 +110,14 @@ object DeviceIdentity:
     DeviceIdentity(
       deviceId = UUID.randomUUID().toString,
       deviceName = detectDeviceName,
-      platform = detectPlatform
+      platform = detectPlatform,
+      deviceSecret = UUID.randomUUID().toString + UUID.randomUUID().toString
     )
+
+  /** Migrate old DeviceIdentity without deviceSecret — generate one on first load. */
+  private def ensureSecret(id: DeviceIdentity): DeviceIdentity =
+    if id.deviceSecret.isEmpty then id.copy(deviceSecret = UUID.randomUUID().toString + UUID.randomUUID().toString)
+    else id
 end DeviceIdentity
 
 // ===== Peer Info =====
@@ -109,6 +127,7 @@ case class PeerInfo(
   deviceName: String,
   platform: String,
   address: String,
+  deviceSecret: String = "",
   lastSeen: Long = System.currentTimeMillis()
 )
 

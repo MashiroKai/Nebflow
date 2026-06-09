@@ -110,21 +110,20 @@ Available devices are listed in the environment info table.""".stripMargin
   private def remoteExec(deviceName: String, action: String, input: JsonObject): IO[Either[ToolError, String]] =
     for
       peers <- meshService.peers
-      uidOpt <- meshService.userId
+      loggedIn <- meshService.isLoggedIn
       peer <- resolvePeer(deviceName, peers)
       result <- peer match
         case Left(err) => IO.pure(Left(err))
         case Right(p) =>
           val addr = p.address
           if addr.isEmpty then IO.pure(Left(ToolError(s"Device '${p.deviceName}' has no registered address.")))
+          else if !loggedIn then IO.pure(Left(ToolError("Not logged in")))
           else
             checkReachable(addr).flatMap {
               case Left(err) => IO.pure(Left(err))
               case Right(_) =>
                 val params = buildParams(action, input)
-                uidOpt match
-                  case Some(uid) => callRemote(addr, action, params, uid)
-                  case None => IO.pure(Left(ToolError("Not logged in")))
+                meshService.peerAuthToken.flatMap(token => callRemote(addr, action, params, token))
             }
     yield result
 
@@ -199,14 +198,14 @@ Available devices are listed in the environment info table.""".stripMargin
     address: String,
     toolName: String,
     params: JsonObject,
-    userId: String
+    token: String
   ): IO[Either[ToolError, String]] =
     IO.blocking {
       val body = io.circe.Json.obj("action" -> toolName.asJson, "params" -> params.asJson)
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(s"$address/api/mesh/remote-exec"))
         .auth
-        .bearer(userId)
+        .bearer(token)
         .contentType("application/json")
         .body(body.noSpaces)
         .readTimeout(60.seconds)
@@ -229,7 +228,7 @@ end MeshTool
 
 object MeshTool:
 
-  private var meshServiceOpt: Option[MeshService] = None
+  @volatile private var meshServiceOpt: Option[MeshService] = None
 
   /** Expose current MeshService for env info injection. */
   def currentService: Option[MeshService] = meshServiceOpt
