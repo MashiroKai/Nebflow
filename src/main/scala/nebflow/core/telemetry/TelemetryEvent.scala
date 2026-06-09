@@ -1,9 +1,8 @@
 package nebflow.core.telemetry
 
-import io.circe.{Decoder, Encoder}
+import io.circe.*
 import io.circe.generic.semiauto.*
 import io.circe.syntax.*
-import io.circe.{Json, JsonObject}
 
 /**
  * A single telemetry event.

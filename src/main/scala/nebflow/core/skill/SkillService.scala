@@ -22,6 +22,7 @@ final case class SkillInfo(
 )
 
 object SkillInfo:
+
   given Encoder[SkillInfo] = Encoder.instance { s =>
     Json.obj(
       "name" -> s.name.asJson,
@@ -36,6 +37,7 @@ object SkillInfo:
       "source" -> s.source.asJson
     )
   }
+end SkillInfo
 
 final case class SkillContent(content: String, baseDir: String)
 
@@ -106,7 +108,8 @@ object SkillService:
     val seen = scala.collection.mutable.Set[String]()
     all.filter { skill =>
       if seen.contains(skill.name) then false
-      else { seen.add(skill.name); true }
+      else
+        seen.add(skill.name); true
     }
   }
 
@@ -230,6 +233,8 @@ object SkillService:
       source = source
     )
 
+  end parseSkillFile
+
   private def extractFrontmatter(content: String): String =
     val trimmed = content.trim
     if trimmed.startsWith("---") then
@@ -281,7 +286,8 @@ object SkillService:
         )
         if fieldStart < 0 then Nil
         else
-          lines.drop(fieldStart + 1)
+          lines
+            .drop(fieldStart + 1)
             .map(_.trim)
             .takeWhile(l => l.startsWith("- "))
             .map(_.stripPrefix("- ").trim)

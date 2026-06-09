@@ -35,8 +35,7 @@ object ToolRegistry:
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Memory
-      "WriteMemory" -> WriteMemoryTool,
-      "ClearStaging" -> ClearStagingTool
+      "WriteMemory" -> WriteMemoryTool
     )
     tools.putAll(builtins.asJava)
   }

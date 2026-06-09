@@ -36,7 +36,7 @@ import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
-import { initReminder, refreshReminders } from './reminder.js';
+import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initMesh } from './mesh.js';
 import { formatLiveDuration } from './chat.js';
 
@@ -1736,7 +1736,7 @@ initPathPicker();
 initInput();
 initFeishuPanel();
 initMemory();
-initReminder();
+initScheduledTask();
 initMesh();
 
 // Sidebar collapse toggle
