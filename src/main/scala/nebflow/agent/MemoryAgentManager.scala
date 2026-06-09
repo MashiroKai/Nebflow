@@ -27,6 +27,7 @@ import scala.concurrent.duration.*
 sealed trait DreamCommand
 
 object DreamCommand:
+
   /** A new memory entry from WriteMemoryTool. */
   case class ProcessEntry(
     scope: String,
@@ -147,8 +148,7 @@ class MemoryAgentManager(
       case entry: DreamCommand.ProcessEntry =>
         val newBuffer = buffer :+ entry
         // Start debounce timer on first entry (if not already scheduled)
-        if buffer.isEmpty then
-          timers.startSingleTimer(DreamCommand.FlushEntries, DebounceDelay)
+        if buffer.isEmpty then timers.startSingleTimer(DreamCommand.FlushEntries, DebounceDelay)
         idle(newBuffer, timers)
 
       case DreamCommand.FlushEntries =>
@@ -156,13 +156,11 @@ class MemoryAgentManager(
           triggerDream(buffer, isFullCycle = false)
           lastDreamTime = System.currentTimeMillis()
           idle(Nil, timers)
-        else
-          idle(Nil, timers)
+        else idle(Nil, timers)
 
       case DreamCommand.FullCycleTick =>
         // Cancel any pending debounce — full cycle supersedes it
-        if buffer.nonEmpty then
-          timers.cancel(DreamCommand.FlushEntries)
+        if buffer.nonEmpty then timers.cancel(DreamCommand.FlushEntries)
         triggerDream(buffer, isFullCycle = true)
         lastDreamTime = System.currentTimeMillis()
         // Reschedule next full cycle
@@ -215,6 +213,7 @@ class MemoryAgentManager(
     catch
       case e: Exception =>
         logger.warnSync(s"Dream trigger failed: ${e.getMessage}")
+    end try
   end triggerDream
 
   // ============================================================
@@ -305,7 +304,11 @@ class MemoryAgentManager(
         val entryLines = entries.map { e =>
           val hash = e.detail.filter(_.trim.nonEmpty).map(_ => MemoryStore.contentHash(e.content))
           val detailNote = hash.map(h => s" (detail →$h)").getOrElse("")
-          s"""{"scope":"${e.scope}","content":"${e.content.replace("\"", "\\\"").take(200)}","detail":${e.detail.isDefined},"hash":${hash.getOrElse("null")},"source":"${e.source}","folder":${e.folderId.getOrElse("null")}}$detailNote"""
+          s"""{"scope":"${e.scope}","content":"${e.content
+              .replace("\"", "\\\"")
+              .take(200)}","detail":${e.detail.isDefined},"hash":${hash.getOrElse(
+              "null"
+            )},"source":"${e.source}","folder":${e.folderId.getOrElse("null")}}$detailNote"""
         }
         s"""|
            |## New observations to process

@@ -15,7 +15,7 @@ import nebflow.core.scheduler.{ScheduledTaskActor, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
-import nebflow.core.tools.ToolRegistry
+import nebflow.core.tools.{MeshTool, ToolRegistry}
 import nebflow.llm.*
 import nebflow.mesh.*
 import nebflow.service.{ConfigSnapshot, *}
@@ -312,9 +312,11 @@ object GatewayMain extends IOApp.Simple:
 
                                   // Create mesh service (event-driven sync actor, no UDP)
                                   val meshServiceF: IO[MeshService] =
-                                    MeshSyncStore.load().flatMap(store =>
-                                      MeshService.create(store, cfg.port.value, actorSystem, dispatcher)
-                                    )
+                                    MeshSyncStore
+                                      .load()
+                                      .flatMap(store =>
+                                        MeshService.create(store, cfg.port.value, actorSystem, dispatcher)
+                                      )
 
                                   bridgeSetup.flatMap { bridgeManager =>
                                     meshServiceF.flatMap { meshService =>
@@ -328,7 +330,9 @@ object GatewayMain extends IOApp.Simple:
 
                                       // --- Create Scheduled Task Actor before wsRoutes ---
                                       // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
-                                      var scheduledTaskActorRefHolder: Option[org.apache.pekko.actor.typed.ActorRef[nebflow.core.scheduler.ScheduledTaskCommand]] = None
+                                      var scheduledTaskActorRefHolder: Option[org.apache.pekko.actor.typed.ActorRef[
+                                        nebflow.core.scheduler.ScheduledTaskCommand
+                                      ]] = None
                                       val scheduledTaskActor = new ScheduledTaskActor(
                                         actorSystem,
                                         sharedResourcesWithBridge.dispatcher,
@@ -337,7 +341,7 @@ object GatewayMain extends IOApp.Simple:
                                           wsRoutesHolder match
                                             case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
                                             case None => IO.unit,
-                                        wsHub
+                                        wsHub.broadcast
                                       )
                                       scheduledTaskActorRefHolder = Some(scheduledTaskActor.ref)
                                       val sharedResourcesFinal = sharedResourcesWithBridge.copy(
