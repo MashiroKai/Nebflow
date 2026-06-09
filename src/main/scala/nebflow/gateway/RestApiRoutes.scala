@@ -275,20 +275,24 @@ class RestApiRoutes(
         ms.logout *> Ok(Json.obj("ok" -> true.asJson))
       }
 
-    // Handshake — called by a discovered peer to establish trust
+    // Handshake — called by a discovered peer to establish trust and exchange device secrets
     case req @ POST -> Root / "mesh" / "handshake" =>
       meshService match
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
         case Some(ms) =>
-          // Extract Bearer userId from Authorization header
-          val callerUserId = req.headers
+          // Bearer format: userId:callerDeviceSecret
+          val bearer = req.headers
             .get[Authorization]
             .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
               t
             }
             .getOrElse("")
-          if callerUserId.isEmpty then Forbidden(Json.obj("error" -> "Missing auth".asJson))
+          val parts = bearer.split(":", 2)
+          if parts.length != 2 || parts(0).isEmpty then
+            Forbidden(Json.obj("error" -> "Invalid peer auth format".asJson))
           else
+            val callerUserId = parts(0)
+            val callerSecret = parts(1)
             val callerIp = req.remoteAddr.fold("unknown")(_.toString)
             req.as[Json].flatMap { body =>
               val hc = body.hcursor
@@ -298,14 +302,15 @@ class RestApiRoutes(
               val port = hc.downField("port").as[Int].getOrElse(8080)
               if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
               else
-                ms.handleHandshake(callerUserId, deviceId, deviceName, platform, callerIp, port)
+                ms.handleHandshake(callerUserId, deviceId, deviceName, platform, callerIp, port, callerSecret)
                   .flatMap { _ =>
                     ms.identity
                       .map { id =>
                         Json.obj(
                           "deviceId" -> id.deviceId.asJson,
                           "deviceName" -> id.deviceName.asJson,
-                          "platform" -> id.platform.asJson
+                          "platform" -> id.platform.asJson,
+                          "deviceSecret" -> id.deviceSecret.asJson
                         )
                       }
                       .flatMap(Ok(_))
@@ -429,21 +434,24 @@ class RestApiRoutes(
         case Some(ms) => f(ms)
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
 
-  /** Verify peer-to-peer access: Bearer must match local userId. */
+  /** Verify peer-to-peer access: Bearer format userId:deviceSecret, validated via MeshService. */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
     meshService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
       case Some(ms) =>
-        val callerUserId = req.headers
+        val bearer = req.headers
           .get[Authorization]
           .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t }
           .getOrElse("")
-        ms.userId.map {
-          case Some(uid) if callerUserId == uid => Right(ms)
-          case Some(_) => Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "User mismatch".asJson)))
-          case None => Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Not logged in".asJson)))
-        }
+        if bearer.isEmpty then
+          IO.pure(Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Missing auth".asJson))))
+        else
+          ms.verifyPeerToken(bearer).map {
+            case true => Right(ms)
+            case false =>
+              Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Invalid peer credentials".asJson)))
+          }
 
   private def checkAuth(req: Request[IO]): Boolean =
     req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
