@@ -66,6 +66,10 @@ object DeviceIdentity:
   private def detectDeviceName: String =
     val hostname = Option(System.getenv("HOSTNAME"))
       .orElse(Option(System.getenv("COMPUTERNAME")))
+      .orElse(
+        try Some(java.net.InetAddress.getLocalHost.getHostName)
+        catch case _: Exception => None
+      )
       .getOrElse("Unknown")
     val platform = detectPlatform match
       case "macos"   => "macOS"
