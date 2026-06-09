@@ -65,6 +65,34 @@ class MeshService private (
   /** ActorRef of the sync actor — callers can send commands directly. */
   def syncActor: ActorRef[SyncCommand] = _syncActorRef
 
+  /** P2P auth token: userId:deviceSecret. Used as Bearer in peer-to-peer requests. */
+  def peerAuthToken: IO[String] =
+    for
+      uidOpt <- userId
+      id <- identityRef.get
+    yield uidOpt match
+      case Some(uid) => s"$uid:${id.deviceSecret}"
+      case None => ""
+
+  /**
+   * Verify an incoming P2P request. Bearer format: userId:deviceSecret.
+   * Checks: userId matches local account AND deviceSecret is from a known peer.
+   */
+  def verifyPeerToken(bearer: String): IO[Boolean] =
+    val parts = bearer.split(":", 2)
+    if parts.length != 2 then IO.pure(false)
+    else
+      val (callerUserId, callerSecret) = (parts(0), parts(1))
+      for
+        myUserId <- userId
+        peersMap <- peersRef.get
+        myId <- identityRef.get
+      yield myUserId match
+        case Some(uid) if uid == callerUserId =>
+          peersMap.values.exists(_.deviceSecret == callerSecret) ||
+            myId.deviceSecret == callerSecret
+        case _ => false
+
   // ===== Account =====
 
   /** Check if a username is available via cloud function. */
@@ -79,8 +107,8 @@ class MeshService private (
             "username" -> username.asJson
           )
         ).map { json =>
-          json.hcursor.downField("available").as[Boolean].getOrElse(true)
-        }.handleError(_ => true)
+          json.hcursor.downField("available").as[Boolean].getOrElse(false)
+        }.handleError(_ => false)
       }
 
   /** Register a new Nebflow account via cloud function. */
@@ -158,7 +186,8 @@ class MeshService private (
     deviceName: String,
     platform: String,
     callerIp: String,
-    port: Int
+    port: Int,
+    callerSecret: String = ""
   ): IO[Unit] =
     for
       myUserId <- userId
@@ -166,7 +195,7 @@ class MeshService private (
         case Some(uid) => IO.raiseWhen(callerUserId != uid)(new RuntimeException("User mismatch"))
         case None => IO.raiseError(new RuntimeException("Not logged in"))
       address = s"http://$callerIp:$port"
-      peer = PeerInfo(deviceId, deviceName, platform, address)
+      peer = PeerInfo(deviceId, deviceName, platform, address, callerSecret)
       _ <- peersRef.update(_ + (deviceId -> peer))
       _ <- logger.info(s"Peer joined: $deviceName at $address")
     yield ()
@@ -267,25 +296,25 @@ class MeshService private (
             }
           )
 
-  private def fetchPeerFingerprints(peer: PeerInfo, uid: String): IO[Map[String, FileFingerprint]] =
+  private def fetchPeerFingerprints(peer: PeerInfo, token: String): IO[Map[String, FileFingerprint]] =
     IO.blocking {
       val resp = basicRequest
         .get(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/fingerprints"))
         .auth
-        .bearer(uid)
+        .bearer(token)
         .readTimeout(15.seconds)
         .response(asStringAlways)
         .send(httpBackend)
       if resp.code.isSuccess then resp.body else throw new RuntimeException(s"Peer returned ${resp.code}")
     }.flatMap(body => IO.fromEither(io.circe.parser.decode[Map[String, FileFingerprint]](body)))
 
-  private def downloadFromPeer(peer: PeerInfo, uid: String, relPath: String): IO[Array[Byte]] =
+  private def downloadFromPeer(peer: PeerInfo, token: String, relPath: String): IO[Array[Byte]] =
     IO.blocking {
       val enc = java.net.URLEncoder.encode(relPath, "UTF-8")
       val resp = basicRequest
         .get(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/file?path=$enc"))
         .auth
-        .bearer(uid)
+        .bearer(token)
         .readTimeout(30.seconds)
         .response(asStringAlways)
         .send(httpBackend)
@@ -298,14 +327,14 @@ class MeshService private (
         )
     )
 
-  private def uploadToPeer(peer: PeerInfo, uid: String, relPath: String, content: Array[Byte]): IO[Unit] =
+  private def uploadToPeer(peer: PeerInfo, token: String, relPath: String, content: Array[Byte]): IO[Unit] =
     IO.blocking {
       val body =
         Json.obj("path" -> relPath.asJson, "content" -> java.util.Base64.getEncoder.encodeToString(content).asJson)
       val resp = basicRequest
         .put(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/file"))
         .auth
-        .bearer(uid)
+        .bearer(token)
         .contentType("application/json")
         .body(body.noSpaces)
         .readTimeout(30.seconds)
@@ -317,20 +346,21 @@ class MeshService private (
   def syncWithPeer(peer: PeerInfo): IO[Unit] =
     for
       uidOpt <- userId
-      uid <- IO.fromOption(uidOpt)(new RuntimeException("Not logged in"))
+      _ <- IO.fromOption(uidOpt)(new RuntimeException("Not logged in"))
+      token <- peerAuthToken
       localFps <- computeLocalFingerprints
-      remoteFps <- fetchPeerFingerprints(peer, uid)
+      remoteFps <- fetchPeerFingerprints(peer, token)
       diff = computeSyncDiff(localFps, remoteFps)
       _ <- logger.info(s"Sync with ${peer.deviceName}: up ${diff.needUpload.size}, dn ${diff.needDownload.size}")
       _ <- diff.needUpload.traverse_ { p =>
         readLocalFile(p).flatMap {
           case Some((c, _)) =>
-            uploadToPeer(peer, uid, p, c).handleErrorWith(e => logger.warn(s"Upload $p failed: ${e.getMessage}"))
+            uploadToPeer(peer, token, p, c).handleErrorWith(e => logger.warn(s"Upload $p failed: ${e.getMessage}"))
           case None => IO.unit
         }
       }
       _ <- diff.needDownload.traverse_ { p =>
-        downloadFromPeer(peer, uid, p)
+        downloadFromPeer(peer, token, p)
           .flatMap(c => writeLocalFile(p, c))
           .handleErrorWith(e => logger.warn(s"Download $p failed: ${e.getMessage}"))
       }
