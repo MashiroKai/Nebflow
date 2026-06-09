@@ -11,11 +11,11 @@ import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
+import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
 import nebflow.shared.*
-import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import org.apache.pekko.actor.typed.*
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.http4s.circe.CirceEntityCodec.*
@@ -927,7 +927,9 @@ class WebSocketRoutes(
           if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
             val task = nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath)
             sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
-              sharedResources.scheduledTaskActorRef.foreach(_ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskCreated(task))
+              sharedResources.scheduledTaskActorRef.foreach(
+                _ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskCreated(task)
+              )
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "scheduledTaskCreated".asJson,
@@ -982,7 +984,9 @@ class WebSocketRoutes(
           val drId = json.hcursor.downField("id").as[String].getOrElse("")
           if drSessionId.nonEmpty && drId.nonEmpty then
             sharedResources.scheduledTaskStore.deleteTask(drSessionId, drId).flatMap { _ =>
-              sharedResources.scheduledTaskActorRef.foreach(_ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskDeleted(drSessionId, drId))
+              sharedResources.scheduledTaskActorRef.foreach(
+                _ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskDeleted(drSessionId, drId)
+              )
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "scheduledTaskDeleted".asJson,
@@ -1658,9 +1662,12 @@ class WebSocketRoutes(
                       // Try to find the file locally by name + size + hash
                       // Search priority: project root → common user dirs → full home
                       val home = os.home.toString
-                      val commonDirs = List("Downloads", "Desktop", "Documents").map(d => s"$home/$d").filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
+                      val commonDirs = List("Downloads", "Desktop", "Documents")
+                        .map(d => s"$home/$d")
+                        .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
                       val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
-                      val localPath = if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
+                      val localPath =
+                        if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
                       localPath match
                         case Some(path) =>
                           savedPaths += path
@@ -1690,6 +1697,7 @@ class WebSocketRoutes(
                               blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
                           end try
                       end match
+                    end if
                   }
 
                   val sessionName = metaOpt.map(_.name).getOrElse("-")
@@ -1767,12 +1775,38 @@ class WebSocketRoutes(
 
   /** Directories to skip during filesystem search — build artifacts, caches, system dirs. */
   private val skipDirs = Set(
-    "node_modules", ".git", "build", "target", "dist", ".cache",
-    "__pycache__", ".gradle", ".idea", ".vscode", ".nebflow",
-    "Library", "Applications", "Trash", ".Trash", ".npm", ".yarn",
-    ".pnpm-store", ".cargo", ".rustup", ".conda", ".venv", "venv",
-    "DerivedData", ".m2", ".ivy2", ".sbt", ".coursier",
-    "Pods", "vendor", "bower_components", "Movies"
+    "node_modules",
+    ".git",
+    "build",
+    "target",
+    "dist",
+    ".cache",
+    "__pycache__",
+    ".gradle",
+    ".idea",
+    ".vscode",
+    ".nebflow",
+    "Library",
+    "Applications",
+    "Trash",
+    ".Trash",
+    ".npm",
+    ".yarn",
+    ".pnpm-store",
+    ".cargo",
+    ".rustup",
+    ".conda",
+    ".venv",
+    "venv",
+    "DerivedData",
+    ".m2",
+    ".ivy2",
+    ".sbt",
+    ".coursier",
+    "Pods",
+    "vendor",
+    "bower_components",
+    "Movies"
   )
 
   /**
@@ -1786,7 +1820,12 @@ class WebSocketRoutes(
    * @param searchPaths directories to search in priority order
    * @return absolute path of a matching local file, or None
    */
-  private def findLocalFile(name: String, expectedHash: String, expectedSize: Long, searchPaths: List[String]): Option[String] =
+  private def findLocalFile(
+    name: String,
+    expectedHash: String,
+    expectedSize: Long,
+    searchPaths: List[String]
+  ): Option[String] =
     import java.nio.file.{FileVisitResult, Files, Path, SimpleFileVisitor}
     import java.security.MessageDigest
 
@@ -1800,9 +1839,15 @@ class WebSocketRoutes(
       if Files.isDirectory(rootPath) then
         try
           // No FOLLOW_LINKS — avoids symlink loops on macOS bundles (.fcpcache etc.)
-          Files.walkFileTree(rootPath, java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]), Integer.MAX_VALUE,
+          Files.walkFileTree(
+            rootPath,
+            java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]),
+            Integer.MAX_VALUE,
             new SimpleFileVisitor[Path]:
-              override def preVisitDirectory(dir: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
+              override def preVisitDirectory(
+                dir: Path,
+                attrs: java.nio.file.attribute.BasicFileAttributes
+              ): FileVisitResult =
                 if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
                 else FileVisitResult.CONTINUE
 
@@ -1817,7 +1862,8 @@ class WebSocketRoutes(
           )
         catch
           case _: Exception => // skip inaccessible directories
-
+      end if
+    end for
     if candidates.isEmpty then None
     else
       // Verify SHA-256 for each candidate (already pre-filtered by name + size)
@@ -1827,8 +1873,7 @@ class WebSocketRoutes(
           val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
           val hex = digest.map(b => String.format("%02x", b)).mkString
           hex == expectedHash
-        catch
-          case _: Exception => false
+        catch case _: Exception => false
       }
 
       hashMatches match
@@ -1842,6 +1887,7 @@ class WebSocketRoutes(
           val chosen = sorted.head._1.toString
           logger.info(s"Attachment '$name': ${multiple.size} local copies with same hash, chose: $chosen")
           Some(chosen)
+    end if
   end findLocalFile
 
   // ============================================================
