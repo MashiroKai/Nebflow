@@ -516,7 +516,6 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         ansDiv.className = 'option-answer';
         ansDiv.textContent = '-> ' + nextMsg.text;
         box.appendChild(ansDiv);
-        skipUserMsg = true;
       }
     } else if (m.type === 'askPermission') {
       // Render as disabled permission prompt (will be replaced by interactive version if still pending)
