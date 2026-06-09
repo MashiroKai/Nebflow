@@ -310,9 +310,11 @@ object GatewayMain extends IOApp.Simple:
                                       }
                                     }
 
-                                  // Create mesh service (sequential to avoid compute pool starvation inside Dispatcher.use)
+                                  // Create mesh service (event-driven sync actor, no UDP)
                                   val meshServiceF: IO[MeshService] =
-                                    MeshSyncStore.load().flatMap(store => MeshService.create(store, cfg.port.value))
+                                    MeshSyncStore.load().flatMap(store =>
+                                      MeshService.create(store, cfg.port.value, actorSystem, dispatcher)
+                                    )
 
                                   bridgeSetup.flatMap { bridgeManager =>
                                     meshServiceF.flatMap { meshService =>
@@ -425,22 +427,7 @@ object GatewayMain extends IOApp.Simple:
                                                 logger.warn(s"Background init failed: ${e.getMessage}")
                                               }
                                               .start
-                                            // --- Mesh: UDP discovery + sync ---
-                                            _ <- meshService.discovery.startBroadcast
-                                              .handleErrorWith(e =>
-                                                logger.warn(s"Mesh broadcast stopped: ${e.getMessage}")
-                                              )
-                                              .start
-                                            _ <- meshService.discovery.startListen
-                                              .handleErrorWith(e =>
-                                                logger.warn(s"Mesh listener stopped: ${e.getMessage}")
-                                              )
-                                              .start
-                                            _ <- meshService.startSyncLoop
-                                              .handleErrorWith(e =>
-                                                logger.warn(s"Mesh sync loop stopped: ${e.getMessage}")
-                                              )
-                                              .start
+                                            // --- Mesh: sync is event-driven (actor), no background loops needed ---
                                             _ <- logger.info(
                                               "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
                                             ) *> waitForQuit
