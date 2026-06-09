@@ -7,12 +7,14 @@ import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.hooks.{HookEngine, HooksConfig}
 import nebflow.core.reminder.ReminderStore
-import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.task.TaskStore
+import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.FileLockManager
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderRegistry, ThinkingConfig}
+import nebflow.mesh.MeshService
 import nebflow.shared.*
+import org.apache.pekko.actor.typed.ActorRef
 
 /**
  * Shared resources available to all actors in the hierarchy.
@@ -39,5 +41,7 @@ case class SharedResources(
   hookEngine: HookEngine = HookEngine.noop,
   bridgeManager: Option[BridgeManager] = None,
   reminderStore: ReminderStore = new ReminderStore(os.home / ".nebflow" / "reminders"),
-  telemetry: Option[TelemetryReporter] = None
+  telemetry: Option[TelemetryReporter] = None,
+  meshService: Option[MeshService] = None,
+  dreamSchedulerRef: Option[ActorRef[DreamCommand]] = None
 )

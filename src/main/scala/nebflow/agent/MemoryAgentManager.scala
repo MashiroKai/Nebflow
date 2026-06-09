@@ -19,12 +19,43 @@ import java.util.concurrent.atomic.AtomicLong
 import scala.compiletime.uninitialized
 import scala.concurrent.duration.*
 
+// ============================================================
+// Dream command protocol — public so WriteMemoryTool can reference it
+// ============================================================
+
+/** Commands accepted by the Dream scheduler actor. */
+sealed trait DreamCommand
+
+object DreamCommand:
+  /** A new memory entry from WriteMemoryTool. */
+  case class ProcessEntry(
+    scope: String,
+    content: String,
+    detail: Option[String],
+    source: String,
+    folderId: Option[String]
+  ) extends DreamCommand
+
+  /** Debounce timer fired — process accumulated entries. */
+  private[nebflow] case object FlushEntries extends DreamCommand
+
+  /** 24-hour full cycle timer fired. */
+  private[nebflow] case object FullCycleTick extends DreamCommand
+
+  /** Shutdown the scheduler. */
+  private[nebflow] case object Shutdown extends DreamCommand
+end DreamCommand
+
 /**
- * Manages the Dream session for periodic memory consolidation
- * and pattern extraction across all memory files.
+ * Manages the Dream session for memory consolidation and pattern extraction.
  *
- * Dream trigger: any memory file has mtime > lastDreamTime, or recent user inputs exist.
- * Dream scope: lists all files with [CHANGED] markers, agent decides what to read.
+ * Event-driven design:
+ *   - WriteMemory calls directly send entries to the Dream actor mailbox.
+ *   - 24-hour full cycle uses a single-shot timer (rescheduled after each cycle).
+ *   - No polling, no staging file, no periodic scanning.
+ *
+ * Mac sleep / network offline: messages wait in the Pekko mailbox until the
+ * actor processes them. No repeated work, no wasted CPU.
  */
 class MemoryAgentManager(
   actorSystem: ActorSystem[?],
@@ -38,6 +69,7 @@ class MemoryAgentManager(
   @volatile private var _resources: SharedResources = uninitialized
   @volatile private var _wsHub: WsHub = uninitialized
   @volatile private var _dreamRef: ActorRef[AgentCommand] = uninitialized
+  @volatile private var _schedulerRef: ActorRef[DreamCommand] = uninitialized
 
   /** Set SharedResources after construction (breaks circular dependency). */
   def setSharedResources(resources: SharedResources): Unit =
@@ -59,6 +91,12 @@ class MemoryAgentManager(
   private val DreamSessionId = "memory-agent-dream"
   private val DreamSessionName = "Dream / 梦境"
 
+  // Debounce: wait this long after the first entry before processing the batch
+  private val DebounceDelay = 2.minutes
+
+  // Full cycle interval
+  private val FullCycleInterval = 24.hours
+
   // Current agent name for file listing
   private def currentAgentName: String =
     try
@@ -71,19 +109,113 @@ class MemoryAgentManager(
 
   // Spawn Dream scheduler on construction
   locally {
-    actorSystem.systemActorOf(dreamScheduler(), "memory-dream-scheduler")
+    _schedulerRef = actorSystem.systemActorOf(dreamScheduler(), "memory-dream-scheduler")
   }
 
   // ============================================================
   // Public API
   // ============================================================
 
-  /** Stop Dream actor. */
+  /** ActorRef of the Dream scheduler — WriteMemoryTool sends entries here. */
+  def dreamSchedulerRef: ActorRef[DreamCommand] = _schedulerRef
+
+  /** Stop Dream actor and scheduler. */
   def shutdownAll(): IO[Unit] =
     IO {
       if _dreamRef != null then _dreamRef ! Stop("shutdown")
+      if _schedulerRef != null then _schedulerRef ! DreamCommand.Shutdown
       logger.infoSync("Memory Agent Manager: shutdown complete")
     }
+
+  // ============================================================
+  // Dream scheduler — event-driven actor (no polling)
+  // ============================================================
+
+  private def dreamScheduler(): Behavior[DreamCommand] =
+    Behaviors.withTimers { timers =>
+      // Schedule the first 24-hour full cycle
+      timers.startSingleTimer(DreamCommand.FullCycleTick, FullCycleInterval)
+      idle(Nil, timers)
+    }
+
+  /** Idle: waiting for entries or full-cycle tick. */
+  private def idle(
+    buffer: List[DreamCommand.ProcessEntry],
+    timers: org.apache.pekko.actor.typed.scaladsl.TimerScheduler[DreamCommand]
+  ): Behavior[DreamCommand] =
+    Behaviors.receiveMessage {
+      case entry: DreamCommand.ProcessEntry =>
+        val newBuffer = buffer :+ entry
+        // Start debounce timer on first entry (if not already scheduled)
+        if buffer.isEmpty then
+          timers.startSingleTimer(DreamCommand.FlushEntries, DebounceDelay)
+        idle(newBuffer, timers)
+
+      case DreamCommand.FlushEntries =>
+        if buffer.nonEmpty then
+          triggerDream(buffer, isFullCycle = false)
+          lastDreamTime = System.currentTimeMillis()
+          idle(Nil, timers)
+        else
+          idle(Nil, timers)
+
+      case DreamCommand.FullCycleTick =>
+        // Cancel any pending debounce — full cycle supersedes it
+        if buffer.nonEmpty then
+          timers.cancel(DreamCommand.FlushEntries)
+        triggerDream(buffer, isFullCycle = true)
+        lastDreamTime = System.currentTimeMillis()
+        // Reschedule next full cycle
+        timers.startSingleTimer(DreamCommand.FullCycleTick, FullCycleInterval)
+        idle(Nil, timers)
+
+      case DreamCommand.Shutdown =>
+        Behaviors.stopped
+    }
+
+  // ============================================================
+  // Trigger Dream — spawn agent and send payload
+  // ============================================================
+
+  private def triggerDream(entries: List[DreamCommand.ProcessEntry], isFullCycle: Boolean): Unit =
+    // Daily backup check (independent of Dream, but piggyback on full cycle)
+    if isFullCycle then
+      try
+        if NebflowBackup.isNeeded then
+          val result = dispatcher.unsafeRunSync(NebflowBackup.run())
+          result.foreach { dir =>
+            logger.infoSync(s"Daily backup created at ${dir.last}")
+          }
+      catch
+        case e: Exception =>
+          logger.warnSync(s"Daily backup failed: ${e.getMessage}")
+
+    try
+      val allFiles = collectAllFiles()
+      val userInputs =
+        if isFullCycle then dispatcher.unsafeRunSync(collectRecentUserInputs)
+        else ""
+      val payload = buildDreamPayload(entries, allFiles, userInputs, isFullCycle)
+
+      // Stop previous Dream actor before creating a new one
+      val oldRef = _dreamRef
+      if oldRef != null then oldRef ! Stop("new-cycle")
+      _dreamRef = null
+
+      val ref = dispatcher.unsafeRunSync(getOrCreateDreamAgent())
+      dispatcher.unsafeRunSync(recordUserMessage(DreamSessionId, payload, injected = true))
+      ref ! ExternalEvent(
+        source = "memory-manager",
+        eventType = "dream",
+        payload = payload
+      )
+      logger.infoSync(
+        s"Dream triggered (${if isFullCycle then "full" else "entries"}): ${entries.size} entries, ${allFiles.size} files"
+      )
+    catch
+      case e: Exception =>
+        logger.warnSync(s"Dream trigger failed: ${e.getMessage}")
+  end triggerDream
 
   // ============================================================
   // Agent lifecycle
@@ -150,12 +282,17 @@ class MemoryAgentManager(
     sessionStore.appendUiMessages(sessionId, List(uiMsg)) *> wsHub.broadcast(wsEvent)
 
   // ============================================================
-  // Dream payload
+  // Dream payload builder
   // ============================================================
 
   private case class FileInfo(path: os.Path, scope: String, changed: Boolean)
 
-  private def buildDreamPayload(files: Seq[FileInfo], userInputs: String, staging: String, fullCycle: Boolean): String =
+  private def buildDreamPayload(
+    entries: List[DreamCommand.ProcessEntry],
+    files: Seq[FileInfo],
+    userInputs: String,
+    fullCycle: Boolean
+  ): String =
     val fileList = files
       .map { f =>
         val marker = if f.changed then " [CHANGED]" else ""
@@ -163,21 +300,27 @@ class MemoryAgentManager(
       }
       .mkString("\n")
 
+    val entriesSection =
+      if entries.nonEmpty then
+        val entryLines = entries.map { e =>
+          val hash = e.detail.filter(_.trim.nonEmpty).map(_ => MemoryStore.contentHash(e.content))
+          val detailNote = hash.map(h => s" (detail →$h)").getOrElse("")
+          s"""{"scope":"${e.scope}","content":"${e.content.replace("\"", "\\\"").take(200)}","detail":${e.detail.isDefined},"hash":${hash.getOrElse("null")},"source":"${e.source}","folder":${e.folderId.getOrElse("null")}}$detailNote"""
+        }
+        s"""|
+           |## New observations to process
+           |
+           |Each entry has: scope, content, detail, hash, source, folder.
+           |If hash is present, write the detail to ~/.nebflow/memory/{{hash}}.md.
+           |
+           |${entryLines.mkString("\n")}""".stripMargin
+      else ""
+
     val inputsSection =
       if fullCycle && userInputs.nonEmpty then s"""|
          |## Recent user inputs (past 24 hours)
          |
          |$userInputs""".stripMargin
-      else ""
-
-    val stagingSection =
-      if staging.nonEmpty then s"""|
-         |## Staging area (new observations to process)
-         |
-         |Each line is JSON with: ts, scope, content, detail, hash, source, folder.
-         |If hash is non-null, write the detail to ~/.nebflow/memory/{{hash}}.md.
-         |
-         |$staging""".stripMargin
       else ""
 
     val consolidationSection =
@@ -191,84 +334,18 @@ class MemoryAgentManager(
     s"""Dream cycle triggered. Memory files:
        |
        |$fileList
-       |$stagingSection
+       |$entriesSection
        |$inputsSection
        |$consolidationSection
        |
        |Task:
-       |1. Process ALL staging entries: write to correct memory files under ## headings with *(YYYY-MM-DD)* timestamps. Add →hash references if detail exists.
+       |1. Process ALL new observations: write to correct memory files under ## headings with *(YYYY-MM-DD)* timestamps. Add →hash references if detail exists.
        |2. ${
         if fullCycle then "Run full consolidation and pattern extraction as described above."
-        else "Quick cycle — skip consolidation, only process staging."
+        else "Quick cycle — skip consolidation, only process observations."
       }
-       |3. After processing, call ClearStaging with confirm=true to delete the staging file.
-       |4. Respond DONE when finished.""".stripMargin
+       |3. Respond DONE when finished.""".stripMargin
   end buildDreamPayload
-
-  // ============================================================
-  // Dream scheduler — ticks every 30 min, triggers all-layer Dream
-  // ============================================================
-
-  private sealed trait DreamTick
-  private case object Tick extends DreamTick
-
-  private def dreamScheduler(): Behavior[DreamTick] =
-    Behaviors.withTimers { timers =>
-      timers.startTimerAtFixedRate(Tick, 5.minutes)
-      Behaviors.receiveMessage { case Tick =>
-        // Daily backup check (independent of Dream)
-        try
-          if NebflowBackup.isNeeded then
-            val result = dispatcher.unsafeRunSync(NebflowBackup.run())
-            result.foreach { dir =>
-              logger.infoSync(s"Daily backup created at ${dir.last}")
-            }
-        catch
-          case e: Exception =>
-            logger.warnSync(s"Daily backup failed: ${e.getMessage}")
-
-        // Dream cycle — check every tick (5 min)
-        val now = System.currentTimeMillis()
-        val hasStaging =
-          val s = dispatcher.unsafeRunSync(MemoryStore.loadStaging)
-          s.nonEmpty
-        // Trigger if: staging has entries (process immediately), or 24h passed for consolidation
-        val shouldTrigger = hasStaging || now - lastDreamTime >= 24.hours.toMillis
-        if shouldTrigger then
-          try
-            val allFiles = collectAllFiles()
-            val changedFiles = allFiles.filter(_.changed)
-            val userInputs = dispatcher.unsafeRunSync(collectRecentUserInputs)
-            val staging = dispatcher.unsafeRunSync(MemoryStore.loadStaging)
-            val fullCycle = now - lastDreamTime >= 24.hours.toMillis
-
-            if changedFiles.nonEmpty || userInputs.nonEmpty || staging.nonEmpty then
-              val payload = buildDreamPayload(allFiles, userInputs, staging, fullCycle)
-              // Stop previous Dream actor before creating a new one
-              val oldRef = _dreamRef
-              if oldRef != null then oldRef ! Stop("new-cycle")
-              _dreamRef = null
-              val ref = dispatcher.unsafeRunSync(getOrCreateDreamAgent())
-              dispatcher.unsafeRunSync(recordUserMessage(DreamSessionId, payload, injected = true))
-              ref ! ExternalEvent(
-                source = "memory-manager",
-                eventType = "dream",
-                payload = payload
-              )
-              // Only update lastDreamTime on full cycles (24h)
-              if fullCycle then lastDreamTime = now
-              logger.infoSync(
-                s"Dream triggered (${if fullCycle then "full" else "staging-only"}): ${changedFiles.size} changed, ${staging.linesIterator.size} staged, ${allFiles.size} total"
-              )
-            else logger.infoSync("Dream skipped — no changed files, no staging, no recent user inputs")
-            end if
-          catch
-            case e: Exception =>
-              logger.warnSync(s"Dream failed: ${e.getMessage}")
-        end if
-        Behaviors.same
-      }
-    }
 
   // ============================================================
   // File collection
@@ -290,7 +367,7 @@ class MemoryAgentManager(
     }
 
   // ============================================================
-  // User input collection for Dream
+  // User input collection for Dream (full cycle only)
   // ============================================================
 
   private val inputHistoryPath: os.Path = os.home / ".nebflow" / "input_history.jsonl"
