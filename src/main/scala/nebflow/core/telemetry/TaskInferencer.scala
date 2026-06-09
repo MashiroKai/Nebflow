@@ -27,40 +27,35 @@ object TaskInferencer:
    */
   def infer(toolProfile: Map[String, Int], turnCount: Int): String =
     val total = toolProfile.values.sum
-    if total == 0 then return InferredTask.Conversation.label
+    if total == 0 then InferredTask.Conversation.label
+    else
+      val edit = toolProfile.getOrElse("Edit", 0) + toolProfile.getOrElse("Write", 0)
+      val read = toolProfile.getOrElse("Read", 0)
+      val grep = toolProfile.getOrElse("Grep", 0)
+      val bash = toolProfile.getOrElse("Bash", 0)
+      val web =
+        toolProfile.getOrElse("WebSearch", 0) + toolProfile.getOrElse("WebFetch", 0) + toolProfile.getOrElse("Curl", 0)
+      val write = toolProfile.getOrElse("Write", 0)
+      val readSearch = read + grep
 
-    val edit = toolProfile.getOrElse("Edit", 0) + toolProfile.getOrElse("Write", 0)
-    val read = toolProfile.getOrElse("Read", 0)
-    val grep = toolProfile.getOrElse("Grep", 0)
-    val bash = toolProfile.getOrElse("Bash", 0)
-    val web =
-      toolProfile.getOrElse("WebSearch", 0) + toolProfile.getOrElse("WebFetch", 0) + toolProfile.getOrElse("Curl", 0)
-    val write = toolProfile.getOrElse("Write", 0)
-    val readSearch = read + grep
-
-    // Rule 1: Web research dominant
-    if pct(web, total) > 0.50 then return InferredTask.Research.label
-
-    // Rule 2: System ops
-    if pct(bash, total) > 0.50 then return InferredTask.Ops.label
-
-    // Rule 3: Project initialization — lots of Write, little Read
-    if pct(write, total) > 0.40 && pct(read, total) < 0.20 then return InferredTask.ProjectInit.label
-
-    // Rule 4: Active coding — significant edits relative to reading
-    if edit > 0 && pct(edit, readSearch) > 0.4 then return InferredTask.Coding.label
-
-    // Rule 5: Debug — heavy search, some edits
-    if pct(readSearch, total) > 0.50 && edit > 0 && edit <= 3 then return InferredTask.Debug.label
-
-    // Rule 6: Code review / understanding — mostly reading
-    if pct(readSearch, total) > 0.60 && edit < 2 then return InferredTask.CodeReview.label
-
-    // Rule 7: Some editing activity
-    if edit > 0 then return InferredTask.Coding.label
-
-    // Default
-    InferredTask.Conversation.label
+      // Rule 1: Web research dominant
+      if pct(web, total) > 0.50 then InferredTask.Research.label
+      // Rule 2: System ops
+      else if pct(bash, total) > 0.50 then InferredTask.Ops.label
+      // Rule 3: Project initialization — lots of Write, little Read
+      else if pct(write, total) > 0.40 && pct(read, total) < 0.20 then InferredTask.ProjectInit.label
+      // Rule 4: Active coding — significant edits relative to reading
+      else if edit > 0 && pct(edit, readSearch) > 0.4 then InferredTask.Coding.label
+      // Rule 5: Debug — heavy search, some edits
+      else if pct(readSearch, total) > 0.50 && edit > 0 && edit <= 3 then InferredTask.Debug.label
+      // Rule 6: Code review / understanding — mostly reading
+      else if pct(readSearch, total) > 0.60 && edit < 2 then InferredTask.CodeReview.label
+      // Rule 7: Some editing activity
+      else if edit > 0 then InferredTask.Coding.label
+      // Default
+      else InferredTask.Conversation.label
+      end if
+    end if
 
   end infer
 
