@@ -141,6 +141,7 @@ export default {
   skillMode: false,
   skillModeName: '',
   skillModeDesc: '',
+  skillModeArgHint: '',
 
   // Thinking bubble
   currentThinkingBubble: null,

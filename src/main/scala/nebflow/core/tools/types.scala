@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
-import nebflow.agent.{AgentCommand, AgentDef, AgentLibrary}
+import nebflow.agent.*
 import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
 import nebflow.core.{AskItem, AskOption, FileChangeTracker}
@@ -37,7 +37,9 @@ case class ToolContext(
   hookContext: HookContext = HookContext(None, "", ""),
   folderId: Option[String] = None,
   // Agent identity for file history attribution
-  mailboxAddress: Option[String] = None
+  mailboxAddress: Option[String] = None,
+  // Dream scheduler — WriteMemoryTool sends entries here directly
+  dreamSchedulerRef: Option[ActorRef[DreamCommand]] = None
 )
 
 /** Tool error */

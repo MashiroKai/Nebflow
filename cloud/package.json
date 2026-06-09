@@ -1,0 +1,9 @@
+{
+  "name": "nebflow-cloud",
+  "version": "1.0.0",
+  "description": "Nebflow Mesh cloud functions for Tencent CloudBase",
+  "private": true,
+  "dependencies": {
+    "@cloudbase/node-sdk": "^3.18.0"
+  }
+}

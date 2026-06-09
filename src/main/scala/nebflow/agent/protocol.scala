@@ -123,6 +123,9 @@ object AgentCommand:
   /** Cache lifecycle prompt content (system-prefix, agentDef, memory, rules) — sent on first turn. */
   case class UpdateLifecycle(lc: LifecycleContext) extends AgentCommand
 
+  /** Update per-session git branch (detected by ContextRefresher on each turn). */
+  case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
+
   /**
    * Background task completed — inject result into message history and resume.
    *  Retained as a convenience during the Phase 1 coexistence period; internally
@@ -439,7 +442,11 @@ case class TurnContext(
   rulesMd: Option[String],
   memoryBlock: String,
   thinkingConfig: nebflow.llm.ThinkingConfig,
-  fileChanges: Option[SystemReminder]
+  fileChanges: Option[SystemReminder],
+  /** Detected git branch change since last turn. None if no change or not a git repo. */
+  branchChange: Option[SystemReminder] = None,
+  /** Current git branch name (for persisting back to SessionContext). */
+  currentBranch: Option[String] = None
 )
 
 /** Per-file write tracking entry for verification reminders. */
@@ -490,7 +497,9 @@ case class SessionContext(
   /** Lifecycle-cached prompt content. Resolved on first turn, reused until session reset. */
   lifecycle: Option[LifecycleContext] = None,
   /** Chat container width in pixels, reported by frontend. Used by Card tool for content sizing. */
-  chatWidth: Int = 0
+  chatWidth: Int = 0,
+  /** Last known git branch for this session's project root. Updated each turn. */
+  gitBranch: Option[String] = None
 )
 
 /** Pending user interaction deferreds. */
@@ -632,6 +641,7 @@ extension (s: AgentState)
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
   def lifecycle: Option[LifecycleContext] = s.session.lifecycle
+  def gitBranch: Option[String] = s.session.gitBranch
 
   // Mutation helpers — return new AgentState with updated sub-structure
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
@@ -701,6 +711,9 @@ extension (s: AgentState)
 
   def withLifecycleCleared: AgentState =
     s.copy(session = s.session.copy(lifecycle = None))
+
+  def withGitBranch(branch: Option[String]): AgentState =
+    s.copy(session = s.session.copy(gitBranch = branch))
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))

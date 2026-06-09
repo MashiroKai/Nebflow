@@ -81,20 +81,20 @@ body {
 }
 
 /* ---------- Sidebar Collapse ---------- */
-#nav-bar,
-#sidebar-panel {
+#sidebar {
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.2s ease;
+              opacity 0.2s ease,
+              margin 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              padding 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   overflow: hidden;
 }
-body.sidebar-collapsed #nav-bar {
+body.sidebar-collapsed #sidebar {
   width: 0;
   opacity: 0;
-  border-right-width: 0;
-}
-body.sidebar-collapsed #sidebar-panel {
-  width: 0;
-  opacity: 0;
+  margin: 0;
+  padding: 0;
+  border-width: 0;
 }
 
 /* Toggle button */
