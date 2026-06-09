@@ -11,6 +11,7 @@ import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
+import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
@@ -656,16 +657,24 @@ class WebSocketRoutes(
         case "switchSession" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if sessionId.nonEmpty then
-            sessionService
+            // Emit session_end for the session being left
+            sessionStore.getActiveId.flatMap { oldId =>
+              if oldId.nonEmpty && oldId != sessionId then emitSessionEnd(oldId)
+              else IO.unit
+            } *> sessionService
               .switchSession(sessionId)
               .flatMap { _ =>
+                val telStart = sharedResources.telemetry.fold(IO.unit)(
+                  _.record("session_start", io.circe.JsonObject("session_id" -> sessionId.asJson))
+                )
                 sendAgentSessionList(wsSend, sessionId) *>
-                  sendMemoryStatus(wsSend, sessionId)
+                  sendMemoryStatus(wsSend, sessionId) *> telStart
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
               }
           else IO.unit
+          end if
 
         case "createSession" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -674,9 +683,12 @@ class WebSocketRoutes(
           val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
           sessionService
             .createSession(name, agentName = agentName, folderId = folderId)
-            .flatMap { _ =>
+            .flatMap { meta =>
+              val tel = sharedResources.telemetry
+              val telStart =
+                tel.fold(IO.unit)(_.record("session_start", io.circe.JsonObject("session_id" -> meta.id.asJson)))
               // Send filtered session list for the agent tab
-              agentName match
+              val sendList = agentName match
                 case Some(an) =>
                   (sessionStore.listSessionsByAgent(an), sessionStore.listFolders(an)).flatMapN { (sessions, folders) =>
                     wsSend(
@@ -690,6 +702,7 @@ class WebSocketRoutes(
                   }
                 case None =>
                   sessionService.sendSessionList(wsSend, "Nebula")
+              sendList *> telStart
             }
             .handleErrorWith { e =>
               wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
@@ -703,8 +716,10 @@ class WebSocketRoutes(
               .getSessionMeta(sessionId)
               .flatMap { metaOpt =>
                 val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                // Clean up text buffers for deleted session to prevent memory leak
-                sessionTextBuffers.update(_ - sessionId) *>
+                // Emit session_end telemetry before cleanup
+                emitSessionEnd(sessionId).handleErrorWith(_ => IO.unit) *>
+                  // Clean up text buffers for deleted session to prevent memory leak
+                  sessionTextBuffers.update(_ - sessionId) *>
                   sessionThinkingBuffers.update(_ - sessionId) *>
                   sessionTurnStarts.update(_ - sessionId) *>
                   removeRootAgent(sessionId) *> sessionService
@@ -900,9 +915,9 @@ class WebSocketRoutes(
           else IO.unit
           end if
 
-        // ===== Reminder Management =====
+        // ===== Scheduled Task Management =====
 
-        case "createReminder" =>
+        case "createScheduledTask" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val hc = json.hcursor
           val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
@@ -910,17 +925,20 @@ class WebSocketRoutes(
           val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
           val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
           if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
-            val reminder = nebflow.core.reminder.Reminder.create(crSessionId, crContent, crTriggerAt, crRefPath)
-            sharedResources.reminderStore.addReminder(reminder).flatMap { _ =>
+            val task = nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath)
+            sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
+              sharedResources.scheduledTaskActorRef.foreach(
+                _ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskCreated(task)
+              )
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderCreated".asJson,
-                  "reminder" -> io.circe.Json.obj(
-                    "id" -> reminder.id.asJson,
-                    "content" -> reminder.content.asJson,
-                    "triggerAt" -> reminder.triggerAt.asJson,
-                    "createdAt" -> reminder.createdAt.asJson,
-                    "referencePath" -> reminder.referencePath.asJson
+                  "type" -> "scheduledTaskCreated".asJson,
+                  "task" -> io.circe.Json.obj(
+                    "id" -> task.id.asJson,
+                    "content" -> task.content.asJson,
+                    "triggerAt" -> task.triggerAt.asJson,
+                    "createdAt" -> task.createdAt.asJson,
+                    "referencePath" -> task.referencePath.asJson
                   )
                 )
               )
@@ -931,28 +949,28 @@ class WebSocketRoutes(
               else if crContent.isEmpty then "missing content"
               else if crTriggerAt <= System.currentTimeMillis() then "triggerAt must be in the future"
               else "unknown"
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid reminder: $reason".asJson))
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid scheduled task: $reason".asJson))
           end if
 
-        case "listReminders" =>
+        case "listScheduledTasks" =>
           val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if lrSessionId.nonEmpty then
-            sharedResources.reminderStore.loadReminders(lrSessionId).flatMap { reminders =>
-              val reminderJsons = reminders.map { r =>
+            sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { tasks =>
+              val taskJsons = tasks.map { t =>
                 io.circe.Json.obj(
-                  "id" -> r.id.asJson,
-                  "content" -> r.content.asJson,
-                  "triggerAt" -> r.triggerAt.asJson,
-                  "createdAt" -> r.createdAt.asJson,
-                  "triggered" -> r.triggered.asJson,
-                  "triggeredAt" -> r.triggeredAt.asJson,
-                  "referencePath" -> r.referencePath.asJson
+                  "id" -> t.id.asJson,
+                  "content" -> t.content.asJson,
+                  "triggerAt" -> t.triggerAt.asJson,
+                  "createdAt" -> t.createdAt.asJson,
+                  "triggered" -> t.triggered.asJson,
+                  "triggeredAt" -> t.triggeredAt.asJson,
+                  "referencePath" -> t.referencePath.asJson
                 )
               }
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderList".asJson,
-                  "reminders" -> reminderJsons.asJson,
+                  "type" -> "scheduledTaskList".asJson,
+                  "tasks" -> taskJsons.asJson,
                   "sessionId" -> lrSessionId.asJson
                 )
               )
@@ -960,15 +978,18 @@ class WebSocketRoutes(
           else IO.unit
           end if
 
-        case "deleteReminder" =>
+        case "deleteScheduledTask" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val drSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
           val drId = json.hcursor.downField("id").as[String].getOrElse("")
           if drSessionId.nonEmpty && drId.nonEmpty then
-            sharedResources.reminderStore.deleteReminder(drSessionId, drId).flatMap { _ =>
+            sharedResources.scheduledTaskStore.deleteTask(drSessionId, drId).flatMap { _ =>
+              sharedResources.scheduledTaskActorRef.foreach(
+                _ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskDeleted(drSessionId, drId)
+              )
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderDeleted".asJson,
+                  "type" -> "scheduledTaskDeleted".asJson,
                   "id" -> drId.asJson,
                   "sessionId" -> drSessionId.asJson
                 )
@@ -1620,50 +1641,65 @@ class WebSocketRoutes(
                     )
                   )
               else
-                val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
-                if content.nonEmpty then blocks += ContentBlock.Text(content)
+                // Resolve projectRoot for local file search before processing attachments
+                (for
+                  metaOpt <- sessionStore.getSessionMeta(msgSessionId)
+                  folderId = metaOpt.flatMap(_.folderId)
+                  projectRoot <- sessionStore.resolveProjectRoot(folderId)
+                yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
+                  val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
+                  if content.nonEmpty then blocks += ContentBlock.Text(content)
 
-                val savedPaths = scala.collection.mutable.ListBuffer.empty[String]
-                attachments.foreach { att =>
-                  val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                  val data = att.hcursor.downField("data").as[String].getOrElse("")
-                  val name = att.hcursor.downField("name").as[String].getOrElse("")
-                  if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
-                  else if data.nonEmpty then
-                    // Save file to disk, only send path reference to LLM
-                    val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                    try
-                      os.makeDir.all(uploadDir)
-                      // Sanitize filename: strip path separators and path traversal sequences
-                      val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
-                      val fileName = s"${System.nanoTime()}_$safeName"
-                      val filePath = uploadDir / fileName
-                      os.write.over(filePath, data)
-                      val absPath = filePath.toString
-                      // Verify the resolved path is still within uploadDir (defense in depth)
-                      if absPath.startsWith(uploadDir.toString) then
-                        savedPaths += absPath
-                        blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                        logger.info(s"Saved attachment '$name' to $absPath (${data.length} chars)")
-                      else
-                        logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
-                        val truncated =
-                          if data.length <= 5000 then data
-                          else data.take(5000) + s"\n... (truncated, ${data.length} total chars)"
-                        blocks += ContentBlock.Text(s"[file: $name (path unsafe, inline)]\n$truncated")
-                    catch
-                      case e: Exception =>
-                        logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
-                        // Fallback: embed content directly (truncated)
-                        val truncated =
-                          if data.length <= 5000 then data
-                          else data.take(5000) + s"\n... (truncated, ${data.length} total chars)"
-                        blocks += ContentBlock.Text(s"[file: $name (保存失败，内联内容)]\n$truncated")
-                    end try
-                  end if
-                }
+                  val savedPaths = scala.collection.mutable.ListBuffer.empty[String]
+                  attachments.foreach { att =>
+                    val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                    val data = att.hcursor.downField("data").as[String].getOrElse("")
+                    val name = att.hcursor.downField("name").as[String].getOrElse("")
+                    val hash = att.hcursor.downField("hash").as[String].getOrElse("")
+                    val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
+                    if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
+                    else if data.nonEmpty then
+                      // Try to find the file locally by name + size + hash
+                      // Search priority: project root → common user dirs → full home
+                      val home = os.home.toString
+                      val commonDirs = List("Downloads", "Desktop", "Documents")
+                        .map(d => s"$home/$d")
+                        .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
+                      val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
+                      val localPath =
+                        if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
+                      localPath match
+                        case Some(path) =>
+                          savedPaths += path
+                          blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                          logger.info(s"Attachment '$name' resolved to local file: $path")
+                        case None =>
+                          // Fallback: save file to disk, send path reference to LLM
+                          val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
+                          try
+                            os.makeDir.all(uploadDir)
+                            val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+                            val fileName = s"${System.nanoTime()}_$safeName"
+                            val filePath = uploadDir / fileName
+                            os.write.over(filePath, java.util.Base64.getDecoder.decode(data))
+                            val absPath = filePath.toString
+                            val decodedSize = java.util.Base64.getDecoder.decode(data).length
+                            if absPath.startsWith(uploadDir.toString) then
+                              savedPaths += absPath
+                              blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
+                              logger.info(s"Saved attachment '$name' to $absPath ($decodedSize bytes)")
+                            else
+                              logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
+                              blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
+                          catch
+                            case e: Exception =>
+                              logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
+                              blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
+                          end try
+                      end match
+                    end if
+                  }
 
-                sessionStore.getSessionMeta(msgSessionId).flatMap { metaOpt =>
                   val sessionName = metaOpt.map(_.name).getOrElse("-")
                   logger.info(s"${logger.hl(sessionName)} User message: ${content
                       .take(60)}${if content.length > 60 then "..." else ""}") *>
@@ -1686,13 +1722,45 @@ class WebSocketRoutes(
                          .appendUiMessages(msgSessionId, List(UiMessage.User(content, attJson, injected)))
                          .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
                      else IO.unit) *> {
-                      val blocksList = blocks.toList
-                      routeToAgent(msgSessionId)(ref =>
-                        IO(
-                          ref ! AgentCommand
-                            .UserInput(content, None, clientMessageId, Some(blocksList).filter(_.nonEmpty), chatWidth)
-                        )
-                      )
+                      // Track turn count + session start time for telemetry
+                      sessionTurnCounts
+                        .update(m => m.updated(msgSessionId, m.getOrElse(msgSessionId, 0) + 1))
+                        .handleErrorWith(_ => IO.unit) *>
+                        sessionStartTimes
+                          .update { m =>
+                            if m.contains(msgSessionId) then m else m.updated(msgSessionId, System.currentTimeMillis())
+                          }
+                          .handleErrorWith(_ => IO.unit) *> {
+                          // Telemetry: message_sent (structural features only, no content)
+                          sharedResources.telemetry.fold(IO.unit)(
+                            _.record(
+                              "message_sent",
+                              JsonObject.fromIterable(
+                                List(
+                                  "session_id" -> msgSessionId.asJson,
+                                  "prompt_length" -> content.length.asJson,
+                                  "language_hint" -> (if content.exists(_ > 0x4e00) then "chinese"
+                                                      else "english").asJson,
+                                  "has_code_block" -> content.contains("```").asJson
+                                )
+                              )
+                            ).handleErrorWith(_ => IO.unit)
+                          ) *> {
+                            val blocksList = blocks.toList
+                            routeToAgent(msgSessionId)(ref =>
+                              IO(
+                                ref ! AgentCommand
+                                  .UserInput(
+                                    content,
+                                    None,
+                                    clientMessageId,
+                                    Some(blocksList).filter(_.nonEmpty),
+                                    chatWidth
+                                  )
+                              )
+                            )
+                          }
+                        }
                     }
                 }
             }
@@ -1700,6 +1768,131 @@ class WebSocketRoutes(
           end if
     end if
   end handleMessage
+
+  // ============================================================
+  // Local file search for smart attachment resolution
+  // ============================================================
+
+  /** Directories to skip during filesystem search — build artifacts, caches, system dirs. */
+  private val skipDirs = Set(
+    "node_modules",
+    ".git",
+    "build",
+    "target",
+    "dist",
+    ".cache",
+    "__pycache__",
+    ".gradle",
+    ".idea",
+    ".vscode",
+    ".nebflow",
+    "Library",
+    "Applications",
+    "Trash",
+    ".Trash",
+    ".npm",
+    ".yarn",
+    ".pnpm-store",
+    ".cargo",
+    ".rustup",
+    ".conda",
+    ".venv",
+    "venv",
+    "DerivedData",
+    ".m2",
+    ".ivy2",
+    ".sbt",
+    ".coursier",
+    "Pods",
+    "vendor",
+    "bower_components",
+    "Movies"
+  )
+
+  /**
+   * Search for a file by name and verify its SHA-256 hash matches.
+   * Searches directories in priority order. Does NOT follow symlinks.
+   * First matches by filename + size (cheap), then verifies by SHA-256 (expensive).
+   *
+   * @param name filename to search for
+   * @param expectedHash SHA-256 hex hash of the uploaded file
+   * @param expectedSize file size in bytes (used for fast pre-filtering)
+   * @param searchPaths directories to search in priority order
+   * @return absolute path of a matching local file, or None
+   */
+  private def findLocalFile(
+    name: String,
+    expectedHash: String,
+    expectedSize: Long,
+    searchPaths: List[String]
+  ): Option[String] =
+    import java.nio.file.{FileVisitResult, Files, Path, SimpleFileVisitor}
+    import java.security.MessageDigest
+
+    val targetName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+    if targetName.isEmpty then None
+    else
+      val candidates = scala.collection.mutable.ListBuffer.empty[(Path, Long, Long)] // (path, mtime, size)
+
+      for searchRoot <- searchPaths if candidates.isEmpty do
+        val rootPath = Path.of(searchRoot)
+        if Files.isDirectory(rootPath) then
+          try
+            // No FOLLOW_LINKS — avoids symlink loops on macOS bundles (.fcpcache etc.)
+            Files.walkFileTree(
+              rootPath,
+              java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]),
+              Integer.MAX_VALUE,
+              new SimpleFileVisitor[Path]:
+                override def preVisitDirectory(
+                  dir: Path,
+                  attrs: java.nio.file.attribute.BasicFileAttributes
+                ): FileVisitResult =
+                  if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
+                  else FileVisitResult.CONTINUE
+
+                override def visitFile(
+                  file: Path,
+                  attrs: java.nio.file.attribute.BasicFileAttributes
+                ): FileVisitResult =
+                  // Fast filter: match filename + size before expensive hash computation
+                  if file.getFileName.toString == targetName && attrs.isRegularFile && attrs.size == expectedSize then
+                    candidates += ((file, attrs.lastModifiedTime.toMillis, attrs.size))
+                  FileVisitResult.CONTINUE
+
+                override def visitFileFailed(file: Path, exc: java.io.IOException): FileVisitResult =
+                  FileVisitResult.CONTINUE
+            )
+          catch
+            case _: Exception => // skip inaccessible directories
+        end if
+      end for
+      if candidates.isEmpty then None
+      else
+        // Verify SHA-256 for each candidate (already pre-filtered by name + size)
+        val hashMatches = candidates.toList.filter { (path, _, _) =>
+          try
+            val bytes = Files.readAllBytes(path)
+            val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+            val hex = digest.map(b => String.format("%02x", b)).mkString
+            hex == expectedHash
+          catch case _: Exception => false
+        }
+
+        hashMatches match
+          case Nil => None
+          case (p, _, _) :: Nil => Some(p.toString)
+          case multiple =>
+            // Multiple identical copies: pick the most recently modified with shortest path
+            val sorted = multiple.sortBy { (path, mtime, _) =>
+              (-mtime, path.toString.length)
+            }
+            val chosen = sorted.head._1.toString
+            logger.info(s"Attachment '$name': ${multiple.size} local copies with same hash, chose: $chosen")
+            Some(chosen)
+      end if
+    end if
+  end findLocalFile
 
   // ============================================================
   // UI Message recording — wraps wsSend to persist frontend-renderable history
@@ -1716,6 +1909,85 @@ class WebSocketRoutes(
   /** Per-session turn start time — set on first streaming event, consumed on done. */
   private val sessionTurnStarts: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
+
+  // ---- Per-session telemetry tracking ----
+
+  /** Per-session tool call counts: sessionId -> (toolName -> count). */
+  private val sessionToolProfile: Ref[IO, Map[String, Map[String, Int]]] =
+    Ref.unsafe[IO, Map[String, Map[String, Int]]](Map.empty)
+
+  /** Per-session turn count (user messages). */
+  private val sessionTurnCounts: Ref[IO, Map[String, Int]] =
+    Ref.unsafe[IO, Map[String, Int]](Map.empty)
+
+  /** Per-session start time (first activity). */
+  private val sessionStartTimes: Ref[IO, Map[String, Long]] =
+    Ref.unsafe[IO, Map[String, Long]](Map.empty)
+
+  /** Per-session model used (last model). */
+  private val sessionModels: Ref[IO, Map[String, String]] =
+    Ref.unsafe[IO, Map[String, String]](Map.empty)
+
+  /** Per-session all models used (accumulated). */
+  private val sessionAllModels: Ref[IO, Map[String, Set[String]]] =
+    Ref.unsafe[IO, Map[String, Set[String]]](Map.empty)
+
+  /** Per-session response times in milliseconds (per turn). */
+  private val sessionResponseTimes: Ref[IO, Map[String, List[Long]]] =
+    Ref.unsafe[IO, Map[String, List[Long]]](Map.empty)
+
+  /** Record a tool call for a session's telemetry profile. */
+  private def recordToolForTelemetry(sessionId: String, toolName: String): IO[Unit] =
+    sessionToolProfile.update { m =>
+      val profile = m.getOrElse(sessionId, Map.empty)
+      m.updated(sessionId, profile.updated(toolName, profile.getOrElse(toolName, 0) + 1))
+    } *> sessionStartTimes.update { m =>
+      if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis())
+    }
+
+  /** Emit a session_end event and clean up telemetry state for a session. */
+  private def emitSessionEnd(sessionId: String): IO[Unit] =
+    sharedResources.telemetry match
+      case None => cleanupSessionTelemetry(sessionId)
+      case Some(reporter) =>
+        for
+          profile <- sessionToolProfile.get.map(_.getOrElse(sessionId, Map.empty))
+          turns <- sessionTurnCounts.get.map(_.getOrElse(sessionId, 0))
+          startTime <- sessionStartTimes.get.map(_.get(sessionId))
+          model <- sessionModels.get.map(_.get(sessionId).getOrElse(""))
+          allModels <- sessionAllModels.get.map(_.getOrElse(sessionId, Set.empty))
+          responseTimes <- sessionResponseTimes.get.map(_.getOrElse(sessionId, Nil))
+          _ <- cleanupSessionTelemetry(sessionId)
+          durationSec = startTime.map(s => (System.currentTimeMillis() - s) / 1000).getOrElse(0L)
+          inferredTask = TaskInferencer.infer(profile, turns)
+          avgResponseMs = if responseTimes.nonEmpty then responseTimes.sum / responseTimes.size else 0L
+          maxResponseMs = responseTimes.maxOption.getOrElse(0L)
+          props = JsonObject.fromIterable(
+            List(
+              "session_id" -> sessionId.asJson,
+              "duration_sec" -> durationSec.asJson,
+              "turn_count" -> turns.asJson,
+              "tool_profile" -> TaskInferencer.toolProfileJson(profile).asJson,
+              "inferred_task" -> inferredTask.asJson,
+              "model_used" -> model.asJson,
+              "models_used" -> allModels.toList.asJson,
+              "avg_response_time_ms" -> avgResponseMs.asJson,
+              "max_response_time_ms" -> maxResponseMs.asJson,
+              "response_times" -> responseTimes.asJson
+            )
+          )
+          _ <- reporter.record("session_end", props)
+          _ <- reporter.flush
+        yield ()
+
+  /** Clean up per-session telemetry tracking state. */
+  private def cleanupSessionTelemetry(sessionId: String): IO[Unit] =
+    sessionToolProfile.update(_ - sessionId) *>
+      sessionTurnCounts.update(_ - sessionId) *>
+      sessionStartTimes.update(_ - sessionId) *>
+      sessionModels.update(_ - sessionId) *>
+      sessionAllModels.update(_ - sessionId) *>
+      sessionResponseTimes.update(_ - sessionId)
 
   private def makeRecordingWsSend(
     sessionId: String,
@@ -1746,7 +2018,13 @@ class WebSocketRoutes(
         else IO.unit
 
       case "toolStart" =>
-        sessionTurnStarts
+        val label = hc.downField("label").as[String].getOrElse("")
+        // Track tool usage for telemetry
+        val toolName = label.takeWhile(_ != '(').trim
+        val trackTool =
+          if toolName.nonEmpty then recordToolForTelemetry(sessionId, toolName).handleErrorWith(_ => IO.unit)
+          else IO.unit
+        trackTool *> sessionTurnStarts
           .update(m => if m.contains(sessionId) then m else m.updated(sessionId, System.currentTimeMillis()))
         // Flush accumulated text + thinking before tool execution, matching frontend finishAi() behavior.
         // Without this, text output before a tool call stays in the in-memory buffer and is lost
@@ -1802,34 +2080,52 @@ class WebSocketRoutes(
 
       case "done" =>
         val model = hc.downField("model").as[Option[String]].getOrElse(None)
-        sessionTurnStarts
+        // Track model for telemetry
+        val trackModel = model match
+          case Some(m) =>
+            sessionModels.update(_.updated(sessionId, m)) *>
+              sessionAllModels.update { map =>
+                val set = map.getOrElse(sessionId, Set.empty)
+                map.updated(sessionId, set + m)
+              }
+          case None => IO.unit
+        trackModel *> sessionTurnStarts
           .modify { m =>
             val start = m.getOrElse(sessionId, 0L)
             (m - sessionId, start)
           }
           .flatMap { startTime =>
             val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
-            sessionTextBuffers
-              .modify { m =>
-                val text = m.getOrElse(sessionId, "")
-                (m - sessionId, text)
-              }
-              .flatMap { text =>
-                sessionThinkingBuffers
-                  .modify { m =>
-                    val thinking = m.getOrElse(sessionId, "")
-                    (m - sessionId, thinking)
-                  }
-                  .flatMap { thinking =>
-                    val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
-                    if text.nonEmpty || thinkingOpt.isDefined then
-                      sharedResources.sessionStore.appendUiMessages(
-                        sessionId,
-                        List(UiMessage.Ai(text, durationMs, model, thinkingOpt))
-                      )
-                    else IO.unit
-                  }
-              }
+            // Track response time for telemetry
+            val trackResponseTime = durationMs match
+              case Some(ms) =>
+                sessionResponseTimes.update { map =>
+                  val times = map.getOrElse(sessionId, Nil)
+                  map.updated(sessionId, times :+ ms)
+                }
+              case None => IO.unit
+            trackResponseTime *>
+              sessionTextBuffers
+                .modify { m =>
+                  val text = m.getOrElse(sessionId, "")
+                  (m - sessionId, text)
+                }
+                .flatMap { text =>
+                  sessionThinkingBuffers
+                    .modify { m =>
+                      val thinking = m.getOrElse(sessionId, "")
+                      (m - sessionId, thinking)
+                    }
+                    .flatMap { thinking =>
+                      val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
+                      if text.nonEmpty || thinkingOpt.isDefined then
+                        sharedResources.sessionStore.appendUiMessages(
+                          sessionId,
+                          List(UiMessage.Ai(text, durationMs, model, thinkingOpt))
+                        )
+                      else IO.unit
+                    }
+                }
           }
 
       case "toolEnd" =>
