@@ -225,14 +225,79 @@ HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local 
 
   /** Base description without user design prompt. */
   private val baseDescription =
-    """Renders an interactive visual explanation in the chat — use this when a diagram, animation, or spatial layout conveys the idea better than paragraphs of text.
+    """Renders an interactive HTML card embedded in the chat.
 
-This tool is for "a picture is worth a thousand words" scenarios. If the content works equally well as Markdown text, do NOT use this tool.
+Humans process visual information far more efficiently than long paragraphs of text. Use this tool to optimize your output — present relationships, structure, and data visually when doing so makes your answer easier to understand.
+
+Accuracy and correctness come first. **Always generate images with professional tools first, then embed them with Card.** Card is for presenting results — not for drawing. Hand-written SVG should only be used for simple conceptual diagrams where precision does not matter. For any data, numbers, or precise structures, always use tools.
+
+## Workflow: generate with tools, embed with Card
+
+1. Use Bash to run a tool (matplotlib, schemdraw, graphviz, etc.) → outputs an image file
+2. Use Card to embed that file via `<img src="/absolute/path/to/file.png">`
+
+## Recommended tools by scenario
+
+### Data visualization
+- **Plots, charts, heatmaps**: matplotlib, gnuplot, ROOT, plotly → save PNG/SVG
+- **Sankey diagrams** (energy/material flow): plotly → save PNG
+- **Gantt charts / timelines**: matplotlib, plotly, mermaid → save PNG
+- **Radar / spider charts**: matplotlib, plotly → save PNG
+- **Treemaps**: plotly, squarify (Python) → save PNG
+
+### Electronics & signals
+- **Circuit schematics**: schemdraw (Python) → save PNG/SVG
+- **PCB layouts**: KiCad/Eagle export, or matplotlib patches → embed
+- **PCB cross-sections / layer stack-ups**: matplotlib patches → save PNG
+- **Timing diagrams**: wavedrom (Python/CLI) → save SVG
+- **Frequency spectra / Bode plots**: matplotlib + scipy → save PNG
+- **Eye diagrams**: matplotlib → save PNG
+- **Smith charts**: matplotlib (smithplot) → save PNG
+
+### Software & system architecture
+- **Block diagrams / signal flow**: graphviz (dot), mermaid-cli → save PNG/SVG
+- **Flowcharts, org charts**: graphviz, mermaid → save PNG/SVG
+- **UML class / sequence / state diagrams**: plantuml, mermaid → save PNG/SVG
+- **ER diagrams** (database schemas): plantuml, erd (CLI), graphviz → save PNG
+- **Network topologies**: graphviz, networkx + matplotlib → save PNG
+
+### Science & engineering
+- **Detector / material cross-sections**: matplotlib patches → save PNG
+- **3D structures / assemblies**: OpenSCAD CLI, matplotlib 3D → save PNG/STL
+- **Vector fields**: matplotlib (quiver), plotly → save PNG
+- **3D surfaces / contour plots**: matplotlib, plotly → save PNG
+- **Polar / antenna radiation patterns**: matplotlib (polar) → save PNG
+- **Mathematical functions / geometry**: matplotlib, manim CLI → save PNG/MP4
+
+### Chemistry & materials
+- **Molecular structures**: rdkit (Python), OpenBabel CLI → save PNG/SVG/3D
+- **Crystal structures / unit cells**: pymatgen, ASE (Python) → save PNG/3D
+
+### Geography & spatial
+- **Maps / spatial distributions**: folium (→ save HTML → embed), cartopy + matplotlib → save PNG
+
+## What it can do
+
+- **Diagrams & charts**: flowcharts, architecture diagrams, org charts, bar/pie/line charts, heatmaps, network topologies
+- **Animations & simulations**: physics simulations, algorithm step-throughs, state machine transitions, progress indicators
+- **Spatial layouts**: UI mockups, floor plans, image galleries, comparison grids, annotated screenshots
+- **Interactive widgets**: clickable prototypes, drag-and-drop exercises, parameter sliders, input forms, quizzes
+- **Embedded media**: local images, generated plots, videos, 3D models (OBJ/STL/GLTF)
+- **Engineering drawings**: circuit schematics, PCB layouts, PCB layer stack-ups, block diagrams, signal flow graphs, detector geometries, 2D/3D structural cross-sections, mechanical assemblies
 
 ## Parameters
 
-- html (string, required): HTML with CSS and JS. Local file paths in src/href (images, scripts, etc.) are automatically served. Dark mode via var(--color-*).
-- title (string, optional): title above card."""
+- html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
+- title (string, optional): title above card.
+
+Example (embed tool-generated image):
+{"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}
+
+Example (SVG diagram):
+{"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 600 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"70\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"240\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}
+
+Example (interactive 3D with Three.js):
+{"html":"<div style=\"padding:0\"><script src=\"https://cdn.jsdelivr.net/npm/three@latest/build/three.min.js\"></script><canvas id=\"c\" style=\"width:100%;height:400px;display:block\"></canvas><script>const s=new THREE.Scene();const c=document.getElementById('c');const r=new THREE.WebGLRenderer({canvas:c,antialias:true});r.setSize(c.clientWidth,400);const cam=new THREE.PerspectiveCamera(75,c.clientWidth/400,0.1,1000);cam.position.z=3;s.add(new THREE.Mesh(new THREE.SphereGeometry(1,32,32),new THREE.MeshNormalMaterial()));function f(){requestAnimationFrame(f);r.render(s,cam)}f()</script></div>","title":"3D Sphere"}"""
 
   /** Dynamic description: base tool description + user design prompt (always present after auto-init). */
   def description: String =
@@ -256,9 +321,9 @@ This tool is for "a picture is worth a thousand words" scenarios. If the content
   )
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    input("html").flatMap(_.asString) match
+    extractHtml(input) match
       case Some(rawHtml) =>
-        val title = input("title").flatMap(_.asString).getOrElse("")
+        val title = extractTitle(input)
         IO.blocking {
           val html = embedLocalFiles(rawHtml)
           val payload = Json
@@ -271,7 +336,52 @@ This tool is for "a picture is worth a thousand words" scenarios. If the content
         }
 
       case None =>
-        IO.pure(Left(ToolError("Missing required parameter: html")))
+        val debug = input.toMap
+          .map { (k, v) =>
+            val preview = v.asString.getOrElse(v.noSpaces).take(80)
+            s"$k: $preview"
+          }
+          .mkString(", ")
+        IO.pure(
+          Left(
+            ToolError(
+              s"Card tool requires non-empty `html` parameter. Your input: {$debug}. Example: {\"html\": \"<div>content</div>\", \"title\": \"optional\"}"
+            )
+          )
+        )
+
+  /**
+   * Try to extract valid HTML from the input with multi-level fallback:
+   *   1. html field is a non-empty string → use directly
+   *   2. html field is a non-string type → stringify and check if it looks like HTML
+   *   3. html is empty/missing, but title contains HTML → use title as html
+   */
+  private def extractHtml(input: JsonObject): Option[String] =
+    // Level 1: html field is a non-empty string
+    input("html")
+      .flatMap(_.asString)
+      .filter(_.nonEmpty)
+      // Level 2: html is non-string — try to stringify
+      .orElse(
+        input("html").filterNot(_.isString).map(_.noSpaces).filter(isHtmlLike)
+      )
+      // Level 3: html missing/empty but title looks like HTML
+      .orElse(
+        input("title").flatMap(_.asString).filter(isHtmlLike)
+      )
+
+  /** Extract title, accounting for the case where title was repurposed as html. */
+  private def extractTitle(input: JsonObject): String =
+    val htmlDirect = input("html").flatMap(_.asString).filter(_.nonEmpty)
+    val titleValue = input("title").flatMap(_.asString).getOrElse("")
+    // If html was empty/missing and title was repurposed as html, clear title
+    if htmlDirect.isEmpty && isHtmlLike(titleValue) then ""
+    else titleValue
+
+  /** Rough check: does the string look like HTML (starts with < and contains >)? */
+  private def isHtmlLike(s: String): Boolean =
+    val t = s.trim
+    t.startsWith("<") && t.contains(">")
 
   def summarize(input: JsonObject): String =
     val title = input("title").flatMap(_.asString).getOrElse("Card")

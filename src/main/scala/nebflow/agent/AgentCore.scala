@@ -355,6 +355,16 @@ private[agent] trait AgentCore:
           reminders = collectAllResult._1
           newHighest = collectAllResult._2
           _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
+          // --- Git branch change detection ---
+          _ <- turnCtx.branchChange match
+            case Some(_) =>
+              // Persist the current branch so we don't re-alert on subsequent turns
+              IO(ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch))
+            case None =>
+              // Still update if this is the first detection (None → Some)
+              IO.whenA(turnCtx.currentBranch != stateForLlm.gitBranch)(
+                IO(ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch))
+              )
           loggedReminders <- SystemReminders.logAndReturn(reminders)
           // --- Active task reminder ---
           // Only when pendingTaskCheck is set (LLM had text+tools or used TaskUpdate).
@@ -385,7 +395,7 @@ private[agent] trait AgentCore:
             )
           // Clear the flag after reading
           _ <- IO(ctx.self ! AgentCommand.ClearTaskCheck)
-          allReminders = verificationOpt.toList ++ loggedReminders
+          allReminders = verificationOpt.toList ++ loggedReminders ++ turnCtx.branchChange.toList
           remindersText = SystemReminder.renderAll(allReminders) + taskReminder
           // Per-turn dynamic context: only reminders (env info is now in system prompt)
           // Skip for compact/ask turns — the reminder is already in messages
@@ -939,11 +949,34 @@ private[agent] trait AgentCore:
       if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
       else Repl.loadSystemPrompt()
     val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
-    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth)
+    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth, meshDeviceInfo)
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
-
   end buildSystemPrompt
+
+  /** Build mesh device info for environment table. */
+  private def meshDeviceInfo: String =
+    val msOpt = nebflow.core.tools.MeshTool.currentService
+    msOpt match
+      case None => ""
+      case Some(ms) =>
+        try
+          import cats.effect.unsafe.implicits.global
+          val id = ms.identity.unsafeRunSync()
+          val peersList = ms.peers.unsafeRunSync()
+          val sb = new StringBuilder
+          sb.append(s"| Current device | ${id.deviceName} |\n")
+          if peersList.nonEmpty then
+            val peerStr = peersList
+              .map(p => s"${p.deviceName} (${p.platform})")
+              .mkString("; ")
+            sb.append(s"| Available devices | $peerStr |\n")
+          sb.toString
+        catch case _: Exception => ""
+
+    end match
+
+  end meshDeviceInfo
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)

@@ -2,7 +2,6 @@ package nebflow.service
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
-import io.circe.Json
 import io.circe.syntax.*
 import nebflow.shared.{MtimeCache, MtimeFileCache}
 
@@ -24,8 +23,7 @@ import scala.jdk.CollectionConverters.*
  *   - The index entry carries a →hash reference so agents can find it.
  *
  * Write flow:
- *   WriteMemoryTool → staging area (~/.nebflow/memory-staging.jsonl)
- *   Dream cycle → MemoryAgent processes staging → final memory files
+ *   WriteMemoryTool → Dream actor mailbox → MemoryAgent processes → final memory files
  *
  * All reads use mtime-based caching.
  */
@@ -47,9 +45,6 @@ object MemoryStore:
   /** Path for a detail file given its hash. */
   def detailPath(hash: String): os.Path = detailDir / s"$hash.md"
 
-  /** Staging area path. */
-  def stagingPath: os.Path = os.home / ".nebflow" / "memory-staging.jsonl"
-
   /** List all folder memory files that exist on disk. */
   def allFolderMemoryPaths: Seq[os.Path] =
     val dir = os.home / ".nebflow" / "folders"
@@ -63,42 +58,6 @@ object MemoryStore:
     val digest = java.security.MessageDigest.getInstance("SHA-256")
     digest.update(content.getBytes("UTF-8"))
     digest.digest().take(6).map(b => String.format("%02x", b)).mkString
-
-  // --- Staging area ---
-
-  /** Append an entry to the staging area (called by WriteMemoryTool). */
-  def appendStaging(
-    scope: String,
-    content: String,
-    detail: Option[String],
-    source: String,
-    folderId: Option[String]
-  ): IO[Unit] =
-    IO.blocking {
-      val hash = detail.filter(_.trim.nonEmpty).map(_ => contentHash(content))
-      val entry = Json.obj(
-        "ts" -> java.time.LocalDateTime.now().toString.asJson,
-        "scope" -> scope.asJson,
-        "content" -> content.asJson,
-        "detail" -> detail.asJson,
-        "hash" -> hash.asJson,
-        "source" -> source.asJson,
-        "folder" -> folderId.asJson
-      )
-      val line = entry.noSpaces + "\n"
-      os.write.append(stagingPath, line, createFolders = true)
-    }
-
-  /** Load all staging entries. Returns empty string if no staging file. */
-  def loadStaging: IO[String] = IO.blocking {
-    if !os.exists(stagingPath) then ""
-    else os.read(stagingPath).trim
-  }
-
-  /** Clear the staging area after processing. */
-  def clearStaging: IO[Unit] = IO.blocking {
-    if os.exists(stagingPath) then os.remove(stagingPath)
-  }
 
   // --- Mtime-cached file reads ---
 

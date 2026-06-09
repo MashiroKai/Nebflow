@@ -6,13 +6,17 @@
 :root {
   --sapphire: 91 127 191;
   --sapphire-glow: 120 160 220;
-  --sapphire-edge: rgba(91, 127, 191, 0.15);
-  --sapphire-edge-strong: rgba(91, 127, 191, 0.32);
+  --sapphire-edge: rgba(91, 127, 191, 0.08);
+  --sapphire-edge-strong: rgba(91, 127, 191, 0.25);
   --sapphire-refraction: rgba(255, 255, 255, 0.45);
 
-  /* Glass surface — light: more transparent, cleaner */
-  --glass-bg: rgba(255, 255, 255, 0.62);
-  --glass-blur: 20px;
+  /* Glass surface — light: transparent, deep frost */
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-blur: 24px;
+
+  /* Glass border — whisper edge, feels like real glass */
+  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-border-dark: rgba(91, 127, 191, 0.06);
 
   /* Etched input — blends into glass surface, no color block */
   --glass-etched-bg: rgba(0, 0, 0, 0.025);
@@ -29,11 +33,14 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --sapphire-edge: rgba(91, 127, 191, 0.10);
-    --sapphire-edge-strong: rgba(91, 127, 191, 0.22);
+    --sapphire-edge: rgba(91, 127, 191, 0.06);
+    --sapphire-edge-strong: rgba(91, 127, 191, 0.18);
     --sapphire-refraction: rgba(91, 127, 191, 0.06);
 
-    --glass-bg: rgba(28, 32, 42, 0.72);
+    --glass-bg: rgba(24, 28, 38, 0.68);
+    --glass-border: rgba(255, 255, 255, 0.06);
+    --glass-border-dark: rgba(255, 255, 255, 0.04);
+
     --glass-etched-bg: rgba(255, 255, 255, 0.04);
     --glass-etched-border: rgba(91, 127, 191, 0.08);
     --glass-etched-border-focus: rgba(91, 127, 191, 0.30);
@@ -48,7 +55,7 @@
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--sapphire-edge);
+  border: 1px solid var(--glass-border);
 }
 
 /* Top-edge refraction line */

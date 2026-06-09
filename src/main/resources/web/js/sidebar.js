@@ -8,8 +8,9 @@ import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
-import { refreshReminders } from './reminder.js';
+import { refreshScheduledTasks } from './scheduled-task.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
+import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
@@ -323,6 +324,10 @@ export function renderSettings() {
 
   content.innerHTML = `
     <div class="settings-section">
+      <div class="settings-section-title">${t('mesh.title')}</div>
+      ${meshSettingsHTML()}
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">${t('settings.runtime')}</div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.thinkingMode')}</span>
@@ -446,6 +451,7 @@ export function renderSettings() {
   }
 
   bindSettingsEvents(content, cfg, allModels);
+  bindMeshEvents(() => renderSettings());
 }
 
 function renderProviderCard(name, p) {
@@ -669,7 +675,8 @@ function bindSettingsEvents(content, cfg, allModels) {
     card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!confirm(t('mcp.removeConfirm', { name }))) return;
-      delete state.parsedConfig.mcpServers[name];
+      // Use null instead of delete — backend mergeConfig treats null as explicit deletion
+      state.parsedConfig.mcpServers[name] = null;
       state.configDirty = true;
       flushConfigToServer();
       renderSettings();
@@ -678,7 +685,8 @@ function bindSettingsEvents(content, cfg, allModels) {
       const s = state.parsedConfig.mcpServers[name];
       showMcpModal(name, s, (newName, data) => {
         if (newName !== name) {
-          delete state.parsedConfig.mcpServers[name];
+          // Use null to signal explicit deletion of old name
+          state.parsedConfig.mcpServers[name] = null;
         }
         state.parsedConfig.mcpServers[newName] = data;
         state.configDirty = true;
@@ -1109,29 +1117,33 @@ export function renderSessionSidebar(sessionData, activeId) {
   const sessionList = state.dom.sessionList;
   sessionList.innerHTML = '';
 
-  // Setup drop-to-root on sessionList (once)
+  // Setup unified drop handler on sessionList (once)
+  // VS Code-style: folder-wrapper is a "scope" — drop inside = move into folder, drop outside = move to root
   if (!sessionList._dropSetup) {
     sessionList._dropSetup = true;
     sessionList.addEventListener('dragover', (e) => {
-      if (!e.target.closest('.folder-item') && !e.target.closest('.session-item')) {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-      }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
     });
     sessionList.addEventListener('drop', (e) => {
-      if (!e.target.closest('.folder-item') && !e.target.closest('.session-item')) {
-        e.preventDefault();
-        const data = e.dataTransfer.getData('text/plain');
-        if (!data) return;
-        if (data.startsWith('folder:')) {
-          const fid = data.slice(7);
-          sendWs({ type: 'moveFolder', folderId: fid, parentId: null });
-        } else if (data.startsWith('batch:')) {
-          const ids = data.slice(6).split(',').filter(Boolean);
-          ids.forEach(sid => sendWs({ type: 'moveSessionToFolder', sessionId: sid, folderId: null }));
-        } else {
-          sendWs({ type: 'moveSessionToFolder', sessionId: data, folderId: null });
+      e.preventDefault();
+      // Clean up any drag-over highlights
+      document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
+      const data = e.dataTransfer.getData('text/plain');
+      if (!data) return;
+      // Determine target folder: closest folder-wrapper = move into, none = move to root
+      const folderWrapper = e.target.closest('.folder-wrapper');
+      const targetFolderId = folderWrapper ? folderWrapper.dataset.folderId : null;
+      if (data.startsWith('folder:')) {
+        const fid = data.slice(7);
+        if (fid && fid !== targetFolderId) {
+          sendWs({ type: 'moveFolder', folderId: fid, parentId: targetFolderId });
         }
+      } else if (data.startsWith('batch:')) {
+        const ids = data.slice(6).split(',').filter(Boolean);
+        ids.forEach(sid => sendWs({ type: 'moveSessionToFolder', sessionId: sid, folderId: targetFolderId }));
+      } else {
+        sendWs({ type: 'moveSessionToFolder', sessionId: data, folderId: targetFolderId });
       }
     });
     // Click on empty area clears active folder (VSCode-style)
@@ -1412,8 +1424,8 @@ export function switchSession(sessionId) {
   restoreInputDraft(sessionId);
   // Task list and bg task indicator are restored inside resetChatForActiveSession()
   sendWs({type: 'switchSession', sessionId});
-  // Refresh reminders for the new session
-  if (typeof refreshReminders === 'function') refreshReminders(sessionId);
+  // Refresh scheduled tasks for the new session
+  if (typeof refreshScheduledTasks === 'function') refreshScheduledTasks(sessionId);
 }
 
 export function deleteSession(sessionId) {
@@ -1723,18 +1735,9 @@ function showDeleteZone() {
       ids = [data];
     }
     if (ids.length > 0) {
-      // If already in selection mode, delete all selected
+      // If already in selection mode, show batch delete confirmation
       if (state.selectedSessionIds.size > 1) {
-        sendWs({ type: 'batchDeleteSessions', sessionIds: [...state.selectedSessionIds] });
-        state.selectedSessionIds.forEach(id => {
-          delete state.sessionInputDrafts[id];
-          state.unreadSessions.delete(id);
-          state.markedUnreadSessions.delete(id);
-          state.pinnedSessions.delete(id);
-        });
-        persistUnread(); persistMarkedUnread(); persistPinned(); persistDrafts();
-        state.selectedSessionIds.clear();
-        state.lastSelectedSessionId = null;
+        showBatchDeleteModal();
       } else {
         // Single drag — confirm delete
         const sid = ids[0];
@@ -2229,33 +2232,12 @@ function renderFolderItem(folder, sessions, container) {
     }
   });
 
-  // Drop zone: allow dragging sessions or folders into this folder
+  // Dragover highlight for folder scope
   folderEl.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = 'move';
     folderEl.classList.add('drag-over');
   });
   folderEl.addEventListener('dragleave', () => {
     folderEl.classList.remove('drag-over');
-  });
-  folderEl.addEventListener('drop', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    folderEl.classList.remove('drag-over');
-    const data = e.dataTransfer.getData('text/plain');
-    if (!data) return;
-    if (data.startsWith('folder:')) {
-      const fid = data.slice(7);
-      if (fid && fid !== folder.id) {
-        sendWs({ type: 'moveFolder', folderId: fid, parentId: folder.id });
-      }
-    } else if (data.startsWith('batch:')) {
-      const ids = data.slice(6).split(',').filter(Boolean);
-      ids.forEach(sid => sendWs({ type: 'moveSessionToFolder', sessionId: sid, folderId: folder.id }));
-    } else {
-      sendWs({ type: 'moveSessionToFolder', sessionId: data, folderId: folder.id });
-    }
   });
 
   folderWrapper.appendChild(folderEl);
@@ -2293,34 +2275,13 @@ function renderFolderItem(folder, sessions, container) {
     sessions.forEach(s => {
       renderOneSessionItem(s, childrenContainer, { inFolder: true });
     });
-    // VSCode-style: allow dropping into the expanded children area, not just the folder name row
+    // Dragover highlight for expanded children area
     childrenContainer.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      e.dataTransfer.dropEffect = 'move';
       folderEl.classList.add('drag-over');
     });
     childrenContainer.addEventListener('dragleave', (e) => {
       if (!childrenContainer.contains(e.relatedTarget)) {
         folderEl.classList.remove('drag-over');
-      }
-    });
-    childrenContainer.addEventListener('drop', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      folderEl.classList.remove('drag-over');
-      const data = e.dataTransfer.getData('text/plain');
-      if (!data) return;
-      if (data.startsWith('folder:')) {
-        const fid = data.slice(7);
-        if (fid && fid !== folder.id) {
-          sendWs({ type: 'moveFolder', folderId: fid, parentId: folder.id });
-        }
-      } else if (data.startsWith('batch:')) {
-        const ids = data.slice(6).split(',').filter(Boolean);
-        ids.forEach(sid => sendWs({ type: 'moveSessionToFolder', sessionId: sid, folderId: folder.id }));
-      } else {
-        sendWs({ type: 'moveSessionToFolder', sessionId: data, folderId: folder.id });
       }
     });
     folderWrapper.appendChild(childrenContainer);

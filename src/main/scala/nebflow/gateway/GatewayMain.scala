@@ -11,11 +11,13 @@ import nebflow.bridge.feishu.*
 import nebflow.core.*
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
-import nebflow.core.reminder.{ReminderScheduler, ReminderStore}
+import nebflow.core.scheduler.{ScheduledTaskActor, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.ToolRegistry
+import nebflow.core.telemetry.TelemetryReporter
+import nebflow.core.tools.{MeshTool, ToolRegistry}
 import nebflow.llm.*
+import nebflow.mesh.*
 import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.*
 import org.apache.pekko.actor.typed.ActorSystem
@@ -151,6 +153,9 @@ object GatewayMain extends IOApp.Simple:
     // Read port from config first, then kill stale processes on that port
     GatewayConfig.load.flatMap { cfg =>
       ensureSingleInstance(cfg.port.value) *> GatewayConfig.load.flatMap { cfg =>
+        // Expose resolved gateway port and PID to agent via system properties
+        System.setProperty("nebflow.gateway.port", cfg.port.value.toString)
+        System.setProperty("nebflow.gateway.pid", ProcessHandle.current.pid.toString)
         // Safe config load — never crash on bad config; auto-restore from snapshot on corruption
         val configRef: Ref[IO, NebflowServiceConfig] = Ref.unsafe {
           try
@@ -245,169 +250,212 @@ object GatewayMain extends IOApp.Simple:
                                   providerRegistry = registry,
                                   hookEngine = hookEngine
                                 )
-                                val sessionService = new SessionService(sessionStore)
-                                val agentService = new AgentService(agentLibrary)
-                                val configService = ConfigService
-
-                                val wsHub = new WsHub()
-
-                                // Dream scheduler: periodic memory consolidation + pattern extraction
-                                val memoryAgentManager = new MemoryAgentManager(
-                                  actorSystem,
-                                  dispatcher,
-                                  sessionStore
-                                )
-                                memoryAgentManager.setSharedResources(sharedResources)
-                                memoryAgentManager.setWsHub(wsHub)
-
-                                // --- Bridge Manager (plugins: feishu, telegram, etc.) ---
-                                val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
-                                  Ref.unsafe(None)
-
-                                // Holder for wsRoutes so we can wire bridge refs after safe construction
-                                var wsRoutesHolder: Option[WebSocketRoutes] = None
-
-                                val bridgeCtx = new BridgeContext:
-                                  def injectMessage(sessionId: String, content: String, senderId: Option[String])
-                                    : IO[Unit] =
-                                    bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId)))
-                                  def interruptAgent(sessionId: String): IO[Unit] =
-                                    wsRoutesHolder match
-                                      case Some(routes) =>
-                                        routes.handleBridgeAgentCommand(sessionId, AgentCommand.Interrupt())
-                                      case None => IO.unit
-                                  def sessionMeta(sessionId: String): IO[Option[SessionMeta]] =
-                                    sessionStore.getSessionMeta(sessionId)
-                                  def listSessions: IO[List[SessionMeta]] =
-                                    sessionStore.listSessions
-                                  def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json])
-                                    : IO[Unit] =
-                                    sessionStore.updateSessionBridge(sessionId, platform, config)
-
-                                val bridgeSetup: IO[BridgeManager] =
-                                  BridgeManager.create(bridgeCtx).flatMap { mgr =>
-                                    // Load Feishu plugin if config exists
-                                    FeishuGlobalConfig.load.flatMap {
-                                      case Some(cfg) =>
-                                        logger.info(s"Feishu bridge enabled (appId=${cfg.appId})") *>
-                                          mgr.register(new FeishuPlugin(cfg)).as(mgr)
-                                      case None => IO.pure(mgr)
-                                    }
-                                  }
-
-                                bridgeSetup.flatMap { bridgeManager =>
-                                  val sharedResourcesWithBridge =
-                                    sharedResources.copy(bridgeManager = Some(bridgeManager))
-                                  EmberServerBuilder
-                                    .default[IO]
-                                    .withHost(cfg.host)
-                                    .withPort(cfg.port)
-                                    .withIdleTimeout(1.hour)
-                                    .withHttpWebSocketApp { wsb =>
-                                      val wsRoutes = new WebSocketRoutes(
-                                        wsb,
-                                        sessionService,
-                                        agentService,
-                                        configService,
-                                        configRef,
-                                        rateLimiter,
-                                        token,
-                                        fileTracker,
-                                        sessionStore,
-                                        wsHub,
-                                        actorSystem,
-                                        contextWindow,
-                                        sharedResourcesWithBridge,
-                                        mcpManager
-                                      )
-                                      wsRoutesHolder = Some(wsRoutes)
-
-                                      // REST API routes for CLI consumption
-                                      val restApiRoutes = new RestApiRoutes(
-                                        token,
-                                        configRef,
-                                        sharedResourcesWithBridge,
-                                        sessionStore,
-                                        wsRoutes
-                                      )
-
-                                      Router(
-                                        "/api" -> (chatRoutes.routes <+> restApiRoutes.routes),
-                                        "/" -> wsRoutes.routes
-                                      ).orNotFound
-                                    }
-                                    .build
-                                    .use { _ =>
-                                      // Wire bridge inject ref
-                                      val wireBridge = wsRoutesHolder match
-                                        case Some(wsRoutes) =>
-                                          bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
-                                        case None => IO.unit
-                                      wireBridge *> (for
-                                        _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
-                                        _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
-                                        // Register bridge as WsHub listener for agent events
-                                        _ <- wsHub.register(json =>
-                                          val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-                                          if sessionId.nonEmpty then bridgeManager.dispatchAgentEvent(sessionId, json)
-                                          else IO.unit
-                                        )
-                                        _ <- bridgeManager.startAll.start // start in background
-                                        // --- Start Reminder Scheduler ---
-                                        _ <- ReminderScheduler
-                                          .start(
-                                            sharedResources.reminderStore,
-                                            (sid, event) =>
-                                              wsRoutesHolder match
-                                                case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
-                                                case None => IO.unit,
-                                            wsHub,
-                                            sessionStore
-                                          )
-                                          .flatMap(_ => IO.unit)
-                                          .start
-                                        _ <- openBrowser(url)
-                                        // --- Background init: skills dir, MCP servers ---
-                                        _ <- SkillService
-                                          .ensureDefaults()
-                                          .handleErrorWith(e => logger.warn(s"Skills init failed: ${e.getMessage}"))
-                                          .start
-                                        // --- Background init: MCP servers ---
-                                        _ <- startMcpServers(config, mcpManager, agentLibrary)
-                                          .flatMap { _ =>
-                                            // Broadcast updated MCP server list to all connected clients
-                                            mcpManager.listServers
-                                              .map(_.map { case (id, enabled) =>
-                                                io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
-                                              })
-                                              .flatMap { mcpJson =>
-                                                wsHub.broadcast(
-                                                  io.circe.Json.obj(
-                                                    "type" -> "mcpServersUpdate".asJson,
-                                                    "mcpServers" -> mcpJson.asJson
-                                                  )
-                                                )
-                                              }
-                                          }
-                                          .handleErrorWith { e =>
-                                            logger.warn(s"Background init failed: ${e.getMessage}")
-                                          }
-                                          .start
-                                        _ <- logger.info(
-                                          "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
-                                        ) *> waitForQuit
-                                      yield ())
-                                    }
-                                    .guarantee(
-                                      logger.info("shutting down...") *>
-                                        mcpManager.stopAll() *>
-                                        releaseBackend *>
-                                        IO.fromFuture(IO {
-                                          actorSystem.terminate()
-                                          actorSystem.whenTerminated
-                                        }).void
-                                    )
+                                // Initialize telemetry (opt-out aware, fire-and-forget on failure)
+                                val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
+                                  logger.warn(s"Telemetry init failed: ${e.getMessage}").as(None)
                                 }
+                                telemetryIO.flatMap { telemetry =>
+                                  val sharedResourcesWithTelemetry = sharedResources.copy(telemetry = telemetry)
+                                  val sessionService = new SessionService(sessionStore)
+                                  val agentService = new AgentService(agentLibrary)
+                                  val configService = ConfigService
+
+                                  val wsHub = new WsHub()
+
+                                  // Dream scheduler: event-driven memory consolidation + pattern extraction
+                                  val memoryAgentManager = new MemoryAgentManager(
+                                    actorSystem,
+                                    dispatcher,
+                                    sessionStore
+                                  )
+                                  // Wire dreamSchedulerRef into SharedResources (created after SharedResources init)
+                                  val sharedResourcesWithDream = sharedResourcesWithTelemetry.copy(
+                                    dreamSchedulerRef = Some(memoryAgentManager.dreamSchedulerRef)
+                                  )
+                                  memoryAgentManager.setSharedResources(sharedResourcesWithDream)
+                                  memoryAgentManager.setWsHub(wsHub)
+
+                                  // --- Bridge Manager (plugins: feishu, telegram, etc.) ---
+                                  val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
+                                    Ref.unsafe(None)
+
+                                  // Holder for wsRoutes so we can wire bridge refs after safe construction
+                                  var wsRoutesHolder: Option[WebSocketRoutes] = None
+
+                                  val bridgeCtx = new BridgeContext:
+                                    def injectMessage(sessionId: String, content: String, senderId: Option[String])
+                                      : IO[Unit] =
+                                      bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId)))
+                                    def interruptAgent(sessionId: String): IO[Unit] =
+                                      wsRoutesHolder match
+                                        case Some(routes) =>
+                                          routes.handleBridgeAgentCommand(sessionId, AgentCommand.Interrupt())
+                                        case None => IO.unit
+                                    def sessionMeta(sessionId: String): IO[Option[SessionMeta]] =
+                                      sessionStore.getSessionMeta(sessionId)
+                                    def listSessions: IO[List[SessionMeta]] =
+                                      sessionStore.listSessions
+                                    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json])
+                                      : IO[Unit] =
+                                      sessionStore.updateSessionBridge(sessionId, platform, config)
+
+                                  val bridgeSetup: IO[BridgeManager] =
+                                    BridgeManager.create(bridgeCtx).flatMap { mgr =>
+                                      // Load Feishu plugin if config exists
+                                      FeishuGlobalConfig.load.flatMap {
+                                        case Some(cfg) =>
+                                          logger.info(s"Feishu bridge enabled (appId=${cfg.appId})") *>
+                                            mgr.register(new FeishuPlugin(cfg)).as(mgr)
+                                        case None => IO.pure(mgr)
+                                      }
+                                    }
+
+                                  // Create mesh service (event-driven sync actor, no UDP)
+                                  val meshServiceF: IO[MeshService] =
+                                    MeshSyncStore
+                                      .load()
+                                      .flatMap(store =>
+                                        MeshService.create(store, cfg.port.value, actorSystem, dispatcher)
+                                      )
+
+                                  bridgeSetup.flatMap { bridgeManager =>
+                                    meshServiceF.flatMap { meshService =>
+                                      // Register mesh tool for agent cross-device operations
+                                      MeshTool.register(meshService)
+                                      val sharedResourcesWithBridge =
+                                        sharedResourcesWithDream.copy(
+                                          bridgeManager = Some(bridgeManager),
+                                          meshService = Some(meshService)
+                                        )
+
+                                      // --- Create Scheduled Task Actor before wsRoutes ---
+                                      // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
+                                      var scheduledTaskActorRefHolder: Option[org.apache.pekko.actor.typed.ActorRef[
+                                        nebflow.core.scheduler.ScheduledTaskCommand
+                                      ]] = None
+                                      val scheduledTaskActor = new ScheduledTaskActor(
+                                        actorSystem,
+                                        sharedResourcesWithBridge.dispatcher,
+                                        sharedResourcesWithBridge.scheduledTaskStore,
+                                        (sid, event) =>
+                                          wsRoutesHolder match
+                                            case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
+                                            case None => IO.unit,
+                                        wsHub.broadcast
+                                      )
+                                      scheduledTaskActorRefHolder = Some(scheduledTaskActor.ref)
+                                      val sharedResourcesFinal = sharedResourcesWithBridge.copy(
+                                        scheduledTaskActorRef = scheduledTaskActorRefHolder
+                                      )
+
+                                      EmberServerBuilder
+                                        .default[IO]
+                                        .withHost(cfg.host)
+                                        .withPort(cfg.port)
+                                        .withIdleTimeout(1.hour)
+                                        .withHttpWebSocketApp { wsb =>
+                                          val wsRoutes = new WebSocketRoutes(
+                                            wsb,
+                                            sessionService,
+                                            agentService,
+                                            configService,
+                                            configRef,
+                                            rateLimiter,
+                                            token,
+                                            fileTracker,
+                                            sessionStore,
+                                            wsHub,
+                                            actorSystem,
+                                            contextWindow,
+                                            sharedResourcesFinal,
+                                            mcpManager
+                                          )
+                                          wsRoutesHolder = Some(wsRoutes)
+
+                                          // REST API routes for CLI consumption
+                                          val restApiRoutes = new RestApiRoutes(
+                                            token,
+                                            configRef,
+                                            sharedResourcesFinal,
+                                            sessionStore,
+                                            wsRoutes,
+                                            meshService = Some(meshService)
+                                          )
+
+                                          Router(
+                                            "/api" -> (chatRoutes.routes <+> restApiRoutes.routes),
+                                            "/" -> wsRoutes.routes
+                                          ).orNotFound
+                                        }
+                                        .build
+                                        .use { _ =>
+                                          // Wire bridge inject ref
+                                          val wireBridge = wsRoutesHolder match
+                                            case Some(wsRoutes) =>
+                                              bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
+                                            case None => IO.unit
+                                          wireBridge *> (for
+                                            _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
+                                            _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
+                                            // Telemetry: app_start
+                                            _ <- telemetry.fold(IO.unit)(
+                                              _.record("app_start", io.circe.JsonObject.empty)
+                                            )
+                                            // Register bridge as WsHub listener for agent events
+                                            _ <- wsHub.register(json =>
+                                              val sessionId =
+                                                json.hcursor.downField("sessionId").as[String].getOrElse("")
+                                              if sessionId.nonEmpty then
+                                                bridgeManager.dispatchAgentEvent(sessionId, json)
+                                              else IO.unit
+                                            )
+                                            _ <- bridgeManager.startAll.start // start in background
+                                            _ <- openBrowser(url)
+                                            // --- Background init: skills dir, MCP servers ---
+                                            _ <- SkillService
+                                              .ensureDefaults()
+                                              .handleErrorWith(e => logger.warn(s"Skills init failed: ${e.getMessage}"))
+                                              .start
+                                            // --- Background init: MCP servers ---
+                                            _ <- startMcpServers(config, mcpManager, agentLibrary)
+                                              .flatMap { _ =>
+                                                // Broadcast updated MCP server list to all connected clients
+                                                mcpManager.listServers
+                                                  .map(_.map { case (id, enabled) =>
+                                                    io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+                                                  })
+                                                  .flatMap { mcpJson =>
+                                                    wsHub.broadcast(
+                                                      io.circe.Json.obj(
+                                                        "type" -> "mcpServersUpdate".asJson,
+                                                        "mcpServers" -> mcpJson.asJson
+                                                      )
+                                                    )
+                                                  }
+                                              }
+                                              .handleErrorWith { e =>
+                                                logger.warn(s"Background init failed: ${e.getMessage}")
+                                              }
+                                              .start
+                                            // --- Mesh: sync is event-driven (actor), no background loops needed ---
+                                            _ <- logger.info(
+                                              "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
+                                            ) *> waitForQuit
+                                          yield ())
+                                        }
+                                        .guarantee(
+                                          logger.info("shutting down...") *>
+                                            telemetry.fold(IO.unit)(_.shutdown) *>
+                                            mcpManager.stopAll() *>
+                                            releaseBackend *>
+                                            IO.fromFuture(IO {
+                                              actorSystem.terminate()
+                                              actorSystem.whenTerminated
+                                            }).void
+                                        )
+                                    } // end meshService
+                                  } // end bridgeManager
+                                } // end telemetry.flatMap
                               } // end fileLockMgr
                             } // end askSemaphore
                           } // end dispatcher.use
