@@ -19,19 +19,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      # --- Bump minor version (Y+1, Z=0) ---
-
-      - name: Bump minor version
+      - name: Read version
         id: version
         run: |
           VERSION=$(cat VERSION)
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          MINOR=$((MINOR + 1))
-          PATCH=0
-          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
-          echo "$NEW_VERSION" > VERSION
-          echo "  $VERSION → $NEW_VERSION"
-          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "  Version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Check if tag already exists
         id: check
@@ -69,15 +62,13 @@ jobs:
         if: steps.check.outputs.skipped == 'false'
         run: sbt assembly
 
-      # --- Commit, Tag & Release ---
+      # --- Tag & Release ---
 
-      - name: Commit version bump and create tag
+      - name: Create tag
         if: steps.check.outputs.skipped == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add VERSION
-          git commit -m "chore: release v${{ steps.version.outputs.version }}"
           git tag "v${{ steps.version.outputs.version }}"
           git push origin release --tags
 
@@ -100,7 +91,6 @@ jobs:
           JAR=$(ls target/scala-3.5.2/nebflow-assembly-*.jar | head -1)
           coscmd upload "$JAR" "$(basename "$JAR")" -f
           echo "  Uploaded $(basename "$JAR") to COS"
-          # Write version file for install scripts (China-friendly, no GitHub API needed)
           echo -n "${{ steps.version.outputs.version }}" > /tmp/latest-version.txt
           coscmd upload /tmp/latest-version.txt latest-version.txt -f
           echo "  Uploaded latest-version.txt to COS"
@@ -114,9 +104,7 @@ jobs:
         run: |
           REPO="${{ github.repository }}"
           NEW_VERSION="${{ steps.version.outputs.version }}"
-          # Get current VERSION file SHA on main
           SHA=$(gh api "repos/$REPO/contents/VERSION?ref=main" --jq '.sha')
-          # Update VERSION on main via API (triggers no workflow since only VERSION changes)
           ENCODED=$(printf '%s' "$NEW_VERSION" | base64)
           gh api "repos/$REPO/contents/VERSION" \
             -X PUT \
