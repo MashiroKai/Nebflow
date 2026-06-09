@@ -3,15 +3,16 @@ package nebflow.core.scheduler
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
+import io.circe.Json
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
 import nebflow.core.NebflowLogger
-import nebflow.gateway.WsHub
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.actor.typed.{ActorRef, ActorSystem, Behavior}
 
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, ZoneId}
+
 import scala.compiletime.uninitialized
 import scala.concurrent.duration.*
 
@@ -50,7 +51,7 @@ class ScheduledTaskActor(
   dispatcher: Dispatcher[IO],
   taskStore: ScheduledTaskStore,
   routeToAgent: (String, AgentCommand.ExternalEvent) => IO[Unit],
-  wsHub: WsHub
+  broadcast: Json => IO[Unit]
 ):
 
   private val logger = NebflowLogger.forName("nebflow.scheduled-task.actor")
@@ -138,12 +139,14 @@ class ScheduledTaskActor(
 
         dispatcher.unsafeRunAndForget(
           for
-            _ <- logger.info(s"Triggering scheduled task ${task.id} for session ${task.sessionId}: ${task.content.take(60)}")
+            _ <- logger.info(
+              s"Triggering scheduled task ${task.id} for session ${task.sessionId}: ${task.content.take(60)}"
+            )
             _ <- taskStore.markTriggered(task.sessionId, task.id)
             _ <- routeToAgent(task.sessionId, event).handleErrorWith { e =>
               logger.warn(s"Failed to route scheduled task to agent: ${e.getMessage}")
             }
-            _ <- wsHub.broadcast(
+            _ <- broadcast(
               io.circe.Json.obj(
                 "type" -> "scheduledTaskTriggered".asJson,
                 "sessionId" -> task.sessionId.asJson,
@@ -161,6 +164,7 @@ class ScheduledTaskActor(
       catch
         case e: Exception =>
           logger.warnSync(s"Failed to trigger scheduled task ${task.id}: ${e.getMessage}")
+    end for
 
     // After firing, reschedule to the next pending task
     reschedule(timers)

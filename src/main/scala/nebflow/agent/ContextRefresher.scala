@@ -132,8 +132,7 @@ object ContextRefresher:
             proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
             if proc.exitValue() == 0 && output.nonEmpty && !output.startsWith("fatal:") then Some(output)
             else None
-          catch
-            case _: Exception => None
+          catch case _: Exception => None
         }
       case None => IO.pure(None)
 
@@ -149,25 +148,28 @@ object ContextRefresher:
       if currentBranch != lastBranch then
         val reminder = (lastBranch, currentBranch) match
           case (Some(old), Some(current)) =>
-            Some(SystemReminder(
-              "gitBranch",
-              s"Git branch changed from \"$old\" to \"$current\". All subsequent file operations now apply to the new branch. " +
-                "If you have uncommitted work, verify it is on the intended branch before making changes."
-            ))
+            Some(
+              SystemReminder(
+                "gitBranch",
+                s"Git branch changed from \"$old\" to \"$current\". All subsequent file operations now apply to the new branch. " +
+                  "If you have uncommitted work, verify it is on the intended branch before making changes."
+              )
+            )
           case (None, Some(current)) =>
             // First detection — just record, no alarm
             None
           case (Some(old), None) =>
             // Was a git repo, now not — could be worrying
-            Some(SystemReminder(
-              "gitBranch",
-              s"Git branch was \"$old\" but the project is no longer detected as a git repository. " +
-                "File operations will continue but version control tracking may be lost."
-            ))
+            Some(
+              SystemReminder(
+                "gitBranch",
+                s"Git branch was \"$old\" but the project is no longer detected as a git repository. " +
+                  "File operations will continue but version control tracking may be lost."
+              )
+            )
           case (None, None) => None
         (reminder, currentBranch)
-      else
-        (None, currentBranch)
+      else (None, currentBranch)
     }
 
   // ============================================================

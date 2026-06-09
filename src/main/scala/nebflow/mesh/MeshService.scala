@@ -1,7 +1,7 @@
 package nebflow.mesh
 
-import cats.effect.{IO, Ref}
 import cats.effect.std.Dispatcher
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -22,10 +22,13 @@ sealed trait SyncCommand
 object SyncCommand:
   /** Start periodic sync (sent on login). */
   case object StartSync extends SyncCommand
+
   /** Stop periodic sync (sent on logout). */
   case object StopSync extends SyncCommand
+
   /** Periodic sync timer fired. */
   private[mesh] case object SyncTick extends SyncCommand
+
   /** A peer was discovered — trigger immediate sync. */
   case object PeerDiscovered extends SyncCommand
 end SyncCommand
@@ -525,6 +528,7 @@ object MeshService:
   private class AtomicServiceBox:
     @volatile private var _service: MeshService = uninitialized
     def set(s: MeshService): Unit = _service = s
+
     def get: MeshService =
       if _service == null then throw new IllegalStateException("MeshService not initialized")
       _service
@@ -582,9 +586,7 @@ object MeshService:
   private def doSync(serviceBox: AtomicServiceBox, dispatcher: Dispatcher[IO]): Unit =
     val service = serviceBox.get
     dispatcher.unsafeRunAndForget(
-      service.runSyncCycle.handleErrorWith(e =>
-        logger.warn(s"Sync cycle failed: ${e.getMessage}")
-      )
+      service.runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}"))
     )
 
 end MeshService
