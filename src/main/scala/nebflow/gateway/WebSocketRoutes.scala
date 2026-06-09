@@ -11,11 +11,11 @@ import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
+import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
 import nebflow.shared.*
-import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import org.apache.pekko.actor.typed.*
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.http4s.circe.CirceEntityCodec.*
@@ -915,9 +915,9 @@ class WebSocketRoutes(
           else IO.unit
           end if
 
-        // ===== Reminder Management =====
+        // ===== Scheduled Task Management =====
 
-        case "createReminder" =>
+        case "createScheduledTask" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val hc = json.hcursor
           val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
@@ -925,17 +925,20 @@ class WebSocketRoutes(
           val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
           val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
           if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
-            val reminder = nebflow.core.reminder.Reminder.create(crSessionId, crContent, crTriggerAt, crRefPath)
-            sharedResources.reminderStore.addReminder(reminder).flatMap { _ =>
+            val task = nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath)
+            sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
+              sharedResources.scheduledTaskActorRef.foreach(
+                _ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskCreated(task)
+              )
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderCreated".asJson,
-                  "reminder" -> io.circe.Json.obj(
-                    "id" -> reminder.id.asJson,
-                    "content" -> reminder.content.asJson,
-                    "triggerAt" -> reminder.triggerAt.asJson,
-                    "createdAt" -> reminder.createdAt.asJson,
-                    "referencePath" -> reminder.referencePath.asJson
+                  "type" -> "scheduledTaskCreated".asJson,
+                  "task" -> io.circe.Json.obj(
+                    "id" -> task.id.asJson,
+                    "content" -> task.content.asJson,
+                    "triggerAt" -> task.triggerAt.asJson,
+                    "createdAt" -> task.createdAt.asJson,
+                    "referencePath" -> task.referencePath.asJson
                   )
                 )
               )
@@ -946,28 +949,28 @@ class WebSocketRoutes(
               else if crContent.isEmpty then "missing content"
               else if crTriggerAt <= System.currentTimeMillis() then "triggerAt must be in the future"
               else "unknown"
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid reminder: $reason".asJson))
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid scheduled task: $reason".asJson))
           end if
 
-        case "listReminders" =>
+        case "listScheduledTasks" =>
           val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if lrSessionId.nonEmpty then
-            sharedResources.reminderStore.loadReminders(lrSessionId).flatMap { reminders =>
-              val reminderJsons = reminders.map { r =>
+            sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { tasks =>
+              val taskJsons = tasks.map { t =>
                 io.circe.Json.obj(
-                  "id" -> r.id.asJson,
-                  "content" -> r.content.asJson,
-                  "triggerAt" -> r.triggerAt.asJson,
-                  "createdAt" -> r.createdAt.asJson,
-                  "triggered" -> r.triggered.asJson,
-                  "triggeredAt" -> r.triggeredAt.asJson,
-                  "referencePath" -> r.referencePath.asJson
+                  "id" -> t.id.asJson,
+                  "content" -> t.content.asJson,
+                  "triggerAt" -> t.triggerAt.asJson,
+                  "createdAt" -> t.createdAt.asJson,
+                  "triggered" -> t.triggered.asJson,
+                  "triggeredAt" -> t.triggeredAt.asJson,
+                  "referencePath" -> t.referencePath.asJson
                 )
               }
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderList".asJson,
-                  "reminders" -> reminderJsons.asJson,
+                  "type" -> "scheduledTaskList".asJson,
+                  "tasks" -> taskJsons.asJson,
                   "sessionId" -> lrSessionId.asJson
                 )
               )
@@ -975,15 +978,18 @@ class WebSocketRoutes(
           else IO.unit
           end if
 
-        case "deleteReminder" =>
+        case "deleteScheduledTask" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val drSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
           val drId = json.hcursor.downField("id").as[String].getOrElse("")
           if drSessionId.nonEmpty && drId.nonEmpty then
-            sharedResources.reminderStore.deleteReminder(drSessionId, drId).flatMap { _ =>
+            sharedResources.scheduledTaskStore.deleteTask(drSessionId, drId).flatMap { _ =>
+              sharedResources.scheduledTaskActorRef.foreach(
+                _ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskDeleted(drSessionId, drId)
+              )
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderDeleted".asJson,
+                  "type" -> "scheduledTaskDeleted".asJson,
                   "id" -> drId.asJson,
                   "sessionId" -> drSessionId.asJson
                 )
@@ -1656,9 +1662,12 @@ class WebSocketRoutes(
                       // Try to find the file locally by name + size + hash
                       // Search priority: project root → common user dirs → full home
                       val home = os.home.toString
-                      val commonDirs = List("Downloads", "Desktop", "Documents").map(d => s"$home/$d").filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
+                      val commonDirs = List("Downloads", "Desktop", "Documents")
+                        .map(d => s"$home/$d")
+                        .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
                       val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
-                      val localPath = if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
+                      val localPath =
+                        if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
                       localPath match
                         case Some(path) =>
                           savedPaths += path
@@ -1688,6 +1697,7 @@ class WebSocketRoutes(
                               blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
                           end try
                       end match
+                    end if
                   }
 
                   val sessionName = metaOpt.map(_.name).getOrElse("-")
@@ -1765,12 +1775,38 @@ class WebSocketRoutes(
 
   /** Directories to skip during filesystem search — build artifacts, caches, system dirs. */
   private val skipDirs = Set(
-    "node_modules", ".git", "build", "target", "dist", ".cache",
-    "__pycache__", ".gradle", ".idea", ".vscode", ".nebflow",
-    "Library", "Applications", "Trash", ".Trash", ".npm", ".yarn",
-    ".pnpm-store", ".cargo", ".rustup", ".conda", ".venv", "venv",
-    "DerivedData", ".m2", ".ivy2", ".sbt", ".coursier",
-    "Pods", "vendor", "bower_components", "Movies"
+    "node_modules",
+    ".git",
+    "build",
+    "target",
+    "dist",
+    ".cache",
+    "__pycache__",
+    ".gradle",
+    ".idea",
+    ".vscode",
+    ".nebflow",
+    "Library",
+    "Applications",
+    "Trash",
+    ".Trash",
+    ".npm",
+    ".yarn",
+    ".pnpm-store",
+    ".cargo",
+    ".rustup",
+    ".conda",
+    ".venv",
+    "venv",
+    "DerivedData",
+    ".m2",
+    ".ivy2",
+    ".sbt",
+    ".coursier",
+    "Pods",
+    "vendor",
+    "bower_components",
+    "Movies"
   )
 
   /**
@@ -1784,7 +1820,12 @@ class WebSocketRoutes(
    * @param searchPaths directories to search in priority order
    * @return absolute path of a matching local file, or None
    */
-  private def findLocalFile(name: String, expectedHash: String, expectedSize: Long, searchPaths: List[String]): Option[String] =
+  private def findLocalFile(
+    name: String,
+    expectedHash: String,
+    expectedSize: Long,
+    searchPaths: List[String]
+  ): Option[String] =
     import java.nio.file.{FileVisitResult, Files, Path, SimpleFileVisitor}
     import java.security.MessageDigest
 
@@ -1798,9 +1839,15 @@ class WebSocketRoutes(
       if Files.isDirectory(rootPath) then
         try
           // No FOLLOW_LINKS — avoids symlink loops on macOS bundles (.fcpcache etc.)
-          Files.walkFileTree(rootPath, java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]), Integer.MAX_VALUE,
+          Files.walkFileTree(
+            rootPath,
+            java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]),
+            Integer.MAX_VALUE,
             new SimpleFileVisitor[Path]:
-              override def preVisitDirectory(dir: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
+              override def preVisitDirectory(
+                dir: Path,
+                attrs: java.nio.file.attribute.BasicFileAttributes
+              ): FileVisitResult =
                 if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
                 else FileVisitResult.CONTINUE
 
@@ -1815,7 +1862,8 @@ class WebSocketRoutes(
           )
         catch
           case _: Exception => // skip inaccessible directories
-
+      end if
+    end for
     if candidates.isEmpty then None
     else
       // Verify SHA-256 for each candidate (already pre-filtered by name + size)
@@ -1825,8 +1873,7 @@ class WebSocketRoutes(
           val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
           val hex = digest.map(b => String.format("%02x", b)).mkString
           hex == expectedHash
-        catch
-          case _: Exception => false
+        catch case _: Exception => false
       }
 
       hashMatches match
@@ -1840,6 +1887,7 @@ class WebSocketRoutes(
           val chosen = sorted.head._1.toString
           logger.info(s"Attachment '$name': ${multiple.size} local copies with same hash, chose: $chosen")
           Some(chosen)
+    end if
   end findLocalFile
 
   // ============================================================

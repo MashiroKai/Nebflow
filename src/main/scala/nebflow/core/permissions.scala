@@ -21,7 +21,6 @@ object ToolReversibility:
     "Edit",
     "Write",
     "WriteMemory",
-    "ClearStaging",
     "AskUserQuestion",
     "TaskCreate",
     "TaskUpdate",
