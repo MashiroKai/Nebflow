@@ -3,17 +3,16 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.service.MemoryStore
+import nebflow.agent.DreamCommand
 
 /**
- * Built-in tool for submitting observations to the memory staging area.
+ * Built-in tool for submitting observations to memory.
  *
- * WriteMemoryTool does NOT write to final memory files. It appends to a staging
- * area (~/.nebflow/memory-staging.jsonl). The MemoryAgent processes the staging
- * area during the Dream cycle and writes to the final memory files.
+ * WriteMemoryTool sends entries directly to the Dream actor mailbox.
+ * The MemoryAgent processes them with a short debounce (batched), then
+ * writes to the final memory files.
  *
- * The agent handles formatting, headings, dedup, and organization.
- * Detail content can be attached and will be carried through staging.
+ * No staging file, no polling — event-driven.
  */
 object WriteMemoryTool extends Tool:
   val name = "WriteMemory"
@@ -84,11 +83,16 @@ When in doubt, prefer a narrower scope. You can always promote to a wider scope 
     else if !Set("folder", "agent", "user").contains(scopeStr) then
       IO.pure(Left(ToolError(s"Unknown scope: $scopeStr")))
     else
-      val source = ctx.agentDef.map(_.name).getOrElse("unknown")
-      val folderId = ctx.folderId
-      MemoryStore
-        .appendStaging(scopeStr, content, detail, source, folderId)
-        .as(Right("Queued for Dream processing."))
+      ctx.dreamSchedulerRef match
+        case Some(ref) =>
+          val source = ctx.agentDef.map(_.name).getOrElse("unknown")
+          val folderId = ctx.folderId
+          // Send entry directly to Dream actor mailbox — fire-and-forget, non-blocking
+          IO.delay {
+            ref ! DreamCommand.ProcessEntry(scopeStr, content, detail, source, folderId)
+          }.as(Right("Queued for Dream processing."))
+        case None =>
+          IO.pure(Left(ToolError("Dream scheduler not available")))
   end call
 
 end WriteMemoryTool

@@ -95,7 +95,7 @@ object Repl:
    * Static environment info — injected once into system prompt, never updated per-turn.
    * Git state is intentionally omitted; agents should use Bash to run git commands on demand.
    */
-  def buildEnvInfo(projectRoot: String, chatWidth: Int = 0): String =
+  def buildEnvInfo(projectRoot: String, chatWidth: Int = 0, meshInfo: String = ""): String =
     val sb = new StringBuilder
     sb.append("## Environment\n\n")
     sb.append("| Property | Value |\n")
@@ -105,7 +105,13 @@ object Repl:
     sb.append(s"| Shell | ${sys.env.getOrElse("SHELL", "unknown")} |\n")
     sb.append(s"| OS Version | ${sys.props.getOrElse("os.name", "")} ${sys.props.getOrElse("os.version", "")} |\n")
     sb.append(s"| Nebflow version | v${nebflow.Version.string} |\n")
+    // PID and port: expose identity so agents avoid killing themselves or sibling instances
+    val pid = sys.props.getOrElse("nebflow.gateway.pid", java.lang.ProcessHandle.current().pid().toString)
+    val port = sys.props.getOrElse("nebflow.gateway.port", sys.env.getOrElse("NEBFLOW_GATEWAY_PORT", "8080"))
+    sb.append(s"| PID | $pid |\n")
+    sb.append(s"| Gateway port | $port |\n")
     if chatWidth > 0 then sb.append(s"| Chat width | ~${chatWidth}px |\n")
+    if meshInfo.nonEmpty then sb.append(meshInfo)
     sb.toString
   end buildEnvInfo
 end Repl
