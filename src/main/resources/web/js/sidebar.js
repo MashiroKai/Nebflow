@@ -1735,18 +1735,9 @@ function showDeleteZone() {
       ids = [data];
     }
     if (ids.length > 0) {
-      // If already in selection mode, delete all selected
+      // If already in selection mode, show batch delete confirmation
       if (state.selectedSessionIds.size > 1) {
-        sendWs({ type: 'batchDeleteSessions', sessionIds: [...state.selectedSessionIds] });
-        state.selectedSessionIds.forEach(id => {
-          delete state.sessionInputDrafts[id];
-          state.unreadSessions.delete(id);
-          state.markedUnreadSessions.delete(id);
-          state.pinnedSessions.delete(id);
-        });
-        persistUnread(); persistMarkedUnread(); persistPinned(); persistDrafts();
-        state.selectedSessionIds.clear();
-        state.lastSelectedSessionId = null;
+        showBatchDeleteModal();
       } else {
         // Single drag — confirm delete
         const sid = ids[0];

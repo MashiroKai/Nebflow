@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
-import nebflow.agent.{AgentCommand, AgentDef, AgentLibrary, DreamCommand}
+import nebflow.agent.*
 import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
 import nebflow.core.{AskItem, AskOption, FileChangeTracker}

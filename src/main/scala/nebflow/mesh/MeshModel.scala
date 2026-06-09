@@ -26,8 +26,7 @@ object AccountInfo:
 
   def load: IO[Option[AccountInfo]] =
     IO.blocking {
-      if os.exists(accountPath) then
-        decode[AccountInfo](os.read(accountPath)).toOption
+      if os.exists(accountPath) then decode[AccountInfo](os.read(accountPath)).toOption
       else None
     }
 
@@ -40,6 +39,7 @@ object AccountInfo:
     IO.blocking {
       if os.exists(accountPath) then os.remove(accountPath)
     }
+end AccountInfo
 
 // ===== Device Identity =====
 
@@ -72,10 +72,10 @@ object DeviceIdentity:
       )
       .getOrElse("Unknown")
     val platform = detectPlatform match
-      case "macos"   => "macOS"
+      case "macos" => "macOS"
       case "windows" => "Windows"
-      case "linux"   => "Linux"
-      case _         => ""
+      case "linux" => "Linux"
+      case _ => ""
     s"$hostname ($platform)"
 
   def loadOrCreate: IO[DeviceIdentity] =
@@ -83,7 +83,7 @@ object DeviceIdentity:
       if os.exists(devicePath) then
         decode[DeviceIdentity](os.read(devicePath)) match
           case Right(d) => d
-          case Left(_)  => createNew()
+          case Left(_) => createNew()
       else createNew()
     }.flatMap { id =>
       if !os.exists(devicePath) then save(id).as(id) else IO.pure(id)
@@ -160,7 +160,9 @@ object SyncDiff:
 case class MeshConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  cloudUrl: Option[String] = Some("https://cloudbase-3gltu9is7f791a38-1411212853.ap-shanghai.app.tcloudbase.com/nebflow-mesh")
+  cloudUrl: Option[String] = Some(
+    "https://cloudbase-3gltu9is7f791a38-1411212853.ap-shanghai.app.tcloudbase.com/nebflow-mesh"
+  )
 )
 
 object MeshConfig:
@@ -174,7 +176,7 @@ object MeshConfig:
       if os.exists(configPath) then
         decode[MeshConfig](os.read(configPath)) match
           case Right(c) => c
-          case Left(_)  => MeshConfig()
+          case Left(_) => MeshConfig()
       else MeshConfig()
     }
 
