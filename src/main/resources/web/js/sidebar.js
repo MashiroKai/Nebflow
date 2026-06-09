@@ -8,7 +8,7 @@ import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
-import { refreshReminders } from './reminder.js';
+import { refreshScheduledTasks } from './scheduled-task.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
 
@@ -1424,8 +1424,8 @@ export function switchSession(sessionId) {
   restoreInputDraft(sessionId);
   // Task list and bg task indicator are restored inside resetChatForActiveSession()
   sendWs({type: 'switchSession', sessionId});
-  // Refresh reminders for the new session
-  if (typeof refreshReminders === 'function') refreshReminders(sessionId);
+  // Refresh scheduled tasks for the new session
+  if (typeof refreshScheduledTasks === 'function') refreshScheduledTasks(sessionId);
 }
 
 export function deleteSession(sessionId) {

@@ -11,7 +11,7 @@ import nebflow.bridge.feishu.*
 import nebflow.core.*
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
-import nebflow.core.reminder.{ReminderScheduler, ReminderStore}
+import nebflow.core.scheduler.{ScheduledTaskActor, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
@@ -325,6 +325,25 @@ object GatewayMain extends IOApp.Simple:
                                           bridgeManager = Some(bridgeManager),
                                           meshService = Some(meshService)
                                         )
+
+                                      // --- Create Scheduled Task Actor before wsRoutes ---
+                                      // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
+                                      var scheduledTaskActorRefHolder: Option[org.apache.pekko.actor.typed.ActorRef[nebflow.core.scheduler.ScheduledTaskCommand]] = None
+                                      val scheduledTaskActor = new ScheduledTaskActor(
+                                        actorSystem,
+                                        sharedResourcesWithBridge.dispatcher,
+                                        sharedResourcesWithBridge.scheduledTaskStore,
+                                        (sid, event) =>
+                                          wsRoutesHolder match
+                                            case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
+                                            case None => IO.unit,
+                                        wsHub
+                                      )
+                                      scheduledTaskActorRefHolder = Some(scheduledTaskActor.ref)
+                                      val sharedResourcesFinal = sharedResourcesWithBridge.copy(
+                                        scheduledTaskActorRef = scheduledTaskActorRefHolder
+                                      )
+
                                       EmberServerBuilder
                                         .default[IO]
                                         .withHost(cfg.host)
@@ -344,7 +363,7 @@ object GatewayMain extends IOApp.Simple:
                                             wsHub,
                                             actorSystem,
                                             contextWindow,
-                                            sharedResourcesWithBridge,
+                                            sharedResourcesFinal,
                                             mcpManager
                                           )
                                           wsRoutesHolder = Some(wsRoutes)
@@ -353,7 +372,7 @@ object GatewayMain extends IOApp.Simple:
                                           val restApiRoutes = new RestApiRoutes(
                                             token,
                                             configRef,
-                                            sharedResourcesWithBridge,
+                                            sharedResourcesFinal,
                                             sessionStore,
                                             wsRoutes,
                                             meshService = Some(meshService)
@@ -387,19 +406,6 @@ object GatewayMain extends IOApp.Simple:
                                               else IO.unit
                                             )
                                             _ <- bridgeManager.startAll.start // start in background
-                                            // --- Start Reminder Scheduler ---
-                                            _ <- ReminderScheduler
-                                              .start(
-                                                sharedResourcesWithDream.reminderStore,
-                                                (sid, event) =>
-                                                  wsRoutesHolder match
-                                                    case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
-                                                    case None => IO.unit,
-                                                wsHub,
-                                                sessionStore
-                                              )
-                                              .flatMap(_ => IO.unit)
-                                              .start
                                             _ <- openBrowser(url)
                                             // --- Background init: skills dir, MCP servers ---
                                             _ <- SkillService
