@@ -1,4 +1,4 @@
-// reminder.js — Session Scheduled Tasks UI (iPhone Reminders style)
+// scheduled-task.js — Session Scheduled Tasks UI (iPhone Reminders style)
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
@@ -10,7 +10,7 @@ function getLocale() {
 }
 
 // ── State ──────────────────────────────────────────────────────────────
-let reminders = [];
+let tasks = [];
 let isCreating = false;
 let panelOpen = false;
 
@@ -29,21 +29,21 @@ function formatTriggerTime(epochMs) {
     hour: '2-digit', minute: '2-digit', hour12: false
   });
 
-  if (diffDays === 0) return t('reminder.today') + ' ' + time;
-  if (diffDays === 1) return t('reminder.tomorrow') + ' ' + time;
-  if (diffDays === -1) return t('reminder.yesterday') + ' ' + time;
+  if (diffDays === 0) return t('task.today') + ' ' + time;
+  if (diffDays === 1) return t('task.tomorrow') + ' ' + time;
+  if (diffDays === -1) return t('task.yesterday') + ' ' + time;
   const dateStr = d.toLocaleDateString(getLocale() === 'zh-CN' ? 'zh-CN' : 'en', {
     month: 'short', day: 'numeric'
   });
   return dateStr + ' ' + time;
 }
 
-function isOverdue(r) {
-  return !r.triggered && r.triggerAt < Date.now();
+function isOverdue(t) {
+  return !t.triggered && t.triggerAt < Date.now();
 }
 
 function pendingCount() {
-  return reminders.filter(r => !r.triggered).length;
+  return tasks.filter(t => !t.triggered).length;
 }
 
 function defaultTriggerAt() {
@@ -89,17 +89,17 @@ function renderList() {
   const body = $('#reminder-panel .reminder-panel-body');
   if (!body) return;
 
-  const pending = reminders.filter(r => !r.triggered);
-  const triggered = reminders.filter(r => r.triggered);
+  const pending = tasks.filter(t => !t.triggered);
+  const triggered = tasks.filter(t => t.triggered);
 
   // Update header count
   const countEl = $('#reminder-panel .reminder-panel-count');
-  if (countEl) countEl.textContent = pending.length > 0 ? t('reminder.pendingCount', { count: pending.length }) : '';
+  if (countEl) countEl.textContent = pending.length > 0 ? t('task.pendingCount', { count: pending.length }) : '';
 
   // Clear and rebuild
   body.innerHTML = '';
 
-  if (reminders.length === 0 && !isCreating) {
+  if (tasks.length === 0 && !isCreating) {
     body.appendChild(buildEmptyState());
   } else {
     for (const r of pending) body.appendChild(buildRow(r, false));
@@ -126,8 +126,8 @@ function buildEmptyState() {
   const el = document.createElement('div');
   el.className = 'reminder-empty';
   el.innerHTML = `
-    <div class="reminder-empty-text">${t('reminder.empty')}</div>
-    <div class="reminder-empty-hint">${t('reminder.emptyHint')}</div>`;
+    <div class="reminder-empty-text">${t('task.empty')}</div>
+    <div class="reminder-empty-hint">${t('task.emptyHint')}</div>`;
   el.addEventListener('click', (e) => {
     e.stopPropagation();
     startInlineCreate();
@@ -153,7 +153,7 @@ function buildRow(r, isTriggered) {
     circle.dataset.id = r.id;
     circle.addEventListener('click', (e) => {
       e.stopPropagation();
-      deleteReminder(r.id);
+      deleteTask(r.id);
     });
   }
 
@@ -168,13 +168,13 @@ function buildRow(r, isTriggered) {
   const timeSpan = document.createElement('span');
   timeSpan.className = 'reminder-row-time';
   if (isTriggered) {
-    timeSpan.textContent = t('reminder.triggered') + ' ' + formatTriggerTime(r.triggerAt);
+    timeSpan.textContent = t('task.triggered') + ' ' + formatTriggerTime(r.triggerAt);
   } else {
     timeSpan.textContent = formatTriggerTime(r.triggerAt);
     if (isOverdue(r)) {
       const tag = document.createElement('span');
       tag.className = 'reminder-overdue-tag';
-      tag.textContent = t('reminder.overdue');
+      tag.textContent = t('task.overdue');
       timeSpan.appendChild(tag);
     }
   }
@@ -199,7 +199,7 @@ function buildInlineCreate() {
     <div class="reminder-inline-main">
       <span class="reminder-circle ghost"></span>
       <input type="text" class="reminder-inline-input" id="reminder-inline-input"
-        placeholder="${t('reminder.inputPlaceholder')}" autocomplete="off">
+        placeholder="${t('task.inputPlaceholder')}" autocomplete="off">
     </div>
     <div class="reminder-inline-detail">
       <div class="reminder-time-row">
@@ -216,7 +216,7 @@ function buildInlineCreate() {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        saveInlineReminder();
+        saveInlineTask();
       }
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -245,11 +245,11 @@ function openPanel() {
   panel.classList.add('open');
 
   const title = panel.querySelector('.reminder-panel-title');
-  if (title) title.textContent = t('reminder.panelTitle');
+  if (title) title.textContent = t('task.panelTitle');
   if (typeof lucide !== 'undefined') lucide.createIcons();
 
   if (state.activeSessionId) {
-    sendWs({ type: 'listReminders', sessionId: state.activeSessionId });
+    sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
   }
 }
 
@@ -277,7 +277,7 @@ function cancelInlineCreate() {
   renderList();
 }
 
-function saveInlineReminder() {
+function saveInlineTask() {
   const input = document.querySelector('#reminder-inline-input');
   const timeInput = document.querySelector('#reminder-time-input');
   if (!input || !timeInput) return;
@@ -301,7 +301,7 @@ function saveInlineReminder() {
     : triggerAt;
 
   sendWs({
-    type: 'createReminder',
+    type: 'createScheduledTask',
     sessionId: state.activeSessionId,
     content: content,
     triggerAt: effectiveTriggerAt,
@@ -309,7 +309,7 @@ function saveInlineReminder() {
   });
 
   // Optimistic add — append to end
-  reminders.push({
+  tasks.push({
     id: 'temp-' + Date.now(),
     content: content,
     triggerAt: effectiveTriggerAt,
@@ -323,7 +323,7 @@ function saveInlineReminder() {
   updateBadge();
 }
 
-function deleteReminder(id) {
+function deleteTask(id) {
   if (!state.activeSessionId) return;
 
   const row = document.querySelector(`.reminder-row[data-id="${id}"]`);
@@ -332,14 +332,14 @@ function deleteReminder(id) {
     if (circle) circle.classList.add('completing');
     row.classList.add('removing');
     setTimeout(() => {
-      sendWs({ type: 'deleteReminder', sessionId: state.activeSessionId, id: id });
-      reminders = reminders.filter(r => r.id !== id);
+      sendWs({ type: 'deleteScheduledTask', sessionId: state.activeSessionId, id: id });
+      tasks = tasks.filter(t => t.id !== id);
       renderList();
       updateBadge();
     }, 350);
   } else {
-    sendWs({ type: 'deleteReminder', sessionId: state.activeSessionId, id: id });
-    reminders = reminders.filter(r => r.id !== id);
+    sendWs({ type: 'deleteScheduledTask', sessionId: state.activeSessionId, id: id });
+    tasks = tasks.filter(t => t.id !== id);
     renderList();
     updateBadge();
   }
@@ -347,50 +347,50 @@ function deleteReminder(id) {
 
 // ── WS Message Handlers ───────────────────────────────────────────────
 
-onMessage('reminderList', (msg) => {
-  reminders = msg.reminders || [];
+onMessage('scheduledTaskList', (msg) => {
+  tasks = msg.tasks || [];
   renderList();
   updateBadge();
 });
 
-onMessage('reminderCreated', (msg) => {
+onMessage('scheduledTaskCreated', (msg) => {
   if (state.activeSessionId) {
-    sendWs({ type: 'listReminders', sessionId: state.activeSessionId });
+    sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
   }
   updateBadge();
 });
 
-onMessage('reminderDeleted', (msg) => {
-  reminders = reminders.filter(r => r.id !== msg.id);
+onMessage('scheduledTaskDeleted', (msg) => {
+  tasks = tasks.filter(t => t.id !== msg.id);
   renderList();
   updateBadge();
 });
 
-onMessage('reminderTriggered', (msg) => {
+onMessage('scheduledTaskTriggered', (msg) => {
   // Show persistent notification regardless of active session, so it survives session switches
-  if (msg.reminder && msg.reminder.content) {
-    addNotification('reminder', msg.reminder.content, { dismissAfter: 60000 });
+  if (msg.task && msg.task.content) {
+    addNotification('task', msg.task.content, { dismissAfter: 60000 });
   }
 
   if (msg.sessionId === state.activeSessionId) {
-    reminders = reminders.map(r =>
-      r.id === (msg.reminder && msg.reminder.id)
-        ? { ...r, triggered: true, triggeredAt: Date.now() }
-        : r
+    tasks = tasks.map(t =>
+      t.id === (msg.task && msg.task.id)
+        ? { ...t, triggered: true, triggeredAt: Date.now() }
+        : t
     );
     renderList();
     updateBadge();
 
-    if (msg.reminder) {
-      const ref = msg.reminder.referencePath
-        ? `<div class="reminder-row-ref" style="margin-top:4px"><i data-lucide="file-text" style="width:12px;height:12px"></i>${escapeHtml(msg.reminder.referencePath)}</div>`
+    if (msg.task) {
+      const ref = msg.task.referencePath
+        ? `<div class="reminder-row-ref" style="margin-top:4px"><i data-lucide="file-text" style="width:12px;height:12px"></i>${escapeHtml(msg.task.referencePath)}</div>`
         : '';
       const bubble = document.createElement('div');
       bubble.className = 'reminder-trigger-bubble';
       bubble.innerHTML = `
-        <div class="reminder-trigger-header"><i data-lucide="bell-ring"></i> ${t('reminder.triggerTitle')}</div>
-        <div class="reminder-trigger-content">${escapeHtml(msg.reminder.content)}</div>
-        <div class="reminder-trigger-time">${t('reminder.scheduledAt', { time: msg.reminder.formattedTime || formatTriggerTime(msg.reminder.triggerAt) })}</div>
+        <div class="reminder-trigger-header"><i data-lucide="bell-ring"></i> ${t('task.triggerTitle')}</div>
+        <div class="reminder-trigger-content">${escapeHtml(msg.task.content)}</div>
+        <div class="reminder-trigger-time">${t('task.scheduledAt', { time: msg.task.formattedTime || formatTriggerTime(msg.task.triggerAt) })}</div>
         ${ref}`;
       const chat = document.getElementById('chat');
       if (chat) {
@@ -405,11 +405,11 @@ onMessage('reminderTriggered', (msg) => {
 
     if (!panelOpen) openPanel();
   } else {
-    // Non-active session: still update local reminder state so badge is correct
-    reminders = reminders.map(r =>
-      r.id === (msg.reminder && msg.reminder.id)
-        ? { ...r, triggered: true, triggeredAt: Date.now() }
-        : r
+    // Non-active session: still update local task state so badge is correct
+    tasks = tasks.map(t =>
+      t.id === (msg.task && msg.task.id)
+        ? { ...t, triggered: true, triggeredAt: Date.now() }
+        : t
     );
     updateBadge();
   }
@@ -417,10 +417,10 @@ onMessage('reminderTriggered', (msg) => {
 
 // ── Public Init ────────────────────────────────────────────────────────
 
-export function initReminder() {
+export function initScheduledTask() {
   const btn = $('#reminder-btn');
   if (btn) {
-    btn.title = t('reminder.panelTitle');
+    btn.title = t('task.panelTitle');
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       togglePanel();
@@ -433,7 +433,7 @@ export function initReminder() {
     createBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (isCreating) {
-        saveInlineReminder();
+        saveInlineTask();
       } else {
         startInlineCreate();
       }
@@ -445,7 +445,7 @@ export function initReminder() {
   if (body) {
     body.addEventListener('click', (e) => {
       if (e.target.closest('button, input, a, .reminder-row')) return;
-      if (isCreating) saveInlineReminder();
+      if (isCreating) saveInlineTask();
       else startInlineCreate();
     });
   }
@@ -460,12 +460,12 @@ export function initReminder() {
   });
 }
 
-/** Called when session switches — refresh reminder list */
-export function refreshReminders(sessionId) {
-  reminders = [];
+/** Called when session switches — refresh task list */
+export function refreshScheduledTasks(sessionId) {
+  tasks = [];
   isCreating = false;
   if (panelOpen && sessionId) {
-    sendWs({ type: 'listReminders', sessionId: sessionId });
+    sendWs({ type: 'listScheduledTasks', sessionId: sessionId });
   } else {
     renderList();
     updateBadge();

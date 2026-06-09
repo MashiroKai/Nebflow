@@ -915,9 +915,9 @@ class WebSocketRoutes(
           else IO.unit
           end if
 
-        // ===== Reminder Management =====
+        // ===== Scheduled Task Management =====
 
-        case "createReminder" =>
+        case "createScheduledTask" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val hc = json.hcursor
           val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
@@ -925,17 +925,18 @@ class WebSocketRoutes(
           val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
           val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
           if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
-            val reminder = nebflow.core.reminder.Reminder.create(crSessionId, crContent, crTriggerAt, crRefPath)
-            sharedResources.reminderStore.addReminder(reminder).flatMap { _ =>
+            val task = nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath)
+            sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
+              sharedResources.scheduledTaskActorRef.foreach(_ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskCreated(task))
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderCreated".asJson,
-                  "reminder" -> io.circe.Json.obj(
-                    "id" -> reminder.id.asJson,
-                    "content" -> reminder.content.asJson,
-                    "triggerAt" -> reminder.triggerAt.asJson,
-                    "createdAt" -> reminder.createdAt.asJson,
-                    "referencePath" -> reminder.referencePath.asJson
+                  "type" -> "scheduledTaskCreated".asJson,
+                  "task" -> io.circe.Json.obj(
+                    "id" -> task.id.asJson,
+                    "content" -> task.content.asJson,
+                    "triggerAt" -> task.triggerAt.asJson,
+                    "createdAt" -> task.createdAt.asJson,
+                    "referencePath" -> task.referencePath.asJson
                   )
                 )
               )
@@ -946,28 +947,28 @@ class WebSocketRoutes(
               else if crContent.isEmpty then "missing content"
               else if crTriggerAt <= System.currentTimeMillis() then "triggerAt must be in the future"
               else "unknown"
-            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid reminder: $reason".asJson))
+            wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Invalid scheduled task: $reason".asJson))
           end if
 
-        case "listReminders" =>
+        case "listScheduledTasks" =>
           val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if lrSessionId.nonEmpty then
-            sharedResources.reminderStore.loadReminders(lrSessionId).flatMap { reminders =>
-              val reminderJsons = reminders.map { r =>
+            sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { tasks =>
+              val taskJsons = tasks.map { t =>
                 io.circe.Json.obj(
-                  "id" -> r.id.asJson,
-                  "content" -> r.content.asJson,
-                  "triggerAt" -> r.triggerAt.asJson,
-                  "createdAt" -> r.createdAt.asJson,
-                  "triggered" -> r.triggered.asJson,
-                  "triggeredAt" -> r.triggeredAt.asJson,
-                  "referencePath" -> r.referencePath.asJson
+                  "id" -> t.id.asJson,
+                  "content" -> t.content.asJson,
+                  "triggerAt" -> t.triggerAt.asJson,
+                  "createdAt" -> t.createdAt.asJson,
+                  "triggered" -> t.triggered.asJson,
+                  "triggeredAt" -> t.triggeredAt.asJson,
+                  "referencePath" -> t.referencePath.asJson
                 )
               }
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderList".asJson,
-                  "reminders" -> reminderJsons.asJson,
+                  "type" -> "scheduledTaskList".asJson,
+                  "tasks" -> taskJsons.asJson,
                   "sessionId" -> lrSessionId.asJson
                 )
               )
@@ -975,15 +976,16 @@ class WebSocketRoutes(
           else IO.unit
           end if
 
-        case "deleteReminder" =>
+        case "deleteScheduledTask" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val drSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
           val drId = json.hcursor.downField("id").as[String].getOrElse("")
           if drSessionId.nonEmpty && drId.nonEmpty then
-            sharedResources.reminderStore.deleteReminder(drSessionId, drId).flatMap { _ =>
+            sharedResources.scheduledTaskStore.deleteTask(drSessionId, drId).flatMap { _ =>
+              sharedResources.scheduledTaskActorRef.foreach(_ ! nebflow.core.scheduler.ScheduledTaskCommand.TaskDeleted(drSessionId, drId))
               wsSend(
                 io.circe.Json.obj(
-                  "type" -> "reminderDeleted".asJson,
+                  "type" -> "scheduledTaskDeleted".asJson,
                   "id" -> drId.asJson,
                   "sessionId" -> drSessionId.asJson
                 )
