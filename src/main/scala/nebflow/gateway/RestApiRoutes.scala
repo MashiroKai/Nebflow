@@ -432,7 +432,8 @@ class RestApiRoutes(
   /** Verify peer-to-peer access: Bearer must match local userId. */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
     meshService match
-      case None => IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
+      case None =>
+        IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
       case Some(ms) =>
         val callerUserId = req.headers
           .get[Authorization]

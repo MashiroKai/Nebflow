@@ -106,10 +106,8 @@ object Repl:
     sb.append(s"| OS Version | ${sys.props.getOrElse("os.name", "")} ${sys.props.getOrElse("os.version", "")} |\n")
     sb.append(s"| Nebflow version | v${nebflow.Version.string} |\n")
     // PID and port: expose identity so agents avoid killing themselves or sibling instances
-    val pid = sys.props.getOrElse("nebflow.gateway.pid",
-      java.lang.ProcessHandle.current().pid().toString)
-    val port = sys.props.getOrElse("nebflow.gateway.port",
-      sys.env.getOrElse("NEBFLOW_GATEWAY_PORT", "8080"))
+    val pid = sys.props.getOrElse("nebflow.gateway.pid", java.lang.ProcessHandle.current().pid().toString)
+    val port = sys.props.getOrElse("nebflow.gateway.port", sys.env.getOrElse("NEBFLOW_GATEWAY_PORT", "8080"))
     sb.append(s"| PID | $pid |\n")
     sb.append(s"| Gateway port | $port |\n")
     if chatWidth > 0 then sb.append(s"| Chat width | ~${chatWidth}px |\n")

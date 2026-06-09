@@ -469,7 +469,7 @@ export function send() {
     sendWs({
       content: text,
       attachments: state.pendingAttachments.map(a => ({
-        mimeType: a.mimeType, data: a.data, name: a.name
+        mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
       clientMessageId,
       sessionId: state.activeSessionId,

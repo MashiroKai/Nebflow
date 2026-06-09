@@ -8,7 +8,7 @@ import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
-import { refreshReminders } from './reminder.js';
+import { refreshScheduledTasks } from './scheduled-task.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
 
@@ -1424,8 +1424,8 @@ export function switchSession(sessionId) {
   restoreInputDraft(sessionId);
   // Task list and bg task indicator are restored inside resetChatForActiveSession()
   sendWs({type: 'switchSession', sessionId});
-  // Refresh reminders for the new session
-  if (typeof refreshReminders === 'function') refreshReminders(sessionId);
+  // Refresh scheduled tasks for the new session
+  if (typeof refreshScheduledTasks === 'function') refreshScheduledTasks(sessionId);
 }
 
 export function deleteSession(sessionId) {
@@ -1735,18 +1735,9 @@ function showDeleteZone() {
       ids = [data];
     }
     if (ids.length > 0) {
-      // If already in selection mode, delete all selected
+      // If already in selection mode, show batch delete confirmation
       if (state.selectedSessionIds.size > 1) {
-        sendWs({ type: 'batchDeleteSessions', sessionIds: [...state.selectedSessionIds] });
-        state.selectedSessionIds.forEach(id => {
-          delete state.sessionInputDrafts[id];
-          state.unreadSessions.delete(id);
-          state.markedUnreadSessions.delete(id);
-          state.pinnedSessions.delete(id);
-        });
-        persistUnread(); persistMarkedUnread(); persistPinned(); persistDrafts();
-        state.selectedSessionIds.clear();
-        state.lastSelectedSessionId = null;
+        showBatchDeleteModal();
       } else {
         // Single drag — confirm delete
         const sid = ids[0];

@@ -89,7 +89,7 @@ class AgentLibrary(
     ),
     DefaultAgent(
       "MemoryAgent",
-      """{"name":"MemoryAgent","description":"Internal memory management agent","tools":["Read","Write","Edit","Glob","Grep","ClearStaging"]}""",
+      """{"name":"MemoryAgent","description":"Internal memory management agent","tools":["Read","Write","Edit","Glob","Grep"]}""",
       MemoryAgentPrompts.systemPrompt
     )
   )
