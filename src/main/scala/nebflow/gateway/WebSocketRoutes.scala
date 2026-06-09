@@ -1830,63 +1830,67 @@ class WebSocketRoutes(
     import java.security.MessageDigest
 
     val targetName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
-    if targetName.isEmpty then return None
-
-    val candidates = scala.collection.mutable.ListBuffer.empty[(Path, Long, Long)] // (path, mtime, size)
-
-    for searchRoot <- searchPaths if candidates.isEmpty do
-      val rootPath = Path.of(searchRoot)
-      if Files.isDirectory(rootPath) then
-        try
-          // No FOLLOW_LINKS — avoids symlink loops on macOS bundles (.fcpcache etc.)
-          Files.walkFileTree(
-            rootPath,
-            java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]),
-            Integer.MAX_VALUE,
-            new SimpleFileVisitor[Path]:
-              override def preVisitDirectory(
-                dir: Path,
-                attrs: java.nio.file.attribute.BasicFileAttributes
-              ): FileVisitResult =
-                if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
-                else FileVisitResult.CONTINUE
-
-              override def visitFile(file: Path, attrs: java.nio.file.attribute.BasicFileAttributes): FileVisitResult =
-                // Fast filter: match filename + size before expensive hash computation
-                if file.getFileName.toString == targetName && attrs.isRegularFile && attrs.size == expectedSize then
-                  candidates += ((file, attrs.lastModifiedTime.toMillis, attrs.size))
-                FileVisitResult.CONTINUE
-
-              override def visitFileFailed(file: Path, exc: java.io.IOException): FileVisitResult =
-                FileVisitResult.CONTINUE
-          )
-        catch
-          case _: Exception => // skip inaccessible directories
-      end if
-    end for
-    if candidates.isEmpty then None
+    if targetName.isEmpty then None
     else
-      // Verify SHA-256 for each candidate (already pre-filtered by name + size)
-      val hashMatches = candidates.toList.filter { (path, _, _) =>
-        try
-          val bytes = Files.readAllBytes(path)
-          val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-          val hex = digest.map(b => String.format("%02x", b)).mkString
-          hex == expectedHash
-        catch case _: Exception => false
-      }
+      val candidates = scala.collection.mutable.ListBuffer.empty[(Path, Long, Long)] // (path, mtime, size)
 
-      hashMatches match
-        case Nil => None
-        case (p, _, _) :: Nil => Some(p.toString)
-        case multiple =>
-          // Multiple identical copies: pick the most recently modified with shortest path
-          val sorted = multiple.sortBy { (path, mtime, _) =>
-            (-mtime, path.toString.length)
-          }
-          val chosen = sorted.head._1.toString
-          logger.info(s"Attachment '$name': ${multiple.size} local copies with same hash, chose: $chosen")
-          Some(chosen)
+      for searchRoot <- searchPaths if candidates.isEmpty do
+        val rootPath = Path.of(searchRoot)
+        if Files.isDirectory(rootPath) then
+          try
+            // No FOLLOW_LINKS — avoids symlink loops on macOS bundles (.fcpcache etc.)
+            Files.walkFileTree(
+              rootPath,
+              java.util.EnumSet.noneOf(classOf[java.nio.file.FileVisitOption]),
+              Integer.MAX_VALUE,
+              new SimpleFileVisitor[Path]:
+                override def preVisitDirectory(
+                  dir: Path,
+                  attrs: java.nio.file.attribute.BasicFileAttributes
+                ): FileVisitResult =
+                  if skipDirs.contains(dir.getFileName.toString) then FileVisitResult.SKIP_SUBTREE
+                  else FileVisitResult.CONTINUE
+
+                override def visitFile(
+                  file: Path,
+                  attrs: java.nio.file.attribute.BasicFileAttributes
+                ): FileVisitResult =
+                  // Fast filter: match filename + size before expensive hash computation
+                  if file.getFileName.toString == targetName && attrs.isRegularFile && attrs.size == expectedSize then
+                    candidates += ((file, attrs.lastModifiedTime.toMillis, attrs.size))
+                  FileVisitResult.CONTINUE
+
+                override def visitFileFailed(file: Path, exc: java.io.IOException): FileVisitResult =
+                  FileVisitResult.CONTINUE
+            )
+          catch
+            case _: Exception => // skip inaccessible directories
+        end if
+      end for
+      if candidates.isEmpty then None
+      else
+        // Verify SHA-256 for each candidate (already pre-filtered by name + size)
+        val hashMatches = candidates.toList.filter { (path, _, _) =>
+          try
+            val bytes = Files.readAllBytes(path)
+            val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+            val hex = digest.map(b => String.format("%02x", b)).mkString
+            hex == expectedHash
+          catch case _: Exception => false
+        }
+
+        hashMatches match
+          case Nil => None
+          case (p, _, _) :: Nil => Some(p.toString)
+          case multiple =>
+            // Multiple identical copies: pick the most recently modified with shortest path
+            val sorted = multiple.sortBy { (path, mtime, _) =>
+              (-mtime, path.toString.length)
+            }
+            val chosen = sorted.head._1.toString
+            logger.info(s"Attachment '$name': ${multiple.size} local copies with same hash, chose: $chosen")
+            Some(chosen)
+      end if
     end if
   end findLocalFile
 
