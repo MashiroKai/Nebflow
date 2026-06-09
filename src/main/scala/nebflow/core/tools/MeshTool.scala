@@ -98,8 +98,7 @@ Available devices are listed in the environment info table.""".stripMargin
       id <- meshService.identity
       peers <- meshService.peers
     yield
-      if !loggedIn then
-        Left(ToolError("Not logged in — use the Mesh panel to login first."))
+      if !loggedIn then Left(ToolError("Not logged in — use the Mesh panel to login first."))
       else if peers.isEmpty then Right("No peer devices. Only this device is in the group.\nCurrent: " + id.deviceName)
       else
         val current = s"- ${id.deviceName} (${id.platform}) [THIS DEVICE]"
