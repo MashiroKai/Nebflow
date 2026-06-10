@@ -43,22 +43,38 @@ function extractThemeVars(themeCSS) {
  *  No transform:scale() — it causes SVG flowchart lines to misalign due to
  *  sub-pixel rounding. Wide content is constrained by max-width:100% on
  *  img/svg/video and overflow:hidden on body.
- *  Reports content width (so parent can size the wrap) and height. */
+ *  Reports content width (so parent can size the wrap) and height.
+ *  Width is only reported after all images finish loading — otherwise the
+ *  first measurement arrives before images load, reports a tiny width,
+ *  the parent shrinks the wrap, and the feedback loop deadlocks the card
+ *  at that tiny size. */
 function buildHeightScript(id) {
   return `<script>
 (function(){
   var id=${id};
+  function allImagesLoaded(){
+    var imgs=document.getElementById('nf-wrap');
+    if(!imgs)return true;
+    imgs=imgs.querySelectorAll('img');
+    for(var i=0;i<imgs.length;i++){
+      if(!imgs[i].complete)return false;
+    }
+    return true;
+  }
   function send(){
     try{
       var w=document.getElementById('nf-wrap');
       if(!w)return;
-      var cw=w.offsetWidth;
       var h=document.documentElement.scrollHeight||document.body.scrollHeight;
+      var cw=null;
+      if(allImagesLoaded()){
+        cw=w.offsetWidth;
+      }
       parent.postMessage({_nfCardW:cw,_nfCardH:h,id:id},"*");
     }catch(e){}
   }
   new ResizeObserver(send).observe(document.body);
-  send();setTimeout(send,100);setTimeout(send,500);
+  send();setTimeout(send,100);setTimeout(send,500);setTimeout(send,2000);
   window.addEventListener('message',function(e){
     if(e.data&&e.data._nfThemeVars){
       var s=document.getElementById('nf-card-theme');
