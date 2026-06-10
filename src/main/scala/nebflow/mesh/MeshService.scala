@@ -445,12 +445,20 @@ class MeshService private (
       else
         io.circe.parser.decode[Json](body) match
           case Right(json) =>
-            val data = json.hcursor.downField("data")
-            data.downField("peers").as[List[PeerInfo]] match
+            // Cloud function may return peers directly or nested under "data"
+            val dataCursor = json.hcursor.downField("data")
+            val peersCursor =
+              if dataCursor.succeeded then dataCursor.downField("peers")
+              else json.hcursor.downField("peers")
+            peersCursor.as[List[PeerInfo]] match
               case Right(cloudPeers) =>
                 peersRef.update(_ ++ cloudPeers.map(p => p.deviceId -> p))
-              case Left(_) => IO.unit
-          case Left(_) => IO.unit
+              case Left(e) =>
+                logger.debug(s"Cloud lookup parse error: ${e.getMessage}")
+            IO.unit
+          case Left(e) =>
+            logger.debug(s"Cloud lookup JSON error: ${e.getMessage}")
+      end if
     }.handleErrorWith(e => logger.debug(s"Cloud lookup: ${e.getMessage}"))
 
   // ===== Helpers =====
@@ -486,16 +494,17 @@ class MeshService private (
       io.circe.parser.decode[Json](resp.body) match
         case Right(json) =>
           json.hcursor.downField("code").as[Int] match
-            case Right(200) => json.hcursor.downField("data").as[Json].getOrElse(json)
-            case Right(code) =>
+            case Right(code) if code != 200 =>
               val msg = json.hcursor.downField("message").as[String].getOrElse("Unknown")
               throw new RuntimeException(s"Cloud error $code: $msg")
-            case Left(_) => json
+            case _ => json // no code field or code==200 — return full json
         case Left(err) => throw new RuntimeException(s"JSON decode error: ${err.getMessage}")
     }
 
   private def parseAccountResponse(json: Json, username: String): IO[AccountInfo] =
-    val data = json.hcursor
+    // Account data may be at root or nested under "data"
+    val dataCursor = json.hcursor.downField("data")
+    val data = if dataCursor.succeeded then dataCursor else json.hcursor
     for
       userId <- IO.fromEither(data.downField("userId").as[String].leftMap(_ => new RuntimeException("Missing userId")))
       token <- IO.fromEither(
