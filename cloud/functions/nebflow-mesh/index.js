@@ -14,7 +14,7 @@ const app = cloudbase.init()
 const db = app.database()
 
 const SESSION_TTL = 30 * 24 * 60 * 60 * 1000 // 30 days
-const DEVICE_REGISTRATION_TTL = 30 * 60 * 1000 // 30 minutes
+const DEVICE_REGISTRATION_TTL = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 // Ensure required collections exist (idempotent)
 const COLLECTIONS = ['mesh_users', 'mesh_sessions', 'mesh_discovery']
