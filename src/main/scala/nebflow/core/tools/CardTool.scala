@@ -199,7 +199,7 @@ Accuracy and correctness come first. If a visualization involves data, numbers, 
 
 ### Embedding external content
 
-HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local file paths in src/href are automatically served by the backend."""
+HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local file paths in src/href are automatically served by the backend. **You MUST use absolute paths** (e.g. `/Users/you/project/plot.png` or `~/project/plot.png`). Relative paths will NOT be resolved."""
 
   /**
    * Load user design prompt from disk (cached by mtime).
@@ -234,7 +234,7 @@ Accuracy and correctness come first. **Always generate images with professional 
 ## Workflow: generate with tools, embed with Card
 
 1. Use Bash to run a tool (matplotlib, schemdraw, graphviz, etc.) → outputs an image file
-2. Use Card to embed that file via `<img src="/absolute/path/to/file.png">`
+2. Use Card to embed that file via `<img src="/absolute/path/to/file.png">` (must be an absolute path — relative paths will NOT work)
 
 ## Recommended tools by scenario
 
@@ -289,6 +289,8 @@ Accuracy and correctness come first. **Always generate images with professional 
 
 - html (string, required): HTML with CSS and JS. Dark mode via var(--color-*).
 - title (string, optional): title above card.
+
+Note: When referencing local files (images, videos, etc.) in `src` or `href` attributes, you MUST use absolute paths (e.g. `/Users/you/project/plot.png` or `~/project/plot.png`). The backend will automatically proxy these files. Relative paths will NOT work.
 
 Example (embed tool-generated image):
 {"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}
