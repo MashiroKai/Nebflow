@@ -30,7 +30,6 @@ object CommandRegistry:
       McpCommand,
       AgentCommand,
       SkillCommand,
-      FeishuCommand,
       MemoryCommand
     ).map(c => c.name -> c).toMap
 

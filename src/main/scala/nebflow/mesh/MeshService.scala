@@ -90,7 +90,7 @@ class MeshService private (
       yield myUserId match
         case Some(uid) if uid == callerUserId =>
           peersMap.values.exists(_.deviceSecret == callerSecret) ||
-            myId.deviceSecret == callerSecret
+          myId.deviceSecret == callerSecret
         case _ => false
 
   // ===== Account =====

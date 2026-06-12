@@ -184,9 +184,6 @@ export default {
   // Card design prompt
   cardDesignPrompt: '',
 
-  // Feishu global config cache (survives DOM recreation)
-  feishuGlobalConfig: null,
-
   // Persistent notifications (survive session switches)
   notifications: [],
 };

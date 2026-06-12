@@ -44,8 +44,6 @@ lazy val root = (project in file("."))
       logbackCore,
       // Diff
       diffUtils,
-      // Feishu SDK
-      feishuSdk,
       // Testing
       munit,
       munitCatsEffect,
