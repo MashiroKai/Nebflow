@@ -28,11 +28,7 @@ object SessionMeta:
     val withAgent = m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
     val withModel = m.modelRef.fold(withAgent)(r => withAgent.deepMerge(Json.obj("modelRef" -> r.asJson)))
     val withFolder = m.folderId.fold(withModel)(f => withModel.deepMerge(Json.obj("folderId" -> f.asJson)))
-    // Legacy: read/write "feishu" field as bridges("feishu") for backward compat
-    val withBridges =
-      if m.bridges.nonEmpty then withFolder.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withFolder
-    val feishuLegacy = m.bridges.get("feishu").fold(withBridges)(f => withBridges.deepMerge(Json.obj("feishu" -> f)))
-    feishuLegacy
+    if m.bridges.nonEmpty then withFolder.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withFolder
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -46,11 +42,7 @@ object SessionMeta:
       modelRef <- c.downField("modelRef").as[Option[String]]
       folderId <- c.downField("folderId").as[Option[String]]
       bridges <- c.downField("bridges").as[Option[Map[String, Json]]].map(_.getOrElse(Map.empty))
-      // Legacy: if "bridges" is empty but "feishu" exists, migrate it
-      feishuLegacy <- c.downField("feishu").as[Option[Json]]
-    yield
-      val migrated = if bridges.isEmpty && feishuLegacy.nonEmpty then Map("feishu" -> feishuLegacy.get) else bridges
-      SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, migrated, folderId)
+    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId)
   }
 
 end SessionMeta

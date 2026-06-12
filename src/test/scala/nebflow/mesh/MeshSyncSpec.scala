@@ -51,6 +51,7 @@ class MeshSyncSpec extends CatsEffectSuite:
         case (None, None) =>
     }
     SyncDiff(up.result(), dn.result(), un.result())
+  end computeSyncDiff
 
   // ===== SyncDiff computation tests =====
 
@@ -123,7 +124,7 @@ class MeshSyncSpec extends CatsEffectSuite:
 
   test("mixed scenario: some upload, some download, some unchanged") {
     val local = Map(
-      "memory.md" -> FileFingerprint(2000, 100, "hash-mem-v2"),   // local newer
+      "memory.md" -> FileFingerprint(2000, 100, "hash-mem-v2"), // local newer
       "skills/skill.md" -> FileFingerprint(1000, 50, "hash-skill"), // same hash
       "agents/Nebula/memory.md" -> FileFingerprint(500, 20, "hash-old") // remote newer
     )
@@ -255,6 +256,7 @@ class MeshSyncSpec extends CatsEffectSuite:
       assertEquals(all("a.md").hash, "h1")
       assertEquals(all("c.md").hash, "h3")
     finally cleanupDir(tmpDir)
+    end try
   }
 
   test("MeshSyncStore removeSnapshot") {
