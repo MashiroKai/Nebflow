@@ -29,7 +29,6 @@ object NebflowBackup:
     _ == "NEBFLOW.md",
     _ == "nebflow.json",
     _ == "auth.json",
-    _ == "feishu.json",
     _ == "input_history.jsonl",
     // Sessions directory
     _.startsWith("sessions/"),

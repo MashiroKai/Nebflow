@@ -15,7 +15,7 @@ import java.util.UUID
 
 // ===== Per-session bridge binding config =====
 // Generic: each platform stores its config as a Json object.
-// e.g. bridges = { "feishu": { "chatId": "oc_xxx", ... }, "telegram": { "chatId": -123 } }
+// e.g. bridges = { "telegram": { "chatId": -123 } }
 
 case class Folder(
   id: String,
@@ -405,10 +405,6 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       }
       (activeId, updated, folders)
     } *> saveIndex
-
-  /** Legacy alias for backward compat with WS messages. */
-  def updateSessionFeishu(id: String, config: Option[Json]): IO[Unit] =
-    updateSessionBridge(id, "feishu", config)
 
   // ===== Folder Management =====
 

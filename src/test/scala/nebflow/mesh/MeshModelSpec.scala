@@ -129,14 +129,18 @@ class MeshModelSpec extends CatsEffectSuite:
 
   test("DeviceIdentity has valid UUID format deviceId after loadOrCreate") {
     val id = DeviceIdentity.loadOrCreate.unsafeRunSync()
-    assert(id.deviceId.matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
-      s"deviceId should be UUID format, got: ${id.deviceId}")
+    assert(
+      id.deviceId.matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"),
+      s"deviceId should be UUID format, got: ${id.deviceId}"
+    )
   }
 
   test("DeviceIdentity platform is one of expected values") {
     val id = DeviceIdentity.loadOrCreate.unsafeRunSync()
-    assert(Set("macos", "windows", "linux", "unknown").contains(id.platform),
-      s"platform should be recognized OS, got: ${id.platform}")
+    assert(
+      Set("macos", "windows", "linux", "unknown").contains(id.platform),
+      s"platform should be recognized OS, got: ${id.platform}"
+    )
   }
 
   // ===== PeerInfo =====
@@ -159,8 +163,10 @@ class MeshModelSpec extends CatsEffectSuite:
     val before = System.currentTimeMillis()
     val peer = PeerInfo("d", "n", "p", "a")
     val after = System.currentTimeMillis()
-    assert(peer.lastSeen >= before && peer.lastSeen <= after,
-      s"lastSeen ${peer.lastSeen} should be between $before and $after")
+    assert(
+      peer.lastSeen >= before && peer.lastSeen <= after,
+      s"lastSeen ${peer.lastSeen} should be between $before and $after"
+    )
   }
 
   test("PeerInfo default deviceSecret is empty string") {

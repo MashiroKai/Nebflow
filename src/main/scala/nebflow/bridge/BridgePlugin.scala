@@ -7,12 +7,12 @@ import nebflow.shared.SessionMeta
 /**
  * A remote-bridge plugin that connects Nebflow sessions to an external platform.
  *
- * Implementations: Feishu (WebSocket long-connection), Telegram, Discord, etc.
+ * Implementations: Telegram, Discord, etc.
  * Plugins are loaded by BridgeManager and are fully self-contained —
  * removing a plugin's code and its config file should not break Nebflow.
  */
 trait BridgePlugin:
-  /** Unique identifier, e.g. "feishu", "telegram". */
+  /** Unique identifier, e.g. "telegram". */
   def name: String
 
   /** Start the plugin (connect to platform, register listeners, etc.). */

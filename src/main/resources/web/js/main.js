@@ -17,7 +17,7 @@ import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   switchSession, deleteSession, formatSessionTime, setSessionAttention,
   initHeaderModelInfo,
-  persistUnread, initFeishuPanel, createNewFolder,
+  persistUnread, createNewFolder,
   resetChatForActiveSession
 } from './sidebar.js';
 import {
@@ -1381,7 +1381,7 @@ onMessage('retryStatus', (msg) => {
   if (isActive(msg)) renderRetryStatus(msg.message);
 });
 
-// --- Bridge user message (e.g. from Feishu) ---
+// --- Bridge user message (e.g. from external platform) ---
 onMessage('bridgeUser', (msg) => {
   const sid = msg.sessionId;
   if (!sid) return;
@@ -1734,7 +1734,6 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput();
-initFeishuPanel();
 initMemory();
 initScheduledTask();
 initMesh();
