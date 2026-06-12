@@ -309,9 +309,6 @@ export function renderSettings() {
   const defaultModel = model.default || '';
   const fallbacks = model.fallbacks || [];
 
-  // Request feishu global config every time settings are opened (data is not cached)
-  sendWs({type: 'getFeishuGlobalConfig'});
-
   // Load card design prompt
   sendWs({type: 'getCardDesign'});
 
@@ -355,21 +352,6 @@ export function renderSettings() {
         <input class="cfg-input" id="cfg-compact-keep" type="number" min="0" max="50" value="${compact.microKeepRecent ?? 5}" autocomplete="off">
         <div class="cfg-hint">${t('settings.keepRecentHint')}</div>
       </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.feishu')}</div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.feishuAppId')}</label>
-        <input class="cfg-input" id="cfg-feishu-appid" type="text" placeholder="cli_xxx" value="" autocomplete="off">
-      </div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.feishuAppSecret')}</label>
-        <div class="cfg-password-wrap">
-          <input class="cfg-input" id="cfg-feishu-appsecret" type="text" value="" autocomplete="off" style="-webkit-text-security:disc">
-          <button class="cfg-eye-btn" id="cfg-feishu-eye" type="button" aria-label="Toggle visibility">${eyeSvg}</button>
-        </div>
-      </div>
-      <button class="cfg-btn" id="btn-save-feishu-global" style="margin-top:6px">${t('settings.save')}</button>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.providers')}</div>
@@ -441,14 +423,6 @@ export function renderSettings() {
         </div>
       </div>
     </div>`;
-
-  // Immediately populate feishu fields from cached data (DOM now exists)
-  if (state.feishuGlobalConfig?.configured) {
-    const appIdInput = document.getElementById('cfg-feishu-appid');
-    const secretInput = document.getElementById('cfg-feishu-appsecret');
-    if (appIdInput) appIdInput.value = state.feishuGlobalConfig.appId || '';
-    if (secretInput) secretInput.value = state.feishuGlobalConfig.appSecret || '';
-  }
 
   bindSettingsEvents(content, cfg, allModels);
   bindMeshEvents(() => renderSettings());
@@ -525,29 +499,6 @@ function bindSettingsEvents(content, cfg, allModels) {
       state.configDirty = true;
       flushConfigToServer();
     });
-  });
-
-  // --- Feishu global config save ---
-  document.getElementById('btn-save-feishu-global')?.addEventListener('click', () => {
-    const appId = document.getElementById('cfg-feishu-appid')?.value.trim() || '';
-    const appSecret = document.getElementById('cfg-feishu-appsecret')?.value.trim() || '';
-    if (!appId) return;
-    const payload = { type: 'updateFeishuGlobalConfig', appId };
-    if (appSecret) payload.appSecret = appSecret;
-    sendWs(payload);
-    const btn = document.getElementById('btn-save-feishu-global');
-    btn.textContent = t('settings.saved');
-    setTimeout(() => { btn.textContent = t('settings.save'); }, 1500);
-  });
-
-  // --- Feishu secret eye toggle ---
-  document.getElementById('cfg-feishu-eye')?.addEventListener('click', () => {
-    const input = document.getElementById('cfg-feishu-appsecret');
-    const btn = document.getElementById('cfg-feishu-eye');
-    if (!input || !btn) return;
-    const isMasked = input.style.webkitTextSecurity !== 'none';
-    input.style.webkitTextSecurity = isMasked ? 'none' : 'disc';
-    btn.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
   });
 
   // --- Provider add/edit/remove ---
@@ -1231,9 +1182,6 @@ export function renderSessionSidebar(sessionData, activeId) {
   if (active) {
     sessionNameEl.textContent = active.name;
     sessionNameEl.style.display = '';
-    // Show feishu indicator if session has feishu config
-    const feishuActive = active.bridges?.feishu?.enabled;
-    sessionNameEl.classList.toggle('feishu-linked', !!feishuActive);
     // Update header brand based on session's agent
     const agentName = active.agentName || 'Nebula';
     updateHeaderBrand(agentName);
@@ -1916,93 +1864,6 @@ window.addEventListener('session-compacting', (e) => {
   updateSessionStatus(e.detail.sessionId);
   computeAgentStates();
 });
-
-// ===== Feishu Group ID — Inline Bubble =====
-
-let feishuBubbleEl = null;
-
-function toggleFeishuBubble() {
-  if (feishuBubbleEl) { closeFeishuBubble(); return; }
-  const active = state.sessions.find(s => s.id === state.activeSessionId);
-  if (!active) return;
-
-  const feishu = (active.bridges && active.bridges.feishu) || {};
-  const chatId = feishu.chatId || '';
-
-  const bubble = document.createElement('div');
-  bubble.id = 'feishu-bubble';
-  bubble.innerHTML = `
-    <div class="fb-row">
-      <input type="text" id="fb-chatid-input" value="${escapeHtml(chatId)}" placeholder="${t('feishu.bindPlaceholder')}" autocomplete="off">
-      <button id="fb-unbind" class="fb-btn fb-btn-subtle" ${!chatId ? 'style="display:none"' : ''} title="${t('sidebar.feishuUnbind')}">×</button>
-    </div>`;
-  document.getElementById('session-name').parentElement.appendChild(bubble);
-  feishuBubbleEl = bubble;
-
-  const input = bubble.querySelector('#fb-chatid-input');
-  input.focus();
-  input.select();
-
-  // Save on Enter or blur
-  const save = () => {
-    const val = input.value.trim();
-    if (val !== chatId) {
-      if (val) {
-        sendWs({ type: 'updateSessionFeishu', sessionId: active.id, chatId: val, chatType: 'group', enabled: true, syncMessages: true, notifyEvents: ['aiResponse', 'askUser', 'permissionRequest'] });
-      } else {
-        sendWs({ type: 'updateSessionFeishu', sessionId: active.id, chatId: '' });
-      }
-    }
-    closeFeishuBubble();
-  };
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); save(); }
-    if (e.key === 'Escape') closeFeishuBubble();
-  });
-  input.addEventListener('blur', () => setTimeout(save, 120));
-
-  bubble.querySelector('#fb-unbind')?.addEventListener('click', () => {
-    sendWs({ type: 'updateSessionFeishu', sessionId: active.id, chatId: '' });
-    closeFeishuBubble();
-  });
-
-  // Animate in
-  requestAnimationFrame(() => bubble.classList.add('open'));
-}
-
-function closeFeishuBubble() {
-  if (!feishuBubbleEl) return;
-  feishuBubbleEl.classList.remove('open');
-  setTimeout(() => { feishuBubbleEl?.remove(); feishuBubbleEl = null; }, 200);
-}
-
-// Handle feishu global config response — populate settings fields
-onMessage('feishuGlobalConfig', (data) => {
-  state.feishuGlobalConfig = data;
-  const appIdInput = document.getElementById('cfg-feishu-appid');
-  const secretInput = document.getElementById('cfg-feishu-appsecret');
-  if (!appIdInput) return;
-  if (data.configured) {
-    appIdInput.value = data.appId || '';
-    if (data.appSecret && data.appSecret !== '***') {
-      secretInput.value = data.appSecret;
-    } else if (data.hasAppSecret) {
-      // Secret exists but was redacted — show placeholder instead of "***"
-      secretInput.value = '';
-      secretInput.placeholder = '••••••••';
-    }
-  }
-});
-
-// Bind click on header session name (called from main.js after DOM refs are set)
-export function initFeishuPanel() {
-  if (!state.dom.sessionNameEl) return;
-  state.dom.sessionNameEl.style.cursor = 'pointer';
-  state.dom.sessionNameEl.addEventListener('click', (e) => {
-    e.stopPropagation();
-    toggleFeishuBubble();
-  });
-}
 
 /** Refresh header model-info bar for the active session. */
 export function initHeaderModelInfo() {
