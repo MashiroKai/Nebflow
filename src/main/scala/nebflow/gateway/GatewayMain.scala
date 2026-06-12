@@ -7,7 +7,6 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.bridge.*
-import nebflow.bridge.feishu.*
 import nebflow.core.*
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
@@ -275,7 +274,7 @@ object GatewayMain extends IOApp.Simple:
                                   memoryAgentManager.setSharedResources(sharedResourcesWithDream)
                                   memoryAgentManager.setWsHub(wsHub)
 
-                                  // --- Bridge Manager (plugins: feishu, telegram, etc.) ---
+                                  // --- Bridge Manager (plugins: telegram, etc.) ---
                                   val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
                                     Ref.unsafe(None)
 
@@ -300,15 +299,7 @@ object GatewayMain extends IOApp.Simple:
                                       sessionStore.updateSessionBridge(sessionId, platform, config)
 
                                   val bridgeSetup: IO[BridgeManager] =
-                                    BridgeManager.create(bridgeCtx).flatMap { mgr =>
-                                      // Load Feishu plugin if config exists
-                                      FeishuGlobalConfig.load.flatMap {
-                                        case Some(cfg) =>
-                                          logger.info(s"Feishu bridge enabled (appId=${cfg.appId})") *>
-                                            mgr.register(new FeishuPlugin(cfg)).as(mgr)
-                                        case None => IO.pure(mgr)
-                                      }
-                                    }
+                                    BridgeManager.create(bridgeCtx)
 
                                   // Create mesh service (event-driven sync actor, no UDP)
                                   val meshServiceF: IO[MeshService] =
