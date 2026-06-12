@@ -154,8 +154,10 @@ class MeshSecuritySpec extends CatsEffectSuite:
     // 32 bytes -> 32 * 8 / 6 = 42.67 -> 43 chars with no padding
     val token = nebflow.gateway.Auth.generateToken.unsafeRunSync()
     assert(token.length == 43, s"Token should be 43 chars, got ${token.length}")
-    assert(token.forall(c => c.isLetterOrDigit || c == '-' || c == '_'),
-      "Token should be base64url (alphanumeric, -, _)")
+    assert(
+      token.forall(c => c.isLetterOrDigit || c == '-' || c == '_'),
+      "Token should be base64url (alphanumeric, -, _)"
+    )
   }
 
   test("Auth.validateToken accepts matching token") {
@@ -178,8 +180,8 @@ class MeshSecuritySpec extends CatsEffectSuite:
     // This test verifies that validateToken doesn't short-circuit on first char mismatch
     // by checking that similar tokens still fail
     val correct = "abcdef123456"
-    val wrong1 = "xbcdef123456"  // differs at start
-    val wrong2 = "abcdef123457"  // differs at end
+    val wrong1 = "xbcdef123456" // differs at start
+    val wrong2 = "abcdef123457" // differs at end
     assert(!nebflow.gateway.Auth.validateToken(wrong1, correct))
     assert(!nebflow.gateway.Auth.validateToken(wrong2, correct))
   }
@@ -228,5 +230,6 @@ class MeshSecuritySpec extends CatsEffectSuite:
         case (None, None) =>
     }
     SyncDiff(up.result(), dn.result(), un.result())
+  end computeSyncDiff
 
 end MeshSecuritySpec
