@@ -186,7 +186,7 @@ class WebSocketRoutes(
     else logger.warn("Dropping message: no sessionId provided") *> IO.unit
 
   /**
-   * Public API for external sources (e.g. Feishu bridge) to inject a user message
+   * Public API for external sources (e.g. bridge plugins) to inject a user message
    * into a session's agent. Reuses the same logic as WebSocket user messages:
    * rate limiting, UiMessage recording, agent routing.
    */
@@ -772,88 +772,6 @@ class WebSocketRoutes(
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
               }
-          else IO.unit
-
-        case "updateSessionFeishu" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val hc = json.hcursor
-          val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-          val chatId = hc.downField("chatId").as[String].getOrElse("")
-          if sessionId.isEmpty then IO.unit
-          else if chatId.isEmpty then
-            // Clear feishu config
-            sessionStore.updateSessionFeishu(sessionId, None).flatMap { _ =>
-              sharedResources.bridgeManager.fold(IO.unit)(_.refreshRoutes) *>
-                sendAgentSessionList(wsSend, sessionId)
-            }
-          else
-            val enabled = hc.downField("enabled").as[Option[Boolean]].toOption.flatten.getOrElse(true)
-            val chatType = hc.downField("chatType").as[Option[String]].toOption.flatten.getOrElse("p2p")
-            val notifyEvents = hc
-              .downField("notifyEvents")
-              .as[Option[List[String]]]
-              .toOption
-              .flatten
-              .getOrElse(List("aiResponse", "askUser", "permissionRequest"))
-            val syncMessages = hc.downField("syncMessages").as[Option[Boolean]].toOption.flatten.getOrElse(true)
-            val appId = hc.downField("appId").as[Option[String]].toOption.flatten.getOrElse("")
-            val appSecret = hc.downField("appSecret").as[Option[String]].toOption.flatten.getOrElse("")
-            val cfgJson = Json.obj(
-              "enabled" -> enabled.asJson,
-              "chatId" -> chatId.asJson,
-              "chatType" -> chatType.asJson,
-              "notifyEvents" -> notifyEvents.asJson,
-              "syncMessages" -> syncMessages.asJson
-            )
-            val withCreds = if appId.nonEmpty then cfgJson.deepMerge(Json.obj("appId" -> appId.asJson)) else cfgJson
-            val finalCfg =
-              if appSecret.nonEmpty then withCreds.deepMerge(Json.obj("appSecret" -> appSecret.asJson)) else withCreds
-            sessionStore.updateSessionFeishu(sessionId, Some(finalCfg)).flatMap { _ =>
-              // Refresh bridge routing tables so the new binding takes effect immediately
-              sharedResources.bridgeManager.fold(IO.unit)(_.refreshRoutes) *>
-                sendAgentSessionList(wsSend, sessionId)
-            }
-          end if
-
-        case "getFeishuGlobalConfig" =>
-          import nebflow.bridge.FeishuGlobalConfig
-          FeishuGlobalConfig.load.flatMap {
-            case Some(cfg) =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "feishuGlobalConfig".asJson,
-                  "configured" -> true.asJson,
-                  "appId" -> cfg.appId.asJson,
-                  "appSecret" -> cfg.appSecret.asJson,
-                  "hasAppSecret" -> cfg.appSecret.nonEmpty.asJson
-                )
-              )
-            case None =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "feishuGlobalConfig".asJson,
-                  "configured" -> false.asJson
-                )
-              )
-          }
-
-        case "updateFeishuGlobalConfig" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val hc = json.hcursor
-          val appId = hc.downField("appId").as[String].getOrElse("")
-          val appSecret = hc.downField("appSecret").as[String].getOrElse("")
-          if appId.nonEmpty then
-            import nebflow.bridge.FeishuGlobalConfig
-            // Load existing config to preserve other fields, then merge
-            FeishuGlobalConfig.load.flatMap { existing =>
-              val base = existing.getOrElse(FeishuGlobalConfig(appId = "", appSecret = ""))
-              val updated = base.copy(
-                appId = appId,
-                appSecret = if appSecret.nonEmpty then appSecret else base.appSecret
-              )
-              FeishuGlobalConfig.save(updated) *>
-                wsSend(io.circe.Json.obj("type" -> "feishuGlobalConfigSaved".asJson, "ok" -> true.asJson))
-            }
           else IO.unit
 
         case "ask" =>
