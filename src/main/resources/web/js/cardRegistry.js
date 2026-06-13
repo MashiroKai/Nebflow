@@ -227,6 +227,17 @@ function renderHtmlCard(container, html, title) {
   wrap.appendChild(iframe);
 
   container.appendChild(wrap);
+
+  // Fallback: force iframe visible after 800ms even if the height postMessage
+  // hasn't arrived yet. During active streaming the browser event loop may be
+  // busy processing WebSocket messages, delaying postMessage handling and
+  // leaving the card stuck at opacity:0 (blank bubble).
+  setTimeout(() => {
+    if (iframe.style.opacity !== '1') {
+      iframe.style.opacity = '1';
+      iframe.style.minHeight = '20px';
+    }
+  }, 800);
 }
 
 /**
