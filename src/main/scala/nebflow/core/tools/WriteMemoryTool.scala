@@ -21,7 +21,17 @@ object WriteMemoryTool extends Tool:
     """Write an observation to memory. Queued for processing — not written immediately.
 Processed by the MemoryAgent within minutes.
 
-## When to write (HIGH BAR)
+## Learning from mistakes — write proactively
+
+The most valuable memory entries come from mistakes and corrections. Write memory when:
+- **You made a recoverable error**: wrong approach, wrong path, failed tool call that a different approach would have avoided → write what works instead
+- **The user corrected you**: "don't do X", "it should be Y", "I prefer Z" → write the correct behavior as a preference or correction
+- **You discovered a non-obvious workaround**: environment quirk, missing dependency, font issue → write the solution
+
+Use prefix [correction] for mistake corrections, [preference] for user preferences, [gotcha] for pitfalls.
+This is how you improve over time — each mistake should only happen once.
+
+## When to write (general)
 
 Only write when rediscovering this knowledge would cost significant time or cause repeated mistakes.
 - DO write: addresses, credentials, user corrections, non-obvious pitfalls, behavioral patterns, entity relationships, architectural decisions

@@ -189,6 +189,10 @@ Visual-first, text-minimal. Cards are for diagrams, animations, transitions, spa
 
 Accuracy and correctness come first. If a visualization involves data, numbers, or precise relationships, use a professional tool (matplotlib, gnuplot, ROOT, etc.) to generate it — then embed the result as an image. Hand-drawn SVG is for layout and simple diagrams where precision is not critical.
 
+### Prohibited: ASCII pseudo-visualizations
+
+NEVER use ASCII art, box-drawing characters, or text-based approximations for charts, curves, diagrams, spectra, or any content where visual precision matters. Always generate a real image with a tool and embed it. If you cannot generate an image, describe the content in plain text — do NOT draw with characters.
+
 ### Visual defaults
 
 - **No emoji.** Use typography and spacing for visual interest.
@@ -230,6 +234,17 @@ HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local 
 Humans process visual information far more efficiently than long paragraphs of text. Use this tool to optimize your output — present relationships, structure, and data visually when doing so makes your answer easier to understand.
 
 Accuracy and correctness come first. **Always generate images with professional tools first, then embed them with Card.** Card is for presenting results — not for drawing. Hand-written SVG should only be used for simple conceptual diagrams where precision does not matter. For any data, numbers, or precise structures, always use tools.
+
+## Prohibited: ASCII and text-based pseudo-visualizations
+
+NEVER use ASCII art, box-drawing characters (│─╔╗╚╝), or text-based approximations as a substitute for real visualizations. This includes:
+- Charts, plots, curves, spectra, histograms → use matplotlib/gnuplot, save image, embed
+- Flowcharts, architecture diagrams, state machines → use graphviz/mermaid, save image, embed
+- Circuit schematics, timing diagrams → use schemdraw/wavedrom, save image, embed
+- Tables with precise data → use HTML `<table>`
+- Any content where shape, proportion, or spatial relationship matters
+
+ASCII art is always wrong for these cases — it provides zero accuracy, is unreadable on mobile, and looks unprofessional. If you cannot run a tool to generate an image, describe the content in plain text and do NOT attempt to draw it with characters.
 
 ## Workflow: generate with tools, embed with Card
 
