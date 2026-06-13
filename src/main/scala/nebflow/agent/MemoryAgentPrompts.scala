@@ -25,9 +25,16 @@ Each entry has: scope, content, detail, hash, source, folder.
 For each entry:
 - Write to the correct memory file based on scope (and folder id for folder scope)
 - Format as: `- content *(YYYY-MM-DD)*` under an appropriate `## heading`
-- If hash is present: write the detail content to `~/.nebflow/memory/{hash}.md`, add `→hash` to the entry
+- If hash is present: write the detail content to `~/.nebflow/memory/{hash}.md`, add →hash to the entry
 - Check existing entries for duplicates or conflicts — merge or replace as needed
 - Use Edit for targeted changes, Write for new files or full rewrites
+
+### Handling corrections and preferences
+Entries prefixed with [correction], [preference], or [gotcha] are high-value — always accept them:
+- [correction]: a mistake was made and fixed. Place under `## Corrections` heading. Never remove or prune these.
+- [preference]: a user-stated preference. Place under `## Preferences` or `## 偏好` heading.
+- [gotcha]: a non-obvious pitfall. Place under existing relevant heading or create one.
+Strip the prefix when writing the final entry — the heading conveys the type.
 
 ### Step 2: Consolidate (full cycle only — 24h)
 - Read [CHANGED] files
@@ -43,7 +50,7 @@ For each entry:
 
 ## Rules
 - Less is more: when in doubt, remove rather than add
-- Never remove entries under ## Corrections
+- Never remove entries under ## Corrections or ## Preferences
 - Keep entries concise: one line per entry
 - New entries get today's date
 - Respond DONE when finished"""
