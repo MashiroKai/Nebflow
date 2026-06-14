@@ -177,21 +177,9 @@ object CardTool extends Tool:
 
 Follow these strictly. They override any conflicting defaults.
 
-### Purpose
-
-Visual-first, text-minimal. Cards are for diagrams, animations, transitions, spatial layouts — not paragraphs. If the content works as Markdown, don't use Card.
-
 ### Color: always use CSS variables
 
 **Never hardcode hex colors.** Always use `var(--color-text)` for body text, `var(--color-bg)`/`var(--color-surface)` for backgrounds. These guarantee maximum contrast in both light and dark mode. Use `var(--color-primary/success/error/warning)` only for status indicators. `var(--color-text-muted)` is for captions only — too low contrast for body text.
-
-### Accuracy
-
-Accuracy and correctness come first. If a visualization involves data, numbers, or precise relationships, use a professional tool (matplotlib, gnuplot, ROOT, etc.) to generate it — then embed the result as an image. Hand-drawn SVG is for layout and simple diagrams where precision is not critical.
-
-### Prohibited: ASCII pseudo-visualizations
-
-NEVER use ASCII art, box-drawing characters, or text-based approximations for charts, curves, diagrams, spectra, or any content where visual precision matters. Always generate a real image with a tool and embed it. If you cannot generate an image, describe the content in plain text — do NOT draw with characters.
 
 ### Visual defaults
 
@@ -231,74 +219,53 @@ HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local 
   private val baseDescription =
     """Renders an interactive HTML card embedded in the chat.
 
-Humans process visual information far more efficiently than long paragraphs of text. Use this tool to optimize your output — present relationships, structure, and data visually when doing so makes your answer easier to understand.
+## Why use cards
 
-Accuracy and correctness come first. **Always generate images with professional tools first, then embed them with Card.** Card is for presenting results — not for drawing. Hand-written SVG should only be used for simple conceptual diagrams where precision does not matter. For any data, numbers, or precise structures, always use tools.
+Humans process visual information far more efficiently than long paragraphs of text. A well-chosen diagram conveys in a glance what would take paragraphs to explain. Use cards to present relationships, structure, and data visually — when a visual makes your answer clearer than words alone.
 
-## Prohibited: ASCII and text-based pseudo-visualizations
+Card is for **presenting** results, not for drawing them. Always generate images with professional tools first, then embed with Card.
 
-NEVER use ASCII art, box-drawing characters (│─╔╗╚╝), or text-based approximations as a substitute for real visualizations. This includes:
-- Charts, plots, curves, spectra, histograms → use matplotlib/gnuplot, save image, embed
-- Flowcharts, architecture diagrams, state machines → use graphviz/mermaid, save image, embed
-- Circuit schematics, timing diagrams → use schemdraw/wavedrom, save image, embed
-- Tables with precise data → use HTML `<table>`
-- Any content where shape, proportion, or spatial relationship matters
+## Use cases and counter-examples
 
-ASCII art is always wrong for these cases — it provides zero accuracy, is unreadable on mobile, and looks unprofessional. If you cannot run a tool to generate an image, describe the content in plain text and do NOT attempt to draw it with characters.
+### Use Card when:
+- **Spatial structure**: architecture diagrams, flowcharts, org charts, network topologies
+- **Data visualization**: charts, plots, heatmaps, spectra, histograms
+- **Interactive elements**: clickable prototypes, parameter sliders, step-through animations
+- **Side-by-side comparison**: image galleries, before/after grids, annotated screenshots
+- **Embedding generated media**: plots from matplotlib, diagrams from graphviz, 3D models
 
-## Workflow: generate with tools, embed with Card
+### Do NOT use Card when:
+- The content works fine as plain Markdown text or a Markdown table
+- A few sentences or a code block would convey the same information
 
-1. Use Bash to run a tool (matplotlib, schemdraw, graphviz, etc.) → outputs an image file
-2. Use Card to embed that file via `<img src="/absolute/path/to/file.png">` (must be an absolute path — relative paths will NOT work)
+### NEVER do this:
+- **ASCII art / box-drawing characters** (│─╔╗╚╝ ▲▼◄►) as a substitute for real charts, curves, diagrams, or spectra. ASCII provides zero accuracy, is unreadable on mobile, and looks unprofessional. Always use a tool to generate an image. If you cannot run a tool, describe in plain text — do NOT draw with characters.
 
-## Recommended tools by scenario
+## Professional tool correspondence table
 
-### Data visualization
-- **Plots, charts, heatmaps**: matplotlib, gnuplot, ROOT, plotly → save PNG/SVG
-- **Sankey diagrams** (energy/material flow): plotly → save PNG
-- **Gantt charts / timelines**: matplotlib, plotly, mermaid → save PNG
-- **Radar / spider charts**: matplotlib, plotly → save PNG
-- **Treemaps**: plotly, squarify (Python) → save PNG
+| Scenario | Recommended tool |
+|----------|-----------------|
+| **Charts & plots** (line, bar, scatter, heatmap) | matplotlib, gnuplot, ROOT, plotly |
+| **Scientific plots** (contour, vector field, polar, 3D surface) | matplotlib, plotly |
+| **Flowcharts & block diagrams** | graphviz (dot), mermaid-cli |
+| **Architecture diagrams & network topologies** | graphviz, networkx + matplotlib |
+| **UML (class / sequence / state)** | plantuml, mermaid |
+| **Timing diagrams** | wavedrom |
+| **Circuit schematics** | schemdraw (Python) |
+| **PCB layouts & cross-sections** | KiCad/Eagle export, matplotlib patches |
+| **Frequency spectra / Bode plots / eye diagrams** | matplotlib + scipy |
+| **Smith charts** | matplotlib (smithplot) |
+| **Molecular structures** | rdkit, OpenBabel |
+| **Crystal structures** | pymatgen, ASE |
+| **Maps & spatial distributions** | folium, cartopy + matplotlib |
+| **3D models** | OpenSCAD CLI, matplotlib 3D |
+| **Gantt charts / timelines** | matplotlib, plotly, mermaid |
+| **Sankey diagrams / treemaps / radar charts** | plotly, squarify |
 
-### Electronics & signals
-- **Circuit schematics**: schemdraw (Python) → save PNG/SVG
-- **PCB layouts**: KiCad/Eagle export, or matplotlib patches → embed
-- **PCB cross-sections / layer stack-ups**: matplotlib patches → save PNG
-- **Timing diagrams**: wavedrom (Python/CLI) → save SVG
-- **Frequency spectra / Bode plots**: matplotlib + scipy → save PNG
-- **Eye diagrams**: matplotlib → save PNG
-- **Smith charts**: matplotlib (smithplot) → save PNG
+## Workflow
 
-### Software & system architecture
-- **Block diagrams / signal flow**: graphviz (dot), mermaid-cli → save PNG/SVG
-- **Flowcharts, org charts**: graphviz, mermaid → save PNG/SVG
-- **UML class / sequence / state diagrams**: plantuml, mermaid → save PNG/SVG
-- **ER diagrams** (database schemas): plantuml, erd (CLI), graphviz → save PNG
-- **Network topologies**: graphviz, networkx + matplotlib → save PNG
-
-### Science & engineering
-- **Detector / material cross-sections**: matplotlib patches → save PNG
-- **3D structures / assemblies**: OpenSCAD CLI, matplotlib 3D → save PNG/STL
-- **Vector fields**: matplotlib (quiver), plotly → save PNG
-- **3D surfaces / contour plots**: matplotlib, plotly → save PNG
-- **Polar / antenna radiation patterns**: matplotlib (polar) → save PNG
-- **Mathematical functions / geometry**: matplotlib, manim CLI → save PNG/MP4
-
-### Chemistry & materials
-- **Molecular structures**: rdkit (Python), OpenBabel CLI → save PNG/SVG/3D
-- **Crystal structures / unit cells**: pymatgen, ASE (Python) → save PNG/3D
-
-### Geography & spatial
-- **Maps / spatial distributions**: folium (→ save HTML → embed), cartopy + matplotlib → save PNG
-
-## What it can do
-
-- **Diagrams & charts**: flowcharts, architecture diagrams, org charts, bar/pie/line charts, heatmaps, network topologies
-- **Animations & simulations**: physics simulations, algorithm step-throughs, state machine transitions, progress indicators
-- **Spatial layouts**: UI mockups, floor plans, image galleries, comparison grids, annotated screenshots
-- **Interactive widgets**: clickable prototypes, drag-and-drop exercises, parameter sliders, input forms, quizzes
-- **Embedded media**: local images, generated plots, videos, 3D models (OBJ/STL/GLTF)
-- **Engineering drawings**: circuit schematics, PCB layouts, PCB layer stack-ups, block diagrams, signal flow graphs, detector geometries, 2D/3D structural cross-sections, mechanical assemblies
+1. Use Bash to run a tool (matplotlib, graphviz, etc.) → outputs an image file
+2. Use Card to embed that file via `<img src="/absolute/path/to/file.png">` (must be absolute path)
 
 ## Parameters
 
