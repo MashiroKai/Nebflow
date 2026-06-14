@@ -234,12 +234,11 @@ Card is for **presenting** results, not for drawing them. Always generate images
 - **Side-by-side comparison**: image galleries, before/after grids, annotated screenshots
 - **Embedding generated media**: plots from matplotlib, diagrams from graphviz, 3D models
 
-### Do NOT use Card when:
-- The content works fine as plain Markdown text or a Markdown table
-- A few sentences or a code block would convey the same information
-
-### NEVER do this:
-- **ASCII art / box-drawing characters** (│─╔╗╚╝ ▲▼◄►) as a substitute for real charts, curves, diagrams, or spectra. ASCII provides zero accuracy, is unreadable on mobile, and looks unprofessional. Always use a tool to generate an image. If you cannot run a tool, describe in plain text — do NOT draw with characters.
+### Common mistakes — the right way vs the wrong way:
+- **Charts, curves, spectra**: do NOT draw with ASCII art (│─╔╗ ▲▼) or hand-write SVG. Use matplotlib/gnuplot → save image → embed.
+- **Flowcharts, architecture diagrams**: do NOT approximate with text boxes and arrows. Use graphviz/mermaid → save image → embed.
+- **Circuit schematics, timing diagrams**: do NOT hand-draw with SVG `<path>`. Use schemdraw/wavedrom → save image → embed.
+- **Any content involving data, proportions, or precise shapes**: do NOT guess coordinates in SVG. Use a professional tool — always.
 
 ## Professional tool correspondence table
 
