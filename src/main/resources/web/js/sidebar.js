@@ -2166,18 +2166,15 @@ function showFolderCtxMenu(x, y, folderId) {
   const isPinned = state.pinnedFolders.has(folderId);
   const folder = state.folders.find(f => f.id === folderId);
   const hasParent = folder && folder.parentId;
-  const isTopLevel = folder && !folder.parentId;
   const menu = document.createElement('div');
   menu.className = 'session-ctx-menu';
   let html =
     '<div class="ctx-item" data-action="toggle-pin">' + (isPinned ? t('ctx.unpin') : t('ctx.pin')) + '</div>' +
     '<div class="ctx-item" data-action="rename">' + t('ctx.rename') + '</div>' +
     '<div class="ctx-item" data-action="new-subfolder">' + t('ctx.newSubfolder') + '</div>';
-  // Project root — only for top-level folders
-  if (isTopLevel) {
-    html += '<div class="ctx-separator"></div>' +
-      '<div class="ctx-item" data-action="set-project-root">' + t('ctx.setProjectRoot') + '</div>';
-  }
+  // Project root — available for all folders
+  html += '<div class="ctx-separator"></div>' +
+    '<div class="ctx-item" data-action="set-project-root">' + t('ctx.setProjectRoot') + '</div>';
   // Rules — dynamic: create if not exists, edit if exists
   const hasRules = state.foldersWithRules && state.foldersWithRules.has(folderId);
   html += '<div class="ctx-item" data-action="edit-rules">' + (hasRules ? t('ctx.editRules') : t('ctx.createRules')) + '</div>';
@@ -2219,14 +2216,12 @@ function showFolderCtxMenu(x, y, folderId) {
     createNewFolder(folderId);
   });
 
-  // Set project root (top-level only) — opens directory picker
-  if (isTopLevel) {
-    menu.querySelector('[data-action="set-project-root"]').addEventListener('click', () => {
-      if (!folder) return;
-      openPathPicker(folderId, folder.projectRoot);
-      dismissCtxMenu();
-    });
-  }
+  // Set project root — opens directory picker
+  menu.querySelector('[data-action="set-project-root"]').addEventListener('click', () => {
+    if (!folder) return;
+    openPathPicker(folderId, folder.projectRoot);
+    dismissCtxMenu();
+  });
 
   // Edit rules
   menu.querySelector('[data-action="edit-rules"]').addEventListener('click', () => {
