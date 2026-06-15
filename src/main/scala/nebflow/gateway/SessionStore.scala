@@ -22,7 +22,7 @@ case class Folder(
   name: String,
   parentId: Option[String] = None,
   agentName: String = "",
-  projectRoot: Option[String] = None, // only top-level folders may set this
+  projectRoot: Option[String] = None,
   createdAt: Long,
   updatedAt: Long
 )
@@ -416,14 +416,12 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, sessions, folder :: folders)
     } *> saveIndex *> IO.pure(folder)
 
-  /** Set projectRoot on a top-level folder. Returns Left(error) if folder is not top-level. */
+  /** Set projectRoot on any folder. Nearest ancestor's projectRoot takes precedence. */
   def setFolderProjectRoot(folderId: String, projectRoot: Option[String]): IO[Either[String, Unit]] =
     indexRef
       .modify { case (activeId, sessions, folders) =>
         folders.find(_.id == folderId) match
           case None => ((activeId, sessions, folders), Left(s"Folder $folderId not found"))
-          case Some(f) if f.parentId.isDefined =>
-            ((activeId, sessions, folders), Left("Only top-level folders can set project root"))
           case Some(_) =>
             val updated = folders.map(f =>
               if f.id == folderId then f.copy(projectRoot = projectRoot, updatedAt = System.currentTimeMillis()) else f
@@ -435,21 +433,24 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case err => IO.pure(err)
       }
 
-  /** Resolve effective projectRoot for a session: its folder's projectRoot (top-level only). */
+  /** Resolve effective projectRoot: walk from the session's folder up to the root,
+    * returning the first (nearest) non-empty projectRoot. */
   def resolveProjectRoot(folderId: Option[String]): IO[Option[String]] =
     folderId match
       case None => IO.pure(None)
       case Some(fid) =>
         indexRef.get.map { case (_, _, folders) =>
-          // Walk up to top-level folder
-          def findTop(id: String): Option[Folder] =
+          // Walk up: nearest folder with a projectRoot wins
+          def findNearest(id: String): Option[String] =
             folders.find(_.id == id) match
               case None => None
               case Some(f) =>
-                f.parentId match
-                  case Some(pid) => findTop(pid)
-                  case None => Some(f)
-          findTop(fid).flatMap(_.projectRoot).filter(_.nonEmpty)
+                f.projectRoot.filter(_.nonEmpty) match
+                  case Some(pr) => Some(pr)
+                  case None => f.parentId match
+                    case Some(pid) => findNearest(pid)
+                    case None => None
+          findNearest(fid)
         }
 
   def renameFolder(id: String, newName: String): IO[Unit] =

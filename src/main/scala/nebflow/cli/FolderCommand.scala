@@ -105,7 +105,7 @@ object FolderCommand extends CliCommand:
 
   private object FolderSetRoot extends CliSubcommand:
     def name = "set-root"
-    def description = "Set project root for a top-level folder"
+    def description = "Set project root for a folder"
 
     def params = List(
       CliParam("folder-id", None, "Folder ID", required = true),
