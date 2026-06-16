@@ -47,6 +47,7 @@ object Dependencies {
   // Actor
   val PekkoVer = "1.1.3"
   val pekkoActorTyped = "org.apache.pekko" %% "pekko-actor-typed" % PekkoVer
+  val pekkoActorTestkitTyped = "org.apache.pekko" %% "pekko-actor-testkit-typed" % PekkoVer % Test
 
   // Logging
   val logbackClassic = "ch.qos.logback" % "logback-classic" % "1.5.16"
