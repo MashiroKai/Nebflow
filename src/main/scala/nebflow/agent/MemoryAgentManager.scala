@@ -11,41 +11,12 @@ import nebflow.core.tools.{FileHistory, ReadTracker}
 import nebflow.gateway.{SessionRecorder, SessionStore, WsHub}
 import nebflow.service.{MemoryStore, NebflowBackup}
 import nebflow.shared.UiMessage
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
-import org.apache.pekko.actor.typed.{ActorRef, ActorSystem, Behavior}
+import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 
 import java.util.concurrent.atomic.AtomicLong
 
 import scala.compiletime.uninitialized
 import scala.concurrent.duration.*
-
-// ============================================================
-// Dream command protocol — public so WriteMemoryTool can reference it
-// ============================================================
-
-/** Commands accepted by the Dream scheduler actor. */
-sealed trait DreamCommand
-
-object DreamCommand:
-
-  /** A new memory entry from WriteMemoryTool. */
-  case class ProcessEntry(
-    scope: String,
-    content: String,
-    detail: Option[String],
-    source: String,
-    folderId: Option[String]
-  ) extends DreamCommand
-
-  /** Debounce timer fired — process accumulated entries. */
-  private[nebflow] case object FlushEntries extends DreamCommand
-
-  /** 24-hour full cycle timer fired. */
-  private[nebflow] case object FullCycleTick extends DreamCommand
-
-  /** Shutdown the scheduler. */
-  private[nebflow] case object Shutdown extends DreamCommand
-end DreamCommand
 
 /**
  * Manages the Dream session for memory consolidation and pattern extraction.
@@ -54,6 +25,9 @@ end DreamCommand
  *   - WriteMemory calls directly send entries to the Dream actor mailbox.
  *   - 24-hour full cycle uses a single-shot timer (rescheduled after each cycle).
  *   - No polling, no staging file, no periodic scanning.
+ *
+ * The scheduler state machine is delegated to [[DreamScheduler]] for testability.
+ * This class provides the hooks (trigger, stop, lifecycle) that the scheduler calls.
  *
  * Mac sleep / network offline: messages wait in the Pekko mailbox until the
  * actor processes them. No repeated work, no wasted CPU.
@@ -98,6 +72,10 @@ class MemoryAgentManager(
   // Full cycle interval
   private val FullCycleInterval = 24.hours
 
+  // Safety timeout: if Dream agent doesn't signal completion within this duration,
+  // force-proceed to avoid blocking forever (agent may have crashed or hung).
+  private val DreamTimeoutDuration = 5.minutes
+
   // Current agent name for file listing
   private def currentAgentName: String =
     try
@@ -108,9 +86,27 @@ class MemoryAgentManager(
         logger.warnSync("Failed to load agent list, defaulting to Nebula")
         "Nebula"
 
+  // ============================================================
+  // DreamScheduler.Hooks implementation
+  // ============================================================
+
+  private val hooks = new DreamScheduler.Hooks:
+    def trigger(entries: List[DreamCommand.ProcessEntry], isFullCycle: Boolean): Boolean =
+      triggerDream(entries, isFullCycle)
+
+    def stopDreamAgent(): Unit =
+      if _dreamRef != null then _dreamRef ! Stop("cycle-complete")
+      _dreamRef = null
+
+    def touchLastDreamTime(): Unit =
+      lastDreamTime = System.currentTimeMillis()
+
   // Spawn Dream scheduler on construction
   locally {
-    _schedulerRef = actorSystem.systemActorOf(dreamScheduler(), "memory-dream-scheduler")
+    _schedulerRef = actorSystem.systemActorOf(
+      DreamScheduler(hooks, DebounceDelay, FullCycleInterval, DreamTimeoutDuration),
+      "memory-dream-scheduler"
+    )
   }
 
   // ============================================================
@@ -129,53 +125,10 @@ class MemoryAgentManager(
     }
 
   // ============================================================
-  // Dream scheduler — event-driven actor (no polling)
-  // ============================================================
-
-  private def dreamScheduler(): Behavior[DreamCommand] =
-    Behaviors.withTimers { timers =>
-      // Schedule the first 24-hour full cycle
-      timers.startSingleTimer(DreamCommand.FullCycleTick, FullCycleInterval)
-      idle(Nil, timers)
-    }
-
-  /** Idle: waiting for entries or full-cycle tick. */
-  private def idle(
-    buffer: List[DreamCommand.ProcessEntry],
-    timers: org.apache.pekko.actor.typed.scaladsl.TimerScheduler[DreamCommand]
-  ): Behavior[DreamCommand] =
-    Behaviors.receiveMessage {
-      case entry: DreamCommand.ProcessEntry =>
-        val newBuffer = buffer :+ entry
-        // Start debounce timer on first entry (if not already scheduled)
-        if buffer.isEmpty then timers.startSingleTimer(DreamCommand.FlushEntries, DebounceDelay)
-        idle(newBuffer, timers)
-
-      case DreamCommand.FlushEntries =>
-        if buffer.nonEmpty then
-          triggerDream(buffer, isFullCycle = false)
-          lastDreamTime = System.currentTimeMillis()
-          idle(Nil, timers)
-        else idle(Nil, timers)
-
-      case DreamCommand.FullCycleTick =>
-        // Cancel any pending debounce — full cycle supersedes it
-        if buffer.nonEmpty then timers.cancel(DreamCommand.FlushEntries)
-        triggerDream(buffer, isFullCycle = true)
-        lastDreamTime = System.currentTimeMillis()
-        // Reschedule next full cycle
-        timers.startSingleTimer(DreamCommand.FullCycleTick, FullCycleInterval)
-        idle(Nil, timers)
-
-      case DreamCommand.Shutdown =>
-        Behaviors.stopped
-    }
-
-  // ============================================================
   // Trigger Dream — spawn agent and send payload
   // ============================================================
 
-  private def triggerDream(entries: List[DreamCommand.ProcessEntry], isFullCycle: Boolean): Unit =
+  private def triggerDream(entries: List[DreamCommand.ProcessEntry], isFullCycle: Boolean): Boolean =
     // Daily backup check (independent of Dream, but piggyback on full cycle)
     if isFullCycle then
       try
@@ -195,12 +148,8 @@ class MemoryAgentManager(
         else ""
       val payload = buildDreamPayload(entries, allFiles, userInputs, isFullCycle)
 
-      // Stop previous Dream actor before creating a new one
-      val oldRef = _dreamRef
-      if oldRef != null then oldRef ! Stop("new-cycle")
-      _dreamRef = null
-
-      val ref = dispatcher.unsafeRunSync(getOrCreateDreamAgent())
+      val ref = dispatcher.unsafeRunSync(createDreamAgent())
+      _dreamRef = ref
       dispatcher.unsafeRunSync(recordUserMessage(DreamSessionId, payload, injected = true))
       ref ! ExternalEvent(
         source = "memory-manager",
@@ -210,23 +159,17 @@ class MemoryAgentManager(
       logger.infoSync(
         s"Dream triggered (${if isFullCycle then "full" else "entries"}): ${entries.size} entries, ${allFiles.size} files"
       )
+      true
     catch
       case e: Exception =>
         logger.warnSync(s"Dream trigger failed: ${e.getMessage}")
+        false
     end try
   end triggerDream
 
   // ============================================================
   // Agent lifecycle
   // ============================================================
-
-  private def getOrCreateDreamAgent(): IO[ActorRef[AgentCommand]] =
-    if _dreamRef != null then IO.pure(_dreamRef)
-    else
-      createDreamAgent().map { ref =>
-        _dreamRef = ref
-        ref
-      }
 
   private def createDreamAgent(): IO[ActorRef[AgentCommand]] =
     for
@@ -243,12 +186,20 @@ class MemoryAgentManager(
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       recorder = SessionRecorder(DreamSessionId, sessionStore, wsHub.broadcast)
+      // Intercept Done event to signal Dream completion back to the scheduler.
+      // This is how the scheduler knows the Dream agent finished processing
+      // and it's safe to start a new cycle (or process buffered entries).
+      schedulerRef = _schedulerRef
+      wsSendWithDone = (json: Json) =>
+        if json.hcursor.downField("type").as[String].toOption.contains("done") then
+          schedulerRef ! DreamCommand.DreamComplete
+        recorder(json)
       ref <- IO {
         actorSystem.systemActorOf(
           AgentActor(
             agentDef,
             resources,
-            wsSend = json => recorder(json),
+            wsSend = wsSendWithDone,
             depth = 0,
             parentRef = None,
             sessionId = Some(DreamSessionId),
