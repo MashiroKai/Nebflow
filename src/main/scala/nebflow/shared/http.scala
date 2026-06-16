@@ -24,15 +24,28 @@ object SharedBackend:
 
   val instance: SyncBackend = HttpClientSyncBackend.usingClient(httpClient)
 
-  /** 统一的 User-Agent，所有 Nebflow 网络请求使用此标识。 */
-  val UserAgent = s"Mozilla/5.0 (compatible; Nebflow/${nebflow.Version.string})"
+  /** 模拟真实 Chrome 浏览器的 User-Agent，避免被反爬虫系统识别为爬虫。 */
+  val UserAgent =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
-  /** 模拟 Chrome 导航请求的关键 headers，降低被反爬虫拦截的概率。 */
+  /** Chrome 版本号，与 UserAgent 保持一致，用于 Client Hints headers。 */
+  private val ChromeVersion = "131"
+
+  /** 模拟真实 Chrome 导航请求的完整 headers，使请求特征与浏览器一致。
+   *
+   *  关键反检测 headers：
+   *  - Sec-Ch-UA: Chrome Client Hints，反爬虫系统会检查是否存在
+   *  - Sec-Fetch-*: Fetch Metadata，标识请求来源（导航 vs 资源加载）
+   *  - Referer: 模拟从搜索引擎点击进入，增加可信度
+   */
   val BrowserHeaders: Map[String, String] = Map(
     "User-Agent" -> UserAgent,
     "Accept" -> "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language" -> "en-US,en;q=0.9",
     "Referer" -> "https://www.google.com/",
+    "Sec-Ch-UA" -> s""""Google Chrome";v="$ChromeVersion", "Chromium";v="$ChromeVersion", "Not_A Brand";v="24"""",
+    "Sec-Ch-UA-Mobile" -> "?0",
+    "Sec-Ch-UA-Platform" -> "\"macOS\"",
     "Sec-Fetch-Dest" -> "document",
     "Sec-Fetch-Mode" -> "navigate",
     "Sec-Fetch-Site" -> "cross-site",
