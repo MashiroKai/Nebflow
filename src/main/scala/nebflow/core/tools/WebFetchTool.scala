@@ -250,9 +250,13 @@ Usage:
                          headless: Boolean): IO[BrowserOutcome] =
     val maxWait = if headless then 10 else 30
     BrowserManager.fetch(url, headless = headless, maxWaitSeconds = maxWait).map { result =>
-      val titleLower = result.title.toLowerCase
-      if titleLower.contains("just a moment") || result.title.contains("请稍候") ||
-         titleLower.contains("attention required") then
+      // Challenge detection: title-based + status+content based
+      // ScienceDirect returns 403 with title "ScienceDirect" (not a standard challenge title),
+      // so we also check for Cloudflare challenge markers in content
+      val isChallenge = isChallengeTitle(result.title) ||
+        (result.status == 403 && result.content.contains("challenge-platform")) ||
+        result.status == 418
+      if isChallenge then
         if headless then
           logger.infoSync(s"WebFetch headless challenge, upgrading to headed", "url" -> url.take(80))
           BrowserOutcome.NeedHeaded
