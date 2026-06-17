@@ -262,7 +262,7 @@ class CloudSessionSync private (
   // ===== Sync Cycle =====
 
   /**
-   * Full sync cycle — called periodically by the mesh sync actor.
+   * Full sync cycle — called periodically by the mesh sync actor (every 5 min).
    * 1. Pull cloud index and merge with local
    * 2. Push local index
    * 3. Push active session data
@@ -291,6 +291,39 @@ class CloudSessionSync private (
             _ <- processRelayCommands.handleErrorWith(e => logger.warn(s"Relay poll failed: ${e.getMessage}"))
           yield ()
     yield ()
+
+  /**
+   * Lightweight fast sync — pull cloud index + push active session (no relay, no index push).
+   * Runs every 60 seconds via startFastSyncPoller for near-real-time cross-device visibility.
+   */
+  def fastSyncCycle: IO[Unit] =
+    for
+      loggedIn <- meshService.isLoggedIn
+      _ <-
+        if !loggedIn then IO.unit
+        else
+          for
+            _ <- pullIndex.flatMap(snapshot =>
+              sessionStore.mergeCloudIndex(snapshot.sessions, snapshot.folders)
+            ).handleErrorWith(e => logger.debug(s"Fast pull index: ${e.getMessage}"))
+            activeId <- sessionStore.getActiveId
+            _ <-
+              if activeId.nonEmpty then
+                pushSession(activeId).handleErrorWith(e => logger.debug(s"Fast push session: ${e.getMessage}"))
+              else IO.unit
+          yield ()
+    yield ()
+
+  /** Start background pollers: fast session sync (60s) + relay (10s). */
+  def startBackgroundPollers(dispatcher: cats.effect.std.Dispatcher[IO]): Unit =
+    dispatcher.unsafeRunAndForget(fastSyncLoop)
+    dispatcher.unsafeRunAndForget(relayLoop)
+
+  private def fastSyncLoop: IO[Unit] =
+    meshService.isLoggedIn.flatMap { loggedIn =>
+      val action = if loggedIn then fastSyncCycle.handleErrorWith(_ => IO.unit) else IO.unit
+      action.flatMap(_ => IO.sleep(60.seconds)).flatMap(_ => fastSyncLoop)
+    }
 
   // ===== Relay Command Execution (target device side) =====
 
