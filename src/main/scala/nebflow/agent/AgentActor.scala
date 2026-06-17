@@ -29,7 +29,7 @@ import scala.concurrent.duration.*
 object AgentActor extends AgentCore with AgentSession:
 
   private val MaxStashCapacity = 100
-  private val MaxEmptyResponseRetries = 2
+  private val MaxEmptyResponseRetries = 5
   private val logger = NebflowLogger.forName("nebflow.agent")
 
   def apply(
@@ -191,12 +191,13 @@ object AgentActor extends AgentCore with AgentSession:
               )
             }
           // Memory is loaded EveryTurn via TurnContext — no need to preload here
+          // Reset empty-response retry counter for the new turn
           pipeLlmCall(
             agentDef,
             resources,
             depth,
             parentRef,
-            stateWithWidth.withMessages(newMessages),
+            stateWithWidth.withMessages(newMessages).withEmptyResponseRetries(0),
             stash,
             ctx,
             replyTo
@@ -543,8 +544,8 @@ object AgentActor extends AgentCore with AgentSession:
           // If LLM also produced text alongside tool calls, flag for task reminder
           else if result.toolCalls.nonEmpty then
             val stateWithFlag =
-              if result.text.nonEmpty then updatedState.withPendingTaskCheck(true)
-              else updatedState
+              (if result.text.nonEmpty then updatedState.withPendingTaskCheck(true)
+               else updatedState).withEmptyResponseRetries(0)
             pipeToolExecutions(agentDef, resources, depth, parentRef, stateWithFlag, stash, ctx, result, replyTo)
           // Has text or thinking content — normal completion
           else if result.text.nonEmpty || result.thinking.nonEmpty then
@@ -553,7 +554,7 @@ object AgentActor extends AgentCore with AgentSession:
               resources,
               depth,
               parentRef,
-              updatedState,
+              updatedState.withEmptyResponseRetries(0),
               stash,
               ctx,
               result.text,
