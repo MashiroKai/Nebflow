@@ -319,7 +319,7 @@ object GatewayMain extends IOApp.Simple:
                                       sessionStore.setSessionChangedHook(sid => cloudSessionSync.pushSession(sid))
                                       meshService.setPostSyncHook(cloudSessionSync.syncCycle)
                                       MeshTool.setCloudSessionSync(cloudSessionSync)
-                                      cloudSessionSync.startRelayPoller(sharedResourcesWithDream.dispatcher)
+                                      cloudSessionSync.startBackgroundPollers(sharedResourcesWithDream.dispatcher)
 
                                       val sharedResourcesWithBridge =
                                         sharedResourcesWithDream.copy(
