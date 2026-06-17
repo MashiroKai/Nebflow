@@ -194,12 +194,13 @@ Usage:
     try
       val url = engine.url.replace("{keyword}", java.net.URLEncoder.encode(query, "UTF-8"))
       val backend = SharedBackend.instance
-      val request = basicRequest
-        .get(uri"$url")
-        .header("User-Agent", SharedBackend.UserAgent)
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .header("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7")
-        .readTimeout(FETCH_TIMEOUT.millis)
+      val request = SharedBackend.BrowserHeaders
+        .foldLeft(
+          basicRequest
+            .get(uri"$url")
+            .header("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7")
+            .readTimeout(FETCH_TIMEOUT.millis)
+        ) { case (req, (k, v)) => req.header(k, v) }
         .response(asStringAlways)
 
       val response = request.send(backend)
