@@ -66,6 +66,18 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private val activeMessagesRef: Ref[IO, List[Message]] =
     Ref.unsafe[IO, List[Message]](Nil)
 
+  /** Optional hook — called with sessionId after any session data change. Used by CloudSessionSync for push. */
+  private var sessionChangedHook: Option[String => IO[Unit]] = None
+
+  /** Register a callback invoked after session data changes (messages saved, session created/deleted). */
+  def setSessionChangedHook(hook: String => IO[Unit]): Unit =
+    sessionChangedHook = Some(hook)
+
+  private def notifySessionChanged(sessionId: String): IO[Unit] =
+    sessionChangedHook match
+      case Some(hook) => hook(sessionId).handleErrorWith(_ => IO.unit)
+      case None => IO.unit
+
   private val indexFile = sessionsDir / "_index.json"
   private val indexTempFile = sessionsDir / "_index.json.tmp"
 
@@ -205,7 +217,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       val updated = sessions.map(s => if s.id == activeId then s.copy(updatedAt = now) else s)
       activeMessagesRef.set(msgs) *>
         saveSessionMessages(activeId, msgs) *>
-        indexRef.set((activeId, updated, folders))
+        indexRef.set((activeId, updated, folders)) *>
+        notifySessionChanged(activeId)
     // Don't save index on every message to reduce disk writes — save periodically or on switch
     }
 
@@ -222,7 +235,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       }
       .flatMap { activeId =>
         val updateRef = if targetId == activeId then activeMessagesRef.set(msgs) else IO.unit
-        updateRef *> saveSessionMessages(targetId, msgs)
+        updateRef *> saveSessionMessages(targetId, msgs) *> notifySessionChanged(targetId)
       }
 
   def flushIndex: IO[Unit] = saveIndex
@@ -500,6 +513,65 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         )
         (activeId, sessions, updated)
     } *> saveIndex
+
+  // ============================================================
+  // Cloud Sync Integration
+  // ============================================================
+
+  /** List all folders (for cloud sync — includes all agents' folders). */
+  def listAllFolders: IO[List[Folder]] =
+    indexRef.get.map { case (_, _, folders) => folders }
+
+  /**
+   * Merge cloud session index into local. Sessions and folders are deduplicated by ID;
+   * the copy with the newer `updatedAt` wins. New sessions from cloud are added locally.
+   */
+  def mergeCloudIndex(cloudSessions: List[SessionMeta], cloudFolders: List[Folder]): IO[Unit] =
+    indexRef
+      .modify { case (activeId, localSessions, localFolders) =>
+        val sessionMap = scala.collection.mutable.LinkedHashMap.empty[String, SessionMeta]
+        for s <- localSessions do sessionMap(s.id) = s
+        for cs <- cloudSessions do
+          sessionMap.get(cs.id) match
+            case Some(existing) if existing.updatedAt >= cs.updatedAt => // keep local
+            case _ => sessionMap(cs.id) = cs
+        val mergedSessions = sessionMap.values.toList
+
+        val folderMap = scala.collection.mutable.LinkedHashMap.empty[String, Folder]
+        for f <- localFolders do folderMap(f.id) = f
+        for cf <- cloudFolders do
+          folderMap.get(cf.id) match
+            case Some(existing) if existing.updatedAt >= cf.updatedAt => // keep local
+            case _ => folderMap(cf.id) = cf
+        val mergedFolders = folderMap.values.toList
+
+        val changed = mergedSessions.length != localSessions.length ||
+          mergedFolders.length != localFolders.length ||
+          mergedSessions.exists(ms => localSessions.find(_.id == ms.id).exists(_.updatedAt != ms.updatedAt))
+
+        ((activeId, mergedSessions, mergedFolders), changed)
+      }
+      .flatMap { changed =>
+        if changed then saveIndex else IO.unit
+      }
+
+  /**
+   * Overwrite local session data with data pulled from cloud.
+   * Updates messages, UI messages, and bumps updatedAt in the index.
+   * Does NOT trigger the sessionChanged hook (this is a pull, not a local edit).
+   */
+  def setSessionFromCloud(sessionId: String, messages: List[Message], uiMessages: List[UiMessage]): IO[Unit] =
+    for
+      _ <- saveSessionMessages(sessionId, messages)
+      _ <- saveUiMessages(sessionId, uiMessages)
+      _ <- indexRef.update { case (activeId, sessions, folders) =>
+        val now = System.currentTimeMillis()
+        val updated = sessions.map(s => if s.id == sessionId then s.copy(updatedAt = now) else s)
+        (activeId, updated, folders)
+      }
+      activeId <- getActiveId
+      _ <- if activeId == sessionId then activeMessagesRef.set(messages) else IO.unit
+    yield ()
 
   // ============================================================
   // UI Messages (frontend rendering history)
