@@ -79,6 +79,7 @@ object BrowserManager:
 
     val opts = new BrowserType.LaunchPersistentContextOptions()
       .setHeadless(headless)
+      .setUserAgent(SharedBackend.UserAgent)
     detectChannel.foreach(opts.setChannel)
     opts.setArgs(List("--disable-blink-features=AutomationControlled").asJava)
 
@@ -101,7 +102,9 @@ object BrowserManager:
    *  - headless=true：自动模式，适用于 IEEE/APS 等 JS 渲染网站
    *  - headless=false：弹窗模式，适用于 ScienceDirect/Wiley（需用户完成 Cloudflare 验证）
    *
-   *  智能等待：每秒轮询标题，页面不再是挑战页时立即返回。
+   *  两阶段智能等待：
+   *  1. 快速阶段：只检查标题（title() 开销小），等标题变为非空且非 challenge
+   *  2. 内容阶段：标题 OK 后才获取 content()，等内容达到合理长度
    *
    *  所有操作在 playwrightEC 单线程上执行，满足 Playwright 线程安全要求。
    */
@@ -112,22 +115,30 @@ object BrowserManager:
       try
         logger.infoSync("Browser navigating",
           "url" -> url.take(80), "headless" -> headless.toString)
-        val response = page.navigate(url, new Page.NavigateOptions().setTimeout(30_000))
+        val response = page.navigate(url,
+          new Page.NavigateOptions().setTimeout(15_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED))
         val status = if response != null then response.status() else 0
 
-        // 智能等待：每秒检查标题，最多等 maxWaitSeconds
+        // Phase 1: 快速等待标题（不获取 content，开销小）
         var title = page.title()
         var waited = 0
-        while isChallengeTitle(title) && waited < maxWaitSeconds do
+        while (title.isEmpty || isChallengeTitle(title)) && waited < maxWaitSeconds do
           page.waitForTimeout(1000)
           waited += 1
           title = page.title()
 
-        val content = page.content()
+        // Phase 2: 标题 OK 后检查内容长度（仅对非 403 页面）
+        var content = page.content()
+        while status != 403 && content.length < 3000 && waited < maxWaitSeconds do
+          page.waitForTimeout(1000)
+          waited += 1
+          content = page.content()
+
         val finalUrl = page.url()
         logger.infoSync("Browser fetched",
           "url" -> url.take(80), "status" -> status.toString,
-          "title" -> title.take(50), "waited" -> waited.toString)
+          "title" -> title.take(50), "contentLen" -> content.length.toString,
+          "waited" -> waited.toString)
         BrowserFetchResult(status, title, content, finalUrl)
       finally
         try page.close() catch case _: Exception => ()
