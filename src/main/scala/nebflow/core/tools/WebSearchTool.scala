@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
+import io.circe.parser
 import nebflow.shared.{HttpUtils, SharedBackend}
 import sttp.client4.*
 
@@ -32,27 +33,38 @@ object WebSearchTool extends Tool:
     SearchEngine("Yahoo", "https://search.yahoo.com/search?p={keyword}", "global"),
     SearchEngine("WeChat", "https://wx.sogou.com/weixin?type=2&query={keyword}", "cn"),
     SearchEngine("Jisilu", "https://www.jisilu.cn/explore/?keyword={keyword}", "cn"),
-    SearchEngine("WolframAlpha", "https://www.wolframalpha.com/input?i={keyword}", "global")
+    SearchEngine("WolframAlpha", "https://www.wolframalpha.com/input?i={keyword}", "global"),
+    // Academic API engines (return structured JSON/XML, not HTML)
+    SearchEngine("arXiv", "http://export.arxiv.org/api/query", "academic"),
+    SearchEngine("Semantic Scholar", "https://api.semanticscholar.org/graph/v1/paper/search", "academic"),
+    SearchEngine("Crossref", "https://api.crossref.org/works", "academic")
   )
 
   private val engineMap: Map[String, SearchEngine] = ENGINES.map(e => e.name -> e).toMap
+  private val ACADEMIC_NAMES = Set("arXiv", "Semantic Scholar", "Crossref")
 
   val name = "WebSearch"
 
   val description = """Search the web using multiple search engines (no API key required).
 
-Available engines (default: Bing INT):
+Available engines (default: auto-select via batch racing):
 - Global: Bing INT, DuckDuckGo, Startpage, Brave, Qwant, Ecosia, Yahoo, WolframAlpha
 - CN: Bing CN, Baidu, Sogou, 360, Toutiao, WeChat Articles, Jisilu
+- Academic: arXiv, Semantic Scholar, Crossref
+
+Academic engines for research paper search:
+- arXiv: preprint server, best for physics/CS/math papers. Returns title, authors, year, abstract, DOI.
+- Semantic Scholar: AI-powered academic search across all fields. Returns title, authors, year, abstract, DOI, open access PDF link.
+- Crossref: DOI registry, best for finding exact publication metadata. Returns title, authors, year, journal, DOI.
+- Specify engine="arXiv", engine="Semantic Scholar", or engine="Crossref" for academic queries.
+- For general web search, omit engine or specify a global/CN engine.
 
 Usage:
+- For academic paper search, prefer engine="arXiv" or engine="Semantic Scholar" over general web search.
 - Only use WebSearch and WebFetch for accessing information beyond your training data.
 - Do NOT generate or guess URLs unless you are confident they help the user with programming tasks.
 - When the user provides a URL, use WebFetch to retrieve its contents rather than guessing what's there.
 - Web search results may contain outdated information — verify critical facts before relying on them.
-- Provides up-to-date information for current events and recent data
-- Use for facts, news, documentation lookups
-- Supports search operators: site:, filetype:, "exact match", -exclude, OR
 - IMPORTANT: You MUST include a "Sources:" section listing all relevant URLs"""
 
   val inputSchema = JsonObject.fromIterable(
@@ -213,6 +225,95 @@ Usage:
         else Right((engine, text))
     catch case e: Exception => Left(s"${engine.name}: ${e.getMessage.take(120)}")
 
+  // ── Academic API search ────────────────────────────────────────────
+
+  /** Search academic API (arXiv/Semantic Scholar/Crossref). Returns structured paper results. */
+  private def searchAcademic(query: String, engine: SearchEngine): Either[String, (SearchEngine, String)] =
+    try
+      val backend = SharedBackend.instance
+      val (fullUrl, resultText) = engine.name match
+        case "arXiv" =>
+          val arxivQ = query.split("\\s+").map(w => s"all:$w").mkString("+AND+")
+          val url = s"${engine.url}?search_query=$arxivQ&start=0&max_results=8&sortBy=relevance"
+          val resp = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
+          val text = if resp.code.isSuccess then extractArxivResults(resp.body) else ""
+          (url, text)
+
+        case "Semantic Scholar" =>
+          val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+          val url = s"${engine.url}?query=$encoded&fields=title,abstract,year,authors,externalIds,openAccessPdf&limit=8"
+          val resp = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
+          val text = if resp.code.isSuccess then extractSemanticScholarResults(resp.body) else ""
+          (url, text)
+
+        case "Crossref" =>
+          val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+          val url = s"${engine.url}?query=$encoded&rows=8&select=DOI,title,author,published-print,container-title,abstract"
+          val resp = basicRequest.get(uri"$url")
+            .header("User-Agent", "Nebflow/academic-search (mailto:research@nebflow.space)")
+            .readTimeout(20_000.millis).response(asStringAlways).send(backend)
+          val text = if resp.code.isSuccess then extractCrossrefResults(resp.body) else ""
+          (url, text)
+
+        case _ => return Left(s"Unknown academic engine: ${engine.name}")
+
+      if resultText.trim.isEmpty then Left(s"${engine.name}: No results or API error")
+      else Right((engine, resultText))
+    catch case e: Exception => Left(s"${engine.name}: ${e.getMessage.take(120)}")
+
+  /** Parse arXiv Atom XML feed into readable result format. */
+  private def extractArxivResults(xml: String): String =
+    val entryPat = """<entry>([\s\S]*?)</entry>""".r
+    val results = entryPat.findAllMatchIn(xml).flatMap { m =>
+      val e = m.group(1)
+      val title = """<title[^>]*>([\s\S]*?)</title>""".r.findFirstMatchIn(e).map(_.group(1).trim.replaceAll("\\s+", " ")).getOrElse("")
+      val summary = """<summary>([\s\S]*?)</summary>""".r.findFirstMatchIn(e).map(_.group(1).trim.replaceAll("\\s+", " ").take(400)).getOrElse("")
+      val link = """<link[^>]*href="([^"]+)"[^>]*rel="alternate"""".r.findFirstMatchIn(e).map(_.group(1)).getOrElse("")
+      val published = """<published>([^<]+)</published>""".r.findFirstMatchIn(e).map(_.group(1).take(4)).getOrElse("")
+      val authors = """<name>([^<]+)</name>""".r.findAllMatchIn(e).map(_.group(1)).toList.take(5).mkString(", ")
+      val doi = """<arxiv:doi[^>]*>([^<]+)""".r.findFirstMatchIn(e).map(d => s" DOI: ${d.group(1)}").getOrElse("")
+      if title.nonEmpty then Some(s"**$title**\n$link\nAuthors: $authors ($published)$doi\n$summary") else None
+    }.toList
+    if results.nonEmpty then results.mkString("\n\n") else ""
+
+  /** Parse Semantic Scholar JSON response. */
+  private def extractSemanticScholarResults(json: String): String =
+    parser.parse(json).toOption.flatMap(_.hcursor.downField("data").as[List[io.circe.Json]].toOption) match
+      case Some(papers) =>
+        papers.take(8).flatMap { paper =>
+          val h = paper.hcursor
+          val title = h.downField("title").as[String].toOption.getOrElse("")
+          val year = h.downField("year").as[Int].map(_.toString).toOption.getOrElse("")
+          val abstract_ = h.downField("abstract").as[String].toOption.getOrElse("").take(400)
+          val authors = h.downField("authors").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+            .flatMap(_.hcursor.downField("name").as[String].toOption).take(5).mkString(", ")
+          val paperId = h.downField("paperId").as[String].toOption.getOrElse("")
+          val doi = h.downField("externalIds").downField("DOI").as[String].toOption.map(d => s" DOI: $d").getOrElse("")
+          val oaPdf = h.downField("openAccessPdf").downField("url").as[String].toOption.map(u => s" OA PDF: $u").getOrElse("")
+          val url = s"https://www.semanticscholar.org/paper/$paperId"
+          if title.nonEmpty then Some(s"**$title**\n$url\nAuthors: $authors ($year)$doi$oaPdf\n$abstract_") else None
+        }.mkString("\n\n")
+      case None => ""
+
+  /** Parse Crossref JSON response. */
+  private def extractCrossrefResults(json: String): String =
+    parser.parse(json).toOption.flatMap(_.hcursor.downField("message").downField("items").as[List[io.circe.Json]].toOption) match
+      case Some(items) =>
+        items.take(8).flatMap { item =>
+          val h = item.hcursor
+          val title = h.downField("title").as[List[String]].toOption.flatMap(_.headOption).getOrElse("")
+          val doi = h.downField("DOI").as[String].toOption.getOrElse("")
+          val year = h.downField("published-print").downField("date-parts").as[List[List[Int]]].toOption
+            .flatMap(_.headOption).flatMap(_.headOption).map(_.toString).getOrElse("")
+          val container = h.downField("container-title").as[List[String]].toOption.flatMap(_.headOption).getOrElse("")
+          val authors = h.downField("author").as[List[io.circe.Json]].toOption.getOrElse(Nil).flatMap { a =>
+            a.hcursor.downField("family").as[String].toOption
+          }.take(5).mkString(", ")
+          val url = s"https://doi.org/$doi"
+          if title.nonEmpty then Some(s"**$title**\n$url\nAuthors: $authors ($year)\nJournal: $container") else None
+        }.mkString("\n\n")
+      case None => ""
+
   // ── Truncate & filter ─────────────────────────────────────────────
 
   private def truncate(text: String, max: Int): String =
@@ -232,46 +333,52 @@ Usage:
       input("max_results").flatMap(_.asNumber).flatMap(_.toInt).map(Math.max(100, _)).getOrElse(DEFAULT_MAX_CHARS)
     val blocked = input("blocked_domains").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil)
     val allowed = input("allowed_domains").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil)
+    val engineName = input("engine").flatMap(_.asString)
 
-    // Build ordered engine list: user-specified engine first, then the rest
-    val enginesToTry: List[SearchEngine] = input("engine").flatMap(_.asString) match
-      case Some(name) => engineMap.get(name).toList ++ ENGINES.filter(_.name != name)
-      case None => ENGINES
-
-    // Split into batches, each batch raced in parallel
-    val batches = enginesToTry.grouped(BATCH_SIZE).toList
-
-    def raceBatch(batch: List[SearchEngine]): IO[Either[String, (SearchEngine, String)]] =
-      val ios: List[IO[Either[String, (SearchEngine, String)]]] =
-        batch.map(e => IO.blocking(searchOne(query, e)))
-      // Race all IOs in the batch: first to finish (success or failure) wins
-      ios.reduce[IO[Either[String, (SearchEngine, String)]]] { (a, b) =>
-        IO.race(a, b).map(_.merge)
+    // Academic engines: direct API call, no racing
+    if engineName.exists(ACADEMIC_NAMES.contains) then
+      val engine = engineMap(engineName.get)
+      IO.blocking(searchAcademic(query, engine)).map {
+        case Right((e, text)) =>
+          Right(s"Search engine: ${e.name}\n\n${truncate(text, maxChars)}")
+        case Left(err) =>
+          Left(ToolError(err))
       }
+    else
+      // General engines: batch racing (existing logic)
+      val enginesToTry: List[SearchEngine] = engineName match
+        case Some(name) => engineMap.get(name).toList ++ ENGINES.filter(e => e.name != name && !ACADEMIC_NAMES.contains(e.name))
+        case None => ENGINES.filter(e => !ACADEMIC_NAMES.contains(e.name))
 
-    def tryBatches(remaining: List[List[SearchEngine]], accErrors: Vector[String]): IO[Either[ToolError, String]] =
-      remaining match
-        case Nil =>
-          IO.pure(
-            Left(
-              ToolError(
-                s"All search engines failed.\n${accErrors.take(8).mkString("\n")}${
-                    if accErrors.length > 8 then s"\n... and ${accErrors.length - 8} more" else ""
-                  }"
-              )
-            )
-          )
-        case batch :: rest =>
-          raceBatch(batch).flatMap {
-            case Right((engine, text)) =>
-              var result = truncate(text, maxChars)
-              result = filterDomains(result, allowed, blocked)
-              IO.pure(Right(s"Search engine: ${engine.name}\n\n$result"))
-            case Left(err) =>
-              tryBatches(rest, accErrors :+ err)
-          }
+      val batches = enginesToTry.grouped(BATCH_SIZE).toList
 
-    tryBatches(batches, Vector.empty)
+      def raceBatch(batch: List[SearchEngine]): IO[Either[String, (SearchEngine, String)]] =
+        val ios: List[IO[Either[String, (SearchEngine, String)]]] =
+          batch.map(e => IO.blocking(searchOne(query, e)))
+        ios.reduce[IO[Either[String, (SearchEngine, String)]]] { (a, b) =>
+          IO.race(a, b).map(_.merge)
+        }
+
+      def tryBatches(remaining: List[List[SearchEngine]], accErrors: Vector[String]): IO[Either[ToolError, String]] =
+        remaining match
+          case Nil =>
+            IO.pure(Left(ToolError(
+              s"All search engines failed.\n${accErrors.take(8).mkString("\n")}${
+                  if accErrors.length > 8 then s"\n... and ${accErrors.length - 8} more" else ""
+                }"
+            )))
+          case batch :: rest =>
+            raceBatch(batch).flatMap {
+              case Right((engine, text)) =>
+                var result = truncate(text, maxChars)
+                result = filterDomains(result, allowed, blocked)
+                IO.pure(Right(s"Search engine: ${engine.name}\n\n$result"))
+              case Left(err) =>
+                tryBatches(rest, accErrors :+ err)
+            }
+
+      tryBatches(batches, Vector.empty)
+    end if
   end call
 
 end WebSearchTool
