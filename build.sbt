@@ -46,6 +46,8 @@ lazy val root = (project in file("."))
       logbackCore,
       // Diff
       diffUtils,
+      // Browser automation (lazy-loaded at runtime, adds ~40MB JAR)
+      playwright,
       // Testing
       munit,
       munitCatsEffect,
