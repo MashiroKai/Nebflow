@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
-import nebflow.shared.{HttpUtils, SharedBackend}
+import nebflow.shared.{BrowserFetchResult, BrowserManager, HttpUtils, SharedBackend}
 import sttp.client4.*
 
 import java.util.concurrent.ConcurrentHashMap
@@ -34,6 +34,10 @@ Usage:
 - Use this tool for accessing URLs provided by the user or found via WebSearch
 - Supports HTML pages, plain text, JSON, and other text-based content
 - Automatically skips binary content (images, videos, archives)
+- For sites behind anti-bot protection (ScienceDirect, IEEE, etc.), automatically
+  falls back to a headless browser, then to a headed browser window where you
+  can complete any human verification (e.g. Cloudflare challenge). Once verified,
+  the session cookie is cached for subsequent requests.
 - Returns the content in markdown (default) or plain text format"""
 
   val inputSchema = JsonObject.fromIterable(
@@ -75,24 +79,22 @@ Usage:
         val entry = it.next()
         if entry.getValue._2 <= now then it.remove()
 
+  // ── Anti-bot detection ─────────────────────────────────────────────
+
+  private def isChallengeTitle(title: String): Boolean =
+    val t = title.toLowerCase
+    t.contains("just a moment") || title.contains("请稍候") ||
+    t.contains("attention required") || t.contains("access denied")
+
   // ── HTML extraction ────────────────────────────────────────────────
 
-  /**
-   * Extract text from HTML with semantic prioritization.
-   *  1. Try `<main>` or `<article>` — the primary content
-   *  2. Fall back to `<body>`
-   *  3. Extract meta description for context
-   */
   private def extractHtmlText(html: String): (Option[String], String, Option[String]) =
-    // Meta description
     val metaDesc = """<meta[^>]+name="description"[^>]+content="([^"]+)"""".r
       .findFirstMatchIn(html)
       .map(_.group(1).trim)
 
-    // Title
     val title = "<title[^>]*>([^<]*)</title>".r.findFirstMatchIn(html).map(_.group(1).trim)
 
-    // Clean: remove non-content elements
     val clean = html
       .replaceAll("""(?i)<script[^>]*>[\s\S]*?</script>""", "")
       .replaceAll("""(?i)<style[^>]*>[\s\S]*?</style>""", "")
@@ -102,7 +104,6 @@ Usage:
       .replaceAll("""(?i)<aside[\s\S]*?</aside>""", "")
       .replaceAll("""(?i)<!--[\s\S]*?-->""", "")
 
-    // Priority: main > article > body > whole doc
     val mainContent = raw"<main[^>]*>([\s\S]*)</main>".r.findFirstMatchIn(clean).map(_.group(1))
     val articleContent = raw"<article[^>]*>([\s\S]*)</article>".r.findFirstMatchIn(clean).map(_.group(1))
     val bodyContent = raw"<body[^>]*>([\s\S]*)</body>".r.findFirstMatchIn(clean).map(_.group(1))
@@ -129,9 +130,6 @@ Usage:
     if text.length <= maxChars then (text, false)
     else (text.take(maxChars) + "\n\n[Content truncated]", true)
 
-  // ── Main call ──────────────────────────────────────────────────────
-
-  /** Recursively walk the exception cause chain to build a detailed error message. */
   private def describeError(e: Throwable): String =
     val b = new StringBuilder
     var t: Throwable = e
@@ -144,130 +142,184 @@ Usage:
       depth += 1
     b.toString
 
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
+  // ── Output formatting ──────────────────────────────────────────────
+
+  private def buildOutput(title: Option[String], text: String, metaDesc: Option[String],
+                          format: String): String =
+    val descBlock = metaDesc.filter(_.nonEmpty).map(d => s"> $d\n\n").getOrElse("")
+    (title, format) match
+      case (Some(t), "markdown") => s"# $t\n\n$descBlock$text"
+      case (Some(t), _)          => s"$t\n\n$descBlock$text"
+      case (_, "markdown")       => s"$descBlock$text"
+      case _                     => s"$descBlock$text"
+
+  // ── Outcome types ──────────────────────────────────────────────────
+
+  private enum HttpOutcome:
+    case Success(text: String)
+    case NeedBrowser
+    case Error(msg: String)
+
+  private enum BrowserOutcome:
+    case Success(text: String)
+    case NeedHeaded
+    case Error(msg: String)
+
+  // ── Layer 1: HTTP fetch ────────────────────────────────────────────
+
+  private def tryHttp(url: String, maxChars: Int, format: String): IO[HttpOutcome] =
+    IO.blocking {
+      val startMs = System.currentTimeMillis()
+      try
+        val backend = SharedBackend.instance
+        val request = SharedBackend.BrowserHeaders
+          .foldLeft(
+            basicRequest
+              .get(uri"$url")
+              .readTimeout(FETCH_TIMEOUT.millis)
+          ) { case (req, (k, v)) => req.header(k, v) }
+          .followRedirects(true)
+          .maxRedirects(5)
+          .response(asStringAlways)
+
+        val response = request.send(backend)
+        val elapsed = System.currentTimeMillis() - startMs
+
+        logger.infoSync(s"WebFetch HTTP response",
+          "url" -> url.take(80), "status" -> response.code.toString,
+          "bodyLen" -> response.body.length.toString, "elapsedMs" -> elapsed.toString)
+
+        // Anti-bot: 403 → try browser
+        if response.code.code == 403 then
+          logger.infoSync(s"WebFetch 403, will try browser fallback", "url" -> url.take(80))
+          HttpOutcome.NeedBrowser
+        else if !response.code.isSuccess then
+          HttpOutcome.Error(s"HTTP ${response.code} ${response.statusText}")
+        else
+          val contentType = response.header("content-type").getOrElse("")
+          if HttpUtils.isBinaryContentType(contentType) then
+            HttpOutcome.Error(s"[Binary content: $contentType] Skipped binary file.")
+          else
+            val body = response.body
+            if body.length > DEFAULT_MAX_BYTES then
+              HttpOutcome.Error(s"Response too large (${body.length} bytes > $DEFAULT_MAX_BYTES)")
+            else
+              // Parse content
+              val (title, text, metaDesc) =
+                if contentType.contains("application/json") then
+                  try
+                    io.circe.parser.parse(body) match
+                      case Right(json) => (None, json.spaces2, None)
+                      case Left(_)     => (None, body, None)
+                  catch case _: Exception => (None, body, None)
+                else if contentType.contains("text/html") then extractHtmlText(body)
+                else (None, body, None)
+
+              // Detect JS challenge page (HTTP 200 but actually a challenge)
+              if title.exists(isChallengeTitle) then
+                logger.infoSync(s"WebFetch challenge page detected, will try browser",
+                  "url" -> url.take(80), "title" -> title.getOrElse(""))
+                HttpOutcome.NeedBrowser
+              else
+                val output = buildOutput(title, text, metaDesc, format)
+                val (truncated, _) = truncate(output, maxChars)
+                writeCache(url, truncated)
+                logger.infoSync(s"WebFetch HTTP success",
+                  "url" -> url.take(80), "resultLen" -> truncated.length.toString)
+                HttpOutcome.Success(truncated)
+        end if
+      catch
+        case e: java.net.http.HttpTimeoutException =>
+          HttpOutcome.Error(s"Request timed out after ${FETCH_TIMEOUT / 1000}s")
+        case e: javax.net.ssl.SSLHandshakeException =>
+          HttpOutcome.Error(s"SSL handshake failed: ${describeError(e)}")
+        case e: javax.net.ssl.SSLException =>
+          HttpOutcome.Error(s"SSL error: ${describeError(e)}")
+        case e: java.net.UnknownHostException =>
+          HttpOutcome.Error(s"DNS lookup failed: ${e.getMessage}")
+        case e: java.net.ConnectException =>
+          HttpOutcome.Error(s"Connection refused: ${e.getMessage}")
+        case e: Exception =>
+          HttpOutcome.Error(s"Fetch failed: ${describeError(e)}")
+    }
+  end tryHttp
+
+  // ── Layer 2/3: Browser fetch ───────────────────────────────────────
+
+  private def tryBrowser(url: String, maxChars: Int, format: String,
+                         headless: Boolean): IO[BrowserOutcome] =
+    val maxWait = if headless then 10 else 30
+    BrowserManager.fetch(url, headless = headless, maxWaitSeconds = maxWait).map { result =>
+      // Challenge detection: title-based + status+content based
+      // ScienceDirect returns 403 with title "ScienceDirect" (not a standard challenge title),
+      // so we also check for Cloudflare challenge markers in content
+      val isChallenge = isChallengeTitle(result.title) ||
+        (result.status == 403 && result.content.contains("challenge-platform")) ||
+        result.status == 418
+      if isChallenge then
+        if headless then
+          logger.infoSync(s"WebFetch headless challenge, upgrading to headed", "url" -> url.take(80))
+          BrowserOutcome.NeedHeaded
+        else
+          BrowserOutcome.Error(
+            "Anti-bot challenge not resolved. Try opening the URL in your browser manually."
+          )
+      else
+        val (extractedTitle, text, metaDesc) = extractHtmlText(result.content)
+        val title = extractedTitle.orElse(Option(result.title).filter(_.nonEmpty))
+        val output = buildOutput(title, text, metaDesc, format)
+        val (truncated, _) = truncate(output, maxChars)
+        writeCache(url, truncated)
+        logger.infoSync(s"WebFetch browser success",
+          "url" -> url.take(80), "headless" -> headless.toString,
+          "resultLen" -> truncated.length.toString)
+        BrowserOutcome.Success(truncated)
+    }.handleError { e =>
+      val err = describeError(e)
+      logger.errorSync(s"WebFetch browser error: $err", "url" -> url.take(80))
+      if headless then BrowserOutcome.NeedHeaded else BrowserOutcome.Error(s"Browser fetch failed: $err")
+    }
+  end tryBrowser
+
+  // ── Main entry: layered fallback ───────────────────────────────────
+
+  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val url = input("url").flatMap(_.asString).getOrElse("")
     val maxChars =
       input("maxChars").flatMap(_.asNumber).flatMap(_.toInt).map(Math.max(100, _)).getOrElse(DEFAULT_MAX_CHARS)
     val format = input("format").flatMap(_.asString).getOrElse("markdown")
 
-    logger.infoSync(s"WebFetch starting", "url" -> url.take(80), "format" -> format, "maxChars" -> maxChars.toString)
+    logger.infoSync(s"WebFetch starting", "url" -> url.take(80), "format" -> format)
 
     readCache(url) match
       case Some(cached) =>
         logger.infoSync(s"WebFetch cache hit", "url" -> url.take(80))
         val (t, _) = truncate(cached, maxChars)
-        Right(s"[Cached] $t")
+        IO.pure(Right(s"[Cached] $t"))
+
       case None =>
-        val startMs = System.currentTimeMillis()
-        try
-          val backend = SharedBackend.instance
-          val request = SharedBackend.BrowserHeaders
-            .foldLeft(
-              basicRequest
-                .get(uri"$url")
-                .readTimeout(FETCH_TIMEOUT.millis)
-            ) { case (req, (k, v)) => req.header(k, v) }
-            .followRedirects(true)
-            .maxRedirects(5)
-            .response(asStringAlways)
+        // Layer 1: HTTP
+        tryHttp(url, maxChars, format).flatMap {
+          case HttpOutcome.Success(text) => IO.pure(Right(text))
+          case HttpOutcome.Error(msg)    => IO.pure(Left(ToolError(msg)))
+          case HttpOutcome.NeedBrowser =>
+            // Layer 2: headless browser
+            tryBrowser(url, maxChars, format, headless = true).flatMap {
+              case BrowserOutcome.Success(text) => IO.pure(Right(text))
+              case BrowserOutcome.Error(msg)    => IO.pure(Left(ToolError(msg)))
+              case BrowserOutcome.NeedHeaded =>
+                // Layer 3: headed browser (user may need to complete verification)
+                logger.infoSync(s"WebFetch opening headed browser for user verification",
+                  "url" -> url.take(80))
+                tryBrowser(url, maxChars, format, headless = false).map {
+                  case BrowserOutcome.Success(text) => Right(text)
+                  case BrowserOutcome.Error(msg)    => Left(ToolError(msg))
+                  case BrowserOutcome.NeedHeaded    => Left(ToolError(
+                    "Anti-bot challenge could not be resolved. Try opening the URL in your browser."
+                  ))
+                }
+            }
+        }
+  end call
 
-          val response = request.send(backend)
-          val elapsed = System.currentTimeMillis() - startMs
-
-          logger.infoSync(
-            s"WebFetch response received",
-            "url" -> url.take(80),
-            "status" -> response.code.toString,
-            "contentType" -> response.header("content-type").getOrElse("N/A"),
-            "bodyLen" -> response.body.length.toString,
-            "elapsedMs" -> elapsed.toString
-          )
-
-          if !response.code.isSuccess then
-            logger.warnSync(s"WebFetch non-success status", "url" -> url.take(80), "status" -> response.code.toString)
-            Left(ToolError(s"HTTP ${response.code} ${response.statusText}"))
-          else
-            val contentType = response.header("content-type").getOrElse("")
-            if HttpUtils.isBinaryContentType(contentType) then
-              logger.warnSync(s"WebFetch binary content skipped", "url" -> url.take(80), "contentType" -> contentType)
-              Right(s"[Binary content: $contentType] Skipped binary file.")
-            else
-              val body = response.body
-              if body.length > DEFAULT_MAX_BYTES then
-                logger.warnSync(
-                  s"WebFetch response too large",
-                  "url" -> url.take(80),
-                  "bodyLen" -> body.length.toString
-                )
-                Left(ToolError(s"Response too large (${body.length} bytes > $DEFAULT_MAX_BYTES)"))
-              else
-                val parseStart = System.currentTimeMillis()
-                val result: (Option[String], String, Option[String]) =
-                  if contentType.contains("application/json") then
-                    try
-                      io.circe.parser.parse(body) match
-                        case Right(json) => (None, json.spaces2, None)
-                        case Left(_) => (None, body, None)
-                    catch case _: Exception => (None, body, None)
-                  else if contentType.contains("text/html") then extractHtmlText(body)
-                  else (None, body, None)
-                val (title, text, metaDesc) = result
-
-                val parseElapsed = System.currentTimeMillis() - parseStart
-                logger.infoSync(
-                  s"WebFetch parsed",
-                  "url" -> url.take(80),
-                  "title" -> title.getOrElse("N/A"),
-                  "textLen" -> text.length.toString,
-                  "metaDesc" -> metaDesc.isDefined.toString,
-                  "parseMs" -> parseElapsed.toString
-                )
-
-                // Build output: title as markdown heading, meta as blockquote, then body
-                val descBlock = metaDesc.filter(_.nonEmpty).map(d => s"> $d\n\n").getOrElse("")
-                val output = (title, format) match
-                  case (Some(t), "markdown") => s"# $t\n\n$descBlock$text"
-                  case (Some(t), _) => s"$t\n\n$descBlock$text"
-                  case (_, "markdown") => s"$descBlock$text"
-                  case _ => s"$descBlock$text"
-
-                val (truncated, _) = truncate(output, maxChars)
-                writeCache(url, truncated)
-                logger.infoSync(
-                  s"WebFetch success",
-                  "url" -> url.take(80),
-                  "resultLen" -> truncated.length.toString,
-                  "totalMs" -> (System.currentTimeMillis() - startMs).toString
-                )
-                Right(truncated)
-              end if
-            end if
-          end if
-        catch
-          case e: java.net.http.HttpTimeoutException =>
-            logger.errorSync(
-              s"WebFetch timeout",
-              "url" -> url.take(80),
-              "timeoutSec" -> (FETCH_TIMEOUT / 1000).toString
-            )
-            Left(ToolError(s"Request timed out after ${FETCH_TIMEOUT / 1000}s"))
-          case e: javax.net.ssl.SSLHandshakeException =>
-            logger.errorSync(s"WebFetch SSL handshake failed: ${describeError(e)}")
-            Left(ToolError(s"SSL handshake failed: ${describeError(e)}"))
-          case e: javax.net.ssl.SSLException =>
-            logger.errorSync(s"WebFetch SSL error: ${describeError(e)}")
-            Left(ToolError(s"SSL error: ${describeError(e)}"))
-          case e: java.net.UnknownHostException =>
-            logger.errorSync(s"WebFetch DNS failed", "url" -> url.take(80), "error" -> e.getMessage)
-            Left(ToolError(s"DNS lookup failed: ${e.getMessage}"))
-          case e: java.net.ConnectException =>
-            logger.errorSync(s"WebFetch connection refused", "url" -> url.take(80), "error" -> e.getMessage)
-            Left(ToolError(s"Connection refused: ${e.getMessage}"))
-          case e: Exception =>
-            val err = describeError(e)
-            logger.errorSync(s"WebFetch unexpected error: $err", "url" -> url.take(80))
-            Left(ToolError(s"Fetch failed: $err"))
-        end try
-    end match
-  }
 end WebFetchTool
