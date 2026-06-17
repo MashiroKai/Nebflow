@@ -221,7 +221,7 @@ object LlmInterface:
                                   )
                                 )
                             )
-                            stream
+                            (stream
                               // Per-provider inactivity timeout: detect hung SSE connections
                               // (HTTP alive but no meaningful data). Applied per-provider so
                               // that a timeout on one provider allows the fallback to try the next.
@@ -246,7 +246,22 @@ object LlmInterface:
                                   }
                                 case other => IO.pure(other)
                               }
-                              .handleErrorWith { err =>
+                              // Guard: if the stream completes but never emitted any content
+                              // (no Done chunk, no text/thinking/tool chunks), some providers
+                              // close the SSE connection without a terminal event. Without this
+                              // check, the empty response slips past sendStream's fallback and
+                              // only reaches AgentActor's retry — which lacks provider fallback.
+                              ++ fs2.Stream.eval(
+                                lockedRef.get.flatMap { locked =>
+                                  if !locked then
+                                    IO.raiseError(
+                                      new RuntimeException(
+                                        s"Stream completed with no content (${candidate.providerId}/${candidate.model})"
+                                      )
+                                    )
+                                  else IO.unit
+                                }
+                              ).drain).handleErrorWith { err =>
                                 val classification = Fallback.classifyError(err)
                                 // Inactivity timeout is a transient error — always allow fallback
                                 // even when lockedRef is true (provider sent partial content then hung).
