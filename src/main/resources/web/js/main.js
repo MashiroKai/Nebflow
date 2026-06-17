@@ -1761,26 +1761,10 @@ initMesh();
   });
 })();
 
-// ---------- Scrollbar auto-slim: scroll → expand, 3s idle → re-slim ----------
-(function initScrollbarAutoSlim() {
-  const SLIM_CLASS = 'scrollbar-slim';
-  const IDLE_MS = 3000;
-  let timer;
-
-  const onInteraction = () => {
-    document.body.classList.remove(SLIM_CLASS);
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      document.body.classList.add(SLIM_CLASS);
-    }, IDLE_MS);
-  };
-
-  // Use capture phase — scroll events do NOT bubble (event.dispatch flag)
-  document.addEventListener('scroll', onInteraction, { passive: true, capture: true });
-
-  // Initial state: slim
-  document.body.classList.add(SLIM_CLASS);
-})();
+// ---------- Scrollbar: fixed slim width ----------
+// Previously had an auto-slim mechanism that toggled scrollbar width between
+// 6px and 10px on scroll/idle. This caused bubbles to re-flow (jump) because
+// the content area width changed by 4px each time. Fixed width eliminates this.
 
 // Re-apply locale when language changes
 window.addEventListener('locale-changed', () => {
