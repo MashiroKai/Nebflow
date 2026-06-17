@@ -343,6 +343,17 @@ class RestApiRoutes(
         }
       }
 
+    // Update device capabilities / user description
+    case req @ PUT -> Root / "mesh" / "device-info" =>
+      withMesh(req) { ms =>
+        req.as[Json].flatMap { body =>
+          val userDesc = body.hcursor.downField("userDescription").as[Option[String]].toOption.flatten
+          val caps = body.hcursor.downField("capabilities").as[Option[Map[String, String]]].toOption.flatten
+          ms.updateDeviceInfo(userDescription = userDesc, capabilities = caps) *>
+            Ok(Json.obj("ok" -> true.asJson))
+        }
+      }
+
     // Fingerprints — returns local file fingerprints for peer sync
     // Auth: Bearer must contain the local userId (peer trust)
     case req @ GET -> Root / "mesh" / "fingerprints" =>
