@@ -137,12 +137,27 @@ function meshLoggedInHTML() {
     { ...meshState.device, deviceId: 'local', isLocal: true },
     ...meshState.peers
   ];
-  const deviceRows = allDevices.map(d => `
+  const deviceRows = allDevices.map(d => {
+    const caps = d.capabilities ? Object.keys(d.capabilities) : [];
+    const desc = d.userDescription || '';
+    const capStr = caps.length > 0 ? `<span class="mesh-peer-caps">${caps.join(', ')}</span>` : '';
+    const descStr = desc ? `<span class="mesh-peer-desc">${escapeHtml(desc)}</span>` : '';
+    return `
     <div class="mesh-peer">
       <span class="mesh-peer-dot dot-on"></span>
       <span class="mesh-peer-name">${escapeHtml(d.deviceName || d.name || d.platform || 'Unknown')}</span>
       ${d.isLocal ? '<span class="mesh-peer-status local-tag">' + t('mesh.thisDevice') + '</span>' : '<span class="mesh-peer-status">' + t('mesh.connected') + '</span>'}
-    </div>`).join('');
+      ${capStr}
+      ${descStr}
+    </div>`;
+  }).join('');
+
+  const localDesc = meshState.device?.userDescription || '';
+  const localCaps = meshState.device?.capabilities ? Object.keys(meshState.device.capabilities) : [];
+  const capsDisplay = localCaps.length > 0
+    ? `<div class="mesh-caps-display">${t('mesh.detectedTools')}: ${localCaps.join(', ')}</div>`
+    : '';
+
   return `
     <div class="mesh-logged-in">
       <div id="mesh-error" class="mesh-error" style="display:none"></div>
@@ -152,6 +167,13 @@ function meshLoggedInHTML() {
       </div>
       <div class="mesh-section-label">${t('mesh.devices')}</div>
       <div class="mesh-peers-list">${deviceRows}</div>
+      ${capsDisplay}
+      <div class="mesh-section-label" style="margin-top:10px">${t('mesh.deviceDescription')}</div>
+      <input type="text" id="mesh-device-desc" class="cfg-input"
+             placeholder="${t('mesh.deviceDescHint')}"
+             value="${escapeHtml(localDesc)}"
+             style="margin-bottom:6px">
+      <button class="cfg-btn" id="mesh-save-desc" style="width:100%">${t('mesh.save')}</button>
     </div>`;
 }
 
@@ -179,6 +201,8 @@ export function bindMeshEvents(rerender) {
   });
   // Logged in actions
   document.getElementById('mesh-logout')?.addEventListener('click', () => doLogout(rerender));
+  document.getElementById('mesh-save-desc')?.addEventListener('click', () => doSaveDescription(rerender));
+  document.getElementById('mesh-device-desc')?.addEventListener('keydown', e => { if (e.key === 'Enter') doSaveDescription(rerender); });
 }
 
 // ---- Actions ----
@@ -223,6 +247,18 @@ async function doLogout(rerender) {
     meshState.username = null;
     meshState.peers = [];
     authTab = 'login';
+    rerender();
+  } catch (e) {
+    showMeshError(e.message);
+  }
+}
+
+async function doSaveDescription(rerender) {
+  const desc = document.getElementById('mesh-device-desc')?.value?.trim() || '';
+  try {
+    hideMeshError();
+    await meshApi('device-info', 'PUT', { userDescription: desc });
+    if (meshState.device) meshState.device.userDescription = desc;
     rerender();
   } catch (e) {
     showMeshError(e.message);
