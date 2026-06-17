@@ -364,7 +364,7 @@
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
 .bubble {
-  max-width: 78%;
+  max-width: 100%;
   padding: 10px 14px;
   border-radius: 16px;
   font-size: 14.5px;
