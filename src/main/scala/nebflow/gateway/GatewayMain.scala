@@ -313,6 +313,14 @@ object GatewayMain extends IOApp.Simple:
                                     meshServiceF.flatMap { meshService =>
                                       // Register mesh tool for agent cross-device operations
                                       MeshTool.register(meshService)
+
+                                      // Create cloud session sync and wire into mesh sync cycle
+                                      val cloudSessionSync = nebflow.mesh.CloudSessionSync(meshService, sessionStore)
+                                      sessionStore.setSessionChangedHook(sid => cloudSessionSync.pushSession(sid))
+                                      meshService.setPostSyncHook(cloudSessionSync.syncCycle)
+                                      MeshTool.setCloudSessionSync(cloudSessionSync)
+                                      cloudSessionSync.startRelayPoller(sharedResourcesWithDream.dispatcher)
+
                                       val sharedResourcesWithBridge =
                                         sharedResourcesWithDream.copy(
                                           bridgeManager = Some(bridgeManager),
