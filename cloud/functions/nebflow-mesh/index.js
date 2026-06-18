@@ -34,7 +34,8 @@ const MAX_SESSION_SIZE = 14 * 1024 * 1024 // 14MB — leave headroom under Cloud
 // Ensure required collections exist (idempotent)
 const COLLECTIONS = [
   'mesh_users', 'mesh_sessions', 'mesh_discovery',
-  'mesh_sync_index', 'mesh_sync_data', 'mesh_busy', 'mesh_relay'
+  'mesh_sync_index', 'mesh_sync_data', 'mesh_busy', 'mesh_relay',
+  'mesh_sync_files'
 ]
 let collectionsEnsured = false
 async function ensureCollections() {
@@ -76,6 +77,9 @@ exports.main = async (event, context) => {
       case 'relay/poll':         return await relayPoll(payload)
       case 'relay/result':       return await relayResult(payload)
       case 'relay/fetch-result': return await relayFetchResult(payload)
+      // File sync (cloud-based, replaces P2P)
+      case 'file/sync':          return await fileSync(payload)
+      case 'file/upload':        return await fileUpload(payload)
       default: throw { status: 400, message: `Unknown action: ${action}` }
     }
   } catch (err) {
@@ -597,6 +601,91 @@ async function relayFetchResult(event) {
     result: doc.result,
     error: doc.error
   }
+}
+
+// ===== File Sync (cloud-based, replaces P2P) =====
+
+/**
+ * Phase 1 of cloud file sync: fingerprint exchange.
+ *
+ * Client sends local fingerprints { path: {mtime, size, hash} }.
+ * Cloud compares with stored files and returns:
+ *   - download: files where cloud is newer (with content)
+ *   - uploadNeeded: paths where local is newer (cloud wants these)
+ *
+ * Body: { userId, sessionToken, fingerprints: { path: {mtime, size, hash} } }
+ */
+async function fileSync(event) {
+  const { userId, sessionToken, fingerprints } = event
+  const user = await verifySession(userId, sessionToken)
+
+  const localFps = fingerprints || {}
+  const col = db.collection('mesh_sync_files')
+
+  // Get all cloud files for this user
+  const { data: cloudFiles } = await col.where({ userId: user.userId }).get()
+  const cloudMap = new Map()
+  for (const f of cloudFiles) cloudMap.set(f.path, f)
+
+  const download = []
+  const uploadNeeded = []
+
+  for (const [path, localFp] of Object.entries(localFps)) {
+    const cloud = cloudMap.get(path)
+    if (!cloud) {
+      // Cloud doesn't have this file — local should upload
+      uploadNeeded.push(path)
+    } else if (localFp.hash === cloud.fingerprint?.hash) {
+      // Same content — no action needed
+    } else if (localFp.mtime > (cloud.fingerprint?.mtime || 0)) {
+      // Local is newer — cloud wants the update
+      uploadNeeded.push(path)
+    } else {
+      // Cloud is newer — send to client
+      download.push({ path, content: cloud.content, fingerprint: cloud.fingerprint })
+    }
+  }
+
+  // Check for files that exist on cloud but not locally (cloud-only)
+  for (const [path, cloud] of cloudMap) {
+    if (!localFps[path]) {
+      download.push({ path, content: cloud.content, fingerprint: cloud.fingerprint })
+    }
+  }
+
+  return { download, uploadNeeded }
+}
+
+/**
+ * Phase 2 of cloud file sync: upload a file's content.
+ *
+ * Body: { userId, sessionToken, path, content (base64), fingerprint: {mtime, size, hash} }
+ */
+async function fileUpload(event) {
+  const { userId, sessionToken, path, content, fingerprint } = event
+  const user = await verifySession(userId, sessionToken)
+
+  if (!path) throw { status: 400, message: 'Missing path' }
+
+  const col = db.collection('mesh_sync_files')
+  const { data: existing } = await col.where({ userId: user.userId, path }).get()
+
+  const now = Date.now()
+  const record = {
+    userId: user.userId,
+    path,
+    content: content || '',
+    fingerprint: fingerprint || {},
+    updatedAt: now
+  }
+
+  if (existing.length > 0) {
+    await col.doc(existing[0]._id).update(record)
+  } else {
+    await col.add({ ...record, createdAt: now })
+  }
+
+  return { ok: true }
 }
 
 // ===== Session Verification =====
