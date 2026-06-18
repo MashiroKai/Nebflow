@@ -596,8 +596,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           val f = uiFile(id)
           if os.exists(f) then decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
           else Nil
-        }.flatTap(msgs => uiCacheRef.update(_.updated(id, msgs)))
-    )
+        }.flatTap(msgs => uiCacheRef.update(_.updated(id, msgs))))
 
   private def saveUiMessages(id: String, msgs: List[UiMessage]): IO[Unit] =
     IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true)) *>
@@ -650,7 +649,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    * - beforeIndex = None: return the latest `limit` messages (for initial load / session switch).
    * - beforeIndex = Some(n): return up to `limit` messages before index n (for scroll-up pagination).
    */
-  def getHistoryPage(sessionId: String, limit: Int, beforeIndex: Option[Int]): IO[(List[UiMessage], Int, Int, Boolean)] =
+  def getHistoryPage(
+    sessionId: String,
+    limit: Int,
+    beforeIndex: Option[Int]
+  ): IO[(List[UiMessage], Int, Int, Boolean)] =
     loadUiMessages(sessionId).map { all =>
       val total = all.size
       beforeIndex match
