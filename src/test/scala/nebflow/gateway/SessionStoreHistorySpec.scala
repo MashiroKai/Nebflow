@@ -194,6 +194,7 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
         assertEquals(total2, 3)
         assertEquals(total2b, 3, "sid2 cache should be unaffected by sid1 append")
         assertEquals(page2b.length, 3)
+      end for
     }
   }
 
@@ -212,3 +213,4 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
         assertEquals(historyPage.map(userText), getPage.map(userText), "Both should return same messages")
     }
   }
+end SessionStoreHistorySpec
