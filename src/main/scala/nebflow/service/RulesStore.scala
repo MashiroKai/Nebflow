@@ -1,4 +1,5 @@
 package nebflow.service
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
@@ -21,7 +22,7 @@ object RulesStore:
 
   // --- Paths ---
 
-  private val baseDir: os.Path = os.home / ".nebflow" / "folders"
+  private val baseDir: os.Path = PathUtil.dataRoot / "folders"
 
   def rulesPath(folderId: String): os.Path = baseDir / s"$folderId.rules.md"
 

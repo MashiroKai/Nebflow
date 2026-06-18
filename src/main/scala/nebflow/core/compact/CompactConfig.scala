@@ -1,5 +1,6 @@
 package nebflow.core.compact
 
+import nebflow.core.PathUtil
 import io.circe.*
 import io.circe.parser.parse
 
@@ -47,7 +48,7 @@ end CompactConfig
 
 object CompactConfig:
 
-  private val configPath = os.home / ".nebflow" / "nebflow.json"
+  private val configPath = PathUtil.dataRoot / "nebflow.json"
 
   /** Load CompactConfig from nebflow.json, falling back to defaults. */
   def apply(): CompactConfig =

@@ -1,4 +1,5 @@
 package nebflow.service
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import io.circe.parser.parse
@@ -10,7 +11,7 @@ import os.Path
  * Restores from latest valid snapshot when config is corrupted.
  */
 object ConfigSnapshot:
-  private val backupDir: Path = os.home / ".nebflow" / "backups"
+  private val backupDir: Path = PathUtil.dataRoot / "backups"
   private val MaxSnapshots = 5
 
   /** Save current config as a timestamped snapshot. */

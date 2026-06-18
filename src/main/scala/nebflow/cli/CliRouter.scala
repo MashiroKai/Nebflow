@@ -1,4 +1,5 @@
 package nebflow.cli
+import nebflow.core.PathUtil
 
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all.*
@@ -95,11 +96,11 @@ object CliRouter:
       cmd.name == "start" || cmd.name == "stop" || cmd.name == "status"
 
     val ctxIO: IO[CliContext] =
-      if isOffline then IO.pure(CliContext(named, positional, jsonMode, quietMode, None, os.home / ".nebflow"))
+      if isOffline then IO.pure(CliContext(named, positional, jsonMode, quietMode, None, PathUtil.dataRoot))
       else
         GatewayClient.create.map {
-          case Some(client) => CliContext(named, positional, jsonMode, quietMode, Some(client), os.home / ".nebflow")
-          case None => CliContext(named, positional, jsonMode, quietMode, None, os.home / ".nebflow")
+          case Some(client) => CliContext(named, positional, jsonMode, quietMode, Some(client), PathUtil.dataRoot)
+          case None => CliContext(named, positional, jsonMode, quietMode, None, PathUtil.dataRoot)
         }
 
     ctxIO.flatMap { ctx =>

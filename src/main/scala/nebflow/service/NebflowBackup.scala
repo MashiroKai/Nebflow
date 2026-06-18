@@ -1,4 +1,5 @@
 package nebflow.service
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import os.Path
@@ -20,7 +21,7 @@ object NebflowBackup:
   private val backupRoot: Path = os.home / ".nebflowBackup"
   private val MaxBackups = 7 // Keep one week of daily backups
 
-  private val home: Path = os.home / ".nebflow"
+  private val home: Path = PathUtil.dataRoot
   private val fmt = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
 
   /** File patterns to back up (relative to ~/.nebflow/). */
