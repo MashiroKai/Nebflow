@@ -1,5 +1,6 @@
 package nebflow.core.tools
 
+import nebflow.core.PathUtil
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.{NebflowLogger, ToolExecResult}
@@ -26,7 +27,7 @@ object ToolResultGuard:
 
   /** Root directory for persisted tool results: ~/.nebflow/tool-results/{sessionId}/ */
   private def resultDir(sessionId: String): os.Path =
-    os.home / ".nebflow" / "tool-results" / sessionId
+    PathUtil.dataRoot / "tool-results" / sessionId
 
   private def resultPath(sessionId: String, toolUseId: String): os.Path =
     resultDir(sessionId) / s"$toolUseId.txt"

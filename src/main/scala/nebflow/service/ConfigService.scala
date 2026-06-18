@@ -1,4 +1,5 @@
 package nebflow.service
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import cats.syntax.all.*
@@ -7,7 +8,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.llm.Config
 
 object ConfigService:
-  private val configPath = os.home / ".nebflow" / "nebflow.json"
+  private val configPath = PathUtil.dataRoot / "nebflow.json"
 
   def isConfigured: IO[Boolean] = IO.blocking {
     if !os.exists(configPath) then false

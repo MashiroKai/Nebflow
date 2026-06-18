@@ -1,5 +1,6 @@
 package nebflow.core.task
 
+import nebflow.core.PathUtil
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.decode
@@ -21,7 +22,7 @@ trait TaskStore:
 
 object FileTaskStore extends TaskStore:
   private val logger = NebflowLogger.forName("nebflow.taskstore")
-  private val root = os.home / ".nebflow" / "tasks"
+  private val root = PathUtil.dataRoot / "tasks"
   private val hwmFile = ".highwatermark"
 
   // Atomic high-water mark per session (Issue #1)
