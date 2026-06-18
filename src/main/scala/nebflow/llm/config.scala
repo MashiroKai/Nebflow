@@ -1,11 +1,10 @@
 package nebflow.llm
 
-import nebflow.core.PathUtil
-
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Decoder, Json}
+import nebflow.core.PathUtil
 import nebflow.shared.Defaults
 
 enum LlmProtocol:

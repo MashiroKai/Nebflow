@@ -1,10 +1,9 @@
 package nebflow.service
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.syntax.*
+import nebflow.core.PathUtil
 import nebflow.shared.{MtimeCache, MtimeFileCache}
 
 import java.util.concurrent.ConcurrentHashMap

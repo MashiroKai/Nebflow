@@ -1,8 +1,8 @@
 package nebflow.core.compact
 
-import nebflow.core.PathUtil
 import io.circe.*
 import io.circe.parser.parse
+import nebflow.core.PathUtil
 
 case class CompactConfig(
   // Absolute buffer used as fallback for small-context models

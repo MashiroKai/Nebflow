@@ -1,12 +1,11 @@
 package nebflow.mesh
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder}
+import nebflow.core.PathUtil
 
 import java.util.UUID
 

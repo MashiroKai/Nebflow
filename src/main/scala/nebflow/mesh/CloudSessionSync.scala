@@ -3,8 +3,7 @@ package nebflow.mesh
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
-import io.circe.{Decoder, JsonObject}
-import io.circe.Json
+import io.circe.{Decoder, Json, JsonObject}
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.gateway.{Folder, SessionStore}

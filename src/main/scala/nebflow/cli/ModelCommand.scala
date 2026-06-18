@@ -1,11 +1,10 @@
 package nebflow.cli
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.PathUtil
 
 object ModelCommand extends CliCommand:
   def name = "model"

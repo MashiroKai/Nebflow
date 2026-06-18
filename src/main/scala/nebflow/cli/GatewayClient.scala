@@ -1,12 +1,11 @@
 package nebflow.cli
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
+import nebflow.core.PathUtil
 import sttp.client4.*
 import sttp.model.Uri
 

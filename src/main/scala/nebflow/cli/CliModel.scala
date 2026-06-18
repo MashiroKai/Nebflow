@@ -1,9 +1,8 @@
 package nebflow.cli
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import io.circe.Json
+import nebflow.core.PathUtil
 
 // ===== Command definition traits =====
 

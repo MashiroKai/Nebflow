@@ -1,10 +1,8 @@
 package nebflow.agent
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.{SystemReminder, SystemReminders}
+import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
 import nebflow.service.{MemoryStore, RulesStore}
 
 /**
