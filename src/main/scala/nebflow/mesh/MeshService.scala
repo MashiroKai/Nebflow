@@ -441,7 +441,8 @@ class MeshService private (
           yield ()
     yield ()
 
-  def syncAll: IO[Unit] = syncFilesWithCloud
+  /** File sync moved to CloudSessionSync.fastSyncCycle (5s interval). This is a no-op kept for compatibility. */
+  def syncAll: IO[Unit] = IO.unit
 
   /** Run one sync cycle: cloud discover + sync all peers + post-sync hook (cloud session sync, relay poll). */
   def runSyncCycle: IO[Unit] = cloudDiscover *> syncAll *> _postSyncHook

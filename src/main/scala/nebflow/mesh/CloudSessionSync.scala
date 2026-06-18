@@ -293,8 +293,9 @@ class CloudSessionSync private (
     yield ()
 
   /**
-   * Lightweight fast sync — pull cloud index + push active session (no relay, no index push).
-   * Runs every 60 seconds via startFastSyncPoller for near-real-time cross-device visibility.
+   * Fast sync cycle — near-real-time cross-device visibility.
+   * Runs every 5 seconds. Focuses on PULL (push is handled by hooks).
+   * Also pushes index so new local sessions appear on other devices quickly.
    */
   def fastSyncCycle: IO[Unit] =
     for
@@ -303,18 +304,20 @@ class CloudSessionSync private (
         if !loggedIn then IO.unit
         else
           for
+            // 1. Pull session index — lightweight metadata only
             _ <- pullIndex.flatMap(snapshot =>
               sessionStore.mergeCloudIndex(snapshot.sessions, snapshot.folders)
             ).handleErrorWith(e => logger.debug(s"Fast pull index: ${e.getMessage}"))
-            activeId <- sessionStore.getActiveId
-            _ <-
-              if activeId.nonEmpty then
-                pushSession(activeId).handleErrorWith(e => logger.debug(s"Fast push session: ${e.getMessage}"))
-              else IO.unit
+            // 2. Push index — so other devices see our new sessions quickly
+            _ <- pushIndex.handleErrorWith(e => logger.debug(s"Fast push index: ${e.getMessage}"))
+            // 3. File fingerprint exchange — just hashes, content only if changed
+            _ <- meshService.syncFilesWithCloud.handleErrorWith(e =>
+              logger.debug(s"Fast file sync: ${e.getMessage}")
+            )
           yield ()
     yield ()
 
-  /** Start background pollers: fast session sync (60s) + relay (10s). */
+  /** Start background pollers: fast sync (5s) + relay (10s). */
   def startBackgroundPollers(dispatcher: cats.effect.std.Dispatcher[IO]): Unit =
     dispatcher.unsafeRunAndForget(fastSyncLoop)
     dispatcher.unsafeRunAndForget(relayLoop)
@@ -322,7 +325,7 @@ class CloudSessionSync private (
   private def fastSyncLoop: IO[Unit] =
     meshService.isLoggedIn.flatMap { loggedIn =>
       val action = if loggedIn then fastSyncCycle.handleErrorWith(_ => IO.unit) else IO.unit
-      action.flatMap(_ => IO.sleep(60.seconds)).flatMap(_ => fastSyncLoop)
+      action.flatMap(_ => IO.sleep(5.seconds)).flatMap(_ => fastSyncLoop)
     }
 
   // ===== Relay Command Execution (target device side) =====
