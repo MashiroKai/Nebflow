@@ -966,10 +966,21 @@ private[agent] trait AgentCore:
           val peersList = ms.peers.unsafeRunSync()
           val sb = new StringBuilder
           sb.append(s"| Current device | ${id.deviceName} |\n")
+          // Show local capabilities
+          val localCaps = id.capabilities.keys.toList.sorted
+          if localCaps.nonEmpty then
+            sb.append(s"| Local tools | ${localCaps.mkString(", ")} |\n")
+          if id.userDescription.nonEmpty then
+            sb.append(s"| Device note | ${id.userDescription} |\n")
           if peersList.nonEmpty then
-            val peerStr = peersList
-              .map(p => s"${p.deviceName} (${p.platform})")
-              .mkString("; ")
+            val peerStr = peersList.map { p =>
+              val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
+              val desc = p.userDescription
+              val parts = List(s"${p.deviceName} (${p.platform})") ++
+                (if caps.nonEmpty then List(caps.mkString("[", ", ", "]")) else Nil) ++
+                (if desc.nonEmpty then List(s"-$desc") else Nil)
+              parts.mkString(" ")
+            }.mkString("; ")
             sb.append(s"| Available devices | $peerStr |\n")
           sb.toString
         catch case _: Exception => ""
