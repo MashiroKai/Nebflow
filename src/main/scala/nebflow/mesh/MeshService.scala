@@ -557,13 +557,42 @@ class MeshService private (
 
   def detectLocalAddress: IO[String] =
     IO.blocking {
-      try
-        val socket = new java.net.DatagramSocket()
+      val fallback = s"http://localhost:$serverPort"
+
+      // Method 1: UDP connect to public DNS
+      def tryUdp: String =
         try
-          socket.connect(java.net.InetAddress.getByName("8.8.8.8"), 53)
-          s"http://${socket.getLocalAddress.getHostAddress}:$serverPort"
-        finally socket.close()
-      catch case _: Exception => s"http://localhost:$serverPort"
+          val socket = new java.net.DatagramSocket()
+          try
+            socket.connect(java.net.InetAddress.getByName("8.8.8.8"), 53)
+            val addr = socket.getLocalAddress.getHostAddress
+            if addr != "0.0.0.0" && addr != "127.0.0.1" then s"http://$addr:$serverPort"
+            else ""
+          finally socket.close()
+        catch case _: Exception => ""
+
+      // Method 2: Enumerate network interfaces
+      def tryInterfaces: String =
+        try
+          var result = ""
+          val interfaces = java.net.NetworkInterface.getNetworkInterfaces()
+          val it = java.util.Collections.list(interfaces).iterator
+          while it.hasNext && result.isEmpty do
+            val ni = it.next()
+            if ni.isUp && !ni.isLoopback && !ni.isVirtual then
+              val addrs = java.util.Collections.list(ni.getInetAddresses).iterator
+              while addrs.hasNext && result.isEmpty do
+                val addr = addrs.next()
+                if addr.isInstanceOf[java.net.Inet4Address] && !addr.isLoopbackAddress then
+                  result = s"http://${addr.getHostAddress}:$serverPort"
+          result
+        catch case _: Exception => ""
+
+      tryUdp match
+        case s if s.nonEmpty => s
+        case _ => tryInterfaces match
+          case s if s.nonEmpty => s
+          case _ => fallback
     }
 
   private def getCloudUrl: IO[String] =
