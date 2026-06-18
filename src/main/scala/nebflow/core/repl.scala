@@ -88,7 +88,7 @@ object Repl:
   }
 
   def loadSystemPrompt(): String = // public for AgentActor
-    val path = os.home / ".nebflow" / "agents" / "Nebula" / "system.md"
+    val path = PathUtil.dataRoot / "agents" / "Nebula" / "system.md"
     if os.exists(path) then os.read(path) else ""
 
   /**

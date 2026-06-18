@@ -1,4 +1,5 @@
 package nebflow.agent
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import cats.syntax.all.*
@@ -107,5 +108,5 @@ class AgentLibrary(
 end AgentLibrary
 
 object AgentLibrary:
-  def defaultDir: os.Path = os.home / ".nebflow" / "agents"
+  def defaultDir: os.Path = PathUtil.dataRoot / "agents"
 end AgentLibrary

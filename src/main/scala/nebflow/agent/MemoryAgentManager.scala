@@ -1,4 +1,5 @@
 package nebflow.agent
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import cats.effect.std.Dispatcher
@@ -208,7 +209,7 @@ class MemoryAgentManager(
             readTracker = Some(readTracker),
             fileHistory = Some(fileHistory),
             contextWindow = resources.contextWindow,
-            projectRoot = Some((os.home / ".nebflow").toString),
+            projectRoot = Some((PathUtil.dataRoot).toString),
             folderId = None
           ),
           s"$DreamSessionId-${counter.incrementAndGet()}"
@@ -324,7 +325,7 @@ class MemoryAgentManager(
   // User input collection for Dream (full cycle only)
   // ============================================================
 
-  private val inputHistoryPath: os.Path = os.home / ".nebflow" / "input_history.jsonl"
+  private val inputHistoryPath: os.Path = PathUtil.dataRoot / "input_history.jsonl"
 
   private def collectRecentUserInputs: IO[String] = IO.blocking {
     if !os.exists(inputHistoryPath) then ""

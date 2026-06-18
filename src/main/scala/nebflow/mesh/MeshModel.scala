@@ -1,4 +1,5 @@
 package nebflow.mesh
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import io.circe.generic.semiauto.*
@@ -22,7 +23,7 @@ object AccountInfo:
   given Encoder[AccountInfo] = deriveEncoder
   given Decoder[AccountInfo] = deriveDecoder
 
-  private val accountPath = os.home / ".nebflow" / "mesh" / "account.json"
+  private val accountPath = PathUtil.dataRoot / "mesh" / "account.json"
 
   def load: IO[Option[AccountInfo]] =
     IO.blocking {
@@ -65,7 +66,7 @@ object DeviceIdentity:
   given Encoder[DeviceIdentity] = deriveEncoder
   given Decoder[DeviceIdentity] = deriveDecoder
 
-  private val devicePath = os.home / ".nebflow" / "device.json"
+  private val devicePath = PathUtil.dataRoot / "device.json"
 
   /** Tools to auto-detect on startup. Key = display name, value = command to check. */
   private val detectionTargets = List(
@@ -240,7 +241,7 @@ object MeshConfig:
   given Encoder[MeshConfig] = deriveEncoder
   given Decoder[MeshConfig] = deriveDecoder
 
-  private val configPath = os.home / ".nebflow" / "mesh" / "config.json"
+  private val configPath = PathUtil.dataRoot / "mesh" / "config.json"
 
   def load: IO[MeshConfig] =
     IO.blocking {

@@ -1,4 +1,5 @@
 package nebflow.gateway
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import io.circe.parser
@@ -9,7 +10,7 @@ import java.security.SecureRandom
 import java.util.Base64
 
 object Auth:
-  private val tokenPath = os.home / ".nebflow" / "auth.json"
+  private val tokenPath = PathUtil.dataRoot / "auth.json"
 
   def generateToken: IO[String] = IO.delay {
     val bytes = new Array[Byte](32)

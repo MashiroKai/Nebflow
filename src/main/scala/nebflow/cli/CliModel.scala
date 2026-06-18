@@ -1,4 +1,5 @@
 package nebflow.cli
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import io.circe.Json
@@ -54,7 +55,7 @@ case class CliContext(
 object CliContext:
 
   def offline(args: Map[String, String] = Map.empty, positionalArgs: List[String] = Nil): CliContext =
-    CliContext(args, positionalArgs, json = false, quiet = false, client = None, os.home / ".nebflow")
+    CliContext(args, positionalArgs, json = false, quiet = false, client = None, PathUtil.dataRoot)
 
 sealed trait CliResult
 

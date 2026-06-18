@@ -1,4 +1,5 @@
 package nebflow.agent
+import nebflow.core.PathUtil
 
 import cats.effect.std.{Dispatcher, Semaphore}
 import cats.effect.{IO, Ref}
@@ -40,7 +41,7 @@ case class SharedResources(
   providerRegistry: ProviderRegistry,
   hookEngine: HookEngine = HookEngine.noop,
   bridgeManager: Option[BridgeManager] = None,
-  scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(os.home / ".nebflow" / "scheduled-tasks"),
+  scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
   telemetry: Option[TelemetryReporter] = None,
   meshService: Option[MeshService] = None,
   dreamSchedulerRef: Option[ActorRef[DreamCommand]] = None,

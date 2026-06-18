@@ -1,4 +1,5 @@
 package nebflow.cli
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
@@ -113,7 +114,7 @@ class GatewayClient(baseUri: String, token: String):
 end GatewayClient
 
 object GatewayClient:
-  private val authPath = os.home / ".nebflow" / "auth.json"
+  private val authPath = PathUtil.dataRoot / "auth.json"
 
   /** Read the stored auth token */
   def readToken: IO[Option[String]] = IO.blocking {

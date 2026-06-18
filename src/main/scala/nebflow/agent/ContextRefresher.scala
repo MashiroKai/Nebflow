@@ -1,4 +1,5 @@
 package nebflow.agent
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import cats.syntax.all.*
@@ -49,7 +50,7 @@ object ContextRefresher:
     new FileInjectionSource(
       "system-prefix",
       InjectionMode.Lifecycle,
-      os.home / ".nebflow" / "system-prefix.md",
+      PathUtil.dataRoot / "system-prefix.md",
       fallback = if jarFallback.nonEmpty then jarFallback + "\n\n" else ""
     )
 
@@ -88,7 +89,7 @@ object ContextRefresher:
             case Some(pr) => IO.pure(Some(pr))
             case None =>
               val folderName = resources.sessionStore.getFolderName(fid).getOrElse(fid.take(8))
-              val defaultPath = os.home / ".nebflow" / "agents" / agentName / "projects" / folderName
+              val defaultPath = PathUtil.dataRoot / "agents" / agentName / "projects" / folderName
               IO.blocking {
                 if !os.exists(defaultPath) then os.makeDir.all(defaultPath)
                 Some(defaultPath.toString)

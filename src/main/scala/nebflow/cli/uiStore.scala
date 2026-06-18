@@ -1,4 +1,5 @@
 package nebflow.cli
+import nebflow.core.PathUtil
 
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
@@ -224,7 +225,7 @@ object UiStore:
       )
       .map(new UiStore(_))
 
-  private def historyPath: os.Path = os.home / ".nebflow" / "input_history.json"
+  private def historyPath: os.Path = PathUtil.dataRoot / "input_history.json"
 
   private def loadHistory: List[HistoryEntry] =
     try

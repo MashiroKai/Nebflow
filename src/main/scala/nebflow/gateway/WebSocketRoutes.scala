@@ -1,4 +1,5 @@
 package nebflow.gateway
+import nebflow.core.PathUtil
 
 import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{IO, Ref}
@@ -109,7 +110,7 @@ class WebSocketRoutes(
                     val folderName = sharedResources.sessionStore
                       .getFolderName(fid)
                       .getOrElse(fid.take(8))
-                    val defaultPath = os.home / ".nebflow" / "agents" / agentName / "projects" / folderName
+                    val defaultPath = PathUtil.dataRoot / "agents" / agentName / "projects" / folderName
                     IO.blocking {
                       if !os.exists(defaultPath) then os.makeDir.all(defaultPath)
                     }.as(Some(defaultPath.toString))
@@ -410,7 +411,7 @@ class WebSocketRoutes(
       end if
   }
 
-  private val inputHistoryPath = os.home / ".nebflow" / "input_history.jsonl"
+  private val inputHistoryPath = PathUtil.dataRoot / "input_history.jsonl"
 
   private def logInputHistory(content: String, attachments: List[io.circe.Json]): IO[Unit] =
     val filtered = content.trim.toLowerCase

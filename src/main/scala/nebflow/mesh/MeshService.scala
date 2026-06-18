@@ -1,4 +1,5 @@
 package nebflow.mesh
+import nebflow.core.PathUtil
 
 import cats.effect.std.Dispatcher
 import cats.effect.{IO, Ref}
@@ -251,7 +252,7 @@ class MeshService private (
 
   def computeLocalFingerprints: IO[Map[String, FileFingerprint]] =
     IO.blocking {
-      val base = os.home / ".nebflow"
+      val base = PathUtil.dataRoot
       val builder = Map.newBuilder[String, FileFingerprint]
       for path <- List(base / "NEBFLOW.md", base / "memory.md"); fp <- FileFingerprint.compute(path)
       do builder += path.relativeTo(base).toString -> fp
@@ -300,7 +301,7 @@ class MeshService private (
       case None => IO.pure(None)
       case Some(safe) =>
         IO.blocking {
-          val abs = os.home / ".nebflow" / safe
+          val abs = PathUtil.dataRoot / safe
           FileFingerprint.compute(abs).map(fp => (os.read.bytes(abs), fp))
         }
 
@@ -313,10 +314,10 @@ class MeshService private (
       validateRelPath(relPath) match
         case None => IO.raiseError(new RuntimeException(s"Invalid path: $relPath"))
         case Some(safe) =>
-          val abs = os.home / ".nebflow" / safe
+          val abs = PathUtil.dataRoot / safe
           IO.blocking {
             if os.exists(abs) then
-              val histDir = os.home / ".nebflow" / "mesh" / "history"
+              val histDir = PathUtil.dataRoot / "mesh" / "history"
               os.write.over(
                 histDir / s"${abs.last}.${System.currentTimeMillis()}.bak",
                 os.read.bytes(abs),

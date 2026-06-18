@@ -1,4 +1,5 @@
 package nebflow.llm
+import nebflow.core.PathUtil
 
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.parser.parse
@@ -130,7 +131,7 @@ object NebflowServiceConfig:
   given Decoder[NebflowServiceConfig] = deriveDecoder[NebflowServiceConfig]
 
 object Config:
-  val NebflowHome: os.Path = os.home / ".nebflow"
+  val NebflowHome: os.Path = PathUtil.dataRoot
   val DefaultConfigPath: os.Path = NebflowHome / "nebflow.json"
 
   private val envVarLogger = nebflow.core.NebflowLogger.forName("nebflow.config")

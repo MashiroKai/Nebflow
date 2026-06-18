@@ -1,4 +1,5 @@
 package nebflow.service
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
@@ -31,23 +32,23 @@ object MemoryStore:
 
   // --- Paths ---
 
-  def userMemoryPath: os.Path = os.home / ".nebflow" / "NEBFLOW.md"
+  def userMemoryPath: os.Path = PathUtil.dataRoot / "NEBFLOW.md"
 
   def agentMemoryPath(agentName: String): os.Path =
-    os.home / ".nebflow" / "agents" / agentName / "memory.md"
+    PathUtil.dataRoot / "agents" / agentName / "memory.md"
 
   def folderMemoryPath(folderId: String): os.Path =
-    os.home / ".nebflow" / "folders" / s"$folderId.memory.md"
+    PathUtil.dataRoot / "folders" / s"$folderId.memory.md"
 
   /** Directory for detail files. */
-  def detailDir: os.Path = os.home / ".nebflow" / "memory"
+  def detailDir: os.Path = PathUtil.dataRoot / "memory"
 
   /** Path for a detail file given its hash. */
   def detailPath(hash: String): os.Path = detailDir / s"$hash.md"
 
   /** List all folder memory files that exist on disk. */
   def allFolderMemoryPaths: Seq[os.Path] =
-    val dir = os.home / ".nebflow" / "folders"
+    val dir = PathUtil.dataRoot / "folders"
     if !os.exists(dir) then Seq.empty
     else os.list(dir).filter(_.last.endsWith(".memory.md")).toSeq
 
