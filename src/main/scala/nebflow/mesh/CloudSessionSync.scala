@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Decoder, JsonObject}
-import io.circe.{Json}
+import io.circe.Json
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.gateway.{Folder, SessionStore}
@@ -58,8 +58,16 @@ class CloudSessionSync private (
     meshService.callCloudFunction("session/pull-index").flatMap { json =>
       val hc = json.hcursor
       for
-        sessions <- IO.fromEither(hc.downField("sessions").as[List[SessionMeta]].leftMap(e => new RuntimeException(s"Decode sessions: ${e.getMessage}")))
-        folders <- IO.fromEither(hc.downField("folders").as[List[Folder]].leftMap(e => new RuntimeException(s"Decode folders: ${e.getMessage}")))
+        sessions <- IO.fromEither(
+          hc.downField("sessions")
+            .as[List[SessionMeta]]
+            .leftMap(e => new RuntimeException(s"Decode sessions: ${e.getMessage}"))
+        )
+        folders <- IO.fromEither(
+          hc.downField("folders")
+            .as[List[Folder]]
+            .leftMap(e => new RuntimeException(s"Decode folders: ${e.getMessage}"))
+        )
       yield CloudIndexSnapshot(sessions, folders, hc.downField("updatedAt").as[Long].getOrElse(0L))
     }
 
@@ -82,13 +90,15 @@ class CloudSessionSync private (
               if uiTotal > 0 then sessionStore.getUiMessages(sessionId, 0, uiTotal).map(_._1)
               else IO.pure(List.empty[UiMessage])
             metaOpt <- sessionStore.getSessionMeta(sessionId)
-            metaJson = metaOpt.map(m =>
-              Json.obj(
-                "name" -> m.name.asJson,
-                "agentName" -> m.agentName.asJson,
-                "folderId" -> m.folderId.asJson
+            metaJson = metaOpt
+              .map(m =>
+                Json.obj(
+                  "name" -> m.name.asJson,
+                  "agentName" -> m.agentName.asJson,
+                  "folderId" -> m.folderId.asJson
+                )
               )
-            ).getOrElse(Json.obj())
+              .getOrElse(Json.obj())
             _ <- meshService.callCloudFunction(
               "session/push",
               "sessionId" -> sessionId.asJson,
@@ -110,13 +120,20 @@ class CloudSessionSync private (
       else
         for
           messages <- IO.fromEither(
-            json.hcursor.downField("messages").as[List[Message]].leftMap(e => new RuntimeException(s"Decode messages: ${e.getMessage}"))
+            json.hcursor
+              .downField("messages")
+              .as[List[Message]]
+              .leftMap(e => new RuntimeException(s"Decode messages: ${e.getMessage}"))
           )
           uiMessages <- IO.fromEither(
-            json.hcursor.downField("uiMessages").as[List[UiMessage]].leftMap(e => new RuntimeException(s"Decode uiMessages: ${e.getMessage}"))
+            json.hcursor
+              .downField("uiMessages")
+              .as[List[UiMessage]]
+              .leftMap(e => new RuntimeException(s"Decode uiMessages: ${e.getMessage}"))
           )
           updatedAt = json.hcursor.downField("updatedAt").as[Long].getOrElse(0L)
         yield Some(CloudSessionData(messages, uiMessages, updatedAt))
+      end if
     }
 
   /** Delete a session from cloud. */
@@ -207,7 +224,10 @@ class CloudSessionSync private (
         "params" -> params
       )
       relayId <- IO.fromEither(
-        resp.hcursor.downField("relayId").as[String].leftMap(e => new RuntimeException(s"Missing relayId: ${e.getMessage}"))
+        resp.hcursor
+          .downField("relayId")
+          .as[String]
+          .leftMap(e => new RuntimeException(s"Missing relayId: ${e.getMessage}"))
       )
     yield relayId
 
@@ -217,18 +237,23 @@ class CloudSessionSync private (
       id <- meshService.identity
       resp <- meshService.callCloudFunction("relay/poll", "deviceId" -> id.deviceId.asJson)
       commands <- IO.fromEither(
-        resp.hcursor.downField("commands").as[List[RelayCommand]].leftMap(e => new RuntimeException(s"Decode commands: ${e.getMessage}"))
+        resp.hcursor
+          .downField("commands")
+          .as[List[RelayCommand]]
+          .leftMap(e => new RuntimeException(s"Decode commands: ${e.getMessage}"))
       )
     yield commands
 
   /** Target device submits execution result. */
   def relaySubmitResult(relayId: String, result: String, error: Option[String]): IO[Unit] =
-    meshService.callCloudFunction(
-      "relay/result",
-      "relayId" -> relayId.asJson,
-      "result" -> result.asJson,
-      "error" -> error.getOrElse("").asJson
-    ).void
+    meshService
+      .callCloudFunction(
+        "relay/result",
+        "relayId" -> relayId.asJson,
+        "result" -> result.asJson,
+        "error" -> error.getOrElse("").asJson
+      )
+      .void
 
   /**
    * Poll for relay command result. Blocks until result is available or timeout.
@@ -258,6 +283,7 @@ class CloudSessionSync private (
         }
 
     loop(deadline)
+  end relayFetchResultBlocking
 
   // ===== Sync Cycle =====
 
@@ -315,20 +341,20 @@ class CloudSessionSync private (
         else
           for
             // 1. Pull session index — lightweight metadata only
-            _ <- pullIndex.flatMap(snapshot =>
-              sessionStore.mergeCloudIndex(snapshot.sessions, snapshot.folders)
-            ).handleErrorWith(e => logger.debug(s"Fast pull index: ${e.getMessage}"))
+            _ <- pullIndex
+              .flatMap(snapshot => sessionStore.mergeCloudIndex(snapshot.sessions, snapshot.folders))
+              .handleErrorWith(e => logger.debug(s"Fast pull index: ${e.getMessage}"))
             // 2. Push index — so other devices see our new sessions quickly
             _ <- pushIndex.handleErrorWith(e => logger.debug(s"Fast push index: ${e.getMessage}"))
             // 3. File fingerprint exchange — just hashes, content only if changed
-            _ <- meshService.syncFilesWithCloud.handleErrorWith(e =>
-              logger.debug(s"Fast file sync: ${e.getMessage}")
-            )
+            _ <- meshService.syncFilesWithCloud.handleErrorWith(e => logger.debug(s"Fast file sync: ${e.getMessage}"))
           yield ()
     yield ()
 
-  /** Start background pollers: fast sync (5s) + relay (10s).
-   *  fastCycle is injected from IncrementalSyncEngine for blob-based state sync. */
+  /**
+   * Start background pollers: fast sync (5s) + relay (10s).
+   *  fastCycle is injected from IncrementalSyncEngine for blob-based state sync.
+   */
   def startBackgroundPollers(
     dispatcher: cats.effect.std.Dispatcher[IO],
     fastCycle: IO[Unit] = IO.unit
@@ -396,7 +422,9 @@ case class CloudSessionData(messages: List[Message], uiMessages: List[UiMessage]
 
 /** A pending relay command received by the target device. */
 case class RelayCommand(relayId: String, fromDeviceId: String, action: String, params: Json)
+
 object RelayCommand:
+
   given Decoder[RelayCommand] = Decoder.instance { c =>
     for
       relayId <- c.downField("relayId").as[String]

@@ -98,8 +98,7 @@ class CloudSyncSpec extends CatsEffectSuite:
         _ <- store.createSession("Test")
         _ <- store.mergeCloudIndex(Nil, Nil)
         sessions <- store.listSessions
-      yield
-        assert(sessions.length >= 1, "Sessions should be unchanged")
+      yield assert(sessions.length >= 1, "Sessions should be unchanged")
     }
   }
 
@@ -149,8 +148,10 @@ class CloudSyncSpec extends CatsEffectSuite:
         _ <- store.switchSession(sid)
         _ <- store.setSessionFromCloud(sid, msgs, Nil)
         active <- store.getActiveMessages
-      yield
-        assert(active.exists(_.textContent == "Active session cloud data"), "Active messages should reflect cloud data")
+      yield assert(
+        active.exists(_.textContent == "Active session cloud data"),
+        "Active messages should reflect cloud data"
+      )
     }
   }
 
@@ -165,8 +166,10 @@ class CloudSyncSpec extends CatsEffectSuite:
         all <- store.listAllFolders
       yield
         val names = all.map(_.name).toSet
-        assert(names.contains("Folder A") && names.contains("Folder B") && names.contains("Folder C"),
-          "All folders should be returned regardless of agent")
+        assert(
+          names.contains("Folder A") && names.contains("Folder B") && names.contains("Folder C"),
+          "All folders should be returned regardless of agent"
+        )
     }
   }
 
@@ -179,8 +182,7 @@ class CloudSyncSpec extends CatsEffectSuite:
       for
         _ <- store.createSession("Hook Test")
         _ <- store.setActiveMessages(List(Message(MessageRole.User, Left("test"))))
-      yield
-        assert(hookCalled, "Hook should be called when messages are set")
+      yield assert(hookCalled, "Hook should be called when messages are set")
     }
   }
 
@@ -192,8 +194,7 @@ class CloudSyncSpec extends CatsEffectSuite:
         created <- store.createSession("ID Test")
         _ <- store.switchSession(created.id)
         _ <- store.setActiveMessages(List(Message(MessageRole.User, Left("test"))))
-      yield
-        assertEquals(receivedId, created.id, "Hook should receive the active session ID")
+      yield assertEquals(receivedId, created.id, "Hook should receive the active session ID")
     }
   }
 

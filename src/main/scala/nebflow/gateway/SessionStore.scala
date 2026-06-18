@@ -1,4 +1,5 @@
 package nebflow.gateway
+
 import nebflow.core.PathUtil
 
 import cats.effect.std.Semaphore
@@ -447,8 +448,10 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case err => IO.pure(err)
       }
 
-  /** Resolve effective projectRoot: walk from the session's folder up to the root,
-    * returning the first (nearest) non-empty projectRoot. */
+  /**
+   * Resolve effective projectRoot: walk from the session's folder up to the root,
+   * returning the first (nearest) non-empty projectRoot.
+   */
   def resolveProjectRoot(folderId: Option[String]): IO[Option[String]] =
     folderId match
       case None => IO.pure(None)
@@ -461,9 +464,10 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
               case Some(f) =>
                 f.projectRoot.filter(_.nonEmpty) match
                   case Some(pr) => Some(pr)
-                  case None => f.parentId match
-                    case Some(pid) => findNearest(pid)
-                    case None => None
+                  case None =>
+                    f.parentId match
+                      case Some(pid) => findNearest(pid)
+                      case None => None
           findNearest(fid)
         }
 

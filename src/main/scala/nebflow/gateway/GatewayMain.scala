@@ -316,9 +316,11 @@ object GatewayMain extends IOApp.Simple:
 
                                       // Create sync services
                                       val cloudSessionSync = nebflow.mesh.CloudSessionSync(meshService, sessionStore)
-                                      val incrementalSync = nebflow.mesh.IncrementalSyncEngine(meshService, sessionStore)
+                                      val incrementalSync =
+                                        nebflow.mesh.IncrementalSyncEngine(meshService, sessionStore)
                                       // Hook: incremental blob push on message change
-                                      sessionStore.setSessionChangedHook(sid => incrementalSync.pushSessionIncremental(sid))
+                                      sessionStore
+                                        .setSessionChangedHook(sid => incrementalSync.pushSessionIncremental(sid))
                                       // Full sync cycle: state + files + all sessions
                                       meshService.setPostSyncHook(incrementalSync.fullSyncCycle)
                                       // MeshTool: cloud session sync for busy lock + relay

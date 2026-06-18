@@ -15,7 +15,8 @@ class BrowserManagerSpec extends CatsEffectSuite:
     t.contains("attention required")
 
   test("headless browser fetches arXiv successfully") {
-    BrowserManager.fetch(ArxivUrl, headless = true, maxWaitSeconds = 10)
+    BrowserManager
+      .fetch(ArxivUrl, headless = true, maxWaitSeconds = 10)
       .map { result =>
         assertEquals(result.status, 200)
         assert(result.content.length > 1000, s"content too short: ${result.content.length}")
@@ -24,7 +25,8 @@ class BrowserManagerSpec extends CatsEffectSuite:
   }
 
   test("IEEE Xplore via headless browser") {
-    BrowserManager.fetch(IeeeUrl, headless = true, maxWaitSeconds = 10)
+    BrowserManager
+      .fetch(IeeeUrl, headless = true, maxWaitSeconds = 10)
       .map { result =>
         assert(result.content.length > 5000, s"content too short: ${result.content.length}")
         assert(!isChallenge(result.title), s"IEEE should not be challenge: ${result.title}")
@@ -32,11 +34,11 @@ class BrowserManagerSpec extends CatsEffectSuite:
   }
 
   test("ScienceDirect returns content (challenge status logged)") {
-    BrowserManager.fetch(SdUrl, headless = true, maxWaitSeconds = 10)
+    BrowserManager
+      .fetch(SdUrl, headless = true, maxWaitSeconds = 10)
       .map { result =>
         val challenged = isChallenge(result.title)
-        if challenged then
-          println(s"  [expected on campus VPN-less] challenge page: ${result.title}")
+        if challenged then println(s"  [expected on campus VPN-less] challenge page: ${result.title}")
         else
           assert(result.content.length > 5000, s"content too short: ${result.content.length}")
           println(s"  ScienceDirect fetched: ${result.title.take(60)}")

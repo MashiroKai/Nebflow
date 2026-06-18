@@ -25,9 +25,7 @@ class BlobSyncService private (meshService: MeshService):
   // Local cache: hash → decoded content, avoids re-downloading
   private val localCache = mutable.Map.empty[String, Array[Byte]]
 
-  /**
-   * Compute SHA-256 hash of content (first 12 hex chars — enough for dedup at our scale).
-   */
+  /** Compute SHA-256 hash of content (first 12 hex chars — enough for dedup at our scale). */
   def hash(content: Array[Byte]): String =
     val digest = java.security.MessageDigest.getInstance("SHA-256")
     digest.update(content)
@@ -94,10 +92,7 @@ class BlobSyncService private (meshService: MeshService):
 
   private def uploadOne(hash: String, content: Array[Byte]): IO[Unit] =
     val b64 = Base64.getEncoder.encodeToString(content)
-    meshService.callCloudFunction("blob/upload",
-      "hash" -> hash.asJson,
-      "content" -> b64.asJson
-    ).void
+    meshService.callCloudFunction("blob/upload", "hash" -> hash.asJson, "content" -> b64.asJson).void
 
   private def batchDownload(hashes: List[String]): IO[Map[String, Array[Byte]]] =
     meshService.callCloudFunction("blob/batch-download", "hashes" -> hashes.asJson).map { resp =>

@@ -19,7 +19,8 @@ final case class BrowserFetchResult(
   finalUrl: String
 )
 
-/** Playwright 浏览器管理器（单例）。
+/**
+ * Playwright 浏览器管理器（单例）。
  *
  *  设计要点：
  *  - 单线程 EC：Playwright 要求所有操作在创建实例的同一个线程上执行
@@ -33,7 +34,9 @@ object BrowserManager:
 
   /** 持久化数据目录，保存 cookies、localStorage 等。 */
   private val dataDir = Paths.get(
-    System.getProperty("user.home"), ".nebflow", "browser-data"
+    System.getProperty("user.home"),
+    ".nebflow",
+    "browser-data"
   )
 
   /** 单线程 EC：Playwright 所有操作必须在此线程执行。 */
@@ -54,11 +57,13 @@ object BrowserManager:
     val osName = System.getProperty("os.name").toLowerCase
     if osName.contains("mac") then
       if Files.exists(Paths.get("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
-      then Some("chrome") else None
+      then Some("chrome")
+      else None
     else if osName.contains("win") then
       val pf = Option(System.getenv("ProgramFiles")).getOrElse("C:\\Program Files")
       if Files.exists(Paths.get(s"$pf\\Google\\Chrome\\Application\\chrome.exe"))
-      then Some("chrome") else None
+      then Some("chrome")
+      else None
     else None // Linux: 让 Playwright 用自带 Chromium
 
   /** 判断标题是否为反爬虫挑战页面。 */
@@ -72,7 +77,8 @@ object BrowserManager:
     if context != null && currentHeadless == headless then return
     // 切换模式：关闭旧 context，cookies 已持久化
     if context != null then
-      try context.close() catch case _: Exception => ()
+      try context.close()
+      catch case _: Exception => ()
       context = null
 
     Files.createDirectories(dataDir)
@@ -92,12 +98,15 @@ object BrowserManager:
     )
 
     currentHeadless = headless
-    logger.infoSync("Browser context started",
+    logger.infoSync(
+      "Browser context started",
       "headless" -> headless.toString,
-      "channel" -> detectChannel.getOrElse("chromium"))
+      "channel" -> detectChannel.getOrElse("chromium")
+    )
   end ensureContext
 
-  /** 用浏览器获取页面内容。
+  /**
+   * 用浏览器获取页面内容。
    *
    *  - headless=true：自动模式，适用于 IEEE/APS 等 JS 渲染网站
    *  - headless=false：弹窗模式，适用于 ScienceDirect/Wiley（需用户完成 Cloudflare 验证）
@@ -113,10 +122,11 @@ object BrowserManager:
       ensureContext(headless)
       val page = context.newPage()
       try
-        logger.infoSync("Browser navigating",
-          "url" -> url.take(80), "headless" -> headless.toString)
-        val response = page.navigate(url,
-          new Page.NavigateOptions().setTimeout(15_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED))
+        logger.infoSync("Browser navigating", "url" -> url.take(80), "headless" -> headless.toString)
+        val response = page.navigate(
+          url,
+          new Page.NavigateOptions().setTimeout(15_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED)
+        )
         val status = if response != null then response.status() else 0
 
         // Phase 1: 快速等待标题（不获取 content，开销小）
@@ -135,13 +145,19 @@ object BrowserManager:
           content = page.content()
 
         val finalUrl = page.url()
-        logger.infoSync("Browser fetched",
-          "url" -> url.take(80), "status" -> status.toString,
-          "title" -> title.take(50), "contentLen" -> content.length.toString,
-          "waited" -> waited.toString)
+        logger.infoSync(
+          "Browser fetched",
+          "url" -> url.take(80),
+          "status" -> status.toString,
+          "title" -> title.take(50),
+          "contentLen" -> content.length.toString,
+          "waited" -> waited.toString
+        )
         BrowserFetchResult(status, title, content, finalUrl)
       finally
-        try page.close() catch case _: Exception => ()
+        try page.close()
+        catch case _: Exception => ()
+      end try
     }.evalOn(playwrightEC)
 
   /** 关闭浏览器和 Playwright，释放资源。 */

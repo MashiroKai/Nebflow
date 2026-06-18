@@ -144,14 +144,13 @@ Usage:
 
   // ── Output formatting ──────────────────────────────────────────────
 
-  private def buildOutput(title: Option[String], text: String, metaDesc: Option[String],
-                          format: String): String =
+  private def buildOutput(title: Option[String], text: String, metaDesc: Option[String], format: String): String =
     val descBlock = metaDesc.filter(_.nonEmpty).map(d => s"> $d\n\n").getOrElse("")
     (title, format) match
       case (Some(t), "markdown") => s"# $t\n\n$descBlock$text"
-      case (Some(t), _)          => s"$t\n\n$descBlock$text"
-      case (_, "markdown")       => s"$descBlock$text"
-      case _                     => s"$descBlock$text"
+      case (Some(t), _) => s"$t\n\n$descBlock$text"
+      case (_, "markdown") => s"$descBlock$text"
+      case _ => s"$descBlock$text"
 
   // ── Outcome types ──────────────────────────────────────────────────
 
@@ -185,16 +184,19 @@ Usage:
         val response = request.send(backend)
         val elapsed = System.currentTimeMillis() - startMs
 
-        logger.infoSync(s"WebFetch HTTP response",
-          "url" -> url.take(80), "status" -> response.code.toString,
-          "bodyLen" -> response.body.length.toString, "elapsedMs" -> elapsed.toString)
+        logger.infoSync(
+          s"WebFetch HTTP response",
+          "url" -> url.take(80),
+          "status" -> response.code.toString,
+          "bodyLen" -> response.body.length.toString,
+          "elapsedMs" -> elapsed.toString
+        )
 
         // Anti-bot: 403 → try browser
         if response.code.code == 403 then
           logger.infoSync(s"WebFetch 403, will try browser fallback", "url" -> url.take(80))
           HttpOutcome.NeedBrowser
-        else if !response.code.isSuccess then
-          HttpOutcome.Error(s"HTTP ${response.code} ${response.statusText}")
+        else if !response.code.isSuccess then HttpOutcome.Error(s"HTTP ${response.code} ${response.statusText}")
         else
           val contentType = response.header("content-type").getOrElse("")
           if HttpUtils.isBinaryContentType(contentType) then
@@ -210,23 +212,32 @@ Usage:
                   try
                     io.circe.parser.parse(body) match
                       case Right(json) => (None, json.spaces2, None)
-                      case Left(_)     => (None, body, None)
+                      case Left(_) => (None, body, None)
                   catch case _: Exception => (None, body, None)
                 else if contentType.contains("text/html") then extractHtmlText(body)
                 else (None, body, None)
 
               // Detect JS challenge page (HTTP 200 but actually a challenge)
               if title.exists(isChallengeTitle) then
-                logger.infoSync(s"WebFetch challenge page detected, will try browser",
-                  "url" -> url.take(80), "title" -> title.getOrElse(""))
+                logger.infoSync(
+                  s"WebFetch challenge page detected, will try browser",
+                  "url" -> url.take(80),
+                  "title" -> title.getOrElse("")
+                )
                 HttpOutcome.NeedBrowser
               else
                 val output = buildOutput(title, text, metaDesc, format)
                 val (truncated, _) = truncate(output, maxChars)
                 writeCache(url, truncated)
-                logger.infoSync(s"WebFetch HTTP success",
-                  "url" -> url.take(80), "resultLen" -> truncated.length.toString)
+                logger.infoSync(
+                  s"WebFetch HTTP success",
+                  "url" -> url.take(80),
+                  "resultLen" -> truncated.length.toString
+                )
                 HttpOutcome.Success(truncated)
+              end if
+            end if
+          end if
         end if
       catch
         case e: java.net.http.HttpTimeoutException =>
@@ -241,44 +252,51 @@ Usage:
           HttpOutcome.Error(s"Connection refused: ${e.getMessage}")
         case e: Exception =>
           HttpOutcome.Error(s"Fetch failed: ${describeError(e)}")
+      end try
     }
   end tryHttp
 
   // ── Layer 2/3: Browser fetch ───────────────────────────────────────
 
-  private def tryBrowser(url: String, maxChars: Int, format: String,
-                         headless: Boolean): IO[BrowserOutcome] =
+  private def tryBrowser(url: String, maxChars: Int, format: String, headless: Boolean): IO[BrowserOutcome] =
     val maxWait = if headless then 10 else 30
-    BrowserManager.fetch(url, headless = headless, maxWaitSeconds = maxWait).map { result =>
-      // Challenge detection: title-based + status+content based
-      // ScienceDirect returns 403 with title "ScienceDirect" (not a standard challenge title),
-      // so we also check for Cloudflare challenge markers in content
-      val isChallenge = isChallengeTitle(result.title) ||
-        (result.status == 403 && result.content.contains("challenge-platform")) ||
-        result.status == 418
-      if isChallenge then
-        if headless then
-          logger.infoSync(s"WebFetch headless challenge, upgrading to headed", "url" -> url.take(80))
-          BrowserOutcome.NeedHeaded
+    BrowserManager
+      .fetch(url, headless = headless, maxWaitSeconds = maxWait)
+      .map { result =>
+        // Challenge detection: title-based + status+content based
+        // ScienceDirect returns 403 with title "ScienceDirect" (not a standard challenge title),
+        // so we also check for Cloudflare challenge markers in content
+        val isChallenge = isChallengeTitle(result.title) ||
+          (result.status == 403 && result.content.contains("challenge-platform")) ||
+          result.status == 418
+        if isChallenge then
+          if headless then
+            logger.infoSync(s"WebFetch headless challenge, upgrading to headed", "url" -> url.take(80))
+            BrowserOutcome.NeedHeaded
+          else
+            BrowserOutcome.Error(
+              "Anti-bot challenge not resolved. Try opening the URL in your browser manually."
+            )
         else
-          BrowserOutcome.Error(
-            "Anti-bot challenge not resolved. Try opening the URL in your browser manually."
+          val (extractedTitle, text, metaDesc) = extractHtmlText(result.content)
+          val title = extractedTitle.orElse(Option(result.title).filter(_.nonEmpty))
+          val output = buildOutput(title, text, metaDesc, format)
+          val (truncated, _) = truncate(output, maxChars)
+          writeCache(url, truncated)
+          logger.infoSync(
+            s"WebFetch browser success",
+            "url" -> url.take(80),
+            "headless" -> headless.toString,
+            "resultLen" -> truncated.length.toString
           )
-      else
-        val (extractedTitle, text, metaDesc) = extractHtmlText(result.content)
-        val title = extractedTitle.orElse(Option(result.title).filter(_.nonEmpty))
-        val output = buildOutput(title, text, metaDesc, format)
-        val (truncated, _) = truncate(output, maxChars)
-        writeCache(url, truncated)
-        logger.infoSync(s"WebFetch browser success",
-          "url" -> url.take(80), "headless" -> headless.toString,
-          "resultLen" -> truncated.length.toString)
-        BrowserOutcome.Success(truncated)
-    }.handleError { e =>
-      val err = describeError(e)
-      logger.errorSync(s"WebFetch browser error: $err", "url" -> url.take(80))
-      if headless then BrowserOutcome.NeedHeaded else BrowserOutcome.Error(s"Browser fetch failed: $err")
-    }
+          BrowserOutcome.Success(truncated)
+        end if
+      }
+      .handleError { e =>
+        val err = describeError(e)
+        logger.errorSync(s"WebFetch browser error: $err", "url" -> url.take(80))
+        if headless then BrowserOutcome.NeedHeaded else BrowserOutcome.Error(s"Browser fetch failed: $err")
+      }
   end tryBrowser
 
   // ── Main entry: layered fallback ───────────────────────────────────
@@ -301,25 +319,28 @@ Usage:
         // Layer 1: HTTP
         tryHttp(url, maxChars, format).flatMap {
           case HttpOutcome.Success(text) => IO.pure(Right(text))
-          case HttpOutcome.Error(msg)    => IO.pure(Left(ToolError(msg)))
+          case HttpOutcome.Error(msg) => IO.pure(Left(ToolError(msg)))
           case HttpOutcome.NeedBrowser =>
             // Layer 2: headless browser
             tryBrowser(url, maxChars, format, headless = true).flatMap {
               case BrowserOutcome.Success(text) => IO.pure(Right(text))
-              case BrowserOutcome.Error(msg)    => IO.pure(Left(ToolError(msg)))
+              case BrowserOutcome.Error(msg) => IO.pure(Left(ToolError(msg)))
               case BrowserOutcome.NeedHeaded =>
                 // Layer 3: headed browser (user may need to complete verification)
-                logger.infoSync(s"WebFetch opening headed browser for user verification",
-                  "url" -> url.take(80))
+                logger.infoSync(s"WebFetch opening headed browser for user verification", "url" -> url.take(80))
                 tryBrowser(url, maxChars, format, headless = false).map {
                   case BrowserOutcome.Success(text) => Right(text)
-                  case BrowserOutcome.Error(msg)    => Left(ToolError(msg))
-                  case BrowserOutcome.NeedHeaded    => Left(ToolError(
-                    "Anti-bot challenge could not be resolved. Try opening the URL in your browser."
-                  ))
+                  case BrowserOutcome.Error(msg) => Left(ToolError(msg))
+                  case BrowserOutcome.NeedHeaded =>
+                    Left(
+                      ToolError(
+                        "Anti-bot challenge could not be resolved. Try opening the URL in your browser."
+                      )
+                    )
                 }
             }
         }
+    end match
   end call
 
 end WebFetchTool

@@ -7,9 +7,7 @@ import munit.CatsEffectSuite
 import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
-/**
- * Tests for device capabilities and new DeviceIdentity/PeerInfo fields.
- */
+/** Tests for device capabilities and new DeviceIdentity/PeerInfo fields. */
 class DeviceCapabilitiesSpec extends CatsEffectSuite:
 
   // ===== DeviceIdentity with capabilities =====
@@ -58,8 +56,7 @@ class DeviceCapabilitiesSpec extends CatsEffectSuite:
     // and should return a Map. On most dev machines, at least git or python should exist.
     assert(caps != null, "detectCapabilities should return a non-null map")
     // On typical dev machines, git is usually present
-    if caps.nonEmpty then
-      assert(caps.values.forall(_.nonEmpty), "All detected paths should be non-empty")
+    if caps.nonEmpty then assert(caps.values.forall(_.nonEmpty), "All detected paths should be non-empty")
   }
 
   // ===== PeerInfo with capabilities =====
@@ -82,7 +79,8 @@ class DeviceCapabilitiesSpec extends CatsEffectSuite:
   test("PeerInfo old JSON without capabilities fails decode — cloud always provides defaults") {
     // The cloud function returns capabilities: {} and userDescription: '' for old records,
     // so this scenario won't happen in practice.
-    val oldJson = """{"deviceId":"d","deviceName":"n","platform":"p","address":"a","deviceSecret":"s","lastSeen":1000}"""
+    val oldJson =
+      """{"deviceId":"d","deviceName":"n","platform":"p","address":"a","deviceSecret":"s","lastSeen":1000}"""
     val decoded = decode[PeerInfo](oldJson)
     assert(decoded.isLeft, "Old PeerInfo JSON without capabilities should fail to decode")
   }
