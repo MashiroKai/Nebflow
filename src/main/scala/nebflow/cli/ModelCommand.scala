@@ -1,4 +1,5 @@
 package nebflow.cli
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import cats.syntax.all.*
@@ -127,7 +128,7 @@ object ThinkingCommand extends CliCommand:
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
           IO.blocking {
-            val configPath = os.home / ".nebflow" / "nebflow.json"
+            val configPath = PathUtil.dataRoot / "nebflow.json"
             if os.exists(configPath) then
               io.circe.parser
                 .parse(os.read(configPath))

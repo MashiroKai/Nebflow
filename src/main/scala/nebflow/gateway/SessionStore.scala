@@ -1,4 +1,5 @@
 package nebflow.gateway
+import nebflow.core.PathUtil
 
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
@@ -379,7 +380,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           val td = tasksDir / id
           if os.exists(td) then os.remove.all(td)
           // Remove uploaded attachments directory
-          val ud = os.home / ".nebflow" / "uploads" / id
+          val ud = PathUtil.dataRoot / "uploads" / id
           if os.exists(ud) then os.remove.all(ud)
         } *> deleteUiMessages(id) *> appendSemaphores.update(
           _ - id

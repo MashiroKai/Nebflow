@@ -1,4 +1,5 @@
 package nebflow.cli
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import io.circe.Json
@@ -112,7 +113,7 @@ object AgentCommand extends CliCommand:
           if name.isEmpty then IO.pure(CliResult.Error("Agent name required"))
           else
             // Open agent directory in $EDITOR
-            val agentDir = os.home / ".nebflow" / "agents" / name
+            val agentDir = PathUtil.dataRoot / "agents" / name
             if !os.exists(agentDir) then IO.pure(CliResult.Error(s"Agent directory not found: $agentDir"))
             else
               val editor = sys.env.getOrElse("EDITOR", sys.env.getOrElse("VISUAL", "vi"))

@@ -1,4 +1,5 @@
 package nebflow.cli
+import nebflow.core.PathUtil
 
 import cats.effect.IO
 import io.circe.Json
@@ -25,7 +26,7 @@ object McpCommand extends CliCommand:
         case Some(client) =>
           // Get MCP server status from config
           IO.blocking {
-            val configPath = os.home / ".nebflow" / "nebflow.json"
+            val configPath = PathUtil.dataRoot / "nebflow.json"
             if os.exists(configPath) then
               io.circe.parser
                 .parse(os.read(configPath))

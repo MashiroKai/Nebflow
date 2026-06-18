@@ -1,4 +1,5 @@
 package nebflow.mesh
+import nebflow.core.PathUtil
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
@@ -51,7 +52,7 @@ class MeshSyncStore private (
 end MeshSyncStore
 
 object MeshSyncStore:
-  private val defaultPath = os.home / ".nebflow" / "mesh" / "sync-snap.json"
+  private val defaultPath = PathUtil.dataRoot / "mesh" / "sync-snap.json"
 
   def load(path: os.Path = defaultPath): IO[MeshSyncStore] =
     IO.blocking {
