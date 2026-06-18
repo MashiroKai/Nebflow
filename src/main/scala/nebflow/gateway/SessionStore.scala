@@ -67,6 +67,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private val activeMessagesRef: Ref[IO, List[Message]] =
     Ref.unsafe[IO, List[Message]](Nil)
 
+  // UI message cache: sessionId -> messages. Avoids re-reading .ui.json on every getHistory.
+  // Invalidated on save/append/delete and populated on first load.
+  private val uiCacheRef: Ref[IO, Map[String, List[UiMessage]]] =
+    Ref.unsafe[IO, Map[String, List[UiMessage]]](Map.empty)
+
   /** Optional hook — called with sessionId after any session data change. Used by CloudSessionSync for push. */
   private var sessionChangedHook: Option[String => IO[Unit]] = None
 
@@ -581,14 +586,19 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private def uiFile(id: String): os.Path = sessionsDir / s"$id.ui.json"
 
   private def loadUiMessages(id: String): IO[List[UiMessage]] =
-    IO.blocking {
-      val f = uiFile(id)
-      if os.exists(f) then decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
-      else Nil
-    }
+    uiCacheRef.get.flatMap(_.get(id) match
+      case Some(cached) => IO.pure(cached)
+      case None =>
+        IO.blocking {
+          val f = uiFile(id)
+          if os.exists(f) then decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
+          else Nil
+        }.flatTap(msgs => uiCacheRef.update(_.updated(id, msgs)))
+    )
 
   private def saveUiMessages(id: String, msgs: List[UiMessage]): IO[Unit] =
-    IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true))
+    IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true)) *>
+      uiCacheRef.update(_.updated(id, msgs))
 
   // Per-session semaphore to serialize appendUiMessages (prevents TOCTOU race)
   private val appendSemaphores: Ref[IO, Map[String, Semaphore[IO]]] =
@@ -631,11 +641,30 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (all.slice(start, end), total)
     }
 
+  /**
+   * Single-read history page: loads UI messages once and computes slice in memory.
+   * Returns (messages, total, offset, hasMore).
+   * - beforeIndex = None: return the latest `limit` messages (for initial load / session switch).
+   * - beforeIndex = Some(n): return up to `limit` messages before index n (for scroll-up pagination).
+   */
+  def getHistoryPage(sessionId: String, limit: Int, beforeIndex: Option[Int]): IO[(List[UiMessage], Int, Int, Boolean)] =
+    loadUiMessages(sessionId).map { all =>
+      val total = all.size
+      beforeIndex match
+        case None =>
+          val offset = Math.max(0, total - limit)
+          (all.slice(offset, total), total, offset, total > limit)
+        case Some(before) =>
+          val offset = Math.max(0, before - limit)
+          val actualLimit = Math.min(limit, before)
+          (all.slice(offset, offset + actualLimit), total, offset, before > limit)
+    }
+
   /** Delete UI messages file when session is deleted. Already called from deleteSession. */
   def deleteUiMessages(sessionId: String): IO[Unit] =
     IO.blocking {
       val f = uiFile(sessionId)
       if os.exists(f) then os.remove(f)
-    }
+    } *> uiCacheRef.update(_ - sessionId)
 
 end SessionStore
