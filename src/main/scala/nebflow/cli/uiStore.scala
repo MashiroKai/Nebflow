@@ -1,12 +1,10 @@
 package nebflow.cli
 
-import nebflow.core.PathUtil
-
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
-import nebflow.core.ReplUi
+import nebflow.core.{PathUtil, ReplUi}
 
 enum Phase:
   case Prompt, Thinking, Streaming, ToolRunning, AskUser

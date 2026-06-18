@@ -1,15 +1,13 @@
 package nebflow.agent
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand.*
-import nebflow.core.NebflowLogger
 import nebflow.core.tools.{FileHistory, ReadTracker}
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.gateway.{SessionRecorder, SessionStore, WsHub}
 import nebflow.service.{MemoryStore, NebflowBackup}
 import nebflow.shared.UiMessage

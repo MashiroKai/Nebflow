@@ -1,10 +1,8 @@
 package nebflow.agent
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.llm.{Config, NebflowServiceConfig}
 import nebflow.shared.{Defaults, MtimeCache}
 

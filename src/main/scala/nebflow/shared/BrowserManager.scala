@@ -7,8 +7,9 @@ import nebflow.core.NebflowLogger
 
 import java.nio.file.{Files, Paths}
 import java.util.concurrent.Executors
-import scala.concurrent.ExecutionContext
+
 import scala.compiletime.uninitialized
+import scala.concurrent.ExecutionContext
 import scala.jdk.CollectionConverters.*
 
 /** 浏览器获取结果。 */
@@ -74,35 +75,36 @@ object BrowserManager:
 
   /** 确保 BrowserContext 以指定模式运行，必要时关闭重开。 */
   private def ensureContext(headless: Boolean): Unit =
-    if context != null && currentHeadless == headless then return
-    // 切换模式：关闭旧 context，cookies 已持久化
-    if context != null then
-      try context.close()
-      catch case _: Exception => ()
-      context = null
+    if context != null && currentHeadless == headless then ()
+    else
+      // 切换模式：关闭旧 context，cookies 已持久化
+      if context != null then
+        try context.close()
+        catch case _: Exception => ()
+        context = null
 
-    Files.createDirectories(dataDir)
+      Files.createDirectories(dataDir)
 
-    val opts = new BrowserType.LaunchPersistentContextOptions()
-      .setHeadless(headless)
-      .setUserAgent(SharedBackend.UserAgent)
-    detectChannel.foreach(opts.setChannel)
-    opts.setArgs(List("--disable-blink-features=AutomationControlled").asJava)
+      val opts = new BrowserType.LaunchPersistentContextOptions()
+        .setHeadless(headless)
+        .setUserAgent(SharedBackend.UserAgent)
+      detectChannel.foreach(opts.setChannel)
+      opts.setArgs(List("--disable-blink-features=AutomationControlled").asJava)
 
-    if playwright == null then playwright = Playwright.create()
-    context = playwright.chromium().launchPersistentContext(dataDir, opts)
+      if playwright == null then playwright = Playwright.create()
+      context = playwright.chromium().launchPersistentContext(dataDir, opts)
 
-    // 隐藏 webdriver 标记，降低被检测概率
-    context.addInitScript(
-      "Object.defineProperty(navigator, 'webdriver', { get: () => false });"
-    )
+      // 隐藏 webdriver 标记，降低被检测概率
+      context.addInitScript(
+        "Object.defineProperty(navigator, 'webdriver', { get: () => false });"
+      )
 
-    currentHeadless = headless
-    logger.infoSync(
-      "Browser context started",
-      "headless" -> headless.toString,
-      "channel" -> detectChannel.getOrElse("chromium")
-    )
+      currentHeadless = headless
+      logger.infoSync(
+        "Browser context started",
+        "headless" -> headless.toString,
+        "channel" -> detectChannel.getOrElse("chromium")
+      )
   end ensureContext
 
   /**

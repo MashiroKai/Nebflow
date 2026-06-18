@@ -1,9 +1,8 @@
 package nebflow.service
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import io.circe.parser.parse
+import nebflow.core.PathUtil
 import os.Path
 
 /**

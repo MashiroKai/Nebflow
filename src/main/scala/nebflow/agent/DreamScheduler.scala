@@ -1,7 +1,7 @@
 package nebflow.agent
 
-import org.apache.pekko.actor.typed.{Behavior, ActorRef}
 import org.apache.pekko.actor.typed.scaladsl.{Behaviors, TimerScheduler}
+import org.apache.pekko.actor.typed.{ActorRef, Behavior}
 
 import scala.concurrent.duration.*
 

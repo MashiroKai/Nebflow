@@ -2,9 +2,8 @@ package nebflow.core.tools
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.JsonObject
 import io.circe.syntax.*
-import io.circe.parser
+import io.circe.{JsonObject, parser}
 import nebflow.shared.{HttpUtils, SharedBackend}
 import sttp.client4.*
 
@@ -231,20 +230,18 @@ Usage:
   private def searchAcademic(query: String, engine: SearchEngine): Either[String, (SearchEngine, String)] =
     try
       val backend = SharedBackend.instance
-      val (fullUrl, resultText) = engine.name match
+      val result: Either[String, String] = engine.name match
         case "arXiv" =>
           val arxivQ = query.split("\\s+").map(w => s"all:$w").mkString("+AND+")
           val url = s"${engine.url}?search_query=$arxivQ&start=0&max_results=8&sortBy=relevance"
           val resp = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
-          val text = if resp.code.isSuccess then extractArxivResults(resp.body) else ""
-          (url, text)
+          Right(if resp.code.isSuccess then extractArxivResults(resp.body) else "")
 
         case "Semantic Scholar" =>
           val encoded = java.net.URLEncoder.encode(query, "UTF-8")
           val url = s"${engine.url}?query=$encoded&fields=title,abstract,year,authors,externalIds,openAccessPdf&limit=8"
           val resp = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
-          val text = if resp.code.isSuccess then extractSemanticScholarResults(resp.body) else ""
-          (url, text)
+          Right(if resp.code.isSuccess then extractSemanticScholarResults(resp.body) else "")
 
         case "Crossref" =>
           val encoded = java.net.URLEncoder.encode(query, "UTF-8")
@@ -256,13 +253,14 @@ Usage:
             .readTimeout(20_000.millis)
             .response(asStringAlways)
             .send(backend)
-          val text = if resp.code.isSuccess then extractCrossrefResults(resp.body) else ""
-          (url, text)
+          Right(if resp.code.isSuccess then extractCrossrefResults(resp.body) else "")
 
-        case _ => return Left(s"Unknown academic engine: ${engine.name}")
+        case other => Left(s"Unknown academic engine: $other")
 
-      if resultText.trim.isEmpty then Left(s"${engine.name}: No results or API error")
-      else Right((engine, resultText))
+      result.flatMap { resultText =>
+        if resultText.trim.isEmpty then Left(s"${engine.name}: No results or API error")
+        else Right((engine, resultText))
+      }
     catch case e: Exception => Left(s"${engine.name}: ${e.getMessage.take(120)}")
 
   /** Parse arXiv Atom XML feed into readable result format. */
