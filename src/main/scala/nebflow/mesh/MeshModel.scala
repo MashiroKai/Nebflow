@@ -200,6 +200,20 @@ object FileFingerprint:
 
 end FileFingerprint
 
+// ===== Cloud File Download =====
+
+case class CloudFileDownload(path: String, content: String, fingerprint: FileFingerprint)
+object CloudFileDownload:
+  given Decoder[CloudFileDownload] = Decoder.instance { c =>
+    for
+      path <- c.downField("path").as[String]
+      content <- c.downField("content").as[String]
+      fpMtime <- c.downField("fingerprint").downField("mtime").as[Long]
+      fpSize <- c.downField("fingerprint").downField("size").as[Long]
+      fpHash <- c.downField("fingerprint").downField("hash").as[String]
+    yield CloudFileDownload(path, content, FileFingerprint(fpMtime, fpSize, fpHash))
+  }
+
 // ===== Sync Diff =====
 
 case class SyncDiff(
