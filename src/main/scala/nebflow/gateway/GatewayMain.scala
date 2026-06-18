@@ -314,12 +314,21 @@ object GatewayMain extends IOApp.Simple:
                                       // Register mesh tool for agent cross-device operations
                                       MeshTool.register(meshService)
 
-                                      // Create cloud session sync and wire into mesh sync cycle
+                                      // Create sync services
                                       val cloudSessionSync = nebflow.mesh.CloudSessionSync(meshService, sessionStore)
-                                      sessionStore.setSessionChangedHook(sid => cloudSessionSync.pushSession(sid))
-                                      meshService.setPostSyncHook(cloudSessionSync.syncCycle)
+                                      val incrementalSync = nebflow.mesh.IncrementalSyncEngine(meshService, sessionStore)
+                                      // Hook: incremental blob push on message change
+                                      sessionStore.setSessionChangedHook(sid => incrementalSync.pushSessionIncremental(sid))
+                                      // Full sync cycle: state + files + all sessions
+                                      meshService.setPostSyncHook(incrementalSync.fullSyncCycle)
+                                      // MeshTool: cloud session sync for busy lock + relay
                                       MeshTool.setCloudSessionSync(cloudSessionSync)
-                                      cloudSessionSync.startBackgroundPollers(sharedResourcesWithDream.dispatcher)
+                                      MeshTool.setIncrementalSyncEngine(incrementalSync)
+                                      // Background pollers: fast state sync (5s) + relay (10s)
+                                      cloudSessionSync.startBackgroundPollers(
+                                        sharedResourcesWithDream.dispatcher,
+                                        incrementalSync.fastSyncCycle
+                                      )
 
                                       val sharedResourcesWithBridge =
                                         sharedResourcesWithDream.copy(
