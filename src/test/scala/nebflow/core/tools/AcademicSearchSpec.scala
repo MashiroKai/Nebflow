@@ -6,6 +6,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 
 class AcademicSearchSpec extends CatsEffectSuite:
+
   private def search(query: String, engine: String) =
     val input = JsonObject("query" -> query.asJson, "engine" -> engine.asJson)
     WebSearchTool.call(input, ToolContext(projectRoot = "/tmp"))
