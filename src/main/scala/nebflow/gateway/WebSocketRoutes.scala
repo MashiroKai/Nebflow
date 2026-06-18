@@ -664,14 +664,9 @@ class WebSocketRoutes(
               else IO.unit
             } *>
               // Cloud pull: fetch latest session data before switching (best-effort)
-              (nebflow.core.tools.MeshTool.currentCloudSessionSync match
-                case Some(css) =>
-                  css.pullSession(sessionId).flatMap {
-                    case Some(data) =>
-                      sessionStore.setSessionFromCloud(sessionId, data.messages, data.uiMessages)
-                        .handleErrorWith(_ => IO.unit)
-                    case None => IO.unit
-                  }.handleErrorWith(_ => IO.unit)
+              (nebflow.core.tools.MeshTool.currentIncrementalSyncEngine match
+                case Some(engine) =>
+                  engine.pullSessionIncremental(sessionId).handleErrorWith(_ => IO.unit)
                 case None => IO.unit
               ) *> sessionService
               .switchSession(sessionId)
