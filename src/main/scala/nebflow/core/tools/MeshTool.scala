@@ -307,6 +307,11 @@ object MeshTool:
   /** Expose current CloudSessionSync for busy lock integration. */
   def currentCloudSessionSync: Option[CloudSessionSync] = cloudSessionSyncOpt
 
+  /** Expose current IncrementalSyncEngine for session pull on switch. */
+  @volatile private var incrementalSyncOpt: Option[nebflow.mesh.IncrementalSyncEngine] = None
+  def setIncrementalSyncEngine(engine: nebflow.mesh.IncrementalSyncEngine): Unit = incrementalSyncOpt = Some(engine)
+  def currentIncrementalSyncEngine: Option[nebflow.mesh.IncrementalSyncEngine] = incrementalSyncOpt
+
   /** Wire CloudSessionSync for relay fallback. */
   def setCloudSessionSync(css: CloudSessionSync): Unit = cloudSessionSyncOpt = Some(css)
 
