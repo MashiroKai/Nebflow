@@ -44,8 +44,7 @@ class SessionStoreFolderSpec extends CatsEffectSuite:
         _ <- store.setFolderProjectRoot(top.id, Some("/top/path"))
         _ <- store.setFolderProjectRoot(mid.id, Some("/mid/path"))
         resolved <- store.resolveProjectRoot(Some(leaf.id))
-      yield
-        assertEquals(resolved, Some("/mid/path"))
+      yield assertEquals(resolved, Some("/mid/path"))
     }
   }
 
@@ -57,8 +56,7 @@ class SessionStoreFolderSpec extends CatsEffectSuite:
         leaf <- store.createFolder("leaf", parentId = Some(mid.id))
         _ <- store.setFolderProjectRoot(top.id, Some("/top/path"))
         resolved <- store.resolveProjectRoot(Some(leaf.id))
-      yield
-        assertEquals(resolved, Some("/top/path"))
+      yield assertEquals(resolved, Some("/top/path"))
     }
   }
 
@@ -68,15 +66,13 @@ class SessionStoreFolderSpec extends CatsEffectSuite:
         top <- store.createFolder("top")
         child <- store.createFolder("child", parentId = Some(top.id))
         resolved <- store.resolveProjectRoot(Some(child.id))
-      yield
-        assertEquals(resolved, None)
+      yield assertEquals(resolved, None)
     }
   }
 
   test("resolveProjectRoot(None) returns None") {
     withStore { store =>
-      for
-        resolved <- store.resolveProjectRoot(None)
+      for resolved <- store.resolveProjectRoot(None)
       yield assertEquals(resolved, None)
     }
   }
@@ -99,8 +95,7 @@ class SessionStoreFolderSpec extends CatsEffectSuite:
 
   test("set projectRoot on non-existent folder returns Left") {
     withStore { store =>
-      for
-        result <- store.setFolderProjectRoot("non-existent-id", Some("/some/path"))
+      for result <- store.setFolderProjectRoot("non-existent-id", Some("/some/path"))
       yield assert(result.isLeft)
     }
   }
@@ -114,8 +109,7 @@ class SessionStoreFolderSpec extends CatsEffectSuite:
         d <- store.createFolder("D", parentId = Some(c.id))
         _ <- store.setFolderProjectRoot(a.id, Some("/a/path"))
         resolved <- store.resolveProjectRoot(Some(d.id))
-      yield
-        assertEquals(resolved, Some("/a/path"))
+      yield assertEquals(resolved, Some("/a/path"))
     }
   }
 
@@ -125,8 +119,7 @@ class SessionStoreFolderSpec extends CatsEffectSuite:
         top <- store.createFolder("top")
         _ <- store.setFolderProjectRoot(top.id, Some("/top/path"))
         resolved <- store.resolveProjectRoot(Some(top.id))
-      yield
-        assertEquals(resolved, Some("/top/path"))
+      yield assertEquals(resolved, Some("/top/path"))
     }
   }
 

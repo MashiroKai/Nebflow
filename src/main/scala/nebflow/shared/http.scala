@@ -31,7 +31,8 @@ object SharedBackend:
   /** Chrome 版本号，与 UserAgent 保持一致，用于 Client Hints headers。 */
   private val ChromeVersion = "131"
 
-  /** 模拟真实 Chrome 导航请求的完整 headers，使请求特征与浏览器一致。
+  /**
+   * 模拟真实 Chrome 导航请求的完整 headers，使请求特征与浏览器一致。
    *
    *  关键反检测 headers：
    *  - Sec-Ch-UA: Chrome Client Hints，反爬虫系统会检查是否存在

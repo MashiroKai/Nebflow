@@ -20,6 +20,7 @@ case class RemoteSessionState(
   def createdAt: Long = updatedAt
 
 object RemoteSessionState:
+
   given Decoder[RemoteSessionState] = Decoder.instance { c =>
     for
       sessionId <- c.downField("sessionId").as[String]
@@ -66,17 +67,21 @@ class IncrementalSyncEngine private (
             // Push local states + pull remote states
             localSessions <- sessionStore.listSessions
             localFolders <- sessionStore.listAllFolders
-            statesJson = localSessions.map(s => Json.obj(
-              "sessionId" -> s.id.asJson,
-              "name" -> s.name.asJson,
-              "agentName" -> s.agentName.asJson,
-              "folderId" -> s.folderId.asJson,
-              "updatedAt" -> s.updatedAt.asJson
-            ))
+            statesJson = localSessions.map(s =>
+              Json.obj(
+                "sessionId" -> s.id.asJson,
+                "name" -> s.name.asJson,
+                "agentName" -> s.agentName.asJson,
+                "folderId" -> s.folderId.asJson,
+                "updatedAt" -> s.updatedAt.asJson
+              )
+            )
             resp <- meshService.callCloudFunction("session/state-sync", "states" -> statesJson.asJson)
             // Merge remote states into local
             remoteStates <- IO.fromEither(
-              resp.hcursor.downField("states").as[List[RemoteSessionState]]
+              resp.hcursor
+                .downField("states")
+                .as[List[RemoteSessionState]]
                 .leftMap(e => new RuntimeException(s"Decode states: ${e.getMessage}"))
             )
             _ <- sessionStore.mergeCloudIndex(
@@ -118,13 +123,19 @@ class IncrementalSyncEngine private (
             // Append hashes to session log
             msgHashes = msgBlobs.map(_._1)
             uiHashes = uiBlobs.map(_._1)
-            _ <- meshService.callCloudFunction("session/log-sync",
-              "sessionId" -> sessionId.asJson,
-              "messageHashes" -> msgHashes.asJson,
-              "uiMessageHashes" -> uiHashes.asJson
-            ).void
-            _ <- if uploaded.nonEmpty then logger.debug(s"Session $sessionId: uploaded ${uploaded.size} new blobs")
-                 else IO.unit
+            _ <- meshService
+              .callCloudFunction(
+                "session/log-sync",
+                "sessionId" -> sessionId.asJson,
+                "messageHashes" -> msgHashes.asJson,
+                "uiMessageHashes" -> uiHashes.asJson
+              )
+              .void
+            _ <-
+              if uploaded.nonEmpty then logger.debug(s"Session $sessionId: uploaded ${uploaded.size} new blobs")
+              else IO.unit
+            // Notify peers to pull immediately (push-based sync)
+            _ <- notifyPeers("session", sessionId)
           yield ()
     yield ()
 
@@ -144,7 +155,8 @@ class IncrementalSyncEngine private (
 
   private def pullSessionFromCloud(sessionId: String): IO[Unit] =
     for
-      resp <- meshService.callCloudFunction("session/log-sync",
+      resp <- meshService.callCloudFunction(
+        "session/log-sync",
         "sessionId" -> sessionId.asJson,
         "messageHashes" -> List.empty[String].asJson,
         "uiMessageHashes" -> List.empty[String].asJson
@@ -175,6 +187,7 @@ class IncrementalSyncEngine private (
       }
       _ <- sessionStore.setSessionFromCloud(sessionId, messages, uiMessages)
     yield ()
+  end downloadAndReconstruct
 
   // ===== File Sync (incremental, same blob approach) =====
 
@@ -191,19 +204,19 @@ class IncrementalSyncEngine private (
           for
             localFps <- meshService.computeLocalFingerprints
             localHashes = localFps.map { case (path, fp) => (path, fp.hash) }
-            resp <- meshService.callCloudFunction("file/ref-sync-v2",
-              "files" -> localHashes.asJson
-            )
+            resp <- meshService.callCloudFunction("file/ref-sync-v2", "files" -> localHashes.asJson)
             needUpload = resp.hcursor.downField("needUpload").as[List[String]].getOrElse(Nil)
             needDownload = resp.hcursor.downField("needDownload").as[List[String]].getOrElse(Nil)
             cloudFiles = resp.hcursor.downField("files").as[Map[String, String]].getOrElse(Map.empty)
             // Upload changed files
-            uploadBlobs <- needUpload.traverse { path =>
-              meshService.readLocalFile(path).map {
-                case Some((content, _)) => Some(blobSync.hash(content) -> content)
-                case None => None
+            uploadBlobs <- needUpload
+              .traverse { path =>
+                meshService.readLocalFile(path).map {
+                  case Some((content, _)) => Some(blobSync.hash(content) -> content)
+                  case None => None
+                }
               }
-            }.map(_.flatten.toMap)
+              .map(_.flatten.toMap)
             _ <- blobSync.uploadMissing(uploadBlobs)
             // Download changed files
             downloadHashes = needDownload.flatMap(p => cloudFiles.get(p))
@@ -213,12 +226,47 @@ class IncrementalSyncEngine private (
                 case Some(content) => meshService.writeLocalFile(path, content)
                 case None => IO.unit
             }
+            // Notify peers if we uploaded changed files
+            _ <- if uploadBlobs.nonEmpty then notifyPeers("file") else IO.unit
           yield ()
     yield ()
 
-  // ===== Fast Sync Cycle (5 seconds) =====
+  // ===== Peer Notification (push-based, bypasses polling) =====
 
-  /** Lightweight cycle: state sync only (metadata + busy). No content transfer. */
+  import sttp.client4.*
+  import scala.concurrent.duration.*
+
+  /** Notify all reachable peers to trigger immediate sync. Fire-and-forget. */
+  def notifyPeers(notifType: String, sessionId: String = ""): IO[Unit] =
+    for
+      peers <- meshService.peers
+      _ <- peers.traverse_ { peer =>
+        notifyOne(peer, notifType, sessionId).handleErrorWith(_ => IO.unit)
+      }
+    yield ()
+
+  private def notifyOne(peer: PeerInfo, notifType: String, sessionId: String): IO[Unit] =
+    if peer.address.isEmpty then IO.unit
+    else
+      IO.blocking {
+        val body =
+          if sessionId.nonEmpty then s"""{"type":"$notifType","sessionId":"$sessionId"}"""
+          else s"""{"type":"$notifType"}"""
+        try
+          basicRequest
+            .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/notify"))
+            .contentType("application/json")
+            .body(body)
+            .readTimeout(2.seconds)
+            .response(asStringAlways)
+            .send(meshService.httpBackend)
+          ()
+        catch case _: Exception => ()
+      }
+
+  // ===== Fast Sync Cycle (fallback, 10s) =====
+
+  /** Lightweight cycle: state sync only (metadata). Fallback for when push notification fails. */
   def fastSyncCycle: IO[Unit] = stateSync
 
   // ===== Full Sync Cycle (5 minutes) =====
@@ -231,9 +279,7 @@ class IncrementalSyncEngine private (
       // Push all local sessions (incremental — only new blobs)
       sessions <- sessionStore.listSessions
       _ <- sessions.traverse_(s =>
-        pushSessionIncremental(s.id).handleErrorWith(e =>
-          logger.debug(s"Push ${s.id.take(8)}: ${e.getMessage}")
-        )
+        pushSessionIncremental(s.id).handleErrorWith(e => logger.debug(s"Push ${s.id.take(8)}: ${e.getMessage}"))
       )
     yield ()
 
@@ -242,6 +288,7 @@ end IncrementalSyncEngine
 // ===== Data Types =====
 
 object IncrementalSyncEngine:
+
   def apply(
     meshService: MeshService,
     sessionStore: SessionStore
