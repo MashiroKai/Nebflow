@@ -301,7 +301,7 @@ class MeshService private (
       case None => IO.pure(None)
       case Some(safe) =>
         IO.blocking {
-          val abs = PathUtil.dataRoot / safe
+          val abs = PathUtil.dataRoot / os.RelPath(safe)
           FileFingerprint.compute(abs).map(fp => (os.read.bytes(abs), fp))
         }
 
@@ -314,7 +314,7 @@ class MeshService private (
       validateRelPath(relPath) match
         case None => IO.raiseError(new RuntimeException(s"Invalid path: $relPath"))
         case Some(safe) =>
-          val abs = PathUtil.dataRoot / safe
+          val abs = PathUtil.dataRoot / os.RelPath(safe)
           IO.blocking {
             if os.exists(abs) then
               val histDir = PathUtil.dataRoot / "mesh" / "history"
