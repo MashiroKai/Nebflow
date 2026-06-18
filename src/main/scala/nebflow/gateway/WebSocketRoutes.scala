@@ -998,42 +998,20 @@ class WebSocketRoutes(
           val beforeIndex = json.hcursor.downField("beforeIndex").as[Option[Int]].getOrElse(None)
           if sessionId.nonEmpty then
             (sharedResources.sessionStore
-              .getUiMessages(sessionId, 0, 0)
-              .map(_._2)
+              .getHistoryPage(sessionId, limit, beforeIndex)
               .attempt
               .flatMap {
-                case Right(total) =>
-                  beforeIndex match
-                    case None =>
-                      val offset = Math.max(0, total - limit)
-                      sharedResources.sessionStore.getUiMessages(sessionId, offset, limit).flatMap { case (msgs, _) =>
-                        wsSend(
-                          io.circe.Json.obj(
-                            "type" -> "historyPage".asJson,
-                            "sessionId" -> sessionId.asJson,
-                            "messages" -> msgs.asJson,
-                            "total" -> total.asJson,
-                            "offset" -> offset.asJson,
-                            "hasMore" -> (total > limit).asJson
-                          )
-                        )
-                      }
-                    case Some(before) =>
-                      val offset = Math.max(0, before - limit)
-                      val actualLimit = Math.min(limit, before)
-                      sharedResources.sessionStore.getUiMessages(sessionId, offset, actualLimit).flatMap {
-                        case (msgs, _) =>
-                          wsSend(
-                            io.circe.Json.obj(
-                              "type" -> "historyPage".asJson,
-                              "sessionId" -> sessionId.asJson,
-                              "messages" -> msgs.asJson,
-                              "total" -> total.asJson,
-                              "offset" -> offset.asJson,
-                              "hasMore" -> (before > limit).asJson
-                            )
-                          )
-                      }
+                case Right((msgs, total, offset, hasMore)) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "historyPage".asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "messages" -> msgs.asJson,
+                      "total" -> total.asJson,
+                      "offset" -> offset.asJson,
+                      "hasMore" -> hasMore.asJson
+                    )
+                  )
                 case Left(_) =>
                   // Send empty historyPage so the frontend doesn't get stuck
                   wsSend(
