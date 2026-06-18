@@ -1,13 +1,11 @@
 package nebflow.mesh
 
-import nebflow.core.PathUtil
-
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
  * Manages local sync snapshots — the file fingerprints after the last successful sync.

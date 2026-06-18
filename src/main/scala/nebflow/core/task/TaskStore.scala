@@ -1,11 +1,10 @@
 package nebflow.core.task
 
-import nebflow.core.PathUtil
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
+import nebflow.core.{NebflowLogger, PathUtil}
 
 import java.time.Instant
 

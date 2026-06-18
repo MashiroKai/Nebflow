@@ -1,11 +1,10 @@
 package nebflow.service
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.parser.parse
 import io.circe.{Json, JsonObject}
+import nebflow.core.PathUtil
 import nebflow.llm.Config
 
 object ConfigService:
