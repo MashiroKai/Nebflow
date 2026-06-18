@@ -265,7 +265,7 @@ class CloudSessionSync private (
    * Full sync cycle — called periodically by the mesh sync actor (every 5 min).
    * 1. Pull cloud index and merge with local
    * 2. Push local index
-   * 3. Push active session data
+   * 3. Push ALL sessions that are newer locally than cloud (ensures full history available)
    * 4. Poll + execute relay commands from other devices
    */
   def syncCycle: IO[Unit] =
@@ -275,19 +275,29 @@ class CloudSessionSync private (
         if !loggedIn then IO.unit
         else
           for
-            // Pull first — get any updates from other devices
-            _ <- pullIndex.flatMap(snapshot =>
-              sessionStore.mergeCloudIndex(snapshot.sessions, snapshot.folders)
-            ).handleErrorWith(e => logger.warn(s"Pull index failed: ${e.getMessage}"))
-            // Push local state
+            // Pull cloud index
+            cloudSnapshot <- pullIndex.handleErrorWith(e =>
+              logger.warn(s"Pull index failed: ${e.getMessage}").as(CloudIndexSnapshot(Nil, Nil, 0))
+            )
+            _ <- sessionStore.mergeCloudIndex(cloudSnapshot.sessions, cloudSnapshot.folders)
+            // Push local index
             _ <- pushIndex.handleErrorWith(e => logger.warn(s"Push index failed: ${e.getMessage}"))
-            // Push active session
-            activeId <- sessionStore.getActiveId
+            // Push all sessions that are newer locally than cloud (batch sync)
+            localSessions <- sessionStore.listSessions
+            cloudUpdatedAt = cloudSnapshot.sessions.map(s => s.id -> s.updatedAt).toMap
+            needPush = localSessions.filter { ls =>
+              cloudUpdatedAt.get(ls.id) match
+                case Some(cUpdated) => ls.updatedAt > cUpdated
+                case None => true // not in cloud yet
+            }
             _ <-
-              if activeId.nonEmpty then
-                pushSession(activeId).handleErrorWith(e => logger.warn(s"Push session failed: ${e.getMessage}"))
-              else IO.unit
-            // Process relay commands from other devices
+              if needPush.isEmpty then IO.unit
+              else
+                logger.info(s"Pushing ${needPush.size} sessions to cloud") *>
+                  needPush.traverse_(s =>
+                    pushSession(s.id).handleErrorWith(e => logger.debug(s"Push ${s.id.take(8)}: ${e.getMessage}"))
+                  )
+            // Process relay commands
             _ <- processRelayCommands.handleErrorWith(e => logger.warn(s"Relay poll failed: ${e.getMessage}"))
           yield ()
     yield ()
