@@ -107,8 +107,7 @@ object DreamScheduler:
             hooks.touchLastDreamTime()
             timers.startSingleTimer(DreamCommand.DreamTimeout, dreamTimeout)
             dreaming(Nil, pendingFullCycle = false, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-          else
-            idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
+          else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
         else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
 
       case DreamCommand.FullCycleTick =>
@@ -119,8 +118,7 @@ object DreamScheduler:
           hooks.touchLastDreamTime()
           timers.startSingleTimer(DreamCommand.DreamTimeout, dreamTimeout)
           dreaming(Nil, pendingFullCycle = false, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-        else
-          idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
+        else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
 
       case DreamCommand.Shutdown =>
         Behaviors.stopped
@@ -188,9 +186,8 @@ object DreamScheduler:
         if pendingFullCycle then hooks.touchLastDreamTime()
         timers.startSingleTimer(DreamCommand.DreamTimeout, dreamTimeout)
         dreaming(Nil, pendingFullCycle = false, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-      else
-        idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-    else
-      idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
+      else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
+    else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
+  end onDreamFinished
 
 end DreamScheduler

@@ -1,4 +1,5 @@
 package nebflow.llm
+
 import nebflow.core.PathUtil
 
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}

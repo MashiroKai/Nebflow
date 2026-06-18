@@ -248,10 +248,14 @@ Usage:
 
         case "Crossref" =>
           val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-          val url = s"${engine.url}?query=$encoded&rows=8&select=DOI,title,author,published-print,container-title,abstract"
-          val resp = basicRequest.get(uri"$url")
+          val url =
+            s"${engine.url}?query=$encoded&rows=8&select=DOI,title,author,published-print,container-title,abstract"
+          val resp = basicRequest
+            .get(uri"$url")
             .header("User-Agent", "Nebflow/academic-search (mailto:research@nebflow.space)")
-            .readTimeout(20_000.millis).response(asStringAlways).send(backend)
+            .readTimeout(20_000.millis)
+            .response(asStringAlways)
+            .send(backend)
           val text = if resp.code.isSuccess then extractCrossrefResults(resp.body) else ""
           (url, text)
 
@@ -264,54 +268,97 @@ Usage:
   /** Parse arXiv Atom XML feed into readable result format. */
   private def extractArxivResults(xml: String): String =
     val entryPat = """<entry>([\s\S]*?)</entry>""".r
-    val results = entryPat.findAllMatchIn(xml).flatMap { m =>
-      val e = m.group(1)
-      val title = """<title[^>]*>([\s\S]*?)</title>""".r.findFirstMatchIn(e).map(_.group(1).trim.replaceAll("\\s+", " ")).getOrElse("")
-      val summary = """<summary>([\s\S]*?)</summary>""".r.findFirstMatchIn(e).map(_.group(1).trim.replaceAll("\\s+", " ").take(400)).getOrElse("")
-      val link = """<link[^>]*href="([^"]+)"[^>]*rel="alternate"""".r.findFirstMatchIn(e).map(_.group(1)).getOrElse("")
-      val published = """<published>([^<]+)</published>""".r.findFirstMatchIn(e).map(_.group(1).take(4)).getOrElse("")
-      val authors = """<name>([^<]+)</name>""".r.findAllMatchIn(e).map(_.group(1)).toList.take(5).mkString(", ")
-      val doi = """<arxiv:doi[^>]*>([^<]+)""".r.findFirstMatchIn(e).map(d => s" DOI: ${d.group(1)}").getOrElse("")
-      if title.nonEmpty then Some(s"**$title**\n$link\nAuthors: $authors ($published)$doi\n$summary") else None
-    }.toList
+    val results = entryPat
+      .findAllMatchIn(xml)
+      .flatMap { m =>
+        val e = m.group(1)
+        val title = """<title[^>]*>([\s\S]*?)</title>""".r
+          .findFirstMatchIn(e)
+          .map(_.group(1).trim.replaceAll("\\s+", " "))
+          .getOrElse("")
+        val summary = """<summary>([\s\S]*?)</summary>""".r
+          .findFirstMatchIn(e)
+          .map(_.group(1).trim.replaceAll("\\s+", " ").take(400))
+          .getOrElse("")
+        val link =
+          """<link[^>]*href="([^"]+)"[^>]*rel="alternate"""".r.findFirstMatchIn(e).map(_.group(1)).getOrElse("")
+        val published = """<published>([^<]+)</published>""".r.findFirstMatchIn(e).map(_.group(1).take(4)).getOrElse("")
+        val authors = """<name>([^<]+)</name>""".r.findAllMatchIn(e).map(_.group(1)).toList.take(5).mkString(", ")
+        val doi = """<arxiv:doi[^>]*>([^<]+)""".r.findFirstMatchIn(e).map(d => s" DOI: ${d.group(1)}").getOrElse("")
+        if title.nonEmpty then Some(s"**$title**\n$link\nAuthors: $authors ($published)$doi\n$summary") else None
+      }
+      .toList
     if results.nonEmpty then results.mkString("\n\n") else ""
+
+  end extractArxivResults
 
   /** Parse Semantic Scholar JSON response. */
   private def extractSemanticScholarResults(json: String): String =
     parser.parse(json).toOption.flatMap(_.hcursor.downField("data").as[List[io.circe.Json]].toOption) match
       case Some(papers) =>
-        papers.take(8).flatMap { paper =>
-          val h = paper.hcursor
-          val title = h.downField("title").as[String].toOption.getOrElse("")
-          val year = h.downField("year").as[Int].map(_.toString).toOption.getOrElse("")
-          val abstract_ = h.downField("abstract").as[String].toOption.getOrElse("").take(400)
-          val authors = h.downField("authors").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-            .flatMap(_.hcursor.downField("name").as[String].toOption).take(5).mkString(", ")
-          val paperId = h.downField("paperId").as[String].toOption.getOrElse("")
-          val doi = h.downField("externalIds").downField("DOI").as[String].toOption.map(d => s" DOI: $d").getOrElse("")
-          val oaPdf = h.downField("openAccessPdf").downField("url").as[String].toOption.map(u => s" OA PDF: $u").getOrElse("")
-          val url = s"https://www.semanticscholar.org/paper/$paperId"
-          if title.nonEmpty then Some(s"**$title**\n$url\nAuthors: $authors ($year)$doi$oaPdf\n$abstract_") else None
-        }.mkString("\n\n")
+        papers
+          .take(8)
+          .flatMap { paper =>
+            val h = paper.hcursor
+            val title = h.downField("title").as[String].toOption.getOrElse("")
+            val year = h.downField("year").as[Int].map(_.toString).toOption.getOrElse("")
+            val abstract_ = h.downField("abstract").as[String].toOption.getOrElse("").take(400)
+            val authors = h
+              .downField("authors")
+              .as[List[io.circe.Json]]
+              .toOption
+              .getOrElse(Nil)
+              .flatMap(_.hcursor.downField("name").as[String].toOption)
+              .take(5)
+              .mkString(", ")
+            val paperId = h.downField("paperId").as[String].toOption.getOrElse("")
+            val doi =
+              h.downField("externalIds").downField("DOI").as[String].toOption.map(d => s" DOI: $d").getOrElse("")
+            val oaPdf =
+              h.downField("openAccessPdf").downField("url").as[String].toOption.map(u => s" OA PDF: $u").getOrElse("")
+            val url = s"https://www.semanticscholar.org/paper/$paperId"
+            if title.nonEmpty then Some(s"**$title**\n$url\nAuthors: $authors ($year)$doi$oaPdf\n$abstract_") else None
+          }
+          .mkString("\n\n")
       case None => ""
 
   /** Parse Crossref JSON response. */
   private def extractCrossrefResults(json: String): String =
-    parser.parse(json).toOption.flatMap(_.hcursor.downField("message").downField("items").as[List[io.circe.Json]].toOption) match
+    parser
+      .parse(json)
+      .toOption
+      .flatMap(_.hcursor.downField("message").downField("items").as[List[io.circe.Json]].toOption) match
       case Some(items) =>
-        items.take(8).flatMap { item =>
-          val h = item.hcursor
-          val title = h.downField("title").as[List[String]].toOption.flatMap(_.headOption).getOrElse("")
-          val doi = h.downField("DOI").as[String].toOption.getOrElse("")
-          val year = h.downField("published-print").downField("date-parts").as[List[List[Int]]].toOption
-            .flatMap(_.headOption).flatMap(_.headOption).map(_.toString).getOrElse("")
-          val container = h.downField("container-title").as[List[String]].toOption.flatMap(_.headOption).getOrElse("")
-          val authors = h.downField("author").as[List[io.circe.Json]].toOption.getOrElse(Nil).flatMap { a =>
-            a.hcursor.downField("family").as[String].toOption
-          }.take(5).mkString(", ")
-          val url = s"https://doi.org/$doi"
-          if title.nonEmpty then Some(s"**$title**\n$url\nAuthors: $authors ($year)\nJournal: $container") else None
-        }.mkString("\n\n")
+        items
+          .take(8)
+          .flatMap { item =>
+            val h = item.hcursor
+            val title = h.downField("title").as[List[String]].toOption.flatMap(_.headOption).getOrElse("")
+            val doi = h.downField("DOI").as[String].toOption.getOrElse("")
+            val year = h
+              .downField("published-print")
+              .downField("date-parts")
+              .as[List[List[Int]]]
+              .toOption
+              .flatMap(_.headOption)
+              .flatMap(_.headOption)
+              .map(_.toString)
+              .getOrElse("")
+            val container = h.downField("container-title").as[List[String]].toOption.flatMap(_.headOption).getOrElse("")
+            val authors = h
+              .downField("author")
+              .as[List[io.circe.Json]]
+              .toOption
+              .getOrElse(Nil)
+              .flatMap { a =>
+                a.hcursor.downField("family").as[String].toOption
+              }
+              .take(5)
+              .mkString(", ")
+            val url = s"https://doi.org/$doi"
+            if title.nonEmpty then Some(s"**$title**\n$url\nAuthors: $authors ($year)\nJournal: $container") else None
+          }
+          .mkString("\n\n")
       case None => ""
 
   // ── Truncate & filter ─────────────────────────────────────────────
@@ -347,7 +394,8 @@ Usage:
     else
       // General engines: batch racing (existing logic)
       val enginesToTry: List[SearchEngine] = engineName match
-        case Some(name) => engineMap.get(name).toList ++ ENGINES.filter(e => e.name != name && !ACADEMIC_NAMES.contains(e.name))
+        case Some(name) =>
+          engineMap.get(name).toList ++ ENGINES.filter(e => e.name != name && !ACADEMIC_NAMES.contains(e.name))
         case None => ENGINES.filter(e => !ACADEMIC_NAMES.contains(e.name))
 
       val batches = enginesToTry.grouped(BATCH_SIZE).toList
@@ -362,11 +410,15 @@ Usage:
       def tryBatches(remaining: List[List[SearchEngine]], accErrors: Vector[String]): IO[Either[ToolError, String]] =
         remaining match
           case Nil =>
-            IO.pure(Left(ToolError(
-              s"All search engines failed.\n${accErrors.take(8).mkString("\n")}${
-                  if accErrors.length > 8 then s"\n... and ${accErrors.length - 8} more" else ""
-                }"
-            )))
+            IO.pure(
+              Left(
+                ToolError(
+                  s"All search engines failed.\n${accErrors.take(8).mkString("\n")}${
+                      if accErrors.length > 8 then s"\n... and ${accErrors.length - 8} more" else ""
+                    }"
+                )
+              )
+            )
           case batch :: rest =>
             raceBatch(batch).flatMap {
               case Right((engine, text)) =>

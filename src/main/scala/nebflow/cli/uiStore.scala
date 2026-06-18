@@ -1,4 +1,5 @@
 package nebflow.cli
+
 import nebflow.core.PathUtil
 
 import cats.effect.{Deferred, IO, Ref}

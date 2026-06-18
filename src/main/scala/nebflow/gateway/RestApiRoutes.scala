@@ -408,7 +408,49 @@ class RestApiRoutes(
           }
       }
 
-    // Remote tool execution — called by peer Nebflow devices
+    // Peer notification — lightweight ping to trigger immediate sync (push-based)
+    case req @ POST -> Root / "mesh" / "notify" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(_) =>
+          req.as[Json].flatMap { body =>
+            val notifType = body.hcursor.downField("type").as[String].getOrElse("")
+            val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
+            // Fire-and-forget: trigger immediate pull based on notification type
+            notifType match
+              case "session" if sessionId.nonEmpty =>
+                nebflow.core.tools.MeshTool.currentIncrementalSyncEngine.foreach { engine =>
+                  sharedResources.dispatcher.unsafeRunAndForget(
+                    engine.pullSessionIncremental(sessionId).handleErrorWith(_ => IO.unit)
+                  )
+                }
+                Ok(Json.obj("ok" -> true.asJson))
+              case "session" =>
+                nebflow.core.tools.MeshTool.currentIncrementalSyncEngine.foreach { engine =>
+                  sharedResources.dispatcher.unsafeRunAndForget(
+                    engine.stateSync.handleErrorWith(_ => IO.unit)
+                  )
+                }
+                Ok(Json.obj("ok" -> true.asJson))
+              case "file" =>
+                nebflow.core.tools.MeshTool.currentIncrementalSyncEngine.foreach { engine =>
+                  sharedResources.dispatcher.unsafeRunAndForget(
+                    engine.syncFilesIncremental.handleErrorWith(_ => IO.unit)
+                  )
+                }
+                Ok(Json.obj("ok" -> true.asJson))
+              case "relay" =>
+                nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
+                  sharedResources.dispatcher.unsafeRunAndForget(
+                    css.processRelayCommands.handleErrorWith(_ => IO.unit)
+                  )
+                }
+                Ok(Json.obj("ok" -> true.asJson))
+              case _ => Ok(Json.obj("ok" -> true.asJson))
+            end match
+          }
+      }
+
     case req @ POST -> Root / "mesh" / "remote-exec" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
