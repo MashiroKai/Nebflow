@@ -402,20 +402,46 @@ class MeshService private (
       }
     yield ()
 
-  def syncAll: IO[Unit] =
+  /** Cloud-based file sync — replaces P2P syncWithPeer. */
+  def syncFilesWithCloud: IO[Unit] =
     for
       loggedIn <- isLoggedIn
       _ <-
         if !loggedIn then IO.unit
         else
-          peersRef.get.flatMap(
-            _.values.toList.traverse_(p =>
-              syncWithPeer(p).handleErrorWith(e => logger.warn(s"Sync with ${p.deviceName} failed: ${e.getMessage}"))
+          for
+            localFps <- computeLocalFingerprints
+            // Phase 1: fingerprint exchange
+            resp <- callCloudFunction("file/sync", "fingerprints" -> localFps.asJson)
+            // Phase 2: download cloud-newer files
+            downloads <- IO.fromEither(
+              resp.hcursor.downField("download").as[List[CloudFileDownload]]
+                .leftMap(e => new RuntimeException(s"Decode download: ${e.getMessage}"))
             )
-          )
+            _ <- downloads.traverse_ { f =>
+              val bytes = java.util.Base64.getDecoder.decode(f.content)
+              writeLocalFile(f.path, bytes) *> syncStore.updateSnapshot(f.path, f.fingerprint)
+            }
+            // Phase 3: upload local-newer files
+            uploadNeeded = resp.hcursor.downField("uploadNeeded").as[List[String]].getOrElse(Nil)
+            _ <- uploadNeeded.traverse_ { p =>
+              readLocalFile(p).flatMap {
+                case Some((content, fp)) =>
+                  val b64 = java.util.Base64.getEncoder.encodeToString(content)
+                  callCloudFunction("file/upload",
+                    "path" -> p.asJson,
+                    "content" -> b64.asJson,
+                    "fingerprint" -> fp.asJson
+                  ).void.handleErrorWith(e => logger.warn(s"Upload $p failed: ${e.getMessage}"))
+                case None => IO.unit
+              }
+            }
+            _ <- logger.info(s"Cloud file sync: ${downloads.size} downloaded, ${uploadNeeded.size} uploaded")
+          yield ()
     yield ()
 
-  /** Run one sync cycle: cloud discover + sync all peers. Called by the sync actor. */
+  def syncAll: IO[Unit] = syncFilesWithCloud
+
   /** Run one sync cycle: cloud discover + sync all peers + post-sync hook (cloud session sync, relay poll). */
   def runSyncCycle: IO[Unit] = cloudDiscover *> syncAll *> _postSyncHook
 
