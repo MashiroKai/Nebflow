@@ -117,6 +117,34 @@
   font-weight: 500;
 }
 
+.mesh-peer-caps {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.mesh-peer-desc {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.mesh-caps-display {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 8px;
+  padding: 4px 6px;
+  background: var(--color-bg);
+  border-radius: 4px;
+}
+
 /* Actions */
 .mesh-actions-row {
   display: flex;

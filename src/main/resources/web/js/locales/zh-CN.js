@@ -389,4 +389,8 @@ export default {
   'mesh.devices': '设备',
   'mesh.thisDevice': '本机',
   'mesh.connected': '已连接',
+  'mesh.detectedTools': '已检测工具',
+  'mesh.deviceDescription': '设备描述',
+  'mesh.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',
+  'mesh.save': '保存',
 };
