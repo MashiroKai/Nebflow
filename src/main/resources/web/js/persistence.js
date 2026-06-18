@@ -355,6 +355,13 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   const chat = state.dom.chat;
   const fragment = document.createDocumentFragment();
   let skipMsg = false;
+  // Defer expensive markdown+KaTeX rendering into post-append batches.
+  // DOM elements are created synchronously with plain text; innerHTML is upgraded via rAF.
+  const pendingRenders = [];
+  const deferMd = (el, text) => {
+    el.textContent = text;
+    pendingRenders.push({ el, text });
+  };
   msgs.forEach((m, i) => {
     if (skipMsg) { skipMsg = false; return; }
     if (m.type === 'user') {
@@ -418,7 +425,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         tLabel.textContent = t('chat.thinkingLabel');
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
-        tContent.innerHTML = renderMarkdownWithMath(m.thinking);
+        deferMd(tContent, m.thinking);
         // If there's no text, keep thinking expanded so user can see what the model thought
         if (!m.text) {
           tLabel.classList.add('expanded');
@@ -441,7 +448,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         row.className = 'row ai';
         const bubble = document.createElement('div');
         bubble.className = 'bubble ai';
-        bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+        deferMd(bubble, m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i);
@@ -583,7 +590,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         aLabel.className = 'ask-label';
         aLabel.textContent = t('chat.askLabel');
         const aContent = document.createElement('div');
-        aContent.innerHTML = renderMarkdownWithMath(m.answer);
+        deferMd(aContent, m.answer);
         aBubble.appendChild(aLabel);
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
@@ -598,7 +605,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       row.className = 'row ai agent-row';
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
-      bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+      deferMd(bubble, m.text || '');
       if (m.agentId && m.agentId !== 'default') {
         const badge = document.createElement('div');
         badge.className = 'agent-badge';
@@ -637,7 +644,26 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   if (scrollToBottom) {
     chat.scrollTop = chat.scrollHeight;
     state.scrollSnapped = true;
-    requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; });
+  }
+  // Batch-upgrade deferred markdown rendering (marked.parse + KaTeX) via rAF.
+  // Processes a few elements per frame to avoid blocking the main thread.
+  const BATCH_SIZE = 6;
+  let ri = 0;
+  function upgradeBatch() {
+    const end = Math.min(ri + BATCH_SIZE, pendingRenders.length);
+    for (; ri < end; ri++) {
+      const { el, text } = pendingRenders[ri];
+      el.innerHTML = renderMarkdownWithMath(text);
+    }
+    if (ri < pendingRenders.length) {
+      requestAnimationFrame(upgradeBatch);
+    } else if (scrollToBottom) {
+      chat.scrollTop = chat.scrollHeight;
+      state.scrollSnapped = true;
+    }
+  }
+  if (pendingRenders.length > 0) {
+    requestAnimationFrame(upgradeBatch);
   }
 }
 
