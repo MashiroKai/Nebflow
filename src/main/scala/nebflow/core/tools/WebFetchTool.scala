@@ -4,7 +4,7 @@ import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
-import nebflow.shared.{BrowserFetchResult, BrowserManager, HttpUtils, SharedBackend}
+import nebflow.shared.*
 import sttp.client4.*
 
 import java.util.concurrent.ConcurrentHashMap

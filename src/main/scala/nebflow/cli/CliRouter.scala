@@ -1,11 +1,10 @@
 package nebflow.cli
 
-import nebflow.core.PathUtil
-
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.core.PathUtil
 
 /**
  * Main CLI router. Parses arguments, discovers the command, and dispatches.

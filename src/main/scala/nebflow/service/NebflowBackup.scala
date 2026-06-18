@@ -1,8 +1,7 @@
 package nebflow.service
 
-import nebflow.core.PathUtil
-
 import cats.effect.IO
+import nebflow.core.PathUtil
 import os.Path
 
 import java.time.format.DateTimeFormatter
