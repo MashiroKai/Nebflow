@@ -327,15 +327,19 @@ class CloudSessionSync private (
           yield ()
     yield ()
 
-  /** Start background pollers: fast sync (5s) + relay (10s). */
-  def startBackgroundPollers(dispatcher: cats.effect.std.Dispatcher[IO]): Unit =
-    dispatcher.unsafeRunAndForget(fastSyncLoop)
+  /** Start background pollers: fast sync (5s) + relay (10s).
+   *  fastCycle is injected from IncrementalSyncEngine for blob-based state sync. */
+  def startBackgroundPollers(
+    dispatcher: cats.effect.std.Dispatcher[IO],
+    fastCycle: IO[Unit] = IO.unit
+  ): Unit =
+    dispatcher.unsafeRunAndForget(fastLoop(fastCycle))
     dispatcher.unsafeRunAndForget(relayLoop)
 
-  private def fastSyncLoop: IO[Unit] =
+  private def fastLoop(fastCycle: IO[Unit]): IO[Unit] =
     meshService.isLoggedIn.flatMap { loggedIn =>
-      val action = if loggedIn then fastSyncCycle.handleErrorWith(_ => IO.unit) else IO.unit
-      action.flatMap(_ => IO.sleep(5.seconds)).flatMap(_ => fastSyncLoop)
+      val action = if loggedIn then fastCycle.handleErrorWith(_ => IO.unit) else IO.unit
+      action.flatMap(_ => IO.sleep(5.seconds)).flatMap(_ => fastLoop(fastCycle))
     }
 
   // ===== Relay Command Execution (target device side) =====
