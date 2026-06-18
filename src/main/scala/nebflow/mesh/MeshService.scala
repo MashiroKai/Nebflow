@@ -52,9 +52,45 @@ class MeshService private (
 ):
   private val logger = NebflowLogger.forName("nebflow.mesh")
 
+  /** Optional hook invoked after each sync cycle (cloud discover + P2P sync). Used by CloudSessionSync. */
+  @volatile private var _postSyncHook: IO[Unit] = IO.unit
+
+  /** Set a hook to run after each sync cycle (e.g. cloud session sync, relay poll). */
+  def setPostSyncHook(hook: IO[Unit]): Unit = _postSyncHook = hook
+
   // ===== Identity =====
 
   def identity: IO[DeviceIdentity] = identityRef.get
+
+  /** Update device capabilities and/or user description. Persists to disk and cloud. */
+  def updateDeviceInfo(
+    capabilities: Option[Map[String, String]] = None,
+    userDescription: Option[String] = None
+  ): IO[Unit] =
+    for
+      updated <- identityRef.modify { id =>
+        val newId = id.copy(
+          capabilities = capabilities.getOrElse(id.capabilities),
+          userDescription = userDescription.getOrElse(id.userDescription)
+        )
+        (newId, newId)
+      }
+      _ <- DeviceIdentity.save(updated)
+      _ <- callCloudFunction("device/capabilities",
+        "deviceId" -> updated.deviceId.asJson,
+        "capabilities" -> updated.capabilities.asJson,
+        "userDescription" -> updated.userDescription.asJson
+      ).handleErrorWith(e => logger.debug(s"Cloud capabilities update: ${e.getMessage}"))
+    yield ()
+
+  /** Run capability self-check and update device identity + cloud. Called on startup. */
+  def selfCheckCapabilities: IO[Unit] =
+    for
+      caps <- DeviceIdentity.detectCapabilities
+      id <- identityRef.get
+      // Only update if capabilities changed
+      _ <- if id.capabilities != caps then updateDeviceInfo(capabilities = Some(caps)) else IO.unit
+    yield ()
 
   def isLoggedIn: IO[Boolean] = accountRef.get.map(_.isDefined)
 
@@ -380,7 +416,8 @@ class MeshService private (
     yield ()
 
   /** Run one sync cycle: cloud discover + sync all peers. Called by the sync actor. */
-  def runSyncCycle: IO[Unit] = cloudDiscover *> syncAll
+  /** Run one sync cycle: cloud discover + sync all peers + post-sync hook (cloud session sync, relay poll). */
+  def runSyncCycle: IO[Unit] = cloudDiscover *> syncAll *> _postSyncHook
 
   // ===== Cloud Discovery =====
 
@@ -412,7 +449,10 @@ class MeshService private (
         "deviceId" -> id.deviceId.asJson,
         "deviceName" -> id.deviceName.asJson,
         "platform" -> id.platform.asJson,
-        "address" -> address.asJson
+        "address" -> address.asJson,
+        "capabilities" -> id.capabilities.asJson,
+        "userDescription" -> id.userDescription.asJson,
+        "deviceSecret" -> id.deviceSecret.asJson
       )
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(cloudUrl))
@@ -460,6 +500,29 @@ class MeshService private (
             logger.debug(s"Cloud lookup JSON error: ${e.getMessage}")
       end if
     }.handleErrorWith(e => logger.debug(s"Cloud lookup: ${e.getMessage}"))
+
+  // ===== Cloud Call (public for CloudSessionSync) =====
+
+  /**
+   * Call a cloud function action with auth context injected automatically.
+   * Requires the user to be logged in.
+   * Returns the response JSON (unwrapped from the cloud function envelope).
+   */
+  def callCloudFunction(action: String, extraFields: (String, Json)*): IO[Json] =
+    for
+      accOpt <- accountRef.get
+      acc <- IO.fromOption(accOpt)(new RuntimeException("Not logged in"))
+      cloudUrl <- getCloudUrl
+      body = Json.obj(
+        "action" -> action.asJson,
+        "userId" -> acc.userId.asJson,
+        "sessionToken" -> acc.sessionToken.asJson
+      ).deepMerge(Json.obj(extraFields*))
+      resp <- callCloud(cloudUrl, body)
+    yield resp
+
+  /** Current cloud URL, or empty string if not configured. */
+  def cloudUrl: IO[String] = configRef.get.map(_.cloudUrl.getOrElse(""))
 
   // ===== Helpers =====
 
@@ -560,6 +623,10 @@ object MeshService:
           logger.info(s"Restored mesh login: ${acc.username}") *>
             IO(syncActorRef ! SyncCommand.StartSync)
         case None => IO.unit
+      // Background: detect capabilities and update identity (best-effort, non-blocking)
+      _ = dispatcher.unsafeRunAndForget(
+        service.selfCheckCapabilities.handleErrorWith(e => logger.debug(s"Capability detection: ${e.getMessage}"))
+      )
     yield service
 
   // Simple mutable box to break MeshService ↔ SyncActor circular dependency.

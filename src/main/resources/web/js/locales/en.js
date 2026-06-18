@@ -388,4 +388,8 @@ export default {
   'mesh.devices': 'Devices',
   'mesh.thisDevice': 'This device',
   'mesh.connected': 'Connected',
+  'mesh.detectedTools': 'Detected tools',
+  'mesh.deviceDescription': 'Device description',
+  'mesh.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
+  'mesh.save': 'Save',
 };

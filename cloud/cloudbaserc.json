@@ -6,7 +6,7 @@
       "name": "nebflow-mesh",
       "handler": "index.main",
       "runtime": "Nodejs18.15",
-      "timeout": 10,
+      "timeout": 15,
       "installDependency": true
     },
     {
