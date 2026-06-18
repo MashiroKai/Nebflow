@@ -1,4 +1,5 @@
 package nebflow.mesh
+
 import nebflow.core.PathUtil
 
 import cats.effect.std.Dispatcher
@@ -77,7 +78,8 @@ class MeshService private (
         (newId, newId)
       }
       _ <- DeviceIdentity.save(updated)
-      _ <- callCloudFunction("device/capabilities",
+      _ <- callCloudFunction(
+        "device/capabilities",
         "deviceId" -> updated.deviceId.asJson,
         "capabilities" -> updated.capabilities.asJson,
         "userDescription" -> updated.userDescription.asJson
@@ -416,7 +418,9 @@ class MeshService private (
             resp <- callCloudFunction("file/sync", "fingerprints" -> localFps.asJson)
             // Phase 2: download cloud-newer files
             downloads <- IO.fromEither(
-              resp.hcursor.downField("download").as[List[CloudFileDownload]]
+              resp.hcursor
+                .downField("download")
+                .as[List[CloudFileDownload]]
                 .leftMap(e => new RuntimeException(s"Decode download: ${e.getMessage}"))
             )
             _ <- downloads.traverse_ { f =>
@@ -429,7 +433,8 @@ class MeshService private (
               readLocalFile(p).flatMap {
                 case Some((content, fp)) =>
                   val b64 = java.util.Base64.getEncoder.encodeToString(content)
-                  callCloudFunction("file/upload",
+                  callCloudFunction(
+                    "file/upload",
                     "path" -> p.asJson,
                     "content" -> b64.asJson,
                     "fingerprint" -> fp.asJson
@@ -541,11 +546,13 @@ class MeshService private (
       accOpt <- accountRef.get
       acc <- IO.fromOption(accOpt)(new RuntimeException("Not logged in"))
       cloudUrl <- getCloudUrl
-      body = Json.obj(
-        "action" -> action.asJson,
-        "userId" -> acc.userId.asJson,
-        "sessionToken" -> acc.sessionToken.asJson
-      ).deepMerge(Json.obj(extraFields*))
+      body = Json
+        .obj(
+          "action" -> action.asJson,
+          "userId" -> acc.userId.asJson,
+          "sessionToken" -> acc.sessionToken.asJson
+        )
+        .deepMerge(Json.obj(extraFields*))
       resp <- callCloud(cloudUrl, body)
     yield resp
 
@@ -591,9 +598,10 @@ class MeshService private (
 
       tryUdp match
         case s if s.nonEmpty => s
-        case _ => tryInterfaces match
-          case s if s.nonEmpty => s
-          case _ => fallback
+        case _ =>
+          tryInterfaces match
+            case s if s.nonEmpty => s
+            case _ => fallback
     }
 
   private def getCloudUrl: IO[String] =

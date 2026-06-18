@@ -1,4 +1,5 @@
 package nebflow.mesh
+
 import nebflow.core.PathUtil
 
 import cats.effect.IO
@@ -124,6 +125,8 @@ object DeviceIdentity:
       results.toMap
     }
 
+  end detectCapabilities
+
   def loadOrCreate: IO[DeviceIdentity] =
     IO.blocking {
       if os.exists(devicePath) then
@@ -204,7 +207,9 @@ end FileFingerprint
 // ===== Cloud File Download =====
 
 case class CloudFileDownload(path: String, content: String, fingerprint: FileFingerprint)
+
 object CloudFileDownload:
+
   given Decoder[CloudFileDownload] = Decoder.instance { c =>
     for
       path <- c.downField("path").as[String]

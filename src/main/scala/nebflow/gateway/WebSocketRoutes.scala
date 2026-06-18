@@ -1,4 +1,5 @@
 package nebflow.gateway
+
 import nebflow.core.PathUtil
 
 import cats.effect.std.{Dispatcher, Queue}
@@ -667,19 +668,18 @@ class WebSocketRoutes(
               (nebflow.core.tools.MeshTool.currentIncrementalSyncEngine match
                 case Some(engine) =>
                   engine.pullSessionIncremental(sessionId).handleErrorWith(_ => IO.unit)
-                case None => IO.unit
-              ) *> sessionService
-              .switchSession(sessionId)
-              .flatMap { _ =>
-                val telStart = sharedResources.telemetry.fold(IO.unit)(
-                  _.record("session_start", io.circe.JsonObject("session_id" -> sessionId.asJson))
-                )
-                sendAgentSessionList(wsSend, sessionId) *>
-                  sendMemoryStatus(wsSend, sessionId) *> telStart
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
+                case None => IO.unit) *> sessionService
+                .switchSession(sessionId)
+                .flatMap { _ =>
+                  val telStart = sharedResources.telemetry.fold(IO.unit)(
+                    _.record("session_start", io.circe.JsonObject("session_id" -> sessionId.asJson))
+                  )
+                  sendAgentSessionList(wsSend, sessionId) *>
+                    sendMemoryStatus(wsSend, sessionId) *> telStart
+                }
+                .handleErrorWith { e =>
+                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+                }
           else IO.unit
           end if
 

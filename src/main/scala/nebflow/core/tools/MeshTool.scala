@@ -101,8 +101,7 @@ Available devices are listed in the environment info table.""".stripMargin
       case "list_peers" => listPeers
       case "QueryJob" =>
         val device = input("device").flatMap(_.asString).getOrElse("")
-        if device.isEmpty then
-          IO.pure(Left(ToolError("Missing device parameter for QueryJob.")))
+        if device.isEmpty then IO.pure(Left(ToolError("Missing device parameter for QueryJob.")))
         else remoteExec(device, "QueryJob", input)
       case "Bash" | "Read" | "Write" | "Edit" | "Glob" | "Grep" =>
         val device = input("device").flatMap(_.asString).getOrElse("")
@@ -110,7 +109,11 @@ Available devices are listed in the environment info table.""".stripMargin
           IO.pure(Left(ToolError("Missing device parameter. Use list_peers to find available devices.")))
         else remoteExec(device, action, input)
       case _ =>
-        IO.pure(Left(ToolError(s"Unknown action: $action. Use list_peers, Bash, QueryJob, Read, Write, Edit, Glob, or Grep.")))
+        IO.pure(
+          Left(ToolError(s"Unknown action: $action. Use list_peers, Bash, QueryJob, Read, Write, Edit, Glob, or Grep."))
+        )
+    end match
+  end call
 
   // ---- Actions ----
 
@@ -170,27 +173,35 @@ Available devices are listed in the environment info table.""".stripMargin
         // For background jobs, just submit and return relayId — don't block
         val isBackground = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
         if isBackground then
-          for
-            relayId <- css.relaySubmit(peer.deviceId, action, buildParams(action, input).asJson)
+          for relayId <- css
+              .relaySubmit(peer.deviceId, action, buildParams(action, input).asJson)
               .handleErrorWith(e => IO.pure(""))
           yield
             if relayId.nonEmpty then
-              Right(s"Submitted to ${peer.deviceName} via cloud relay (relayId: $relayId). The command is running in background on the remote device. Use Mesh action=QueryJob to check status.")
+              Right(
+                s"Submitted to ${peer.deviceName} via cloud relay (relayId: $relayId). The command is running in background on the remote device. Use Mesh action=QueryJob to check status."
+              )
             else
               Left(ToolError(s"P2P failed (${p2pError.message}) and relay submit also failed. Device may be offline."))
         else
           for
-            relayId <- css.relaySubmit(peer.deviceId, action, buildParams(action, input).asJson)
+            relayId <- css
+              .relaySubmit(peer.deviceId, action, buildParams(action, input).asJson)
               .handleErrorWith(e => IO.pure(""))
             result <-
               if relayId.isEmpty then
-                IO.pure(Left(ToolError(s"P2P failed (${p2pError.message}) and relay submit also failed. Device may be offline.")))
+                IO.pure(
+                  Left(
+                    ToolError(s"P2P failed (${p2pError.message}) and relay submit also failed. Device may be offline.")
+                  )
+                )
               else
                 css.relayFetchResultBlocking(relayId, timeout = 180.seconds).map {
                   case Right(output) => Right(output)
                   case Left(err) => Left(ToolError(s"Relay error: $err"))
                 }
           yield result
+        end if
 
   // ---- Helpers ----
 
@@ -319,3 +330,4 @@ object MeshTool:
   def register(meshService: MeshService): Unit =
     meshServiceOpt = Some(meshService)
     ToolRegistry.registerTool(new MeshTool(meshService))
+end MeshTool

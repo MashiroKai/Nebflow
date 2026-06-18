@@ -50,7 +50,7 @@ class DreamSchedulerSpec extends munit.FunSuite:
   /** Short durations for fast tests. */
   private val Debounce = 50.millis
   private val FullCycle = 999.hours // effectively never fires in tests
-  private val Timeout = 999.hours   // effectively never fires in tests
+  private val Timeout = 999.hours // effectively never fires in tests
 
   private def mkEntry(content: String): DreamCommand.ProcessEntry =
     DreamCommand.ProcessEntry("user", content, None, "test", None)
@@ -102,7 +102,7 @@ class DreamSchedulerSpec extends munit.FunSuite:
 
     testKit.run(mkEntry("e1"))
     Thread.sleep(Debounce.toMillis / 2)
-    testKit.run(mkEntry("e2"))  // should NOT restart debounce
+    testKit.run(mkEntry("e2")) // should NOT restart debounce
 
     // Total sleep < debounce → no trigger yet
     Thread.sleep(Debounce.toMillis / 2)
@@ -400,6 +400,7 @@ class DreamSchedulerSpec extends munit.FunSuite:
   // ============================================================
 
   test("BUG REPRO: entries are NOT lost when WriteMemory fires during Dream processing") {
+
     /**
      * Before the fix:
      *   - idle receives e1, debounce, FlushEntries → triggerDream([e1]) → idle(Nil)
