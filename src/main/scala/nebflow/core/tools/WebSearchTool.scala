@@ -241,14 +241,21 @@ Usage:
         case "Semantic Scholar" =>
           val encoded = java.net.URLEncoder.encode(query, "UTF-8")
           val url = s"${engine.url}?query=$encoded&fields=title,abstract,year,authors,externalIds,openAccessPdf&limit=8"
-          val resp1 = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
+          // Optional API key for higher rate limits (https://www.semanticscholar.org/product/api#api-key-form)
+          val apiKey = sys.env.getOrElse("SEMANTIC_SCHOLAR_API_KEY", "")
+          val baseReq = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways)
+          val reqWithKey = if apiKey.nonEmpty then baseReq.header("x-api-key", apiKey) else baseReq
+          val resp1 = reqWithKey.send(backend)
           if resp1.code.isSuccess then
             Right(extractSemanticScholarResults(resp1.body))
           else if resp1.code.code == 429 then
             // Rate limited: wait and retry once
-            Thread.sleep(2000)
-            val resp2 = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
-            Right(if resp2.code.isSuccess then extractSemanticScholarResults(resp2.body) else "")
+            Thread.sleep(5000)
+            val resp2 = reqWithKey.send(backend)
+            if resp2.code.isSuccess then Right(extractSemanticScholarResults(resp2.body))
+            else Left("Semantic Scholar rate limited (429). Try engine=arXiv or engine=Crossref instead. " +
+                     "For reliable access, apply for a free API key at https://www.semanticscholar.org/product/api#api-key-form " +
+                     "and set SEMANTIC_SCHOLAR_API_KEY env var.")
           else
             Right("")
 

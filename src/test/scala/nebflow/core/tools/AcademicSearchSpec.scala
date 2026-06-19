@@ -27,6 +27,8 @@ class AcademicSearchSpec extends CatsEffectSuite:
       case Right(result) =>
         assert(result.contains("**"), s"should have titles: ${result.take(200)}")
         println(s"\n=== Semantic Scholar result preview ===\n${result.take(500)}")
+      case Left(err) if err.message.contains("429") || err.message.contains("rate limited") =>
+        println(s"\n=== Semantic Scholar skipped (rate limited) ===")
       case Left(err) => fail(s"Semantic Scholar failed: ${err.message}")
     }
   }
