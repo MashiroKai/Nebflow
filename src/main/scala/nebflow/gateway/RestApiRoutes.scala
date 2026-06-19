@@ -408,36 +408,20 @@ class RestApiRoutes(
           }
       }
 
-    // Peer notification — lightweight ping to trigger immediate sync (push-based)
+    // Peer notification — lightweight ping to trigger immediate sync
     case req @ POST -> Root / "mesh" / "notify" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
-        case Right(_) =>
+        case Right(ms) =>
           req.as[Json].flatMap { body =>
             val notifType = body.hcursor.downField("type").as[String].getOrElse("")
-            val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
-            // Fire-and-forget: trigger immediate pull based on notification type
+            // Fire-and-forget: trigger immediate sync based on notification type
             notifType match
-              case "session" if sessionId.nonEmpty =>
-                nebflow.core.tools.MeshTool.currentIncrementalSyncEngine.foreach { engine =>
-                  sharedResources.dispatcher.unsafeRunAndForget(
-                    engine.pullSessionIncremental(sessionId).handleErrorWith(_ => IO.unit)
-                  )
-                }
-                Ok(Json.obj("ok" -> true.asJson))
-              case "session" =>
-                nebflow.core.tools.MeshTool.currentIncrementalSyncEngine.foreach { engine =>
-                  sharedResources.dispatcher.unsafeRunAndForget(
-                    engine.stateSync.handleErrorWith(_ => IO.unit)
-                  )
-                }
-                Ok(Json.obj("ok" -> true.asJson))
-              case "file" =>
-                nebflow.core.tools.MeshTool.currentIncrementalSyncEngine.foreach { engine =>
-                  sharedResources.dispatcher.unsafeRunAndForget(
-                    engine.syncFilesIncremental.handleErrorWith(_ => IO.unit)
-                  )
-                }
+              case "file" | "session" =>
+                // Unified: just pull changed files from cloud
+                sharedResources.dispatcher.unsafeRunAndForget(
+                  ms.syncFilesWithCloud.handleErrorWith(_ => IO.unit)
+                )
                 Ok(Json.obj("ok" -> true.asJson))
               case "relay" =>
                 nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>

@@ -28,6 +28,30 @@ class CloudSessionSync private (
 ):
   private val logger = NebflowLogger.forName("nebflow.cloud-sync")
 
+  /** Notify all reachable peers to trigger immediate sync. Fire-and-forget. */
+  def notifyPeersSync: IO[Unit] =
+    import sttp.client4.*
+    import scala.concurrent.duration.*
+    for
+      peers <- meshService.peers
+      _ <- peers.traverse_ { peer =>
+        if peer.address.nonEmpty then
+          IO.blocking {
+            try
+              basicRequest
+                .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/notify"))
+                .contentType("application/json")
+                .body("""{"type":"file"}""")
+                .readTimeout(2.seconds)
+                .response(asStringAlways)
+                .send(meshService.httpBackend)
+              ()
+            catch case _: Exception => ()
+          }
+        else IO.unit
+      }
+    yield ()
+
   // ===== Session Index Sync =====
 
   /** Push local session index (metadata + folders) to cloud. */
@@ -364,7 +388,7 @@ class CloudSessionSync private (
   private def fastLoop(fastCycle: IO[Unit]): IO[Unit] =
     meshService.isLoggedIn.flatMap { loggedIn =>
       val action = if loggedIn then fastCycle.handleErrorWith(_ => IO.unit) else IO.unit
-      action.flatMap(_ => IO.sleep(5.seconds)).flatMap(_ => fastLoop(fastCycle))
+      action.flatMap(_ => IO.sleep(3.seconds)).flatMap(_ => fastLoop(fastCycle))
     }
 
   // ===== Relay Command Execution (target device side) =====
