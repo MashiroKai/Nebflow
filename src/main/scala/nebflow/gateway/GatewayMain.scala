@@ -316,20 +316,25 @@ object GatewayMain extends IOApp.Simple:
 
                                       // Create sync services
                                       val cloudSessionSync = nebflow.mesh.CloudSessionSync(meshService, sessionStore)
-                                      val incrementalSync =
-                                        nebflow.mesh.IncrementalSyncEngine(meshService, sessionStore)
-                                      // Hook: incremental blob push on message change
-                                      sessionStore
-                                        .setSessionChangedHook(sid => incrementalSync.pushSessionIncremental(sid))
-                                      // Full sync cycle: state + files + all sessions
-                                      meshService.setPostSyncHook(incrementalSync.fullSyncCycle)
+                                      // Unified sync: ONE channel for ALL .nebflow files
+                                      // (sessions, memory, skills, config) via fingerprint diff
+                                      // Hook triggers immediate sync on any session change
+                                      sessionStore.setSessionChangedHook { _ =>
+                                        meshService.syncFilesWithCloud.handleErrorWith(_ => IO.unit) *>
+                                          cloudSessionSync.notifyPeersSync
+                                      }
+                                      // Full sync cycle (5 min) — same mechanism, safety net
+                                      meshService.setPostSyncHook(meshService.syncFilesWithCloud)
                                       // MeshTool: cloud session sync for busy lock + relay
                                       MeshTool.setCloudSessionSync(cloudSessionSync)
-                                      MeshTool.setIncrementalSyncEngine(incrementalSync)
-                                      // Background pollers: fast state sync (5s) + relay (10s)
+                                      // Background pollers: unified fast sync (5s) + relay (10s)
                                       cloudSessionSync.startBackgroundPollers(
                                         sharedResourcesWithDream.dispatcher,
-                                        incrementalSync.fastSyncCycle
+                                        meshService.syncFilesWithCloud
+                                      )
+                                      // Immediate sync on startup
+                                      sharedResourcesWithDream.dispatcher.unsafeRunAndForget(
+                                        meshService.syncFilesWithCloud.handleErrorWith(_ => IO.unit)
                                       )
 
                                       val sharedResourcesWithBridge =

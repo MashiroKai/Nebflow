@@ -17,10 +17,9 @@ let meshState = {
 
 let authTab = 'login'; // 'login' | 'register'
 
-// Read auth token from cookie
+// Read auth token from localStorage (port-scoped, avoids multi-instance conflict)
 function getAuthToken() {
-  const m = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/);
-  return m ? decodeURIComponent(m[1]) : '';
+  return localStorage.getItem('nebflow_token') || '';
 }
 
 // ---- API ----
