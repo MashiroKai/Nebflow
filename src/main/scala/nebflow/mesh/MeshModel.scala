@@ -219,6 +219,17 @@ object CloudFileDownload:
     yield CloudFileDownload(path, content, FileFingerprint(fpMtime, fpSize, fpHash))
   }
 
+/** COS-based download item — path + fileID, content fetched separately via file/download. */
+case class CloudFileDownloadItem(path: String, fileID: String)
+
+object CloudFileDownloadItem:
+  given Decoder[CloudFileDownloadItem] = Decoder.instance { c =>
+    for
+      path <- c.downField("path").as[String]
+      fileID <- c.downField("fileID").as[String]
+    yield CloudFileDownloadItem(path, fileID)
+  }
+
 // ===== Sync Diff =====
 
 case class SyncDiff(

@@ -32,12 +32,13 @@ export function connect() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const urlParams = new URLSearchParams(location.search);
   const token = urlParams.get('token') || '';
-  // Store token in cookie (HttpOnly not possible from JS, but Secure/SameSite are)
+  // Store token in localStorage (port-scoped, fixes multi-instance cookie conflict)
   if (token) {
-    document.cookie = `nebflow_token=${encodeURIComponent(token)}; path=/; SameSite=Strict; max-age=86400`;
+    localStorage.setItem('nebflow_token', token);
   }
-  // Connect without token in URL — server reads from cookie
-  const wsUrl = `${proto}//${location.host}/ws`;
+  // Connect with token in URL (server reads from query param)
+  const storedToken = localStorage.getItem('nebflow_token') || token;
+  const wsUrl = `${proto}//${location.host}/ws${storedToken ? '?token=' + encodeURIComponent(storedToken) : ''}`;
   try {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {

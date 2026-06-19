@@ -236,8 +236,10 @@ class WebSocketRoutes(
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
+      // Query param takes priority (from localStorage), cookie as fallback
+      val paramToken = req.params.get("token").getOrElse("")
       val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-      val provided = if cookieToken.nonEmpty then cookieToken else req.params.get("token").getOrElse("")
+      val provided = if paramToken.nonEmpty then paramToken else cookieToken
       if Auth.validateToken(provided, token) then
         for
           outbound <- Queue.unbounded[IO, WebSocketFrame]
@@ -2198,10 +2200,10 @@ class WebSocketRoutes(
   // Callback helpers
   // ============================================================
 
-  /** Extract token from cookie, Authorization header, or query param. */
+  /** Extract token from query param (localStorage), Authorization header, or cookie. */
   private def extractToken(req: org.http4s.Request[IO]): String =
-    val fromCookie = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-    if fromCookie.nonEmpty then fromCookie
+    val fromParam = req.params.get("token").getOrElse("")
+    if fromParam.nonEmpty then fromParam
     else
       val fromHeader = req.headers
         .get[org.http4s.headers.Authorization]
@@ -2210,7 +2212,7 @@ class WebSocketRoutes(
         }
         .getOrElse("")
       if fromHeader.nonEmpty then fromHeader
-      else req.params.get("token").getOrElse("")
+      else req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
 
   /**
    * POST /api/callbacks/inject
