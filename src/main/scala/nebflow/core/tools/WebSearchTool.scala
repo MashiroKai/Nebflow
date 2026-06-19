@@ -232,7 +232,8 @@ Usage:
       val backend = SharedBackend.instance
       val result: Either[String, String] = engine.name match
         case "arXiv" =>
-          val arxivQ = query.split("\\s+").map(w => s"all:$w").mkString("+AND+")
+          // Limit to 5 most important terms to avoid over-constrained AND queries
+          val arxivQ = query.split("\\s+").take(5).map(w => s"all:$w").mkString("+AND+")
           val url = s"${engine.url}?search_query=$arxivQ&start=0&max_results=8&sortBy=relevance"
           val resp = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
           Right(if resp.code.isSuccess then extractArxivResults(resp.body) else "")
@@ -240,8 +241,16 @@ Usage:
         case "Semantic Scholar" =>
           val encoded = java.net.URLEncoder.encode(query, "UTF-8")
           val url = s"${engine.url}?query=$encoded&fields=title,abstract,year,authors,externalIds,openAccessPdf&limit=8"
-          val resp = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
-          Right(if resp.code.isSuccess then extractSemanticScholarResults(resp.body) else "")
+          val resp1 = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
+          if resp1.code.isSuccess then
+            Right(extractSemanticScholarResults(resp1.body))
+          else if resp1.code.code == 429 then
+            // Rate limited: wait and retry once
+            Thread.sleep(2000)
+            val resp2 = basicRequest.get(uri"$url").readTimeout(20_000.millis).response(asStringAlways).send(backend)
+            Right(if resp2.code.isSuccess then extractSemanticScholarResults(resp2.body) else "")
+          else
+            Right("")
 
         case "Crossref" =>
           val encoded = java.net.URLEncoder.encode(query, "UTF-8")
@@ -390,13 +399,20 @@ Usage:
           Left(ToolError(err))
       }
     else
-      // General engines: batch racing (existing logic)
+      // General engines: batch racing
       val enginesToTry: List[SearchEngine] = engineName match
         case Some(name) =>
           engineMap.get(name).toList ++ ENGINES.filter(e => e.name != name && !ACADEMIC_NAMES.contains(e.name))
         case None => ENGINES.filter(e => !ACADEMIC_NAMES.contains(e.name))
 
-      val batches = enginesToTry.grouped(BATCH_SIZE).toList
+      // When a specific engine is specified, try it ALONE first (batch size 1),
+      // so it doesn't lose a race to faster-but-lower-quality engines like Bing CN.
+      // Fall back to batch racing only if the specified engine fails.
+      val batches: List[List[SearchEngine]] = engineName match
+        case Some(_) if enginesToTry.nonEmpty =>
+          List(enginesToTry.head) :: enginesToTry.tail.grouped(BATCH_SIZE).toList
+        case _ =>
+          enginesToTry.grouped(BATCH_SIZE).toList
 
       def raceBatch(batch: List[SearchEngine]): IO[Either[String, (SearchEngine, String)]] =
         val ios: List[IO[Either[String, (SearchEngine, String)]]] =
