@@ -278,8 +278,13 @@ Usage:
               "Anti-bot challenge not resolved. Try opening the URL in your browser manually."
             )
         else
-          val (extractedTitle, text, metaDesc) = extractHtmlText(result.content)
-          val title = extractedTitle.orElse(Option(result.title).filter(_.nonEmpty))
+          // Browser may return Markdown (Obscura/DOM-to-Markdown) or raw HTML
+          val (title, text, metaDesc) =
+            if result.isMarkdown then
+              (Option(result.title).filter(_.nonEmpty), result.content, None)
+            else
+              val (t, txt, md) = extractHtmlText(result.content)
+              (t.orElse(Option(result.title).filter(_.nonEmpty)), txt, md)
           val output = buildOutput(title, text, metaDesc, format)
           val (truncated, _) = truncate(output, maxChars)
           writeCache(url, truncated)
