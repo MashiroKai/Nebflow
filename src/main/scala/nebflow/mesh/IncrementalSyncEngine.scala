@@ -8,6 +8,7 @@ import io.circe.{Decoder, Json}
 import nebflow.core.NebflowLogger
 import nebflow.gateway.{Folder, SessionStore}
 import nebflow.shared.{*, given}
+import io.circe.generic.semiauto.*
 
 /** Remote session state from cloud (metadata only). */
 case class RemoteSessionState(
@@ -54,8 +55,8 @@ class IncrementalSyncEngine private (
   // ===== State Sync (lightweight, every 5 seconds) =====
 
   /**
-   * Push all local session states (metadata only) to cloud and pull remote states.
-   * This is the fast cycle — just hashes and metadata, no content.
+   * Push all local session states + folders to cloud and pull remote states.
+   * This is the fast cycle — just metadata, no content.
    */
   def stateSync: IO[Unit] =
     for
@@ -64,7 +65,7 @@ class IncrementalSyncEngine private (
         if !loggedIn then IO.unit
         else
           for
-            // Push local states + pull remote states
+            // Push local session states + pull remote states
             localSessions <- sessionStore.listSessions
             localFolders <- sessionStore.listAllFolders
             statesJson = localSessions.map(s =>
@@ -77,7 +78,7 @@ class IncrementalSyncEngine private (
               )
             )
             resp <- meshService.callCloudFunction("session/state-sync", "states" -> statesJson.asJson)
-            // Merge remote states into local
+            // Merge remote session states into local
             remoteStates <- IO.fromEither(
               resp.hcursor
                 .downField("states")
@@ -86,8 +87,18 @@ class IncrementalSyncEngine private (
             )
             _ <- sessionStore.mergeCloudIndex(
               remoteStates.map(s => SessionMeta(s.sessionId, s.name, s.createdAt, s.updatedAt, hasUnread = false)),
-              Nil // folders handled separately in full sync
+              Nil
             )
+            // Folders: push local + pull remote via existing index endpoint
+            _ <- meshService.callCloudFunction("session/push-index",
+              "sessions" -> localSessions.asJson,
+              "folders" -> localFolders.asJson
+            ).handleErrorWith(e => logger.debug(s"Push index (folders): ${e.getMessage}"))
+            pullResp <- meshService.callCloudFunction("session/pull-index").handleErrorWith(e =>
+              logger.debug(s"Pull index: ${e.getMessage}").as(io.circe.Json.Null)
+            )
+            remoteFolders = pullResp.hcursor.downField("folders").as[List[Folder]].getOrElse(Nil)
+            _ <- sessionStore.mergeCloudIndex(Nil, remoteFolders)
           yield ()
     yield ()
 

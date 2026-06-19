@@ -35,7 +35,9 @@ const MAX_SESSION_SIZE = 14 * 1024 * 1024 // 14MB — leave headroom under Cloud
 const COLLECTIONS = [
   'mesh_users', 'mesh_sessions', 'mesh_discovery',
   'mesh_sync_index', 'mesh_sync_data', 'mesh_busy', 'mesh_relay',
-  'mesh_sync_files'
+  'mesh_sync_files',
+  'mesh_blobs', 'mesh_session_state', 'mesh_session_logs', 'mesh_file_refs',
+  'mesh_file_chunks'
 ]
 let collectionsEnsured = false
 async function ensureCollections() {
@@ -80,6 +82,17 @@ exports.main = async (event, context) => {
       // File sync (cloud-based, replaces P2P)
       case 'file/sync':          return await fileSync(payload)
       case 'file/upload':        return await fileUpload(payload)
+      case 'file/download':      return await fileDownload(payload)
+      case 'file/upload-chunk':  return await fileUploadChunk(payload)
+      case 'file/upload-complete': return await fileUploadComplete(payload)
+      // Blob-based incremental sync (v2)
+      case 'blob/batch-check':     return await blobBatchCheck(payload)
+      case 'blob/upload':          return await blobUpload(payload)
+      case 'blob/batch-download':  return await blobBatchDownload(payload)
+      case 'session/state-sync':   return await sessionStateSync(payload)
+      case 'session/log-sync':     return await sessionLogSync(payload)
+      case 'session/log-get-all':  return await sessionLogGetAll(payload)
+      case 'file/ref-sync-v2':     return await fileRefSyncV2(payload)
       default: throw { status: 400, message: `Unknown action: ${action}` }
     }
   } catch (err) {
@@ -603,17 +616,14 @@ async function relayFetchResult(event) {
   }
 }
 
-// ===== File Sync (cloud-based, replaces P2P) =====
+// ===== File Sync (content in COS, metadata in document DB) =====
 
 /**
- * Phase 1 of cloud file sync: fingerprint exchange.
- *
- * Client sends local fingerprints { path: {mtime, size, hash} }.
- * Cloud compares with stored files and returns:
- *   - download: files where cloud is newer (with content)
- *   - uploadNeeded: paths where local is newer (cloud wants these)
+ * Fingerprint exchange — returns ONLY fileIDs, no content.
+ * Client downloads each file separately via file/download.
  *
  * Body: { userId, sessionToken, fingerprints: { path: {mtime, size, hash} } }
+ * Returns: { download: [{path, fileID}], uploadNeeded: [paths] }
  */
 async function fileSync(event) {
   const { userId, sessionToken, fingerprints } = event
@@ -621,8 +631,6 @@ async function fileSync(event) {
 
   const localFps = fingerprints || {}
   const col = db.collection('mesh_sync_files')
-
-  // Get all cloud files for this user
   const { data: cloudFiles } = await col.where({ userId: user.userId }).get()
   const cloudMap = new Map()
   for (const f of cloudFiles) cloudMap.set(f.path, f)
@@ -632,24 +640,22 @@ async function fileSync(event) {
 
   for (const [path, localFp] of Object.entries(localFps)) {
     const cloud = cloudMap.get(path)
-    if (!cloud) {
-      // Cloud doesn't have this file — local should upload
+    if (!cloud || !cloud.fileID) {
+      // Cloud doesn't have it (or old record without COS fileID) — local should upload
       uploadNeeded.push(path)
     } else if (localFp.hash === cloud.fingerprint?.hash) {
-      // Same content — no action needed
+      // Same — skip
     } else if (localFp.mtime > (cloud.fingerprint?.mtime || 0)) {
-      // Local is newer — cloud wants the update
       uploadNeeded.push(path)
     } else {
-      // Cloud is newer — send to client
-      download.push({ path, content: cloud.content, fingerprint: cloud.fingerprint })
+      download.push({ path, fileID: cloud.fileID })
     }
   }
 
-  // Check for files that exist on cloud but not locally (cloud-only)
   for (const [path, cloud] of cloudMap) {
-    if (!localFps[path]) {
-      download.push({ path, content: cloud.content, fingerprint: cloud.fingerprint })
+    if (!localFps[path] && cloud.fileID) {
+      // Cloud-only file with valid fileID — client needs to download
+      download.push({ path, fileID: cloud.fileID })
     }
   }
 
@@ -657,35 +663,242 @@ async function fileSync(event) {
 }
 
 /**
- * Phase 2 of cloud file sync: upload a file's content.
+ * Upload file to COS. Stores fileID in document DB (not content).
  *
- * Body: { userId, sessionToken, path, content (base64), fingerprint: {mtime, size, hash} }
+ * Body: { userId, sessionToken, path, content (base64), fingerprint }
  */
 async function fileUpload(event) {
   const { userId, sessionToken, path, content, fingerprint } = event
   const user = await verifySession(userId, sessionToken)
-
   if (!path) throw { status: 400, message: 'Missing path' }
 
+  const buffer = Buffer.from(content || '', 'base64')
   const col = db.collection('mesh_sync_files')
   const { data: existing } = await col.where({ userId: user.userId, path }).get()
 
+  // Upload to COS
+  const cloudPath = `nebflow-files/${user.userId}/${path}`
+  const uploadResult = await app.uploadFile({ cloudPath, fileContent: buffer })
+  const fileID = uploadResult.fileID
+
   const now = Date.now()
-  const record = {
-    userId: user.userId,
-    path,
-    content: content || '',
-    fingerprint: fingerprint || {},
-    updatedAt: now
-  }
+  const record = { userId: user.userId, path, fileID, fingerprint: fingerprint || {}, updatedAt: now }
 
   if (existing.length > 0) {
+    if (existing[0].fileID && existing[0].fileID !== fileID) {
+      try { await app.deleteFile({ fileIDList: [existing[0].fileID] }) } catch {}
+    }
     await col.doc(existing[0]._id).update(record)
   } else {
     await col.add({ ...record, createdAt: now })
   }
 
-  return { ok: true }
+  return { ok: true, size: buffer.length }
+}
+
+/**
+ * Download file from COS by fileID.
+ *
+ * Body: { userId, sessionToken, fileID }
+ * Returns: { content: base64 }
+ */
+async function fileDownload(event) {
+  const { userId, sessionToken, fileID } = event
+  const user = await verifySession(userId, sessionToken)
+  if (!fileID) throw { status: 400, message: 'Missing fileID' }
+
+  const result = await app.downloadFile({ fileID })
+  return { content: result.fileContent.toString('base64') }
+}
+
+// ===== Chunked file upload (for large files) =====
+
+/**
+ * Receive a single chunk of a large file.
+ * Body: { userId, sessionToken, path, chunkIndex, totalChunks, content (base64) }
+ */
+async function fileUploadChunk(event) {
+  const { userId, sessionToken, path, chunkIndex, totalChunks, content } = event
+  const user = await verifySession(userId, sessionToken)
+  if (!path) throw { status: 400, message: 'Missing path' }
+
+  await db.collection('mesh_file_chunks').add({
+    userId: user.userId,
+    path,
+    chunkIndex,
+    totalChunks,
+    content: content || '',
+    createdAt: Date.now()
+  })
+
+  return { ok: true, chunkIndex }
+}
+
+/**
+ * Assemble chunks, upload to COS, clean up.
+ * Body: { userId, sessionToken, path, fingerprint }
+ */
+async function fileUploadComplete(event) {
+  const { userId, sessionToken, path, fingerprint } = event
+  const user = await verifySession(userId, sessionToken)
+  if (!path) throw { status: 400, message: 'Missing path' }
+
+  const chunkCol = db.collection('mesh_file_chunks')
+  const { data: chunks } = await chunkCol
+    .where({ userId: user.userId, path })
+    .orderBy('chunkIndex', 'asc')
+    .get()
+
+  if (chunks.length === 0) throw { status: 400, message: 'No chunks found for path' }
+
+  // Assemble content
+  const fullContent = chunks.map(c => c.content).join('')
+  const buffer = Buffer.from(fullContent, 'base64')
+
+  // Upload to COS
+  const cloudPath = `nebflow-files/${user.userId}/${path}`
+  const uploadResult = await app.uploadFile({ cloudPath, fileContent: buffer })
+  const fileID = uploadResult.fileID
+
+  // Store metadata
+  const col = db.collection('mesh_sync_files')
+  const { data: existing } = await col.where({ userId: user.userId, path }).get()
+  const now = Date.now()
+  const record = { userId: user.userId, path, fileID, fingerprint: fingerprint || {}, updatedAt: now }
+
+  if (existing.length > 0) {
+    if (existing[0].fileID && existing[0].fileID !== fileID) {
+      try { await app.deleteFile({ fileIDList: [existing[0].fileID] }) } catch {}
+    }
+    await col.doc(existing[0]._id).update(record)
+  } else {
+    await col.add({ ...record, createdAt: now })
+  }
+
+  // Clean up chunks
+  await chunkCol.where({ userId: user.userId, path }).remove()
+
+  return { ok: true, size: buffer.length, chunks: chunks.length }
+}
+
+// ===== Blob-Based Incremental Sync (v2) =====
+
+const MAX_BLOB_SIZE = 10 * 1024 * 1024
+
+async function blobBatchCheck(event) {
+  const { userId, sessionToken, hashes } = event
+  const user = await verifySession(userId, sessionToken)
+  if (!hashes || hashes.length === 0) return { missing: [] }
+  const { data: existing } = await db.collection('mesh_blobs')
+    .where({ userId: user.userId, hash: db.command.in(hashes) })
+    .field({ hash: true }).get()
+  const existingSet = new Set(existing.map(d => d.hash))
+  return { missing: hashes.filter(h => !existingSet.has(h)) }
+}
+
+async function blobUpload(event) {
+  const { userId, sessionToken, hash, content } = event
+  const user = await verifySession(userId, sessionToken)
+  if (!hash || !content) throw { status: 400, message: 'Missing hash or content' }
+  const col = db.collection('mesh_blobs')
+  const { data: existing } = await col.where({ userId: user.userId, hash }).get()
+  if (existing.length > 0) return { ok: true, exists: true }
+  const buffer = Buffer.from(content, 'base64')
+  if (buffer.length > MAX_BLOB_SIZE) throw { status: 413, message: `Blob too large: ${buffer.length}` }
+  const cloudPath = `nebflow-blobs/${user.userId}/${hash}`
+  const result = await app.uploadFile({ cloudPath, fileContent: buffer })
+  await col.add({ userId: user.userId, hash, size: buffer.length, fileID: result.fileID, createdAt: Date.now() })
+  return { ok: true, size: buffer.length }
+}
+
+async function blobBatchDownload(event) {
+  const { userId, sessionToken, hashes } = event
+  const user = await verifySession(userId, sessionToken)
+  if (!hashes || hashes.length === 0) return { blobs: {} }
+  const { data: blobDocs } = await db.collection('mesh_blobs')
+    .where({ userId: user.userId, hash: db.command.in(hashes) }).get()
+  const results = {}
+  for (const doc of blobDocs) {
+    try {
+      const dl = await app.downloadFile({ fileID: doc.fileID })
+      results[doc.hash] = dl.fileContent.toString('base64')
+    } catch (e) { console.error(`[blob-dl] ${doc.hash}: ${e.message}`) }
+  }
+  return { blobs: results }
+}
+
+async function sessionStateSync(event) {
+  const { userId, sessionToken, states } = event
+  const user = await verifySession(userId, sessionToken)
+  const col = db.collection('mesh_session_state')
+  for (const s of (states || [])) {
+    const { data: existing } = await col.where({ userId: user.userId, sessionId: s.sessionId }).get()
+    if (existing.length > 0) {
+      if ((s.updatedAt || 0) > (existing[0].updatedAt || 0)) {
+        await col.doc(existing[0]._id).update({ name: s.name, agentName: s.agentName, folderId: s.folderId, updatedAt: s.updatedAt })
+      }
+    } else {
+      await col.add({ userId: user.userId, sessionId: s.sessionId, name: s.name, agentName: s.agentName, folderId: s.folderId, updatedAt: s.updatedAt || Date.now(), createdAt: Date.now() })
+    }
+  }
+  const { data: allStates } = await col.where({ userId: user.userId }).get()
+  return { states: allStates.map(s => ({ sessionId: s.sessionId, name: s.name, agentName: s.agentName, folderId: s.folderId, updatedAt: s.updatedAt || 0 })) }
+}
+
+async function sessionLogSync(event) {
+  const { userId, sessionToken, sessionId, messageHashes, uiMessageHashes } = event
+  const user = await verifySession(userId, sessionToken)
+  if (!sessionId) throw { status: 400, message: 'Missing sessionId' }
+  const col = db.collection('mesh_session_logs')
+  const { data: existing } = await col.where({ userId: user.userId, sessionId }).get()
+  let existingMsg = [], existingUi = []
+  if (existing.length > 0) { existingMsg = existing[0].messageHashes || []; existingUi = existing[0].uiMessageHashes || [] }
+  const existingMsgSet = new Set(existingMsg), existingUiSet = new Set(existingUi)
+  const newMsg = (messageHashes || []).filter(h => !existingMsgSet.has(h))
+  const newUi = (uiMessageHashes || []).filter(h => !existingUiSet.has(h))
+  const now = Date.now()
+  if (existing.length > 0) {
+    const update = { updatedAt: now }
+    if (newMsg.length > 0) update.messageHashes = db.command.push(newMsg)
+    if (newUi.length > 0) update.uiMessageHashes = db.command.push(newUi)
+    await col.doc(existing[0]._id).update(update)
+    return { messageHashes: [...existingMsg, ...newMsg], uiMessageHashes: [...existingUi, ...newUi], updatedAt: now }
+  } else {
+    const msgH = messageHashes || [], uiH = uiMessageHashes || []
+    await col.add({ userId: user.userId, sessionId, messageHashes: msgH, uiMessageHashes: uiH, createdAt: now, updatedAt: now })
+    return { messageHashes: msgH, uiMessageHashes: uiH, updatedAt: now }
+  }
+}
+
+async function sessionLogGetAll(event) {
+  const { userId, sessionToken } = event
+  const user = await verifySession(userId, sessionToken)
+  const { data: logs } = await db.collection('mesh_session_logs').where({ userId: user.userId }).get()
+  return { logs: logs.map(l => ({ sessionId: l.sessionId, messageHashes: l.messageHashes || [], uiMessageHashes: l.uiMessageHashes || [], updatedAt: l.updatedAt || 0 })) }
+}
+
+async function fileRefSyncV2(event) {
+  const { userId, sessionToken, files } = event
+  const user = await verifySession(userId, sessionToken)
+  const col = db.collection('mesh_file_refs')
+  const { data: cloudFiles } = await col.where({ userId: user.userId }).get()
+  const cloudMap = new Map(cloudFiles.map(f => [f.path, f.hash]))
+  const localFiles = files || {}
+  const needUpload = [], needDownload = []
+  for (const [path, hash] of Object.entries(localFiles)) {
+    const cloudHash = cloudMap.get(path)
+    if (cloudHash !== hash) {
+      needUpload.push(path)
+      const { data: existing } = await col.where({ userId: user.userId, path }).get()
+      if (existing.length > 0) await col.doc(existing[0]._id).update({ hash, updatedAt: Date.now() })
+      else await col.add({ userId: user.userId, path, hash, createdAt: Date.now(), updatedAt: Date.now() })
+    }
+  }
+  const resultFiles = {}
+  for (const f of cloudFiles) resultFiles[f.path] = f.hash
+  for (const [path, hash] of Object.entries(localFiles)) resultFiles[path] = hash
+  for (const [path, cloudHash] of cloudMap) { if (localFiles[path] !== cloudHash) needDownload.push(path) }
+  return { files: resultFiles, needUpload, needDownload }
 }
 
 // ===== Session Verification =====

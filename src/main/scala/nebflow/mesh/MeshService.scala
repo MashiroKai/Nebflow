@@ -254,27 +254,51 @@ class MeshService private (
     IO.blocking {
       val base = PathUtil.dataRoot
       val builder = Map.newBuilder[String, FileFingerprint]
-      for path <- List(base / "NEBFLOW.md", base / "memory.md"); fp <- FileFingerprint.compute(path)
-      do builder += path.relativeTo(base).toString -> fp
+
+      def addFile(path: os.Path): Unit =
+        FileFingerprint.compute(path).foreach(fp =>
+          builder += path.relativeTo(base).toString -> fp
+        )
+
+      // Core files
+      addFile(base / "NEBFLOW.md")
+      addFile(base / "memory.md")
+
+      // Sessions — _index.json, {id}.json, {id}.ui.json, {id}.tasks.json
+      val sessionsDir = base / "sessions"
+      if os.exists(sessionsDir) then
+        for f <- os.walk(sessionsDir).filter(os.isFile) if f.last.endsWith(".json") do
+          addFile(f)
+
+      // Config files
+      addFile(base / "config.json")
+      addFile(base / "model_config.json")
+      val compactDir = base / "compact"
+      if os.exists(compactDir) then
+        for f <- os.list(compactDir).filter(_.last.endsWith(".json")) do addFile(f)
+
+      // Agent memory
       val agentsDir = base / "agents"
       if os.exists(agentsDir) then
         for agentDir <- os.list(agentsDir).filter(os.isDir) do
-          val memFile = agentDir / "memory.md"
-          FileFingerprint.compute(memFile).foreach(fp => builder += memFile.relativeTo(base).toString -> fp)
+          addFile(agentDir / "memory.md")
+
+      // Folder memory
       val foldersDir = base / "folders"
       if os.exists(foldersDir) then
-        for f <- os.list(foldersDir).filter(_.last.endsWith(".memory.md")) do
-          FileFingerprint.compute(f).foreach(fp => builder += f.relativeTo(base).toString -> fp)
+        for f <- os.list(foldersDir).filter(_.last.endsWith(".memory.md")) do addFile(f)
+
+      // Memory entries
       val memoryDir = base / "memory"
       if os.exists(memoryDir) then
-        for f <- os.list(memoryDir).filter(_.last.endsWith(".md")) do
-          FileFingerprint.compute(f).foreach(fp => builder += f.relativeTo(base).toString -> fp)
+        for f <- os.list(memoryDir).filter(_.last.endsWith(".md")) do addFile(f)
+
+      // Skills
       val skillsDir = base / "skills"
       if os.exists(skillsDir) then
         for skillDir <- os.list(skillsDir).filter(os.isDir) do
-          FileFingerprint
-            .compute(skillDir / "skill.md")
-            .foreach(fp => builder += (skillDir / "skill.md").relativeTo(base).toString -> fp)
+          addFile(skillDir / "skill.md")
+
       builder.result()
     }
 
@@ -403,46 +427,101 @@ class MeshService private (
       }
     yield ()
 
-  /** Cloud-based file sync — replaces P2P syncWithPeer. */
+  /** Cloud-based file sync — guarded against concurrent execution. */
+  private val syncLock = new java.util.concurrent.atomic.AtomicBoolean(false)
+
   def syncFilesWithCloud: IO[Unit] =
-    for
-      loggedIn <- isLoggedIn
-      _ <-
-        if !loggedIn then IO.unit
-        else
-          for
-            localFps <- computeLocalFingerprints
-            // Phase 1: fingerprint exchange
-            resp <- callCloudFunction("file/sync", "fingerprints" -> localFps.asJson)
-            // Phase 2: download cloud-newer files
-            downloads <- IO.fromEither(
-              resp.hcursor
-                .downField("download")
-                .as[List[CloudFileDownload]]
-                .leftMap(e => new RuntimeException(s"Decode download: ${e.getMessage}"))
-            )
-            _ <- downloads.traverse_ { f =>
-              val bytes = java.util.Base64.getDecoder.decode(f.content)
-              writeLocalFile(f.path, bytes) *> syncStore.updateSnapshot(f.path, f.fingerprint)
-            }
-            // Phase 3: upload local-newer files
-            uploadNeeded = resp.hcursor.downField("uploadNeeded").as[List[String]].getOrElse(Nil)
-            _ <- uploadNeeded.traverse_ { p =>
-              readLocalFile(p).flatMap {
-                case Some((content, fp)) =>
-                  val b64 = java.util.Base64.getEncoder.encodeToString(content)
-                  callCloudFunction(
-                    "file/upload",
-                    "path" -> p.asJson,
-                    "content" -> b64.asJson,
-                    "fingerprint" -> fp.asJson
-                  ).void.handleErrorWith(e => logger.warn(s"Upload $p failed: ${e.getMessage}"))
-                case None => IO.unit
+    if !syncLock.compareAndSet(false, true) then IO.unit
+    else
+      (for
+        loggedIn <- isLoggedIn
+        _ <-
+          if !loggedIn then IO.unit
+          else
+            for
+              localFps <- computeLocalFingerprints
+              resp <- callCloudFunction("file/sync", "fingerprints" -> localFps.asJson)
+              downloadItems = resp.hcursor.downField("download").as[List[CloudFileDownloadItem]].getOrElse(Nil)
+              _ <- downloadItems.traverse_ { item =>
+                downloadFileFromCloud(item.fileID).flatMap {
+                  case Some(bytes) => writeLocalFile(item.path, bytes)
+                  case None => logger.warn(s"Download ${item.path}: no content")
+                }.handleErrorWith(e => logger.warn(s"Download ${item.path}: ${e.getMessage}"))
               }
-            }
-            _ <- logger.info(s"Cloud file sync: ${downloads.size} downloaded, ${uploadNeeded.size} uploaded")
-          yield ()
-    yield ()
+              uploadNeeded = resp.hcursor.downField("uploadNeeded").as[List[String]].getOrElse(Nil)
+              // Batch: 30 files per cycle, 5 parallel at a time
+              uploadBatch = uploadNeeded.take(30)
+              _ <- uploadBatch.grouped(5).toList.traverse_ { chunk =>
+                chunk.parTraverse_ { p =>
+                  readLocalFile(p).flatMap {
+                    case Some((content, fp)) =>
+                      uploadFileChunked(p, content, fp).handleErrorWith(e => logger.warn(s"Upload $p: ${e.getMessage}"))
+                    case None => IO.unit
+                  }
+                }
+              }
+              _ <- IO.whenA(downloadItems.nonEmpty || uploadBatch.nonEmpty)(
+                logger.info(s"Cloud file sync: ${downloadItems.size} downloaded, ${uploadBatch.size} uploaded (${uploadNeeded.size - uploadBatch.size} remaining)")
+              )
+            yield ()
+      yield ()).guarantee(IO(syncLock.set(false)))
+
+  /** Upload file to cloud. Uses chunked upload for large files to avoid payload limits. */
+  private def uploadFileChunked(path: String, content: Array[Byte], fp: FileFingerprint): IO[Unit] =
+    val compressed = gzipBytes(content)
+    val b64 = java.util.Base64.getEncoder.encodeToString(compressed)
+    val CHUNK_SIZE = 60000 // 60KB per chunk — well under CloudBase payload limit
+    if b64.length <= CHUNK_SIZE then
+      // Small file — single upload
+      callCloudFunction("file/upload",
+        "path" -> path.asJson,
+        "content" -> b64.asJson,
+        "fingerprint" -> fp.asJson
+      ).void
+    else
+      // Large file — chunked upload
+      val chunks = b64.grouped(CHUNK_SIZE).toList
+      val total = chunks.length
+      for
+        _ <- chunks.zipWithIndex.traverse_ { case (chunk, i) =>
+          callCloudFunction("file/upload-chunk",
+            "path" -> path.asJson,
+            "chunkIndex" -> i.asJson,
+            "totalChunks" -> total.asJson,
+            "content" -> chunk.asJson
+          ).void
+        }
+        _ <- callCloudFunction("file/upload-complete",
+          "path" -> path.asJson,
+          "fingerprint" -> fp.asJson
+        ).void
+      yield ()
+
+  /** Download a single file from COS by fileID. Content is gzipped — decompress. */
+  private def downloadFileFromCloud(fileID: String): IO[Option[Array[Byte]]] =
+    callCloudFunction("file/download", "fileID" -> fileID.asJson).flatMap { resp =>
+      val contentOpt = resp.hcursor.downField("content").as[String].toOption
+      IO.pure(contentOpt.map(b64 => gunzipBytes(java.util.Base64.getDecoder.decode(b64))))
+    }.handleErrorWith(e => logger.debug(s"COS download: ${e.getMessage}").as(None))
+
+  /** Gzip compress bytes. */
+  private def gzipBytes(bytes: Array[Byte]): Array[Byte] =
+    val bos = new java.io.ByteArrayOutputStream()
+    val gos = new java.util.zip.GZIPOutputStream(bos)
+    gos.write(bytes)
+    gos.close()
+    bos.toByteArray
+
+  /** Gzip decompress bytes. Falls back to raw if not gzipped. */
+  private def gunzipBytes(bytes: Array[Byte]): Array[Byte] =
+    try
+      val bis = new java.io.ByteArrayInputStream(bytes)
+      val gis = new java.util.zip.GZIPInputStream(bis)
+      val result = gis.readAllBytes()
+      gis.close()
+      result
+    catch
+      case _: java.util.zip.ZipException => bytes // not gzipped — return raw
 
   /** File sync moved to CloudSessionSync.fastSyncCycle (5s interval). This is a no-op kept for compatibility. */
   def syncAll: IO[Unit] = IO.unit
@@ -609,13 +688,14 @@ class MeshService private (
 
   private def callCloud(cloudUrl: String, body: Json): IO[Json] =
     IO.blocking {
+      val backend = DefaultSyncBackend() // fresh backend per call — thread-safe for parallel uploads
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(cloudUrl))
         .contentType("application/json")
         .body(body.noSpaces)
         .readTimeout(15.seconds)
         .response(asStringAlways)
-        .send(httpBackend)
+        .send(backend)
       if !resp.code.isSuccess then throw new RuntimeException(s"Cloud API ${resp.code}: ${resp.body.take(200)}")
       io.circe.parser.decode[Json](resp.body) match
         case Right(json) =>

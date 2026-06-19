@@ -171,10 +171,9 @@ window.addEventListener('message', (e) => {
     });
   }
 });
-/** Read the nebflow auth token from cookie (set by ws.js on connect). */
+/** Read the nebflow auth token from localStorage (set by ws.js on connect). */
 function getNfToken() {
-  const match = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : '';
+  return localStorage.getItem('nebflow_token') || '';
 }
 
 /** Inject auth token into /api/nf-file URLs so the sandboxed iframe can fetch them.
