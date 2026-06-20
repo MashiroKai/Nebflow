@@ -678,42 +678,47 @@ private[agent] trait AgentCore:
     ctx: org.apache.pekko.actor.typed.scaladsl.ActorContext[AgentCommand],
     toolCtx: ToolContext
   ): IO[ToolExecResult] =
-    permissionDeferredRef.get.flatMap {
-      case Some(_) =>
-        IO.pure(ToolExecResult("Another permission request is already pending", isError = true))
+    // Use Ref.modify for atomic check-and-set — prevents the race condition where
+    // multiple .parTraverse fibers all pass the None check before any set completes,
+    // causing orphaned Deferreds that are never completed (deadlock).
+    permissionDeferredRef.modify {
+      case existing @ Some(_) =>
+        // Another fiber already claimed the permission slot
+        (existing, IO.pure(ToolExecResult("Another permission request is already pending", isError = true)))
       case None =>
         val deferred = cats.effect.Deferred.unsafe[IO, Boolean]
-        permissionDeferredRef.set(Some(deferred)) *>
+        (Some(deferred),
           IO(ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
-          IO {
-            val summary = nebflow.core.summarizeToolCall(call)
-            // Determine danger level for frontend highlighting
-            val dangerLevel =
-              if call.name == "Bash" then
-                call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
-              else if call.name == "Curl" then
-                call.input("method").flatMap(_.asString).map(_.toUpperCase) match
-                  case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
-                  case _ => 0
-              else 1 // Unknown tools are level 1
-            Json.obj(
-              "type" -> "askPermission".asJson,
-              "sessionId" -> state.sessionId.asJson,
-              "toolName" -> call.name.asJson,
-              "summary" -> summary.asJson,
-              "input" -> call.input.asJson,
-              "dangerLevel" -> dangerLevel.asJson
-            )
-          }.flatMap { permJson =>
-            for
-              _ <- state.wsSend(permJson)
-              approved <- deferred.get
-              result <-
-                if approved then executeTool(call, toolCtx)
-                else IO.pure(ToolExecResult("Permission denied by user", isError = true))
-            yield result
-          }
-    }
+            IO {
+              val summary = nebflow.core.summarizeToolCall(call)
+              // Determine danger level for frontend highlighting
+              val dangerLevel =
+                if call.name == "Bash" then
+                  call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
+                else if call.name == "Curl" then
+                  call.input("method").flatMap(_.asString).map(_.toUpperCase) match
+                    case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
+                    case _ => 0
+                else 1 // Unknown tools are level 1
+              Json.obj(
+                "type" -> "askPermission".asJson,
+                "sessionId" -> state.sessionId.asJson,
+                "toolName" -> call.name.asJson,
+                "summary" -> summary.asJson,
+                "input" -> call.input.asJson,
+                "dangerLevel" -> dangerLevel.asJson
+              )
+            }.flatMap { permJson =>
+              for
+                _ <- state.wsSend(permJson)
+                approved <- deferred.get
+                result <-
+                  if approved then executeTool(call, toolCtx)
+                  else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+              yield result
+            }
+        )
+    }.flatten
 
   // ============================================================
   // Unified tool execution — all tools go through executeTool
