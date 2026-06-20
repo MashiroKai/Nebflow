@@ -26,7 +26,8 @@ object ToolReversibility:
     "TaskUpdate",
     "TaskList",
     "Card",
-    "RemoveUnnecessary"
+    "RemoveUnnecessary",
+    "Delegate"
   )
 
   private val SafeHttpMethods = Set("GET", "HEAD", "OPTIONS")
