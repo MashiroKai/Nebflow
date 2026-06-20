@@ -43,7 +43,9 @@ case class ToolContext(
   /** Full SharedResources — needed by DelegateTool to spawn sub-agent actors. */
   sharedResources: Option[SharedResources] = None,
   /** ActorSystem — needed by DelegateTool to spawn sub-agent actors. */
-  actorSystem: Option[org.apache.pekko.actor.typed.ActorSystem[?]] = None
+  actorSystem: Option[org.apache.pekko.actor.typed.ActorSystem[?]] = None,
+  /** Current conversation messages — needed by DelegateTool for fork support. */
+  messages: List[Message] = Nil
 )
 
 /** Tool error */
