@@ -286,7 +286,7 @@ private[agent] trait AgentCore:
           )
 
         // In compact mode, disable tools — model must respond with summary text only
-        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef)
+        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth)
 
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
@@ -405,7 +405,7 @@ private[agent] trait AgentCore:
             else Nil
           // --- LLM call ---
           // Use fresh agentDef from TurnContext for tools and system prompt
-          freshTools = if isCompactTurn then Some(Nil) else buildToolList(freshDef)
+          freshTools = if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth)
           systemStable = baseSystemStable +
             (if turnCtx.memoryBlock.nonEmpty then s"\n\n${turnCtx.memoryBlock}" else "") +
             stateForLlm.language
@@ -500,7 +500,7 @@ private[agent] trait AgentCore:
     ) => Behavior[AgentCommand]
   ): Behavior[AgentCommand] =
     // Build the full allowed tool set: whitelist + always-available + context-dependent
-    val allowedTools = buildAllowedToolSet(agentDef)
+    val allowedTools = buildAllowedToolSet(agentDef, depth)
     val (filteredCalls, droppedCalls) = result.toolCalls.partition(tc => allowedTools.contains(tc.name))
     if droppedCalls.nonEmpty then
       val dropped = droppedCalls.map(_.name).distinct.mkString(", ")
@@ -546,7 +546,9 @@ private[agent] trait AgentCore:
         ),
         folderId = state.folderId,
         mailboxAddress = state.session.sessionId,
-        dreamSchedulerRef = resources.dreamSchedulerRef
+        dreamSchedulerRef = resources.dreamSchedulerRef,
+        sharedResources = Some(resources),
+        actorSystem = Some(ctx.system)
       )
       freshResults <- filteredCalls
         .traverse { call =>
@@ -810,7 +812,7 @@ private[agent] trait AgentCore:
   // ============================================================
 
   /** Build the set of allowed tool names for filtering tool call results. */
-  protected def buildAllowedToolSet(agentDef: AgentDef): Set[String] =
+  protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int = 0): Set[String] =
     val isMcpTool = (name: String) => name.startsWith("mcp__")
     val base = agentDef.tools match
       case Nil => Set.empty[String]
@@ -825,12 +827,14 @@ private[agent] trait AgentCore:
           val prefix = s"mcp__${serverId}__"
           mcpToolNames.filter(_.startsWith(prefix))
         }.toSet
-    base ++ mcpTools
+    // Remove Delegate tool when at max depth — leaf agents cannot spawn children
+    val depthFiltered = if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" else base
+    depthFiltered ++ mcpTools
 
   end buildAllowedToolSet
 
-  protected def buildToolList(agentDef: AgentDef): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef)
+  protected def buildToolList(agentDef: AgentDef, depth: Int = 0): Option[List[ToolDefinition]] =
+    val allowedSet = buildAllowedToolSet(agentDef, depth)
     val tools = ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name))
     Some(tools)
   end buildToolList
