@@ -22,14 +22,16 @@ class DelegateToolSpec extends CatsEffectSuite:
   }
 
   test("inputSchema has required fields prompt and description") {
-    val props = DelegateTool.inputSchema("properties")
+    val props = DelegateTool
+      .inputSchema("properties")
       .flatMap(_.asObject)
       .getOrElse(fail("properties should be an object"))
     assert(props.contains("prompt"), "schema should have prompt")
     assert(props.contains("description"), "schema should have description")
     assert(props.contains("agentName"), "schema should have agentName")
 
-    val required = DelegateTool.inputSchema("required")
+    val required = DelegateTool
+      .inputSchema("required")
       .flatMap(_.asArray.map(_.map(_.asString.getOrElse(""))))
       .getOrElse(Nil)
     assert(required.contains("prompt"), "prompt should be required")
