@@ -282,7 +282,12 @@ final class ShellSession private (
 
   private def buildProcessBuilder(command: String, cwd: String): ProcessBuilder =
     val pb =
-      if isWindows then new ProcessBuilder("cmd.exe", "/c", command)
+      if isWindows then
+        // Prefix with "chcp 65001 >nul" to switch the console code page to UTF-8.
+        // Without this, cmd.exe and its child processes output in the system OEM
+        // code page (GBK/CP936 on Chinese Windows), causing garbled text when
+        // readStream decodes as UTF-8.
+        new ProcessBuilder("cmd.exe", "/c", "chcp 65001 >nul && " + command)
       else new ProcessBuilder("bash", "-c", command)
     // Empty or invalid working directory causes cmd.exe to fail on Windows
     // with "文件名、目录名或卷标语法不正确". Fall back to user home.
@@ -291,7 +296,13 @@ final class ShellSession private (
         sys.props.getOrElse("user.home", if isWindows then "C:\\" else "/tmp")
       else cwd
     pb.directory(new File(safeCwd))
-    if isWindows then pb.redirectInput(ProcessBuilder.Redirect.PIPE)
+    if isWindows then
+      pb.redirectInput(ProcessBuilder.Redirect.PIPE)
+      // Inject UTF-8 env vars for common runtimes that don't respect the
+      // console code page (e.g. Python uses the C runtime locale by default).
+      val env = pb.environment()
+      env.put("PYTHONUTF8", "1")
+      env.put("PYTHONIOENCODING", "utf-8")
     else pb.redirectInput(new File("/dev/null"))
     pb.redirectErrorStream(false) // stdout/stderr separated
     pb

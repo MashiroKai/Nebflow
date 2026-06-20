@@ -43,7 +43,9 @@ class StdioTransport private (
     val stderrThread = new Thread(
       () =>
         try
-          val errReader = new BufferedReader(new InputStreamReader(proc.getErrorStream))
+          val errReader = new BufferedReader(
+            new InputStreamReader(proc.getErrorStream, java.nio.charset.StandardCharsets.UTF_8)
+          )
           var line: String = null
           while running do
             line = errReader.readLine()
@@ -175,8 +177,15 @@ object StdioTransport:
         .redirectError(ProcessBuilder.Redirect.PIPE)
       env.foreach { case (k, v) => processBuilder.environment().put(k, v) }
       val proc = processBuilder.start()
-      val stdin = new PrintWriter(proc.getOutputStream, true)
-      val stdout = new BufferedReader(new InputStreamReader(proc.getInputStream))
+      // MCP JSON-RPC uses UTF-8. Explicit charset prevents garbled text on Windows
+      // where the default charset is GBK/CP936.
+      val stdin = new PrintWriter(
+        new java.io.OutputStreamWriter(proc.getOutputStream, java.nio.charset.StandardCharsets.UTF_8),
+        true
+      )
+      val stdout = new BufferedReader(
+        new InputStreamReader(proc.getInputStream, java.nio.charset.StandardCharsets.UTF_8)
+      )
       new StdioTransport(command, args, env, proc, stdin, stdout)
     }.flatTap { transport =>
       // Start reader threads after construction
