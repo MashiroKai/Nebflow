@@ -256,9 +256,7 @@ class MeshService private (
       val builder = Map.newBuilder[String, FileFingerprint]
 
       def addFile(path: os.Path): Unit =
-        FileFingerprint.compute(path).foreach(fp =>
-          builder += path.relativeTo(base).toString -> fp
-        )
+        FileFingerprint.compute(path).foreach(fp => builder += path.relativeTo(base).toString -> fp)
 
       // Core files
       addFile(base / "NEBFLOW.md")
@@ -267,37 +265,30 @@ class MeshService private (
       // Sessions — _index.json, {id}.json, {id}.ui.json, {id}.tasks.json
       val sessionsDir = base / "sessions"
       if os.exists(sessionsDir) then
-        for f <- os.walk(sessionsDir).filter(os.isFile) if f.last.endsWith(".json") do
-          addFile(f)
+        for f <- os.walk(sessionsDir).filter(os.isFile) if f.last.endsWith(".json") do addFile(f)
 
       // Config files
       addFile(base / "config.json")
       addFile(base / "model_config.json")
       val compactDir = base / "compact"
-      if os.exists(compactDir) then
-        for f <- os.list(compactDir).filter(_.last.endsWith(".json")) do addFile(f)
+      if os.exists(compactDir) then for f <- os.list(compactDir).filter(_.last.endsWith(".json")) do addFile(f)
 
       // Agent memory
       val agentsDir = base / "agents"
       if os.exists(agentsDir) then
-        for agentDir <- os.list(agentsDir).filter(os.isDir) do
-          addFile(agentDir / "memory.md")
+        for agentDir <- os.list(agentsDir).filter(os.isDir) do addFile(agentDir / "memory.md")
 
       // Folder memory
       val foldersDir = base / "folders"
-      if os.exists(foldersDir) then
-        for f <- os.list(foldersDir).filter(_.last.endsWith(".memory.md")) do addFile(f)
+      if os.exists(foldersDir) then for f <- os.list(foldersDir).filter(_.last.endsWith(".memory.md")) do addFile(f)
 
       // Memory entries
       val memoryDir = base / "memory"
-      if os.exists(memoryDir) then
-        for f <- os.list(memoryDir).filter(_.last.endsWith(".md")) do addFile(f)
+      if os.exists(memoryDir) then for f <- os.list(memoryDir).filter(_.last.endsWith(".md")) do addFile(f)
 
       // Skills
       val skillsDir = base / "skills"
-      if os.exists(skillsDir) then
-        for skillDir <- os.list(skillsDir).filter(os.isDir) do
-          addFile(skillDir / "skill.md")
+      if os.exists(skillsDir) then for skillDir <- os.list(skillsDir).filter(os.isDir) do addFile(skillDir / "skill.md")
 
       builder.result()
     }
@@ -443,10 +434,12 @@ class MeshService private (
               resp <- callCloudFunction("file/sync", "fingerprints" -> localFps.asJson)
               downloadItems = resp.hcursor.downField("download").as[List[CloudFileDownloadItem]].getOrElse(Nil)
               _ <- downloadItems.traverse_ { item =>
-                downloadFileFromCloud(item.fileID).flatMap {
-                  case Some(bytes) => writeLocalFile(item.path, bytes)
-                  case None => logger.warn(s"Download ${item.path}: no content")
-                }.handleErrorWith(e => logger.warn(s"Download ${item.path}: ${e.getMessage}"))
+                downloadFileFromCloud(item.fileID)
+                  .flatMap {
+                    case Some(bytes) => writeLocalFile(item.path, bytes)
+                    case None => logger.warn(s"Download ${item.path}: no content")
+                  }
+                  .handleErrorWith(e => logger.warn(s"Download ${item.path}: ${e.getMessage}"))
               }
               uploadNeeded = resp.hcursor.downField("uploadNeeded").as[List[String]].getOrElse(Nil)
               // Batch: 30 files per cycle, 5 parallel at a time
@@ -461,7 +454,9 @@ class MeshService private (
                 }
               }
               _ <- IO.whenA(downloadItems.nonEmpty || uploadBatch.nonEmpty)(
-                logger.info(s"Cloud file sync: ${downloadItems.size} downloaded, ${uploadBatch.size} uploaded (${uploadNeeded.size - uploadBatch.size} remaining)")
+                logger.info(
+                  s"Cloud file sync: ${downloadItems.size} downloaded, ${uploadBatch.size} uploaded (${uploadNeeded.size - uploadBatch.size} remaining)"
+                )
               )
             yield ()
       yield ()).guarantee(IO(syncLock.set(false)))
@@ -473,36 +468,36 @@ class MeshService private (
     val CHUNK_SIZE = 60000 // 60KB per chunk — well under CloudBase payload limit
     if b64.length <= CHUNK_SIZE then
       // Small file — single upload
-      callCloudFunction("file/upload",
-        "path" -> path.asJson,
-        "content" -> b64.asJson,
-        "fingerprint" -> fp.asJson
-      ).void
+      callCloudFunction("file/upload", "path" -> path.asJson, "content" -> b64.asJson, "fingerprint" -> fp.asJson).void
     else
       // Large file — chunked upload
       val chunks = b64.grouped(CHUNK_SIZE).toList
       val total = chunks.length
       for
         _ <- chunks.zipWithIndex.traverse_ { case (chunk, i) =>
-          callCloudFunction("file/upload-chunk",
+          callCloudFunction(
+            "file/upload-chunk",
             "path" -> path.asJson,
             "chunkIndex" -> i.asJson,
             "totalChunks" -> total.asJson,
             "content" -> chunk.asJson
           ).void
         }
-        _ <- callCloudFunction("file/upload-complete",
-          "path" -> path.asJson,
-          "fingerprint" -> fp.asJson
-        ).void
+        _ <- callCloudFunction("file/upload-complete", "path" -> path.asJson, "fingerprint" -> fp.asJson).void
       yield ()
+
+    end if
+
+  end uploadFileChunked
 
   /** Download a single file from COS by fileID. Content is gzipped — decompress. */
   private def downloadFileFromCloud(fileID: String): IO[Option[Array[Byte]]] =
-    callCloudFunction("file/download", "fileID" -> fileID.asJson).flatMap { resp =>
-      val contentOpt = resp.hcursor.downField("content").as[String].toOption
-      IO.pure(contentOpt.map(b64 => gunzipBytes(java.util.Base64.getDecoder.decode(b64))))
-    }.handleErrorWith(e => logger.debug(s"COS download: ${e.getMessage}").as(None))
+    callCloudFunction("file/download", "fileID" -> fileID.asJson)
+      .flatMap { resp =>
+        val contentOpt = resp.hcursor.downField("content").as[String].toOption
+        IO.pure(contentOpt.map(b64 => gunzipBytes(java.util.Base64.getDecoder.decode(b64))))
+      }
+      .handleErrorWith(e => logger.debug(s"COS download: ${e.getMessage}").as(None))
 
   /** Gzip compress bytes. */
   private def gzipBytes(bytes: Array[Byte]): Array[Byte] =
@@ -515,16 +510,44 @@ class MeshService private (
   /** Gzip decompress bytes. Falls back to raw if not gzipped. */
   private def gunzipBytes(bytes: Array[Byte]): Array[Byte] =
     try
-      val bis = new java.io.ByteArrayInputStream(bytes)
-      val gis = new java.util.zip.GZIPInputStream(bis)
-      val result = gis.readAllBytes()
-      gis.close()
-      result
-    catch
-      case _: java.util.zip.ZipException => bytes // not gzipped — return raw
+      val bis = java.io.ByteArrayInputStream(bytes)
+      val gis = java.util.zip.GZIPInputStream(bis)
+      try gis.readAllBytes()
+      finally gis.close()
+    catch case _: java.util.zip.ZipException => bytes // not gzipped — return raw
 
   /** File sync moved to CloudSessionSync.fastSyncCycle (5s interval). This is a no-op kept for compatibility. */
   def syncAll: IO[Unit] = IO.unit
+
+  /** Notify all reachable peers to trigger immediate sync. Fire-and-forget. */
+  def notifyPeers(notifType: String, sessionId: String = ""): IO[Unit] =
+    import scala.concurrent.duration.*
+    for
+      peers <- peersRef.get.map(_.values.toList)
+      _ <- peers.traverse_ { peer =>
+        if peer.address.nonEmpty then
+          IO.blocking {
+            try
+              val body =
+                if sessionId.nonEmpty then s"""{"type":"$notifType","sessionId":"$sessionId"}"""
+                else s"""{"type":"$notifType"}"""
+              basicRequest
+                .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/notify"))
+                .contentType("application/json")
+                .body(body)
+                .readTimeout(2.seconds)
+                .response(asStringAlways)
+                .send(httpBackend)
+              ()
+            catch
+              case e: Exception =>
+                logger.warnSync(s"Notify ${peer.deviceName}: ${e.getMessage.take(200)}")
+          }
+        else IO.unit
+      }
+    yield ()
+    end for
+  end notifyPeers
 
   /** Run one sync cycle: cloud discover + sync all peers + post-sync hook (cloud session sync, relay poll). */
   def runSyncCycle: IO[Unit] = cloudDiscover *> syncAll *> _postSyncHook
