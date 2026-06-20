@@ -114,9 +114,15 @@ object HookRunner:
 
   private def buildProcessBuilder(command: String, cwd: String): ProcessBuilder =
     val pb =
-      if isWindows then new ProcessBuilder("cmd.exe", "/c", command)
+      if isWindows then
+        // Force UTF-8 console code page to prevent encoding issues (see shell.scala)
+        new ProcessBuilder("cmd.exe", "/c", "chcp 65001 >nul && " + command)
       else new ProcessBuilder("bash", "-c", command)
     pb.directory(new java.io.File(cwd))
+    if isWindows then
+      val env = pb.environment()
+      env.put("PYTHONUTF8", "1")
+      env.put("PYTHONIOENCODING", "utf-8")
     pb
 
   private def executeCommand(
