@@ -280,7 +280,7 @@ private[agent] trait AgentCore:
             resources.dispatcher,
             state.wsSend,
             ctx,
-            AgentStreamEvent.AgentStart(agentDef.name, agentDef.description),
+            AgentStreamEvent.AgentStart(agentDef.name, agentDef.description, state.sessionName),
             isSubagent = true,
             state.sessionId
           )
