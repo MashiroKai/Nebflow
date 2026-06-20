@@ -47,8 +47,7 @@ object StringMatcher:
         // Collapse entire whitespace run into a single space
         val runStart = i
         i += 1
-        while i < s.length && (s.charAt(i) == ' ' || s.charAt(i) == '\t') do
-          i += 1
+        while i < s.length && (s.charAt(i) == ' ' || s.charAt(i) == '\t') do i += 1
         sb.append(' ')
         starts += runStart
         ends += i // i is past the end of the whitespace run
@@ -57,8 +56,11 @@ object StringMatcher:
         starts += i
         ends += i + 1
         i += 1
+    end while
 
     WhitespaceNormalized(sb.toString, starts.result(), ends.result())
+
+  end normalizeWhitespace
 
   /**
    * Given a whitespace-normalized match position, extract the corresponding
@@ -104,8 +106,7 @@ object StringMatcher:
         // Step 3: whitespace-insensitive (no quote handling)
         val wnSearch = normalizeWhitespace(search)
         val wsIdx = wnContent.text.indexOf(wnSearch.text)
-        if wsIdx >= 0 then
-          Some(extractOriginalSpan(content, wnContent, wsIdx, wnSearch.text.length))
+        if wsIdx >= 0 then Some(extractOriginalSpan(content, wnContent, wsIdx, wnSearch.text.length))
         else
           // Step 4: quote-normalized + whitespace-insensitive.
           // Search in wnContentQ (built from normContent) because the
@@ -114,9 +115,14 @@ object StringMatcher:
           val wnContentQ = normalizeWhitespace(normContent)
           val wnSearchQ = normalizeWhitespace(normSearch)
           val wsQIdx = wnContentQ.text.indexOf(wnSearchQ.text)
-          if wsQIdx >= 0 then
-            Some(extractOriginalSpan(content, wnContent, wsQIdx, wnSearchQ.text.length))
+          if wsQIdx >= 0 then Some(extractOriginalSpan(content, wnContent, wsQIdx, wnSearchQ.text.length))
           else None
+
+      end if
+
+    end if
+
+  end findActualString
 
   /**
    * When old_string matched via quote normalization, apply the file's
