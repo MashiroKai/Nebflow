@@ -39,7 +39,11 @@ case class ToolContext(
   // Agent identity for file history attribution
   mailboxAddress: Option[String] = None,
   // Dream scheduler — WriteMemoryTool sends entries here directly
-  dreamSchedulerRef: Option[ActorRef[DreamCommand]] = None
+  dreamSchedulerRef: Option[ActorRef[DreamCommand]] = None,
+  /** Full SharedResources — needed by DelegateTool to spawn sub-agent actors. */
+  sharedResources: Option[SharedResources] = None,
+  /** ActorSystem — needed by DelegateTool to spawn sub-agent actors. */
+  actorSystem: Option[org.apache.pekko.actor.typed.ActorSystem[?]] = None
 )
 
 /** Tool error */
