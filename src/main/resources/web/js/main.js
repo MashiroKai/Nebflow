@@ -1108,90 +1108,34 @@ onMessage('historyPage', (msg) => {
 });
 
 // --- Multi-agent events ---
+// Sub-agent activity is silently tracked but NOT rendered in the chat.
+// The parent's Delegate tool card (pending spinner → result) provides visual feedback.
 onMessage('agentStart', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
   state.activeAgentId = msg.name || msg.agentId;
-  const color = getAgentColor(state.activeAgentId);
-  if (!state.agentBubbles[state.activeAgentId]) {
-    const { chat } = state.dom;
-    const row = document.createElement('div');
-    row.className = 'row ai agent-row';
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble ai';
-    bubble.innerHTML = '<span class="thinking-text">' + randomThinkingText() + '</span>';
-    // Only show badge for non-default agents
-    if (state.activeAgentId && state.activeAgentId !== 'default') {
-      const badge = document.createElement('div');
-      badge.className = 'agent-badge';
-      badge.style.borderColor = color;
-      badge.style.color = color;
-      badge.textContent = state.activeAgentId;
-      row.appendChild(badge);
-    }
-    row.appendChild(bubble);
-    chat.appendChild(row);
-    state.agentBubbles[state.activeAgentId] = { bubble, text: '', row, badge: row.querySelector('.agent-badge') };
-  }
 });
 
-onMessage('agentTextDelta', (msg) => { resetStreamTimeout(msg.sessionId); if (isActive(msg)) appendAgentText(msg.agentId || state.activeAgentId, msg.delta); });
-onMessage('agentToolCallDetected', (msg) => { 
-  resetStreamTimeout(msg.sessionId); 
-  const aSid = msg.sessionId;
-  if (aSid && !state.sessionPendingTools[aSid]) state.sessionPendingTools[aSid] = { label: msg.name };
-  if (isActive(msg)) renderToolPending(msg.name, msg.sessionId); 
-});
-onMessage('agentToolStart', (msg) => { 
-  resetStreamTimeout(msg.sessionId); 
-  const aSid2 = msg.sessionId;
-  if (aSid2) state.sessionPendingTools[aSid2] = { label: msg.label };
-  if (isActive(msg)) renderToolPending(msg.label, msg.sessionId); 
-});
-onMessage('agentToolEnd', (msg) => {
-  resetStreamTimeout(msg.sessionId);
-  const aSid3 = msg.sessionId;
-  if (aSid3) delete state.sessionPendingTools[aSid3];
-  if (!isActive(msg)) return;
-  const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
-  if (data) saveMsg(data, msg.sessionId);
-});
+onMessage('agentTextDelta', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolCallDetected', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolStart', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolEnd', (msg) => { resetStreamTimeout(msg.sessionId); });
 onMessage('agentEnd', (msg) => {
   if (!isActive(msg)) return;
   clearBusyFor(msg);
   const id = msg.name || msg.agentId;
-  const a = state.agentBubbles[id];
-  if (a && a.text) {
-    saveMsg({ type: 'agent', agentId: id, text: a.text }, msg.sessionId || state.activeSessionId);
-  }
   finishAgent(id);
 });
 
-onMessage('agentThinking', (msg) => {
-  resetStreamTimeout(msg.sessionId);
-  if (!isActive(msg)) return;
-  if (state.activeAgentId && state.agentBubbles[state.activeAgentId]) {
-    state.agentBubbles[state.activeAgentId].bubble.innerHTML = '<span class="thinking-text">' + randomThinkingText() + '</span>';
-  }
-});
-
-onMessage('agentRetryStatus', (msg) => {
-  resetStreamTimeout(msg.sessionId);
-  if (isActive(msg)) renderRetryStatus(msg.message);
-});
+onMessage('agentThinking', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentRetryStatus', (msg) => { resetStreamTimeout(msg.sessionId); });
 
 onMessage('agentDone', (msg) => {
   if (!isActive(msg)) return;
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   consumeTurnDuration(sid);
-  Object.keys(state.agentBubbles).forEach(id => {
-    const a = state.agentBubbles[id];
-    if (a && a.text) {
-      saveMsg({ type: 'agent', agentId: id, text: a.text }, sid);
-    }
-    finishAgent(id);
-  });
+  Object.keys(state.agentBubbles).forEach(id => { finishAgent(id); });
   state.agentBubbles = {};
   state.activeAgentId = null;
   clearStatus();

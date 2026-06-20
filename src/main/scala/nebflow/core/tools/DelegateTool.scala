@@ -17,11 +17,14 @@ import scala.concurrent.duration.*
  *
  * Design (borrowed from Claude Code's AgentTool):
  *   - Parent agent calls Delegate with a self-contained prompt and target agent name.
- *   - A fresh sub-agent Actor is spawned via ActorSystem.systemActorOf (same
- *     pattern as MemoryAgentManager spawning the Dream agent).
+ *   - A fresh sub-agent Actor is spawned via ActorSystem.systemActorOf.
  *   - Sub-agent runs a single turn (UserInput -> LLM -> tools -> done), then
  *     returns its final assistant text via AgentEvent.Completed.
  *   - Parent receives the text as the tool result.
+ *
+ * Enhanced features:
+ *   - model: assign a specific model to the sub-agent (e.g. "zhipu/GLM-5.2")
+ *   - fork: pass current conversation context to the sub-agent (saves tokens via cache)
  *
  * Depth limit: when depth >= MaxDepth, the tool is not included in the agent's
  * tool list (filtered by buildToolList in AgentCore), making it impossible to
@@ -49,16 +52,17 @@ Use Delegate when:
 - A subtask requires deep focus without polluting your main conversation
 
 Key rules:
-- The sub-agent CANNOT see your conversation history. Every prompt must be self-contained with all context needed.
+- By default the sub-agent starts with a clean context (no conversation history). Every prompt must be self-contained.
+- Set fork=true to pass your current conversation context to the sub-agent. This saves tokens via prompt caching. Use fork when the subtask depends on your conversation context.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
 - For research: "Report specific file paths, line numbers, and findings. Do not modify files."
 - For implementation: "Make the change, run relevant tests, and report the result."
-- You can delegate to different agent types by specifying agentName (e.g. "Nebula"). Defaults to "Nebula".
+- You can delegate to different agent types by specifying agentName (e.g. "Nebula", "Lyra"). Defaults to "Nebula".
+- You can assign a specific model with the `model` parameter (format: "provider/model-id"). Use faster/cheaper models for simple tasks, stronger models for complex ones.
 - Multiple Delegate calls in a single response run in parallel.
 
 Do NOT use Delegate for:
 - Trivial tasks you can handle directly with Read/Bash/etc.
-- Tasks that require seeing your full conversation context.
 - Sequential tasks where each step depends on the previous step's result."""
 
   val inputSchema = JsonObject.fromIterable(
@@ -67,16 +71,25 @@ Do NOT use Delegate for:
       "properties" -> io.circe.Json.obj(
         "agentName" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Name of the agent definition to use (e.g. \"Nebula\"). Defaults to \"Nebula\".".asJson,
+          "description" -> "Name of the agent definition to use (e.g. \"Nebula\", \"Lyra\"). Defaults to \"Nebula\".".asJson,
           "default" -> "Nebula".asJson
         ),
         "prompt" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Self-contained task description for the sub-agent. Must include all context needed — the sub-agent cannot see your conversation.".asJson
+          "description" -> "Self-contained task description for the sub-agent. Must include all context needed unless fork=true.".asJson
         ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Short label for the task (shown in UI).".asJson
+        ),
+        "model" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> """Model to use for the sub-agent, in "provider/model-id" format (e.g. "zhipu/GLM-5.2"). If omitted, uses the default model.""".asJson
+        ),
+        "fork" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "If true, pass current conversation context to the sub-agent (enables prompt cache reuse, saves tokens). Default: false.".asJson,
+          "default" -> false.asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -86,7 +99,14 @@ Do NOT use Delegate for:
   def summarize(input: JsonObject): String =
     val desc = input("description").flatMap(_.asString).getOrElse("")
     val agent = input("agentName").flatMap(_.asString).getOrElse("Nebula")
-    s"Delegate($agent: $desc)"
+    val model = input("model").flatMap(_.asString)
+    val forked = input("fork").flatMap(_.asBoolean).getOrElse(false)
+    val suffix = List(
+      model.map(m => s"model=$m"),
+      if forked then Some("fork") else None
+    ).flatten.mkString(", ")
+    if suffix.nonEmpty then s"Delegate($agent: $desc [$suffix])"
+    else s"Delegate($agent: $desc)"
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 200 then result.take(197) + "..." else result
@@ -95,6 +115,8 @@ Do NOT use Delegate for:
     val prompt = input("prompt").flatMap(_.asString).getOrElse("")
     val description = input("description").flatMap(_.asString).getOrElse("subtask")
     val agentName = input("agentName").flatMap(_.asString).getOrElse("Nebula")
+    val modelRef = input("model").flatMap(_.asString)
+    val fork = input("fork").flatMap(_.asBoolean).getOrElse(false)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
@@ -106,6 +128,9 @@ Do NOT use Delegate for:
             prompt = prompt,
             description = description,
             agentName = agentName,
+            modelRef = modelRef.filter(_.nonEmpty),
+            fork = fork,
+            parentMessages = if fork then ctx.messages else Nil,
             system = system,
             resources = resources,
             agentLibrary = agentLibrary,
@@ -124,6 +149,9 @@ Do NOT use Delegate for:
     prompt: String,
     description: String,
     agentName: String,
+    modelRef: Option[String],
+    fork: Boolean,
+    parentMessages: List[Message],
     system: ActorSystem[?],
     resources: SharedResources,
     agentLibrary: AgentLibrary,
@@ -137,19 +165,45 @@ Do NOT use Delegate for:
       case None =>
         IO.pure(Left(ToolError(s"Agent '$agentName' not found in agent library")))
       case Some(agentDef) =>
-        spawnAndRun(
-          agentDef = agentDef,
-          prompt = prompt,
-          description = description,
-          agentName = agentName,
-          system = system,
-          resources = resources,
-          scheduler = scheduler,
-          parentDepth = parentDepth,
-          parentRef = parentRef,
-          wsSend = wsSend,
-          projectRoot = projectRoot
-        )
+        // Resolve model override if specified
+        modelRef match
+          case None =>
+            spawnAndRun(
+              agentDef = agentDef,
+              prompt = prompt,
+              description = description,
+              agentName = agentName,
+              modelOverride = None,
+              initialMessages = parentMessages,
+              system = system,
+              resources = resources,
+              scheduler = scheduler,
+              parentDepth = parentDepth,
+              parentRef = parentRef,
+              wsSend = wsSend,
+              projectRoot = projectRoot
+            )
+          case Some(ref) =>
+            resources.providerRegistry.getCandidateForRef(ref).flatMap {
+              case None =>
+                IO.pure(Left(ToolError(s"Model '$ref' not found. Check available models.")))
+              case Some(candidate) =>
+                spawnAndRun(
+                  agentDef = agentDef,
+                  prompt = prompt,
+                  description = description,
+                  agentName = agentName,
+                  modelOverride = Some(candidate),
+                  initialMessages = parentMessages,
+                  system = system,
+                  resources = resources,
+                  scheduler = scheduler,
+                  parentDepth = parentDepth,
+                  parentRef = parentRef,
+                  wsSend = wsSend,
+                  projectRoot = projectRoot
+                )
+            }
     }
 
   private def spawnAndRun(
@@ -157,6 +211,8 @@ Do NOT use Delegate for:
     prompt: String,
     description: String,
     agentName: String,
+    modelOverride: Option[nebflow.llm.ModelCandidate],
+    initialMessages: List[Message],
     system: ActorSystem[?],
     resources: SharedResources,
     scheduler: org.apache.pekko.actor.typed.Scheduler,
@@ -170,6 +226,14 @@ Do NOT use Delegate for:
       fileHistory <- FileHistory.create()
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
+      // Resolve contextWindow: use model override's contextWindow if specified, else global
+      contextWindow = modelOverride.map(_.contextWindow).getOrElse(resources.contextWindow)
+      // Set model override for this sub-agent's sessionId (actor path name)
+      _ <- modelOverride match
+        case Some(candidate) =>
+          logger.info(s"Sub-agent $subagentId will use model ${candidate.providerId}/${candidate.model}") *>
+            resources.sessionModelOverrides.update(_ + (subagentId -> candidate))
+        case None => IO.unit
       childWsSend = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
       subagentRef = system.systemActorOf(
         AgentActor(
@@ -180,15 +244,17 @@ Do NOT use Delegate for:
           parentRef = parentRef,
           sessionId = None,
           sessionName = Some(description),
-          initialMessages = Nil,
+          initialMessages = initialMessages,
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow,
+          contextWindow = contextWindow,
           projectRoot = Some(projectRoot)
         ),
         subagentId
       )
-      _ = logger.info(s"Spawned sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
+      forkInfo = if initialMessages.nonEmpty then s", fork=${initialMessages.size}msgs" else ""
+      modelInfo = modelOverride.map(c => s", model=${c.providerId}/${c.model}").getOrElse("")
+      _ = logger.info(s"Spawned sub-agent: $subagentId (depth=$childDepth, agent=$agentName$modelInfo$forkInfo)")
       result <- IO
         .fromFuture(
           IO(
@@ -209,6 +275,10 @@ Do NOT use Delegate for:
         .recover { case _: java.util.concurrent.TimeoutException =>
           Left(ToolError(s"Sub-agent timed out after $SubagentTimeout"))
         }
+      // Clean up model override
+      _ <- modelOverride match
+        case Some(_) => resources.sessionModelOverrides.update(_ - subagentId)
+        case None => IO.unit
       _ = subagentRef ! AgentCommand.Stop("delegate-complete")
     yield result
 

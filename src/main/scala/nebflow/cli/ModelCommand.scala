@@ -44,7 +44,10 @@ object ModelCommand extends CliCommand:
                 val lines = models.map { m =>
                   val ref = m.hcursor.downField("ref").as[String].getOrElse("")
                   val label = m.hcursor.downField("label").as[String].getOrElse(ref)
-                  if ref == current then s"  * $ref  ($label)" else s"    $ref  ($label)"
+                  val desc = m.hcursor.downField("description").as[Option[String]].toOption.flatten
+                  val marker = if ref == current then "  * " else "    "
+                  val main = s"$marker$ref  ($label)"
+                  desc.map(d => s"$main  — $d").getOrElse(main)
                 }
                 CliResult.Text(s"Current: $current" :: "Available:" :: lines)
             }
