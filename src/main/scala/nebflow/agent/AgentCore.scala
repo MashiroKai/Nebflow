@@ -545,7 +545,8 @@ private[agent] trait AgentCore:
           cwd = effectiveProjectRoot
         ),
         folderId = state.folderId,
-        mailboxAddress = state.session.sessionId
+        mailboxAddress = state.session.sessionId,
+        dreamSchedulerRef = resources.dreamSchedulerRef
       )
       freshResults <- filteredCalls
         .traverse { call =>
