@@ -25,7 +25,8 @@ object LlmProtocol:
 case class ModelConfig(
   id: String,
   maxTokens: Int = Defaults.MaxTokens,
-  contextWindow: Int = Defaults.ContextWindow
+  contextWindow: Int = Defaults.ContextWindow,
+  description: Option[String] = None
 )
 
 object ModelConfig:
