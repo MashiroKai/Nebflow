@@ -2,13 +2,13 @@ package nebflow.mesh
 
 import cats.effect.IO
 import cats.syntax.all.*
+import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Json}
 import nebflow.core.NebflowLogger
 import nebflow.gateway.{Folder, SessionStore}
 import nebflow.shared.{*, given}
-import io.circe.generic.semiauto.*
 
 /** Remote session state from cloud (metadata only). */
 case class RemoteSessionState(
@@ -90,13 +90,16 @@ class IncrementalSyncEngine private (
               Nil
             )
             // Folders: push local + pull remote via existing index endpoint
-            _ <- meshService.callCloudFunction("session/push-index",
-              "sessions" -> localSessions.asJson,
-              "folders" -> localFolders.asJson
-            ).handleErrorWith(e => logger.debug(s"Push index (folders): ${e.getMessage}"))
-            pullResp <- meshService.callCloudFunction("session/pull-index").handleErrorWith(e =>
-              logger.debug(s"Pull index: ${e.getMessage}").as(io.circe.Json.Null)
-            )
+            _ <- meshService
+              .callCloudFunction(
+                "session/push-index",
+                "sessions" -> localSessions.asJson,
+                "folders" -> localFolders.asJson
+              )
+              .handleErrorWith(e => logger.debug(s"Push index (folders): ${e.getMessage}"))
+            pullResp <- meshService
+              .callCloudFunction("session/pull-index")
+              .handleErrorWith(e => logger.debug(s"Pull index: ${e.getMessage}").as(io.circe.Json.Null))
             remoteFolders = pullResp.hcursor.downField("folders").as[List[Folder]].getOrElse(Nil)
             _ <- sessionStore.mergeCloudIndex(Nil, remoteFolders)
           yield ()
@@ -190,14 +193,24 @@ class IncrementalSyncEngine private (
       _ <- blobSync.download(msgToDownload ++ uiToDownload)
       msgBytes <- blobSync.download(cloudMsgHashes)
       uiBytes <- blobSync.download(cloudUiHashes)
-      messages = cloudMsgHashes.flatMap { h =>
-        msgBytes.get(h).flatMap(b => decode[Message](new String(b, "UTF-8")).toOption)
+      (messages, msgFailures) = cloudMsgHashes.foldLeft((List.empty[Message], 0)) { case ((acc, fail), h) =>
+        msgBytes.get(h).flatMap(b => decode[Message](new String(b, "UTF-8")).toOption) match
+          case Some(m) => (acc :+ m, fail)
+          case None => (acc, fail + 1)
       }
-      uiMessages = cloudUiHashes.flatMap { h =>
-        uiBytes.get(h).flatMap(b => decode[UiMessage](new String(b, "UTF-8")).toOption)
+      (uiMessages, uiFailures) = cloudUiHashes.foldLeft((List.empty[UiMessage], 0)) { case ((acc, fail), h) =>
+        uiBytes.get(h).flatMap(b => decode[UiMessage](new String(b, "UTF-8")).toOption) match
+          case Some(m) => (acc :+ m, fail)
+          case None => (acc, fail + 1)
       }
+      _ <- IO.whenA(msgFailures > 0 || uiFailures > 0)(
+        logger.debug(
+          s"Session $sessionId: $msgFailures messages + $uiFailures UI messages failed to deserialize"
+        )
+      )
       _ <- sessionStore.setSessionFromCloud(sessionId, messages, uiMessages)
     yield ()
+    end for
   end downloadAndReconstruct
 
   // ===== File Sync (incremental, same blob approach) =====
@@ -244,36 +257,9 @@ class IncrementalSyncEngine private (
 
   // ===== Peer Notification (push-based, bypasses polling) =====
 
-  import sttp.client4.*
-  import scala.concurrent.duration.*
-
   /** Notify all reachable peers to trigger immediate sync. Fire-and-forget. */
-  def notifyPeers(notifType: String, sessionId: String = ""): IO[Unit] =
-    for
-      peers <- meshService.peers
-      _ <- peers.traverse_ { peer =>
-        notifyOne(peer, notifType, sessionId).handleErrorWith(_ => IO.unit)
-      }
-    yield ()
-
-  private def notifyOne(peer: PeerInfo, notifType: String, sessionId: String): IO[Unit] =
-    if peer.address.isEmpty then IO.unit
-    else
-      IO.blocking {
-        val body =
-          if sessionId.nonEmpty then s"""{"type":"$notifType","sessionId":"$sessionId"}"""
-          else s"""{"type":"$notifType"}"""
-        try
-          basicRequest
-            .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/notify"))
-            .contentType("application/json")
-            .body(body)
-            .readTimeout(2.seconds)
-            .response(asStringAlways)
-            .send(meshService.httpBackend)
-          ()
-        catch case _: Exception => ()
-      }
+  private def notifyPeers(notifType: String, sessionId: String = ""): IO[Unit] =
+    meshService.notifyPeers(notifType, sessionId)
 
   // ===== Fast Sync Cycle (fallback, 10s) =====
 

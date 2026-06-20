@@ -604,14 +604,18 @@ class WebSocketRoutes(
 
         case "getModelOptions" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-          sharedResources.providerRegistry.getAllModels().flatMap { models =>
+          sharedResources.providerRegistry.getAllModelsDetailed().flatMap { models =>
             sharedResources.sessionModelOverrides.get.flatMap { overrides =>
               val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "modelOptions".asJson,
-                  "models" -> models.map { case (ref, label) =>
-                    io.circe.Json.obj("ref" -> ref.asJson, "label" -> label.asJson)
+                  "models" -> models.map { case (ref, label, desc) =>
+                    io.circe.Json.obj(
+                      "ref" -> ref.asJson,
+                      "label" -> label.asJson,
+                      "description" -> desc.asJson
+                    )
                   }.asJson,
                   "current" -> currentOpt.asJson
                 )

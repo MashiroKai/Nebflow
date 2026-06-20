@@ -80,6 +80,14 @@ class ProviderRegistry(
       }.toList
     }
 
+  /** List all models with descriptions. Returns (ref, modelId, description) triples. */
+  def getAllModelsDetailed(): IO[List[(String, String, Option[String])]] =
+    configRef.get.map { config =>
+      config.llm.providers.flatMap { case (providerId, provider) =>
+        provider.models.map(mc => (s"$providerId/${mc.id}", mc.id, mc.description))
+      }.toList
+    }
+
   /** Build a ModelCandidate from a model ref string (e.g. "openai/gpt-4o"). Returns None gracefully. */
   def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
     configRef.get.map { config =>
