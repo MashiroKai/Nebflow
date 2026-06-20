@@ -188,8 +188,12 @@ function injectFileTokens(html) {
 }
 
 /** Render HTML content inside a sandboxed iframe.
- *  Creates the iframe immediately (no lazy loading) — the browser handles srcdoc
- *  parsing asynchronously, so this is safe even with many cards. */
+ *  Uses lazy loading: the iframe's srcdoc is not set until it scrolls near the
+ *  viewport (IntersectionObserver). This prevents dozens of iframe browsing
+ *  contexts — each with its own DOM, JS engine, and network requests — from
+ *  being created simultaneously when a session with many cards is opened.
+ *  Additionally, <audio>/<video> elements get preload="none" so the browser
+ *  never auto-fetches media files; the user must click play. */
 function renderHtmlCard(container, html, title) {
   container.innerHTML = '';
 
@@ -213,6 +217,12 @@ function renderHtmlCard(container, html, title) {
   // SVGs without viewBox: strip width:100%
   processedHtml = processedHtml.replace(/(<svg\b(?![^>]*viewBox=)[^>]*\bstyle=["'][^"']*)width:\s*100%\s*;?([^"']*["'])/gi, '$1$2');
 
+  // Add preload="none" to <audio>/<video> elements that don't already have it.
+  // Without this, a session with 200+ audio elements causes the browser to
+  // simultaneously fetch and decode all files on load, freezing the page.
+  processedHtml = processedHtml.replace(/(<audio\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
+  processedHtml = processedHtml.replace(/(<video\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
+
   // #nf-wrap: fit-content shrinks the bubble to match content size.
   // max-width:100% prevents overflow.
   const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="width:fit-content;max-width:100%">${processedHtml}</div>${heightScript}</body></html>`;
@@ -221,22 +231,45 @@ function renderHtmlCard(container, html, title) {
   iframe.className = 'html-card-iframe';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('scrolling', 'no');
-  iframe.setAttribute('srcdoc', srcdoc);
   iframe.dataset.nfCardId = id;
   wrap.appendChild(iframe);
 
   container.appendChild(wrap);
 
-  // Fallback: force iframe visible after 800ms even if the height postMessage
-  // hasn't arrived yet. During active streaming the browser event loop may be
-  // busy processing WebSocket messages, delaying postMessage handling and
-  // leaving the card stuck at opacity:0 (blank bubble).
-  setTimeout(() => {
-    if (iframe.style.opacity !== '1') {
-      iframe.style.opacity = '1';
-      iframe.style.minHeight = '20px';
-    }
-  }, 800);
+  // Lazy loading: defer srcdoc until the iframe is near the viewport.
+  // This prevents all card iframes in a session from being created and
+  // parsed at once — only visible (+ margin) cards are instantiated.
+  let srcdocSet = false;
+  const applySrcdoc = () => {
+    if (srcdocSet) return;
+    srcdocSet = true;
+    iframe.setAttribute('srcdoc', srcdoc);
+    // Fallback: force iframe visible after 800ms even if the height postMessage
+    // hasn't arrived yet. During active streaming the browser event loop may be
+    // busy processing WebSocket messages, delaying postMessage handling and
+    // leaving the card stuck at opacity:0 (blank bubble).
+    setTimeout(() => {
+      if (iframe.style.opacity !== '1') {
+        iframe.style.opacity = '1';
+        iframe.style.minHeight = '20px';
+      }
+    }, 800);
+  };
+
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) {
+        applySrcdoc();
+        io.disconnect();
+      }
+    }, { rootMargin: '300px' });
+    io.observe(iframe);
+    // Safety timeout: load after 3s even if observer never fires
+    // (e.g. display:none ancestor, or already in viewport before observer attaches).
+    setTimeout(applySrcdoc, 3000);
+  } else {
+    applySrcdoc();
+  }
 }
 
 /**
