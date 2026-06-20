@@ -209,6 +209,42 @@
   animation: bg-pulse 1.5s ease-in-out infinite;
 }
 .delegate-count { font-weight: 600; }
+#delegate-indicator { cursor: pointer; }
+#delegate-indicator:hover { background: rgba(59,130,246,0.25); }
+
+/* Delegate dropdown — same styling as bg-dropdown */
+#delegate-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--sapphire-edge);
+  border-radius: 12px;
+  min-width: 280px;
+  max-width: 380px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
+    0px 4px 16px rgba(0, 0, 0, 0.08),
+    0px 8px 32px rgba(0, 0, 0, 0.06);
+  z-index: 100;
+  overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  #delegate-dropdown {
+    box-shadow:
+      inset 0 1px 0 0 rgba(91, 127, 191, 0.05),
+      0px 4px 16px rgba(0, 0, 0, 0.30),
+      0px 8px 32px rgba(0, 0, 0, 0.45);
+  }
+}
+#delegate-dropdown.hidden { display: none; }
+
+.delegate-running { color: var(--color-primary); font-size: 11px; }
+.delegate-done { color: var(--color-success); font-size: 11px; }
+.delegate-tool { font-size: 10px; color: var(--color-text-muted); display: block; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Background tasks dropdown — sapphire glass */
 #bg-dropdown {

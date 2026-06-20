@@ -47,6 +47,7 @@ export default {
   agentColors: {},
   agentColorIdx: 0,
   activeDelegates: 0,
+  activeSubAgents: {},  // {agentId: {description, currentTool, done}}
 
   // Per-session streaming text buffer: sessionId -> accumulated text
   sessionTexts: {},
