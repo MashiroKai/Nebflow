@@ -130,17 +130,7 @@ Do NOT use Delegate for:
             agentName = agentName,
             modelRef = modelRef.filter(_.nonEmpty),
             fork = fork,
-            parentMessages = if fork then
-              Message(
-                MessageRole.User,
-                Left(
-                  "[Context: Your parent agent has forked this conversation to give you background context. " +
-                  "You are a sub-agent working on a delegated task. " +
-                  "Focus ONLY on the specific task described in the message below this one. " +
-                  "Do not work on other topics from the conversation history — those are your parent's responsibilities.]"
-                )
-              ) :: ctx.messages
-            else Nil,
+            parentMessages = if fork then ctx.messages else Nil,
             system = system,
             resources = resources,
             agentLibrary = agentLibrary,
@@ -169,6 +159,19 @@ Do NOT use Delegate for:
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String
   ): IO[Either[ToolError, String]] =
+    // When fork=true, wrap context instruction inside the prompt as a
+    // <system-reminder> so the cache prefix (system prompt + parent
+    // conversation) stays intact.  Inserting a new message before the
+    // parent history would break the provider-level prompt cache.
+    val adjustedPrompt = if fork then
+      s"""<system-reminder>
+You are a sub-agent working on a delegated task. Your parent agent has forked this conversation to give you background context.
+
+Focus ONLY on the specific task described below. Do not work on other topics from the conversation history — those are your parent's responsibilities.
+</system-reminder>
+
+$prompt"""
+    else prompt
     agentLibrary.get(agentName).flatMap {
       case None =>
         IO.pure(Left(ToolError(s"Agent '$agentName' not found in agent library")))
@@ -178,7 +181,7 @@ Do NOT use Delegate for:
           case None =>
             spawnAsync(
               agentDef = agentDef,
-              prompt = prompt,
+              prompt = adjustedPrompt,
               description = description,
               agentName = agentName,
               modelOverride = None,
@@ -197,7 +200,7 @@ Do NOT use Delegate for:
               case Some(candidate) =>
                 spawnAsync(
                   agentDef = agentDef,
-                  prompt = prompt,
+                  prompt = adjustedPrompt,
                   description = description,
                   agentName = agentName,
                   modelOverride = Some(candidate),
