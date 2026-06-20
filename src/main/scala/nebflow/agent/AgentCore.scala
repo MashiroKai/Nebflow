@@ -687,7 +687,8 @@ private[agent] trait AgentCore:
         (existing, IO.pure(ToolExecResult("Another permission request is already pending", isError = true)))
       case None =>
         val deferred = cats.effect.Deferred.unsafe[IO, Boolean]
-        (Some(deferred),
+        (
+          Some(deferred),
           IO(ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
             IO {
               val summary = nebflow.core.summarizeToolCall(call)
