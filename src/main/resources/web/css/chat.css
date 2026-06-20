@@ -188,6 +188,28 @@
 }
 .bg-count { font-weight: 600; }
 
+/* Delegate sub-agent indicator — same pattern as bg-indicator, blue accent */
+#delegate-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(59,130,246,0.15);
+  border-radius: 10px;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--color-primary);
+  cursor: default;
+  transition: background 0.2s;
+}
+#delegate-indicator.hidden { display: none; }
+.delegate-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: bg-pulse 1.5s ease-in-out infinite;
+}
+.delegate-count { font-weight: 600; }
+
 /* Background tasks dropdown — sapphire glass */
 #bg-dropdown {
   position: absolute;

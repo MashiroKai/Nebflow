@@ -1108,12 +1108,27 @@ onMessage('historyPage', (msg) => {
 });
 
 // --- Multi-agent events ---
-// Sub-agent activity is silently tracked but NOT rendered in the chat.
-// The parent's Delegate tool card (pending spinner → result) provides visual feedback.
+// Sub-agent activity shows a header indicator (like Bash background tasks).
+// No tool cards or text rendered in the chat — the parent's Delegate tool
+// card (spinner → result) is the only chat-level feedback.
+function updateDelegateIndicator() {
+  const el = document.getElementById('delegate-indicator');
+  if (!el) return;
+  const count = state.activeDelegates || 0;
+  if (count > 0) {
+    el.classList.remove('hidden');
+    el.querySelector('.delegate-count').textContent = count;
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
 onMessage('agentStart', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
   state.activeAgentId = msg.name || msg.agentId;
+  state.activeDelegates = (state.activeDelegates || 0) + 1;
+  updateDelegateIndicator();
 });
 
 onMessage('agentTextDelta', (msg) => { resetStreamTimeout(msg.sessionId); });
@@ -1121,24 +1136,23 @@ onMessage('agentToolCallDetected', (msg) => { resetStreamTimeout(msg.sessionId);
 onMessage('agentToolStart', (msg) => { resetStreamTimeout(msg.sessionId); });
 onMessage('agentToolEnd', (msg) => { resetStreamTimeout(msg.sessionId); });
 onMessage('agentEnd', (msg) => {
+  resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
-  clearBusyFor(msg);
-  const id = msg.name || msg.agentId;
-  finishAgent(id);
+  state.activeDelegates = Math.max(0, (state.activeDelegates || 0) - 1);
+  updateDelegateIndicator();
 });
 
 onMessage('agentThinking', (msg) => { resetStreamTimeout(msg.sessionId); });
 onMessage('agentRetryStatus', (msg) => { resetStreamTimeout(msg.sessionId); });
 
 onMessage('agentDone', (msg) => {
+  resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
-  clearBusyFor(msg);
-  const sid = msg.sessionId || state.activeSessionId;
-  consumeTurnDuration(sid);
-  Object.keys(state.agentBubbles).forEach(id => { finishAgent(id); });
+  state.activeDelegates = Math.max(0, (state.activeDelegates || 0) - 1);
+  updateDelegateIndicator();
+  // Cleanup any residual state
   state.agentBubbles = {};
   state.activeAgentId = null;
-  clearStatus();
 });
 
 // --- Compaction events (per-session) ---
