@@ -34,6 +34,8 @@ object ToolRegistry:
       "TaskUpdate" -> TaskUpdateTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
+      // Sub-agent delegation
+      "Delegate" -> DelegateTool,
       // Memory
       "WriteMemory" -> WriteMemoryTool
     )

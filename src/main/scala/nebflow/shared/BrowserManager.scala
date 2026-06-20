@@ -7,8 +7,10 @@ import nebflow.core.NebflowLogger
 
 import java.nio.file.{Files, Paths}
 import java.util.concurrent.{Executors, TimeUnit}
+
 import scala.compiletime.uninitialized
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 /** 浏览器获取结果。 */
@@ -32,7 +34,10 @@ final case class BrowserFetchResult(
 object BrowserManager:
   private val logger = NebflowLogger.forName("nebflow.browser")
 
-  private val dataDir = Paths.get(System.getProperty("user.home"), ".nebflow", "browser-data")
+  private val dataDir =
+    Option(System.getProperty("nebflow.browser.dataDir"))
+      .map(Paths.get(_))
+      .getOrElse(Paths.get(System.getProperty("user.home"), ".nebflow", "browser-data"))
 
   /** 单线程 EC：Playwright 所有操作必须在此线程执行。 */
   private val playwrightEC = ExecutionContext.fromExecutorService(
@@ -81,8 +86,7 @@ object BrowserManager:
             Some(BrowserFetchResult(200, title, output, url, isMarkdown = true))
           else None
         else None
-      catch
-        case _: Exception => None
+      catch case _: Exception => None
     }
 
   // ── Playwright stealth ──────────────────────────────────────────────
@@ -92,14 +96,17 @@ object BrowserManager:
     val osName = System.getProperty("os.name").toLowerCase
     if osName.contains("mac") then
       if Files.exists(Paths.get("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
-      then Some("chrome") else None
+      then Some("chrome")
+      else None
     else if osName.contains("win") then
       val pf = Option(System.getenv("ProgramFiles")).getOrElse("C:\\Program Files")
       if Files.exists(Paths.get(s"$pf\\Google\\Chrome\\Application\\chrome.exe"))
-      then Some("chrome") else None
+      then Some("chrome")
+      else None
     else None
 
-  /** 增强反检测脚本——参考 Obscura 的 stealth mode。
+  /**
+   * 增强反检测脚本——参考 Obscura 的 stealth mode。
    *
    *  覆盖以下检测维度：
    *  - navigator.webdriver / userAgentData
@@ -145,7 +152,8 @@ object BrowserManager:
       |})();
     """.stripMargin
 
-  /** DOM-to-Markdown 转换脚本——参考 Obscura 的 LP.getMarkdown。
+  /**
+   * DOM-to-Markdown 转换脚本——参考 Obscura 的 LP.getMarkdown。
    *
    *  在 page.evaluate() 中调用，将渲染后的 DOM 转为简洁 Markdown。
    *  替代 WebFetchTool 的正则 HTML 提取，正确处理嵌套结构和表格。
@@ -183,12 +191,26 @@ object BrowserManager:
 
   /** 常见追踪/广告域名，通过 Playwright route 拦截以减少检测信号。 */
   private val TRACKER_DOMAINS = List(
-    "google-analytics.com", "googletagmanager.com", "doubleclick.net",
-    "googlesyndication.com", "googleadservices.com", "connect.facebook.net",
-    "analytics.twitter.com", "ads.twitter.com", "sb.scorecardresearch.com",
-    "hotjar.com", "mixpanel.com", "segment.io", "amplitude.com",
-    "fullstory.com", "clarity.ms", "bat.bing.com", "cloudflareinsights.com",
-    "quantserve.com", "crazyegg.com", "optimizely.com"
+    "google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
+    "googlesyndication.com",
+    "googleadservices.com",
+    "connect.facebook.net",
+    "analytics.twitter.com",
+    "ads.twitter.com",
+    "sb.scorecardresearch.com",
+    "hotjar.com",
+    "mixpanel.com",
+    "segment.io",
+    "amplitude.com",
+    "fullstory.com",
+    "clarity.ms",
+    "bat.bing.com",
+    "cloudflareinsights.com",
+    "quantserve.com",
+    "crazyegg.com",
+    "optimizely.com"
   )
 
   private def isChallengeTitle(title: String): Boolean =
@@ -199,44 +221,63 @@ object BrowserManager:
   // ── Playwright 浏览器管理 ───────────────────────────────────────────
 
   private def ensureContext(headless: Boolean): Unit =
-    if context != null && currentHeadless == headless then return
-    if context != null then
-      try context.close() catch case _: Exception => ()
-      context = null
+    if context == null || currentHeadless != headless then
+      if context != null then
+        try context.close()
+        catch case _: Exception => ()
+        context = null
 
-    Files.createDirectories(dataDir)
+      Files.createDirectories(dataDir)
 
-    val opts = new BrowserType.LaunchPersistentContextOptions()
-      .setHeadless(headless)
-      .setUserAgent(SharedBackend.UserAgent)
-    detectChannel.foreach(opts.setChannel)
-    opts.setArgs(List("--disable-blink-features=AutomationControlled").asJava)
+      val opts = new BrowserType.LaunchPersistentContextOptions()
+        .setHeadless(headless)
+        .setUserAgent(SharedBackend.UserAgent)
+      detectChannel.foreach(opts.setChannel)
+      opts.setArgs(List("--disable-blink-features=AutomationControlled").asJava)
 
-    if playwright == null then playwright = Playwright.create()
-    context = playwright.chromium().launchPersistentContext(dataDir, opts)
+      if playwright == null then playwright = Playwright.create()
+      try context = playwright.chromium().launchPersistentContext(dataDir, opts)
+      catch
+        case _: Exception =>
+          // Chrome may have crashed on a previous run, leaving a stale SingletonLock.
+          // Delete it and retry once.
+          val lock = dataDir.resolve("SingletonLock")
+          if Files.exists(lock) then
+            logger.infoSync("Removing stale SingletonLock", "dir" -> dataDir.toString)
+            try Files.delete(lock)
+            catch case _: Exception => ()
+          context = playwright.chromium().launchPersistentContext(dataDir, opts)
 
-    // 注入增强 stealth 脚本（在每个页面加载前执行）
-    context.addInitScript(STEALTH_JS)
+      // Set a global default timeout so NO Playwright operation can block
+      // indefinitely.  Anti-bot systems can cause navigate/title/content to
+      // hang forever; this ensures they throw after the limit instead.
+      context.setDefaultTimeout(15_000.0)
+      context.setDefaultNavigationTimeout(15_000.0)
 
-    // NOTE: tracker domain blocking removed — context.route() per-domain
-    // added latency to every request. Obscura handles this at engine level
-    // (Rust). For Playwright, stealth injection alone is sufficient.
+      // 注入增强 stealth 脚本（在每个页面加载前执行）
+      context.addInitScript(STEALTH_JS)
 
-    currentHeadless = headless
-    logger.infoSync("Browser context started",
-      "headless" -> headless.toString,
-      "channel" -> detectChannel.getOrElse("chromium"),
-      "stealth" -> "enhanced")
+      currentHeadless = headless
+      logger.infoSync(
+        "Browser context started",
+        "headless" -> headless.toString,
+        "channel" -> detectChannel.getOrElse("chromium"),
+        "stealth" -> "enhanced"
+      )
   end ensureContext
 
   /** 用 Playwright 获取页面，返回 DOM-to-Markdown 转换后的内容。 */
   private def fetchWithPlaywright(url: String, headless: Boolean, maxWaitSeconds: Int): BrowserFetchResult =
     ensureContext(headless)
     val page = context.newPage()
+
     try
       logger.infoSync("Browser navigating", "url" -> url.take(80), "headless" -> headless.toString)
-      val response = page.navigate(url,
-        new Page.NavigateOptions().setTimeout(15_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED))
+      // Use COMMIT wait strategy: fires as soon as the response headers are
+      // received, without waiting for JavaScript or DOM events.  This prevents
+      // anti-bot challenges from blocking navigation indefinitely.
+      val response =
+        page.navigate(url, new Page.NavigateOptions().setTimeout(15_000).setWaitUntil(WaitUntilState.COMMIT))
       val status = if response != null then response.status() else 0
 
       // Phase 1: 等待标题
@@ -260,31 +301,59 @@ object BrowserManager:
         catch case _: Exception => page.content()
 
       val finalUrl = page.url()
-      logger.infoSync("Browser fetched",
-        "url" -> url.take(80), "status" -> status.toString,
-        "title" -> title.take(50), "len" -> markdown.length.toString,
-        "waited" -> waited.toString, "format" -> "markdown")
+      logger.infoSync(
+        "Browser fetched",
+        "url" -> url.take(80),
+        "status" -> status.toString,
+        "title" -> title.take(50),
+        "len" -> markdown.length.toString,
+        "waited" -> waited.toString,
+        "format" -> "markdown"
+      )
       BrowserFetchResult(status, title, markdown, finalUrl, isMarkdown = true)
+    catch
+      case e: Exception =>
+        // Global timeout or Playwright error — return partial result instead
+        // of blocking the single-thread playwrightEC forever.
+        logger.infoSync("Browser fetch error", "url" -> url.take(80), "error" -> e.getMessage.take(100))
+        // Reset context: anti-bot timeouts can leave Chrome in a bad state.
+        // Closing forces ensureContext to create a fresh context for the next call.
+        try context.close()
+        catch case _: Exception => ()
+        context = null
+        BrowserFetchResult(0, "Timeout", s"Page load failed for $url: ${e.getMessage}", url)
     finally
-      try page.close() catch case _: Exception => ()
+      try page.close()
+      catch case _: Exception => ()
+    end try
   end fetchWithPlaywright
 
   // ── 公开 API ────────────────────────────────────────────────────────
 
   /** 获取页面内容。优先使用 Obscura（轻量 + 内建 stealth），回退到 Playwright。 */
   def fetch(url: String, headless: Boolean, maxWaitSeconds: Int = 15): IO[BrowserFetchResult] =
+    // Hard cap: maxWaitSeconds + 15s buffer for navigation + DOM conversion
+    val hardTimeout = (maxWaitSeconds + 15).seconds
     // Obscura 优先（不需要 playwrightEC，独立进程）
-    if obscuraPath.isDefined then
-      IO.blocking {
-        fetchWithObscura(url, maxWaitSeconds)
-      }.flatMap {
-        case Some(result) => IO.pure(result)
-        case None =>
-          logger.infoSync("Obscura failed, falling back to Playwright", "url" -> url.take(80))
-          IO.delay { fetchWithPlaywright(url, headless, maxWaitSeconds) }.evalOn(playwrightEC)
-      }
-    else
-      IO.delay { fetchWithPlaywright(url, headless, maxWaitSeconds) }.evalOn(playwrightEC)
+    val io =
+      if obscuraPath.isDefined then
+        IO.blocking {
+          fetchWithObscura(url, maxWaitSeconds)
+        }.flatMap {
+          case Some(result) => IO.pure(result)
+          case None =>
+            logger.infoSync("Obscura failed, falling back to Playwright", "url" -> url.take(80))
+            IO.delay { fetchWithPlaywright(url, headless, maxWaitSeconds) }.evalOn(playwrightEC)
+        }
+      else IO.delay { fetchWithPlaywright(url, headless, maxWaitSeconds) }.evalOn(playwrightEC)
+    // Timeout: anti-bot challenges can make Playwright block indefinitely on a
+    // single-thread EC.  Return a graceful error instead of hanging forever.
+    io.timeout(hardTimeout).recover { case _: java.util.concurrent.TimeoutException =>
+      logger.infoSync("Browser fetch timed out", "url" -> url.take(80), "timeout" -> hardTimeout.toString)
+      BrowserFetchResult(0, "Timeout", s"Page load timed out after $hardTimeout.", url)
+    }
+
+  end fetch
 
   /** 关闭浏览器和 Playwright，释放资源。 */
   def shutdown(): Unit =
