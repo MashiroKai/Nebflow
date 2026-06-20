@@ -755,11 +755,21 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved }));
     }
+    // Track answered permission: prevents re-creating interactive prompt on
+    // session switch-back while tool is still executing (askPermission is still
+    // the last history entry until toolEnd is recorded).
+    state.answeredPermissions.add(targetSid);
+    // Remove the permission prompt row from DOM immediately after answering
+    row.remove();
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   }, t('chat.confirm'), () => {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: false }));
     }
+    // Track denied permission (same reason as above)
+    state.answeredPermissions.add(targetSid);
+    // Remove the permission prompt row from DOM immediately after denying
+    row.remove();
     window.dispatchEvent(new CustomEvent('session-attention', { detail: { sessionId: targetSid, attention: false } }));
   });
   smartScroll();
