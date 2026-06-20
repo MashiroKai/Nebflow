@@ -1150,9 +1150,11 @@ function renderDelegateDropdown() {
     const toolLabel = info.currentTool || '';
     const toolPart = toolLabel ? '<span class="delegate-tool">' + escapeHtml(toolLabel) + '</span>' : '';
     const status = info.done ? '<span class="delegate-done">done</span>' : '<span class="delegate-running">running</span>';
+    const displayName = info.name || id;
+    const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
     return '<div class="bg-task-row">' +
       '<div class="bg-task-info">' +
-        '<span class="bg-task-name">' + status + ' ' + escapeHtml(info.description || id) + '</span>' +
+        '<span class="bg-task-name">' + status + ' ' + label + '</span>' +
         toolPart +
       '</div>' +
     '</div>';
@@ -1187,7 +1189,12 @@ onMessage('agentStart', (msg) => {
   const aid = msg.agentId || msg.name;
   state.activeAgentId = aid;
   if (!state.activeSubAgents) state.activeSubAgents = {};
-  state.activeSubAgents[aid] = { description: aid, currentTool: null, done: false };
+  state.activeSubAgents[aid] = {
+    name: msg.name || aid,
+    task: msg.taskDescription || '',
+    currentTool: null,
+    done: false
+  };
   updateDelegateIndicator();
 });
 
