@@ -163,15 +163,16 @@ Do NOT use Delegate for:
     // <system-reminder> so the cache prefix (system prompt + parent
     // conversation) stays intact.  Inserting a new message before the
     // parent history would break the provider-level prompt cache.
-    val adjustedPrompt = if fork then
-      s"""<system-reminder>
+    val adjustedPrompt =
+      if fork then
+        s"""<system-reminder>
 You are a sub-agent working on a delegated task. Your parent agent has forked this conversation to give you background context.
 
 Focus ONLY on the specific task described below. Do not work on other topics from the conversation history — those are your parent's responsibilities.
 </system-reminder>
 
 $prompt"""
-    else prompt
+      else prompt
     agentLibrary.get(agentName).flatMap {
       case None =>
         IO.pure(Left(ToolError(s"Agent '$agentName' not found in agent library")))
@@ -214,6 +215,8 @@ $prompt"""
                 )
             }
     }
+
+  end delegateToSubagent
 
   /**
    * Spawn a sub-agent actor asynchronously and return immediately.
@@ -299,24 +302,24 @@ $prompt"""
       val (eventType, payload) = event match
         case AgentEvent.Completed(_, messages) =>
           val text = extractLastAssistantText(messages)
-          if text.nonEmpty then
-            ("completed", s"[Sub-agent completed] \"$description\":\n$text")
-          else
-            ("completed", s"[Sub-agent completed] \"$description\" (no text output)")
+          if text.nonEmpty then ("completed", s"[Sub-agent completed] \"$description\":\n$text")
+          else ("completed", s"[Sub-agent completed] \"$description\" (no text output)")
         case AgentEvent.Failed(_, error) =>
           ("failed", s"[Sub-agent failed] \"$description\": ${error.message}")
 
       // Forward result to parent via ExternalEvent mechanism
-      parentRef.foreach(_ ! AgentCommand.ExternalEvent(
-        source = "delegate",
-        eventType = eventType,
-        payload = payload,
-        metadata = io.circe.JsonObject(
-          "description" -> description.asJson,
-          "agentName" -> agentName.asJson
-        ),
-        correlationId = Some(subagentId)
-      ))
+      parentRef.foreach(
+        _ ! AgentCommand.ExternalEvent(
+          source = "delegate",
+          eventType = eventType,
+          payload = payload,
+          metadata = io.circe.JsonObject(
+            "description" -> description.asJson,
+            "agentName" -> agentName.asJson
+          ),
+          correlationId = Some(subagentId)
+        )
+      )
 
       // Cleanup: remove model override, stop sub-agent, stop self
       resources.dispatcher.unsafeRunAndForget(

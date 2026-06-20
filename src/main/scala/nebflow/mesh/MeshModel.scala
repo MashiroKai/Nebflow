@@ -223,6 +223,7 @@ object CloudFileDownload:
 case class CloudFileDownloadItem(path: String, fileID: String)
 
 object CloudFileDownloadItem:
+
   given Decoder[CloudFileDownloadItem] = Decoder.instance { c =>
     for
       path <- c.downField("path").as[String]
