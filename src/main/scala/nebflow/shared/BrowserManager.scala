@@ -9,6 +9,7 @@ import java.nio.file.{Files, Paths}
 import java.util.concurrent.{Executors, TimeUnit}
 import scala.compiletime.uninitialized
 import scala.concurrent.ExecutionContext
+import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 /** 浏览器获取结果。 */
@@ -32,7 +33,10 @@ final case class BrowserFetchResult(
 object BrowserManager:
   private val logger = NebflowLogger.forName("nebflow.browser")
 
-  private val dataDir = Paths.get(System.getProperty("user.home"), ".nebflow", "browser-data")
+  private val dataDir =
+    Option(System.getProperty("nebflow.browser.dataDir"))
+      .map(Paths.get(_))
+      .getOrElse(Paths.get(System.getProperty("user.home"), ".nebflow", "browser-data"))
 
   /** 单线程 EC：Playwright 所有操作必须在此线程执行。 */
   private val playwrightEC = ExecutionContext.fromExecutorService(
@@ -213,14 +217,25 @@ object BrowserManager:
     opts.setArgs(List("--disable-blink-features=AutomationControlled").asJava)
 
     if playwright == null then playwright = Playwright.create()
-    context = playwright.chromium().launchPersistentContext(dataDir, opts)
+    try
+      context = playwright.chromium().launchPersistentContext(dataDir, opts)
+    catch case _: Exception =>
+      // Chrome may have crashed on a previous run, leaving a stale SingletonLock.
+      // Delete it and retry once.
+      val lock = dataDir.resolve("SingletonLock")
+      if Files.exists(lock) then
+        logger.infoSync("Removing stale SingletonLock", "dir" -> dataDir.toString)
+        try Files.delete(lock) catch case _: Exception => ()
+      context = playwright.chromium().launchPersistentContext(dataDir, opts)
+
+    // Set a global default timeout so NO Playwright operation can block
+    // indefinitely.  Anti-bot systems can cause navigate/title/content to
+    // hang forever; this ensures they throw after the limit instead.
+    context.setDefaultTimeout(15_000.0)
+    context.setDefaultNavigationTimeout(15_000.0)
 
     // 注入增强 stealth 脚本（在每个页面加载前执行）
     context.addInitScript(STEALTH_JS)
-
-    // NOTE: tracker domain blocking removed — context.route() per-domain
-    // added latency to every request. Obscura handles this at engine level
-    // (Rust). For Playwright, stealth injection alone is sufficient.
 
     currentHeadless = headless
     logger.infoSync("Browser context started",
@@ -233,10 +248,14 @@ object BrowserManager:
   private def fetchWithPlaywright(url: String, headless: Boolean, maxWaitSeconds: Int): BrowserFetchResult =
     ensureContext(headless)
     val page = context.newPage()
+
     try
       logger.infoSync("Browser navigating", "url" -> url.take(80), "headless" -> headless.toString)
+      // Use COMMIT wait strategy: fires as soon as the response headers are
+      // received, without waiting for JavaScript or DOM events.  This prevents
+      // anti-bot challenges from blocking navigation indefinitely.
       val response = page.navigate(url,
-        new Page.NavigateOptions().setTimeout(15_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED))
+        new Page.NavigateOptions().setTimeout(15_000).setWaitUntil(WaitUntilState.COMMIT))
       val status = if response != null then response.status() else 0
 
       // Phase 1: 等待标题
@@ -265,6 +284,16 @@ object BrowserManager:
         "title" -> title.take(50), "len" -> markdown.length.toString,
         "waited" -> waited.toString, "format" -> "markdown")
       BrowserFetchResult(status, title, markdown, finalUrl, isMarkdown = true)
+    catch
+      case e: Exception =>
+        // Global timeout or Playwright error — return partial result instead
+        // of blocking the single-thread playwrightEC forever.
+        logger.infoSync("Browser fetch error", "url" -> url.take(80), "error" -> e.getMessage.take(100))
+        // Reset context: anti-bot timeouts can leave Chrome in a bad state.
+        // Closing forces ensureContext to create a fresh context for the next call.
+        try context.close() catch case _: Exception => ()
+        context = null
+        BrowserFetchResult(0, "Timeout", s"Page load failed for $url: ${e.getMessage}", url)
     finally
       try page.close() catch case _: Exception => ()
   end fetchWithPlaywright
@@ -273,18 +302,28 @@ object BrowserManager:
 
   /** 获取页面内容。优先使用 Obscura（轻量 + 内建 stealth），回退到 Playwright。 */
   def fetch(url: String, headless: Boolean, maxWaitSeconds: Int = 15): IO[BrowserFetchResult] =
+    // Hard cap: maxWaitSeconds + 15s buffer for navigation + DOM conversion
+    val hardTimeout = (maxWaitSeconds + 15).seconds
     // Obscura 优先（不需要 playwrightEC，独立进程）
-    if obscuraPath.isDefined then
-      IO.blocking {
-        fetchWithObscura(url, maxWaitSeconds)
-      }.flatMap {
-        case Some(result) => IO.pure(result)
-        case None =>
-          logger.infoSync("Obscura failed, falling back to Playwright", "url" -> url.take(80))
-          IO.delay { fetchWithPlaywright(url, headless, maxWaitSeconds) }.evalOn(playwrightEC)
-      }
-    else
-      IO.delay { fetchWithPlaywright(url, headless, maxWaitSeconds) }.evalOn(playwrightEC)
+    val io =
+      if obscuraPath.isDefined then
+        IO.blocking {
+          fetchWithObscura(url, maxWaitSeconds)
+        }.flatMap {
+          case Some(result) => IO.pure(result)
+          case None =>
+            logger.infoSync("Obscura failed, falling back to Playwright", "url" -> url.take(80))
+            IO.delay { fetchWithPlaywright(url, headless, maxWaitSeconds) }.evalOn(playwrightEC)
+        }
+      else
+        IO.delay { fetchWithPlaywright(url, headless, maxWaitSeconds) }.evalOn(playwrightEC)
+    // Timeout: anti-bot challenges can make Playwright block indefinitely on a
+    // single-thread EC.  Return a graceful error instead of hanging forever.
+    io.timeout(hardTimeout).recover {
+      case _: java.util.concurrent.TimeoutException =>
+        logger.infoSync("Browser fetch timed out", "url" -> url.take(80), "timeout" -> hardTimeout.toString)
+        BrowserFetchResult(0, "Timeout", s"Page load timed out after $hardTimeout.", url)
+    }
 
   /** 关闭浏览器和 Playwright，释放资源。 */
   def shutdown(): Unit =
