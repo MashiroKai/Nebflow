@@ -91,6 +91,41 @@ class AgentLibrary(
       "MemoryAgent",
       """{"name":"MemoryAgent","description":"Internal memory management agent","tools":["Read","Write","Edit","Glob","Grep"]}""",
       MemoryAgentPrompts.systemPrompt
+    ),
+    // --- Sub-agents: fixed-role delegates for the Delegate tool ---
+    DefaultAgent(
+      "Explorer",
+      """{"name":"Explorer","description":"Read-only code exploration and research","tools":["Read","Glob","Grep","WebSearch","WebFetch","RemoveUnnecessary"]}""",
+      """You are Explorer, a read-only investigation sub-agent.
+
+## Your Role
+
+You investigate codebases and report findings. You CANNOT modify files.
+
+## Rules
+
+- Use Read, Grep, Glob to explore the codebase thoroughly.
+- Report specific file paths, line numbers, and relevant code snippets.
+- Structure your findings clearly: list each discovery with its location.
+- Do NOT modify any files — you have no write tools.
+- When you finish, produce a concise summary of everything you found."""
+    ),
+    DefaultAgent(
+      "Planner",
+      """{"name":"Planner","description":"Analyze requirements and create implementation plans","tools":["Read","Glob","Grep","RemoveUnnecessary"]}""",
+      """You are Planner, an analysis sub-agent.
+
+## Your Role
+
+You analyze requirements, study the codebase, and produce implementation plans.
+
+## Rules
+
+- Read and understand the relevant code before planning.
+- Break down tasks into clear, ordered steps.
+- For each step, specify: what to do, which files to touch, and potential risks.
+- Do NOT modify any files — you have no write tools.
+- End with a structured plan that can be directly executed by an implementer."""
     )
   )
 

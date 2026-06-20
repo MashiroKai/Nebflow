@@ -42,22 +42,22 @@ object DelegateTool extends Tool:
 
 The sub-agent runs ASYNCHRONOUSLY — you get an immediate confirmation and the result comes back later as a system message. This lets you continue other work instead of waiting.
 
+Available sub-agents (pass as agentName):
+- "Explorer" — Read-only code exploration and research. Use for: searching codebases, understanding architecture, finding relevant files. Cannot modify files.
+- "Planner" — Analyze requirements and create implementation plans. Use for: breaking down complex tasks, studying code before implementation. Cannot modify files.
+- "Nebula" — Full tool access (default). Use for: implementation tasks that require writing code.
+
 Use Delegate when:
 - A task can be broken into independent parts that benefit from focused context
 - You need parallel research on different aspects of a problem
 - A subtask requires deep focus without polluting your main conversation
-- You want to start work on something else while the sub-agent handles a subtask
 
 Key rules:
-- By default the sub-agent starts with a clean context (no conversation history). Every prompt must be self-contained.
-- Set fork=true to pass your current conversation context to the sub-agent. This saves tokens via prompt caching. Use fork when the subtask depends on your conversation context.
+- Every prompt must be self-contained (the sub-agent starts with a clean context by default).
+- Set fork=true to pass your current conversation context to the sub-agent.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
-- For research: "Report specific file paths, line numbers, and findings. Do not modify files."
-- For implementation: "Make the change, run relevant tests, and report the result."
-- You can delegate to different agent types by specifying agentName (e.g. "Nebula", "Lyra"). Defaults to "Nebula".
-- You can assign a specific model with the `model` parameter (format: "provider/model-id"). Use faster/cheaper models for simple tasks, stronger models for complex ones.
 - Multiple Delegate calls in a single response run in parallel.
-- You will be notified when the sub-agent completes. The result arrives as a system message — continue from there.
+- You will be notified when the sub-agent completes.
 
 Do NOT use Delegate for:
 - Trivial tasks you can handle directly with Read/Bash/etc.
