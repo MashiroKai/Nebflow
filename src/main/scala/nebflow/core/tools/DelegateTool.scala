@@ -6,8 +6,8 @@ import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.{Message, MessageRole}
-import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
+import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 import org.apache.pekko.util.Timeout
 
 import scala.concurrent.duration.*
@@ -96,8 +96,7 @@ Do NOT use Delegate for:
     val description = input("description").flatMap(_.asString).getOrElse("subtask")
     val agentName = input("agentName").flatMap(_.asString).getOrElse("Nebula")
 
-    if prompt.trim.isEmpty then
-      IO.pure(Left(ToolError("Missing required parameter: prompt")))
+    if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else
@@ -118,6 +117,7 @@ Do NOT use Delegate for:
           )
         case _ =>
           IO.pure(Left(ToolError("Delegate requires ActorSystem, SharedResources, agent library, and Pekko scheduler")))
+    end if
   end call
 
   private def delegateToSubagent(
@@ -189,29 +189,36 @@ Do NOT use Delegate for:
         subagentId
       )
       _ = logger.info(s"Spawned sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
-      result <- IO.fromFuture(
-        IO(
-          subagentRef.ask[AgentEvent](replyTo =>
-            AgentCommand.UserInput(prompt, Some(replyTo))
-          )(using askTimeout, scheduler)
+      result <- IO
+        .fromFuture(
+          IO(
+            subagentRef.ask[AgentEvent](replyTo => AgentCommand.UserInput(prompt, Some(replyTo)))(using
+              askTimeout,
+              scheduler
+            )
+          )
         )
-      ).map {
-        case AgentEvent.Completed(_, messages) =>
-          val text = extractLastAssistantText(messages)
-          if text.nonEmpty then Right(text)
-          else Right("(sub-agent completed with no text output)")
-        case AgentEvent.Failed(_, error) =>
-          Left(ToolError(s"Sub-agent '${error.agentName}' failed: ${error.message}"))
-      }.recover { case _: java.util.concurrent.TimeoutException =>
-        Left(ToolError(s"Sub-agent timed out after $SubagentTimeout"))
-      }
+        .map {
+          case AgentEvent.Completed(_, messages) =>
+            val text = extractLastAssistantText(messages)
+            if text.nonEmpty then Right(text)
+            else Right("(sub-agent completed with no text output)")
+          case AgentEvent.Failed(_, error) =>
+            Left(ToolError(s"Sub-agent '${error.agentName}' failed: ${error.message}"))
+        }
+        .recover { case _: java.util.concurrent.TimeoutException =>
+          Left(ToolError(s"Sub-agent timed out after $SubagentTimeout"))
+        }
       _ = subagentRef ! AgentCommand.Stop("delegate-complete")
     yield result
 
   /** Extract the last assistant message text from a list of messages. */
   private def extractLastAssistantText(messages: List[Message]): String =
-    messages.reverse.collectFirst {
-      case msg if msg.role == MessageRole.Assistant => msg.textContent
-    }.filter(_.nonEmpty).getOrElse("")
+    messages.reverse
+      .collectFirst {
+        case msg if msg.role == MessageRole.Assistant => msg.textContent
+      }
+      .filter(_.nonEmpty)
+      .getOrElse("")
 
 end DelegateTool

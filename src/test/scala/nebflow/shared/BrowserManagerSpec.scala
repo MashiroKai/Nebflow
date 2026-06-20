@@ -19,8 +19,10 @@ class BrowserManagerSpec extends CatsEffectSuite:
 
   // Clean up stale SingletonLock from previous test runs
   val lockFile = Paths.get(testDataDir, "SingletonLock")
+
   if Files.exists(lockFile) then
-    try Files.delete(lockFile) catch case _: Exception => ()
+    try Files.delete(lockFile)
+    catch case _: Exception => ()
 
   private val ArxivUrl = "https://arxiv.org/abs/2401.00001"
   private val IeeeUrl = "https://ieeexplore.ieee.org/document/9000000"
@@ -34,7 +36,7 @@ class BrowserManagerSpec extends CatsEffectSuite:
   /** Whether the result indicates the page was blocked or timed out. */
   private def isBlocked(result: BrowserFetchResult): Boolean =
     isChallenge(result.title) || result.status == 403 || result.status == 0 ||
-    result.status == 202 || result.content.length < 500
+      result.status == 202 || result.content.length < 500
 
   test("arXiv: stealth + DOM-to-Markdown") {
     BrowserManager.fetch(ArxivUrl, headless = true, maxWaitSeconds = 10).map { result =>
