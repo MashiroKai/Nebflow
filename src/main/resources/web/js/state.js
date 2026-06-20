@@ -46,6 +46,7 @@ export default {
   agentBubbles: {},
   agentColors: {},
   agentColorIdx: 0,
+  activeDelegates: 0,
 
   // Per-session streaming text buffer: sessionId -> accumulated text
   sessionTexts: {},
