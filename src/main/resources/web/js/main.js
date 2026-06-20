@@ -601,6 +601,8 @@ onMessage('done', (msg) => {
   delete state.sessionPendingTools[sid];
   // Turn is complete — clear turnExpecting so stray thinkingDelta won't create bubbles
   if (sid) delete state.turnExpecting[sid];
+  // Clean up answered permission tracking — turn is done
+  if (sid) state.answeredPermissions.delete(sid);
   // Store model info for this session
   if (sid && (msg.model || msg.contextWindow || msg.inputTokens != null)) {
     state.sessionModelInfo[sid] = {
@@ -706,6 +708,7 @@ onMessage('error', (msg) => {
   if (sid) delete state.turnExpecting[sid];
   // Defensive: clear attention on error
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
+  if (sid) state.answeredPermissions.delete(sid);
   // Reset history loading state — backend may fail mid-pagination
   state.historyLoading = false;
   hideHistoryLoader();
@@ -733,6 +736,7 @@ onMessage('interrupted', (msg) => {
   if (sid) delete state.turnExpecting[sid];
   // Defensive: clear attention on interrupt
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
+  if (sid) state.answeredPermissions.delete(sid);
   if (isActive(msg)) {
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
@@ -749,6 +753,7 @@ onMessage('timeout', (msg) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) delete state.sessionPendingAiMessages[sid];
+  if (sid) state.answeredPermissions.delete(sid);
   if (isActive(msg)) {
     finishThinking();
     finishAi();
@@ -767,6 +772,7 @@ onMessage('maxTokens', (msg) => {
   if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid) delete state.turnExpecting[sid];
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
+  if (sid) state.answeredPermissions.delete(sid);
   if (isActive(msg)) {
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
@@ -1050,7 +1056,9 @@ onMessage('historyPage', (msg) => {
 
     // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
     // Same logic as AskUser — if already answered, there would be subsequent tool messages.
-    if (isAskPermissionPending) {
+    // Guard: skip if the user has already answered this permission in the current session
+    // (tool is still executing, askPermission is still the last history entry).
+    if (isAskPermissionPending && !state.answeredPermissions.has(sid)) {
       // Remove the disabled askPermission row (restored by restoreFromBackendHistory).
       state.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.permission-pending-box')) row.remove();
