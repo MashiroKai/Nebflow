@@ -130,7 +130,17 @@ Do NOT use Delegate for:
             agentName = agentName,
             modelRef = modelRef.filter(_.nonEmpty),
             fork = fork,
-            parentMessages = if fork then ctx.messages else Nil,
+            parentMessages = if fork then
+              Message(
+                MessageRole.User,
+                Left(
+                  "[Context: Your parent agent has forked this conversation to give you background context. " +
+                  "You are a sub-agent working on a delegated task. " +
+                  "Focus ONLY on the specific task described in the message below this one. " +
+                  "Do not work on other topics from the conversation history — those are your parent's responsibilities.]"
+                )
+              ) :: ctx.messages
+            else Nil,
             system = system,
             resources = resources,
             agentLibrary = agentLibrary,
