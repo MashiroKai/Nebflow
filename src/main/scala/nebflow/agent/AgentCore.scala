@@ -405,7 +405,10 @@ private[agent] trait AgentCore:
             else Nil
           // --- LLM call ---
           // Use fresh agentDef from TurnContext for tools and system prompt
-          freshTools = if isCompactTurn then Some(Nil) else buildToolList(freshDef, depth)
+          // Fetch available models to enrich Delegate tool description with model options
+          modelDescs <- if isCompactTurn then IO.pure(Nil) else resources.providerRegistry.getAllModelsDetailed()
+          freshTools =
+            if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
           systemStable = baseSystemStable +
             (if turnCtx.memoryBlock.nonEmpty then s"\n\n${turnCtx.memoryBlock}" else "") +
             stateForLlm.language
@@ -548,10 +551,11 @@ private[agent] trait AgentCore:
         mailboxAddress = state.session.sessionId,
         dreamSchedulerRef = resources.dreamSchedulerRef,
         sharedResources = Some(resources),
-        actorSystem = Some(ctx.system)
+        actorSystem = Some(ctx.system),
+        messages = state.messages
       )
       freshResults <- filteredCalls
-        .traverse { call =>
+        .parTraverse { call =>
           // AskUserQuestion renders its own UI via askUser event — skip generic toolStart/End
           val skipStreaming = call.name == "AskUserQuestion"
           (if !skipStreaming then
@@ -838,6 +842,27 @@ private[agent] trait AgentCore:
     val tools = ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name))
     Some(tools)
   end buildToolList
+
+  /** Enrich the Delegate tool description with available model options. */
+  private def enrichDelegateTools(
+    tools: Option[List[ToolDefinition]],
+    models: List[(String, String, Option[String])]
+  ): Option[List[ToolDefinition]] =
+    if models.isEmpty then tools
+    else
+      tools.map(_.map { td =>
+        if td.name == "Delegate" then
+          val modelList = models
+            .map { case (ref, _, desc) =>
+              s"  - $ref" + desc.map(d => s": $d").getOrElse("")
+            }
+            .mkString("\n")
+          td.copy(description =
+            td.description + s"\n\nAvailable models (pass as the `model` parameter in \"provider/model\" format):\n$modelList"
+          )
+        else td
+      })
+  end enrichDelegateTools
 
   // ============================================================
   // Stream helpers

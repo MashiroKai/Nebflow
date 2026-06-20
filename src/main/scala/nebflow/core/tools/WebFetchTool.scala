@@ -7,8 +7,6 @@ import nebflow.core.NebflowLogger
 import nebflow.shared.*
 import sttp.client4.*
 
-import java.util.concurrent.ConcurrentHashMap
-
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -18,9 +16,17 @@ object WebFetchTool extends Tool:
   val DEFAULT_MAX_CHARS = 20_000
   val DEFAULT_MAX_BYTES = 750_000
 
-  private val cache = new ConcurrentHashMap[String, (String, Long)]()
   private val CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
   private val MAX_CACHE_SIZE = 100
+
+  // LinkedHashMap with LRU eviction — thread-safe under this class's single-threaded access.
+  // removeEldestEntry fires automatically on every put, eliminating the need for
+  // manual iteration which could race with concurrent access.
+  import java.util.{LinkedHashMap, Map as JMap}
+
+  private val cache = new LinkedHashMap[String, (String, Long)](MAX_CACHE_SIZE, 0.75f, true):
+    override def removeEldestEntry(eldest: JMap.Entry[String, (String, Long)]): Boolean =
+      size() > MAX_CACHE_SIZE
 
   val name = "WebFetch"
 
@@ -72,12 +78,7 @@ Usage:
 
   private def writeCache(url: String, value: String): Unit =
     cache.put(url, (value, System.currentTimeMillis() + CACHE_TTL_MS))
-    if cache.size() > MAX_CACHE_SIZE then
-      val now = System.currentTimeMillis()
-      val it = cache.entrySet().iterator()
-      while it.hasNext do
-        val entry = it.next()
-        if entry.getValue._2 <= now then it.remove()
+    // Eviction is handled automatically by LinkedHashMap.removeEldestEntry
 
   // ── Anti-bot detection ─────────────────────────────────────────────
 
@@ -280,8 +281,7 @@ Usage:
         else
           // Browser may return Markdown (Obscura/DOM-to-Markdown) or raw HTML
           val (title, text, metaDesc) =
-            if result.isMarkdown then
-              (Option(result.title).filter(_.nonEmpty), result.content, None)
+            if result.isMarkdown then (Option(result.title).filter(_.nonEmpty), result.content, None)
             else
               val (t, txt, md) = extractHtmlText(result.content)
               (t.orElse(Option(result.title).filter(_.nonEmpty)), txt, md)

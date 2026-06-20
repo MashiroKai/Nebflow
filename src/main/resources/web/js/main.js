@@ -1108,93 +1108,115 @@ onMessage('historyPage', (msg) => {
 });
 
 // --- Multi-agent events ---
+// Sub-agent activity shows a header indicator (like Bash background tasks).
+// No tool cards or text rendered in the chat — the parent's Delegate tool
+// card (spinner → result) is the only chat-level feedback.
+// Click the indicator to see a dropdown with per-agent status.
+
+function updateDelegateIndicator() {
+  const el = document.getElementById('delegate-indicator');
+  if (!el) return;
+  const count = Object.keys(state.activeSubAgents || {}).length;
+  if (count > 0) {
+    el.classList.remove('hidden');
+    el.querySelector('.delegate-count').textContent = count;
+  } else {
+    el.classList.add('hidden');
+    // Also hide dropdown
+    const dropdown = document.getElementById('delegate-dropdown');
+    if (dropdown) dropdown.classList.add('hidden');
+  }
+  renderDelegateDropdown();
+}
+
+function renderDelegateDropdown() {
+  const listEl = document.querySelector('#delegate-dropdown .bg-dropdown-list');
+  if (!listEl) return;
+  const agents = state.activeSubAgents || {};
+  const entries = Object.entries(agents);
+  if (entries.length === 0) {
+    listEl.innerHTML = '';
+    return;
+  }
+  listEl.innerHTML = entries.map(([id, info]) => {
+    const toolLabel = info.currentTool || '';
+    const toolPart = toolLabel ? '<span class="delegate-tool">' + escapeHtml(toolLabel) + '</span>' : '';
+    const status = info.done ? '<span class="delegate-done">done</span>' : '<span class="delegate-running">running</span>';
+    return '<div class="bg-task-row">' +
+      '<div class="bg-task-info">' +
+        '<span class="bg-task-name">' + status + ' ' + escapeHtml(info.description || id) + '</span>' +
+        toolPart +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// Toggle dropdown on indicator click
+document.getElementById('delegate-indicator')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const dropdown = document.getElementById('delegate-dropdown');
+  if (!dropdown) return;
+  if (dropdown.classList.contains('hidden')) {
+    renderDelegateDropdown();
+    dropdown.classList.remove('hidden');
+  } else {
+    dropdown.classList.add('hidden');
+  }
+});
+
+// Close dropdown on outside click
+document.addEventListener('click', (e) => {
+  const dropdown = document.getElementById('delegate-dropdown');
+  const indicator = document.getElementById('delegate-indicator');
+  if (dropdown && !dropdown.contains(e.target) && !indicator?.contains(e.target)) {
+    dropdown.classList.add('hidden');
+  }
+});
+
 onMessage('agentStart', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
-  state.activeAgentId = msg.name || msg.agentId;
-  const color = getAgentColor(state.activeAgentId);
-  if (!state.agentBubbles[state.activeAgentId]) {
-    const { chat } = state.dom;
-    const row = document.createElement('div');
-    row.className = 'row ai agent-row';
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble ai';
-    bubble.innerHTML = '<span class="thinking-text">' + randomThinkingText() + '</span>';
-    // Only show badge for non-default agents
-    if (state.activeAgentId && state.activeAgentId !== 'default') {
-      const badge = document.createElement('div');
-      badge.className = 'agent-badge';
-      badge.style.borderColor = color;
-      badge.style.color = color;
-      badge.textContent = state.activeAgentId;
-      row.appendChild(badge);
-    }
-    row.appendChild(bubble);
-    chat.appendChild(row);
-    state.agentBubbles[state.activeAgentId] = { bubble, text: '', row, badge: row.querySelector('.agent-badge') };
+  const aid = msg.agentId || msg.name;
+  state.activeAgentId = aid;
+  if (!state.activeSubAgents) state.activeSubAgents = {};
+  state.activeSubAgents[aid] = { description: aid, currentTool: null, done: false };
+  updateDelegateIndicator();
+});
+
+onMessage('agentTextDelta', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolCallDetected', (msg) => { resetStreamTimeout(msg.sessionId); });
+
+onMessage('agentToolStart', (msg) => {
+  resetStreamTimeout(msg.sessionId);
+  const aid = msg.agentId || state.activeAgentId;
+  if (aid && state.activeSubAgents && state.activeSubAgents[aid]) {
+    state.activeSubAgents[aid].currentTool = msg.label;
+    renderDelegateDropdown();
   }
 });
 
-onMessage('agentTextDelta', (msg) => { resetStreamTimeout(msg.sessionId); if (isActive(msg)) appendAgentText(msg.agentId || state.activeAgentId, msg.delta); });
-onMessage('agentToolCallDetected', (msg) => { 
-  resetStreamTimeout(msg.sessionId); 
-  const aSid = msg.sessionId;
-  if (aSid && !state.sessionPendingTools[aSid]) state.sessionPendingTools[aSid] = { label: msg.name };
-  if (isActive(msg)) renderToolPending(msg.name, msg.sessionId); 
-});
-onMessage('agentToolStart', (msg) => { 
-  resetStreamTimeout(msg.sessionId); 
-  const aSid2 = msg.sessionId;
-  if (aSid2) state.sessionPendingTools[aSid2] = { label: msg.label };
-  if (isActive(msg)) renderToolPending(msg.label, msg.sessionId); 
-});
-onMessage('agentToolEnd', (msg) => {
-  resetStreamTimeout(msg.sessionId);
-  const aSid3 = msg.sessionId;
-  if (aSid3) delete state.sessionPendingTools[aSid3];
-  if (!isActive(msg)) return;
-  const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
-  if (data) saveMsg(data, msg.sessionId);
-});
-onMessage('agentEnd', (msg) => {
-  if (!isActive(msg)) return;
-  clearBusyFor(msg);
-  const id = msg.name || msg.agentId;
-  const a = state.agentBubbles[id];
-  if (a && a.text) {
-    saveMsg({ type: 'agent', agentId: id, text: a.text }, msg.sessionId || state.activeSessionId);
-  }
-  finishAgent(id);
-});
+onMessage('agentToolEnd', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentEnd', (msg) => { resetStreamTimeout(msg.sessionId); });
 
-onMessage('agentThinking', (msg) => {
-  resetStreamTimeout(msg.sessionId);
-  if (!isActive(msg)) return;
-  if (state.activeAgentId && state.agentBubbles[state.activeAgentId]) {
-    state.agentBubbles[state.activeAgentId].bubble.innerHTML = '<span class="thinking-text">' + randomThinkingText() + '</span>';
-  }
-});
-
-onMessage('agentRetryStatus', (msg) => {
-  resetStreamTimeout(msg.sessionId);
-  if (isActive(msg)) renderRetryStatus(msg.message);
-});
+onMessage('agentThinking', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentRetryStatus', (msg) => { resetStreamTimeout(msg.sessionId); });
 
 onMessage('agentDone', (msg) => {
+  resetStreamTimeout(msg.sessionId);
   if (!isActive(msg)) return;
-  clearBusyFor(msg);
-  const sid = msg.sessionId || state.activeSessionId;
-  consumeTurnDuration(sid);
-  Object.keys(state.agentBubbles).forEach(id => {
-    const a = state.agentBubbles[id];
-    if (a && a.text) {
-      saveMsg({ type: 'agent', agentId: id, text: a.text }, sid);
-    }
-    finishAgent(id);
-  });
-  state.agentBubbles = {};
+  const aid = msg.agentId || state.activeAgentId;
+  if (aid && state.activeSubAgents) {
+    // Mark as done briefly so user sees transition, then remove
+    if (state.activeSubAgents[aid]) state.activeSubAgents[aid].done = true;
+    renderDelegateDropdown();
+    setTimeout(() => {
+      if (state.activeSubAgents && state.activeSubAgents[aid]) {
+        delete state.activeSubAgents[aid];
+        updateDelegateIndicator();
+      }
+    }, 2000);
+  }
   state.activeAgentId = null;
-  clearStatus();
 });
 
 // --- Compaction events (per-session) ---
