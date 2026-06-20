@@ -29,6 +29,11 @@ export default {
   foldersWithRules: new Set(),
   pinnedFolders: new Set(safeParse(localStorage.getItem('nebflow_pinned_folders'), [])),
   attentionSessions: new Set(),
+  /** Tracks sessions whose askPermission has been answered by the user.
+   *  Prevents re-creating interactive permission prompts on session switch-back
+   *  when the tool is still executing (the askPermission UiMessage is still the
+   *  last history entry until toolEnd is recorded). */
+  answeredPermissions: new Set(),
   legacyMigrated: false,
 
   // Bypass all permission requests (auto-approve mode)
