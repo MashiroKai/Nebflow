@@ -197,7 +197,7 @@ enum AgentStreamEvent:
     isError: Boolean,
     input: Option[JsonObject] = None
   )
-  case AgentStart(agentName: String, agentType: String)
+  case AgentStart(agentName: String, agentType: String, taskDescription: Option[String] = None)
   case AgentEnd(agentName: String)
   case Thinking
   case ToolCallDetected(name: String)
@@ -256,13 +256,14 @@ enum AgentStreamEvent:
             "isError" -> isError.asJson
           )
       input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
-    case AgentStart(name, agentType) =>
-      Json.obj(
+    case AgentStart(name, agentType, taskDescription) =>
+      val base = Json.obj(
         "type" -> "agentStart".asJson,
         "agentId" -> agentId.asJson,
         "name" -> name.asJson,
         "agentType" -> agentType.asJson
       )
+      taskDescription.fold(base)(desc => base.deepMerge(Json.obj("taskDescription" -> desc.asJson)))
     case AgentEnd(name) =>
       Json.obj("type" -> "agentEnd".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
     case Thinking =>
