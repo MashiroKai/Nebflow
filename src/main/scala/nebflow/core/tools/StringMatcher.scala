@@ -13,16 +13,77 @@ object StringMatcher:
   def normalizeQuotes(s: String): String =
     s.map(c => CurlyQuotes.getOrElse(c, c))
 
+  // ---------------------------------------------------------------------------
+  // Whitespace-insensitive matching
+  // ---------------------------------------------------------------------------
+
   /**
-   * Two-step matching: exact match first, then quote-normalized fallback.
+   * Normalized form where each run of consecutive whitespace (spaces, tabs)
+   * is collapsed into a single space. Non-whitespace characters pass through
+   * unchanged.
+   *
+   * @param text     normalized string (one space per whitespace run)
+   * @param origStarts  origStarts(i) = position in original string where the
+   *                    span for normalized character i begins
+   * @param origEnds    origEnds(i) = position in original string right after
+   *                    the span for normalized character i
+   */
+  private case class WhitespaceNormalized(
+    text: String,
+    origStarts: Array[Int],
+    origEnds: Array[Int]
+  )
+
+  /** Collapse whitespace runs and track original positions. */
+  private def normalizeWhitespace(s: String): WhitespaceNormalized =
+    val sb = new StringBuilder(s.length)
+    val starts = Array.newBuilder[Int]
+    val ends = Array.newBuilder[Int]
+
+    var i = 0
+    while i < s.length do
+      val c = s.charAt(i)
+      if c == ' ' || c == '\t' then
+        // Collapse entire whitespace run into a single space
+        val runStart = i
+        i += 1
+        while i < s.length && (s.charAt(i) == ' ' || s.charAt(i) == '\t') do
+          i += 1
+        sb.append(' ')
+        starts += runStart
+        ends += i // i is past the end of the whitespace run
+      else
+        sb.append(c)
+        starts += i
+        ends += i + 1
+        i += 1
+
+    WhitespaceNormalized(sb.toString, starts.result(), ends.result())
+
+  /**
+   * Given a whitespace-normalized match position, extract the corresponding
+   * span from the original string.  The normalized form collapses runs of
+   * whitespace but always produces a result, so we walk the position map to
+   * find the true original boundaries.
+   */
+  private def extractOriginalSpan(
+    content: String,
+    wn: WhitespaceNormalized,
+    normIdx: Int,
+    normLen: Int
+  ): String =
+    val normEnd = normIdx + normLen - 1
+    val origStart = wn.origStarts(normIdx)
+    val origEnd = wn.origEnds(normEnd)
+    content.substring(origStart, origEnd)
+
+  /**
+   * Three-step matching: exact match first, then quote-normalized fallback,
+   * finally whitespace-insensitive fallback (which also handles quote
+   * normalization internally).
+   *
    * Returns the actual substring from `content` that matches `search`,
    * or None if no match is found.
-   *
-   * Note: the substring extraction on line below relies on normalizeQuotes
-   * being a strict 1:1 character mapping (each curly quote maps to exactly
-   * one straight quote), so `search.length` equals the matched span in the
-   * normalized string. If a future normalization breaks this invariant
-   * (e.g. ellipsis "…" → "..."), the extraction logic must be updated.
    */
   def findActualString(content: String, search: String): Option[String] =
     // Step 1: exact match
@@ -34,7 +95,28 @@ object StringMatcher:
       val normSearch = normalizeQuotes(search)
       val idx = normContent.indexOf(normSearch)
       if idx >= 0 then Some(content.substring(idx, idx + search.length))
-      else None
+      else
+        // Steps 3 & 4: whitespace-insensitive matching.
+        // Compute wnContent once — its position map is identical whether
+        // built from content or normContent (quote normalization is 1:1).
+        val wnContent = normalizeWhitespace(content)
+
+        // Step 3: whitespace-insensitive (no quote handling)
+        val wnSearch = normalizeWhitespace(search)
+        val wsIdx = wnContent.text.indexOf(wnSearch.text)
+        if wsIdx >= 0 then
+          Some(extractOriginalSpan(content, wnContent, wsIdx, wnSearch.text.length))
+        else
+          // Step 4: quote-normalized + whitespace-insensitive.
+          // Search in wnContentQ (built from normContent) because the
+          // normalized text may differ from wnContent.text (curly vs straight).
+          // Extraction still uses wnContent (same position map).
+          val wnContentQ = normalizeWhitespace(normContent)
+          val wnSearchQ = normalizeWhitespace(normSearch)
+          val wsQIdx = wnContentQ.text.indexOf(wnSearchQ.text)
+          if wsQIdx >= 0 then
+            Some(extractOriginalSpan(content, wnContent, wsQIdx, wnSearchQ.text.length))
+          else None
 
   /**
    * When old_string matched via quote normalization, apply the file's
