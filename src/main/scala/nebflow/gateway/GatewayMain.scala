@@ -14,7 +14,7 @@ import nebflow.core.scheduler.{ScheduledTaskActor, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
-import nebflow.core.tools.{MeshTool, ToolRegistry}
+import nebflow.core.tools.{RemoteExecutor, ToolRegistry}
 import nebflow.llm.*
 import nebflow.mesh.*
 import nebflow.service.{ConfigSnapshot, *}
@@ -312,7 +312,10 @@ object GatewayMain extends IOApp.Simple:
                                   bridgeSetup.flatMap { bridgeManager =>
                                     meshServiceF.flatMap { meshService =>
                                       // Register mesh tool for agent cross-device operations
-                                      MeshTool.register(meshService)
+                                      // Register remote executor for distributed tool dispatch
+                                      RemoteExecutor.initialize(meshService)
+                                      // Keep MeshTool companion state for backward compat (RestApiRoutes/WebSocketRoutes)
+                                      nebflow.core.tools.MeshTool.wire(meshService)
 
                                       // Create sync services
                                       val cloudSessionSync = nebflow.mesh.CloudSessionSync(meshService, sessionStore)
@@ -326,8 +329,9 @@ object GatewayMain extends IOApp.Simple:
                                       meshService.setPostSyncHook(
                                         cloudSessionSync.syncCycle.handleErrorWith(_ => IO.unit)
                                       )
-                                      // MeshTool: cloud session sync for busy lock + relay
-                                      MeshTool.setCloudSessionSync(cloudSessionSync)
+                                      // RemoteExecutor: cloud session sync for relay fallback
+                                      RemoteExecutor.setCloudSessionSync(cloudSessionSync)
+                                      nebflow.core.tools.MeshTool.setCloudSessionSync(cloudSessionSync)
                                       // Background pollers: fast sync (3s) includes session index + file sync
                                       cloudSessionSync.startBackgroundPollers(
                                         sharedResourcesWithDream.dispatcher,
