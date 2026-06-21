@@ -270,6 +270,16 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
         val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
         for _ <- store.verifySession(userId, sessionToken) yield Json.obj("ok" -> true.asJson)
 
+      // Agent status broadcast — pushes to all WebSocket clients of this user
+      case "agent/status" =>
+        val userId = hc.downField("userId").as[String].getOrElse("")
+        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
+        val status = hc.downField("status").as[Json].getOrElse(Json.obj())
+        for
+          _ <- store.verifySession(userId, sessionToken)
+          _ <- wsManager.broadcastToUser(userId, status)
+        yield Json.obj("ok" -> true.asJson)
+
       case other =>
         IO.pure(Json.obj("code" -> 400.asJson, "message" -> s"Unknown action: $other".asJson))
 

@@ -74,6 +74,14 @@ class WebSocketManager private (
       userTopics.foldLeft(IO.unit: IO[Unit])((acc, topic) => acc *> topic.publish1(msg.noSpaces).void)
     }
 
+  /** Broadcast a message to all connected devices of a user. */
+  def broadcastToUser(userId: String, msg: Json): IO[Unit] =
+    connectionsRef.get.flatMap { m =>
+      val userTopics = m.filter { case ((uid, _), _) => uid == userId }.values
+      if userTopics.isEmpty then IO.unit
+      else userTopics.foldLeft(IO.unit: IO[Unit])((acc, topic) => acc *> topic.publish1(msg.noSpaces).void)
+    }
+
   def isConnected(userId: String, deviceId: String): IO[Boolean] =
     connectionsRef.get.map(_.contains((userId, deviceId)))
 

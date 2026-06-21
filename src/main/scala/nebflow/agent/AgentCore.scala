@@ -352,7 +352,8 @@ private[agent] trait AgentCore:
             turnCtx.fileChanges,
             isUserTurn
           )
-          reminders = collectAllResult._1
+          // Add device pool info as per-turn reminder (not persisted in system prompt)
+          reminders = collectAllResult._1 ++ deviceReminder.toList
           newHighest = collectAllResult._2
           _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
           // --- Git branch change detection ---
@@ -758,6 +759,13 @@ private[agent] trait AgentCore:
                     val remoteInput = finalInput.remove("device")
                     val remoteSummary = s"[${deviceName}] ${tool.summarize(remoteInput)}"
                     logger.info(s"$logCtx Remote tool: $remoteSummary")
+                    // Broadcast status to other devices (fire-and-forget)
+                    val sid = ctx.sessionId.getOrElse("")
+                    RemoteExecutor.current.get.meshServiceOpt.foreach { ms =>
+                      given cats.effect.unsafe.IORuntime = cats.effect.unsafe.IORuntime.global
+                      ms.broadcastAgentStatus("executing", sid, deviceName, call.name)
+                        .unsafeRunAndForget()
+                    }
                     RemoteExecutor.current.get
                       .execute(deviceName, call.name, remoteInput)
                       .flatMap {
@@ -1011,42 +1019,40 @@ private[agent] trait AgentCore:
       if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
       else Repl.loadSystemPrompt()
     val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
-    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth, meshDeviceInfo)
+    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth)  // device info moved to per-turn reminder
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
   end buildSystemPrompt
 
-  /** Build device pool info for system prompt. */
-  private def meshDeviceInfo: String =
+  /** Build device info for per-turn system reminder (not persisted in system prompt). */
+  private def deviceReminder: Option[SystemReminder] =
     val msOpt = RemoteExecutor.current.flatMap(_.meshServiceOpt)
-    msOpt match
-      case None => ""
-      case Some(ms) =>
-        try
-          import cats.effect.unsafe.implicits.global
-          val id = ms.identity.unsafeRunSync()
-          val loggedIn = ms.isLoggedIn.unsafeRunSync()
-          val peersList = if loggedIn then ms.peers.unsafeRunSync() else Nil
-          val sb = new StringBuilder
-          // Device pool: list all devices the agent can use
-          sb.append("| Devices | ")
-          sb.append(s"local (${id.deviceName}, ${id.platform})")
-          val localCaps = id.capabilities.keys.toList.sorted
-          if localCaps.nonEmpty then sb.append(s" [${localCaps.mkString(", ")}]")
-          if loggedIn then
-            for p <- peersList do
-              val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
-              val desc = p.userDescription
-              sb.append(s"; ${p.deviceName} (${p.platform})")
-              if caps.nonEmpty then sb.append(s" [${caps.mkString(", ")}]")
-              if desc.nonEmpty then sb.append(s" - $desc")
-          sb.append(" |\n")
-          if loggedIn && peersList.nonEmpty then
-            sb.append("| Device parameter | Each tool accepts an optional `device` parameter to select the target device. Use device name from the list above. |\n")
-          sb.toString
-        catch case _: Exception => ""
-
-  end meshDeviceInfo
+    msOpt.flatMap { ms =>
+      try
+        import cats.effect.unsafe.implicits.global
+        val id = ms.identity.unsafeRunSync()
+        val loggedIn = ms.isLoggedIn.unsafeRunSync()
+        val peersList = if loggedIn then ms.peers.unsafeRunSync() else Nil
+        val parts = List.newBuilder[String]
+        parts += s"local (${id.deviceName}, ${id.platform})"
+        val localCaps = id.capabilities.keys.toList.sorted
+        if localCaps.nonEmpty then parts += s"[${localCaps.mkString(", ")}]"
+        val localStr = parts.result.mkString(" ")
+        val peerStrs = if loggedIn then peersList.map { p =>
+          val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
+          val desc = p.userDescription
+          val ps = List(s"${p.deviceName} (${p.platform})") ++
+            (if caps.nonEmpty then List(s"[${caps.mkString(", ")}]") else Nil) ++
+            (if desc.nonEmpty then List(s"-$desc") else Nil)
+          ps.mkString(" ")
+        } else Nil
+        val allDevices = (localStr :: peerStrs).mkString("; ")
+        val deviceHint = if loggedIn && peersList.nonEmpty then
+          "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
+        else ""
+        Some(SystemReminder("devices", s"Devices: $allDevices$deviceHint"))
+      catch case _: Exception => None
+    }
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
