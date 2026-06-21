@@ -188,14 +188,14 @@ class MeshService private (
       _ <- logger.info(s"Logged in as $username")
     yield acc
 
-  /** Logout — clear account, stop sync, clear peers. */
+  /** Logout — clear account, stop sync, clear peers. Preserves cloudUrl so re-login is seamless. */
   def logout: IO[Unit] =
     for
       _ <- AccountInfo.clear
       _ <- accountRef.set(None)
       _ <- peersRef.set(Map.empty)
-      _ <- configRef.update(_.copy(enabled = false))
-      _ <- MeshConfig.save(MeshConfig(enabled = false))
+      _ <- configRef.update(cfg => cfg.copy(enabled = false))
+      _ <- configRef.get.flatMap(cfg => MeshConfig.save(cfg))
       // Stop sync actor timers
       _ = _syncActorRef ! SyncCommand.StopSync
       _ <- logger.info("Logged out of Mesh")
