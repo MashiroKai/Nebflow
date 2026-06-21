@@ -139,16 +139,10 @@ object SystemReminders:
     // Current time — only on user input turns
     if isUserTurn then reminders += currentTime()
 
-    // Token pressure
-    val (pressureReminder, updatedHighest) = usage match
-      case Some(u) => contextPressure(u, contextWindow, highestPressureLevel)
-      case None => (None, highestPressureLevel)
-    pressureReminder.foreach(reminders += _)
-
     // External file changes
     fileChangesOpt.foreach(reminders += _)
 
-    (reminders.toList, updatedHighest)
+    (reminders.toList, highestPressureLevel)
   end collectAll
 
   /** Log reminders and return them wrapped in IO. */
