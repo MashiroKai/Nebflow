@@ -212,4 +212,147 @@ class CloudSyncSpec extends CatsEffectSuite:
     }
   }
 
+  // ===== mergeMessages (WeChat-like content merge) =====
+
+  test("mergeMessages: both empty → empty") {
+    withStore { store =>
+      val merged = store.mergeMessages(Nil, Nil)
+      IO(assertEquals(merged, Nil))
+    }
+  }
+
+  test("mergeMessages: local only → unchanged") {
+    withStore { store =>
+      val local = List(Message(MessageRole.User, Left("hello"), 1000L))
+      val merged = store.mergeMessages(local, Nil)
+      IO(assertEquals(merged.length, 1))
+    }
+  }
+
+  test("mergeMessages: cloud only → cloud messages") {
+    withStore { store =>
+      val cloud = List(Message(MessageRole.Assistant, Left("world"), 2000L))
+      val merged = store.mergeMessages(Nil, cloud)
+      IO(assertEquals(merged.length, 1))
+    }
+  }
+
+  test("mergeMessages: same content on both sides → deduplicated") {
+    withStore { store =>
+      val local = List(Message(MessageRole.User, Left("hello"), 1000L))
+      val cloud = List(Message(MessageRole.User, Left("hello"), 1000L))
+      val merged = store.mergeMessages(local, cloud)
+      IO(assertEquals(merged.length, 1, "Duplicate message should be deduplicated"))
+    }
+  }
+
+  test("mergeMessages: different messages on both sides → union") {
+    withStore { store =>
+      val local = List(
+        Message(MessageRole.User, Left("question A"), 1000L),
+        Message(MessageRole.Assistant, Left("answer A"), 2000L)
+      )
+      val cloud = List(
+        Message(MessageRole.User, Left("question B"), 3000L),
+        Message(MessageRole.Assistant, Left("answer B"), 4000L)
+      )
+      val merged = store.mergeMessages(local, cloud)
+      IO(assertEquals(merged.length, 4, "All unique messages should be in the union"))
+    }
+  }
+
+  test("mergeMessages: result is sorted by timestamp") {
+    withStore { store =>
+      val local = List(
+        Message(MessageRole.User, Left("late"), 5000L),
+        Message(MessageRole.Assistant, Left("earliest"), 1000L)
+      )
+      val cloud = List(
+        Message(MessageRole.User, Left("middle"), 3000L)
+      )
+      val merged = store.mergeMessages(local, cloud)
+      IO {
+        assertEquals(merged.length, 3)
+        assertEquals(merged.head.timestamp, 1000L, "Earliest should be first")
+        assertEquals(merged.last.timestamp, 5000L, "Latest should be last")
+      }
+    }
+  }
+
+  test("mergeMessages: first-connection merge (disjoint histories)") {
+    withStore { store =>
+      // Device A had conversation about topic 1
+      val deviceA = List(
+        Message(MessageRole.User, Left("tell me about physics"), 1000L),
+        Message(MessageRole.Assistant, Left("physics is..."), 2000L),
+        Message(MessageRole.User, Left("thanks"), 3000L)
+      )
+      // Device B had conversation about topic 2
+      val deviceB = List(
+        Message(MessageRole.User, Left("help with coding"), 4000L),
+        Message(MessageRole.Assistant, Left("sure, let's..."), 5000L)
+      )
+      val merged = store.mergeMessages(deviceA, deviceB)
+      IO {
+        assertEquals(merged.length, 5, "All messages from both devices should be merged")
+        assertEquals(merged.map(_.timestamp), List(1000L, 2000L, 3000L, 4000L, 5000L), "Should be chronological")
+      }
+    }
+  }
+
+  test("mergeUiMessages: takes longer list") {
+    withStore { store =>
+      val local = List(UiMessage.User("a"), UiMessage.User("b"))
+      val cloud = List(UiMessage.User("a"), UiMessage.User("b"), UiMessage.User("c"), UiMessage.User("d"))
+      val merged = store.mergeUiMessages(local, cloud)
+      IO(assertEquals(merged.length, 4, "Should take the longer list (cloud)"))
+    }
+  }
+
+  test("mergeUiMessages: equal length prefers local") {
+    withStore { store =>
+      val local = List(UiMessage.User("local-a"), UiMessage.User("local-b"))
+      val cloud = List(UiMessage.User("cloud-a"), UiMessage.User("cloud-b"))
+      val merged = store.mergeUiMessages(local, cloud)
+      IO(assertEquals(merged.head.asInstanceOf[UiMessage.User].text, "local-a", "Should prefer local when equal length"))
+    }
+  }
+
+  // ===== mergeSessionFromCloud (integration) =====
+
+  test("mergeSessionFromCloud: merges cloud messages into existing local session") {
+    withStore { store =>
+      val sid = "merge-test-session"
+      val localMsgs = List(Message(MessageRole.User, Left("local question"), 1000L))
+      val cloudMsgs = List(
+        Message(MessageRole.User, Left("local question"), 1000L), // same as local
+        Message(MessageRole.Assistant, Left("cloud answer"), 2000L) // new from cloud
+      )
+      for
+        _ <- store.mergeCloudIndex(List(meta(sid, "Merge Test", System.currentTimeMillis())), Nil)
+        _ <- store.saveMessagesForSession(sid, localMsgs)
+        result <- store.mergeSessionFromCloud(sid, cloudMsgs, Nil)
+        loaded <- store.loadMessagesForSession(sid)
+      yield
+        assert(result.changed, "Merge should detect changes")
+        assertEquals(loaded.length, 2, "Should have 2 unique messages after merge")
+    }
+  }
+
+  test("mergeSessionFromCloud: no change when cloud has subset of local") {
+    withStore { store =>
+      val sid = "no-change-test"
+      val localMsgs = List(
+        Message(MessageRole.User, Left("q1"), 1000L),
+        Message(MessageRole.Assistant, Left("a1"), 2000L)
+      )
+      val cloudMsgs = List(Message(MessageRole.User, Left("q1"), 1000L))
+      for
+        _ <- store.mergeCloudIndex(List(meta(sid, "No Change", System.currentTimeMillis())), Nil)
+        _ <- store.saveMessagesForSession(sid, localMsgs)
+        result <- store.mergeSessionFromCloud(sid, cloudMsgs, Nil)
+      yield assert(!result.changed, "Merge should report no change when cloud is a subset")
+    }
+  }
+
 end CloudSyncSpec
