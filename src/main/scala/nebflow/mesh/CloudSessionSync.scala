@@ -78,6 +78,9 @@ class CloudSessionSync private (
 
   /**
    * Push a single session's messages + UI messages to cloud.
+   * Uses pull-before-push: first pulls the cloud version, merges with local
+   * (union by content fingerprint), then pushes the merged result.
+   * This ensures no data is lost when two devices have different session histories.
    * Called after local session is updated (message saved, AI reply complete).
    */
   def pushSession(sessionId: String): IO[Unit] =
@@ -87,6 +90,11 @@ class CloudSessionSync private (
         if !loggedIn then IO.unit
         else
           for
+            // Phase 1: Pull cloud version and merge (handles concurrent edits)
+            _ <- pullAndMergeSession(sessionId).handleErrorWith(e =>
+              logger.debug(s"Pull-before-push merge for $sessionId: ${e.getMessage}")
+            )
+            // Phase 2: Push merged result to cloud
             messages <- sessionStore.loadMessagesForSession(sessionId)
             (_, uiTotal) <- sessionStore.getUiMessages(sessionId, 0, 1)
             uiMessages <-
@@ -111,6 +119,18 @@ class CloudSessionSync private (
             )
           yield ()
     yield ()
+
+  /**
+   * Pull a session from cloud and merge into local (union by content fingerprint).
+   * If cloud has messages we don't, they get merged in.
+   * If cloud doesn't have the session, this is a no-op.
+   */
+  def pullAndMergeSession(sessionId: String): IO[Boolean] =
+    pullSession(sessionId).flatMap {
+      case None => IO.pure(false)
+      case Some(cloudData) =>
+        sessionStore.mergeSessionFromCloud(sessionId, cloudData.messages, cloudData.uiMessages).map(_.changed)
+    }
 
   /**
    * Pull a single session's data from cloud.
@@ -223,7 +243,7 @@ class CloudSessionSync private (
         "relay/submit",
         "fromDeviceId" -> id.deviceId.asJson,
         "toDeviceId" -> toDeviceId.asJson,
-        "action" -> action.asJson,
+        "relayAction" -> action.asJson,
         "params" -> params
       )
       relayId <- IO.fromEither(
@@ -293,9 +313,10 @@ class CloudSessionSync private (
   /**
    * Full sync cycle — called periodically by the mesh sync actor (every 5 min).
    * 1. Pull cloud index and merge with local
-   * 2. Push local index
-   * 3. Push ALL sessions that are newer locally than cloud (ensures full history available)
-   * 4. Poll + execute relay commands from other devices
+   * 2. Pull sessions that are newer in cloud (merge, not replace)
+   * 3. Push local index
+   * 4. Push ALL sessions that are newer locally than cloud (ensures full history available)
+   * 5. Poll + execute relay commands from other devices
    */
   def syncCycle: IO[Unit] =
     for
@@ -309,12 +330,28 @@ class CloudSessionSync private (
               logger.warn(s"Pull index failed: ${e.getMessage}").as(CloudIndexSnapshot(Nil, Nil, 0))
             )
             _ <- sessionStore.mergeCloudIndex(cloudSnapshot.sessions, cloudSnapshot.folders)
+            // Pull sessions that are newer in cloud (content merge)
+            localSessions <- sessionStore.listSessions
+            cloudUpdatedAt = cloudSnapshot.sessions.map(s => s.id -> s.updatedAt).toMap
+            needPull = localSessions.filter { ls =>
+              cloudUpdatedAt.get(ls.id) match
+                case Some(cUpdated) => cUpdated > ls.updatedAt
+                case None => false // not in cloud, nothing to pull
+            }
+            _ <-
+              if needPull.isEmpty then IO.unit
+              else
+                needPull.traverse_(s =>
+                  pullAndMergeSession(s.id).handleErrorWith(e =>
+                    logger.debug(s"Pull+merge ${s.id.take(8)}: ${e.getMessage}")
+                  )
+                )
             // Push local index
             _ <- pushIndex.handleErrorWith(e => logger.warn(s"Push index failed: ${e.getMessage}"))
             // Push all sessions that are newer locally than cloud (batch sync)
-            localSessions <- sessionStore.listSessions
-            cloudUpdatedAt = cloudSnapshot.sessions.map(s => s.id -> s.updatedAt).toMap
-            needPush = localSessions.filter { ls =>
+            // Re-read local sessions after potential merge updates
+            refreshedLocal <- sessionStore.listSessions
+            needPush = refreshedLocal.filter { ls =>
               cloudUpdatedAt.get(ls.id) match
                 case Some(cUpdated) => ls.updatedAt > cUpdated
                 case None => true // not in cloud yet
@@ -333,8 +370,11 @@ class CloudSessionSync private (
 
   /**
    * Fast sync cycle — near-real-time cross-device visibility.
-   * Runs every 5 seconds. Focuses on PULL (push is handled by hooks).
-   * Also pushes index so new local sessions appear on other devices quickly.
+   * Runs every 3 seconds. Focuses on PULL (push is handled by hooks).
+   * 1. Pull session index — detect new/updated sessions from other devices
+   * 2. Auto-pull sessions that are newer in cloud (content merge)
+   * 3. Push index so new local sessions appear on other devices quickly
+   * 4. File fingerprint exchange
    */
   def fastSyncCycle: IO[Unit] =
     for
@@ -344,12 +384,28 @@ class CloudSessionSync private (
         else
           for
             // 1. Pull session index — lightweight metadata only
-            _ <- pullIndex
-              .flatMap(snapshot => sessionStore.mergeCloudIndex(snapshot.sessions, snapshot.folders))
-              .handleErrorWith(e => logger.debug(s"Fast pull index: ${e.getMessage}"))
-            // 2. Push index — so other devices see our new sessions quickly
+            snapshot <- pullIndex
+              .handleErrorWith(e => logger.debug(s"Fast pull index: ${e.getMessage}").as(CloudIndexSnapshot(Nil, Nil, 0)))
+            _ <- sessionStore.mergeCloudIndex(snapshot.sessions, snapshot.folders)
+            // 2. Auto-pull sessions that are newer in cloud (content merge)
+            localSessions <- sessionStore.listSessions
+            cloudUpdatedAt = snapshot.sessions.map(s => s.id -> s.updatedAt).toMap
+            needPull = localSessions.filter { ls =>
+              cloudUpdatedAt.get(ls.id).exists(_ > ls.updatedAt)
+            }
+            // Also pull sessions that exist in cloud but not locally yet (index merge may have just added them)
+            // Limit to 3 per cycle to avoid burst
+            _ <-
+              if needPull.isEmpty then IO.unit
+              else
+                needPull.take(3).traverse_(s =>
+                  pullAndMergeSession(s.id).handleErrorWith(e =>
+                    logger.debug(s"Fast pull+merge ${s.id.take(8)}: ${e.getMessage}")
+                  )
+                )
+            // 3. Push index — so other devices see our new sessions quickly
             _ <- pushIndex.handleErrorWith(e => logger.debug(s"Fast push index: ${e.getMessage}"))
-            // 3. File fingerprint exchange — just hashes, content only if changed
+            // 4. File fingerprint exchange — just hashes, content only if changed
             _ <- meshService.syncFilesWithCloud.handleErrorWith(e => logger.debug(s"Fast file sync: ${e.getMessage}"))
           yield ()
     yield ()
