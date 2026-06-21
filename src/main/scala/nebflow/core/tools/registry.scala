@@ -45,7 +45,8 @@ object ToolRegistry:
   def TOOL_MAP: Map[String, Tool] = tools.asScala.toMap
 
   def ALL_TOOLS: List[ToolDefinition] = tools.asScala.values.map { t =>
-    ToolDefinition(t.name, t.description, t.inputSchema)
+    val schema = RemoteExecutor.augmentSchema(t.name, t.inputSchema)
+    ToolDefinition(t.name, t.description, schema)
   }.toList
 
   /** Builtin tool names (non-MCP), used by frontend to build configurable tool list. */
