@@ -63,8 +63,7 @@ object AgentCommand:
     replyTo: Option[org.apache.pekko.actor.typed.ActorRef[AgentEvent]],
     compactedMessages: Option[List[Message]] = None,
     thinking: Option[String] = None,
-    thinkingSignature: Option[String] = None,
-    updatedWriteTracker: Map[String, WriteTrackerEntry] = Map.empty
+    thinkingSignature: Option[String] = None
   ) extends AgentCommand
 
   // Internal — direct compaction result from CompactService IO fiber
@@ -113,12 +112,6 @@ object AgentCommand:
 
   /** Full session reset — triggered by /clear to reset messages, usage, compaction state, etc. */
   case object ResetSession extends AgentCommand
-
-  /** Update per-session highest context-pressure level (isolated from other sessions). */
-  case class UpdateHighestPressureLevel(level: Int) extends AgentCommand
-
-  /** Clear pendingTaskCheck flag after it has been consumed by pipeLlmCall. */
-  case object ClearTaskCheck extends AgentCommand
 
   /** Cache lifecycle prompt content (system-prefix, agentDef, memory, rules) — sent on first turn. */
   case class UpdateLifecycle(lc: LifecycleContext) extends AgentCommand
@@ -443,15 +436,11 @@ case class TurnContext(
   rulesMd: Option[String],
   memoryBlock: String,
   thinkingConfig: nebflow.llm.ThinkingConfig,
-  fileChanges: Option[SystemReminder],
   /** Detected git branch change since last turn. None if no change or not a git repo. */
   branchChange: Option[SystemReminder] = None,
   /** Current git branch name (for persisting back to SessionContext). */
   currentBranch: Option[String] = None
 )
-
-/** Per-file write tracking entry for verification reminders. */
-case class WriteTrackerEntry(writeCount: Int, remindCount: Int)
 
 /**
  * Lifecycle-cached prompt content — resolved once per session lifecycle (first turn),
@@ -481,8 +470,6 @@ case class SessionContext(
   depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None,
   fileHistory: Option[nebflow.core.tools.FileHistory] = None,
-  /** Per-file write tracking for verification reminders — scoped to this agent/session. */
-  writesSinceLastRead: Map[String, WriteTrackerEntry] = Map.empty,
   /** Context window for this session's current model — updated when user switches models. */
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
   /** When Some(question), this turn is an inline /ask — single Q&A, no history write-back. */
@@ -521,9 +508,7 @@ case class ExecutionContext(
   /** Queued external events to inject after turn. */
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
   /** Retry count for LLM empty responses within a single turn. */
-  emptyResponseRetries: Int = 0,
-  /** Flag set when LLM used TaskUpdate or had text+tools — triggers active task reminder in next pipeLlmCall. */
-  pendingTaskCheck: Boolean = false
+  emptyResponseRetries: Int = 0
 )
 
 object ExecutionContext:
@@ -549,9 +534,7 @@ case class CompactionState(
   /** Timestamp of the last compaction failure (epoch ms) — used for retry backoff. */
   lastCompactionFailureAt: Long = 0L,
   latestUsage: Option[TokenUsage] = None,
-  lastModel: Option[String] = None,
-  /** Highest context-pressure reminder level shown for this session (0–100). Per-session isolation. */
-  highestPressureLevel: Int = 0
+  lastModel: Option[String] = None
 )
 
 /** Top-level agent state — composed of domain-specific sub-structures. */
@@ -591,15 +574,14 @@ object AgentState:
       case _ => Some(InteractionState(pendingAskUser, pendingPermission))
     new AgentState(
       SessionContext(
-        sessionId,
-        sessionName,
-        recentMessageIds,
-        wsSend,
-        depth,
-        readTracker,
-        fileHistory,
-        Map.empty,
-        contextWindow,
+        sessionId = sessionId,
+        sessionName = sessionName,
+        recentMessageIds = recentMessageIds,
+        wsSend = wsSend,
+        depth = depth,
+        readTracker = readTracker,
+        fileHistory = fileHistory,
+        contextWindow = contextWindow,
         folderId = folderId,
         projectRoot = projectRoot,
         rulesMd = rulesMd
@@ -634,7 +616,6 @@ extension (s: AgentState)
     s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
   def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
-  def writesSinceLastRead: Map[String, WriteTrackerEntry] = s.session.writesSinceLastRead
   def contextWindow: Int = s.session.contextWindow
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
@@ -680,9 +661,6 @@ extension (s: AgentState)
     )
   def withRecentMessageIds(ids: List[String]): AgentState = s.copy(session = s.session.copy(recentMessageIds = ids))
 
-  def withWritesSinceLastRead(tracker: Map[String, WriteTrackerEntry]): AgentState =
-    s.copy(session = s.session.copy(writesSinceLastRead = tracker))
-
   def withContextWindow(window: Int): AgentState =
     s.copy(session = s.session.copy(contextWindow = window))
 
@@ -703,9 +681,6 @@ extension (s: AgentState)
 
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
-
-  def withPendingTaskCheck(flag: Boolean): AgentState =
-    s.copy(execution = s.execution.copy(pendingTaskCheck = flag))
 
   def withLifecycle(lc: LifecycleContext): AgentState =
     s.copy(session = s.session.copy(lifecycle = Some(lc)))

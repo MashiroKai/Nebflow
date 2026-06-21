@@ -196,7 +196,6 @@ object ContextRefresher:
       case Some(lc) =>
         for
           thinkingConfig <- resources.thinkingConfigRef.get
-          fileChanges <- resources.fileChangeTracker.checkChanges()
           (branchReminder, currentBranch) <- checkBranchChange(lc.projectRoot, state.gitBranch)
         yield (
           TurnContext(
@@ -206,7 +205,6 @@ object ContextRefresher:
             lc.rulesMd,
             lc.memoryBlock,
             thinkingConfig,
-            fileChanges,
             branchReminder,
             currentBranch
           ),
@@ -217,7 +215,6 @@ object ContextRefresher:
         for
           lc <- resolveLifecycle(state, resources, agentDef)
           thinkingConfig <- resources.thinkingConfigRef.get
-          fileChanges <- resources.fileChangeTracker.checkChanges()
           (branchReminder, currentBranch) <- checkBranchChange(lc.projectRoot, state.gitBranch)
         yield (
           TurnContext(
@@ -227,7 +224,6 @@ object ContextRefresher:
             lc.rulesMd,
             lc.memoryBlock,
             thinkingConfig,
-            fileChanges,
             branchReminder,
             currentBranch
           ),

@@ -319,13 +319,7 @@ private[agent] trait AgentCore:
           case None =>
             state.withCurrentTurnId(turnId)
         val stateForTurn = stateAfterMicro
-
-        // NOTE: context-budget-exceeded removed — maybeAutoCompact already covers both
-        // API-reported inputTokens AND estimate-based fallback with the same threshold.
-        // Compute verification reminder from per-agent write tracker (pure, no IO needed)
-        val (verificationOpt, updatedWriteTracker) =
-          SystemReminders.computeVerificationReminder(stateForTurn.writesSinceLastRead)
-        val stateForLlm = stateForTurn.withWritesSinceLastRead(updatedWriteTracker)
+        val stateForLlm = stateForTurn
 
         val io = for
           // --- Context refresh: Lifecycle sources cached after first turn, EveryTurn sources always fresh ---
@@ -345,17 +339,9 @@ private[agent] trait AgentCore:
           // --- reminders (async) ---
           // isUserTurn: last message is a plain-text user message (not tool results wrapped as User)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
-          collectAllResult = SystemReminders.collectAll(
-            stateForLlm.compaction.highestPressureLevel,
-            stateForLlm.latestUsage,
-            state.contextWindow,
-            turnCtx.fileChanges,
-            isUserTurn
-          )
+          timeReminders = SystemReminders.collectAll(isUserTurn)
           // Add device pool info as per-turn reminder (not persisted in system prompt)
-          reminders = collectAllResult._1 ++ deviceReminder.toList
-          newHighest = collectAllResult._2
-          _ <- IO(ctx.self ! AgentCommand.UpdateHighestPressureLevel(newHighest))
+          reminders = timeReminders ++ deviceReminder.toList
           // --- Git branch change detection ---
           _ <- turnCtx.branchChange match
             case Some(_) =>
@@ -367,37 +353,8 @@ private[agent] trait AgentCore:
                 IO(ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch))
               )
           loggedReminders <- SystemReminders.logAndReturn(reminders)
-          // --- Active task reminder ---
-          // Only when pendingTaskCheck is set (LLM had text+tools or used TaskUpdate).
-          // Load active tasks and inject a reminder so LLM updates remaining tasks.
-          taskReminder <-
-            (
-              if isCompactTurn || isAskTurn || !stateForLlm.execution.pendingTaskCheck then IO.pure("")
-              else
-                resources.taskStore
-                  .listActive(stateForLlm.sessionId.getOrElse(""))
-                  .map { activeTasks =>
-                    if activeTasks.isEmpty then ""
-                    else
-                      val lines = activeTasks.map { t =>
-                        val st = t.status match
-                          case nebflow.core.task.TaskStatus.InProgress => "in_progress"
-                          case _ => "pending"
-                        s"  #${t.id} [$st] ${t.subject}"
-                      }
-                      s"""\n<system-reminder>
-                       |You still have ${activeTasks.size} active task(s):
-                       |${lines.mkString("\n")}
-                       |
-                       |Please call TaskUpdate to mark tasks as completed or failed when done.
-                       |</system-reminder>""".stripMargin
-                  }
-                  .handleError(_ => "")
-            )
-          // Clear the flag after reading
-          _ <- IO(ctx.self ! AgentCommand.ClearTaskCheck)
-          allReminders = verificationOpt.toList ++ loggedReminders ++ turnCtx.branchChange.toList
-          remindersText = SystemReminder.renderAll(allReminders) + taskReminder
+          allReminders = loggedReminders ++ turnCtx.branchChange.toList
+          remindersText = SystemReminder.renderAll(allReminders)
           // Per-turn dynamic context: only reminders (env info is now in system prompt)
           // Skip for compact/ask turns — the reminder is already in messages
           dynamicMsg =
@@ -614,21 +571,6 @@ private[agent] trait AgentCore:
       droppedResults = droppedCalls.map { call =>
         (call, ToolExecResult(s"Tool not available: ${call.name}", isError = true))
       }
-      // Track per-file write count since last read (per-agent, pure computation)
-      readFiles: Set[String] = guardedBatch
-        .filter { pair => pair._1.name == "Read" && !pair._2.isError }
-        .map { pair => pair._1.input("file_path").flatMap(_.asString).getOrElse("") }
-        .filter(_.nonEmpty)
-        .toSet
-      writtenFiles: List[String] = guardedBatch
-        .filter { pair => Set("Write", "Edit").contains(pair._1.name) && !pair._2.isError }
-        .map { pair => pair._1.input("file_path").flatMap(_.asString).getOrElse("") }
-        .filter(_.nonEmpty)
-      updatedWriteTracker = SystemReminders.updateWriteTracker(
-        state.writesSinceLastRead,
-        readFiles,
-        writtenFiles
-      )
       _ <- IO(
         ctx.self ! ToolsComplete(
           guardedBatch ++ droppedResults,
@@ -636,8 +578,7 @@ private[agent] trait AgentCore:
           replyTo,
           None,
           result.thinking,
-          result.thinkingSignature,
-          updatedWriteTracker
+          result.thinkingSignature
         )
       )
     yield ()
