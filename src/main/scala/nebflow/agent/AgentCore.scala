@@ -8,7 +8,7 @@ import nebflow.agent.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
-import nebflow.core.tools.{ToolContext, ToolRegistry, ToolResultGuard}
+import nebflow.core.tools.{RemoteExecutor, ToolContext, ToolRegistry, ToolResultGuard}
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
@@ -749,55 +749,81 @@ private[agent] trait AgentCore:
                 // Merge updatedInput if provided
                 val finalInput = preResult.updatedInput.getOrElse(call.input)
 
-                // --- Execute tool ---
-                tool
-                  .call(finalInput, ctx)
-                  .flatMap {
-                    case Left(err) =>
-                      // --- PostToolUseFailure hook ---
-                      hookEngine
-                        .afterToolFailure(call.name, finalInput, err.message, hookCtx)
-                        .map { postResult =>
-                          val appended = postResult.additionalContext match
-                            case Some(ctx) => s"${err.message}\n\n$ctx"
-                            case None => err.message
-                          ToolExecResult(appended, isError = true)
-                        }
-                    case Right(result) =>
-                      // No preemptive truncation — oversized results are handled by maybeAutoCompact
-                      // before the next LLM call. Raw result is always preserved in frontendContent
-                      // for correct frontend rendering.
-                      val isCard = call.name == "Card"
-                      val isFileEdit = call.name == "Edit" || call.name == "Write"
-                      // --- PostToolUse hook operates on LLM-visible content ---
-                      hookEngine
-                        .afterTool(call.name, finalInput, result, true, hookCtx)
-                        .map { postResult =>
-                          val hookSuffix = postResult.additionalContext.getOrElse("")
-                          if isCard then
-                            // Card tool: LLM sees a compact summary (not the raw HTML)
-                            val title = call.input("title").flatMap(_.asString).getOrElse("")
-                            val llmSummary = s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
-                            ToolExecResult(
-                              llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
-                            )
-                          else if isFileEdit then
-                            // Edit/Write: LLM already knows what it wrote — no need to echo the diff.
-                            // Full diff is preserved in frontendContent for the user to review.
-                            val llmSummary = nebflow.core.summarizeToolResult(call, result)
-                            ToolExecResult(
-                              llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
-                            )
-                          else
-                            ToolExecResult(
-                              result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                              frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
-                            )
-                          end if
-                        }
-                  }
+                // --- Check device parameter for remote execution ---
+                val deviceOpt = finalInput("device").flatMap(_.asString).filter(_.nonEmpty).filter(_ != "local")
+
+                val execIO: IO[ToolExecResult] = deviceOpt match
+                  case Some(deviceName) if RemoteExecutor.current.isDefined =>
+                    // Remote execution: route to target device via P2P or relay
+                    val remoteInput = finalInput.remove("device")
+                    val remoteSummary = s"[${deviceName}] ${tool.summarize(remoteInput)}"
+                    logger.info(s"$logCtx Remote tool: $remoteSummary")
+                    RemoteExecutor.current.get
+                      .execute(deviceName, call.name, remoteInput)
+                      .flatMap {
+                        case Right(result) =>
+                          hookEngine.afterTool(call.name, finalInput, result, true, hookCtx)
+                            .map { postResult =>
+                              val hookSuffix = postResult.additionalContext.getOrElse("")
+                              ToolExecResult(
+                                result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                                frontendContent = Some(result)
+                              )
+                            }
+                        case Left(err) =>
+                          hookEngine.afterToolFailure(call.name, finalInput, err.message, hookCtx)
+                            .map { postResult =>
+                              val appended = postResult.additionalContext match
+                                case Some(ctx) => s"${err.message}\n\n$ctx"
+                                case None => err.message
+                              ToolExecResult(appended, isError = true)
+                            }
+                      }
+                  case _ =>
+                    // Local execution (original path)
+                    tool
+                      .call(finalInput, ctx)
+                      .flatMap {
+                        case Left(err) =>
+                          // --- PostToolUseFailure hook ---
+                          hookEngine
+                            .afterToolFailure(call.name, finalInput, err.message, hookCtx)
+                            .map { postResult =>
+                              val appended = postResult.additionalContext match
+                                case Some(ctx) => s"${err.message}\n\n$ctx"
+                                case None => err.message
+                              ToolExecResult(appended, isError = true)
+                            }
+                        case Right(result) =>
+                          val isCard = call.name == "Card"
+                          val isFileEdit = call.name == "Edit" || call.name == "Write"
+                          hookEngine
+                            .afterTool(call.name, finalInput, result, true, hookCtx)
+                            .map { postResult =>
+                              val hookSuffix = postResult.additionalContext.getOrElse("")
+                              if isCard then
+                                val title = call.input("title").flatMap(_.asString).getOrElse("")
+                                val llmSummary = s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
+                                ToolExecResult(
+                                  llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                                  frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
+                                )
+                              else if isFileEdit then
+                                val llmSummary = nebflow.core.summarizeToolResult(call, result)
+                                ToolExecResult(
+                                  llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                                  frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
+                                )
+                              else
+                                ToolExecResult(
+                                  result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
+                                  frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
+                                )
+                              end if
+                            }
+                      }
+
+                execIO
                   .handleErrorWith {
                     case _: UserAbort => IO.raiseError(new UserAbort())
                     case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
@@ -990,38 +1016,35 @@ private[agent] trait AgentCore:
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
   end buildSystemPrompt
 
-  /** Build mesh device info for environment table. */
+  /** Build device pool info for system prompt. */
   private def meshDeviceInfo: String =
-    val msOpt = nebflow.core.tools.MeshTool.currentService
+    val msOpt = RemoteExecutor.current.flatMap(_.meshServiceOpt)
     msOpt match
       case None => ""
       case Some(ms) =>
         try
           import cats.effect.unsafe.implicits.global
           val id = ms.identity.unsafeRunSync()
-          val peersList = ms.peers.unsafeRunSync()
+          val loggedIn = ms.isLoggedIn.unsafeRunSync()
+          val peersList = if loggedIn then ms.peers.unsafeRunSync() else Nil
           val sb = new StringBuilder
-          sb.append(s"| Current device | ${id.deviceName} |\n")
-          // Show local capabilities
+          // Device pool: list all devices the agent can use
+          sb.append("| Devices | ")
+          sb.append(s"local (${id.deviceName}, ${id.platform})")
           val localCaps = id.capabilities.keys.toList.sorted
-          if localCaps.nonEmpty then sb.append(s"| Local tools | ${localCaps.mkString(", ")} |\n")
-          if id.userDescription.nonEmpty then sb.append(s"| Device note | ${id.userDescription} |\n")
-          if peersList.nonEmpty then
-            val peerStr = peersList
-              .map { p =>
-                val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
-                val desc = p.userDescription
-                val parts = List(s"${p.deviceName} (${p.platform})") ++
-                  (if caps.nonEmpty then List(caps.mkString("[", ", ", "]")) else Nil) ++
-                  (if desc.nonEmpty then List(s"-$desc") else Nil)
-                parts.mkString(" ")
-              }
-              .mkString("; ")
-            sb.append(s"| Available devices | $peerStr |\n")
+          if localCaps.nonEmpty then sb.append(s" [${localCaps.mkString(", ")}]")
+          if loggedIn then
+            for p <- peersList do
+              val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
+              val desc = p.userDescription
+              sb.append(s"; ${p.deviceName} (${p.platform})")
+              if caps.nonEmpty then sb.append(s" [${caps.mkString(", ")}]")
+              if desc.nonEmpty then sb.append(s" - $desc")
+          sb.append(" |\n")
+          if loggedIn && peersList.nonEmpty then
+            sb.append("| Device parameter | Each tool accepts an optional `device` parameter to select the target device. Use device name from the list above. |\n")
           sb.toString
         catch case _: Exception => ""
-
-    end match
 
   end meshDeviceInfo
 

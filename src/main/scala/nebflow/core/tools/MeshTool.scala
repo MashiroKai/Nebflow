@@ -326,7 +326,13 @@ object MeshTool:
   /** Wire CloudSessionSync for relay fallback. */
   def setCloudSessionSync(css: CloudSessionSync): Unit = cloudSessionSyncOpt = Some(css)
 
-  /** Create and register the mesh tool with the tool registry. */
+  /** Wire MeshService for companion state without registering MeshTool as a tool.
+   * Used by GatewayMain for backward compat (RestApiRoutes/WebSocketRoutes access MeshTool.currentService).
+   * MeshTool as an agent-facing tool is replaced by RemoteExecutor + device parameter on all tools.
+   */
+  def wire(ms: MeshService): Unit = meshServiceOpt = Some(ms)
+
+  /** Create and register the mesh tool with the tool registry. Deprecated — use RemoteExecutor instead. */
   def register(meshService: MeshService): Unit =
     meshServiceOpt = Some(meshService)
     ToolRegistry.registerTool(new MeshTool(meshService))
