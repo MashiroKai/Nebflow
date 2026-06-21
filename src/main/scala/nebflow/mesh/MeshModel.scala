@@ -102,7 +102,7 @@ object DeviceIdentity:
       case "windows" => "Windows"
       case "linux" => "Linux"
       case _ => ""
-    s"$hostname ($platform)"
+    hostname
 
   /** Detect available tools by running `which`/`where`. Returns map of name → path. */
   def detectCapabilities: IO[Map[String, String]] =
