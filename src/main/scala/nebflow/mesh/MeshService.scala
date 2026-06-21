@@ -551,6 +551,19 @@ class MeshService private (
     end for
   end notifyPeers
 
+  /** Broadcast agent execution status to all devices via relay server. Fire-and-forget. */
+  def broadcastAgentStatus(status: String, sessionId: String = "", device: String = "", tool: String = ""): IO[Unit] =
+    val payload = Json.obj(
+      "type" -> "agent-status".asJson,
+      "status" -> status.asJson,
+      "sessionId" -> sessionId.asJson,
+      "device" -> device.asJson,
+      "tool" -> tool.asJson,
+      "timestamp" -> System.currentTimeMillis().asJson
+    )
+    callCloudFunction("agent/status", "status" -> payload).void
+      .handleErrorWith(_ => IO.unit)
+
   /** Run one sync cycle: cloud discover + sync all peers + post-sync hook (cloud session sync, relay poll). */
   def runSyncCycle: IO[Unit] = cloudDiscover *> syncAll *> _postSyncHook
 
