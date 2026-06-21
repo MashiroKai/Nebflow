@@ -284,9 +284,7 @@ object AgentActor extends AgentCore with AgentSession:
           .withPendingCompaction(None)
           .withCompactionFailures(0)
           .withLastCompactionFailureAt(0L)
-          .withWritesSinceLastRead(Map.empty)
           .withRecentMessageIds(Nil)
-          .withCompaction(state.compaction.copy(highestPressureLevel = 0))
           .withLifecycleCleared
         // Lifecycle sources will be re-resolved from disk on next turn
         stash.unstashAll(idle(agentDef, resources, depth, parentRef, resetState, stash, ctx))
@@ -417,9 +415,9 @@ object AgentActor extends AgentCore with AgentSession:
       // These accumulate in the stash over many turns and eventually cause
       // StashOverflowException when legitimate user messages arrive during
       // a long LLM call. All are handled in processing state — in idle they are stale.
-      case _: AgentCommand.StreamFiberStarted | _: AgentCommand.UpdateHighestPressureLevel |
+      case _: AgentCommand.StreamFiberStarted |
           _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
-          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults | AgentCommand.ClearTaskCheck |
+          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
           _: AgentCommand.UpdateGitBranch =>
         Behaviors.same
 
@@ -446,21 +444,6 @@ object AgentActor extends AgentCore with AgentSession:
       // --- Stream fiber registered (for Interrupt cancellation) ---
       case AgentCommand.StreamFiberStarted(fiber) =>
         processing(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(Some(fiber)), stash, ctx)
-
-      // --- Per-session highest pressure level update (from IO fiber) ---
-      case AgentCommand.UpdateHighestPressureLevel(level) =>
-        processing(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state.withCompaction(state.compaction.copy(highestPressureLevel = level)),
-          stash,
-          ctx
-        )
-
-      case AgentCommand.ClearTaskCheck =>
-        processing(agentDef, resources, depth, parentRef, state.withPendingTaskCheck(false), stash, ctx)
 
       // --- Cache lifecycle prompt content (from first turn's IO fiber) ---
       case AgentCommand.UpdateLifecycle(lc) =>
@@ -541,11 +524,8 @@ object AgentActor extends AgentCore with AgentSession:
               result.model
             )
           // Tool calls (normal or ask mode) — execute tools
-          // If LLM also produced text alongside tool calls, flag for task reminder
           else if result.toolCalls.nonEmpty then
-            val stateWithFlag =
-              (if result.text.nonEmpty then updatedState.withPendingTaskCheck(true)
-               else updatedState).withEmptyResponseRetries(0)
+            val stateWithFlag = updatedState.withEmptyResponseRetries(0)
             pipeToolExecutions(agentDef, resources, depth, parentRef, stateWithFlag, stash, ctx, result, replyTo)
           // Has text or thinking content — normal completion
           else if result.text.nonEmpty || result.thinking.nonEmpty then
@@ -845,11 +825,9 @@ object AgentActor extends AgentCore with AgentSession:
             execution = state.execution.copy(
               messages = newMessages,
               interaction = None,
-              pendingEvents = Nil, // consumed
-              pendingTaskCheck = state.execution.pendingTaskCheck || hasTaskUpdate
+              pendingEvents = Nil // consumed
             )
           )
-          .withWritesSinceLastRead(tc.updatedWriteTracker)
         resources.dispatcher.unsafeRunAndForget(
           persistIfSession(resources, updatedState)
             .handleErrorWith(e =>
@@ -917,9 +895,7 @@ object AgentActor extends AgentCore with AgentSession:
           .withPendingCompaction(None)
           .withCompactionFailures(0)
           .withLastCompactionFailureAt(0L)
-          .withWritesSinceLastRead(Map.empty)
           .withRecentMessageIds(Nil)
-          .withCompaction(state.compaction.copy(highestPressureLevel = 0))
           .withLifecycleCleared
           .resetToIdle(Nil)
         // Lifecycle sources will be re-resolved from disk on next turn

@@ -100,7 +100,9 @@ class FileChangeTracker private (
           yield
             val allChanges = changed.map("modified: " + _) ++ deleted.map("deleted: " + _)
             if allChanges.isEmpty then None
-            else Some(SystemReminders.fileChanges(allChanges))
+            else
+              val fileList = allChanges.take(20).mkString("\n  - ", "\n  - ", if allChanges.length > 20 then s"\n  ... and ${allChanges.length - 20} more" else "")
+              Some(SystemReminder("fileChanges", s"The following files were modified externally since the last message:$fileList"))
     yield result
 
   def recordAgentModification(path: String): IO[Unit] =

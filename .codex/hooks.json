@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"/Users/kaiyu/Claude code/Nebflow\" && sbt scalafmtCheckAll 2>&1 | grep -E '(error|warn|not formatted|FAILED|scalafmtCheckAll)' | head -20 || echo '[QC] scalafmt check completed.'"
+          }
+        ]
+      }
+    ]
+  }
+}
