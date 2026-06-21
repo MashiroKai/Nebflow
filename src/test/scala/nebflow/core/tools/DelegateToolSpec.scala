@@ -32,7 +32,6 @@ class DelegateToolSpec extends CatsEffectSuite:
     assert(props.contains("prompt"), "schema should have prompt")
     assert(props.contains("description"), "schema should have description")
     assert(props.contains("agentName"), "schema should have agentName")
-    assert(props.contains("model"), "schema should have model")
     assert(props.contains("fork"), "schema should have fork")
 
     val required = DelegateTool
@@ -41,8 +40,6 @@ class DelegateToolSpec extends CatsEffectSuite:
       .getOrElse(Nil)
     assert(required.contains("prompt"), "prompt should be required")
     assert(required.contains("description"), "description should be required")
-    // model and fork should NOT be required
-    assert(!required.contains("model"), "model should be optional")
     assert(!required.contains("fork"), "fork should be optional")
   }
 
@@ -65,15 +62,6 @@ class DelegateToolSpec extends CatsEffectSuite:
     assertEquals(DelegateTool.summarize(input), "Delegate(Nebula: test task)")
   }
 
-  test("summarize shows model when specified") {
-    val input = JsonObject(
-      "description" -> "test task".asJson,
-      "prompt" -> "...".asJson,
-      "model" -> "zhipu/GLM-5.2".asJson
-    )
-    assertEquals(DelegateTool.summarize(input), "Delegate(Nebula: test task [model=zhipu/GLM-5.2])")
-  }
-
   test("summarize shows fork when true") {
     val input = JsonObject(
       "description" -> "test task".asJson,
@@ -81,16 +69,6 @@ class DelegateToolSpec extends CatsEffectSuite:
       "fork" -> true.asJson
     )
     assertEquals(DelegateTool.summarize(input), "Delegate(Nebula: test task [fork])")
-  }
-
-  test("summarize shows both model and fork") {
-    val input = JsonObject(
-      "description" -> "test task".asJson,
-      "prompt" -> "...".asJson,
-      "model" -> "USTC/glm-5.2".asJson,
-      "fork" -> true.asJson
-    )
-    assertEquals(DelegateTool.summarize(input), "Delegate(Nebula: test task [model=USTC/glm-5.2, fork])")
   }
 
   test("summarize does not show fork when false or absent") {
