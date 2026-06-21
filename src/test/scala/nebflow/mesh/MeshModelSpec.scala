@@ -200,8 +200,7 @@ class MeshModelSpec extends CatsEffectSuite:
     val cfg = MeshConfig()
     assertEquals(cfg.enabled, false, "Default enabled should be false")
     assertEquals(cfg.syncIntervalSec, 300, "Default sync interval should be 300 seconds")
-    assert(cfg.cloudUrl.isDefined, "Default cloud URL should be defined")
-    assert(cfg.cloudUrl.get.contains("cloudbase"), "Default cloud URL should point to CloudBase")
+    assert(cfg.cloudUrl.isEmpty, "Default cloud URL should be None — user configures self-hosted server")
   }
 
   test("MeshConfig serialization roundtrip") {

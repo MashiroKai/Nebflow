@@ -248,9 +248,7 @@ object SyncDiff:
 case class MeshConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  cloudUrl: Option[String] = Some(
-    "https://cloudbase-3gltu9is7f791a38-1411212853.ap-shanghai.app.tcloudbase.com/nebflow-mesh"
-  )
+  cloudUrl: Option[String] = None  // Self-hosted server URL, configured by user
 )
 
 object MeshConfig:

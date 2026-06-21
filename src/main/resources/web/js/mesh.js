@@ -51,6 +51,150 @@ export async function fetchMeshStatus() {
   }
 }
 
+// ===== Login Gate — full-screen login required before app use =====
+
+let gateTab = 'login'; // 'login' | 'register'
+let gateChecking = false;
+
+/** Load saved server URL from localStorage. */
+function getSavedServerUrl() {
+  return localStorage.getItem('nebflow_server_url') || '';
+}
+
+/** Save server URL to localStorage. */
+function saveServerUrl(url) {
+  localStorage.setItem('nebflow_server_url', url);
+}
+
+/** Configure the Nebflow backend to use a self-hosted server URL. */
+async function configureServerUrl(url) {
+  if (!url) return;
+  const token = getAuthToken();
+  await fetch('/api/mesh/config', {
+    method: 'PATCH',
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cloudUrl: url })
+  });
+}
+
+/** Check login status and show/hide the login gate accordingly. */
+export async function checkLoginGate() {
+  if (gateChecking) return;
+  gateChecking = true;
+  await fetchMeshStatus();
+  gateChecking = false;
+
+  const gate = document.getElementById('mesh-login-gate');
+  if (!gate) return;
+
+  if (meshState.loggedIn) {
+    hideLoginGate();
+  } else {
+    showLoginGate();
+    // Pre-fill server URL if saved
+    const saved = getSavedServerUrl();
+    const urlInput = document.getElementById('gate-server-url');
+    if (urlInput && saved) urlInput.value = saved;
+  }
+}
+
+function showLoginGate() {
+  const gate = document.getElementById('mesh-login-gate');
+  if (!gate) return;
+  gate.classList.remove('hidden');
+  bindGateEvents();
+}
+
+function hideLoginGate() {
+  const gate = document.getElementById('mesh-login-gate');
+  if (!gate) return;
+  gate.classList.add('hidden');
+}
+
+function bindGateEvents() {
+  // Tab switching
+  document.querySelectorAll('.login-gate-tab').forEach(tab => {
+    tab.onclick = () => {
+      gateTab = tab.dataset.tab;
+      document.querySelectorAll('.login-gate-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const btn = document.getElementById('gate-submit-btn');
+      if (btn) btn.textContent = gateTab === 'login' ? '登录' : '注册';
+      const errEl = document.getElementById('gate-error');
+      if (errEl) errEl.textContent = '';
+    };
+  });
+
+  // Submit
+  const btn = document.getElementById('gate-submit-btn');
+  if (btn && !btn.dataset.bound) {
+    btn.dataset.bound = '1';
+    btn.onclick = doGateSubmit;
+  }
+
+  // Enter key — server URL → username → password → submit
+  const urlInput = document.getElementById('gate-server-url');
+  if (urlInput && !urlInput.dataset.bound) {
+    urlInput.dataset.bound = '1';
+    urlInput.onkeydown = (e) => { if (e.key === 'Enter') document.getElementById('gate-username')?.focus(); };
+  }
+  const passInput = document.getElementById('gate-password');
+  if (passInput && !passInput.dataset.bound) {
+    passInput.dataset.bound = '1';
+    passInput.onkeydown = (e) => { if (e.key === 'Enter') doGateSubmit(); };
+  }
+  const userInput = document.getElementById('gate-username');
+  if (userInput && !userInput.dataset.bound) {
+    userInput.dataset.bound = '1';
+    userInput.onkeydown = (e) => { if (e.key === 'Enter') document.getElementById('gate-password')?.focus(); };
+  }
+}
+
+async function doGateSubmit() {
+  const serverUrl = document.getElementById('gate-server-url')?.value?.trim();
+  const username = document.getElementById('gate-username')?.value?.trim();
+  const password = document.getElementById('gate-password')?.value;
+  const errEl = document.getElementById('gate-error');
+  const btn = document.getElementById('gate-submit-btn');
+
+  if (!serverUrl) {
+    if (errEl) errEl.textContent = '请填写服务器地址';
+    return;
+  }
+  if (!username || !password) {
+    if (errEl) errEl.textContent = '请输入用户名和密码';
+    return;
+  }
+  if (errEl) errEl.textContent = '';
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+
+  try {
+    // Step 1: save server URL and configure backend
+    saveServerUrl(serverUrl);
+    await configureServerUrl(serverUrl);
+
+    // Step 2: login or register
+    const action = gateTab === 'login' ? 'login' : 'register';
+    await meshApi(action, 'POST', { username, password });
+    await fetchMeshStatus();
+    if (meshState.loggedIn) {
+      hideLoginGate();
+    } else {
+      if (errEl) errEl.textContent = '登录失败，请检查服务器地址和凭据';
+    }
+  } catch (e) {
+    if (errEl) errEl.textContent = e.message;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = gateTab === 'login' ? '登录' : '注册'; }
+  }
+}
+
+/** Export for external logout handling — re-shows the gate. */
+export function showLoginGateFromLogout() {
+  meshState.loggedIn = false;
+  showLoginGate();
+}
+
 // ---- Inline error display ----
 function showMeshError(msg) {
   const el = document.getElementById('mesh-error');
@@ -247,6 +391,8 @@ async function doLogout(rerender) {
     meshState.peers = [];
     authTab = 'login';
     rerender();
+    // Re-show the login gate after logout
+    showLoginGate();
   } catch (e) {
     showMeshError(e.message);
   }
@@ -266,5 +412,5 @@ async function doSaveDescription(rerender) {
 
 // ---- Init (called once from main.js) ----
 export function initMesh() {
-  fetchMeshStatus();
+  checkLoginGate();
 }
