@@ -262,10 +262,12 @@ class MeshService private (
       addFile(base / "NEBFLOW.md")
       addFile(base / "memory.md")
 
-      // Sessions — _index.json, {id}.json, {id}.ui.json, {id}.tasks.json
+      // Sessions — only sync task files. Session messages ({id}.json) and UI
+      // messages ({id}.ui.json) are handled by CloudSessionSync with proper
+      // content merge, so excluding them here avoids last-writer-wins conflicts.
       val sessionsDir = base / "sessions"
       if os.exists(sessionsDir) then
-        for f <- os.walk(sessionsDir).filter(os.isFile) if f.last.endsWith(".json") do addFile(f)
+        for f <- os.walk(sessionsDir).filter(os.isFile) if f.last.endsWith(".tasks.json") do addFile(f)
 
       // Config files
       addFile(base / "config.json")

@@ -583,6 +583,86 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     yield ()
 
   // ============================================================
+  // Session Merge — WeChat-like sync with conflict resolution
+  // ============================================================
+
+  /** Compute a content fingerprint for a Message (role + serialized content). */
+  private def messageFingerprint(m: Message): String =
+    val contentJson = m.content match
+      case Left(text) => text
+      case Right(blocks) => blocks.asJson.noSpaces
+    s"${m.role.name}:$contentJson"
+
+  /**
+   * Merge local and cloud messages into a single deduplicated list.
+   * Strategy: union by content fingerprint (role + content), sort by timestamp.
+   * When two messages have the same fingerprint, keep the one with the earlier timestamp
+   * (they contain the same content; earlier timestamp is the original creation time).
+   */
+  private[gateway] def mergeMessages(local: List[Message], cloud: List[Message]): List[Message] =
+    if cloud.isEmpty then local
+    else if local.isEmpty then cloud
+    else
+      val seen = scala.collection.mutable.LinkedHashMap.empty[String, Message]
+      for m <- local ++ cloud do
+        val fp = messageFingerprint(m)
+        seen.get(fp) match
+          case Some(existing) =>
+            // Keep the one with earlier timestamp (original creation)
+            if m.timestamp < existing.timestamp then seen(fp) = m
+          case None => seen(fp) = m
+      seen.values.toList.sortBy(_.timestamp)
+
+  /**
+   * Merge local and cloud UiMessages.
+   * Strategy: take whichever side has more entries (the more complete rendering history).
+   * If equal length, prefer local (avoids unnecessary UI changes).
+   */
+  private[gateway] def mergeUiMessages(local: List[UiMessage], cloud: List[UiMessage]): List[UiMessage] =
+    if cloud.length > local.length then cloud else local
+
+  /**
+   * Result of a session merge: the merged data plus a flag indicating whether
+   * anything actually changed (i.e. cloud contributed new content).
+   */
+  case class MergeResult(messages: List[Message], uiMessages: List[UiMessage], changed: Boolean)
+
+  /**
+   * Merge cloud session data into local. Unlike setSessionFromCloud (which replaces),
+   * this unions messages from both sides, deduplicating by content fingerprint.
+   * Handles the "first connection" scenario where both devices accumulated
+   * different records independently.
+   *
+   * Returns MergeResult so the caller can decide whether to push back.
+   * Does NOT trigger the sessionChanged hook.
+   */
+  def mergeSessionFromCloud(
+    sessionId: String,
+    cloudMessages: List[Message],
+    cloudUiMessages: List[UiMessage]
+  ): IO[MergeResult] =
+    for
+      localMsgs <- loadSessionMessages(sessionId)
+      localUi <- loadUiMessages(sessionId)
+      mergedMsgs = mergeMessages(localMsgs, cloudMessages)
+      mergedUi = mergeUiMessages(localUi, cloudUiMessages)
+      changed = mergedMsgs.length != localMsgs.length || mergedUi.length != localUi.length
+      _ <- if changed then
+        for
+          _ <- saveSessionMessages(sessionId, mergedMsgs)
+          _ <- saveUiMessages(sessionId, mergedUi)
+          _ <- indexRef.update { case (activeId, sessions, folders) =>
+            val now = System.currentTimeMillis()
+            val updated = sessions.map(s => if s.id == sessionId then s.copy(updatedAt = now) else s)
+            (activeId, updated, folders)
+          }
+          aid <- getActiveId
+          _ <- if aid == sessionId then activeMessagesRef.set(mergedMsgs) else IO.unit
+        yield ()
+      else IO.unit
+    yield MergeResult(mergedMsgs, mergedUi, changed)
+
+  // ============================================================
   // UI Messages (frontend rendering history)
   // ============================================================
 
