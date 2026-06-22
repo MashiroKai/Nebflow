@@ -76,13 +76,16 @@ class DeviceCapabilitiesSpec extends CatsEffectSuite:
     assertEquals(decoded, Right(peer), "Roundtrip should preserve capabilities and userDescription")
   }
 
-  test("PeerInfo old JSON without capabilities fails decode — cloud always provides defaults") {
-    // The cloud function returns capabilities: {} and userDescription: '' for old records,
-    // so this scenario won't happen in practice.
+  test("PeerInfo old JSON without capabilities decodes with defaults") {
+    // The relay server may not return capabilities/userDescription/lastSeen for old records.
+    // The decoder should tolerate missing fields with sensible defaults.
     val oldJson =
-      """{"deviceId":"d","deviceName":"n","platform":"p","address":"a","deviceSecret":"s","lastSeen":1000}"""
+      """{"deviceId":"d","deviceName":"n","platform":"p","address":"a","deviceSecret":"s"}"""
     val decoded = decode[PeerInfo](oldJson)
-    assert(decoded.isLeft, "Old PeerInfo JSON without capabilities should fail to decode")
+    assert(decoded.isRight, "Old PeerInfo JSON without optional fields should decode with defaults")
+    val pi = decoded.toOption.get
+    assertEquals(pi.capabilities, Map.empty[String, String])
+    assertEquals(pi.userDescription, "")
   }
 
   // ===== CloudSessionSync data types =====
