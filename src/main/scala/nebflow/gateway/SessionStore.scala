@@ -198,6 +198,13 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    */
   def loadMessagesForSession(id: String): IO[List[Message]] = loadSessionMessages(id)
 
+  /** Check if a session has any saved messages on disk (without reading them). */
+  def hasMessages(id: String): IO[Boolean] =
+    IO.blocking {
+      val f = sessionFile(id)
+      os.exists(f) && os.read(f).trim != "[]"
+    }
+
   private def saveSessionMessages(id: String, msgs: List[Message]): IO[Unit] =
     IO.blocking(os.write.over(sessionFile(id), msgs.asJson.spaces2, createFolders = true))
 
