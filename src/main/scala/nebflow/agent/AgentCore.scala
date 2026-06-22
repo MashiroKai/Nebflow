@@ -975,14 +975,16 @@ private[agent] trait AgentCore:
         val loggedIn = ms.isLoggedIn.unsafeRunSync()
         val peersList = if loggedIn then ms.peers.unsafeRunSync() else Nil
         val parts = List.newBuilder[String]
-        parts += s"local (${id.deviceName}, ${id.platform})"
+        // deviceName may already include platform info (e.g. "Mac (macOS)"), don't duplicate
+        val localName = id.deviceName
+        parts += s"local ($localName)"
         val localCaps = id.capabilities.keys.toList.sorted
         if localCaps.nonEmpty then parts += s"[${localCaps.mkString(", ")}]"
         val localStr = parts.result.mkString(" ")
         val peerStrs = if loggedIn then peersList.map { p =>
           val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
           val desc = p.userDescription
-          val ps = List(s"${p.deviceName} (${p.platform})") ++
+          val ps = List(p.deviceName) ++
             (if caps.nonEmpty then List(s"[${caps.mkString(", ")}]") else Nil) ++
             (if desc.nonEmpty then List(s"-$desc") else Nil)
           ps.mkString(" ")
