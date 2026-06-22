@@ -174,7 +174,18 @@ case class PeerInfo(
 
 object PeerInfo:
   given Encoder[PeerInfo] = deriveEncoder
-  given Decoder[PeerInfo] = deriveDecoder
+  given Decoder[PeerInfo] = Decoder.instance { c =>
+    for
+      deviceId <- c.downField("deviceId").as[String]
+      deviceName <- c.downField("deviceName").as[String]
+      platform <- c.downField("platform").as[String]
+      address <- c.downField("address").as[String]
+      deviceSecret <- c.downField("deviceSecret").as[Option[String]].map(_.getOrElse(""))
+      capabilities <- c.downField("capabilities").as[Option[Map[String, String]]].map(_.getOrElse(Map.empty))
+      userDescription <- c.downField("userDescription").as[Option[String]].map(_.getOrElse(""))
+      lastSeen <- c.downField("lastSeen").as[Option[Long]].map(_.getOrElse(System.currentTimeMillis()))
+    yield PeerInfo(deviceId, deviceName, platform, address, deviceSecret, capabilities, userDescription, lastSeen)
+  }
 
 // ===== File Fingerprint =====
 

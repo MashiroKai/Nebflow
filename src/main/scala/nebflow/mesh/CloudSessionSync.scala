@@ -393,16 +393,33 @@ class CloudSessionSync private (
             needPull = localSessions.filter { ls =>
               cloudUpdatedAt.get(ls.id).exists(_ > ls.updatedAt)
             }
-            // Also pull sessions that exist in cloud but not locally yet (index merge may have just added them)
-            // Limit to 3 per cycle to avoid burst
+            // 2b. Pull content for sessions that exist in index but have no local messages
+            // (new device scenario: index merged from cloud, but content not yet pulled)
             _ <-
-              if needPull.isEmpty then IO.unit
-              else
+              if needPull.nonEmpty then
                 needPull.take(3).traverse_(s =>
                   pullAndMergeSession(s.id).handleErrorWith(e =>
                     logger.debug(s"Fast pull+merge ${s.id.take(8)}: ${e.getMessage}")
                   )
                 )
+              else
+                // Check for cloud sessions with no local content (populate new device)
+                localSessions
+                  .filter(ls => cloudUpdatedAt.contains(ls.id))
+                  .take(5)
+                  .traverseFilter { ls =>
+                    sessionStore.hasMessages(ls.id).map(has => if !has then Some(ls.id) else None)
+                  }
+                  .flatMap { empty =>
+                    if empty.nonEmpty then
+                      logger.info(s"Populating ${empty.size} sessions from cloud") *>
+                        empty.traverse_(sid =>
+                          pullAndMergeSession(sid).handleErrorWith(e =>
+                            logger.debug(s"Populate ${sid.take(8)}: ${e.getMessage}")
+                          )
+                        )
+                    else IO.unit
+                  }
             // 3. Push index — so other devices see our new sessions quickly
             _ <- pushIndex.handleErrorWith(e => logger.debug(s"Fast push index: ${e.getMessage}"))
             // 4. File fingerprint exchange — just hashes, content only if changed
