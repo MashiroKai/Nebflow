@@ -467,7 +467,7 @@ class MeshService private (
   private def uploadFileChunked(path: String, content: Array[Byte], fp: FileFingerprint): IO[Unit] =
     val compressed = gzipBytes(content)
     val b64 = java.util.Base64.getEncoder.encodeToString(compressed)
-    val CHUNK_SIZE = 60000 // 60KB per chunk — well under CloudBase payload limit
+    val CHUNK_SIZE = 60000 // 60KB per chunk — keep payloads reasonable
     if b64.length <= CHUNK_SIZE then
       // Small file — single upload
       callCloudFunction("file/upload", "path" -> path.asJson, "content" -> b64.asJson, "fingerprint" -> fp.asJson).void

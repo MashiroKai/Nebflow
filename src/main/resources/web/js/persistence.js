@@ -8,8 +8,6 @@ import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, attac
 import { renderWithRegistry } from './cardRegistry.js';
 import { createDurationBadgeElement } from './chat.js';
 
-const MAX_MSGS_PER_SESSION = 200;
-
 // ---------- Duration formatting (mirrors chat.js formatDuration) ----------
 function formatDurationPersisted(ms) {
   const totalSeconds = ms / 1000;
@@ -45,11 +43,7 @@ export function saveMsg(entry, sessionId) {
     const all = safeGetJSON(LS_SESSIONS_KEY, {});
     const arr = all[sid] || [];
     arr.push(entry);
-    if (arr.length > MAX_MSGS_PER_SESSION) {
-      all[sid] = arr.slice(-MAX_MSGS_PER_SESSION);
-    } else {
-      all[sid] = arr;
-    }
+    all[sid] = arr;
     safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
   } catch (e) {
     // Silently ignore — backend is the source of truth
