@@ -668,11 +668,7 @@ class WebSocketRoutes(
               if oldId.nonEmpty && oldId != sessionId then emitSessionEnd(oldId)
               else IO.unit
             } *>
-              // Cloud pull: fetch latest session data before switching (best-effort)
-              (nebflow.core.tools.MeshTool.currentIncrementalSyncEngine match
-                case Some(engine) =>
-                  engine.pullSessionIncremental(sessionId).handleErrorWith(_ => IO.unit)
-                case None => IO.unit) *> sessionService
+              sessionService
                 .switchSession(sessionId)
                 .flatMap { _ =>
                   val telStart = sharedResources.telemetry.fold(IO.unit)(

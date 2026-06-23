@@ -698,9 +698,6 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       case Some(sem) => IO.pure(sem)
       case None => Semaphore[IO](1).flatTap(sem => appendSemaphores.update(_.updated(sessionId, sem))))
 
-  /** Maximum number of UI messages kept per session. */
-  private val MaxUiMessagesPerSession = 200
-
   /** Append UI messages to a session. Creates the file if it doesn't exist. */
   def appendUiMessages(sessionId: String, msgs: List[UiMessage]): IO[Unit] =
     if msgs.isEmpty then IO.unit
@@ -708,10 +705,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       getAppendSemaphore(sessionId).flatMap { sem =>
         sem.permit.use { _ =>
           loadUiMessages(sessionId).flatMap { existing =>
-            val combined = existing ++ msgs
-            val trimmed =
-              if combined.size > MaxUiMessagesPerSession then combined.takeRight(MaxUiMessagesPerSession) else combined
-            saveUiMessages(sessionId, trimmed)
+            saveUiMessages(sessionId, existing ++ msgs)
           }
         }
       }

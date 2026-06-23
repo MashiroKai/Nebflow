@@ -73,28 +73,12 @@ object TelemetryReporter:
 
   private def dataRoot: os.Path = nebflow.core.PathUtil.dataRoot
 
-  /** Default telemetry endpoint (CloudBase HTTP access). */
-  val DefaultEndpoint = "https://cloudbase-3gltu9is7f791a38-1411212853.ap-shanghai.app.tcloudbase.com/nebflow-telemetry"
+  /** Telemetry is disabled — CloudBase dependency removed.
+   * To re-enable with self-hosted server, set endpoint and implement sender. */
+  val DefaultEndpoint = ""
 
-  /** Check if telemetry is enabled via env or config. */
-  def isEnabled: Boolean =
-    // Env var takes highest priority
-    sys.env.get("NEBFLOW_TELEMETRY").map(_.toLowerCase) match
-      case Some("false") | Some("0") | Some("no") => false
-      case _ =>
-        // Check config file
-        try
-          val configPath = dataRoot / "config.yaml"
-          if os.exists(configPath) then
-            val content = os.read(configPath)
-            // Simple check — don't pull in a full YAML parser for this
-            content.linesIterator.exists { line =>
-              val trimmed = line.trim
-              trimmed.startsWith("telemetry:") &&
-              trimmed.substring("telemetry:".length).trim.toLowerCase == "false"
-            } == false // if telemetry: false exists, return false
-          else true
-        catch case _: Exception => true
+  /** Check if telemetry is enabled. Disabled by default — CloudBase dependency removed. */
+  def isEnabled: Boolean = false
 
   /** Detect simplified OS name. */
   def detectOs: String =

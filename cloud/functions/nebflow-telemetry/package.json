@@ -1,8 +1,0 @@
-{
-  "name": "nebflow-telemetry",
-  "version": "1.0.0",
-  "private": true,
-  "dependencies": {
-    "@cloudbase/node-sdk": "latest"
-  }
-}

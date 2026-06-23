@@ -236,7 +236,12 @@ object LlmInterface:
                               .evalMap {
                                 case done: StreamChunk.Done =>
                                   lockedRef.get.flatMap { locked =>
-                                    if locked then IO.pure(done.copy(contextWindow = Some(candidate.contextWindow)))
+                                    if locked then
+                                      // Fix the meta's providerId — adapters hardcode it (e.g., "openai"
+                                      // for any OpenAI-compatible provider). Use the actual providerId
+                                      // from the candidate so the frontend shows correct provider name.
+                                      val fixedMeta = done.meta.map(_.copy(providerId = candidate.providerId))
+                                      IO.pure(done.copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow)))
                                     else
                                       IO.raiseError(
                                         new RuntimeException(
