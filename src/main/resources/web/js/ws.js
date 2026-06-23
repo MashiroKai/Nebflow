@@ -124,8 +124,46 @@ export function connect() {
           !STREAM_MSG_TYPES.includes(msg.type)) {
         return;
       }
+      // ── Secondary session swap ──────────────────────────────────────
+      // When a message is for the secondary session, temporarily swap
+      // state.dom.chat + streaming variables so ALL existing handlers
+      // render into #secondary-chat without any code duplication.
+      const isSecMsg = state.secondarySessionId && msg.sessionId === state.secondarySessionId;
+      let _saved = null;
+      if (isSecMsg) {
+        _saved = {
+          chat: state.dom.chat,
+          aiText: state.aiText,
+          currentAiBubble: state.currentAiBubble,
+          thinkingText: state.thinkingText,
+          currentThinkingBubble: state.currentThinkingBubble,
+        };
+        state.dom.chat = document.getElementById('secondary-chat');
+        const ss = state._secStream || (state._secStream = {});
+        state.aiText = ss.aiText || '';
+        state.currentAiBubble = ss.currentAiBubble || null;
+        state.thinkingText = ss.thinkingText || '';
+        state.currentThinkingBubble = ss.currentThinkingBubble || null;
+        state._secondaryActive = true;
+      }
+
       const list = handlers[msg.type];
       if (list) for (const h of list) h(msg);
+
+      // Restore primary state after handlers complete
+      if (isSecMsg && _saved) {
+        const ss = state._secStream || (state._secStream = {});
+        ss.aiText = state.aiText;
+        ss.currentAiBubble = state.currentAiBubble;
+        ss.thinkingText = state.thinkingText;
+        ss.currentThinkingBubble = state.currentThinkingBubble;
+        state.dom.chat = _saved.chat;
+        state.aiText = _saved.aiText;
+        state.currentAiBubble = _saved.currentAiBubble;
+        state.thinkingText = _saved.thinkingText;
+        state.currentThinkingBubble = _saved.currentThinkingBubble;
+        state._secondaryActive = false;
+      }
     } catch (err) {
       console.error('[ws] message parse error:', err);
     }
