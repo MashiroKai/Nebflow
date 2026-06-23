@@ -63,10 +63,13 @@
         <div id="schedule-section">
           <div class="schedule-header">
             <span class="schedule-title">Schedule</span>
-            <button id="schedule-add-btn" class="panel-btn" title="New Task"><i data-lucide="plus"></i></button>
+            <div class="schedule-header-right">
+              <span class="schedule-count"></span>
+              <button id="schedule-add-btn" class="reminder-create-btn" title="New Task"><i data-lucide="plus"></i></button>
+            </div>
           </div>
-          <div id="schedule-list">
-            <div class="schedule-empty">No scheduled tasks</div>
+          <div id="schedule-list" class="reminder-panel-body">
+            <!-- Tasks rendered here by scheduled-task.js -->
           </div>
         </div>
 
@@ -100,7 +103,6 @@
       <div class="header-right">
         <span id="header-model-info"></span>
         <span id="bypass-badge" class="bypass-badge hidden"><span class="bypass-badge-text"></span></span>
-        <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="clock"></i></button>
         <div id="bg-indicator" class="hidden">
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
@@ -119,19 +121,6 @@
         </div>
         <div class="conn off" id="conn"></div>
       </div>
-    </div>
-    <div id="reminder-panel">
-      <div class="reminder-panel-header">
-        <div class="reminder-panel-title">Scheduled Tasks</div>
-        <div class="reminder-panel-header-right">
-          <span class="reminder-panel-count"></span>
-          <button class="reminder-create-btn" id="reminder-create-btn" title="New Task">
-            <i data-lucide="plus"></i>
-          </button>
-        </div>
-      </div>
-      <div class="reminder-panel-body"></div>
-      <div class="reminder-panel-footer"></div>
     </div>
     <div id="top-overlays">
       <div id="task-list"></div>
