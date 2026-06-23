@@ -929,7 +929,9 @@ private[agent] trait AgentCore:
       .collectFirst { case StreamChunk.Done(_, Some(u), _, _) if u.inputTokens > 0 => u }
       .orElse(chunks.collectFirst { case StreamChunk.Done(_, u, _, _) => u }.flatten)
     val stopReason = chunks.collectFirst { case StreamChunk.Done(sr, _, _, _) => sr }.flatten
-    val model = chunks.collectFirst { case StreamChunk.Done(_, _, Some(meta), _) => meta.model }
+    val model = chunks.collectFirst {
+      case StreamChunk.Done(_, _, Some(meta), _) => s"${meta.providerId}/${meta.model}"
+    }
     val contextWindow = chunks.collectFirst { case StreamChunk.Done(_, _, _, cw) => cw }.flatten
     ConsumeResult(
       text,
