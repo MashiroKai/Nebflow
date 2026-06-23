@@ -107,24 +107,47 @@ export function clearActiveFolder() {
   document.querySelectorAll('.folder-item.active').forEach(el => el.classList.remove('active'));
 }
 
-// ---------- Nav Bar Tab Switching ----------
+// ---------- Panel Switching ----------
+function showPanel(tab) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const panel = document.getElementById('panel-' + tab);
+  if (panel) panel.classList.add('active');
+}
+
+function closeSecondaryPanel() {
+  document.body.classList.remove('split-view');
+  const panel = document.getElementById('secondary-panel');
+  if (panel) {
+    panel.classList.remove('visible');
+    panel.classList.add('hidden');
+  }
+}
+
 export function initNavTabs() {
-  document.querySelectorAll('.nav-item[data-tab]').forEach(item => {
-    item.addEventListener('click', () => {
-      const tab = item.dataset.tab;
-      document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
-      item.classList.add('active');
-      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      document.getElementById('panel-' + tab).classList.add('active');
-      if (tab === 'settings') {
-        sendWs({type: 'getConfig'});
-        renderSettings();
-      } else {
-        // Returning to sessions from settings — switch back
-        document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
-      }
+  // New layout: settings button in sessions panel header
+  const settingsBtn = document.getElementById('settings-btn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      showPanel('settings');
+      sendWs({type: 'getConfig'});
+      renderSettings();
     });
-  });
+  }
+
+  const settingsBackBtn = document.getElementById('settings-back-btn');
+  if (settingsBackBtn) {
+    settingsBackBtn.addEventListener('click', () => {
+      showPanel('sessions');
+    });
+  }
+
+  // Secondary panel close button
+  const secondaryCloseBtn = document.getElementById('secondary-close-btn');
+  if (secondaryCloseBtn) {
+    secondaryCloseBtn.addEventListener('click', () => {
+      closeSecondaryPanel();
+    });
+  }
 }
 
 // ---------- Agent icons in Nav Bar ----------
