@@ -1192,9 +1192,13 @@ export function renderSessionSidebar(sessionData, activeId) {
   computeAgentStates();
 }
 
-// Persist sessionInputDrafts to localStorage
+// Persist sessionInputDrafts to localStorage (strip transient skill/ask mode)
 function persistDrafts() {
-  try { localStorage.setItem(LS_DRAFTS_KEY, JSON.stringify(state.sessionInputDrafts)); } catch(e) {}
+  const stripped = {};
+  for (const [sid, draft] of Object.entries(state.sessionInputDrafts)) {
+    stripped[sid] = { text: draft.text, attachments: draft.attachments };
+  }
+  try { localStorage.setItem(LS_DRAFTS_KEY, JSON.stringify(stripped)); } catch(e) {}
 }
 
 // Save current input box content as draft for the given session
@@ -1202,8 +1206,19 @@ export function saveInputDraft(sessionId) {
   if (!sessionId || !state.dom.input) return;
   const text = state.dom.input.value;
   const attachments = state.pendingAttachments;
-  if (text || attachments.length > 0) {
-    state.sessionInputDrafts[sessionId] = { text, attachments: JSON.parse(JSON.stringify(attachments)) };
+  const skillMode = state.skillMode ? {
+    name: state.skillModeName,
+    desc: state.skillModeDesc,
+    argHint: state.skillModeArgHint,
+  } : null;
+  const askMode = !!state.askMode;
+  if (text || attachments.length > 0 || skillMode || askMode) {
+    state.sessionInputDrafts[sessionId] = {
+      text,
+      attachments: JSON.parse(JSON.stringify(attachments)),
+      skillMode,
+      askMode,
+    };
   } else {
     delete state.sessionInputDrafts[sessionId];
   }
@@ -1230,6 +1245,10 @@ function restoreInputDraft(sessionId) {
     state.pendingAttachments = [];
     if (state.dom.attPreview) state.dom.attPreview.innerHTML = '';
   }
+  // Restore skill/ask mode for this session
+  import('./input.js').then(({ applyInputModes }) => {
+    applyInputModes(draft?.skillMode, draft?.askMode);
+  });
 }
 
 // Reset chat area for the current activeSessionId (used after session list updates)
