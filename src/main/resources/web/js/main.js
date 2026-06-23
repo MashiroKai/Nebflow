@@ -37,6 +37,7 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
+import { initSecondaryChat } from './secondary-chat.js';
 import { initMesh } from './mesh.js';
 import { formatLiveDuration } from './chat.js';
 
@@ -1765,6 +1766,7 @@ initPathPicker();
 initInput();
 initMemory();
 initScheduledTask();
+initSecondaryChat();
 initMesh();
 
 // Sidebar collapse toggle
