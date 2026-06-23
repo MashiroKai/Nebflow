@@ -284,6 +284,35 @@ export function cancelSkillMode() {
   state.dom.input.placeholder = t('input.placeholder');
 }
 
+// Restore skill/ask mode from per-session draft data.
+// Unlike enterSkillMode/enterAskMode, this does NOT focus the input.
+export function applyInputModes(skillData, askActive) {
+  state.skillMode = false;
+  state.skillModeName = '';
+  state.skillModeDesc = '';
+  state.skillModeArgHint = '';
+  state.askMode = false;
+
+  if (skillData) {
+    state.skillMode = true;
+    state.skillModeName = skillData.name || '';
+    state.skillModeDesc = skillData.desc || '';
+    state.skillModeArgHint = skillData.argHint || '';
+  } else if (askActive) {
+    state.askMode = true;
+  }
+
+  updateInputIndicator();
+
+  if (state.skillMode) {
+    state.dom.input.placeholder = state.skillModeArgHint || t('input.skillPlaceholder');
+  } else if (state.askMode) {
+    state.dom.input.placeholder = t('input.askPlaceholder');
+  } else {
+    state.dom.input.placeholder = t('input.placeholder');
+  }
+}
+
 // ---------- Image Compression ----------
 function compressImage(file, opts = {}) {
   const maxDim = opts.maxDim || 1920;
