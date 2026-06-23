@@ -9,6 +9,7 @@ import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 import { refreshScheduledTasks } from './scheduled-task.js';
+import { loadSecondary } from './secondary-chat.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
 
@@ -134,6 +135,8 @@ function openInSecondary(session) {
   document.getElementById('secondary-session-name').textContent = session.name;
   const badge = document.getElementById('secondary-agent-badge');
   if (badge) badge.textContent = session.agentName || 'Nebula';
+  // Load session history into secondary chat
+  loadSecondary(session.id, session.name);
   renderSessionSidebar(state.sessions, state.activeSessionId);
 }
 
