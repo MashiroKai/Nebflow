@@ -17,6 +17,13 @@ export function getAgentColor(agentId) {
 
 // ---------- Status bar ----------
 export function setStatus(text) {
+  if (state._secondaryActive) {
+    const secStatus = document.getElementById('secondary-status-text');
+    const secWrap = document.getElementById('secondary-status-wrap');
+    if (secStatus) secStatus.textContent = text || '';
+    if (secWrap) secWrap.classList.add('on');
+    return;
+  }
   const { statusText, statusWrap } = state.dom;
   statusText.textContent = text || '';
   statusWrap.classList.add('on');
@@ -24,6 +31,11 @@ export function setStatus(text) {
 }
 
 export function clearStatus() {
+  if (state._secondaryActive) {
+    const secWrap = document.getElementById('secondary-status-wrap');
+    if (secWrap) secWrap.classList.remove('on');
+    return;
+  }
   const { statusWrap } = state.dom;
   statusWrap.classList.remove('on');
   stopSpinner();
@@ -52,7 +64,7 @@ export function clearRetryStatus() {
 export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
-  if (sessionId === state.activeSessionId) {
+  if (sessionId === state.activeSessionId || (state._secondaryActive && sessionId === state.secondarySessionId)) {
     const { input, sendBtn, stopBtn } = state.dom;
     input.disabled = true;
     sendBtn.style.display = 'none';
@@ -63,7 +75,7 @@ export function setBusy(sessionId) {
 export function clearBusy(sessionId) {
   state.busySessionIds.delete(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
-  if (sessionId === state.activeSessionId) {
+  if (sessionId === state.activeSessionId || (state._secondaryActive && sessionId === state.secondarySessionId)) {
     const { input, sendBtn, stopBtn } = state.dom;
     input.disabled = false;
     sendBtn.style.display = 'flex';
@@ -293,7 +305,7 @@ export function finishAgent(agentId) {
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || state.activeSessionId;
   // Guard: do not render into a different session's chat
-  if (sid && sid !== state.activeSessionId) return null;
+  if (sid && sid !== state.activeSessionId && !state._secondaryActive) return null;
   const chat = state.dom.chat;
   const pending = state.sessionToolCards[sid];
   if (pending) {
@@ -349,7 +361,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 export function renderToolPending(label, sessionId) {
   const sid = sessionId || state.activeSessionId;
   // Guard: only render into the active session
-  if (sid && sid !== state.activeSessionId) return;
+  if (sid && sid !== state.activeSessionId && !state._secondaryActive) return;
   const chat = state.dom.chat;
   if (state.currentAiBubble && state.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();

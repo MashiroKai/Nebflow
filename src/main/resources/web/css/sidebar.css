@@ -106,6 +106,16 @@
   stroke-width: 1.8;
 }
 .panel-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); border-color: var(--color-frame-text-muted); opacity: 1; }
+
+/* Session management actions bar */
+.session-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 14px;
+  flex-shrink: 0;
+}
+
 #session-list {
   flex: 1;
   overflow-y: auto;
