@@ -145,6 +145,55 @@
   flex-shrink: 0;
 }
 
+#secondary-input-area {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.secondary-input-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 14px;
+}
+#secondary-input {
+  flex: 1;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+  background: var(--color-bg);
+  color: var(--color-text);
+  max-height: 200px;
+  line-height: 1.4;
+  transition: border-color 0.15s;
+}
+#secondary-input:focus {
+  border-color: var(--color-primary);
+}
+#secondary-send-btn {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-primary);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+#secondary-send-btn:hover { opacity: 0.85; }
+#secondary-send-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Split view body state */
 body.split-view #main {
   flex: 1;
