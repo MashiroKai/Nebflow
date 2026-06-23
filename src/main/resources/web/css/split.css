@@ -1,12 +1,12 @@
 /* ===== Schedule Section (top of sidebar) ===== */
 #schedule-section {
   flex-shrink: 0;
-  max-height: 180px;
+  max-height: 200px;
   overflow-y: auto;
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .schedule-header {
-  padding: 10px 14px 6px;
+  padding: 10px 14px 4px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -18,11 +18,26 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.schedule-empty {
-  padding: 4px 16px 10px;
-  font-size: 12px;
-  color: var(--color-frame-text-dim);
-  font-style: italic;
+.schedule-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.schedule-count {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  opacity: 0.5;
+}
+#schedule-list {
+  padding: 4px 6px 8px;
+  min-height: 40px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+#schedule-list::-webkit-scrollbar { width: 4px; }
+#schedule-list::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.15);
+  border-radius: 2px;
 }
 
 /* Section divider between schedule and sessions */

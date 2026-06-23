@@ -67,33 +67,20 @@ function escapeHtml(str) {
 // ── Badge ──────────────────────────────────────────────────────────────
 
 function updateBadge() {
-  const btn = $('#reminder-btn');
-  if (!btn) return;
-  let badge = btn.querySelector('.reminder-badge');
-  const count = pendingCount();
-  if (count > 0) {
-    if (!badge) {
-      badge = document.createElement('span');
-      badge.className = 'reminder-badge';
-      btn.appendChild(badge);
-    }
-    badge.textContent = count > 9 ? '9+' : count;
-  } else if (badge) {
-    badge.remove();
-  }
+  return;
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
 
 function renderList() {
-  const body = $('#reminder-panel .reminder-panel-body');
+  const body = $('#schedule-list');
   if (!body) return;
 
   const pending = tasks.filter(t => !t.triggered);
   const triggered = tasks.filter(t => t.triggered);
 
   // Update header count
-  const countEl = $('#reminder-panel .reminder-panel-count');
+  const countEl = $('.schedule-count');
   if (countEl) countEl.textContent = pending.length > 0 ? t('task.pendingCount', { count: pending.length }) : '';
 
   // Clear and rebuild
@@ -238,32 +225,18 @@ function buildInlineCreate() {
 // ── Actions ────────────────────────────────────────────────────────────
 
 function openPanel() {
-  const panel = $('#reminder-panel');
-  if (!panel) return;
-  panelOpen = true;
-  isCreating = false;
-  panel.classList.add('open');
-
-  const title = panel.querySelector('.reminder-panel-title');
-  if (title) title.textContent = t('task.panelTitle');
-  if (typeof lucide !== 'undefined') lucide.createIcons();
-
   if (state.activeSessionId) {
     sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
   }
+  renderList();
 }
 
 function closePanel() {
-  const panel = $('#reminder-panel');
-  if (!panel) return;
-  panelOpen = false;
-  isCreating = false;
-  panel.classList.remove('open');
+  // No-op: schedule is always visible in sidebar
 }
 
 function togglePanel() {
-  if (panelOpen) closePanel();
-  else openPanel();
+  // No-op: schedule is always visible in sidebar
 }
 
 function startInlineCreate() {
@@ -403,7 +376,6 @@ onMessage('scheduledTaskTriggered', (msg) => {
       }
     }
 
-    if (!panelOpen) openPanel();
   } else {
     // Non-active session: still update local task state so badge is correct
     tasks = tasks.map(t =>
@@ -418,17 +390,8 @@ onMessage('scheduledTaskTriggered', (msg) => {
 // ── Public Init ────────────────────────────────────────────────────────
 
 export function initScheduledTask() {
-  const btn = $('#reminder-btn');
-  if (btn) {
-    btn.title = t('task.panelTitle');
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      togglePanel();
-    });
-  }
-
-  // "+" button in panel header — use direct event listener (not delegation)
-  const createBtn = $('#reminder-create-btn');
+  // "+" button in schedule header
+  const createBtn = $('#schedule-add-btn');
   if (createBtn) {
     createBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -441,7 +404,7 @@ export function initScheduledTask() {
   }
 
   // Body click: click empty area to create/save
-  const body = $('#reminder-panel .reminder-panel-body');
+  const body = $('#schedule-list');
   if (body) {
     body.addEventListener('click', (e) => {
       if (e.target.closest('button, input, a, .reminder-row')) return;
@@ -450,24 +413,19 @@ export function initScheduledTask() {
     });
   }
 
-  // Close panel on outside click
-  document.addEventListener('click', (e) => {
-    if (!panelOpen) return;
-    const panel = $('#reminder-panel');
-    if (panel && !panel.contains(e.target) && !e.target.closest('#reminder-btn')) {
-      closePanel();
-    }
-  });
+  // Auto-load tasks for active session
+  if (state.activeSessionId) {
+    sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
+  }
 }
 
 /** Called when session switches — refresh task list */
 export function refreshScheduledTasks(sessionId) {
   tasks = [];
   isCreating = false;
-  if (panelOpen && sessionId) {
+  if (sessionId) {
     sendWs({ type: 'listScheduledTasks', sessionId: sessionId });
   } else {
     renderList();
-    updateBadge();
   }
 }

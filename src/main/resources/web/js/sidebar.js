@@ -115,12 +115,26 @@ function showPanel(tab) {
 }
 
 function closeSecondaryPanel() {
+  state.secondarySessionId = null;
   document.body.classList.remove('split-view');
   const panel = document.getElementById('secondary-panel');
   if (panel) {
     panel.classList.remove('visible');
     panel.classList.add('hidden');
   }
+  renderSessionSidebar(state.sessions, state.activeSessionId);
+}
+
+function openInSecondary(session) {
+  state.secondarySessionId = session.id;
+  document.body.classList.add('split-view');
+  const panel = document.getElementById('secondary-panel');
+  panel.classList.remove('hidden');
+  panel.classList.add('visible');
+  document.getElementById('secondary-session-name').textContent = session.name;
+  const badge = document.getElementById('secondary-agent-badge');
+  if (badge) badge.textContent = session.agentName || 'Nebula';
+  renderSessionSidebar(state.sessions, state.activeSessionId);
 }
 
 export function initNavTabs() {
@@ -946,7 +960,7 @@ function renderOneSessionItem(s, container, opts = {}) {
   const isSelected = state.selectedSessionIds.has(s.id);
   item.className = 'session-item'
     + (inFolder ? ' in-folder' : '')
-    + (s.id === state.activeSessionId ? ' active' : '')
+    + (s.id === state.activeSessionId || s.id === state.secondarySessionId ? ' active' : '')
     + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
     + (isSelected ? ' selected' : '');
   item.dataset.id = s.id;
@@ -1044,15 +1058,22 @@ function renderOneSessionItem(s, container, opts = {}) {
       }
     } else {
       clearActiveFolder();
-      if (s.id !== state.activeSessionId) {
-        switchSession(s.id);
+      const isJarvis = (s.agentName || 'Nebula') === 'Jarvis';
+      if (isJarvis) {
+        // Jarvis session → main area, close secondary if open
+        closeSecondaryPanel();
+        if (s.id !== state.activeSessionId) {
+          switchSession(s.id);
+        } else {
+          state.unreadSessions.delete(s.id);
+          state.markedUnreadSessions.delete(s.id);
+          persistUnread();
+          persistMarkedUnread();
+          updateSessionStatus(s.id);
+        }
       } else {
-        // Already active — still clear unread dot
-        state.unreadSessions.delete(s.id);
-        state.markedUnreadSessions.delete(s.id);
-        persistUnread();
-        persistMarkedUnread();
-        updateSessionStatus(s.id);
+        // Non-Jarvis session → secondary panel (画板)
+        openInSecondary(s);
       }
     }
   };
@@ -1128,19 +1149,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     });
   }
 
-  // Separate sessions by folder
-  const rootSessions = [];
-  const sessionsByFolder = {};
-  const validFolderIds = new Set((state.folders || []).map(f => f.id));
-  (state.sessions || []).forEach(s => {
-    if (s.folderId && validFolderIds.has(s.folderId)) {
-      if (!sessionsByFolder[s.folderId]) sessionsByFolder[s.folderId] = [];
-      sessionsByFolder[s.folderId].push(s);
-    } else {
-      rootSessions.push(s);
-    }
-  });
-
+  // Sort sessions helper
   const sortSessions = (list) => [...list].sort((a, b) => {
     const pa = state.pinnedSessions.has(a.id) ? 1 : 0;
     const pb = state.pinnedSessions.has(b.id) ? 1 : 0;
@@ -1148,55 +1157,93 @@ export function renderSessionSidebar(sessionData, activeId) {
     return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
   });
 
-  const sortedRoots = sortSessions(rootSessions);
-  Object.keys(sessionsByFolder).forEach(fid => {
-    sessionsByFolder[fid] = sortSessions(sessionsByFolder[fid]);
+  // Group sessions and folders by agent
+  const allFolders = state.folders || [];
+  const agentGroups = {};
+  (state.sessions || []).forEach(s => {
+    const agent = s.agentName || 'Nebula';
+    if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
+    agentGroups[agent].sessions.push(s);
+  });
+  allFolders.forEach(f => {
+    const agent = f.agentName || 'Nebula';
+    if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
+    agentGroups[agent].folders.push(f);
   });
 
-  // Filter root folders for current agent (agentName may be undefined when empty on backend)
-  const effectiveAgent = state.selectedAgent || 'Nebula';
-  const allAgentFolders = (state.folders || []).filter(f => {
-    const fa = f.agentName || '';
-    return fa === effectiveAgent || (fa === '' && effectiveAgent === 'Nebula');
-  });
-  const agentFolders = allAgentFolders.filter(f => !f.parentId);
-  // Sort root folders alphabetically by name
-  agentFolders.sort((a, b) => a.name.localeCompare(b.name));
-
-  // Build a mixed list of root sessions and folders, each with a pinned flag
-  const mixedItems = [];
-  sortedRoots.forEach(s => {
-    mixedItems.push({ type: 'session', data: s, pinned: state.pinnedSessions.has(s.id), time: s.updatedAt || s.createdAt || 0 });
-  });
-  agentFolders.forEach(f => {
-    mixedItems.push({ type: 'folder', data: f, pinned: state.pinnedFolders.has(f.id) });
+  // Sort agent groups: Jarvis first, then alphabetical
+  const agentOrder = Object.keys(agentGroups).sort((a, b) => {
+    if (a === 'Jarvis') return -1;
+    if (b === 'Jarvis') return 1;
+    return a.localeCompare(b);
   });
 
-  // Sort: pinned first, then folders before sessions, then alphabetically for folders / by time for sessions
-  mixedItems.sort((a, b) => {
-    if (b.pinned !== a.pinned) return b.pinned ? 1 : -1;
-    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-    if (a.type === 'folder') return a.data.name.localeCompare(b.data.name);
-    return b.time - a.time;
-  });
+  // Render each agent group
+  agentOrder.forEach(agentName => {
+    const group = agentGroups[agentName];
 
-  // Render
-  let hasPinned = false;
-  let renderedDivider = false;
-  mixedItems.forEach(item => {
-    if (item.pinned) {
-      hasPinned = true;
-    } else if (hasPinned && !renderedDivider) {
-      const divider = document.createElement('div');
-      divider.className = 'session-divider';
-      sessionList.appendChild(divider);
-      renderedDivider = true;
+    // Agent group header (only when multiple agents exist)
+    if (agentOrder.length > 1) {
+      const header = document.createElement('div');
+      header.className = 'agent-group-header';
+      header.textContent = agentName;
+      sessionList.appendChild(header);
     }
-    if (item.type === 'session') {
-      renderOneSessionItem(item.data, sessionList, { inFolder: false });
-    } else {
-      renderFolderItem(item.data, sessionsByFolder[item.data.id] || [], sessionList);
-    }
+
+    // Separate sessions by folder within this agent group
+    const groupFolderIds = new Set(group.folders.map(f => f.id));
+    const rootSessions = [];
+    const sessionsByFolder = {};
+    group.sessions.forEach(s => {
+      if (s.folderId && groupFolderIds.has(s.folderId)) {
+        if (!sessionsByFolder[s.folderId]) sessionsByFolder[s.folderId] = [];
+        sessionsByFolder[s.folderId].push(s);
+      } else {
+        rootSessions.push(s);
+      }
+    });
+
+    const sortedRoots = sortSessions(rootSessions);
+    Object.keys(sessionsByFolder).forEach(fid => {
+      sessionsByFolder[fid] = sortSessions(sessionsByFolder[fid]);
+    });
+
+    const agentFolders = group.folders.filter(f => !f.parentId);
+    agentFolders.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Build mixed list of root sessions and folders
+    const mixedItems = [];
+    sortedRoots.forEach(s => {
+      mixedItems.push({ type: 'session', data: s, pinned: state.pinnedSessions.has(s.id), time: s.updatedAt || s.createdAt || 0 });
+    });
+    agentFolders.forEach(f => {
+      mixedItems.push({ type: 'folder', data: f, pinned: state.pinnedFolders.has(f.id) });
+    });
+    mixedItems.sort((a, b) => {
+      if (b.pinned !== a.pinned) return b.pinned ? 1 : -1;
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+      if (a.type === 'folder') return a.data.name.localeCompare(b.data.name);
+      return b.time - a.time;
+    });
+
+    // Render items
+    let hasPinned = false;
+    let renderedDivider = false;
+    mixedItems.forEach(item => {
+      if (item.pinned) {
+        hasPinned = true;
+      } else if (hasPinned && !renderedDivider) {
+        const divider = document.createElement('div');
+        divider.className = 'session-divider';
+        sessionList.appendChild(divider);
+        renderedDivider = true;
+      }
+      if (item.type === 'session') {
+        renderOneSessionItem(item.data, sessionList, { inFolder: false });
+      } else {
+        renderFolderItem(item.data, sessionsByFolder[item.data.id] || [], sessionList);
+      }
+    });
   });
   if (typeof lucide !== 'undefined') lucide.createIcons();
   // Update header session name + brand
@@ -1499,12 +1546,8 @@ function showSessionCtxMenu(x, y, sessionId) {
   const session = state.sessions.find(s => s.id === sessionId);
   const currentFolderId = session?.folderId || null;
 
-  // Build folder submenu HTML
-  const effectiveAgent = state.selectedAgent || 'Nebula';
-  const agentFolders = (state.folders || []).filter(f => {
-    const fa = f.agentName || '';
-    return fa === effectiveAgent || (fa === '' && effectiveAgent === 'Nebula');
-  });
+  // Build folder submenu HTML — unified list, no agent filtering
+  const agentFolders = state.folders || [];
   let folderSubHtml = '';
   if (currentFolderId !== null) {
     folderSubHtml += '<div class="ctx-sub" data-folder-id="">' + t('ctx.removeFolder') + '</div>';

@@ -482,16 +482,16 @@ class WebSocketRoutes(
       logger.warn(s"Failed to persist thinking config: ${e.getMessage}")
     }
 
-  /** Send agent-filtered session list by looking up the session's agent name. */
+  /** Send unified session list by looking up the session's agent name (for agentName field only). */
   private def sendAgentSessionList(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
     sessionStore.getSessionMeta(sessionId).flatMap { metaOpt =>
       val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
       sendAgentSessionListByName(wsSend, agentName)
     }
 
-  /** Send agent-filtered session list for a known agent name. */
+  /** Send unified session list (all agents) — keeps sessions isolated from filtering issues. */
   private def sendAgentSessionListByName(wsSend: io.circe.Json => IO[Unit], agentName: String): IO[Unit] =
-    (sessionStore.listSessionsByAgent(agentName), sessionStore.listFolders(agentName)).flatMapN { (sessions, folders) =>
+    (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
       val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
       wsSend(
         io.circe.Json.obj(
@@ -694,10 +694,10 @@ class WebSocketRoutes(
               val tel = sharedResources.telemetry
               val telStart =
                 tel.fold(IO.unit)(_.record("session_start", io.circe.JsonObject("session_id" -> meta.id.asJson)))
-              // Send filtered session list for the agent tab
+              // Send unified session list (all agents)
               val sendList = agentName match
                 case Some(an) =>
-                  (sessionStore.listSessionsByAgent(an), sessionStore.listFolders(an)).flatMapN { (sessions, folders) =>
+                  (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
                     wsSend(
                       io.circe.Json.obj(
                         "type" -> "agentSessionList".asJson,
