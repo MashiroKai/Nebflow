@@ -1,0 +1,139 @@
+/* ===== Schedule Section (top of sidebar) ===== */
+#schedule-section {
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+.schedule-header {
+  padding: 10px 14px 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.schedule-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-frame-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.schedule-empty {
+  padding: 4px 16px 10px;
+  font-size: 12px;
+  color: var(--color-frame-text-dim);
+  font-style: italic;
+}
+
+/* Section divider between schedule and sessions */
+.sidebar-section-divider {
+  height: 1px;
+  background: var(--glass-border);
+  flex-shrink: 0;
+}
+
+/* ===== Agent Badge (session list + secondary header) ===== */
+.agent-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+/* Session list agent tag */
+.session-agent-tag {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-frame-input-bg);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Jarvis session bold */
+.session-item.is-jarvis .session-name {
+  font-weight: 600;
+}
+
+/* ===== Secondary Panel (split view) ===== */
+#secondary-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  background: var(--color-bg);
+  border-left: 1px solid var(--color-border);
+}
+#secondary-panel.visible {
+  display: flex;
+}
+#secondary-panel.hidden {
+  display: none;
+}
+.secondary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 16px;
+  height: 48px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-header-bg);
+}
+.secondary-header-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+#secondary-session-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.secondary-close-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.secondary-close-btn:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+.secondary-close-btn svg {
+  width: 16px;
+  height: 16px;
+}
+#secondary-chat {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-color: var(--color-border) transparent;
+}
+#secondary-input-area {
+  flex-shrink: 0;
+}
+
+/* Split view body state */
+body.split-view #main {
+  flex: 1;
+}
+body.split-view #secondary-panel.visible {
+  flex: 1;
+}

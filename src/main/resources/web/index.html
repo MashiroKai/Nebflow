@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="css/reminder.css">
   <link rel="stylesheet" href="css/mesh.css">
   <link rel="stylesheet" href="css/sapphire.css">
+  <link rel="stylesheet" href="css/split.css">
 </head>
 <body>
   <!-- Mesh Login Gate — full-screen overlay shown until user logs in -->
@@ -45,37 +46,41 @@
   </div>
 
   <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
-  <!-- Sidebar — unified glass card (nav + session list) -->
+  <!-- Sidebar — unified glass card (schedule + session list) -->
   <div id="sidebar">
-    <!-- Nav Bar — agent icons + settings at bottom -->
-    <div id="nav-bar">
-      <div id="nav-agent-list"></div>
-      <button id="new-agent-btn" class="nav-add-btn">+</button>
-      <div class="nav-spacer"></div>
-      <div class="nav-item" data-tab="settings">
-        <i data-lucide="settings"></i>
-      </div>
-    </div>
-
-    <!-- Divider between nav and session list -->
-    <div class="sidebar-divider"></div>
-
-    <!-- Session list for selected agent -->
     <div id="sidebar-panel">
       <div id="panel-sessions" class="panel active">
         <div class="panel-header">
           <span class="panel-title">Sessions</span>
           <div class="panel-actions">
+            <button id="settings-btn" class="panel-btn" title="Settings"><i data-lucide="settings"></i></button>
             <button id="new-folder-btn" class="panel-btn"><i data-lucide="folder"></i></button>
             <button id="new-session-btn" class="panel-btn">+</button>
           </div>
         </div>
 
+        <!-- Schedule Section (top) -->
+        <div id="schedule-section">
+          <div class="schedule-header">
+            <span class="schedule-title">Schedule</span>
+            <button id="schedule-add-btn" class="panel-btn" title="New Task"><i data-lucide="plus"></i></button>
+          </div>
+          <div id="schedule-list">
+            <div class="schedule-empty">No scheduled tasks</div>
+          </div>
+        </div>
+
+        <div class="sidebar-section-divider"></div>
+
+        <!-- Session List (bottom) -->
         <div id="session-list"></div>
       </div>
       <div id="panel-settings" class="panel">
         <div class="panel-header">
           <span class="panel-title">Settings</span>
+          <div class="panel-actions">
+            <button id="settings-back-btn" class="panel-btn" title="Back"><i data-lucide="arrow-left"></i></button>
+          </div>
         </div>
         <div id="settings-content"></div>
       </div>
@@ -157,6 +162,21 @@
       <button id="stop-btn"><i data-lucide="square"></i></button>
     </div>
   </div>
+  </div>
+
+  <!-- Secondary Panel — split view for non-Jarvis sessions -->
+  <div id="secondary-panel" class="hidden">
+    <div class="secondary-header">
+      <div class="secondary-header-info">
+        <span id="secondary-session-name"></span>
+        <span id="secondary-agent-badge" class="agent-badge"></span>
+      </div>
+      <button id="secondary-close-btn" class="secondary-close-btn" title="Close">
+        <i data-lucide="x"></i>
+      </button>
+    </div>
+    <div id="secondary-chat"></div>
+    <div id="secondary-input-area"></div>
   </div>
 
   <!-- Modals -->
