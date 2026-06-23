@@ -63,6 +63,17 @@
   letter-spacing: 0.5px;
 }
 
+/* ---------- Agent Group Headers ---------- */
+.agent-group-header {
+  padding: 8px 16px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-frame-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+
 /* Session list styles (within panel-sessions) */
 
 
