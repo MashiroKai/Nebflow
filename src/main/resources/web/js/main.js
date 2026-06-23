@@ -214,7 +214,10 @@ function updateAgentNotificationDot(agentName) {
 
 // Helper: is this event for the currently active session?
 function isActive(msg) {
-  return !msg.sessionId || msg.sessionId === state.activeSessionId;
+  if (!msg.sessionId || msg.sessionId === state.activeSessionId) return true;
+  // When ws.js sets _secondaryActive, the swap is already done — treat as active
+  if (state._secondaryActive) return true;
+  return false;
 }
 
 // Helper: compute and clear turn duration for a session
@@ -884,7 +887,7 @@ function clearHistoryIndicators() {
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg) => {
   const sid = msg.sessionId;
-  if (sid !== state.activeSessionId) return;
+  if (sid !== state.activeSessionId && !state._secondaryActive) return;
   state.historyLoading = false;
   hideHistoryLoader();
 
