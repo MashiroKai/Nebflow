@@ -50,16 +50,7 @@
   <div id="sidebar">
     <div id="sidebar-panel">
       <div id="panel-sessions" class="panel active">
-        <div class="panel-header">
-          <span class="panel-title">Sessions</span>
-          <div class="panel-actions">
-            <button id="settings-btn" class="panel-btn" title="Settings"><i data-lucide="settings"></i></button>
-            <button id="new-folder-btn" class="panel-btn"><i data-lucide="folder"></i></button>
-            <button id="new-session-btn" class="panel-btn">+</button>
-          </div>
-        </div>
-
-        <!-- Schedule Section (top) -->
+        <!-- Schedule Section -->
         <div id="schedule-section">
           <div class="schedule-header">
             <span class="schedule-title">Schedule</span>
@@ -75,7 +66,14 @@
 
         <div class="sidebar-section-divider"></div>
 
-        <!-- Session List (bottom) -->
+        <!-- Session management actions -->
+        <div class="session-actions">
+          <button id="new-folder-btn" class="panel-btn"><i data-lucide="folder"></i></button>
+          <button id="new-session-btn" class="panel-btn">+</button>
+          <button id="settings-btn" class="panel-btn" title="Settings"><i data-lucide="settings"></i></button>
+        </div>
+
+        <!-- Session List (other agents, no Jarvis) -->
         <div id="session-list"></div>
       </div>
       <div id="panel-settings" class="panel">
@@ -171,7 +169,10 @@
     </div>
     <div id="secondary-input-area">
       <div class="secondary-input-bar">
-        <textarea id="secondary-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
+        <div id="secondary-input-wrap" style="position:relative;flex:1;">
+          <textarea id="secondary-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
+          <div id="secondary-slash-dropdown"></div>
+        </div>
         <button id="secondary-stop-btn"><i data-lucide="square"></i></button>
         <button id="secondary-send-btn"><i data-lucide="send"></i></button>
       </div>

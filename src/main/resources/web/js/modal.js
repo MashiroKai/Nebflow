@@ -24,7 +24,7 @@ export function confirmNewSession() {
   const name = modalInput.value.trim();
   hideModals();
   if (!name) return;
-  const payload = {type: 'createSession', name, agentName: state.selectedAgent || 'Nebula'};
+  const payload = {type: 'createSession', name, agentName: 'Nebula'};
   const folderId = state.activeFolderId || getCurrentSessionFolderId();
   if (folderId) payload.folderId = folderId;
   sendWs(payload);
@@ -64,7 +64,7 @@ export function startInlineNewSession() {
     const name = input.value.trim();
     wrapper.remove();
     if (name) {
-      const payload = { type: 'createSession', name, agentName: state.selectedAgent || 'Nebula' };
+      const payload = { type: 'createSession', name, agentName: 'Nebula' };
       if (folderId) payload.folderId = folderId;
       sendWs(payload);
     }

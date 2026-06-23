@@ -133,12 +133,24 @@ export function connect() {
       if (isSecMsg) {
         _saved = {
           chat: state.dom.chat,
+          statusWrap: state.dom.statusWrap,
+          statusText: state.dom.statusText,
+          sendBtn: state.dom.sendBtn,
+          stopBtn: state.dom.stopBtn,
+          input: state.dom.input,
+          lottieSpinnerEl: state.dom.lottieSpinnerEl,
           aiText: state.aiText,
           currentAiBubble: state.currentAiBubble,
           thinkingText: state.thinkingText,
           currentThinkingBubble: state.currentThinkingBubble,
         };
         state.dom.chat = document.getElementById('secondary-chat');
+        state.dom.statusWrap = document.getElementById('secondary-status-wrap');
+        state.dom.statusText = document.getElementById('secondary-status-text');
+        state.dom.sendBtn = document.getElementById('secondary-send-btn');
+        state.dom.stopBtn = document.getElementById('secondary-stop-btn');
+        state.dom.input = document.getElementById('secondary-input');
+        state.dom.lottieSpinnerEl = document.getElementById('secondary-spinner');
         const ss = state._secStream || (state._secStream = {});
         state.aiText = ss.aiText || '';
         state.currentAiBubble = ss.currentAiBubble || null;
@@ -158,6 +170,12 @@ export function connect() {
         ss.thinkingText = state.thinkingText;
         ss.currentThinkingBubble = state.currentThinkingBubble;
         state.dom.chat = _saved.chat;
+        state.dom.statusWrap = _saved.statusWrap;
+        state.dom.statusText = _saved.statusText;
+        state.dom.sendBtn = _saved.sendBtn;
+        state.dom.stopBtn = _saved.stopBtn;
+        state.dom.input = _saved.input;
+        state.dom.lottieSpinnerEl = _saved.lottieSpinnerEl;
         state.aiText = _saved.aiText;
         state.currentAiBubble = _saved.currentAiBubble;
         state.thinkingText = _saved.thinkingText;
