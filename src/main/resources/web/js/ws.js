@@ -1,10 +1,11 @@
 import state from './state.js';
 
-// ---------- Handler registry ----------
+// ---------- Handler registry (supports multiple handlers per type) ----------
 const handlers = {};
 
 export function onMessage(type, handler) {
-  handlers[type] = handler;
+  if (!handlers[type]) handlers[type] = [];
+  handlers[type].push(handler);
 }
 
 // ---------- Reconnection state ----------
@@ -118,12 +119,13 @@ export function connect() {
         'roundComplete'
       ];
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
+          msg.sessionId !== state.secondarySessionId &&
           !GLOBAL_MSG_TYPES.includes(msg.type) && !TERMINAL_MSG_TYPES.includes(msg.type) &&
           !STREAM_MSG_TYPES.includes(msg.type)) {
         return;
       }
-      const handler = handlers[msg.type];
-      if (handler) handler(msg);
+      const list = handlers[msg.type];
+      if (list) for (const h of list) h(msg);
     } catch (err) {
       console.error('[ws] message parse error:', err);
     }
