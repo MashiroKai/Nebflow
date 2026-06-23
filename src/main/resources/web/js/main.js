@@ -831,23 +831,13 @@ onMessage('sessionList', (msg) => {
   const allFolders = msg.folders || [];
   allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
 
-  // Filter by selected agent if one is active (safety net — backend should send agentSessionList)
+  // Unified list — show all sessions regardless of agent
   let sessionsToShow = allSessions;
-  if (state.selectedAgent) {
-    sessionsToShow = allSessions.filter(s => (s.agentName || 'Nebula') === state.selectedAgent);
-  }
   state.folders = allFolders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
 
-  // Determine activeId: only use it if it belongs to the filtered (shown) sessions
+  // Use activeId as-is (unified list — no agent filtering)
   let activeId = msg.activeId;
-  if (state.selectedAgent && activeId) {
-    const activeAgent = state.sessionAgentMap[activeId];
-    if (activeAgent !== state.selectedAgent) {
-      // activeId belongs to a different agent — pick the first session of the current agent instead
-      activeId = sessionsToShow[0]?.id || null;
-    }
-  }
 
   renderSessionSidebar(sessionsToShow, activeId);
   initHeaderModelInfo();
@@ -1298,18 +1288,15 @@ onMessage('agentList', (msg) => {
   // Auto-select first agent if none selected
   if (!state.selectedAgent && state.agentsData.length > 0) {
     import('./sidebar.js').then(({ selectAgent }) => {
-      // Default to Nebula if present, otherwise first agent
-      const nebula = state.agentsData.find(a => a.name === 'Nebula');
-      selectAgent(nebula ? 'Nebula' : state.agentsData[0].name);
+      // Default to Jarvis (main orchestrator)
+      const jarvis = state.agentsData.find(a => a.name === 'Jarvis');
+      selectAgent(jarvis ? 'Jarvis' : (state.agentsData[0]?.name || 'Nebula'));
     });
   }
 });
 
 onMessage('agentSessionList', (msg) => {
-  // Safety: ignore if agent doesn't match the currently selected tab
-  // Prevents cross-agent session list contamination on stale messages
-  if (state.selectedAgent && msg.agentName !== state.selectedAgent) return;
-  // Render sessions for the selected agent
+  // Unified list — accept all sessions regardless of which agent triggered the request
   const agentName = msg.agentName;
   const sessions = msg.sessions || [];
   const folders = msg.folders || [];

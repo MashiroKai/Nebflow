@@ -1061,7 +1061,15 @@ class WebSocketRoutes(
         case "listAgentSessions" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            (sessionStore.listSessionsByAgent(agentName), sessionStore.listFolders(agentName)).flatMapN {
+            // Ensure Jarvis session exists
+            val ensureJarvis = sessionStore.listSessions.flatMap { sessions =>
+              val jarvisExists = sessions.exists(_.agentName.contains("Jarvis"))
+              if jarvisExists then IO.unit
+              else sessionStore.createSession("Jarvis", Nil, Some("Jarvis"), None).void
+            }
+            // Return ALL sessions and folders (unified list)
+            ensureJarvis *>
+            (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN {
               (sessions, folders) =>
                 wsSend(
                   io.circe.Json.obj(
