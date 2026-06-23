@@ -194,6 +194,44 @@
   height: 16px;
 }
 
+/* Secondary status bar */
+#secondary-status-wrap {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-border);
+}
+#secondary-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: secondary-spin 0.8s linear infinite;
+}
+@keyframes secondary-spin { to { transform: rotate(360deg); } }
+
+/* Secondary stop button */
+#secondary-stop-btn {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-error, #f44336);
+  color: #fff;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+#secondary-stop-btn.visible { display: flex; }
+#secondary-stop-btn svg { width: 14px; height: 14px; }
+
 /* Split view body state */
 body.split-view #main {
   flex: 1;
