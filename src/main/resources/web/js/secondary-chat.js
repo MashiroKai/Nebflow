@@ -124,7 +124,9 @@ onMessage('historyPage', (msg) => {
   withSecondary(() => {
     state.dom.chat.innerHTML = '';
     state.pendingInitialLoad = false;
-    restoreFromBackendHistory(msg);
+    // Clear stale tool card references for this session
+    if (state.sessionToolCards) delete state.sessionToolCards[msg.sessionId];
+    restoreFromBackendHistory(msg.messages);
     smartScroll();
   });
 });
