@@ -1174,12 +1174,13 @@ export function renderSessionSidebar(sessionData, activeId) {
     agentGroups[agent].folders.push(f);
   });
 
-  // Sort agent groups: Jarvis first, then alphabetical
-  const agentOrder = Object.keys(agentGroups).sort((a, b) => {
-    if (a === 'Jarvis') return -1;
-    if (b === 'Jarvis') return 1;
-    return a.localeCompare(b);
-  });
+  // Skip Jarvis sessions — Jarvis is always in the main view, not in the sidebar
+  if (agentGroups['Jarvis']) {
+    delete agentGroups['Jarvis'];
+  }
+
+  // Sort remaining agent groups alphabetically
+  const agentOrder = Object.keys(agentGroups).sort((a, b) => a.localeCompare(b));
 
   // Render each agent group
   agentOrder.forEach(agentName => {
@@ -2015,7 +2016,7 @@ export function createNewFolder(parentFolderId) {
     const name = input.value.trim();
     row.remove();
     if (name) {
-      const payload = { type: 'createFolder', name, agentName: state.selectedAgent || 'Nebula' };
+      const payload = { type: 'createFolder', name, agentName: 'Nebula' };
       if (parentFolderId) payload.parentId = parentFolderId;
       import('./ws.js').then(({ sendWs }) => sendWs(payload));
     }
