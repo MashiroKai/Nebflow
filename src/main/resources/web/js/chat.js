@@ -656,7 +656,7 @@ export function renderAskUser(items, askSessionId) {
     return { type: 'askUser', items: [] };
   }
   const chat = state.dom.chat;
-  const sid = state.activeSessionId;
+  const sid = askSessionId || state.activeSessionId;
   if (sid && state.sessionToolCards[sid]) { state.sessionToolCards[sid].remove(); delete state.sessionToolCards[sid]; }
   const row = document.createElement('div');
   row.className = 'row ai';
