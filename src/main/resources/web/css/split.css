@@ -169,7 +169,7 @@
   padding: 64px 12px 88px 12px;
   display: flex;
   flex-direction: column;
-  scrollbar-color: var(--color-border) transparent;
+  scrollbar-color: var(--color-frame-border) transparent;
 }
 #secondary-input-area {
   flex-shrink: 0;
@@ -183,6 +183,7 @@
   align-items: flex-end;
   gap: 8px;
   padding: 8px 12px;
+  flex-shrink: 0;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -248,8 +249,11 @@
 
 /* Secondary status bar — floating pill matching #status-wrap */
 #secondary-status-wrap {
-  display: none;
-  align-self: center;
+  position: absolute;
+  bottom: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
   align-items: center;
   gap: 8px;
   background: rgba(0,0,0,0.75);
@@ -257,16 +261,17 @@
   padding: 6px 14px;
   border-radius: 16px;
   font-size: 12px;
-  flex-shrink: 0;
-  margin-bottom: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
   pointer-events: none;
+  z-index: 100;
 }
-#secondary-status-wrap.on { display: flex; }
+#secondary-status-wrap.on { opacity: 1; }
 #secondary-spinner {
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--color-border);
-  border-top-color: var(--color-primary);
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: #fff;
   border-radius: 50%;
   animation: secondary-spin 0.8s linear infinite;
 }
