@@ -810,6 +810,11 @@ onMessage('askUser', (msg) => {
 onMessage('askPermission', (msg) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
+  // Clear stale "answered" tracking: a new permission request means any
+  // previous answer in this session (same turn) is no longer relevant.
+  // Without this, a second permission in the same turn would be stuck as
+  // disabled because answeredPermissions still holds this sid.
+  if (sid) state.answeredPermissions.delete(sid);
   if (isActive(msg)) {
     renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
   } else if (sid) {
