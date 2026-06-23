@@ -139,6 +139,9 @@
 #secondary-chat {
   flex: 1;
   overflow-y: auto;
+  padding: 64px 12px 88px 12px;
+  display: flex;
+  flex-direction: column;
   scrollbar-color: var(--color-border) transparent;
 }
 #secondary-input-area {
