@@ -378,6 +378,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     // Also deduplicate: if past races/bugs left more than one session for this agent,
     // keep the most recently updated one and drop the rest.
     // Returns (meta, action) where action is "created" | "deduped" | "exists".
+    sessionCountDebug(agentName) *>
     indexRef
       .modify { case (activeId, sessions, folders) =>
         val matching = sessions.filter(_.agentName.contains(agentName))
@@ -407,6 +408,13 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
             notifySessionChanged(meta.id)
         persist.as((meta, action != "exists"))
       }
+
+  private def sessionCountDebug(agentName: String): IO[Unit] =
+    indexRef.get.flatMap { case (_, sessions, _) =>
+      val matching = sessions.count(_.agentName.contains(agentName))
+      logger.warn(s"[DEBUG] sessionCount($agentName): $matching matching out of ${sessions.size} total")
+      IO.unit
+    }
 
   def deleteSession(id: String): IO[Unit] =
     indexRef
