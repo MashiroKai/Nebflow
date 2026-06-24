@@ -1447,6 +1447,8 @@ export function resetChatForActiveSession() {
   renderTaskList(state.sessionTasks[sid] || []);
   // Restore background task indicator for this session
   if (state.updateBgTasksUI) state.updateBgTasksUI();
+  // Refresh delegate indicator for this session
+  if (state.updateDelegateIndicator) state.updateDelegateIndicator();
 }
 
 export function switchSession(sessionId) {

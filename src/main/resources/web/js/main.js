@@ -1137,7 +1137,10 @@ onMessage('historyPage', (msg) => {
 function updateDelegateIndicator() {
   const el = document.getElementById('delegate-indicator');
   if (!el) return;
-  const count = Object.keys(state.activeSubAgents || {}).length;
+  // Only count sub-agents belonging to the active session
+  const count = Object.values(state.activeSubAgents || {})
+    .filter(info => !info.sessionId || info.sessionId === state.activeSessionId)
+    .length;
   if (count > 0) {
     el.classList.remove('hidden');
     el.querySelector('.delegate-count').textContent = count;
@@ -1149,12 +1152,15 @@ function updateDelegateIndicator() {
   }
   renderDelegateDropdown();
 }
+state.updateDelegateIndicator = updateDelegateIndicator;
 
 function renderDelegateDropdown() {
   const listEl = document.querySelector('#delegate-dropdown .bg-dropdown-list');
   if (!listEl) return;
   const agents = state.activeSubAgents || {};
-  const entries = Object.entries(agents);
+  // Only show sub-agents belonging to the active session
+  const entries = Object.entries(agents)
+    .filter(([id, info]) => !info.sessionId || info.sessionId === state.activeSessionId);
   if (entries.length === 0) {
     listEl.innerHTML = '';
     return;
@@ -1206,7 +1212,8 @@ onMessage('agentStart', (msg) => {
     name: msg.name || aid,
     task: msg.taskDescription || '',
     currentTool: null,
-    done: false
+    done: false,
+    sessionId: msg.sessionId || state.activeSessionId
   };
   updateDelegateIndicator();
 });
@@ -1324,7 +1331,17 @@ onMessage('agentSessionList', (msg) => {
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
   // Find active session for this agent
   const prevActiveId = state.activeSessionId;
-  const newActiveId = sessions.find(s => s.id === prevActiveId) ? prevActiveId : (sessions[0]?.id || null);
+  const prevSession = sessions.find(s => s.id === prevActiveId);
+  let newActiveId;
+  if (agentName === 'Jarvis') {
+    // Jarvis tab: ensure the main chat area always shows a Jarvis session
+    const prevIsJarvis = prevSession && prevSession.agentName === 'Jarvis';
+    newActiveId = prevIsJarvis ? prevActiveId
+      : (sessions.find(s => s.agentName === 'Jarvis')?.id || null);
+  } else {
+    // Non-Jarvis agent: keep previous active session if it's still in the list
+    newActiveId = prevSession ? prevActiveId : (sessions[0]?.id || null);
+  }
   // Clear memory cache when session changes so modal fetches fresh content from server
   if (newActiveId && newActiveId !== prevActiveId) {
     clearMemoryCache();
