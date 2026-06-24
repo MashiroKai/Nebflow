@@ -349,12 +349,11 @@ function showSecondaryBusy(busy) {
 }
 
 function updateSecondarySendBtn() {
-  const input = document.getElementById('secondary-input');
+  // Parity with the primary window: the send button is never disabled (it just
+  // no-ops on empty input via sendSecondary's guard). Keeping it always enabled
+  // avoids the greyed-out look that made the two windows feel different.
   const sendBtn = document.getElementById('secondary-send-btn');
-  if (!input || !sendBtn) return;
-  const hasText = input.value.trim();
-  const hasAttachments = (state._secPendingAttachments || []).length > 0;
-  sendBtn.disabled = !(hasText || hasAttachments);
+  if (sendBtn) sendBtn.disabled = false;
 }
 
 // ── Slash dropdown (simplified autocomplete) ──────────────────────────
