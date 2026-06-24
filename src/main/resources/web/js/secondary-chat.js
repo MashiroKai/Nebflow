@@ -22,6 +22,12 @@ let secSlashSelected = 0;
 export function loadSecondary(sessionId) {
   // Reset secondary streaming state
   state._secStream = { aiText: '', currentAiBubble: null, thinkingText: '', currentThinkingBubble: null };
+  // Reset secondary pagination state (independent from primary)
+  state._secHistoryOffset = 0;
+  state._secHistoryHasMore = false;
+  state._secHistoryLoading = false;
+  state._secPendingInitialLoad = true;
+  state._secScrollSnapped = true;
   const el = document.getElementById('secondary-chat');
   if (el) el.innerHTML = '<div style="padding:24px;color:var(--color-text-muted);text-align:center;font-size:13px">Loading...</div>';
   // Sync button state with current busy status
@@ -46,7 +52,10 @@ export function sendSecondary() {
   state.dom.chat = secChat;
   renderUserBubble(text, []);
   state.dom.chat = origChat;
-  smartScroll();
+  // Manual scroll-to-bottom for secondary (smartScroll uses primary's scrollSnapped)
+  if (secChat) {
+    requestAnimationFrame(() => { secChat.scrollTop = secChat.scrollHeight; });
+  }
 
   // Persist user message
   saveMsg({ type: 'user', text }, state.secondarySessionId);
@@ -223,6 +232,20 @@ export function initSecondaryChat() {
     });
   }
 
+  // Scroll-up pagination for secondary chat
+  const secChat = document.getElementById('secondary-chat');
+  if (secChat) {
+    secChat.addEventListener('scroll', () => {
+      const sid = state.secondarySessionId;
+      if (!sid) return;
+      state._secScrollSnapped = secChat.scrollTop + secChat.clientHeight >= secChat.scrollHeight - 40;
+      if (secChat.scrollTop < 100 && state._secHistoryHasMore && !state._secHistoryLoading && state._secHistoryOffset > 0) {
+        state._secHistoryLoading = true;
+        sendWs({ type: 'getHistory', sessionId: sid, limit: 50, beforeIndex: state._secHistoryOffset });
+      }
+    });
+  }
+
   // Restore buttons when secondary turn completes
   // (clearBusy in chat.js dispatches this event)
   window.addEventListener('session-busy', (e) => {
@@ -240,4 +263,47 @@ export function initSecondaryChat() {
       closeSecondarySlash(dropdown);
     }
   });
+
+  // Attachment button
+  const secAttachBtn = document.getElementById('secondary-attach-btn');
+  if (secAttachBtn) {
+    secAttachBtn.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      input.onchange = (e) => {
+        const files = Array.from(e.target.files);
+        console.log('[secondary] attachments:', files);
+        input.remove();
+      };
+      input.click();
+    });
+  }
+
+  // Voice button — basic speech recognition
+  const secVoiceBtn = document.getElementById('secondary-voice-btn');
+  if (secVoiceBtn) {
+    let recognizing = false;
+    const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onresult = (e) => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          const secInput = document.getElementById('secondary-input');
+          secInput.value += e.results[i][0].transcript;
+        } else {
+          interim += e.results[i][0].transcript;
+        }
+      }
+    };
+    recognition.onend = () => { recognizing = false; secVoiceBtn.classList.remove('active'); };
+    secVoiceBtn.addEventListener('click', () => {
+      if (recognizing) { recognition.stop(); return; }
+      try { recognition.start(); recognizing = true; secVoiceBtn.classList.add('active'); } catch(e) {}
+    });
+  }
 }

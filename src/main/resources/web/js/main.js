@@ -888,16 +888,16 @@ function clearHistoryIndicators() {
 onMessage('historyPage', (msg) => {
   const sid = msg.sessionId;
   if (sid !== state.activeSessionId && !state._secondaryActive) return;
-  state.historyLoading = false;
+  if (state._secondaryActive) state._secHistoryLoading = false; else state.historyLoading = false;
   hideHistoryLoader();
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
   // resetChatForActiveSession sets pendingInitialLoad=true; we clear it here on first response.
   // Subsequent historyPage responses (from duplicate getHistory) see pendingInitialLoad=false
   // and go to the prepend path instead of clearing the DOM again.
-  const isInitialLoad = state.pendingInitialLoad;
+  const isInitialLoad = state._secondaryActive ? state._secPendingInitialLoad : state.pendingInitialLoad;
   if (isInitialLoad) {
-    state.pendingInitialLoad = false;
+    if (state._secondaryActive) state._secPendingInitialLoad = false; else state.pendingInitialLoad = false;
     // Initial load or full refresh — replace
     state.dom.chat.innerHTML = '';
     // Reset sessionToolCards — innerHTML clear above removes all tool pending
@@ -907,9 +907,14 @@ onMessage('historyPage', (msg) => {
     Object.keys(state.sessionToolCards).forEach(sid => delete state.sessionToolCards[sid]);
     // Clear history indicators before rendering
     clearHistoryIndicators();
-    state.historyOffset = msg.offset;
-    state.historyTotal = msg.total;
-    state.historyHasMore = msg.hasMore;
+    if (state._secondaryActive) {
+      state._secHistoryOffset = msg.offset;
+      state._secHistoryHasMore = msg.hasMore;
+    } else {
+      state.historyOffset = msg.offset;
+      state.historyTotal = msg.total;
+      state.historyHasMore = msg.hasMore;
+    }
     restoreFromBackendHistory(msg.messages);
 
     // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
@@ -1065,16 +1070,18 @@ onMessage('historyPage', (msg) => {
       renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel);
     }
 
-    if (!state.historyHasMore && msg.messages.length > 0) showHistoryEnd();
+    const _hasMore = state._secondaryActive ? state._secHistoryHasMore : state.historyHasMore;
+    if (!_hasMore && msg.messages.length > 0) showHistoryEnd();
 
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
     // is complete, ensure the viewport shows the latest content.
     // Uses rAF to avoid layout thrashing — fires after any pending style calculations.
     requestAnimationFrame(() => {
       const chat = state.dom.chat;
-      if (state.scrollSnapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
+      const _snapped = state._secondaryActive ? state._secScrollSnapped : state.scrollSnapped;
+      if (_snapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
         chat.scrollTop = chat.scrollHeight;
-        state.scrollSnapped = true;
+        if (state._secondaryActive) state._secScrollSnapped = true; else state.scrollSnapped = true;
       }
     });
 
@@ -1082,7 +1089,8 @@ onMessage('historyPage', (msg) => {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
     // if the response offset is >= what we already have, skip it to avoid duplicates.
-    if (msg.offset >= state.historyOffset && state.historyOffset > 0) {
+    const _histOffset = state._secondaryActive ? state._secHistoryOffset : state.historyOffset;
+    if (msg.offset >= _histOffset && _histOffset > 0) {
       // Skipping duplicate response
       return;
     }
@@ -1108,9 +1116,15 @@ onMessage('historyPage', (msg) => {
     // Restore scroll position so user stays at the same message
     const newScrollHeight = chat.scrollHeight;
     chat.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
-    state.historyOffset = msg.offset;
-    state.historyHasMore = msg.hasMore;
-    if (!state.historyHasMore) showHistoryEnd();
+    if (state._secondaryActive) {
+      state._secHistoryOffset = msg.offset;
+      state._secHistoryHasMore = msg.hasMore;
+      if (!state._secHistoryHasMore) showHistoryEnd();
+    } else {
+      state.historyOffset = msg.offset;
+      state.historyHasMore = msg.hasMore;
+      if (!state.historyHasMore) showHistoryEnd();
+    }
   }
 });
 
@@ -1466,7 +1480,15 @@ onMessage('sessionBusy', (msg) => {
 onMessage('taskListUpdate', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
-  if (isActive(msg)) renderTaskList(msg.tasks);
+  // Secondary panel — check first to avoid isActive() matching during ws.js swap
+  if (state.secondarySessionId && msg.sessionId === state.secondarySessionId) {
+    renderTaskList(msg.tasks, document.getElementById('secondary-task-list'));
+    return;
+  }
+  // Main panel
+  if (msg.sessionId === state.activeSessionId || !msg.sessionId) {
+    renderTaskList(msg.tasks);
+  }
 });
 
 // --- Background task indicator in header ---
