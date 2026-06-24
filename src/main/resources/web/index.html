@@ -162,6 +162,9 @@
         <i data-lucide="x"></i>
       </button>
     </div>
+    <div id="secondary-overlays">
+      <div id="secondary-task-list"></div>
+    </div>
     <div id="secondary-chat"></div>
     <div id="secondary-status-wrap">
       <div id="secondary-spinner"></div>
@@ -169,10 +172,13 @@
     </div>
     <div id="secondary-input-area">
       <div class="secondary-input-bar">
+        <button class="icon-btn" id="secondary-voice-btn" title="Voice"><i data-lucide="mic"></i></button>
         <div id="secondary-input-wrap" style="position:relative;flex:1;">
+          <div id="secondary-attachment-preview"></div>
           <textarea id="secondary-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
           <div id="secondary-slash-dropdown"></div>
         </div>
+        <button class="icon-btn" id="secondary-attach-btn" title="Attach"><i data-lucide="paperclip"></i></button>
         <button id="secondary-send-btn"><i data-lucide="send"></i></button>
         <button id="secondary-stop-btn"><i data-lucide="square"></i></button>
       </div>

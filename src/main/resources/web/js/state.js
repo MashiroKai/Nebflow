@@ -134,6 +134,13 @@ export default {
   // duplicate getHistory responses when offset happens to be 0.
   pendingInitialLoad: false,
 
+  // Secondary panel history (separate from primary to avoid cross-contamination)
+  _secHistoryOffset: 0,
+  _secHistoryHasMore: false,
+  _secHistoryLoading: false,
+  _secPendingInitialLoad: false,
+  _secScrollSnapped: true,
+
   // IME
   composing: false,
 

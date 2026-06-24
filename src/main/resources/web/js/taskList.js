@@ -18,8 +18,8 @@ function setCollapsed(v) {
   try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0'); } catch {}
 }
 
-export function renderTaskList(tasks) {
-  const container = document.getElementById('task-list');
+export function renderTaskList(tasks, container) {
+  container = container || document.getElementById('task-list');
   if (!container) return;
 
   if (!tasks || tasks.length === 0) {

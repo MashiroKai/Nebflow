@@ -128,6 +128,12 @@ function closeSecondaryPanel() {
 
 function openInSecondary(session) {
   state.secondarySessionId = session.id;
+  // Clear unread state — user is now viewing this session
+  state.unreadSessions.delete(session.id);
+  state.markedUnreadSessions.delete(session.id);
+  persistUnread();
+  persistMarkedUnread();
+  updateSessionStatus(session.id);
   document.body.classList.add('split-view');
   const panel = document.getElementById('secondary-panel');
   panel.classList.remove('hidden');
