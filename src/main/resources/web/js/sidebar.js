@@ -148,7 +148,12 @@ function openInSecondary(session) {
   panel.classList.add('visible');
   document.getElementById('secondary-session-name').textContent = session.name;
   const badge = document.getElementById('secondary-agent-badge');
-  if (badge) badge.textContent = session.agentName || 'Nebula';
+  if (badge) {
+    // Use the agent's display name when available, matching the primary header brand.
+    const agentName = session.agentName || 'Nebula';
+    const agent = state.agentsData.find(a => a.name === agentName);
+    badge.textContent = agent ? (agent.displayName || agent.name) : agentName;
+  }
   // Load session history into secondary chat
   loadSecondary(session.id);
   renderSessionSidebar(state.sessions, state.activeSessionId);
