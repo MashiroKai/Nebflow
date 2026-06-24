@@ -1061,12 +1061,8 @@ class WebSocketRoutes(
         case "listAgentSessions" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            // Ensure Jarvis session exists
-            val ensureJarvis = sessionStore.listSessions.flatMap { sessions =>
-              val jarvisExists = sessions.exists(_.agentName.contains("Jarvis"))
-              if jarvisExists then IO.unit
-              else sessionStore.createSession("Jarvis", Nil, Some("Jarvis"), None).void
-            }
+            // Ensure Jarvis session exists (atomically — no race even under concurrent calls).
+            val ensureJarvis = sessionStore.ensureAgentSession("Jarvis").void
             // Return ALL sessions and folders (unified list)
             ensureJarvis *>
             (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN {
@@ -1458,7 +1454,7 @@ class WebSocketRoutes(
                     tag <- j.hcursor.downField("tag_name").as[String].toOption
                     name <- j.hcursor.downField("name").as[String].toOption
                   yield (tag, name)
-                val conn = new java.net.URL(url).openConnection()
+                val conn = java.net.URI.create(url).toURL.openConnection()
                 conn.setConnectTimeout(5000)
                 conn.setReadTimeout(5000)
                 val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
