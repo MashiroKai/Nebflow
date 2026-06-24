@@ -9,7 +9,7 @@ import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 import { refreshScheduledTasks } from './scheduled-task.js';
-import { loadSecondary } from './secondary-chat.js';
+import { loadSecondary, saveSecondaryDraft } from './secondary-chat.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
 
@@ -116,6 +116,9 @@ function showPanel(tab) {
 }
 
 function closeSecondaryPanel() {
+  // Save the current secondary draft before tearing down, so reopening the same
+  // session restores the in-progress text/attachments.
+  if (state.secondarySessionId) saveSecondaryDraft(state.secondarySessionId);
   state.secondarySessionId = null;
   document.body.classList.remove('split-view');
   const panel = document.getElementById('secondary-panel');
@@ -127,6 +130,11 @@ function closeSecondaryPanel() {
 }
 
 function openInSecondary(session) {
+  // Save the draft of the session currently shown in the secondary panel (if any)
+  // before switching to a new one, mirroring how switchSession saves the primary draft.
+  if (state.secondarySessionId && state.secondarySessionId !== session.id) {
+    saveSecondaryDraft(state.secondarySessionId);
+  }
   state.secondarySessionId = session.id;
   // Clear unread state — user is now viewing this session
   state.unreadSessions.delete(session.id);
@@ -142,7 +150,7 @@ function openInSecondary(session) {
   const badge = document.getElementById('secondary-agent-badge');
   if (badge) badge.textContent = session.agentName || 'Nebula';
   // Load session history into secondary chat
-  loadSecondary(session.id, session.name);
+  loadSecondary(session.id);
   renderSessionSidebar(state.sessions, state.activeSessionId);
 }
 

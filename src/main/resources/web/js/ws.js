@@ -143,6 +143,16 @@ export function connect() {
           currentAiBubble: state.currentAiBubble,
           thinkingText: state.thinkingText,
           currentThinkingBubble: state.currentThinkingBubble,
+          // Fields that were previously NOT swapped — leaking these caused
+          // cross-window state corruption when both windows ran /ask, multi-agent
+          // (delegate) turns, or relied on scroll-snap anchoring.
+          currentAskBubble: state.currentAskBubble,
+          askAnswerText: state.askAnswerText,
+          askMode: state.askMode,
+          agentBubbles: state.agentBubbles,
+          activeAgentId: state.activeAgentId,
+          activeSubAgents: state.activeSubAgents,
+          scrollSnapped: state.scrollSnapped,
         };
         state.dom.chat = document.getElementById('secondary-chat');
         state.dom.statusWrap = document.getElementById('secondary-status-wrap');
@@ -156,6 +166,14 @@ export function connect() {
         state.currentAiBubble = ss.currentAiBubble || null;
         state.thinkingText = ss.thinkingText || '';
         state.currentThinkingBubble = ss.currentThinkingBubble || null;
+        state.currentAskBubble = ss.currentAskBubble || null;
+        state.askAnswerText = ss.askAnswerText || '';
+        state.askMode = ss.askMode || false;
+        state.agentBubbles = ss.agentBubbles || {};
+        state.activeAgentId = ss.activeAgentId || null;
+        state.activeSubAgents = ss.activeSubAgents || {};
+        // scrollSnapped: prefer the dedicated secondary flag, fall back to stream store.
+        state.scrollSnapped = state._secScrollSnapped != null ? state._secScrollSnapped : (ss.scrollSnapped != null ? ss.scrollSnapped : true);
         state._secondaryActive = true;
       }
 
@@ -169,6 +187,15 @@ export function connect() {
         ss.currentAiBubble = state.currentAiBubble;
         ss.thinkingText = state.thinkingText;
         ss.currentThinkingBubble = state.currentThinkingBubble;
+        ss.currentAskBubble = state.currentAskBubble;
+        ss.askAnswerText = state.askAnswerText;
+        ss.askMode = state.askMode;
+        ss.agentBubbles = state.agentBubbles;
+        ss.activeAgentId = state.activeAgentId;
+        ss.activeSubAgents = state.activeSubAgents;
+        // Persist the per-window scroll-snap back to the dedicated secondary flag
+        // (the scroll handler in secondary-chat.js reads/writes _secScrollSnapped).
+        state._secScrollSnapped = state.scrollSnapped;
         state.dom.chat = _saved.chat;
         state.dom.statusWrap = _saved.statusWrap;
         state.dom.statusText = _saved.statusText;
@@ -180,6 +207,13 @@ export function connect() {
         state.currentAiBubble = _saved.currentAiBubble;
         state.thinkingText = _saved.thinkingText;
         state.currentThinkingBubble = _saved.currentThinkingBubble;
+        state.currentAskBubble = _saved.currentAskBubble;
+        state.askAnswerText = _saved.askAnswerText;
+        state.askMode = _saved.askMode;
+        state.agentBubbles = _saved.agentBubbles;
+        state.activeAgentId = _saved.activeAgentId;
+        state.activeSubAgents = _saved.activeSubAgents;
+        state.scrollSnapped = _saved.scrollSnapped;
         state._secondaryActive = false;
       }
     } catch (err) {

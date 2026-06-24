@@ -163,6 +163,7 @@
       </button>
     </div>
     <div id="secondary-overlays">
+      <div id="secondary-notification-banner"></div>
       <div id="secondary-task-list"></div>
     </div>
     <div id="secondary-chat"></div>
@@ -171,10 +172,17 @@
       <span id="secondary-status-text"></span>
     </div>
     <div id="secondary-input-area">
+      <div class="voice-overlay" id="secondary-voice-overlay">
+        <div class="voice-wave"><i data-lucide="mic"></i></div>
+        <div class="voice-text" id="secondary-voice-text">Listening...</div>
+        <div class="voice-hint" id="secondary-voice-hint">Release to send</div>
+      </div>
       <div class="secondary-input-bar">
         <button class="icon-btn" id="secondary-voice-btn" title="Voice"><i data-lucide="mic"></i></button>
         <div id="secondary-input-wrap" style="position:relative;flex:1;">
           <div id="secondary-attachment-preview"></div>
+          <div id="secondary-ask-indicator"><span id="secondary-ask-indicator-label">ASK</span><span id="secondary-ask-indicator-cancel">&times;</span></div>
+          <div id="secondary-skill-indicator"><span id="secondary-skill-indicator-label">SKILL</span><span id="secondary-skill-indicator-cancel">&times;</span></div>
           <textarea id="secondary-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
           <div id="secondary-slash-dropdown"></div>
         </div>

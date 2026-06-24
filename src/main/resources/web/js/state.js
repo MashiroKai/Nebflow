@@ -98,6 +98,13 @@ export default {
 
   // Input
   pendingAttachments: [],
+  // Secondary panel has its own attachment queue so the two windows never
+  // cross-contaminate each other's pending attachments.
+  _secPendingAttachments: [],
+  // Secondary panel drafts (keyed by sessionId), kept separate from the primary
+  // window's sessionInputDrafts so switching the secondary session doesn't clobber
+  // the primary draft and vice versa.
+  _secInputDrafts: {},
   thinkingMode: null,
   recognition: null,
   inputHistory: safeParse(localStorage.getItem('nebflow_input_history'), []),

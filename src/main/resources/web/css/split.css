@@ -356,3 +356,32 @@ body.split-view #secondary-panel.visible {
   #secondary-input::placeholder { color: #555860; }
   #secondary-status-wrap { background: rgba(23,26,33,0.9); }
 }
+
+/* ── Secondary indicator/banner placeholders ────────────────────────────
+   These mirror the primary window's ask/skill indicators and notification
+   banner. They stay hidden until a future change activates ask/skill mode
+   in the secondary window; for now they are DOM-only placeholders so the
+   layout matches the primary input area. */
+#secondary-ask-indicator,
+#secondary-skill-indicator {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  pointer-events: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  opacity: 0.5;
+  color: var(--color-text, #666);
+  white-space: nowrap;
+  user-select: none;
+}
+#secondary-ask-indicator.show,
+#secondary-skill-indicator.show { display: flex; }
+#secondary-notification-banner:empty { display: none; }
