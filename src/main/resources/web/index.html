@@ -157,10 +157,31 @@
       <div class="secondary-header-info">
         <span id="secondary-session-name"></span>
         <span id="secondary-agent-badge" class="agent-badge"></span>
+        <button id="secondary-memory-btn" class="memory-btn" style="display:none">Memory</button>
       </div>
-      <button id="secondary-close-btn" class="secondary-close-btn" title="Close">
-        <i data-lucide="x"></i>
-      </button>
+      <div class="secondary-header-right">
+        <span id="secondary-header-model-info"></span>
+        <span id="secondary-bypass-badge" class="bypass-badge hidden"><span class="bypass-badge-text"></span></span>
+        <div id="secondary-bg-indicator" class="hidden">
+          <span class="bg-dot"></span>
+          <span class="bg-count">0</span>
+        </div>
+        <div id="secondary-delegate-indicator" class="hidden" title="Sub-agents running">
+          <span class="delegate-dot"></span>
+          <span class="delegate-count">0</span>
+        </div>
+        <div id="secondary-delegate-dropdown" class="hidden">
+          <div class="bg-dropdown-header">Sub-agents</div>
+          <div class="bg-dropdown-list"></div>
+        </div>
+        <div id="secondary-bg-dropdown" class="hidden">
+          <div class="bg-dropdown-header">Background tasks</div>
+          <div class="bg-dropdown-list"></div>
+        </div>
+        <button id="secondary-close-btn" class="secondary-close-btn" title="Close">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
     </div>
     <div id="secondary-overlays">
       <div id="secondary-notification-banner"></div>
