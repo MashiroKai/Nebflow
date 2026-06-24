@@ -375,23 +375,37 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def ensureAgentSession(agentName: String): IO[(SessionMeta, Boolean)] =
     // modify is an atomic read-modify-write: the decide-to-create and the state
     // update happen in one step, closing the TOCTOU window that listSessions + createSession had.
+    // Also deduplicate: if past races/bugs left more than one session for this agent,
+    // keep the most recently updated one and drop the rest.
+    // Returns (meta, action) where action is "created" | "deduped" | "exists".
     indexRef
       .modify { case (activeId, sessions, folders) =>
-        sessions.find(_.agentName.contains(agentName)) match
-          case Some(existing) => ((activeId, sessions, folders), (existing, false))
-          case None =>
+        val matching = sessions.filter(_.agentName.contains(agentName))
+        matching match
+          case Nil =>
             val id = UUID.randomUUID().toString
             val now = System.currentTimeMillis()
             val meta = SessionMeta(id, agentName, now, now, hasUnread = false, agentName = Some(agentName))
-            ((activeId, meta :: sessions, folders), (meta, true))
+            ((activeId, meta :: sessions, folders), (meta, "created"))
+          case one :: Nil =>
+            ((activeId, sessions, folders), (one, "exists"))
+          case multiple =>
+            // Dedup: keep the newest (max updatedAt), drop the rest.
+            val keeper = multiple.maxBy(_.updatedAt)
+            val pruned = sessions.filterNot(s => s.agentName.contains(agentName) && s.id != keeper.id)
+            ((activeId, pruned, folders), (keeper, "deduped"))
       }
-      .flatMap { case (meta, created) =>
-        // Persist side effects only when this fiber is the winner that created it,
-        // then carry the result tuple through.
+      .flatMap { case (meta, action) =>
+        // Persist: always save the index when we created or pruned sessions.
         val persist =
-          if created then saveSessionMessages(meta.id, Nil) *> saveIndex *> notifySessionChanged(meta.id)
-          else IO.unit
-        persist.as((meta, created))
+          if action == "exists" then IO.unit
+          else
+            val init = if action == "created" then saveSessionMessages(meta.id, Nil) else IO.unit
+            init *>
+            saveIndex *>
+            IO.delay(logger.info(s"ensureAgentSession($agentName): $action, session=${meta.id}, flushed index")) *>
+            notifySessionChanged(meta.id)
+        persist.as((meta, action != "exists"))
       }
 
   def deleteSession(id: String): IO[Unit] =
