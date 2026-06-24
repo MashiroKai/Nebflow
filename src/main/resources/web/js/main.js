@@ -37,6 +37,7 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
+import { initChatViews, chatViews, findViewBySessionId } from './chatView.js';
 import { initSecondaryChat } from './secondary-chat.js';
 import { initMesh } from './mesh.js';
 import { formatLiveDuration } from './chat.js';
@@ -162,6 +163,59 @@ state.dom = {
   delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
   memoryBtnEl: document.getElementById('memory-btn'),
 };
+
+// ── Initialize ChatView instances ──────────────────────────────────────
+// Each window gets its own ChatView with scoped DOM refs + streaming state.
+// The secondary view is multi-purpose (chat today, mind-map/diff tomorrow),
+// so it starts unmounted; secondary-chat.js mounts it when a session opens.
+initChatViews(
+  // Primary window DOM refs
+  {
+    chat: document.getElementById('chat'),
+    input: document.getElementById('input'),
+    sendBtn: document.getElementById('send-btn'),
+    stopBtn: document.getElementById('stop-btn'),
+    statusWrap: document.getElementById('status-wrap'),
+    statusText: document.getElementById('status-text'),
+    lottieSpinner: document.getElementById('lottie-spinner'),
+    attPreview: document.getElementById('attachment-preview'),
+    slashDropdown: document.getElementById('slash-dropdown'),
+    voiceBtn: document.getElementById('voice-btn'),
+    voiceOverlay: document.getElementById('voice-overlay'),
+    voiceText: document.getElementById('voice-text'),
+    headerModelInfo: document.getElementById('header-model-info'),
+    bgIndicator: document.getElementById('bg-indicator'),
+    bgCount: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
+    bgDropdown: document.getElementById('bg-dropdown'),
+    bgDropdownList: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
+    delegateIndicator: document.getElementById('delegate-indicator'),
+    delegateDropdown: document.getElementById('delegate-dropdown'),
+    delegateDropdownList: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+  },
+  // Secondary panel DOM refs (chat subtree only — panel itself is multi-purpose)
+  {
+    chat: document.getElementById('secondary-chat'),
+    input: document.getElementById('secondary-input'),
+    sendBtn: document.getElementById('secondary-send-btn'),
+    stopBtn: document.getElementById('secondary-stop-btn'),
+    statusWrap: document.getElementById('secondary-status-wrap'),
+    statusText: document.getElementById('secondary-status-text'),
+    lottieSpinner: document.getElementById('secondary-spinner'),
+    attPreview: document.getElementById('secondary-attachment-preview'),
+    slashDropdown: document.getElementById('secondary-slash-dropdown'),
+    voiceBtn: document.getElementById('secondary-voice-btn'),
+    voiceOverlay: document.getElementById('secondary-voice-overlay'),
+    voiceText: document.getElementById('secondary-voice-text'),
+    headerModelInfo: document.getElementById('secondary-header-model-info'),
+    bgIndicator: document.getElementById('secondary-bg-indicator'),
+    bgCount: document.getElementById('secondary-bg-indicator')?.querySelector('.bg-count'),
+    bgDropdown: document.getElementById('secondary-bg-dropdown'),
+    bgDropdownList: document.getElementById('secondary-bg-dropdown')?.querySelector('.bg-dropdown-list'),
+    delegateIndicator: document.getElementById('secondary-delegate-indicator'),
+    delegateDropdown: document.getElementById('secondary-delegate-dropdown'),
+    delegateDropdownList: document.getElementById('secondary-delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+  }
+);
 
 // ---------- 2. Init libraries ----------
 // Guard: Safari may execute module scripts before CDN scripts finish loading.
