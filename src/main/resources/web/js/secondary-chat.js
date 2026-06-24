@@ -365,7 +365,8 @@ function getSecondarySlashCommands() {
     state.skills.forEach(skill => {
       cmds.push({
         cmd: '/' + skill.name,
-        desc: skill.description || '',
+        desc: skill.description || t('slash.skillDefault'),
+        whenToUse: skill.whenToUse || '',
         isSkill: true,
       });
     });
@@ -394,11 +395,12 @@ function updateSecondarySlash() {
   secSlashMatches.forEach((item, i) => {
     const div = document.createElement('div');
     div.className = 'slash-item' + (i === 0 ? ' active' : '');
-    const badge = item.isSkill ? '<span class="slash-badge skill">SKILL</span>' : '';
+    const badge = item.isSkill ? '<span class="slash-badge skill">' + escapeHtml(t('slash.skillBadge')) + '</span>' : '';
+    const whenToUseHtml = item.whenToUse ? '<span class="slash-when">' + escapeHtml(item.whenToUse) + '</span>' : '';
     div.innerHTML =
       '<div style="display:flex;align-items:center">' +
       '<span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge +
-      '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>';
+      '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>' + whenToUseHtml;
     div.onclick = () => pickSecondarySlash(i);
     div.onmouseenter = () => {
       secSlashSelected = i;
@@ -420,6 +422,24 @@ function closeSecondarySlash(dropdown) {
 function updateSecondaryHighlight(dropdown) {
   const items = dropdown.querySelectorAll('.slash-item');
   items.forEach((el, i) => el.classList.toggle('active', i === secSlashSelected));
+
+  // Scroll the active item into view within the dropdown (parity with primary).
+  const active = items[secSlashSelected];
+  if (!active) return;
+  let relTop = 0;
+  let el = active;
+  while (el && el !== dropdown) {
+    relTop += el.offsetTop;
+    el = el.offsetParent;
+  }
+  const relBottom = relTop + active.offsetHeight;
+  const scrollTop = dropdown.scrollTop;
+  const visibleBottom = scrollTop + dropdown.clientHeight;
+  if (relTop < scrollTop) {
+    dropdown.scrollTop = relTop;
+  } else if (relBottom > visibleBottom) {
+    dropdown.scrollTop = relBottom - dropdown.clientHeight;
+  }
 }
 
 function pickSecondarySlash(index) {
@@ -427,14 +447,23 @@ function pickSecondarySlash(index) {
   const dropdown = document.getElementById('secondary-slash-dropdown');
   if (index < 0 || index >= secSlashMatches.length) return;
   const cmd = secSlashMatches[index].cmd;
-  if (input) {
-    input.value = cmd + ' ';
-    input.focus();
-    input.setSelectionRange(input.value.length, input.value.length);
-    input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-  }
   closeSecondarySlash(dropdown);
+  // Parity with the primary window's pickSlashCommand: execute the command
+  // immediately and clear the input, rather than leaving "/cmd " in the box
+  // (which would re-trigger the dropdown and feel "stuck").
+  if (input) {
+    input.value = '';
+    input.style.height = 'auto';
+    input.focus();
+  }
+  // Execute the command — same path as typing it and pressing Enter.
+  if (handleSecondaryAsk(cmd + ' ')) return;
+  if (handleSecondarySlash(cmd)) {
+    updateSecondarySendBtn();
+    return;
+  }
+  // Unknown command — just leave focus in the input.
+  updateSecondarySendBtn();
 }
 
 // ── Initialization ─────────────────────────────────────────────────────
