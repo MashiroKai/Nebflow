@@ -119,6 +119,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding: 10px 16px;
   margin: 8px;
   border-radius: 20px;
@@ -132,6 +133,7 @@
   left: 0;
   right: 0;
   z-index: 30;
+  overflow: hidden;
   box-shadow:
     inset 0 1px 0 0 rgba(255,255,255,0.25),
     0px 2px 8px rgba(0,0,0,0.04),
@@ -152,6 +154,8 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
 }
 #secondary-session-name {
   font-size: 14px;
@@ -385,3 +389,83 @@ body.split-view #secondary-panel.visible {
 #secondary-ask-indicator.show,
 #secondary-skill-indicator.show { display: flex; }
 #secondary-notification-banner:empty { display: none; }
+
+/* ── Secondary header layout + indicator parity ─────────────────────────
+   The primary window styles its indicators via #header-scoped or id-specific
+   rules in chat.css. The secondary panel uses different ids (secondary-*), so
+   we replicate the essential layout here so both windows look identical. */
+.secondary-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  position: relative;
+  flex-shrink: 0;
+}
+/* Context-usage bar — same look as #header #header-model-info */
+#secondary-header-model-info {
+  display: none;
+  color: var(--color-frame-text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+/* Background task indicator */
+#secondary-bg-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(7,193,96,0.15);
+  border-radius: 10px;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#secondary-bg-indicator:hover { background: rgba(7,193,96,0.25); }
+#secondary-bg-indicator.hidden { display: none; }
+/* Delegate sub-agent indicator */
+#secondary-delegate-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(59,130,246,0.15);
+  border-radius: 10px;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#secondary-delegate-indicator:hover { background: rgba(59,130,246,0.25); }
+#secondary-delegate-indicator.hidden { display: none; }
+/* Dropdowns (bg + delegate) — absolute under the header */
+#secondary-bg-dropdown,
+#secondary-delegate-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--sapphire-edge);
+  border-radius: 12px;
+  min-width: 280px;
+  max-width: 380px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
+    0px 4px 16px rgba(0, 0, 0, 0.08),
+    0px 8px 32px rgba(0, 0, 0, 0.06);
+  z-index: 100;
+  overflow: hidden;
+}
+#secondary-bg-dropdown.hidden,
+#secondary-delegate-dropdown.hidden { display: none; }
+/* Bypass badge parity */
+#secondary-bypass-badge { white-space: nowrap; }
+#secondary-bypass-badge.hidden { display: none; }
+/* Memory button parity (shares .memory-btn class with primary) */
+#secondary-memory-btn.memory-btn { font-size: 12px; }
