@@ -362,6 +362,38 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           }
     }
 
+  /**
+   * Atomically ensure a singleton session exists for the given agentName.
+   *
+   * Unlike createSession (which always appends), this guarantees at most one session
+   * per agentName even under concurrent calls — the existence check and the index
+   * mutation happen in a single `indexRef.modify`, so two concurrent invocations can
+   * never both observe "missing" and both create.
+   *
+   * Used to guarantee Jarvis has exactly one persistent session. Returns (meta, wasCreated).
+   */
+  def ensureAgentSession(agentName: String): IO[(SessionMeta, Boolean)] =
+    // modify is an atomic read-modify-write: the decide-to-create and the state
+    // update happen in one step, closing the TOCTOU window that listSessions + createSession had.
+    indexRef
+      .modify { case (activeId, sessions, folders) =>
+        sessions.find(_.agentName.contains(agentName)) match
+          case Some(existing) => ((activeId, sessions, folders), (existing, false))
+          case None =>
+            val id = UUID.randomUUID().toString
+            val now = System.currentTimeMillis()
+            val meta = SessionMeta(id, agentName, now, now, hasUnread = false, agentName = Some(agentName))
+            ((activeId, meta :: sessions, folders), (meta, true))
+      }
+      .flatMap { case (meta, created) =>
+        // Persist side effects only when this fiber is the winner that created it,
+        // then carry the result tuple through.
+        val persist =
+          if created then saveSessionMessages(meta.id, Nil) *> saveIndex *> notifySessionChanged(meta.id)
+          else IO.unit
+        persist.as((meta, created))
+      }
+
   def deleteSession(id: String): IO[Unit] =
     indexRef
       .modify { case (activeId, sessions, folders) =>
