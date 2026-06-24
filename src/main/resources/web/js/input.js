@@ -84,14 +84,19 @@ const slashCommands = {
  * Called when bypass mode is toggled.
  */
 function updateBypassBadge(enabled) {
-  const badge = document.getElementById('bypass-badge');
-  if (!badge) return;
-  const textEl = badge.querySelector('.bypass-badge-text');
-  if (enabled) {
-    badge.classList.remove('hidden');
-    if (textEl) textEl.textContent = t('chat.bypassBadge');
-  } else {
-    badge.classList.add('hidden');
+  // Bypass is a global toggle — keep both the primary and secondary header badges in sync.
+  for (const badge of [
+    document.getElementById('bypass-badge'),
+    document.getElementById('secondary-bypass-badge'),
+  ]) {
+    if (!badge) continue;
+    const textEl = badge.querySelector('.bypass-badge-text');
+    if (enabled) {
+      badge.classList.remove('hidden');
+      if (textEl) textEl.textContent = t('chat.bypassBadge');
+    } else {
+      badge.classList.add('hidden');
+    }
   }
 }
 

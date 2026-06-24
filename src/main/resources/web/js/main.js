@@ -153,6 +153,14 @@ state.dom = {
   bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
   bgDropdownEl: document.getElementById('bg-dropdown'),
   bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
+  // Header status indicators — surfaced on state.dom so the ws.js swap can redirect
+  // them to the secondary panel, giving both windows identical indicator behaviour.
+  headerModelInfoEl: document.getElementById('header-model-info'),
+  bypassBadgeEl: document.getElementById('bypass-badge'),
+  delegateIndicatorEl: document.getElementById('delegate-indicator'),
+  delegateDropdownEl: document.getElementById('delegate-dropdown'),
+  delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+  memoryBtnEl: document.getElementById('memory-btn'),
 };
 
 // ---------- 2. Init libraries ----------
@@ -218,6 +226,15 @@ function isActive(msg) {
   // When ws.js sets _secondaryActive, the swap is already done — treat as active
   if (state._secondaryActive) return true;
   return false;
+}
+
+// Helper: which session is the "display target" right now?
+// During a secondary swap, rendering should target the secondary session's data;
+// otherwise it targets the primary active session. Functions that previously
+// hardcoded state.activeSessionId use this so they render the correct session's
+// model-info / background tasks / delegates in either window.
+function displaySessionId() {
+  return state._secondaryActive ? state.secondarySessionId : state.activeSessionId;
 }
 
 // Helper: compute and clear turn duration for a session
@@ -457,9 +474,9 @@ function formatTokens(n) {
 }
 
 function updateHeaderModelInfo() {
-  const el = document.getElementById('header-model-info');
+  const el = state.dom.headerModelInfoEl;
   if (!el) return;
-  const sid = state.activeSessionId;
+  const sid = displaySessionId();
   const info = sid ? state.sessionModelInfo[sid] : null;
   if (!info || !info.contextWindow) {
     el.textContent = '';
@@ -592,7 +609,7 @@ onMessage('usageUpdate', (msg) => {
       inputTokens: msg.inputTokens,
       compactThreshold: msg.compactThreshold
     };
-    if (sid === state.activeSessionId) updateHeaderModelInfo();
+    if (isActive(msg)) updateHeaderModelInfo();
   }
 });
 
@@ -1135,11 +1152,12 @@ onMessage('historyPage', (msg) => {
 // Click the indicator to see a dropdown with per-agent status.
 
 function updateDelegateIndicator() {
-  const el = document.getElementById('delegate-indicator');
+  const el = state.dom.delegateIndicatorEl;
   if (!el) return;
-  // Only count sub-agents belonging to the active session
+  // Only count sub-agents belonging to the currently displayed session
+  const sid = displaySessionId();
   const count = Object.values(state.activeSubAgents || {})
-    .filter(info => !info.sessionId || info.sessionId === state.activeSessionId)
+    .filter(info => !info.sessionId || info.sessionId === sid)
     .length;
   if (count > 0) {
     el.classList.remove('hidden');
@@ -1147,7 +1165,7 @@ function updateDelegateIndicator() {
   } else {
     el.classList.add('hidden');
     // Also hide dropdown
-    const dropdown = document.getElementById('delegate-dropdown');
+    const dropdown = state.dom.delegateDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
   renderDelegateDropdown();
@@ -1155,12 +1173,13 @@ function updateDelegateIndicator() {
 state.updateDelegateIndicator = updateDelegateIndicator;
 
 function renderDelegateDropdown() {
-  const listEl = document.querySelector('#delegate-dropdown .bg-dropdown-list');
+  const listEl = state.dom.delegateDropdownListEl;
   if (!listEl) return;
   const agents = state.activeSubAgents || {};
-  // Only show sub-agents belonging to the active session
+  // Only show sub-agents belonging to the currently displayed session
+  const sid = displaySessionId();
   const entries = Object.entries(agents)
-    .filter(([id, info]) => !info.sessionId || info.sessionId === state.activeSessionId);
+    .filter(([id, info]) => !info.sessionId || info.sessionId === sid);
   if (entries.length === 0) {
     listEl.innerHTML = '';
     return;
@@ -1273,7 +1292,7 @@ onMessage('compactStart', (msg) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, true);
-  if (sid === state.activeSessionId) {
+  if (isActive(msg)) {
     renderSystemBubble(t('chat.compacting'));
   }
 });
@@ -1283,7 +1302,7 @@ onMessage('compactComplete', (msg) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
-  if (sid === state.activeSessionId) {
+  if (isActive(msg)) {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
   }
@@ -1294,7 +1313,7 @@ onMessage('compactFailed', (msg) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
-  if (sid === state.activeSessionId) {
+  if (isActive(msg)) {
     renderSystemBubble(t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts }));
   }
   if (msg.attempt >= msg.maxAttempts) {
@@ -1521,7 +1540,7 @@ function formatDuration(ms) {
 }
 
 function renderBgDropdown() {
-  const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+  const tasks = state.sessionBgTasks[displaySessionId()] || [];
   const listEl = state.dom.bgDropdownListEl;
   const dropdown = state.dom.bgDropdownEl;
   if (!listEl || !dropdown) return;
@@ -1583,7 +1602,7 @@ function renderBgDropdown() {
       cancelBtn.classList.add('cancelling');
       cancelBtn.textContent = task.status === 'cancelling' ? t('bg.cancelling') : '...';
       task.status = 'cancelling';
-      sendWs({ type: 'cancelBackgroundJob', sessionId: state.activeSessionId, jobId: task.taskId });
+      sendWs({ type: 'cancelBackgroundJob', sessionId: displaySessionId(), jobId: task.taskId });
     };
     // If already cancelling, show the cancelling state
     if (task.status === 'cancelling') {
@@ -1616,7 +1635,7 @@ function stopBgTimer() {
 }
 
 function updateBgTasksUI() {
-  const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+  const tasks = state.sessionBgTasks[displaySessionId()] || [];
   const active = tasks.filter(task => task.status === 'running' || task.status === 'cancelling');
   const el = state.dom.bgIndicatorEl;
   const countEl = state.dom.bgCountEl;
