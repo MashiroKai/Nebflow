@@ -788,10 +788,15 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
 }
 
 // ---------- Attachment preview ----------
-export function renderAttachmentPreview() {
-  const attPreview = state.dom.attPreview;
+export function renderAttachmentPreview(target) {
+  // target: optional { attPreviewEl, attachments } for non-primary windows.
+  // Defaults to the primary window's attPreview + pendingAttachments so existing
+  // call sites are unaffected.
+  const attPreview = (target && target.attPreviewEl) || state.dom.attPreview;
+  const attachments = (target && target.attachments) || state.pendingAttachments;
+  if (!attPreview) return;
   attPreview.innerHTML = '';
-  state.pendingAttachments.forEach((att, idx) => {
+  attachments.forEach((att, idx) => {
     if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
@@ -804,8 +809,8 @@ export function renderAttachmentPreview() {
       rm.className = 'att-remove';
       rm.textContent = 'x';
       rm.onclick = () => {
-        state.pendingAttachments.splice(idx, 1);
-        renderAttachmentPreview();
+        attachments.splice(idx, 1);
+        renderAttachmentPreview(target);
       };
       wrap.appendChild(rm);
       attPreview.appendChild(wrap);
@@ -818,8 +823,8 @@ export function renderAttachmentPreview() {
       rm.style.cursor = 'pointer';
       rm.style.color = '#f44336';
       rm.onclick = () => {
-        state.pendingAttachments.splice(idx, 1);
-        renderAttachmentPreview();
+        attachments.splice(idx, 1);
+        renderAttachmentPreview(target);
       };
       wrap.appendChild(rm);
       attPreview.appendChild(wrap);
