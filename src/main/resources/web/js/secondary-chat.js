@@ -7,6 +7,7 @@ import { renderUserBubble, renderAttachmentPreview, renderSystemBubble } from '.
 import { saveMsg } from './persistence.js';
 import { addFileAttachment } from './input.js';
 import { t, getLocale } from './i18n.js';
+import { renderTaskList } from './taskList.js';
 
 // ── Slash command data (simplified) ───────────────────────────────────
 const BUILT_IN_SLASH = [
@@ -59,6 +60,15 @@ function handleSecondarySlash(text) {
       );
       return true;
     default:
+      // Skill commands: "/skillname" → enter skill mode (parity with primary).
+      if (cmd.startsWith('/') && state.skills) {
+        const skillName = cmd.slice(1);
+        const skill = state.skills.find(s => s.name === skillName);
+        if (skill) {
+          enterSecondarySkillMode(skill.name, skill.description, skill.argumentHint);
+          return true;
+        }
+      }
       return false;
   }
 }
@@ -77,6 +87,101 @@ function handleSecondaryAsk(text) {
   return true;
 }
 
+// ── Secondary skill mode ───────────────────────────────────────────────
+// Mirrors the primary window's enterSkillMode/cancelSkillMode but scoped to the
+// secondary DOM nodes. Entered via a "/skillname" slash command.
+let _secSkillMode = false;
+let _secSkillName = '';
+let _secSkillDesc = '';
+let _secSkillArgHint = '';
+
+function enterSecondarySkillMode(skillName, description, argumentHint) {
+  _secSkillMode = true;
+  _secSkillName = skillName;
+  _secSkillDesc = description || '';
+  _secSkillArgHint = argumentHint || '';
+  const ind = document.getElementById('secondary-skill-indicator');
+  const label = document.getElementById('secondary-skill-indicator-label');
+  if (ind && label) {
+    label.textContent = skillName || 'SKILL';
+    ind.classList.add('show');
+  }
+  const input = document.getElementById('secondary-input');
+  if (input) {
+    input.placeholder = argumentHint || t('input.skillPlaceholder');
+    input.focus();
+  }
+}
+
+function cancelSecondarySkillMode() {
+  if (!_secSkillMode) return;
+  _secSkillMode = false;
+  _secSkillName = '';
+  _secSkillDesc = '';
+  _secSkillArgHint = '';
+  const ind = document.getElementById('secondary-skill-indicator');
+  if (ind) ind.classList.remove('show');
+  const input = document.getElementById('secondary-input');
+  if (input) input.placeholder = t('input.placeholder');
+}
+
+// Bind the skill indicator cancel button once during init.
+function bindSecondarySkillCancel() {
+  const cancel = document.getElementById('secondary-skill-indicator-cancel');
+  if (cancel) {
+    cancel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cancelSecondarySkillMode();
+      const input = document.getElementById('secondary-input');
+      if (input) input.focus();
+    });
+  }
+}
+
+
+// Re-render the secondary window's header indicators by briefly swapping the
+// session-scoped DOM refs + _secondaryActive so the shared update functions
+// (updateHeaderModelInfo, updateBgTasksUI, updateDelegateIndicator) target the
+// secondary header with the secondary session's data.
+function refreshSecondaryHeader() {
+  const sid = state.secondarySessionId;
+  if (!sid) return;
+  const saved = {
+    headerModelInfoEl: state.dom.headerModelInfoEl,
+    bgIndicatorEl: state.dom.bgIndicatorEl,
+    bgCountEl: state.dom.bgCountEl,
+    bgDropdownEl: state.dom.bgDropdownEl,
+    bgDropdownListEl: state.dom.bgDropdownListEl,
+    delegateIndicatorEl: state.dom.delegateIndicatorEl,
+    delegateDropdownEl: state.dom.delegateDropdownEl,
+    delegateDropdownListEl: state.dom.delegateDropdownListEl,
+    secondaryActive: state._secondaryActive,
+  };
+  state.dom.headerModelInfoEl = document.getElementById('secondary-header-model-info');
+  state.dom.bgIndicatorEl = document.getElementById('secondary-bg-indicator');
+  state.dom.bgCountEl = document.getElementById('secondary-bg-indicator')?.querySelector('.bg-count');
+  state.dom.bgDropdownEl = document.getElementById('secondary-bg-dropdown');
+  state.dom.bgDropdownListEl = document.getElementById('secondary-bg-dropdown')?.querySelector('.bg-dropdown-list');
+  state.dom.delegateIndicatorEl = document.getElementById('secondary-delegate-indicator');
+  state.dom.delegateDropdownEl = document.getElementById('secondary-delegate-dropdown');
+  state.dom.delegateDropdownListEl = document.getElementById('secondary-delegate-dropdown')?.querySelector('.bg-dropdown-list');
+  state._secondaryActive = true;
+  try {
+    if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
+    if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
+    if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
+  } finally {
+    state.dom.headerModelInfoEl = saved.headerModelInfoEl;
+    state.dom.bgIndicatorEl = saved.bgIndicatorEl;
+    state.dom.bgCountEl = saved.bgCountEl;
+    state.dom.bgDropdownEl = saved.bgDropdownEl;
+    state.dom.bgDropdownListEl = saved.bgDropdownListEl;
+    state.dom.delegateIndicatorEl = saved.delegateIndicatorEl;
+    state.dom.delegateDropdownEl = saved.delegateDropdownEl;
+    state.dom.delegateDropdownListEl = saved.delegateDropdownListEl;
+    state._secondaryActive = saved.secondaryActive;
+  }
+}
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -140,6 +245,10 @@ export function loadSecondary(sessionId) {
   showSecondaryBusy(state.busySessionIds.has(sessionId));
   // Restore any saved draft for this session (text + attachments).
   restoreSecondaryDraft(sessionId);
+  // Refresh header indicators (model-info, background tasks, delegates) for the
+  // new session, and restore the task list — parity with resetChatForActiveSession.
+  refreshSecondaryHeader();
+  renderTaskList(state.sessionTasks[sessionId] || [], document.getElementById('secondary-task-list'));
   // Request history — ws.js swap + main.js historyPage handler will render it
   sendWs({ type: 'getHistory', sessionId, limit: 50 });
 }
@@ -149,10 +258,31 @@ export function sendSecondary() {
   if (!input) return;
   const text = input.value.trim();
   const attachments = state._secPendingAttachments || [];
-  if ((!text && attachments.length === 0) || !state.secondarySessionId) return;
+  const sid = state.secondarySessionId;
+  if ((!text && attachments.length === 0) || !sid) return;
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
   // Block if secondary session is already busy
-  if (state.busySessionIds.has(state.secondarySessionId)) return;
+  if (state.busySessionIds.has(sid)) return;
+
+  // Skill mode: send as skill activation (parity with primary window).
+  if (_secSkillMode) {
+    const skillName = _secSkillName;
+    cancelSecondarySkillMode();
+    if (!text) return;
+    state.turnExpecting[sid] = true;
+    sendWs({ type: 'skill', skillName, input: text, sessionId: sid });
+    // Render a skill bubble in the secondary chat
+    const secChat = document.getElementById('secondary-chat');
+    const origChat = state.dom.chat;
+    state.dom.chat = secChat;
+    import('./chat.js').then(({ renderSkillBubble }) => renderSkillBubble(skillName, text));
+    state.dom.chat = origChat;
+    input.value = '';
+    input.style.height = 'auto';
+    delete state._secInputDrafts[sid];
+    updateSecondarySendBtn();
+    return;
+  }
 
   const secChat = document.getElementById('secondary-chat');
 
@@ -313,6 +443,7 @@ export function initSecondaryChat() {
   // Set initial button states (send visible, stop hidden)
   showSecondaryBusy(false);
   updateSecondarySendBtn();
+  bindSecondarySkillCancel();
 
   const sendBtn = document.getElementById('secondary-send-btn');
   if (sendBtn) sendBtn.addEventListener('click', (e) => { e.preventDefault(); sendSecondary(); });

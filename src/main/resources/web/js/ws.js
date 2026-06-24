@@ -153,6 +153,16 @@ export function connect() {
           activeAgentId: state.activeAgentId,
           activeSubAgents: state.activeSubAgents,
           scrollSnapped: state.scrollSnapped,
+          // Header status indicators (session-scoped) — swap so updateHeaderModelInfo,
+          // updateBgTasksUI, updateDelegateIndicator render into the secondary header.
+          headerModelInfoEl: state.dom.headerModelInfoEl,
+          bgIndicatorEl: state.dom.bgIndicatorEl,
+          bgCountEl: state.dom.bgCountEl,
+          bgDropdownEl: state.dom.bgDropdownEl,
+          bgDropdownListEl: state.dom.bgDropdownListEl,
+          delegateIndicatorEl: state.dom.delegateIndicatorEl,
+          delegateDropdownEl: state.dom.delegateDropdownEl,
+          delegateDropdownListEl: state.dom.delegateDropdownListEl,
         };
         state.dom.chat = document.getElementById('secondary-chat');
         state.dom.statusWrap = document.getElementById('secondary-status-wrap');
@@ -161,6 +171,14 @@ export function connect() {
         state.dom.stopBtn = document.getElementById('secondary-stop-btn');
         state.dom.input = document.getElementById('secondary-input');
         state.dom.lottieSpinnerEl = document.getElementById('secondary-spinner');
+        state.dom.headerModelInfoEl = document.getElementById('secondary-header-model-info');
+        state.dom.bgIndicatorEl = document.getElementById('secondary-bg-indicator');
+        state.dom.bgCountEl = document.getElementById('secondary-bg-indicator')?.querySelector('.bg-count');
+        state.dom.bgDropdownEl = document.getElementById('secondary-bg-dropdown');
+        state.dom.bgDropdownListEl = document.getElementById('secondary-bg-dropdown')?.querySelector('.bg-dropdown-list');
+        state.dom.delegateIndicatorEl = document.getElementById('secondary-delegate-indicator');
+        state.dom.delegateDropdownEl = document.getElementById('secondary-delegate-dropdown');
+        state.dom.delegateDropdownListEl = document.getElementById('secondary-delegate-dropdown')?.querySelector('.bg-dropdown-list');
         const ss = state._secStream || (state._secStream = {});
         state.aiText = ss.aiText || '';
         state.currentAiBubble = ss.currentAiBubble || null;
@@ -214,6 +232,14 @@ export function connect() {
         state.activeAgentId = _saved.activeAgentId;
         state.activeSubAgents = _saved.activeSubAgents;
         state.scrollSnapped = _saved.scrollSnapped;
+        state.dom.headerModelInfoEl = _saved.headerModelInfoEl;
+        state.dom.bgIndicatorEl = _saved.bgIndicatorEl;
+        state.dom.bgCountEl = _saved.bgCountEl;
+        state.dom.bgDropdownEl = _saved.bgDropdownEl;
+        state.dom.bgDropdownListEl = _saved.bgDropdownListEl;
+        state.dom.delegateIndicatorEl = _saved.delegateIndicatorEl;
+        state.dom.delegateDropdownEl = _saved.delegateDropdownEl;
+        state.dom.delegateDropdownListEl = _saved.delegateDropdownListEl;
         state._secondaryActive = false;
       }
     } catch (err) {

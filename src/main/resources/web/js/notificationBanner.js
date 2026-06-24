@@ -56,11 +56,15 @@ export function clearNotifications() {
 }
 
 function renderNotifications() {
-  const banner = document.getElementById('notification-banner');
-  if (!banner) return;
+  // Notifications are global — render into both the primary and secondary banners.
+  const banners = [
+    document.getElementById('notification-banner'),
+    document.getElementById('secondary-notification-banner'),
+  ].filter(Boolean);
+  if (banners.length === 0) return;
 
   if (state.notifications.length === 0) {
-    banner.innerHTML = '';
+    banners.forEach(b => b.innerHTML = '');
     return;
   }
 
@@ -79,13 +83,15 @@ function renderNotifications() {
       </div>`;
   });
 
-  banner.innerHTML = html;
+  banners.forEach(banner => { banner.innerHTML = html; });
 
-  // Bind close buttons
-  banner.querySelectorAll('.notif-close').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      dismissNotification(btn.dataset.id);
+  // Bind close buttons in every banner
+  banners.forEach(banner => {
+    banner.querySelectorAll('.notif-close').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dismissNotification(btn.dataset.id);
+      });
     });
   });
 }
