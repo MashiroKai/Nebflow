@@ -16,6 +16,7 @@ const BUILT_IN_SLASH = [
 
 let secSlashMatches = [];
 let secSlashSelected = 0;
+let secComposing = false;
 
 // ── Public API ─────────────────────────────────────────────────────────
 
@@ -83,6 +84,7 @@ export function sendSecondary() {
   // Clear input
   input.value = '';
   input.style.height = 'auto';
+  updateSecondarySendBtn();
 }
 
 // ── Busy state UI ──────────────────────────────────────────────────────
@@ -94,6 +96,13 @@ function showSecondaryBusy(busy) {
   if (sendBtn) sendBtn.style.display = busy ? 'none' : 'flex';
   if (stopBtn) stopBtn.style.display = busy ? 'flex' : 'none';
   if (input) input.disabled = busy;
+}
+
+function updateSecondarySendBtn() {
+  const input = document.getElementById('secondary-input');
+  const sendBtn = document.getElementById('secondary-send-btn');
+  if (!input || !sendBtn) return;
+  sendBtn.disabled = !input.value.trim();
 }
 
 // ── Slash dropdown (simplified autocomplete) ──────────────────────────
@@ -181,6 +190,7 @@ function pickSecondarySlash(index) {
 export function initSecondaryChat() {
   // Set initial button states (send visible, stop hidden)
   showSecondaryBusy(false);
+  updateSecondarySendBtn();
 
   const sendBtn = document.getElementById('secondary-send-btn');
   if (sendBtn) sendBtn.addEventListener('click', (e) => { e.preventDefault(); sendSecondary(); });
@@ -193,6 +203,10 @@ export function initSecondaryChat() {
 
   const input = document.getElementById('secondary-input');
   if (input) {
+    // IME composition tracking — prevents sending on Enter while composing CJK
+    input.addEventListener('compositionstart', () => { secComposing = true; });
+    input.addEventListener('compositionend', () => { secComposing = false; });
+
     input.addEventListener('keydown', (e) => {
       const dropdown = document.getElementById('secondary-slash-dropdown');
       // Slash dropdown navigation
@@ -221,6 +235,7 @@ export function initSecondaryChat() {
         }
       }
       if (e.key === 'Enter' && !e.shiftKey) {
+        if (secComposing || e.isComposing || e.keyCode === 229) return;
         e.preventDefault();
         sendSecondary();
       }
@@ -229,6 +244,7 @@ export function initSecondaryChat() {
       input.style.height = 'auto';
       input.style.height = Math.min(input.scrollHeight, 200) + 'px';
       updateSecondarySlash();
+      updateSecondarySendBtn();
     });
   }
 
