@@ -281,7 +281,10 @@ class WebSocketRoutes(
           activeMeta <- sessionStore.getActiveMeta
           // Ensure the singleton Jarvis session exists on connect so the main window
           // has something to show immediately, not only after the user clicks the tab.
-          _ <- sessionStore.ensureAgentSession("Jarvis")
+          _ <- sessionStore.ensureAgentSession("Jarvis").flatMap { case (meta, created) =>
+            logger.info(s"[connect] ensureAgentSession(Jarvis): meta=${meta.id.take(8)} created=$created")
+            IO.pure(meta -> created)
+          }
           agentName = activeMeta.flatMap(_.agentName).getOrElse("Nebula")
           _ <- sessionService.sendSessionList(perConnWsSend, agentName)
           ws <- wsb.build(sendStream, receivePipe)
