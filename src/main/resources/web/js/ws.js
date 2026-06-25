@@ -125,42 +125,32 @@ export function connect() {
           !STREAM_MSG_TYPES.includes(msg.type)) {
         return;
       }
-      // ── ChatView routing (replaces the old manual swap) ──────────────
-      // Before each handler runs, we "activate" the ChatView that owns this
-      // session: push its stream state into the global state (so legacy
-      // handlers that read state.currentAiBubble etc. see the right values)
-      // and point state.dom at the view's DOM elements.
+      // ── ChatView routing ─────────────────────────────────────────────
+      // For the secondary view: temporarily push its stream state into the
+      // global state + point state.dom at its DOM, so legacy handlers render
+      // into the right window. After handlers finish, pull changes back and
+      // restore the primary view's globals.
       //
-      // After handlers finish, we pull any changes back into the view and
-      // restore the primary view's globals. This is a stepping stone: once
-      // all handlers are migrated to read from the view directly, this
-      // push/pull dance goes away.
+      // The primary view needs NO push/pull — its stream state IS the global
+      // state (they share the same object references). This avoids 11 field
+      // copies on every primary-window message (including high-frequency
+      // textDelta/thinkingDelta).
       const view = findViewBySessionId(msg.sessionId);
       let _savedDom = null;
       if (view && view.id !== 'primary') {
-        // Non-primary view: save primary's globals, activate this view.
         _savedDom = { ...state.dom };
         view.pushToGlobal();
-        // Point state.dom at this view's elements
         Object.assign(state.dom, view.dom);
         state._secondaryActive = true;
-      } else if (view && view.id === 'primary') {
-        // Primary view is already the global default — just sync its stream.
-        // (In the future this branch disappears; primary's state IS the global.)
-        view.pushToGlobal();
       }
 
       const list = handlers[msg.type];
       if (list) for (const h of list) h(msg);
 
-      // Pull handler mutations back into the view, then restore primary globals.
-      if (view) {
+      if (view && view.id !== 'primary') {
         view.pullFromGlobal();
-        if (_savedDom) {
-          // Restore primary's DOM refs
-          Object.assign(state.dom, _savedDom);
-          state._secondaryActive = false;
-        }
+        Object.assign(state.dom, _savedDom);
+        state._secondaryActive = false;
       }
     } catch (err) {
       console.error('[ws] message parse error:', err);
