@@ -76,9 +76,18 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
+  gap: 8px;
+  max-width: 40%;
+  overflow: hidden;
   z-index: 10;
 }
-#header #session-name { color: var(--color-text-muted); font-size: 13px; }
+#header #session-name {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 #header #header-model-info {
   display: none;
   color: var(--color-frame-text-muted);
@@ -156,11 +165,12 @@
   letter-spacing: 0.2px;
 }
 #header .header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; position: relative; }
-#header .conn {
+.conn {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--color-success);
+  flex-shrink: 0;
 }
-#header .conn.off { background: var(--color-error); }
+.conn.off { background: var(--color-error); }
 /* Background task indicator — in header */
 #bg-indicator {
   display: flex;

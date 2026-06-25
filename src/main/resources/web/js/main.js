@@ -1515,17 +1515,34 @@ onMessage('modelOptions', (msg) => {
   // callback runs asynchronously (long after this handler returns), so we must
   // NOT rely on state.activeSessionId which may have switched by then.
   const targetSessionId = msg.sessionId || state.activeSessionId;
+  // Determine which chat window owns this session so the card renders in the right place.
+  const isSecondary = targetSessionId === state.secondarySessionId;
+  const chatEl = isSecondary ? document.getElementById('secondary-chat') : state.dom.chat;
+
+  function renderInto(fn) {
+    if (!isSecondary) { fn(); return; }
+    const orig = state.dom.chat;
+    state.dom.chat = chatEl;
+    try { fn(); }
+    finally { state.dom.chat = orig; }
+  }
+
   if (models.length === 0) {
-    renderSystemBubble(t('chat.noModels'));
+    renderInto(() => renderSystemBubble(t('chat.noModels')));
     return;
   }
-  if (!state.currentAiBubble) {
-    const row = document.createElement('div');
-    row.className = 'row ai';
-    state.currentAiBubble = document.createElement('div');
-    state.currentAiBubble.className = 'bubble ai';
-    row.appendChild(state.currentAiBubble);
-    state.dom.chat.appendChild(row);
+  // Use a local bubble reference for the secondary window; primary uses the shared state.currentAiBubble.
+  let bubble = isSecondary ? null : state.currentAiBubble;
+  if (!bubble) {
+    renderInto(() => {
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      row.appendChild(bubble);
+      chatEl.appendChild(row);
+    });
+    if (!isSecondary) state.currentAiBubble = bubble;
   }
   const options = models.map(m => {
     const isCurrent = current && m.ref === current;
@@ -1535,7 +1552,7 @@ onMessage('modelOptions', (msg) => {
   const defaultLabel = t('chat.modelDefault');
   options.unshift({label: defaultLabel, desc: t('chat.modelDefaultDesc'), ref: null});
   import('./chat.js').then(({ showOptions }) => {
-    showOptions(state.currentAiBubble, [
+    showOptions(bubble, [
       {question: t('chat.selectModel'), options: options.map(o => ({label: o.label, desc: o.desc})), allowOther: false}
     ], (answers) => {
       const selected = options.find(o => o.label === answers[0]);
@@ -1850,6 +1867,10 @@ onMessage('skillList', (msg) => {
   const skills = msg.skills || [];
   state.skills = skills;
   registerSkillCommands(skills);
+});
+
+onMessage('skillError', (msg) => {
+  if (isActive(msg)) renderSystemBubble(msg.message || 'Skill error');
 });
 
 

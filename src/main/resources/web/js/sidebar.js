@@ -1998,6 +1998,18 @@ export function initHeaderModelInfo() {
   }
 }
 
+/** Determine which agent a new session/folder should belong to, based on context.
+ *  Mirrors the folder-id resolution logic: active folder → active session → fallback. */
+export function getTargetAgent() {
+  if (state.activeFolderId) {
+    const folder = (state.folders || []).find(f => f.id === state.activeFolderId);
+    if (folder?.agentName) return folder.agentName;
+  }
+  const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
+  if (active?.agentName) return active.agentName;
+  return 'Nebula';
+}
+
 /** Build a human-readable breadcrumb path for a folder ID, e.g. "项目A / 模块B". */
 export function getTargetPath(folderId) {
   if (!folderId) return null;
@@ -2053,7 +2065,7 @@ export function createNewFolder(parentFolderId) {
     const name = input.value.trim();
     row.remove();
     if (name) {
-      const payload = { type: 'createFolder', name, agentName: 'Nebula' };
+      const payload = { type: 'createFolder', name, agentName: getTargetAgent() };
       if (parentFolderId) payload.parentId = parentFolderId;
       import('./ws.js').then(({ sendWs }) => sendWs(payload));
     }

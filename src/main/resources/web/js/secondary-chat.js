@@ -3,7 +3,7 @@
 import state from './state.js';
 import { sendWs } from './ws.js';
 import { smartScroll, escapeHtml } from './utils.js';
-import { renderUserBubble, renderAttachmentPreview, renderSystemBubble } from './chat.js';
+import { renderUserBubble, renderAttachmentPreview, renderSystemBubble, renderSkillBubble } from './chat.js';
 import { saveMsg } from './persistence.js';
 import { addFileAttachment } from './input.js';
 import { t, getLocale } from './i18n.js';
@@ -187,16 +187,24 @@ function refreshSecondaryHeader() {
 // ── Public API ─────────────────────────────────────────────────────────
 
 // Save the secondary input as a draft for the given (soon-to-be-left) session.
+// Includes skill mode so it is restored when the user returns — parity with the
+// primary window's saveInputDraft which stores skillMode alongside text/attachments.
 export function saveSecondaryDraft(sessionId) {
   if (!sessionId) return;
   const input = document.getElementById('secondary-input');
   if (!input) return;
   const text = input.value;
   const attachments = state._secPendingAttachments || [];
-  if (text || attachments.length > 0) {
+  const skillMode = _secSkillMode ? {
+    name: _secSkillName,
+    desc: _secSkillDesc,
+    argHint: _secSkillArgHint,
+  } : null;
+  if (text || attachments.length > 0 || skillMode) {
     state._secInputDrafts[sessionId] = {
       text,
       attachments: JSON.parse(JSON.stringify(attachments)),
+      skillMode,
     };
   } else {
     delete state._secInputDrafts[sessionId];
@@ -221,6 +229,12 @@ function restoreSecondaryDraft(sessionId) {
     attPreviewEl: document.getElementById('secondary-attachment-preview'),
     attachments: state._secPendingAttachments,
   });
+  // Restore or clear skill mode — prevents skill state from leaking across sessions.
+  if (draft?.skillMode) {
+    enterSecondarySkillMode(draft.skillMode.name, draft.skillMode.desc, draft.skillMode.argHint);
+  } else {
+    cancelSecondarySkillMode();
+  }
   updateSecondarySendBtn();
 }
 
@@ -263,11 +277,14 @@ export function sendSecondary() {
     if (!text) return;
     state.turnExpecting[sid] = true;
     sendWs({ type: 'skill', skillName, input: text, sessionId: sid });
-    // Render a skill bubble in the secondary chat
+    // Render a skill bubble in the secondary chat.
+    // Must call renderSkillBubble synchronously while state.dom.chat points at
+    // the secondary element — a dynamic import().then() would fire after the
+    // swap is restored, rendering into the primary window instead.
     const secChat = document.getElementById('secondary-chat');
     const origChat = state.dom.chat;
     state.dom.chat = secChat;
-    import('./chat.js').then(({ renderSkillBubble }) => renderSkillBubble(skillName, text));
+    renderSkillBubble(skillName, text);
     state.dom.chat = origChat;
     input.value = '';
     input.style.height = 'auto';
@@ -506,6 +523,18 @@ export function initSecondaryChat() {
           closeSecondarySlash(dropdown);
           return;
         }
+      }
+      // Escape cancels skill mode (parity with primary window)
+      if (e.key === 'Escape' && _secSkillMode) {
+        e.preventDefault();
+        cancelSecondarySkillMode();
+        return;
+      }
+      // Backspace on empty input cancels skill mode (like removing a tag)
+      if ((e.key === 'Backspace' || e.key === 'Delete') && input.value.trim() === '' && _secSkillMode) {
+        e.preventDefault();
+        cancelSecondarySkillMode();
+        return;
       }
       if (e.key === 'Enter' && !e.shiftKey) {
         if (secComposing || e.isComposing || e.keyCode === 229) return;

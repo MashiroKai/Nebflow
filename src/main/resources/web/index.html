@@ -50,6 +50,12 @@
   <div id="sidebar">
     <div id="sidebar-panel">
       <div id="panel-sessions" class="panel active">
+        <!-- Sidebar top bar — settings gear + connection indicator -->
+        <div class="sidebar-topbar">
+          <button id="settings-btn" class="panel-btn" title="Settings"><i data-lucide="settings"></i></button>
+          <div class="conn off" id="conn"></div>
+        </div>
+
         <!-- Schedule Section -->
         <div id="schedule-section">
           <div class="schedule-header">
@@ -70,7 +76,6 @@
         <div class="session-actions">
           <button id="new-folder-btn" class="panel-btn"><i data-lucide="folder"></i></button>
           <button id="new-session-btn" class="panel-btn">+</button>
-          <button id="settings-btn" class="panel-btn" title="Settings"><i data-lucide="settings"></i></button>
         </div>
 
         <!-- Session List (other agents, no Jarvis) -->
@@ -117,7 +122,6 @@
           <div class="bg-dropdown-header">Background tasks</div>
           <div class="bg-dropdown-list"></div>
         </div>
-        <div class="conn off" id="conn"></div>
       </div>
     </div>
     <div id="top-overlays">
@@ -199,7 +203,7 @@
       </div>
       <div class="secondary-input-bar">
         <button class="icon-btn" id="secondary-voice-btn" title="Voice"><i data-lucide="mic"></i></button>
-        <div id="secondary-input-wrap" style="position:relative;flex:1;">
+        <div id="secondary-input-wrap" style="position:relative;">
           <div id="secondary-attachment-preview"></div>
           <div id="secondary-ask-indicator"><span id="secondary-ask-indicator-label">ASK</span><span id="secondary-ask-indicator-cancel">&times;</span></div>
           <div id="secondary-skill-indicator"><span id="secondary-skill-indicator-label">SKILL</span><span id="secondary-skill-indicator-cancel">&times;</span></div>
