@@ -1503,6 +1503,10 @@ onMessage('configUpdated', (msg) => {
 onMessage('modelOptions', (msg) => {
   const models = msg.models || [];
   const current = msg.current || null;
+  // Capture the session that requested the model list — the user's selection
+  // callback runs asynchronously (long after this handler returns), so we must
+  // NOT rely on state.activeSessionId which may have switched by then.
+  const targetSessionId = msg.sessionId || state.activeSessionId;
   if (models.length === 0) {
     renderSystemBubble(t('chat.noModels'));
     return;
@@ -1528,7 +1532,8 @@ onMessage('modelOptions', (msg) => {
     ], (answers) => {
       const selected = options.find(o => o.label === answers[0]);
       const modelRef = selected ? selected.ref : null;
-      sendWs({type: 'setSessionModel', sessionId: state.activeSessionId, modelRef: modelRef});
+      // Use the captured session id, not the (possibly changed) activeSessionId.
+      sendWs({type: 'setSessionModel', sessionId: targetSessionId, modelRef: modelRef});
       renderSystemBubble(t('chat.modelSet', { model: answers[0] === defaultLabel ? 'default' : answers[0].replace(' ✓', '') }));
     }, t('chat.apply'));
   });
@@ -1700,7 +1705,7 @@ function startBgTimer() {
   _bgTimer = setInterval(() => {
     const dropdown = state.dom.bgDropdownEl;
     if (!dropdown || dropdown.classList.contains('hidden')) { stopBgTimer(); return; }
-    const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+    const tasks = state.sessionBgTasks[displaySessionId()] || [];
     const now = Date.now();
     dropdown.querySelectorAll('.bg-task-duration').forEach(el => {
       const t = tasks.find(t => t.taskId === el.dataset.taskId);
