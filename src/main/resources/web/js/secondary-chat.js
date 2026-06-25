@@ -8,6 +8,7 @@ import { saveMsg } from './persistence.js';
 import { addFileAttachment } from './input.js';
 import { t, getLocale } from './i18n.js';
 import { renderTaskList } from './taskList.js';
+import { chatViews } from './chatView.js';
 
 // ── Slash command data (simplified) ───────────────────────────────────
 const BUILT_IN_SLASH = [
@@ -237,6 +238,10 @@ export function loadSecondary(sessionId) {
   state._secHistoryOffset = 0;
   state._secHistoryHasMore = false;
   state._secHistoryLoading = false;
+  // Also reset the ChatView pagination for consistency
+  if (chatViews.secondary) {
+    chatViews.secondary.pagination = { offset: 0, total: 0, hasMore: false, loading: false, pendingInitialLoad: true };
+  }
   state._secPendingInitialLoad = true;
   state._secScrollSnapped = true;
   const el = document.getElementById('secondary-chat');
@@ -551,9 +556,10 @@ export function initSecondaryChat() {
       const sid = state.secondarySessionId;
       if (!sid) return;
       state._secScrollSnapped = secChat.scrollTop + secChat.clientHeight >= secChat.scrollHeight - 40;
-      if (secChat.scrollTop < 100 && state._secHistoryHasMore && !state._secHistoryLoading && state._secHistoryOffset > 0) {
-        state._secHistoryLoading = true;
-        sendWs({ type: 'getHistory', sessionId: sid, limit: 50, beforeIndex: state._secHistoryOffset });
+      const secView = chatViews.secondary;
+      if (secChat.scrollTop < 100 && secView?.pagination?.hasMore && !secView?.pagination?.loading && secView?.pagination?.offset > 0) {
+        secView.pagination.loading = true;
+        sendWs({ type: 'getHistory', sessionId: sid, limit: 50, beforeIndex: secView.pagination.offset });
       }
     });
   }

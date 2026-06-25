@@ -1396,6 +1396,11 @@ export function resetChatForActiveSession() {
     if (state.sessionToolCards[sid]) state.sessionToolCards[sid].remove();
   });
   state.sessionToolCards = {};
+  // Reset primary ChatView pagination state
+  if (chatViews.primary) {
+    chatViews.primary.pagination = { offset: 0, total: 0, hasMore: false, loading: false, pendingInitialLoad: true };
+  }
+  // Keep legacy state in sync for any code still reading it during the migration
   state.historyOffset = 0;
   state.historyHasMore = false;
   state.historyLoading = false;
