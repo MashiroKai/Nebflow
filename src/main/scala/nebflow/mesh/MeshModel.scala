@@ -259,7 +259,8 @@ object SyncDiff:
 case class MeshConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  cloudUrl: Option[String] = None  // Self-hosted server URL, configured by user
+  cloudUrl: Option[String] = None,  // Self-hosted server URL, configured by user
+  syncEnabled: Boolean = true  // Cloud session sync on/off toggle (persists across restarts)
 )
 
 object MeshConfig:
