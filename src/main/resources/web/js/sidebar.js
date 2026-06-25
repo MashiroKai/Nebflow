@@ -1122,6 +1122,28 @@ function renderOneSessionItem(s, container, opts = {}) {
   container.appendChild(item);
 }
 
+/** Update the main header's session name + brand based on the active session.
+ *  Extracted from renderSessionSidebar so the "skip rebuild" fast path can
+ *  still refresh the header without a full DOM rebuild. */
+function updateHeaderSessionName() {
+  const sessionNameEl = state.dom.sessionNameEl;
+  const active = state.sessions.find(s => s.id === state.activeSessionId);
+  if (active) {
+    const agentName = active.agentName || 'Nebula';
+    updateHeaderBrand(agentName);
+    // For singleton agents like Jarvis, the brand already shows the agent name,
+    // so the session name is redundant — hide it to keep the header clean.
+    const SINGLETON_AGENTS = new Set(['Jarvis']);
+    if (SINGLETON_AGENTS.has(agentName)) {
+      if (sessionNameEl) { sessionNameEl.textContent = ''; sessionNameEl.style.display = 'none'; }
+    } else {
+      if (sessionNameEl) { sessionNameEl.textContent = active.name; sessionNameEl.style.display = ''; }
+    }
+  } else {
+    if (sessionNameEl) { sessionNameEl.textContent = ''; sessionNameEl.style.display = 'none'; }
+  }
+}
+
 export function renderSessionSidebar(sessionData, activeId) {
   state.sessions = sessionData || [];
   const prevActiveId = state.activeSessionId;
@@ -1132,6 +1154,24 @@ export function renderSessionSidebar(sessionData, activeId) {
     resetChatForActiveSession();
     restoreInputDraft(activeId);
   }
+
+  // ── Performance: skip full DOM rebuild when nothing changed ──────────
+  // sessionList and agentSessionList often carry identical data (especially during
+  // initial load where both fire in sequence). Detect this and avoid the expensive
+  // innerHTML='' + rebuild cycle. We compare a lightweight fingerprint: the set of
+  // session ids + their updatedAt timestamps + the active id.
+  const fingerprint = (activeId || '') + '|' +
+    (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',');
+  const sessionList = state.dom.sessionList;
+  if (sessionList && sessionList._lastFingerprint === fingerprint) {
+    // Data unchanged — just update active highlight in-place (much cheaper than rebuild).
+    sessionList.querySelectorAll('.session-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.sessionId === state.activeSessionId);
+    });
+    updateHeaderSessionName();
+    return;
+  }
+  if (sessionList) sessionList._lastFingerprint = fingerprint;
 
   // Clean up localStorage for deleted sessions
   const currentIds = new Set((sessionData || []).map(s => s.id));
@@ -1281,26 +1321,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     });
   });
   if (typeof lucide !== 'undefined') lucide.createIcons();
-  // Update header session name + brand
-  const sessionNameEl = state.dom.sessionNameEl;
-  const active = state.sessions.find(s => s.id === state.activeSessionId);
-  if (active) {
-    const agentName = active.agentName || 'Nebula';
-    updateHeaderBrand(agentName);
-    // For singleton agents like Jarvis, the brand already shows the agent name,
-    // so the session name is redundant — hide it to keep the header clean.
-    const SINGLETON_AGENTS = new Set(['Jarvis']);
-    if (SINGLETON_AGENTS.has(agentName)) {
-      sessionNameEl.textContent = '';
-      sessionNameEl.style.display = 'none';
-    } else {
-      sessionNameEl.textContent = active.name;
-      sessionNameEl.style.display = '';
-    }
-  } else {
-    sessionNameEl.textContent = '';
-    sessionNameEl.style.display = 'none';
-  }
+  updateHeaderSessionName();
   computeAgentStates();
 }
 
