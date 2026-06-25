@@ -320,8 +320,8 @@ export function selectAgent(agentName) {
     }
     return;
   }
-  // Save current input draft before switching agent tabs
-  saveInputDraft(state.activeSessionId);
+  // Agent tab switches only filter the sidebar list — the main window stays
+  // locked to Jarvis regardless. No draft saving / session switching needed.
   state.selectedAgent = agentName;
   // Clear unread count for this agent
   const prevCount = state.agentUnreadCounts[agentName] || 0;
@@ -1504,34 +1504,6 @@ export function resetChatForActiveSession() {
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   // Refresh delegate indicator for this session
   if (state.updateDelegateIndicator) state.updateDelegateIndicator();
-}
-
-export function switchSession(sessionId) {
-  // Clear unread + marked unread for this session
-  state.unreadSessions.delete(sessionId);
-  state.markedUnreadSessions.delete(sessionId);
-  persistUnread();
-  persistMarkedUnread();
-  // Save draft for the session we're leaving
-  saveInputDraft(state.activeSessionId);
-  const prevActiveId = state.activeSessionId;
-  // Switch active session
-  state.activeSessionId = sessionId;
-  // Sync the primary ChatView instance to track this session
-  if (chatViews.primary) chatViews.primary.sessionId = sessionId;
-  // Clear memory cache so new session fetches fresh content
-  clearMemoryCache();
-  // Update sidebar status for both sessions (activeSessionId has changed,
-  // so getSessionStatusClass may return different values, e.g. compacting → busy or vice versa)
-  updateSessionStatus(sessionId);
-  if (prevActiveId && prevActiveId !== sessionId) updateSessionStatus(prevActiveId);
-  resetChatForActiveSession();
-  // Restore input draft for the new session
-  restoreInputDraft(sessionId);
-  // Task list and bg task indicator are restored inside resetChatForActiveSession()
-  sendWs({type: 'switchSession', sessionId});
-  // Refresh scheduled tasks for the new session
-  if (typeof refreshScheduledTasks === 'function') refreshScheduledTasks(sessionId);
 }
 
 export function deleteSession(sessionId) {
