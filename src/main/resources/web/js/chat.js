@@ -916,6 +916,10 @@ export function renderAskError(msg) {
 // O(n^2) slow as text grows and keeps the main thread busy — causing visible
 // lag when user tries to interact (e.g. switching agents).
 let _pendingThinkingRAF = null;
+// Capture the bubble + chat at schedule time so the rAF renders into the correct
+// window. For the secondary view, ws.js push/pull restores global state to primary
+// before the rAF fires — reading state.* at fire time would target the wrong window.
+let _thinkingRafTarget = null;
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   state.thinkingText += delta;
@@ -945,16 +949,29 @@ export function appendThinkingDelta(delta) {
     chat.appendChild(row);
     state.currentThinkingBubble = bubble;
   }
+  // Capture the render target synchronously (correct during ws.js push/pull window).
+  // Store accumulated text on the bubble node so the rAF reads it regardless of
+  // which view global state points to at fire time.
+  _thinkingRafTarget = { bubble: state.currentThinkingBubble, chat: state.dom.chat };
+  _thinkingRafTarget.bubble._nfText = state.thinkingText;
   // Schedule a rAF render if one isn't already pending — caps re-render rate
   // and coalesces multiple deltas into a single DOM update.
   if (!_pendingThinkingRAF) {
     _pendingThinkingRAF = requestAnimationFrame(() => {
       _pendingThinkingRAF = null;
-      const contentEl = state.currentThinkingBubble?.querySelector('.thinking-content');
+      const target = _thinkingRafTarget;
+      _thinkingRafTarget = null;
+      if (!target || !target.bubble) return;
+      const contentEl = target.bubble.querySelector('.thinking-content');
       if (contentEl) {
-        contentEl.innerHTML = renderMarkdownWithMath(state.thinkingText || '') + '<span class="cursor"></span>';
+        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
       }
-      smartScroll();
+      // Scroll the correct chat element directly — smartScroll() reads state.dom
+      // at rAF time which may be the wrong window.
+      const threshold = 60;
+      if (target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+        target.chat.scrollTop = target.chat.scrollHeight;
+      }
     });
   }
 }
