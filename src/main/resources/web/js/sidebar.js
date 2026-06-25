@@ -1153,9 +1153,13 @@ export function renderSessionSidebar(sessionData, activeId) {
   // sessionList and agentSessionList often carry identical data (especially during
   // initial load where both fire in sequence). Detect this and avoid the expensive
   // innerHTML='' + rebuild cycle. We compare a lightweight fingerprint: the set of
-  // session ids + their updatedAt timestamps + the active id.
+  // session ids + their updatedAt timestamps + the active id + expanded folders
+  // (folder expand/collapse changes the DOM but not the session data).
   const fingerprint = (activeId || '') + '|' +
-    (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',');
+    (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',') +
+    '|folders:' + [...(state.expandedFolders || [])].sort().join(',') +
+    '|pinned:' + [...(state.pinnedSessions || [])].sort().join(',') +
+    '|batch:' + state.batchMode;
   const sessionList = state.dom.sessionList;
   if (sessionList && sessionList._lastFingerprint === fingerprint) {
     // Data unchanged — just update active highlight in-place (much cheaper than rebuild).
