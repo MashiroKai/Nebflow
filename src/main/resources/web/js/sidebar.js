@@ -1183,7 +1183,6 @@ export function renderSessionSidebar(sessionData, activeId) {
     }
     if (changed) { try { localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all)); } catch(e) {} }
   } catch(e) {}
-  const sessionList = state.dom.sessionList;
   sessionList.innerHTML = '';
 
   // Setup unified drop handler on sessionList (once)
