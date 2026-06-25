@@ -1131,14 +1131,8 @@ function updateHeaderSessionName() {
   if (active) {
     const agentName = active.agentName || 'Nebula';
     updateHeaderBrand(agentName);
-    // For singleton agents like Jarvis, the brand already shows the agent name,
-    // so the session name is redundant — hide it to keep the header clean.
-    const SINGLETON_AGENTS = new Set(['Jarvis']);
-    if (SINGLETON_AGENTS.has(agentName)) {
-      if (sessionNameEl) { sessionNameEl.textContent = ''; sessionNameEl.style.display = 'none'; }
-    } else {
-      if (sessionNameEl) { sessionNameEl.textContent = active.name; sessionNameEl.style.display = ''; }
-    }
+    // Session name always shown in the center, regardless of agent type.
+    if (sessionNameEl) { sessionNameEl.textContent = active.name; sessionNameEl.style.display = ''; }
   } else {
     if (sessionNameEl) { sessionNameEl.textContent = ''; sessionNameEl.style.display = 'none'; }
   }
