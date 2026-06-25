@@ -924,8 +924,13 @@ onMessage('sessionList', (msg) => {
   state.folders = allFolders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
 
-  // Use activeId as-is (unified list — no agent filtering)
-  let activeId = msg.activeId;
+  // ── Main window locked to Jarvis ──
+  // Override the backend's activeId: the primary view always shows Jarvis.
+  const jarvisSess = sessionsToShow.find(s => s.agentName === 'Jarvis');
+  let activeId = jarvisSess ? jarvisSess.id : msg.activeId;
+  if (jarvisSess && chatViews.primary) {
+    chatViews.primary.sessionId = jarvisSess.id;
+  }
 
   renderSessionSidebar(sessionsToShow, activeId);
   initHeaderModelInfo();
@@ -1415,30 +1420,20 @@ onMessage('agentSessionList', (msg) => {
 
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
-  // Find active session for this agent
-  const prevActiveId = state.activeSessionId;
-  const prevSession = sessions.find(s => s.id === prevActiveId);
-  let newActiveId;
-  if (agentName === 'Jarvis') {
-    // Jarvis tab: ensure the main chat area always shows a Jarvis session
-    const prevIsJarvis = prevSession && prevSession.agentName === 'Jarvis';
-    newActiveId = prevIsJarvis ? prevActiveId
-      : (sessions.find(s => s.agentName === 'Jarvis')?.id || null);
-  } else {
-    // Non-Jarvis agent: keep previous active session if it's still in the list
-    newActiveId = prevSession ? prevActiveId : (sessions[0]?.id || null);
+
+  // ── Main window is locked to Jarvis ──────────────────────────────────
+  // The primary ChatView always shows the Jarvis session; agent tab switches
+  // only filter the sidebar list, they never change what the main window shows.
+  // Find (or create) the Jarvis session and pin the primary view to it.
+  const jarvisSession = sessions.find(s => s.agentName === 'Jarvis');
+  if (jarvisSession && chatViews.primary) {
+    if (chatViews.primary.sessionId !== jarvisSession.id) {
+      chatViews.primary.sessionId = jarvisSession.id;
+      state.activeSessionId = jarvisSession.id; // keep legacy in sync
+    }
   }
-  // Clear memory cache when session changes so modal fetches fresh content from server
-  if (newActiveId && newActiveId !== prevActiveId) {
-    clearMemoryCache();
-  }
-  renderSessionSidebar(sessions, newActiveId);
-  // Sync backend active session when agent tab switch auto-selected a different session.
-  // Without this, getMemory/memoryStatus read backend's getActiveMeta which still
-  // points to the previous session → shows wrong memory content.
-  if (newActiveId && newActiveId !== prevActiveId) {
-    sendWs({type: 'switchSession', sessionId: newActiveId});
-  }
+  // Render sidebar — active highlight shows Jarvis (primary) session
+  renderSessionSidebar(sessions, state.activeSessionId);
   initHeaderModelInfo();
 });
 
