@@ -788,7 +788,9 @@ onMessage('error', (msg) => {
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
   // Reset history loading state — backend may fail mid-pagination
-  state.historyLoading = false;
+  const errView = findViewBySessionId(sid);
+  if (errView) errView.pagination.loading = false;
+  state.historyLoading = false; // legacy fallback
   hideHistoryLoader();
   if (isActive(msg)) {
     if (sid && state.sessionToolCards[sid]) {
@@ -969,17 +971,17 @@ function clearHistoryIndicators() {
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg) => {
   const sid = msg.sessionId;
-  if (sid !== state.activeSessionId && !state._secondaryActive) return;
-  if (state._secondaryActive) state._secHistoryLoading = false; else state.historyLoading = false;
+  // Route to the ChatView that owns this session — replaces the old
+  // _secondaryActive ternary checks with unified view.pagination access.
+  const view = findViewBySessionId(sid);
+  if (!view) return;
+  view.pagination.loading = false;
   hideHistoryLoader();
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
-  // resetChatForActiveSession sets pendingInitialLoad=true; we clear it here on first response.
-  // Subsequent historyPage responses (from duplicate getHistory) see pendingInitialLoad=false
-  // and go to the prepend path instead of clearing the DOM again.
-  const isInitialLoad = state._secondaryActive ? state._secPendingInitialLoad : state.pendingInitialLoad;
+  const isInitialLoad = view.pagination.pendingInitialLoad;
   if (isInitialLoad) {
-    if (state._secondaryActive) state._secPendingInitialLoad = false; else state.pendingInitialLoad = false;
+    view.pagination.pendingInitialLoad = false;
     // Initial load or full refresh — replace
     state.dom.chat.innerHTML = '';
     // Reset sessionToolCards — innerHTML clear above removes all tool pending
@@ -989,14 +991,9 @@ onMessage('historyPage', (msg) => {
     Object.keys(state.sessionToolCards).forEach(sid => delete state.sessionToolCards[sid]);
     // Clear history indicators before rendering
     clearHistoryIndicators();
-    if (state._secondaryActive) {
-      state._secHistoryOffset = msg.offset;
-      state._secHistoryHasMore = msg.hasMore;
-    } else {
-      state.historyOffset = msg.offset;
-      state.historyTotal = msg.total;
-      state.historyHasMore = msg.hasMore;
-    }
+    view.pagination.offset = msg.offset;
+    view.pagination.total = msg.total;
+    view.pagination.hasMore = msg.hasMore;
     restoreFromBackendHistory(msg.messages);
 
     // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
@@ -1152,18 +1149,16 @@ onMessage('historyPage', (msg) => {
       renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel);
     }
 
-    const _hasMore = state._secondaryActive ? state._secHistoryHasMore : state.historyHasMore;
-    if (!_hasMore && msg.messages.length > 0) showHistoryEnd();
+    if (!view.pagination.hasMore && msg.messages.length > 0) showHistoryEnd();
 
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
     // is complete, ensure the viewport shows the latest content.
     // Uses rAF to avoid layout thrashing — fires after any pending style calculations.
     requestAnimationFrame(() => {
       const chat = state.dom.chat;
-      const _snapped = state._secondaryActive ? state._secScrollSnapped : state.scrollSnapped;
-      if (_snapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
+      if (view.stream.scrollSnapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
         chat.scrollTop = chat.scrollHeight;
-        if (state._secondaryActive) state._secScrollSnapped = true; else state.scrollSnapped = true;
+        view.stream.scrollSnapped = true;
       }
     });
 
@@ -1171,8 +1166,7 @@ onMessage('historyPage', (msg) => {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
     // if the response offset is >= what we already have, skip it to avoid duplicates.
-    const _histOffset = state._secondaryActive ? state._secHistoryOffset : state.historyOffset;
-    if (msg.offset >= _histOffset && _histOffset > 0) {
+    if (msg.offset >= view.pagination.offset && view.pagination.offset > 0) {
       // Skipping duplicate response
       return;
     }
@@ -1198,15 +1192,9 @@ onMessage('historyPage', (msg) => {
     // Restore scroll position so user stays at the same message
     const newScrollHeight = chat.scrollHeight;
     chat.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
-    if (state._secondaryActive) {
-      state._secHistoryOffset = msg.offset;
-      state._secHistoryHasMore = msg.hasMore;
-      if (!state._secHistoryHasMore) showHistoryEnd();
-    } else {
-      state.historyOffset = msg.offset;
-      state.historyHasMore = msg.hasMore;
-      if (!state.historyHasMore) showHistoryEnd();
-    }
+    view.pagination.offset = msg.offset;
+    view.pagination.hasMore = msg.hasMore;
+    if (!view.pagination.hasMore) showHistoryEnd();
   }
 });
 
@@ -1959,10 +1947,11 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 state.dom.chat.addEventListener('scroll', () => {
   state.scrollSnapped = state.dom.chat.scrollTop + state.dom.chat.clientHeight >= state.dom.chat.scrollHeight - 40;
   // Scroll-to-top: load older messages
-  if (state.dom.chat.scrollTop < 100 && state.historyHasMore && !state.historyLoading && state.historyOffset > 0) {
-    state.historyLoading = true;
+  const pv = chatViews.primary;
+  if (state.dom.chat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
+    pv.pagination.loading = true;
     showHistoryLoader();
-    sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: state.historyOffset });
+    sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
 });
 
