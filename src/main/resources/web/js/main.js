@@ -294,6 +294,31 @@ function displaySessionId() {
   return state._secondaryActive ? state.secondarySessionId : state.activeSessionId;
 }
 
+/** Render into a specific session's window from an async callback (outside
+ *  the normal ChatView push/pull window). Temporarily activates the target
+ *  view's stream + DOM so the render function writes to the right place,
+ *  then restores. Use this for showOptions confirm callbacks, setTimeout
+ *  callbacks, etc. where the original ChatView routing has already unwound. */
+function renderToSession(sessionId, fn) {
+  const view = findViewBySessionId(sessionId);
+  if (!view || view.id === 'primary') {
+    // Primary view or not found — just render directly (global state is primary's).
+    fn();
+    return;
+  }
+  // Secondary view: push + swap DOM, run fn, pull + restore.
+  const savedDom = { ...state.dom };
+  view.pushToGlobal();
+  Object.assign(state.dom, view.dom);
+  state._secondaryActive = true;
+  try { fn(); }
+  finally {
+    view.pullFromGlobal();
+    Object.assign(state.dom, savedDom);
+    state._secondaryActive = false;
+  }
+}
+
 // Helper: compute and clear turn duration for a session
 function consumeTurnDuration(sid) {
   const startTime = state.turnStartTimes[sid];
@@ -1517,7 +1542,9 @@ onMessage('modelOptions', (msg) => {
       const modelRef = selected ? selected.ref : null;
       // Use the captured session id, not the (possibly changed) activeSessionId.
       sendWs({type: 'setSessionModel', sessionId: targetSessionId, modelRef: modelRef});
-      renderSystemBubble(t('chat.modelSet', { model: answers[0] === defaultLabel ? 'default' : answers[0].replace(' ✓', '') }));
+      renderToSession(targetSessionId, () => {
+        renderSystemBubble(t('chat.modelSet', { model: answers[0] === defaultLabel ? 'default' : answers[0].replace(' ✓', '') }));
+      });
     }, t('chat.apply'));
   });
 });
