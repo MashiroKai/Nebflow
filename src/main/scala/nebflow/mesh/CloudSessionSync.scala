@@ -28,12 +28,28 @@ class CloudSessionSync private (
 ):
   private val logger = NebflowLogger.forName("nebflow.cloud-sync")
 
-  /** Whether session sync (push/pull) is enabled. Toggleable via UI/API.
-   *  When disabled, all sync operations are no-ops. Relay/busy-lock still work. */
+  /** Whether session sync (push/pull) is enabled. Persisted in MeshConfig.syncEnabled
+   *  so it survives restarts. When disabled, all sync operations are no-ops. */
   @volatile private var _syncEnabled: Boolean = true
+  @volatile private var _loaded: Boolean = false
 
-  def setSyncEnabled(enabled: Boolean): Unit = { _syncEnabled = enabled }
-  def isSyncEnabled: Boolean = _syncEnabled
+  private def ensureLoaded(): Unit =
+    if !_loaded then
+      try
+        given cats.effect.unsafe.IORuntime = cats.effect.unsafe.IORuntime.global
+        _syncEnabled = meshService.meshConfig.unsafeRunSync().syncEnabled
+      catch case _ => ()
+      _loaded = true
+
+  def setSyncEnabled(enabled: Boolean): Unit =
+    _syncEnabled = enabled
+    _loaded = true
+    given cats.effect.unsafe.IORuntime = cats.effect.unsafe.IORuntime.global
+    meshService.updateConfig(_.copy(syncEnabled = enabled)).unsafeRunAndForget()
+
+  def isSyncEnabled: Boolean =
+    ensureLoaded()
+    _syncEnabled
 
   /** Notify all reachable peers to trigger immediate sync. Fire-and-forget. */
   def notifyPeersSync: IO[Unit] =
@@ -43,6 +59,7 @@ class CloudSessionSync private (
 
   /** Push local session index (metadata + folders) to cloud. */
   def pushIndex: IO[Unit] =
+    ensureLoaded()
     if !_syncEnabled then IO.unit
     else for
       loggedIn <- meshService.isLoggedIn
@@ -92,6 +109,7 @@ class CloudSessionSync private (
    * Called after local session is updated (message saved, AI reply complete).
    */
   def pushSession(sessionId: String): IO[Unit] =
+    ensureLoaded()
     if !_syncEnabled then IO.unit
     else for
       loggedIn <- meshService.isLoggedIn
@@ -328,6 +346,7 @@ class CloudSessionSync private (
    * 5. Poll + execute relay commands from other devices
    */
   def syncCycle: IO[Unit] =
+    ensureLoaded()
     if !_syncEnabled then IO.unit
     else for
       loggedIn <- meshService.isLoggedIn
@@ -387,6 +406,7 @@ class CloudSessionSync private (
    * 4. File fingerprint exchange
    */
   def fastSyncCycle: IO[Unit] =
+    ensureLoaded()
     if !_syncEnabled then IO.unit
     else for
       loggedIn <- meshService.isLoggedIn
