@@ -296,11 +296,15 @@ export function shouldAutoScroll() {
 }
 
 export function smartScroll() {
+  // Capture chat + scrollSnapped synchronously — for the secondary view, ws.js
+  // push/pull restores global state to primary before the rAF fires, so reading
+  // state.* inside the rAF would target the wrong window.
   const chat = state.dom.chat;
+  const snapped = state.scrollSnapped;
   requestAnimationFrame(() => {
-    if (state.scrollSnapped || shouldAutoScroll()) {
+    const threshold = 60;
+    if (snapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold) {
       chat.scrollTop = chat.scrollHeight;
-      state.scrollSnapped = true;
     }
   });
 }

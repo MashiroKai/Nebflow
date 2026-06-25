@@ -2,7 +2,7 @@
 
 import state from './state.js';
 import { sendWs } from './ws.js';
-import { batchDeleteSelected, deleteFolder, getTargetPath } from './sidebar.js';
+import { batchDeleteSelected, deleteFolder, getTargetPath, getTargetAgent } from './sidebar.js';
 import { t } from './i18n.js';
 
 // ---------- Session Modals ----------
@@ -24,7 +24,7 @@ export function confirmNewSession() {
   const name = modalInput.value.trim();
   hideModals();
   if (!name) return;
-  const payload = {type: 'createSession', name, agentName: 'Nebula'};
+  const payload = {type: 'createSession', name, agentName: getTargetAgent()};
   const folderId = state.activeFolderId || getCurrentSessionFolderId();
   if (folderId) payload.folderId = folderId;
   sendWs(payload);
@@ -64,7 +64,7 @@ export function startInlineNewSession() {
     const name = input.value.trim();
     wrapper.remove();
     if (name) {
-      const payload = { type: 'createSession', name, agentName: 'Nebula' };
+      const payload = { type: 'createSession', name, agentName: getTargetAgent() };
       if (folderId) payload.folderId = folderId;
       sendWs(payload);
     }
