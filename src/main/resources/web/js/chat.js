@@ -17,27 +17,17 @@ export function getAgentColor(agentId) {
 
 // ---------- Status bar ----------
 export function setStatus(text) {
-  if (state._secondaryActive) {
-    const secStatus = document.getElementById('secondary-status-text');
-    const secWrap = document.getElementById('secondary-status-wrap');
-    if (secStatus) secStatus.textContent = text || '';
-    if (secWrap) secWrap.classList.add('on');
-    return;
-  }
+  // state.dom is already pointed at the correct window by ChatView routing
+  // (Object.assign in ws.js), so no _secondaryActive branching needed.
   const { statusText, statusWrap } = state.dom;
-  statusText.textContent = text || '';
-  statusWrap.classList.add('on');
+  if (statusText) statusText.textContent = text || '';
+  if (statusWrap) statusWrap.classList.add('on');
   playSpinner();
 }
 
 export function clearStatus() {
-  if (state._secondaryActive) {
-    const secWrap = document.getElementById('secondary-status-wrap');
-    if (secWrap) secWrap.classList.remove('on');
-    return;
-  }
   const { statusWrap } = state.dom;
-  statusWrap.classList.remove('on');
+  if (statusWrap) statusWrap.classList.remove('on');
   stopSpinner();
 }
 
