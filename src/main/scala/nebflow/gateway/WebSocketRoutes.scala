@@ -616,6 +616,7 @@ class WebSocketRoutes(
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "modelOptions".asJson,
+                  "sessionId" -> sessionId.asJson,
                   "models" -> models.map { case (ref, label, desc) =>
                     io.circe.Json.obj(
                       "ref" -> ref.asJson,
