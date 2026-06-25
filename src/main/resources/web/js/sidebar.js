@@ -1088,23 +1088,23 @@ function renderOneSessionItem(s, container, opts = {}) {
         // do nothing, keep selection
       } else {
         exitBatchMode();
-        if (s.id !== state.activeSessionId) switchSession(s.id);
+        // Main window is locked to Jarvis — non-Jarvis sessions open in secondary.
+        openInSecondary(s);
       }
     } else {
       clearActiveFolder();
       const isJarvis = (s.agentName || 'Nebula') === 'Jarvis';
       if (isJarvis) {
-        // Jarvis session → main area, close secondary if open
-        closeSecondaryPanel();
-        if (s.id !== state.activeSessionId) {
-          switchSession(s.id);
-        } else {
-          state.unreadSessions.delete(s.id);
-          state.markedUnreadSessions.delete(s.id);
-          persistUnread();
-          persistMarkedUnread();
-          updateSessionStatus(s.id);
-        }
+        // Main window is locked to Jarvis — clicking the Jarvis session just
+        // clears unread and scrolls to top. No session switch needed.
+        state.unreadSessions.delete(s.id);
+        state.markedUnreadSessions.delete(s.id);
+        persistUnread();
+        persistMarkedUnread();
+        updateSessionStatus(s.id);
+        renderSessionSidebar(state.sessions, state.activeSessionId);
+        // Scroll main chat to bottom
+        if (state.dom.chat) state.dom.chat.scrollTop = state.dom.chat.scrollHeight;
       } else {
         // Non-Jarvis session → secondary panel (画板)
         openInSecondary(s);
