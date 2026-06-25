@@ -1,4 +1,5 @@
 import state from './state.js';
+import { findViewBySessionId } from './chatView.js';
 
 // ---------- Handler registry (supports multiple handlers per type) ----------
 const handlers = {};
@@ -124,123 +125,42 @@ export function connect() {
           !STREAM_MSG_TYPES.includes(msg.type)) {
         return;
       }
-      // ── Secondary session swap ──────────────────────────────────────
-      // When a message is for the secondary session, temporarily swap
-      // state.dom.chat + streaming variables so ALL existing handlers
-      // render into #secondary-chat without any code duplication.
-      const isSecMsg = state.secondarySessionId && msg.sessionId === state.secondarySessionId;
-      let _saved = null;
-      if (isSecMsg) {
-        _saved = {
-          chat: state.dom.chat,
-          statusWrap: state.dom.statusWrap,
-          statusText: state.dom.statusText,
-          sendBtn: state.dom.sendBtn,
-          stopBtn: state.dom.stopBtn,
-          input: state.dom.input,
-          lottieSpinnerEl: state.dom.lottieSpinnerEl,
-          aiText: state.aiText,
-          currentAiBubble: state.currentAiBubble,
-          thinkingText: state.thinkingText,
-          currentThinkingBubble: state.currentThinkingBubble,
-          // Fields that were previously NOT swapped — leaking these caused
-          // cross-window state corruption when both windows ran /ask, multi-agent
-          // (delegate) turns, or relied on scroll-snap anchoring.
-          currentAskBubble: state.currentAskBubble,
-          askAnswerText: state.askAnswerText,
-          askMode: state.askMode,
-          agentBubbles: state.agentBubbles,
-          activeAgentId: state.activeAgentId,
-          activeSubAgents: state.activeSubAgents,
-          scrollSnapped: state.scrollSnapped,
-          // Header status indicators (session-scoped) — swap so updateHeaderModelInfo,
-          // updateBgTasksUI, updateDelegateIndicator render into the secondary header.
-          headerModelInfoEl: state.dom.headerModelInfoEl,
-          bgIndicatorEl: state.dom.bgIndicatorEl,
-          bgCountEl: state.dom.bgCountEl,
-          bgDropdownEl: state.dom.bgDropdownEl,
-          bgDropdownListEl: state.dom.bgDropdownListEl,
-          delegateIndicatorEl: state.dom.delegateIndicatorEl,
-          delegateDropdownEl: state.dom.delegateDropdownEl,
-          delegateDropdownListEl: state.dom.delegateDropdownListEl,
-        };
-        state.dom.chat = document.getElementById('secondary-chat');
-        state.dom.statusWrap = document.getElementById('secondary-status-wrap');
-        state.dom.statusText = document.getElementById('secondary-status-text');
-        state.dom.sendBtn = document.getElementById('secondary-send-btn');
-        state.dom.stopBtn = document.getElementById('secondary-stop-btn');
-        state.dom.input = document.getElementById('secondary-input');
-        state.dom.lottieSpinnerEl = document.getElementById('secondary-spinner');
-        state.dom.headerModelInfoEl = document.getElementById('secondary-header-model-info');
-        state.dom.bgIndicatorEl = document.getElementById('secondary-bg-indicator');
-        state.dom.bgCountEl = document.getElementById('secondary-bg-indicator')?.querySelector('.bg-count');
-        state.dom.bgDropdownEl = document.getElementById('secondary-bg-dropdown');
-        state.dom.bgDropdownListEl = document.getElementById('secondary-bg-dropdown')?.querySelector('.bg-dropdown-list');
-        state.dom.delegateIndicatorEl = document.getElementById('secondary-delegate-indicator');
-        state.dom.delegateDropdownEl = document.getElementById('secondary-delegate-dropdown');
-        state.dom.delegateDropdownListEl = document.getElementById('secondary-delegate-dropdown')?.querySelector('.bg-dropdown-list');
-        const ss = state._secStream || (state._secStream = {});
-        state.aiText = ss.aiText || '';
-        state.currentAiBubble = ss.currentAiBubble || null;
-        state.thinkingText = ss.thinkingText || '';
-        state.currentThinkingBubble = ss.currentThinkingBubble || null;
-        state.currentAskBubble = ss.currentAskBubble || null;
-        state.askAnswerText = ss.askAnswerText || '';
-        state.askMode = ss.askMode || false;
-        state.agentBubbles = ss.agentBubbles || {};
-        state.activeAgentId = ss.activeAgentId || null;
-        state.activeSubAgents = ss.activeSubAgents || {};
-        // scrollSnapped: prefer the dedicated secondary flag, fall back to stream store.
-        state.scrollSnapped = state._secScrollSnapped != null ? state._secScrollSnapped : (ss.scrollSnapped != null ? ss.scrollSnapped : true);
+      // ── ChatView routing (replaces the old manual swap) ──────────────
+      // Before each handler runs, we "activate" the ChatView that owns this
+      // session: push its stream state into the global state (so legacy
+      // handlers that read state.currentAiBubble etc. see the right values)
+      // and point state.dom at the view's DOM elements.
+      //
+      // After handlers finish, we pull any changes back into the view and
+      // restore the primary view's globals. This is a stepping stone: once
+      // all handlers are migrated to read from the view directly, this
+      // push/pull dance goes away.
+      const view = findViewBySessionId(msg.sessionId);
+      let _savedDom = null;
+      if (view && view.id !== 'primary') {
+        // Non-primary view: save primary's globals, activate this view.
+        _savedDom = { ...state.dom };
+        view.pushToGlobal();
+        // Point state.dom at this view's elements
+        Object.assign(state.dom, view.dom);
         state._secondaryActive = true;
+      } else if (view && view.id === 'primary') {
+        // Primary view is already the global default — just sync its stream.
+        // (In the future this branch disappears; primary's state IS the global.)
+        view.pushToGlobal();
       }
 
       const list = handlers[msg.type];
       if (list) for (const h of list) h(msg);
 
-      // Restore primary state after handlers complete
-      if (isSecMsg && _saved) {
-        const ss = state._secStream || (state._secStream = {});
-        ss.aiText = state.aiText;
-        ss.currentAiBubble = state.currentAiBubble;
-        ss.thinkingText = state.thinkingText;
-        ss.currentThinkingBubble = state.currentThinkingBubble;
-        ss.currentAskBubble = state.currentAskBubble;
-        ss.askAnswerText = state.askAnswerText;
-        ss.askMode = state.askMode;
-        ss.agentBubbles = state.agentBubbles;
-        ss.activeAgentId = state.activeAgentId;
-        ss.activeSubAgents = state.activeSubAgents;
-        // Persist the per-window scroll-snap back to the dedicated secondary flag
-        // (the scroll handler in secondary-chat.js reads/writes _secScrollSnapped).
-        state._secScrollSnapped = state.scrollSnapped;
-        state.dom.chat = _saved.chat;
-        state.dom.statusWrap = _saved.statusWrap;
-        state.dom.statusText = _saved.statusText;
-        state.dom.sendBtn = _saved.sendBtn;
-        state.dom.stopBtn = _saved.stopBtn;
-        state.dom.input = _saved.input;
-        state.dom.lottieSpinnerEl = _saved.lottieSpinnerEl;
-        state.aiText = _saved.aiText;
-        state.currentAiBubble = _saved.currentAiBubble;
-        state.thinkingText = _saved.thinkingText;
-        state.currentThinkingBubble = _saved.currentThinkingBubble;
-        state.currentAskBubble = _saved.currentAskBubble;
-        state.askAnswerText = _saved.askAnswerText;
-        state.askMode = _saved.askMode;
-        state.agentBubbles = _saved.agentBubbles;
-        state.activeAgentId = _saved.activeAgentId;
-        state.activeSubAgents = _saved.activeSubAgents;
-        state.scrollSnapped = _saved.scrollSnapped;
-        state.dom.headerModelInfoEl = _saved.headerModelInfoEl;
-        state.dom.bgIndicatorEl = _saved.bgIndicatorEl;
-        state.dom.bgCountEl = _saved.bgCountEl;
-        state.dom.bgDropdownEl = _saved.bgDropdownEl;
-        state.dom.bgDropdownListEl = _saved.bgDropdownListEl;
-        state.dom.delegateIndicatorEl = _saved.delegateIndicatorEl;
-        state.dom.delegateDropdownEl = _saved.delegateDropdownEl;
-        state.dom.delegateDropdownListEl = _saved.delegateDropdownListEl;
-        state._secondaryActive = false;
+      // Pull handler mutations back into the view, then restore primary globals.
+      if (view) {
+        view.pullFromGlobal();
+        if (_savedDom) {
+          // Restore primary's DOM refs
+          Object.assign(state.dom, _savedDom);
+          state._secondaryActive = false;
+        }
       }
     } catch (err) {
       console.error('[ws] message parse error:', err);

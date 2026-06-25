@@ -10,6 +10,7 @@ import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 import { refreshScheduledTasks } from './scheduled-task.js';
 import { loadSecondary, saveSecondaryDraft } from './secondary-chat.js';
+import { chatViews } from './chatView.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
 
@@ -120,6 +121,11 @@ function closeSecondaryPanel() {
   // session restores the in-progress text/attachments.
   if (state.secondarySessionId) saveSecondaryDraft(state.secondarySessionId);
   state.secondarySessionId = null;
+  // Unmount the secondary ChatView — the panel is now free for non-chat content.
+  if (chatViews.secondary) {
+    chatViews.secondary.mounted = false;
+    chatViews.secondary.sessionId = null;
+  }
   document.body.classList.remove('split-view');
   const panel = document.getElementById('secondary-panel');
   if (panel) {
@@ -136,6 +142,12 @@ function openInSecondary(session) {
     saveSecondaryDraft(state.secondarySessionId);
   }
   state.secondarySessionId = session.id;
+  // Mount the secondary ChatView to this session — ws.js will now route
+  // messages for this session to the secondary view.
+  if (chatViews.secondary) {
+    chatViews.secondary.mounted = true;
+    chatViews.secondary.sessionId = session.id;
+  }
   // Clear unread state — user is now viewing this session
   state.unreadSessions.delete(session.id);
   state.markedUnreadSessions.delete(session.id);
@@ -1482,6 +1494,8 @@ export function switchSession(sessionId) {
   const prevActiveId = state.activeSessionId;
   // Switch active session
   state.activeSessionId = sessionId;
+  // Sync the primary ChatView instance to track this session
+  if (chatViews.primary) chatViews.primary.sessionId = sessionId;
   // Clear memory cache so new session fetches fresh content
   clearMemoryCache();
   // Update sidebar status for both sessions (activeSessionId has changed,
