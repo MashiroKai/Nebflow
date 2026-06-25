@@ -225,25 +225,12 @@ function restoreSecondaryDraft(sessionId) {
 }
 
 export function loadSecondary(sessionId) {
-  // Reset secondary streaming state (must mirror the swap fields in ws.js so a
-  // fresh secondary session never inherits stale bubbles/buffers from the previous one).
-  state._secStream = {
-    aiText: '', currentAiBubble: null,
-    thinkingText: '', currentThinkingBubble: null,
-    currentAskBubble: null, askAnswerText: '', askMode: false,
-    agentBubbles: {}, activeAgentId: null, activeSubAgents: {},
-    scrollSnapped: true,
-  };
-  // Reset secondary pagination state (independent from primary)
-  state._secHistoryOffset = 0;
-  state._secHistoryHasMore = false;
-  state._secHistoryLoading = false;
-  // Also reset the ChatView pagination for consistency
+  // Reset the secondary ChatView's streaming + pagination state so a fresh
+  // session never inherits stale bubbles/buffers from the previous one.
   if (chatViews.secondary) {
-    chatViews.secondary.pagination = { offset: 0, total: 0, hasMore: false, loading: false, pendingInitialLoad: true };
+    chatViews.secondary.resetStream();
+    chatViews.secondary.resetPagination();
   }
-  state._secPendingInitialLoad = true;
-  state._secScrollSnapped = true;
   const el = document.getElementById('secondary-chat');
   if (el) el.innerHTML = '<div style="padding:24px;color:var(--color-text-muted);text-align:center;font-size:13px">Loading...</div>';
   // Sync button state with current busy status
@@ -555,7 +542,9 @@ export function initSecondaryChat() {
     secChat.addEventListener('scroll', () => {
       const sid = state.secondarySessionId;
       if (!sid) return;
-      state._secScrollSnapped = secChat.scrollTop + secChat.clientHeight >= secChat.scrollHeight - 40;
+      if (chatViews.secondary) {
+        chatViews.secondary.stream.scrollSnapped = secChat.scrollTop + secChat.clientHeight >= secChat.scrollHeight - 40;
+      }
       const secView = chatViews.secondary;
       if (secChat.scrollTop < 100 && secView?.pagination?.hasMore && !secView?.pagination?.loading && secView?.pagination?.offset > 0) {
         secView.pagination.loading = true;

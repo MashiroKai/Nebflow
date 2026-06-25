@@ -131,22 +131,13 @@ export default {
   // Scroll
   scrollSnapped: true,
 
-  // History pagination
+  // History pagination (legacy — primary window still reads these during the
+  // ChatView migration; secondary window uses chatViews.secondary.pagination)
   historyOffset: 0,
   historyTotal: 0,
   historyHasMore: false,
   historyLoading: false,
-  // Set true by resetChatForActiveSession, consumed by historyPage handler to distinguish
-  // initial load from scroll-up pagination. Prevents double chat.innerHTML='' from
-  // duplicate getHistory responses when offset happens to be 0.
   pendingInitialLoad: false,
-
-  // Secondary panel history (separate from primary to avoid cross-contamination)
-  _secHistoryOffset: 0,
-  _secHistoryHasMore: false,
-  _secHistoryLoading: false,
-  _secPendingInitialLoad: false,
-  _secScrollSnapped: true,
 
   // IME
   composing: false,
