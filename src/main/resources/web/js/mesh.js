@@ -317,6 +317,16 @@ function meshLoggedInHTML() {
              value="${escapeHtml(localDesc)}"
              style="margin-bottom:6px">
       <button class="cfg-btn" id="mesh-save-desc" style="width:100%">${t('mesh.save')}</button>
+      <div class="mesh-sync-toggle-row" style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:500">${t('mesh.cloudSync')}</div>
+          <div style="font-size:11px;opacity:0.6">${t('mesh.cloudSyncHint')}</div>
+        </div>
+        <label class="mesh-switch" style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0">
+          <input type="checkbox" id="mesh-sync-toggle" ${meshState.syncEnabled !== false ? 'checked' : ''} style="opacity:0;width:0;height:0">
+          <span class="mesh-switch-slider"></span>
+        </label>
+      </div>
     </div>`;
 }
 
@@ -346,6 +356,22 @@ export function bindMeshEvents(rerender) {
   document.getElementById('mesh-logout')?.addEventListener('click', () => doLogout(rerender));
   document.getElementById('mesh-save-desc')?.addEventListener('click', () => doSaveDescription(rerender));
   document.getElementById('mesh-device-desc')?.addEventListener('keydown', e => { if (e.key === 'Enter') doSaveDescription(rerender); });
+  // Cloud sync toggle
+  document.getElementById('mesh-sync-toggle')?.addEventListener('change', async (e) => {
+    const enabled = e.target.checked;
+    try {
+      await fetch('/api/mesh/sync-enabled', {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${getAuthToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      meshState.syncEnabled = enabled;
+    } catch (err) {
+      // Revert on failure
+      e.target.checked = !enabled;
+      showMeshError(err.message);
+    }
+  });
 }
 
 // ---- Actions ----
@@ -411,6 +437,14 @@ async function doSaveDescription(rerender) {
 }
 
 // ---- Init (called once from main.js) ----
-export function initMesh() {
+export async function initMesh() {
+  // Load cloud sync toggle state
+  try {
+    const resp = await fetch('/api/mesh/sync-enabled', { headers: { 'Authorization': `Bearer ${getAuthToken()}` } });
+    if (resp.ok) {
+      const data = await resp.json();
+      meshState.syncEnabled = data.enabled !== false;
+    }
+  } catch (e) { /* ignore — default enabled */ }
   checkLoginGate();
 }

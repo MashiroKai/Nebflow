@@ -139,6 +139,38 @@
     0px 2px 8px rgba(0,0,0,0.04),
     0px 8px 24px rgba(0,0,0,0.06);
 }
+/* Three-segment layout mirroring the primary header (left brand / center name / right indicators) */
+.secondary-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.secondary-header-brand {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--color-frame-text);
+  white-space: nowrap;
+}
+.secondary-header-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 40%;
+  overflow: hidden;
+}
+.secondary-header-center > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-frame-text-muted);
+}
 .secondary-header::before {
   content: '';
   position: absolute;
