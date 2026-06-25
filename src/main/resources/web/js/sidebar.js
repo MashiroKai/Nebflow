@@ -1273,11 +1273,18 @@ export function renderSessionSidebar(sessionData, activeId) {
   const sessionNameEl = state.dom.sessionNameEl;
   const active = state.sessions.find(s => s.id === state.activeSessionId);
   if (active) {
-    sessionNameEl.textContent = active.name;
-    sessionNameEl.style.display = '';
-    // Update header brand based on session's agent
     const agentName = active.agentName || 'Nebula';
     updateHeaderBrand(agentName);
+    // For singleton agents like Jarvis, the brand already shows the agent name,
+    // so the session name is redundant — hide it to keep the header clean.
+    const SINGLETON_AGENTS = new Set(['Jarvis']);
+    if (SINGLETON_AGENTS.has(agentName)) {
+      sessionNameEl.textContent = '';
+      sessionNameEl.style.display = 'none';
+    } else {
+      sessionNameEl.textContent = active.name;
+      sessionNameEl.style.display = '';
+    }
   } else {
     sessionNameEl.textContent = '';
     sessionNameEl.style.display = 'none';

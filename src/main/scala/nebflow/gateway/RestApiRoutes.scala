@@ -343,6 +343,19 @@ class RestApiRoutes(
         }
       }
 
+    // Cloud session sync toggle — read current state
+    case req @ GET -> Root / "mesh" / "sync-enabled" =>
+      val enabled = nebflow.core.tools.MeshTool.currentCloudSessionSync.exists(_.isSyncEnabled)
+      Ok(Json.obj("enabled" -> enabled.asJson))
+
+    // Cloud session sync toggle — set enabled/disabled
+    case req @ PUT -> Root / "mesh" / "sync-enabled" =>
+      req.as[Json].flatMap { body =>
+        val enabled = body.hcursor.downField("enabled").as[Boolean].getOrElse(true)
+        nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach(_.setSyncEnabled(enabled))
+        Ok(Json.obj("enabled" -> enabled.asJson))
+      }
+
     // Update device capabilities / user description
     case req @ PUT -> Root / "mesh" / "device-info" =>
       withMesh(req) { ms =>

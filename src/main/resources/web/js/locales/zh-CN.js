@@ -393,4 +393,6 @@ export default {
   'mesh.deviceDescription': '设备描述',
   'mesh.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',
   'mesh.save': '保存',
+  'mesh.cloudSync': '云同步',
+  'mesh.cloudSyncHint': '在多设备间同步会话',
 };

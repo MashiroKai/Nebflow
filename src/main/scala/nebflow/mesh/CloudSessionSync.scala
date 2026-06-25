@@ -28,6 +28,13 @@ class CloudSessionSync private (
 ):
   private val logger = NebflowLogger.forName("nebflow.cloud-sync")
 
+  /** Whether session sync (push/pull) is enabled. Toggleable via UI/API.
+   *  When disabled, all sync operations are no-ops. Relay/busy-lock still work. */
+  @volatile private var _syncEnabled: Boolean = true
+
+  def setSyncEnabled(enabled: Boolean): Unit = { _syncEnabled = enabled }
+  def isSyncEnabled: Boolean = _syncEnabled
+
   /** Notify all reachable peers to trigger immediate sync. Fire-and-forget. */
   def notifyPeersSync: IO[Unit] =
     meshService.notifyPeers("file")
@@ -36,7 +43,8 @@ class CloudSessionSync private (
 
   /** Push local session index (metadata + folders) to cloud. */
   def pushIndex: IO[Unit] =
-    for
+    if !_syncEnabled then IO.unit
+    else for
       loggedIn <- meshService.isLoggedIn
       _ <-
         if !loggedIn then IO.unit
@@ -84,7 +92,8 @@ class CloudSessionSync private (
    * Called after local session is updated (message saved, AI reply complete).
    */
   def pushSession(sessionId: String): IO[Unit] =
-    for
+    if !_syncEnabled then IO.unit
+    else for
       loggedIn <- meshService.isLoggedIn
       _ <-
         if !loggedIn then IO.unit
@@ -319,7 +328,8 @@ class CloudSessionSync private (
    * 5. Poll + execute relay commands from other devices
    */
   def syncCycle: IO[Unit] =
-    for
+    if !_syncEnabled then IO.unit
+    else for
       loggedIn <- meshService.isLoggedIn
       _ <-
         if !loggedIn then IO.unit
@@ -377,7 +387,8 @@ class CloudSessionSync private (
    * 4. File fingerprint exchange
    */
   def fastSyncCycle: IO[Unit] =
-    for
+    if !_syncEnabled then IO.unit
+    else for
       loggedIn <- meshService.isLoggedIn
       _ <-
         if !loggedIn then IO.unit
