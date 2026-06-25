@@ -15,7 +15,7 @@ import {
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
-  switchSession, deleteSession, formatSessionTime, setSessionAttention,
+  deleteSession, formatSessionTime, setSessionAttention,
   initHeaderModelInfo,
   persistUnread, createNewFolder,
   resetChatForActiveSession
