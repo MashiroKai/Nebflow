@@ -700,13 +700,6 @@ private[agent] trait AgentCore:
                     val remoteInput = finalInput.remove("device")
                     val remoteSummary = s"[${deviceName}] ${tool.summarize(remoteInput)}"
                     logger.info(s"$logCtx Remote tool: $remoteSummary")
-                    // Broadcast status to other devices (fire-and-forget)
-                    val sid = ctx.sessionId.getOrElse("")
-                    RemoteExecutor.current.get.meshServiceOpt.foreach { ms =>
-                      given cats.effect.unsafe.IORuntime = cats.effect.unsafe.IORuntime.global
-                      ms.broadcastAgentStatus("executing", sid, deviceName, call.name)
-                        .unsafeRunAndForget()
-                    }
                     RemoteExecutor.current.get
                       .execute(deviceName, call.name, remoteInput)
                       .flatMap {

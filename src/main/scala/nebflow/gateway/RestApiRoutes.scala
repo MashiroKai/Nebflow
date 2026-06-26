@@ -322,11 +322,7 @@ class RestApiRoutes(
             }
           end if
 
-    // Trigger sync with all peers
-    case req @ POST -> Root / "mesh" / "sync" =>
-      withMesh(req) { ms =>
-        ms.syncAll *> Ok(Json.obj("synced" -> true.asJson))
-      }
+    // Trigger sync — removed (file sync deleted)
 
     // Update mesh config (e.g. cloudUrl)
     case req @ PATCH -> Root / "mesh" / "config" =>
@@ -343,18 +339,7 @@ class RestApiRoutes(
         }
       }
 
-    // Cloud session sync toggle — read current state
-    case req @ GET -> Root / "mesh" / "sync-enabled" =>
-      val enabled = nebflow.core.tools.MeshTool.currentCloudSessionSync.exists(_.isSyncEnabled)
-      Ok(Json.obj("enabled" -> enabled.asJson))
-
-    // Cloud session sync toggle — set enabled/disabled
-    case req @ PUT -> Root / "mesh" / "sync-enabled" =>
-      req.as[Json].flatMap { body =>
-        val enabled = body.hcursor.downField("enabled").as[Boolean].getOrElse(true)
-        nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach(_.setSyncEnabled(enabled))
-        Ok(Json.obj("enabled" -> enabled.asJson))
-      }
+    // Cloud session sync toggle — removed (session sync deleted)
 
     // Update device capabilities / user description
     case req @ PUT -> Root / "mesh" / "device-info" =>
@@ -367,85 +352,14 @@ class RestApiRoutes(
         }
       }
 
-    // Fingerprints — returns local file fingerprints for peer sync
-    // Auth: Bearer must contain the local userId (peer trust)
-    case req @ GET -> Root / "mesh" / "fingerprints" =>
-      verifyPeerAccess(req).flatMap {
-        case Left(resp) => IO.pure(resp)
-        case Right(ms) =>
-          ms.computeLocalFingerprints.flatMap { fps =>
-            Ok(io.circe.Json.fromFields(fps.map { case (path, fp) =>
-              path -> fp.asJson
-            }))
-          }
-      }
-
-    // File download — returns file content for peer sync
-    case req @ GET -> Root / "mesh" / "file" =>
-      verifyPeerAccess(req).flatMap {
-        case Left(resp) => IO.pure(resp)
-        case Right(ms) =>
-          val relPath = req.params.getOrElse("path", "")
-          if relPath.isEmpty then BadRequest(Json.obj("error" -> "Missing path".asJson))
-          else
-            ms.readLocalFile(relPath).flatMap {
-              case None => NotFound(Json.obj("error" -> s"File not found: $relPath".asJson))
-              case Some((bytes, fp)) =>
-                val encoded = java.util.Base64.getEncoder.encodeToString(bytes)
-                Ok(
-                  Json.obj(
-                    "path" -> relPath.asJson,
-                    "content" -> encoded.asJson,
-                    "mtime" -> fp.mtime.asJson,
-                    "hash" -> fp.hash.asJson
-                  )
-                )
-            }
-          end if
-      }
-
-    // File upload — receives file content from a peer
-    case req @ PUT -> Root / "mesh" / "file" =>
-      verifyPeerAccess(req).flatMap {
-        case Left(resp) => IO.pure(resp)
-        case Right(ms) =>
-          req.as[Json].flatMap { body =>
-            val hc = body.hcursor
-            val relPath = hc.downField("path").as[String].getOrElse("")
-            val contentB64 = hc.downField("content").as[String].getOrElse("")
-            if relPath.isEmpty || contentB64.isEmpty
-            then BadRequest(Json.obj("error" -> "Missing path or content".asJson))
-            else
-              val bytes = java.util.Base64.getDecoder.decode(contentB64)
-              ms.writeLocalFile(relPath, bytes) *> Ok(Json.obj("ok" -> true.asJson))
-          }
-      }
+    // File sync endpoints (fingerprints, file GET/PUT) — removed
 
     // Peer notification — lightweight ping to trigger immediate sync
     case req @ POST -> Root / "mesh" / "notify" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(ms) =>
-          req.as[Json].flatMap { body =>
-            val notifType = body.hcursor.downField("type").as[String].getOrElse("")
-            // Fire-and-forget: trigger immediate sync based on notification type
-            notifType match
-              case "file" | "session" =>
-                // Unified: just pull changed files from cloud
-                sharedResources.dispatcher.unsafeRunAndForget(
-                  ms.syncFilesWithCloud.handleErrorWith(_ => IO.unit)
-                )
-                Ok(Json.obj("ok" -> true.asJson))
-              case "relay" =>
-                nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-                  sharedResources.dispatcher.unsafeRunAndForget(
-                    css.processRelayCommands.handleErrorWith(_ => IO.unit)
-                  )
-                }
-                Ok(Json.obj("ok" -> true.asJson))
-              case _ => Ok(Json.obj("ok" -> true.asJson))
-            end match
-          }
+          Ok(Json.obj("ok" -> true.asJson))
       }
 
     case req @ POST -> Root / "mesh" / "remote-exec" =>

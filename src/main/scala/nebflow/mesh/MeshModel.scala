@@ -187,80 +187,12 @@ object PeerInfo:
     yield PeerInfo(deviceId, deviceName, platform, address, deviceSecret, capabilities, userDescription, lastSeen)
   }
 
-// ===== File Fingerprint =====
-
-case class FileFingerprint(
-  mtime: Long,
-  size: Long,
-  hash: String
-)
-
-object FileFingerprint:
-  given Encoder[FileFingerprint] = deriveEncoder
-  given Decoder[FileFingerprint] = deriveDecoder
-
-  def compute(path: os.Path): Option[FileFingerprint] =
-    if !os.exists(path) then None
-    else
-      val stat = os.stat(path)
-      val content = os.read.bytes(path)
-      val hash = computeHash(content)
-      Some(FileFingerprint(stat.mtime.toMillis, stat.size, hash))
-
-  def computeHash(bytes: Array[Byte]): String =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
-    digest.update(bytes)
-    digest.digest().take(6).map(b => String.format("%02x", b)).mkString
-
-end FileFingerprint
-
-// ===== Cloud File Download =====
-
-case class CloudFileDownload(path: String, content: String, fingerprint: FileFingerprint)
-
-object CloudFileDownload:
-
-  given Decoder[CloudFileDownload] = Decoder.instance { c =>
-    for
-      path <- c.downField("path").as[String]
-      content <- c.downField("content").as[String]
-      fpMtime <- c.downField("fingerprint").downField("mtime").as[Long]
-      fpSize <- c.downField("fingerprint").downField("size").as[Long]
-      fpHash <- c.downField("fingerprint").downField("hash").as[String]
-    yield CloudFileDownload(path, content, FileFingerprint(fpMtime, fpSize, fpHash))
-  }
-
-/** COS-based download item — path + fileID, content fetched separately via file/download. */
-case class CloudFileDownloadItem(path: String, fileID: String)
-
-object CloudFileDownloadItem:
-
-  given Decoder[CloudFileDownloadItem] = Decoder.instance { c =>
-    for
-      path <- c.downField("path").as[String]
-      fileID <- c.downField("fileID").as[String]
-    yield CloudFileDownloadItem(path, fileID)
-  }
-
-// ===== Sync Diff =====
-
-case class SyncDiff(
-  needUpload: List[String],
-  needDownload: List[String],
-  unchanged: List[String]
-)
-
-object SyncDiff:
-  given Encoder[SyncDiff] = deriveEncoder
-  given Decoder[SyncDiff] = deriveDecoder
-
 // ===== Mesh Config =====
 
 case class MeshConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  cloudUrl: Option[String] = None,  // Self-hosted server URL, configured by user
-  syncEnabled: Boolean = true  // Cloud session sync on/off toggle (persists across restarts)
+  cloudUrl: Option[String] = None  // Self-hosted server URL, configured by user
 )
 
 object MeshConfig:

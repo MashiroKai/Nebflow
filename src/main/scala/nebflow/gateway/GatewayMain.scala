@@ -301,46 +301,19 @@ object GatewayMain extends IOApp.Simple:
                                   val bridgeSetup: IO[BridgeManager] =
                                     BridgeManager.create(bridgeCtx)
 
-                                  // Create mesh service (event-driven sync actor, no UDP)
+                                  // Create mesh service (device discovery only, no file sync)
                                   val meshServiceF: IO[MeshService] =
-                                    MeshSyncStore
-                                      .load()
-                                      .flatMap(store =>
-                                        MeshService.create(store, cfg.port.value, actorSystem, dispatcher)
-                                      )
+                                    MeshService.create(cfg.port.value, actorSystem, dispatcher)
 
                                   bridgeSetup.flatMap { bridgeManager =>
                                     meshServiceF.flatMap { meshService =>
-                                      // Register mesh tool for agent cross-device operations
-                                      // Register remote executor for distributed tool dispatch
+                                      // Register remote executor for cross-device tool dispatch
                                       RemoteExecutor.initialize(meshService)
-                                      // Keep MeshTool companion state for backward compat (RestApiRoutes/WebSocketRoutes)
-                                      nebflow.core.tools.MeshTool.wire(meshService)
-
-                                      // Create sync services
-                                      val cloudSessionSync = nebflow.mesh.CloudSessionSync(meshService, sessionStore)
-                                      // Session changed hook: push session data + file sync + notify peers
-                                      sessionStore.setSessionChangedHook { sessionId =>
-                                        cloudSessionSync.pushSession(sessionId).handleErrorWith(_ => IO.unit) *>
-                                          meshService.syncFilesWithCloud.handleErrorWith(_ => IO.unit) *>
-                                          cloudSessionSync.notifyPeersSync
-                                      }
-                                      // Full sync cycle (5 min) — session sync + file sync + relay
-                                      meshService.setPostSyncHook(
-                                        cloudSessionSync.syncCycle.handleErrorWith(_ => IO.unit)
-                                      )
-                                      // RemoteExecutor: cloud session sync for relay fallback
-                                      RemoteExecutor.setCloudSessionSync(cloudSessionSync)
-                                      nebflow.core.tools.MeshTool.setCloudSessionSync(cloudSessionSync)
-                                      // Background pollers: fast sync (3s) includes session index + file sync
-                                      cloudSessionSync.startBackgroundPollers(
-                                        sharedResourcesWithDream.dispatcher,
-                                        cloudSessionSync.fastSyncCycle
-                                      )
-                                      // Immediate sync on startup
-                                      sharedResourcesWithDream.dispatcher.unsafeRunAndForget(
-                                        cloudSessionSync.syncCycle.handleErrorWith(_ => IO.unit)
-                                      )
+                                      // Create relay service for cloud relay fallback (NAT traversal)
+                                      val relayService = RelayService(meshService)
+                                      RemoteExecutor.setRelayService(relayService)
+                                      // Start background relay poller (target side — executes commands from other devices)
+                                      relayService.startBackgroundPoller(sharedResourcesWithDream.dispatcher)
 
                                       val sharedResourcesWithBridge =
                                         sharedResourcesWithDream.copy(

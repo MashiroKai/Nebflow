@@ -5,7 +5,7 @@ import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
-import nebflow.mesh.{CloudSessionSync, MeshService, PeerInfo}
+import nebflow.mesh.{MeshService, PeerInfo, RelayService}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -13,7 +13,7 @@ import scala.concurrent.duration.*
 /**
  * Executes tool calls on remote devices via P2P or cloud relay.
  *
- * Extracted from MeshTool — this is the routing engine that makes
+ * This is the routing engine that makes
  * every tool device-aware. When a tool call specifies device="win-build",
  * this executor routes the call to that device.
  *
@@ -82,12 +82,12 @@ class RemoteExecutor(meshService: MeshService):
     params: JsonObject,
     p2pError: ToolError
   ): IO[Either[ToolError, String]] =
-    RemoteExecutor.cloudSessionSyncOpt match
+    RemoteExecutor.relayServiceOpt match
       case None => IO.pure(Left(p2pError))
-      case Some(css) =>
+      case Some(rs) =>
         for
-          relayId <- css
-            .relaySubmit(peer.deviceId, toolName, params.asJson)
+          relayId <- rs
+            .submit(peer.deviceId, toolName, params.asJson)
             .handleErrorWith(e => IO.pure(""))
           result <-
             if relayId.isEmpty then
@@ -95,7 +95,7 @@ class RemoteExecutor(meshService: MeshService):
                 s"P2P failed (${p2pError.message}) and relay submit also failed. Device may be offline."
               )))
             else
-              css.relayFetchResultBlocking(relayId, timeout = 180.seconds).map {
+              rs.fetchResultBlocking(relayId, timeout = 180.seconds).map {
                 case Right(output) => Right(output)
                 case Left(err)     => Left(ToolError(s"Relay error: $err"))
               }
@@ -146,11 +146,11 @@ object RemoteExecutor:
   /** Get the current instance, or None if mesh is not initialized. */
   def current: Option[RemoteExecutor] = instance
 
-  @volatile private var cloudSessionSyncOpt: Option[CloudSessionSync] = None
+  @volatile private var relayServiceOpt: Option[RelayService] = None
 
-  /** Wire CloudSessionSync for relay fallback. */
-  def setCloudSessionSync(css: CloudSessionSync): Unit =
-    cloudSessionSyncOpt = Some(css)
+  /** Wire RelayService for relay fallback. */
+  def setRelayService(rs: RelayService): Unit =
+    relayServiceOpt = Some(rs)
 
   /**
    * Tools that support remote execution. Only these tools get the `device` parameter
