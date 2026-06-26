@@ -137,6 +137,13 @@ export function appendAiText(text) {
 
 export function finishAi(durationMs, model) {
   if (state.currentAiBubble) {
+    // Diagnostic: warn if finishAi is called while streaming is active.
+    // This helps catch any code path that prematurely resets the bubble.
+    const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
+    if (sinceActivity < 15000 && state.aiText) {
+      console.warn('[finishAi] Called during active streaming'
+        + ` (${sinceActivity}ms since last delta, textLen=${state.aiText.length})`);
+    }
     if (!state.aiText || !state.aiText.trim()) {
       const row = state.currentAiBubble.closest('.row');
       if (row) row.remove();
