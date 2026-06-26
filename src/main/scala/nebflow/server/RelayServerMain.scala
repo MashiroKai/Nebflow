@@ -153,48 +153,7 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
           r <- store.registerDevice(userId, deviceId, "Unknown", "", "", caps, desc, "")
         yield r
 
-      // Session Sync
-      case "session/push-index" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessions = hc.downField("sessions").as[Json].getOrElse(Json.arr())
-        val folders = hc.downField("folders").as[Json].getOrElse(Json.arr())
-        for _ <- store.verifySession(userId, sessionToken); r <- store.pushIndex(userId, sessions, folders) yield r
-
-      case "session/pull-index" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.pullIndex(userId) yield r
-
-      case "session/push" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-        val messages = hc.downField("messages").as[Json].getOrElse(Json.arr())
-        val uiMessages = hc.downField("uiMessages").as[Json].getOrElse(Json.arr())
-        val meta = hc.downField("meta").as[Json].getOrElse(Json.obj())
-        for _ <- store.verifySession(userId, sessionToken); r <- store.pushSession(userId, sessionId, messages, uiMessages, meta) yield r
-
-      case "session/pull" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.pullSession(userId, sessionId) yield r
-
-      case "session/delete" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.deleteSession(userId, sessionId) yield r
-
-      case "session/busy" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-        val busy = hc.downField("busy").as[Option[Boolean]].toOption.flatten
-        val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-        val deviceName = hc.downField("deviceName").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.sessionBusy(userId, sessionId, busy, deviceId, deviceName) yield r
+      // Session sync + busy lock — removed (session sync deleted)
 
       // Relay
       case "relay/submit" =>
@@ -238,37 +197,7 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
         val relayId = hc.downField("relayId").as[String].getOrElse("")
         for _ <- store.verifySession(userId, sessionToken); r <- store.relayFetchResult(relayId) yield r
 
-      // File Sync
-      case "file/sync" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val fingerprints = hc.downField("fingerprints").as[Json].getOrElse(Json.obj())
-        for _ <- store.verifySession(userId, sessionToken); r <- store.fileSync(userId, fingerprints) yield r
-
-      case "file/upload" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val path = hc.downField("path").as[String].getOrElse("")
-        val content = hc.downField("content").as[String].getOrElse("")
-        val fingerprint = hc.downField("fingerprint").as[Json].getOrElse(Json.obj())
-        for _ <- store.verifySession(userId, sessionToken); r <- store.fileUpload(userId, path, content, fingerprint) yield r
-
-      case "file/download" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val fileID = hc.downField("fileID").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.fileDownload(userId, fileID) yield r
-
-      // Chunked upload — no-op on self-hosted (no size limit)
-      case "file/upload-chunk" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken) yield Json.obj("ok" -> true.asJson)
-
-      case "file/upload-complete" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken) yield Json.obj("ok" -> true.asJson)
+      // File sync — removed
 
       // Agent status broadcast — pushes to all WebSocket clients of this user
       case "agent/status" =>

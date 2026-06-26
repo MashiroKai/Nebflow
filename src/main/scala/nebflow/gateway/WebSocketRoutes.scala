@@ -739,12 +739,6 @@ class WebSocketRoutes(
                   removeRootAgent(sessionId) *> sessionService
                     .deleteSession(sessionId)
                     .flatMap { _ =>
-                      // Cloud sync: delete from cloud (fire-and-forget)
-                      nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-                        sharedResources.dispatcher.unsafeRunAndForget(
-                          css.deleteFromCloud(sessionId).handleErrorWith(_ => IO.unit)
-                        )
-                      }
                       sendAgentSessionListByName(wsSend, agentName)
                     }
               }
@@ -767,15 +761,7 @@ class WebSocketRoutes(
                       sessionThinkingBuffers.update(_ - sid) *>
                       sessionTurnStarts.update(_ - sid) *>
                       removeRootAgent(sid) *>
-                      sessionService.deleteSession(sid) *>
-                      // Cloud sync: delete from cloud (fire-and-forget)
-                      IO {
-                        nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-                          sharedResources.dispatcher.unsafeRunAndForget(
-                            css.deleteFromCloud(sid).handleErrorWith(_ => IO.unit)
-                          )
-                        }
-                      }
+                      sessionService.deleteSession(sid)
                   }
                   .flatMap { _ =>
                     sendAgentSessionListByName(wsSend, agentName)
@@ -1675,12 +1661,6 @@ class WebSocketRoutes(
                             ).handleErrorWith(_ => IO.unit)
                           ) *> {
                             val blocksList = blocks.toList
-                            // Fire-and-forget: acquire cloud busy lock to signal other devices
-                            nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-                              sharedResources.dispatcher.unsafeRunAndForget(
-                                css.tryAcquireBusy(msgSessionId).handleErrorWith(_ => IO.unit)
-                              )
-                            }
                             routeToAgent(msgSessionId)(ref =>
                               IO(
                                 ref ! AgentCommand
@@ -2014,12 +1994,6 @@ class WebSocketRoutes(
 
       case "done" =>
         val model = hc.downField("model").as[Option[String]].getOrElse(None)
-        // Fire-and-forget: release cloud busy lock — AI response complete
-        nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-          sharedResources.dispatcher.unsafeRunAndForget(
-            css.releaseBusy(sessionId).handleErrorWith(_ => IO.unit)
-          )
-        }
         // Track model for telemetry
         val trackModel = model match
           case Some(m) =>
