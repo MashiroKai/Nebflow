@@ -18,21 +18,27 @@ import java.util.UUID
 enum MeshError(val message: String, val code: String):
   /** The relay server URL has not been configured. Frontend should ask the user to set it. */
   case CloudUrlNotConfigured extends MeshError("服务器地址未配置", "cloud_url_missing")
+
   /** Authentication failed (bad credentials / session). */
   case AuthFailed(msg: String) extends MeshError(msg, "auth_failed")
+
   /** Network-level failure reaching the relay server (timeout, connection refused, DNS). */
   case NetworkError(msg: String) extends MeshError(msg, "network_error")
+
   /** Any other cloud/relay error surfaced as a generic message. */
   case CloudError(msg: String) extends MeshError(msg, "cloud_error")
 
 object MeshError:
+
   /** Map a raw exception thrown during a cloud call onto a structured MeshError. */
   def fromThrowable(e: Throwable): MeshError =
     val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
     msg match
-      case m if m.startsWith("Cloud URL not configured")     => CloudUrlNotConfigured
-      case m if m.contains("Invalid username or password") ||
-                 m.contains("Auth error") || m.contains("Session") => AuthFailed(m)
+      case m if m.startsWith("Cloud URL not configured") => CloudUrlNotConfigured
+      case m
+          if m.contains("Invalid username or password") ||
+            m.contains("Auth error") || m.contains("Session") =>
+        AuthFailed(m)
       case m if m.contains("Cloud API") || m.contains("Cloud error") =>
         CloudError(extractInner(m))
       case _ => NetworkError(msg)
@@ -208,6 +214,7 @@ case class PeerInfo(
 
 object PeerInfo:
   given Encoder[PeerInfo] = deriveEncoder
+
   given Decoder[PeerInfo] = Decoder.instance { c =>
     for
       deviceId <- c.downField("deviceId").as[String]
@@ -226,7 +233,7 @@ object PeerInfo:
 case class MeshConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  cloudUrl: Option[String] = None  // Self-hosted server URL, configured by user
+  cloudUrl: Option[String] = None // Self-hosted server URL, configured by user
 )
 
 object MeshConfig:
