@@ -53,7 +53,7 @@ class RemoteExecutor(meshService: MeshService):
         val body = io.circe.Json.obj("action" -> toolName.asJson, "params" -> params.asJson)
         val resp = basicRequest
           .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/remote-exec"))
-          .auth.bearer(token)
+          .header("X-Peer-Token", token)
           .contentType("application/json")
           .body(body.noSpaces)
           .readTimeout(60.seconds)
