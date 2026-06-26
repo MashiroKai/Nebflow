@@ -47,6 +47,10 @@ export default {
   currentAiBubble: null,
   aiText: '',
 
+  // Timestamp of the last textDelta/thinkingDelta received (ms).
+  // Used to guard against stale sessionBusy(false) resetting an active stream.
+  lastStreamActivity: 0,
+
   // Multi-agent
   activeAgentId: null,
   agentBubbles: {},
