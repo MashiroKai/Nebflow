@@ -2,8 +2,8 @@ package nebflow.mesh
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.{Decoder, Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Decoder, Json, JsonObject}
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 
@@ -46,17 +46,18 @@ class RelayService private (meshService: MeshService):
   def submitAndWait(toDeviceId: String, action: String, params: JsonObject): IO[Either[String, String]] =
     for
       id <- meshService.identity
-      relayId <- meshService.callCloudFunction(
-        "relay/submit",
-        "fromDeviceId" -> id.deviceId.asJson,
-        "toDeviceId" -> toDeviceId.asJson,
-        "relayAction" -> action.asJson,
-        "params" -> params.asJson
-      ).map(_.hcursor.downField("relayId").as[String].getOrElse(""))
+      relayId <- meshService
+        .callCloudFunction(
+          "relay/submit",
+          "fromDeviceId" -> id.deviceId.asJson,
+          "toDeviceId" -> toDeviceId.asJson,
+          "relayAction" -> action.asJson,
+          "params" -> params.asJson
+        )
+        .map(_.hcursor.downField("relayId").as[String].getOrElse(""))
         .handleErrorWith(_ => IO.pure(""))
       result <-
-        if relayId.isEmpty then
-          IO.pure(Left("Relay submit failed. Device may be offline or relay unreachable."))
+        if relayId.isEmpty then IO.pure(Left("Relay submit failed. Device may be offline or relay unreachable."))
         else awaitResult(relayId)
     yield result
 
@@ -68,7 +69,8 @@ class RelayService private (meshService: MeshService):
           case Some(deferred) =>
             // Real-time path: wait for the WS push, with a generous timeout, then clean up.
             // On timeout (WS dropped mid-flight), fall back to HTTP polling.
-            deferred.get.timeoutTo(60.seconds, fallbackPoll(relayId))
+            deferred.get
+              .timeoutTo(60.seconds, fallbackPoll(relayId))
               .guarantee(IO(client.removeWaiter(relayId)))
           case None => fallbackPoll(relayId)
         }
@@ -157,7 +159,7 @@ class RelayService private (meshService: MeshService):
           result <- tool.call(params, ctx)
           _ <- result match
             case Right(output) => submitResult(cmd.relayId, output, None)
-            case Left(err)     => submitResult(cmd.relayId, "", Some(err.message))
+            case Left(err) => submitResult(cmd.relayId, "", Some(err.message))
         yield ()
       case None =>
         submitResult(cmd.relayId, "", Some(s"Unknown tool: ${cmd.action}"))
@@ -183,10 +185,12 @@ class RelayService private (meshService: MeshService):
           val ctx = ToolContext(projectRoot = System.getProperty("user.dir", "."))
           tool.call(params, ctx).flatMap {
             case Right(output) => submitResult(relayId, output, None)
-            case Left(err)     => submitResult(relayId, "", Some(err.message))
+            case Left(err) => submitResult(relayId, "", Some(err.message))
           }
         case None => submitResult(relayId, "", Some(s"Unknown tool: $action"))
     yield ()
+    end for
+  end executeRelayCommand
 
   // ===== Background loop (fallback) =====
 
@@ -223,16 +227,18 @@ end RelayService
 case class RelayCommand(relayId: String, fromDeviceId: String, action: String, params: Json)
 
 object RelayCommand:
+
   given Decoder[RelayCommand] = Decoder.instance { c =>
     for
-      relayId     <- c.downField("relayId").as[String]
+      relayId <- c.downField("relayId").as[String]
       fromDeviceId <- c.downField("fromDeviceId").as[String]
-      action      <- c.downField("action").as[String]
-      params      <- c.downField("params").as[Json]
+      action <- c.downField("action").as[String]
+      params <- c.downField("params").as[Json]
     yield RelayCommand(relayId, fromDeviceId, action, params)
   }
 
 object RelayService:
+
   /** Create a RelayService. */
   def apply(meshService: MeshService): RelayService =
     new RelayService(meshService)

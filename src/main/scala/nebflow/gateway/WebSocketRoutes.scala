@@ -1058,8 +1058,7 @@ class WebSocketRoutes(
             val ensureJarvis = sessionStore.ensureAgentSession("Jarvis").void
             // Return ALL sessions and folders (unified list)
             ensureJarvis *>
-            (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN {
-              (sessions, folders) =>
+              (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "agentSessionList".asJson,
@@ -1068,8 +1067,9 @@ class WebSocketRoutes(
                     "folders" -> folders.asJson
                   )
                 )
-            }
+              }
           else IO.unit
+          end if
 
         // ===== Folder Management =====
 

@@ -2,8 +2,8 @@ package nebflow.server
 
 import cats.effect.{IO, Ref}
 import fs2.concurrent.Topic
-import io.circe.syntax.given
 import io.circe.Json
+import io.circe.syntax.given
 import nebflow.core.NebflowLogger
 
 /**
@@ -38,9 +38,12 @@ class WebSocketManager private (
    * queue and will be picked up by HTTP polling.
    */
   def pushRelayCommand(
-    userId: String, toDeviceId: String,
-    relayId: String, fromDeviceId: String,
-    action: String, params: Json
+    userId: String,
+    toDeviceId: String,
+    relayId: String,
+    fromDeviceId: String,
+    action: String,
+    params: Json
   ): IO[Unit] =
     val key = (userId, toDeviceId)
     connectionsRef.get.flatMap { m =>
@@ -57,6 +60,8 @@ class WebSocketManager private (
         case None =>
           IO.unit
     }
+
+  end pushRelayCommand
 
   /**
    * Push relay result back to the originator's devices via WebSocket.
@@ -88,6 +93,8 @@ class WebSocketManager private (
 end WebSocketManager
 
 object WebSocketManager:
+
   def create: IO[WebSocketManager] =
-    Ref.of[IO, Map[(String, String), Topic[IO, String]]](Map.empty)
+    Ref
+      .of[IO, Map[(String, String), Topic[IO, String]]](Map.empty)
       .map(new WebSocketManager(_))

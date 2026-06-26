@@ -55,11 +55,13 @@ class MeshService private (
   // with MeshRelayClient, which itself depends on this MeshService). Each hook is an IO.
   private val loginHooks: Ref[IO, List[IO[Unit]]] =
     Ref.unsafe[IO, List[IO[Unit]]](Nil)
+
   private val logoutHooks: Ref[IO, List[IO[Unit]]] =
     Ref.unsafe[IO, List[IO[Unit]]](Nil)
 
   /** Register a side effect to run after a successful login (e.g. connect the WS relay client). */
   def addLoginHook(hook: IO[Unit]): IO[Unit] = loginHooks.update(_ :+ hook)
+
   /** Register a side effect to run on logout (e.g. disconnect the WS relay client). */
   def addLogoutHook(hook: IO[Unit]): IO[Unit] = logoutHooks.update(_ :+ hook)
 
@@ -166,7 +168,9 @@ class MeshService private (
    * prompt the user to configure the server URL).
    */
   private def registerOrLogin(
-    username: String, password: String, register: Boolean
+    username: String,
+    password: String,
+    register: Boolean
   ): IO[Either[MeshError, AccountInfo]] =
     val action = if register then "auth/register" else "auth/login"
     val flow: IO[AccountInfo] = for
@@ -190,7 +194,7 @@ class MeshService private (
 
     flow.attempt.map {
       case Right(acc) => Right(acc)
-      case Left(err)  => Left(MeshError.fromThrowable(err))
+      case Left(err) => Left(MeshError.fromThrowable(err))
     }
   end registerOrLogin
 
@@ -204,9 +208,9 @@ class MeshService private (
       _ <- configRef.get.flatMap(cfg => MeshConfig.save(cfg))
       _ = _syncActorRef ! SyncCommand.StopSync
       // Run logout hooks (e.g. disconnect the WS relay client) before we finish.
-      _ <- logoutHooks.get.flatMap(_.sequence_.handleErrorWith(e =>
-        logger.debug(s"Logout hook failed: ${e.getMessage}")
-      ))
+      _ <- logoutHooks.get.flatMap(
+        _.sequence_.handleErrorWith(e => logger.debug(s"Logout hook failed: ${e.getMessage}"))
+      )
       _ <- logger.info("Logged out of Mesh")
     yield ()
 
@@ -260,9 +264,7 @@ class MeshService private (
       // right at login, instead of waiting for the first periodic tick.
       _ <- cloudDiscover.handleErrorWith(e => logger.debug(s"Initial discovery: ${e.getMessage}"))
       // Run login hooks (e.g. connect the WS relay client for real-time tool delivery).
-      _ <- loginHooks.get.flatMap(_.sequence_.handleErrorWith(e =>
-        logger.debug(s"Login hook failed: ${e.getMessage}")
-      ))
+      _ <- loginHooks.get.flatMap(_.sequence_.handleErrorWith(e => logger.debug(s"Login hook failed: ${e.getMessage}")))
       _ <- logger.info(s"Started discovery for userId=${uid.take(8)}...")
     yield ()
 

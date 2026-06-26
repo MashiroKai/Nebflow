@@ -1,7 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.IO
-import cats.effect.Deferred
+import cats.effect.{Deferred, IO}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.*
