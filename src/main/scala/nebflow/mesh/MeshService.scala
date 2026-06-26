@@ -51,6 +51,18 @@ class MeshService private (
 ):
   private val logger = NebflowLogger.forName("nebflow.mesh")
 
+  // Lifecycle hooks — wired by GatewayMain after construction (avoids a constructor cycle
+  // with MeshRelayClient, which itself depends on this MeshService). Each hook is an IO.
+  private val loginHooks: Ref[IO, List[IO[Unit]]] =
+    Ref.unsafe[IO, List[IO[Unit]]](Nil)
+  private val logoutHooks: Ref[IO, List[IO[Unit]]] =
+    Ref.unsafe[IO, List[IO[Unit]]](Nil)
+
+  /** Register a side effect to run after a successful login (e.g. connect the WS relay client). */
+  def addLoginHook(hook: IO[Unit]): IO[Unit] = loginHooks.update(_ :+ hook)
+  /** Register a side effect to run on logout (e.g. disconnect the WS relay client). */
+  def addLogoutHook(hook: IO[Unit]): IO[Unit] = logoutHooks.update(_ :+ hook)
+
   // ===== Identity =====
 
   def identity: IO[DeviceIdentity] = identityRef.get
@@ -141,34 +153,30 @@ class MeshService private (
       }
 
   /** Register a new Nebflow account via cloud function. */
-  def register(username: String, password: String): IO[AccountInfo] =
-    for
-      _ <- validateUsername(username)
-      _ <- validatePassword(password)
-      cloudUrl <- getCloudUrl
-      resp <- callCloud(
-        cloudUrl,
-        Json.obj(
-          "action" -> "auth/register".asJson,
-          "username" -> username.asJson,
-          "password" -> password.asJson
-        )
-      )
-      acc <- parseAccountResponse(resp, username)
-      _ <- AccountInfo.save(acc)
-      _ <- accountRef.set(Some(acc))
-      _ <- startDiscovery(acc.userId)
-      _ <- logger.info(s"Registered and logged in as $username")
-    yield acc
+  def register(username: String, password: String): IO[Either[MeshError, AccountInfo]] =
+    registerOrLogin(username, password, register = true)
 
   /** Login to an existing Nebflow account via cloud function. */
-  def login(username: String, password: String): IO[AccountInfo] =
-    for
+  def login(username: String, password: String): IO[Either[MeshError, AccountInfo]] =
+    registerOrLogin(username, password, register = false)
+
+  /**
+   * Shared login/register flow. Returns a structured MeshError instead of throwing,
+   * so the gateway can map it to a precise HTTP response (e.g. CloudUrlNotConfigured →
+   * prompt the user to configure the server URL).
+   */
+  private def registerOrLogin(
+    username: String, password: String, register: Boolean
+  ): IO[Either[MeshError, AccountInfo]] =
+    val action = if register then "auth/register" else "auth/login"
+    val flow: IO[AccountInfo] = for
+      _ <- if register then validateUsername(username) else IO.unit
+      _ <- if register then validatePassword(password) else IO.unit
       cloudUrl <- getCloudUrl
       resp <- callCloud(
         cloudUrl,
         Json.obj(
-          "action" -> "auth/login".asJson,
+          "action" -> action.asJson,
           "username" -> username.asJson,
           "password" -> password.asJson
         )
@@ -177,8 +185,14 @@ class MeshService private (
       _ <- AccountInfo.save(acc)
       _ <- accountRef.set(Some(acc))
       _ <- startDiscovery(acc.userId)
-      _ <- logger.info(s"Logged in as $username")
+      _ <- logger.info(s"${if register then "Registered" else "Logged in"} as $username")
     yield acc
+
+    flow.attempt.map {
+      case Right(acc) => Right(acc)
+      case Left(err)  => Left(MeshError.fromThrowable(err))
+    }
+  end registerOrLogin
 
   /** Logout — clear account, stop sync, clear peers. Preserves cloudUrl so re-login is seamless. */
   def logout: IO[Unit] =
@@ -189,6 +203,10 @@ class MeshService private (
       _ <- configRef.update(cfg => cfg.copy(enabled = false))
       _ <- configRef.get.flatMap(cfg => MeshConfig.save(cfg))
       _ = _syncActorRef ! SyncCommand.StopSync
+      // Run logout hooks (e.g. disconnect the WS relay client) before we finish.
+      _ <- logoutHooks.get.flatMap(_.sequence_.handleErrorWith(e =>
+        logger.debug(s"Logout hook failed: ${e.getMessage}")
+      ))
       _ <- logger.info("Logged out of Mesh")
     yield ()
 
@@ -232,9 +250,19 @@ class MeshService private (
 
   private def startDiscovery(uid: String): IO[Unit] =
     for
+      // Enable discovery AND persist the *actual* config (preserves cloudUrl/syncIntervalSec).
+      // Previously this wrote MeshConfig(enabled=true) — a blank default that wiped cloudUrl,
+      // silently breaking discovery after a restart.
       _ <- configRef.update(_.copy(enabled = true))
-      _ <- MeshConfig.save(MeshConfig(enabled = true))
+      _ <- configRef.get.flatMap(MeshConfig.save)
       _ = _syncActorRef ! SyncCommand.StartSync
+      // Fire one immediate discovery so this device registers itself and learns its peers
+      // right at login, instead of waiting for the first periodic tick.
+      _ <- cloudDiscover.handleErrorWith(e => logger.debug(s"Initial discovery: ${e.getMessage}"))
+      // Run login hooks (e.g. connect the WS relay client for real-time tool delivery).
+      _ <- loginHooks.get.flatMap(_.sequence_.handleErrorWith(e =>
+        logger.debug(s"Login hook failed: ${e.getMessage}")
+      ))
       _ <- logger.info(s"Started discovery for userId=${uid.take(8)}...")
     yield ()
 
@@ -442,8 +470,6 @@ end MeshService
 object MeshService:
   private val logger = NebflowLogger.forName("nebflow.mesh")
 
-  private val SyncInterval = 5.minutes
-
   def create(
     serverPort: Int = 8080,
     actorSystem: ActorSystem[?],
@@ -504,11 +530,16 @@ object MeshService:
     Behaviors.receiveMessage {
       case SyncCommand.StartSync =>
         doSync(serviceBox, dispatcher)
-        timers.startSingleTimer(SyncCommand.SyncTick, SyncInterval)
+        scheduleNextTick(timers, serviceBox)
         running(timers, serviceBox, dispatcher)
       case SyncCommand.StopSync => Behaviors.same
       case SyncCommand.SyncTick => Behaviors.same
-      case SyncCommand.PeerDiscovered => Behaviors.same
+      // Activate the dormant fast-path: a peer joined (signaled via WS peer-joined push).
+      // Discover immediately even before we've entered the running state, so newly-logged-in
+      // peers become visible in seconds rather than after the first periodic tick.
+      case SyncCommand.PeerDiscovered =>
+        doSync(serviceBox, dispatcher)
+        Behaviors.same
     }
 
   private def running(
@@ -519,7 +550,7 @@ object MeshService:
     Behaviors.receiveMessage {
       case SyncCommand.SyncTick =>
         doSync(serviceBox, dispatcher)
-        timers.startSingleTimer(SyncCommand.SyncTick, SyncInterval)
+        scheduleNextTick(timers, serviceBox)
         Behaviors.same
       case SyncCommand.StopSync =>
         timers.cancelAll()
@@ -529,6 +560,19 @@ object MeshService:
         doSync(serviceBox, dispatcher)
         Behaviors.same
     }
+
+  private def scheduleNextTick(
+    timers: org.apache.pekko.actor.typed.scaladsl.TimerScheduler[SyncCommand],
+    serviceBox: AtomicServiceBox
+  ): Unit =
+    // Read the configured interval instead of a hardcoded constant, so PATCH /mesh/config
+    // (syncIntervalSec) actually takes effect. Pure in-memory Ref read — safe to run inline.
+    val secs =
+      try
+        import cats.effect.unsafe.implicits.global
+        serviceBox.get.meshConfig.unsafeRunSync().syncIntervalSec.max(10)
+      catch case _: Exception => 300
+    timers.startSingleTimer(SyncCommand.SyncTick, secs.seconds)
 
   private def doSync(serviceBox: AtomicServiceBox, dispatcher: Dispatcher[IO]): Unit =
     val service = serviceBox.get

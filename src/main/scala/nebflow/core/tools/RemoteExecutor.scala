@@ -85,21 +85,12 @@ class RemoteExecutor(meshService: MeshService):
     RemoteExecutor.relayServiceOpt match
       case None => IO.pure(Left(p2pError))
       case Some(rs) =>
-        for
-          relayId <- rs
-            .submit(peer.deviceId, toolName, params.asJson)
-            .handleErrorWith(e => IO.pure(""))
-          result <-
-            if relayId.isEmpty then
-              IO.pure(Left(ToolError(
-                s"P2P failed (${p2pError.message}) and relay submit also failed. Device may be offline."
-              )))
-            else
-              rs.fetchResultBlocking(relayId, timeout = 180.seconds).map {
-                case Right(output) => Right(output)
-                case Left(err)     => Left(ToolError(s"Relay error: $err"))
-              }
-        yield result
+        rs.submitAndWait(peer.deviceId, toolName, params).map {
+          case Right(output) => Right(output)
+          case Left(err) =>
+            Left(ToolError(s"P2P failed (${p2pError.message}); relay: $err"))
+        }
+
 
   // ---- Helpers ----
 

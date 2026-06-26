@@ -118,18 +118,36 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
       case "discover/register" =>
         val userId = hc.downField("userId").as[String].getOrElse("")
         val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
+        val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+        val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
+        val platform = hc.downField("platform").as[String].getOrElse("")
+        val address = hc.downField("address").as[String].getOrElse("")
+        val caps = hc.downField("capabilities").as[Map[String, String]].getOrElse(Map.empty)
+        val userDesc = hc.downField("userDescription").as[String].getOrElse("")
+        val deviceSecret = hc.downField("deviceSecret").as[String].getOrElse("")
         for
           _ <- store.verifySession(userId, sessionToken)
           r <- store.registerDevice(
-            userId,
-            hc.downField("deviceId").as[String].getOrElse(""),
-            hc.downField("deviceName").as[String].getOrElse("Unknown"),
-            hc.downField("platform").as[String].getOrElse(""),
-            hc.downField("address").as[String].getOrElse(""),
-            hc.downField("capabilities").as[Map[String, String]].getOrElse(Map.empty),
-            hc.downField("userDescription").as[String].getOrElse(""),
-            hc.downField("deviceSecret").as[String].getOrElse("")
+            userId, deviceId, deviceName, platform, address, caps, userDesc, deviceSecret
           )
+          // Notify this account's other already-connected devices that a new peer joined,
+          // so they can re-run discovery immediately (seconds) instead of waiting for the
+          // next periodic tick. Best-effort: ignored if no WS clients connected.
+          _ <- wsManager.broadcastToUser(
+            userId,
+            Json.obj(
+              "type" -> "peer-joined".asJson,
+              "device" -> Json.obj(
+                "deviceId" -> deviceId.asJson,
+                "deviceName" -> deviceName.asJson,
+                "platform" -> platform.asJson,
+                "address" -> address.asJson,
+                "capabilities" -> caps.asJson,
+                "userDescription" -> userDesc.asJson,
+                "deviceSecret" -> deviceSecret.asJson
+              )
+            )
+          ).handleErrorWith(_ => IO.unit)
         yield r
 
       case "discover/lookup" =>
