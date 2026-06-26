@@ -11,13 +11,9 @@ import { renderTaskList } from './taskList.js';
 import { chatViews } from './chatView.js';
 
 // ── Slash command data (simplified) ───────────────────────────────────
-const BUILT_IN_SLASH = [
-  { cmd: '/clear',   desc: 'Clear conversation history' },
-  { cmd: '/compact', desc: 'Compact conversation context' },
-  { cmd: '/model',   desc: 'Switch AI model' },
-  { cmd: '/bypass',  desc: 'Toggle bypass-all-permission mode' },
-];
-
+// Built-in commands are inlined in getSecondarySlashCommands() so descriptions
+// are resolved through i18n on each open (parity with the primary window's
+// slashCommands which use t('slash.*')). Skills are appended dynamically.
 let secSlashMatches = [];
 let secSlashSelected = 0;
 let secComposing = false;
@@ -374,7 +370,16 @@ function updateSecondarySendBtn() {
 // ── Slash dropdown (simplified autocomplete) ──────────────────────────
 
 function getSecondarySlashCommands() {
-  const cmds = [...BUILT_IN_SLASH];
+  // Built-in commands mirror the primary window's slashCommands object — same
+  // set (including /ask) and same i18n descriptions. Resolved here so locale
+  // switches are reflected without reloading.
+  const cmds = [
+    { cmd: '/clear',   desc: t('slash.clear') },
+    { cmd: '/compact', desc: t('slash.compact') },
+    { cmd: '/ask',     desc: t('slash.ask') },
+    { cmd: '/model',   desc: t('slash.model') },
+    { cmd: '/bypass',  desc: t('slash.bypass') },
+  ];
   if (state.skills) {
     state.skills.forEach(skill => {
       cmds.push({
