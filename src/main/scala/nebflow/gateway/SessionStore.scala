@@ -72,7 +72,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private val uiCacheRef: Ref[IO, Map[String, List[UiMessage]]] =
     Ref.unsafe[IO, Map[String, List[UiMessage]]](Map.empty)
 
-  /** Optional hook — called with sessionId after any session data change. Used by CloudSessionSync for push. */
+  /** Optional hook — called with sessionId after any session data change. */
   private var sessionChangedHook: Option[String => IO[Unit]] = None
 
   /** Register a callback invoked after session data changes (messages saved, session created/deleted). */
