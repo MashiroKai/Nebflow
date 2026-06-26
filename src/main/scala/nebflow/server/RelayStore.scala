@@ -1,10 +1,10 @@
 package nebflow.server
 
 import cats.effect.{IO, Ref}
-import io.circe.syntax.*
-import io.circe.parser.decode
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.generic.semiauto.*
+import io.circe.parser.decode
+import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.NebflowLogger
 
 import java.security.SecureRandom
@@ -15,11 +15,13 @@ import javax.crypto.spec.PBEKeySpec
 // ===== Data Models =====
 
 case class UserRecord(userId: String, username: String, passwordHash: String, createdAt: Long)
+
 object UserRecord:
   given Encoder[UserRecord] = deriveEncoder
   given Decoder[UserRecord] = deriveDecoder
 
 case class SessionRecord(userId: String, sessionToken: String, createdAt: Long, expiresAt: Long)
+
 object SessionRecord:
   given Encoder[SessionRecord] = deriveEncoder
   given Decoder[SessionRecord] = deriveDecoder
@@ -35,6 +37,7 @@ case class DeviceRecord(
   updatedAt: Long = 0,
   expiresAt: Long = 0
 )
+
 object DeviceRecord:
   given Encoder[DeviceRecord] = deriveEncoder
   given Decoder[DeviceRecord] = deriveDecoder
@@ -52,6 +55,7 @@ case class RelayRecord(
   createdAt: Long = 0,
   expiresAt: Long = 0
 )
+
 object RelayRecord:
   given Encoder[RelayRecord] = deriveEncoder
   given Decoder[RelayRecord] = deriveDecoder
@@ -63,15 +67,15 @@ object RelayRecord:
  */
 class RelayStore private (
   dataDir: os.Path,
-  usersRef: Ref[IO, Map[String, UserRecord]],        // username → UserRecord
-  sessionsRef: Ref[IO, Map[String, SessionRecord]],   // sessionToken → SessionRecord
+  usersRef: Ref[IO, Map[String, UserRecord]], // username → UserRecord
+  sessionsRef: Ref[IO, Map[String, SessionRecord]], // sessionToken → SessionRecord
   devicesRef: Ref[IO, Map[String, List[DeviceRecord]]], // userId → devices
-  relayRef: Ref[IO, List[RelayRecord]]                // all pending/running relay commands
+  relayRef: Ref[IO, List[RelayRecord]] // all pending/running relay commands
 ):
   private val logger = NebflowLogger.forName("nebflow.server.store")
 
-  private val SessionTtl = 30L * 24 * 60 * 60 * 1000  // 30 days
-  private val RelayTtl = 30L * 60 * 1000               // 30 minutes
+  private val SessionTtl = 30L * 24 * 60 * 60 * 1000 // 30 days
+  private val RelayTtl = 30L * 60 * 1000 // 30 minutes
 
   // ===== Auth =====
 
@@ -126,11 +130,27 @@ class RelayStore private (
   // ===== Discovery =====
 
   def registerDevice(
-    userId: String, deviceId: String, deviceName: String, platform: String,
-    address: String, capabilities: Map[String, String], userDescription: String, deviceSecret: String
+    userId: String,
+    deviceId: String,
+    deviceName: String,
+    platform: String,
+    address: String,
+    capabilities: Map[String, String],
+    userDescription: String,
+    deviceSecret: String
   ): IO[Json] =
     val now = System.currentTimeMillis()
-    val record = DeviceRecord(deviceId, deviceName, platform, address, capabilities, userDescription, deviceSecret, now, now + 7 * 24 * 60 * 60 * 1000L)
+    val record = DeviceRecord(
+      deviceId,
+      deviceName,
+      platform,
+      address,
+      capabilities,
+      userDescription,
+      deviceSecret,
+      now,
+      now + 7 * 24 * 60 * 60 * 1000L
+    )
     for
       _ <- devicesRef.update { m =>
         val list = m.getOrElse(userId, Nil)
@@ -140,6 +160,8 @@ class RelayStore private (
       _ <- persistDevices(userId)
     yield Json.obj("ok" -> true.asJson)
 
+  end registerDevice
+
   def lookupDevices(userId: String, excludeDeviceId: Option[String]): IO[Json] =
     for
       devices <- devicesRef.get
@@ -148,15 +170,17 @@ class RelayStore private (
       filtered = excludeDeviceId match
         case Some(id) => list.filterNot(_.deviceId == id)
         case None => list
-      peers = filtered.map(d => Json.obj(
-        "deviceId" -> d.deviceId.asJson,
-        "deviceName" -> d.deviceName.asJson,
-        "platform" -> d.platform.asJson,
-        "address" -> d.address.asJson,
-        "capabilities" -> d.capabilities.asJson,
-        "userDescription" -> d.userDescription.asJson,
-        "deviceSecret" -> d.deviceSecret.asJson
-      ))
+      peers = filtered.map(d =>
+        Json.obj(
+          "deviceId" -> d.deviceId.asJson,
+          "deviceName" -> d.deviceName.asJson,
+          "platform" -> d.platform.asJson,
+          "address" -> d.address.asJson,
+          "capabilities" -> d.capabilities.asJson,
+          "userDescription" -> d.userDescription.asJson,
+          "deviceSecret" -> d.deviceSecret.asJson
+        )
+      )
     yield Json.obj("peers" -> peers.asJson)
 
   // ===== Relay =====
@@ -164,36 +188,57 @@ class RelayStore private (
   def relaySubmit(userId: String, fromDeviceId: String, toDeviceId: String, action: String, params: Json): IO[Json] =
     val now = System.currentTimeMillis()
     val relayId = java.util.UUID.randomUUID().toString
-    val record = RelayRecord(relayId, userId, fromDeviceId, toDeviceId, action, params, "pending", createdAt = now, expiresAt = now + RelayTtl)
+    val record = RelayRecord(
+      relayId,
+      userId,
+      fromDeviceId,
+      toDeviceId,
+      action,
+      params,
+      "pending",
+      createdAt = now,
+      expiresAt = now + RelayTtl
+    )
     for
       _ <- relayRef.update(_ :+ record)
       _ <- persistRelay()
     yield Json.obj("relayId" -> relayId.asJson)
 
+  end relaySubmit
+
   def relayPoll(userId: String, deviceId: String): IO[Json] =
     val now = System.currentTimeMillis()
     for
       all <- relayRef.get
-      pending = all.filter(r => r.userId == userId && r.toDeviceId == deviceId && r.status == "pending" && r.expiresAt > now)
+      pending = all.filter(r =>
+        r.userId == userId && r.toDeviceId == deviceId && r.status == "pending" && r.expiresAt > now
+      )
       _ <- relayRef.update { list =>
         list.map { r =>
           if pending.exists(_.relayId == r.relayId) then r.copy(status = "running") else r
         }
       }
       _ <- persistRelay()
-      commands = pending.map(c => Json.obj(
-        "relayId" -> c.relayId.asJson,
-        "fromDeviceId" -> c.fromDeviceId.asJson,
-        "action" -> c.action.asJson,
-        "params" -> c.params
-      ))
+      commands = pending.map(c =>
+        Json.obj(
+          "relayId" -> c.relayId.asJson,
+          "fromDeviceId" -> c.fromDeviceId.asJson,
+          "action" -> c.action.asJson,
+          "params" -> c.params
+        )
+      )
     yield Json.obj("commands" -> commands.asJson)
+
+    end for
+
+  end relayPoll
 
   def relayResult(relayId: String, result: String, error: String): IO[Json] =
     for
       _ <- relayRef.update { list =>
         list.map { r =>
-          if r.relayId == relayId then r.copy(status = if error.nonEmpty then "error" else "done", result = result, error = error)
+          if r.relayId == relayId then
+            r.copy(status = if error.nonEmpty then "error" else "done", result = result, error = error)
           else r
         }
       }
@@ -280,6 +325,7 @@ class RelayStore private (
 end RelayStore
 
 object RelayStore:
+
   def create(dataDir: os.Path): IO[RelayStore] =
     for
       users <- loadMap[UserRecord](dataDir / "users.json", keyFrom = _.username)
@@ -294,26 +340,27 @@ object RelayStore:
 
   private def loadMap[T: Decoder](path: os.Path, keyFrom: T => String): IO[Map[String, T]] =
     IO.blocking {
-      if os.exists(path) then
-        decode[Map[String, T]](os.read(path)).getOrElse(Map.empty)
+      if os.exists(path) then decode[Map[String, T]](os.read(path)).getOrElse(Map.empty)
       else Map.empty
     }
 
   private def loadList[T: Decoder](path: os.Path): IO[List[T]] =
     IO.blocking {
-      if os.exists(path) then
-        decode[List[T]](os.read(path)).getOrElse(Nil)
+      if os.exists(path) then decode[List[T]](os.read(path)).getOrElse(Nil)
       else Nil
     }
 
   private def loadAllDevices(dir: os.Path): IO[Map[String, List[DeviceRecord]]] =
     IO.blocking {
       if os.exists(dir) then
-        os.list(dir).filter(_.last.endsWith(".json")).map { f =>
-          val userId = f.last.stripSuffix(".json")
-          val devices = decode[List[DeviceRecord]](os.read(f)).getOrElse(Nil)
-          userId -> devices
-        }.toMap
+        os.list(dir)
+          .filter(_.last.endsWith(".json"))
+          .map { f =>
+            val userId = f.last.stripSuffix(".json")
+            val devices = decode[List[DeviceRecord]](os.read(f)).getOrElse(Nil)
+            userId -> devices
+          }
+          .toMap
       else Map.empty
     }.handleError(_ => Map.empty)
 

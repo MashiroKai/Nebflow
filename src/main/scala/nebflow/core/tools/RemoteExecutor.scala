@@ -91,7 +91,6 @@ class RemoteExecutor(meshService: MeshService):
             Left(ToolError(s"P2P failed (${p2pError.message}); relay: $err"))
         }
 
-
   // ---- Helpers ----
 
   private def resolvePeer(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
@@ -103,10 +102,12 @@ class RemoteExecutor(meshService: MeshService):
       case Some(p) => Right(p)
       case None =>
         val available = peers.map(_.deviceName)
-        Left(ToolError(
-          if peers.isEmpty then s"No peer devices found."
-          else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
-        ))
+        Left(
+          ToolError(
+            if peers.isEmpty then s"No peer devices found."
+            else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
+          )
+        )
 
   private def checkReachable(address: String): IO[Either[ToolError, Unit]] =
     IO.blocking {
@@ -159,10 +160,13 @@ object RemoteExecutor:
       val props = schema("properties")
         .flatMap(_.asObject)
         .getOrElse(JsonObject.empty)
-      props.add("device", io.circe.Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted.".asJson
-      )) match
+      props.add(
+        "device",
+        io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted.".asJson
+        )
+      ) match
         case newProps =>
           schema.add("properties", newProps.asJson)
 

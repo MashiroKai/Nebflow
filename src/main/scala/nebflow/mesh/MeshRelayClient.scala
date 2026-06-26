@@ -2,14 +2,15 @@ package nebflow.mesh
 
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO}
-import io.circe.parser.decode
 import io.circe.Json
+import io.circe.parser.decode
 import nebflow.core.NebflowLogger
 
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
-import java.util.concurrent.{CompletionStage, ConcurrentHashMap}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
+import java.util.concurrent.{CompletionStage, ConcurrentHashMap}
+
 import scala.concurrent.duration.*
 
 /**
@@ -72,7 +73,7 @@ final class MeshRelayClient(
   /** Connect (or reconnect) to the relay server's /ws. Idempotent; safe to call repeatedly. */
   def connect(): IO[Unit] =
     isConnected.flatMap {
-      case true  => IO.unit
+      case true => IO.unit
       case false => doConnect()
     }
 
@@ -95,7 +96,8 @@ final class MeshRelayClient(
             try
               val client = HttpClient.newHttpClient()
               val listener = new RelayWsListener(this)
-              val socket = client.newWebSocketBuilder()
+              val socket = client
+                .newWebSocketBuilder()
                 .buildAsync(URI.create(wsUri), listener)
                 .get() // throws on failure → caught below
               wsRef.set(socket)
@@ -106,10 +108,13 @@ final class MeshRelayClient(
                 logger.debug(s"WS connect failed: ${e.getMessage} — will retry")
                 scheduleReconnect()
             finally connecting.set(false)
+            end try
+        end match
       catch
         case e: Exception =>
           connecting.set(false)
           logger.debug(s"doConnect error: ${e.getMessage}")
+      end try
   }
 
   /** Disconnect and stop the reconnect loop. Called on logout. */
@@ -117,15 +122,16 @@ final class MeshRelayClient(
     alive.set(false)
     val ws = wsRef.getAndSet(null)
     if ws != null then
-      try ws.sendClose(WebSocket.NORMAL_CLOSURE, "logout") catch case _: Exception => ()
+      try ws.sendClose(WebSocket.NORMAL_CLOSURE, "logout")
+      catch
+        case _: Exception => ()
     // Fail all pending waiters immediately so callers fall back to HTTP polling
     // instead of blocking until their 60s Deferred timeout elapses.
     val snapshot = new java.util.ArrayList[String]()
     waiters.keySet().forEach(snapshot.add)
     snapshot.forEach { relayId =>
       val w = waiters.remove(relayId)
-      if w != null then
-        dispatcher.unsafeRunAndForget(w.complete(Left("WS disconnected")))
+      if w != null then dispatcher.unsafeRunAndForget(w.complete(Left("WS disconnected")))
     }
     ()
   }
@@ -148,7 +154,8 @@ final class MeshRelayClient(
     s"$wsBase/ws?userId=${enc(userId)}&deviceId=${enc(deviceId)}&token=${enc(token)}"
 
   private def enc(s: String): String =
-    try java.net.URLEncoder.encode(s, "UTF-8") catch case _: Exception => s
+    try java.net.URLEncoder.encode(s, "UTF-8")
+    catch case _: Exception => s
 
   // ===== Message dispatch (invoked from the WS listener thread) =====
 
@@ -157,18 +164,18 @@ final class MeshRelayClient(
     decode[Json](text) match
       case Right(json) =>
         json.hcursor.downField("type").as[String].getOrElse("") match
-          case "relay"        => handleRelayCommand(json)
+          case "relay" => handleRelayCommand(json)
           case "relay-result" => handleRelayResult(json)
-          case "peer-joined"  => handlePeerJoined()
-          case _              => () // unknown/legacy message — ignore
+          case "peer-joined" => handlePeerJoined()
+          case _ => () // unknown/legacy message — ignore
       case Left(_) => () // malformed — ignore
 
   /** Server pushed a command for this device to execute. */
   private def handleRelayCommand(json: Json): Unit =
     dispatcher.unsafeRunAndForget(
-      relayService.executeRelayCommand(json).handleErrorWith(e =>
-        logger.warn(s"WS relay command failed: ${e.getMessage}")
-      )
+      relayService
+        .executeRelayCommand(json)
+        .handleErrorWith(e => logger.warn(s"WS relay command failed: ${e.getMessage}"))
     )
 
   /** Server pushed a relay result back to the originator — complete the waiting Deferred. */

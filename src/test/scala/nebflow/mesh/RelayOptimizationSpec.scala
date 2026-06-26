@@ -120,7 +120,16 @@ class RelayOptimizationSpec extends CatsEffectSuite:
     (for
       store <- nebflow.server.RelayStore.create(tmpDir)
       _ <- store.registerDevice("user1", "devA", "DeviceA", "macos", "http://a", Map.empty, "", "secretA")
-      _ <- store.registerDevice("user1", "devB", "DeviceB", "linux", "http://b", Map("python" -> "/usr/bin/python3"), "build box", "secretB")
+      _ <- store.registerDevice(
+        "user1",
+        "devB",
+        "DeviceB",
+        "linux",
+        "http://b",
+        Map("python" -> "/usr/bin/python3"),
+        "build box",
+        "secretB"
+      )
       // devA looks up its peers (excluding itself)
       r <- store.lookupDevices("user1", excludeDeviceId = Some("devA"))
       peers = r.hcursor.downField("peers").as[List[io.circe.Json]].getOrElse(Nil)
