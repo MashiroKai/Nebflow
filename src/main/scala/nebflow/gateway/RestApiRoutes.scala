@@ -12,6 +12,7 @@ import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.Authorization
+import org.typelevel.ci.CIStringSyntax
 
 /**
  * REST API routes for CLI consumption.
@@ -398,20 +399,18 @@ class RestApiRoutes(
         case Some(ms) => f(ms)
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
 
-  /** Verify peer-to-peer access: Bearer format userId:deviceSecret, validated via MeshService. */
+  /** Verify peer-to-peer access: token format userId:deviceSecret, validated via MeshService.
+   * Uses X-Peer-Token header because http4s's Authorization parser rejects colons in bearer tokens. */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
     meshService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
       case Some(ms) =>
-        val bearer = req.headers
-          .get[Authorization]
-          .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t }
-          .getOrElse("")
-        if bearer.isEmpty then
+        val token = req.headers.get(ci"X-Peer-Token").map(_.head.value).getOrElse("")
+        if token.isEmpty then
           IO.pure(Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Missing auth".asJson))))
         else
-          ms.verifyPeerToken(bearer).map {
+          ms.verifyPeerToken(token).map {
             case true => Right(ms)
             case false =>
               Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Invalid peer credentials".asJson)))
