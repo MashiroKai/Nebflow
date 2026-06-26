@@ -110,6 +110,9 @@ function enterSecondarySkillMode(skillName, description, argumentHint) {
   const input = document.getElementById('secondary-input');
   if (input) {
     input.placeholder = argumentHint || t('input.skillPlaceholder');
+    // Adjust padding to make room for the skill indicator (parity with primary)
+    const w = ind ? ind.offsetWidth + 12 : 0;
+    input.style.paddingLeft = Math.max(w, 56) + 'px';
     input.focus();
   }
 }
@@ -123,7 +126,10 @@ function cancelSecondarySkillMode() {
   const ind = document.getElementById('secondary-skill-indicator');
   if (ind) ind.classList.remove('show');
   const input = document.getElementById('secondary-input');
-  if (input) input.placeholder = t('input.placeholder');
+  if (input) {
+    input.placeholder = t('input.placeholder');
+    input.style.paddingLeft = '';
+  }
 }
 
 // Bind the skill indicator cancel button once during init.
