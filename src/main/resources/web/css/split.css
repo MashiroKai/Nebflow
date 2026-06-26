@@ -115,6 +115,36 @@
 #secondary-panel.hidden {
   display: none;
 }
+
+/* ── Jarvis main window can be hidden (like the secondary panel) ──────────
+   Toggling body.jarvis-hidden simply collapses #main. The ChatView is NOT
+   unmounted and activeSessionId is unchanged, so Jarvis streaming keeps
+   accumulating into the (hidden) DOM and reappears when reopened. When #main
+   is hidden, the secondary panel (if visible) expands to fill via flex:1. */
+body.jarvis-hidden #main {
+  display: none;
+}
+
+/* "J" entry button in the sidebar topbar — reuses .panel-btn sizing.
+   Letter styling mirrors the agent-letter-icon look (sidebar.js). */
+.jarvis-toggle-btn .jarvis-letter {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+/* Highlight (primary color) when Jarvis is visible; dim when hidden.
+   This gives the button an active/inactive affordance matching its toggle. */
+body:not(.jarvis-hidden) .jarvis-toggle-btn {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  opacity: 1;
+}
+
+/* Close button in the main header reuses .secondary-close-btn. Add a touch of
+   left margin so it sits clear of the brand text. */
+.main-close-btn {
+  margin-left: 4px;
+}
 .secondary-header {
   display: flex;
   align-items: center;
