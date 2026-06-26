@@ -6,7 +6,7 @@ import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
 import nebflow.llm.NebflowServiceConfig
-import nebflow.mesh.MeshService
+import nebflow.mesh.{MeshError, MeshService}
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -237,13 +237,7 @@ class RestApiRoutes(
           val password = hc.downField("password").as[String].toOption.filter(_.nonEmpty)
           (username, password) match
             case (Some(u), Some(p)) =>
-              ms.register(u, p)
-                .flatMap { acc =>
-                  Ok(Json.obj("ok" -> true.asJson, "username" -> acc.username.asJson))
-                }
-                .handleErrorWith { e =>
-                  BadRequest(Json.obj("error" -> e.getMessage.asJson))
-                }
+              ms.register(u, p).flatMap(meshErrResponse)
             case _ =>
               BadRequest(Json.obj("error" -> "Missing username or password".asJson))
         }
@@ -258,13 +252,7 @@ class RestApiRoutes(
           val password = hc.downField("password").as[String].toOption.filter(_.nonEmpty)
           (username, password) match
             case (Some(u), Some(p)) =>
-              ms.login(u, p)
-                .flatMap { acc =>
-                  Ok(Json.obj("ok" -> true.asJson, "username" -> acc.username.asJson))
-                }
-                .handleErrorWith { e =>
-                  BadRequest(Json.obj("error" -> e.getMessage.asJson))
-                }
+              ms.login(u, p).flatMap(meshErrResponse)
             case _ =>
               BadRequest(Json.obj("error" -> "Missing username or password".asJson))
         }
@@ -398,6 +386,28 @@ class RestApiRoutes(
       meshService match
         case Some(ms) => f(ms)
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+
+  /**
+   * Map a MeshError result to a precise HTTP response. Success → 200 with the account;
+   * each MeshError variant gets its own status + code so the frontend can react precisely
+   * (e.g. CloudUrlNotConfigured → focus the server URL field).
+   */
+  private def meshErrResponse(
+    result: Either[MeshError, nebflow.mesh.AccountInfo]
+  ): IO[Response[IO]] =
+    result match
+      case Right(acc) =>
+        Ok(Json.obj("ok" -> true.asJson, "username" -> acc.username.asJson))
+      case Left(err) =>
+        val status = err match
+          case MeshError.CloudUrlNotConfigured => Status.BadRequest
+          case MeshError.AuthFailed(_)         => Status.Unauthorized
+          case MeshError.NetworkError(_)       => Status.BadGateway
+          case MeshError.CloudError(_)         => Status.BadGateway
+        IO.pure(
+          Response[IO](status)
+            .withEntity(Json.obj("error" -> err.message.asJson, "code" -> err.code.asJson))
+        )
 
   /** Verify peer-to-peer access: token format userId:deviceSecret, validated via MeshService.
    * Uses X-Peer-Token header because http4s's Authorization parser rejects colons in bearer tokens. */
