@@ -376,6 +376,12 @@ body.split-view #secondary-panel.visible {
 
 /* ── Dark Theme — Secondary Panel ────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
+  .secondary-header {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
   .secondary-input-bar {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
@@ -416,6 +422,25 @@ body.split-view #secondary-panel.visible {
 }
 #secondary-ask-indicator.show,
 #secondary-skill-indicator.show { display: flex; }
+#secondary-skill-indicator-label {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#secondary-ask-indicator-cancel,
+#secondary-skill-indicator-cancel {
+  cursor: pointer;
+  pointer-events: auto;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+  padding: 0 2px;
+}
+#secondary-ask-indicator-cancel:hover,
+#secondary-skill-indicator-cancel:hover {
+  opacity: 1;
+}
 #secondary-notification-banner:empty { display: none; }
 
 /* ── Secondary header layout + indicator parity ─────────────────────────

@@ -368,6 +368,7 @@ onMessage('thinkingDelta', (msg) => {
   // Accumulate thinking text for ALL sessions
   if (sid) state.sessionThinkingBuffers[sid] = (state.sessionThinkingBuffers[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
+  state.lastStreamActivity = Date.now();
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
     stopThinkingTimer();
@@ -394,6 +395,7 @@ onMessage('textDelta', (msg) => {
   // Accumulate text for ALL sessions
   if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
+  state.lastStreamActivity = Date.now();
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
     stopThinkingTimer();
@@ -1604,22 +1606,33 @@ onMessage('sessionBusy', (msg) => {
     delete state.pendingRestore[sid];
     if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
   }
-  // DOM-related cleanup only for active session
+  // DOM-related cleanup only for active session.
+  // Guard: if we received a textDelta/thinkingDelta very recently, the stream
+  // is still active — a stale sessionBusy(false) (e.g. from idle-entry delay,
+  // DeathWatcher broadcast, or crash-recovery race) must NOT finalize the bubble.
+  // Only do the defensive cleanup if the stream has been silent for 15s+,
+  // indicating the 'done' event was truly lost.
   if (isActive(msg) && !msg.busy && state.currentAiBubble) {
-    const durationMs = consumeTurnDuration(sid);
-    // IMPORTANT: do NOT use sessionModelInfo[sid]?.model here.
-    // If the user switched models (e.g. deepseek → glm), sessionModelInfo still
-    // holds the PREVIOUS turn's model. When sessionBusy(false) wins the race
-    // against 'done' (backend acknowledges this can happen), using the cache
-    // renders the wrong model name on the duration badge. Passing null means
-    // the badge shows the phrase without a model — the correct model comes from
-    // history when the user switches sessions.
-    const data = finishAi(durationMs, null);
-    if (data) saveMsg(data, sid);
-    Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
-    state.agentBubbles = {};
-    state.activeAgentId = null;
-    clearStatus();
+    const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
+    if (sinceActivity < 15000) {
+      console.warn('[sessionBusy(false)] Ignoring stale sessionBusy(false) during active streaming'
+        + ` (${sinceActivity}ms since last delta)`);
+    } else {
+      const durationMs = consumeTurnDuration(sid);
+      // IMPORTANT: do NOT use sessionModelInfo[sid]?.model here.
+      // If the user switched models (e.g. deepseek → glm), sessionModelInfo still
+      // holds the PREVIOUS turn's model. When sessionBusy(false) wins the race
+      // against 'done' (backend acknowledges this can happen), using the cache
+      // renders the wrong model name on the duration badge. Passing null means
+      // the badge shows the phrase without a model — the correct model comes from
+      // history when the user switches sessions.
+      const data = finishAi(durationMs, null);
+      if (data) saveMsg(data, sid);
+      Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
+      state.agentBubbles = {};
+      state.activeAgentId = null;
+      clearStatus();
+    }
   }
 });
 
