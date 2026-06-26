@@ -315,7 +315,9 @@ object GatewayMain extends IOApp.Simple:
                                       // Create the WS relay client (real-time command/result delivery).
                                       // Wired before hooks so login/logout can connect/disconnect it.
                                       val meshRelayClient = new MeshRelayClient(
-                                        meshService, relayService, sharedResourcesWithDream.dispatcher
+                                        meshService,
+                                        relayService,
+                                        sharedResourcesWithDream.dispatcher
                                       )
                                       relayService.setWsClient(meshRelayClient)
                                       // Login → connect WS; logout → disconnect. Connect is also safe to
@@ -324,7 +326,7 @@ object GatewayMain extends IOApp.Simple:
                                         meshService.addLogoutHook(meshRelayClient.disconnect()) *>
                                         // If we restored a login at startup, open the WS now.
                                         meshService.isLoggedIn.flatMap {
-                                          case true  => meshRelayClient.connect().start
+                                          case true => meshRelayClient.connect().start
                                           case false => IO.unit
                                         } *>
                                         // Start background relay poller (target side — executes commands

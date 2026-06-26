@@ -401,16 +401,18 @@ class RestApiRoutes(
       case Left(err) =>
         val status = err match
           case MeshError.CloudUrlNotConfigured => Status.BadRequest
-          case MeshError.AuthFailed(_)         => Status.Unauthorized
-          case MeshError.NetworkError(_)       => Status.BadGateway
-          case MeshError.CloudError(_)         => Status.BadGateway
+          case MeshError.AuthFailed(_) => Status.Unauthorized
+          case MeshError.NetworkError(_) => Status.BadGateway
+          case MeshError.CloudError(_) => Status.BadGateway
         IO.pure(
           Response[IO](status)
             .withEntity(Json.obj("error" -> err.message.asJson, "code" -> err.code.asJson))
         )
 
-  /** Verify peer-to-peer access: token format userId:deviceSecret, validated via MeshService.
-   * Uses X-Peer-Token header because http4s's Authorization parser rejects colons in bearer tokens. */
+  /**
+   * Verify peer-to-peer access: token format userId:deviceSecret, validated via MeshService.
+   * Uses X-Peer-Token header because http4s's Authorization parser rejects colons in bearer tokens.
+   */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
     meshService match
       case None =>

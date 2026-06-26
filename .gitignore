@@ -36,3 +36,4 @@ cloud/node_modules/
 credentials.json
 dist/
 beta.md
+typescript
