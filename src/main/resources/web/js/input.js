@@ -458,6 +458,16 @@ export function send() {
     setTimeout(() => { state.isSending = false; }, 300);
     return;
   }
+  // Allow slash commands (except /ask <question> which sends to the agent)
+  // even when the session is busy — they are UI/meta operations.
+  if (text.startsWith('/') && !text.startsWith('/ask ')) {
+    if (handleSlash(text)) {
+      input.value = '';
+      saveInputDraft(state.activeSessionId);
+      setTimeout(() => { state.isSending = false; }, 300);
+      return;
+    }
+  }
   if ((!text && state.pendingAttachments.length === 0) || isBusy) {
     console.warn('[send] blocked:', { text: text.slice(0,20), busy: state.busySessionIds.has(state.activeSessionId), wsState: state.ws?.readyState });
     return;
