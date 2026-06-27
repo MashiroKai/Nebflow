@@ -521,7 +521,7 @@ export function send() {
       })),
       clientMessageId,
       sessionId: activeView.sessionId,
-      chatWidth: document.getElementById('chat')?.clientWidth || 0
+      chatWidth: activeView.dom.chat?.clientWidth || 0
     });
   } catch (e) {
     console.error('WebSocket send failed:', e);
@@ -562,7 +562,8 @@ export function send() {
       // click Stop (which does send interrupt).
       sendWs({type: 'interrupt', sessionId: sid});
       import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        if (sid === activeView.sessionId) renderTimeoutNotice();
+        const v = findViewBySessionId(sid);
+        if (v) { setActiveView(v); renderTimeoutNotice(); }
         clearBusy(sid);
         clearStatus();
       });
@@ -635,7 +636,8 @@ export function injectUserMessage(text, options = {}) {
     if (state.busySessionIds.has(sessionId)) {
       sendWs({type: 'interrupt', sessionId});
       import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        if (sessionId === activeView.sessionId) renderTimeoutNotice();
+        const v = findViewBySessionId(sessionId);
+        if (v) { setActiveView(v); renderTimeoutNotice(); }
         clearBusy(sessionId);
         clearStatus();
       });
@@ -684,6 +686,7 @@ export function initInput(view) {
 
   // Paste handler — image paste from clipboard
   input.addEventListener('paste', (e) => {
+    setActiveView(view);
     const files = [];
     if (e.clipboardData.items) {
       for (const item of e.clipboardData.items) {
@@ -964,7 +967,9 @@ export function initInput(view) {
   input.addEventListener('input', () => { setActiveView(view); updateSlashDropdown(); });
   document.addEventListener('click', (e) => {
     if (!input.contains(e.target) && !slashDropdown.contains(e.target)) {
-      closeSlashDropdown();
+      slashDropdown.classList.remove('on');
+      view.slashMatches = [];
+      view.slashSelectedIndex = -1;
     }
   });
 

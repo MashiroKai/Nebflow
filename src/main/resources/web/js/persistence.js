@@ -65,7 +65,8 @@ export function loadMsgs() {
 // Builds DOM directly (doesn't call render functions from chat.js) to avoid
 // circular deps and to avoid re-saving.
 export function restoreFromStorage() {
-  const chat = activeView.dom.chat;
+  const chat = activeView?.dom?.chat;
+  if (!chat) return;
   const msgs = loadMsgs();
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
@@ -675,7 +676,7 @@ export function migrateLegacyIfNeeded() {
       all[state.activeSessionId] = oldMsgs;
       safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
       // Re-render chat with the migrated data
-      activeView.dom.chat.innerHTML = '';
+      if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
       restoreFromStorage();
     }
   } catch(e) {}
