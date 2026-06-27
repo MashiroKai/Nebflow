@@ -118,6 +118,7 @@ function showPanel(tab) {
 function closeSecondaryPanel() {
   if (state.secondarySessionId && chatViews.secondary) {
     chatViews.secondary.saveDraft(state.secondarySessionId);
+    saveInputDraft(state.secondarySessionId, chatViews.secondary);
   }
   state.secondarySessionId = null;
   if (chatViews.secondary) {
@@ -139,6 +140,10 @@ function loadSecondaryView(sessionId) {
   if (!view) return;
   // setSession resets stream + pagination + drafts, clears chat DOM
   view.setSession(sessionId);
+  // Also restore from localStorage if no in-memory draft exists for this session
+  if (!view.inputDrafts[sessionId] && state.sessionInputDrafts[sessionId]) {
+    restoreInputDraft(sessionId, view);
+  }
   // Chat is already cleared by setSession — no need for a loading placeholder
   // Sync busy button state
   const sendBtn = document.getElementById('secondary-send-btn');
@@ -161,6 +166,7 @@ function loadSecondaryView(sessionId) {
 function openInSecondary(session) {
   if (state.secondarySessionId && state.secondarySessionId !== session.id && chatViews.secondary) {
     chatViews.secondary.saveDraft(state.secondarySessionId);
+    saveInputDraft(state.secondarySessionId, chatViews.secondary);
   }
   state.secondarySessionId = session.id;
   if (chatViews.secondary) {
@@ -1367,8 +1373,8 @@ function persistDrafts() {
 }
 
 // Save current input box content as draft for the given session
-export function saveInputDraft(sessionId) {
-  const view = activeView || chatViews.primary;
+export function saveInputDraft(sessionId, view) {
+  view = view || activeView || chatViews.primary;
   if (!sessionId || !view?.dom?.input) return;
   const text = view.dom.input.value;
   const attachments = view.pendingAttachments;
@@ -1392,8 +1398,8 @@ export function saveInputDraft(sessionId) {
 }
 
 // Restore input box content from draft for the given session
-function restoreInputDraft(sessionId) {
-  const view = chatViews.primary;
+function restoreInputDraft(sessionId, view) {
+  view = view || chatViews.primary;
   if (!view?.dom?.input) return;
   const input = view.dom.input;
   const draft = state.sessionInputDrafts[sessionId];
