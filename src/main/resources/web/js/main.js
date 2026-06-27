@@ -325,9 +325,8 @@ function resetStreamTimeout(sid) {
     if (state.busySessionIds.has(sid)) {
       import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
         const v = findViewBySessionId(sid);
-        if (v) { setActiveView(v); renderTimeoutNotice(); }
+        if (v) { setActiveView(v); renderTimeoutNotice(); clearStatus(); }
         clearBusy(sid);
-        clearStatus();
       });
     }
   }, state.streamTimeoutMs + 30000);
@@ -1804,7 +1803,7 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       }
     }, 3000);
   }
-  updateBgTasksUI();
+  if (view) updateBgTasksUI();
 });
 
 // --- /ask command ---
@@ -1837,7 +1836,7 @@ onMessage('askDone', (msg, view) => {
   // Clean up thinking buffer so the subsequent 'done' event doesn't save
   // ask-mode thinking as a separate AI message (stray thinking fragment).
   if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
-  if (activeView.stream.currentThinkingBubble) finishThinking();
+  if (activeView?.stream?.currentThinkingBubble) finishThinking();
 });
 onMessage('askError', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;

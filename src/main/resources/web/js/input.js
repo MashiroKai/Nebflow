@@ -619,7 +619,7 @@ export function injectUserMessage(text, options = {}) {
     clientMessageId,
     sessionId,
     injected: true,
-    chatWidth: document.getElementById('chat')?.clientWidth || 0
+    chatWidth: activeView.dom.chat?.clientWidth || 0
   });
 
   // Mark session as busy
@@ -973,9 +973,10 @@ export function initInput(view) {
     }
   });
 
-  // Ask indicator cancel button (primary only — secondary has its own)
-  if (view.id === 'primary') {
-    const askCancel = document.getElementById('ask-indicator-cancel');
+  // Ask/skill indicator cancel buttons (view-specific element IDs)
+  {
+    const prefix = view.id === 'primary' ? '' : 'secondary-';
+    const askCancel = document.getElementById(prefix + 'ask-indicator-cancel');
     if (askCancel) {
       askCancel.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -984,8 +985,7 @@ export function initInput(view) {
         input.focus();
       });
     }
-    // Skill indicator cancel button
-    const skillCancel = document.getElementById('skill-indicator-cancel');
+    const skillCancel = document.getElementById(prefix + 'skill-indicator-cancel');
     if (skillCancel) {
       skillCancel.addEventListener('click', (e) => {
         e.stopPropagation();

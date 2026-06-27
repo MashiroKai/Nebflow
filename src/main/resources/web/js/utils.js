@@ -26,22 +26,28 @@ export const spinnerJson = {
 };
 
 // === Lottie spinner initialization ===
-let lottieSpinner = null;
+const _spinners = {};
 
 export function initSpinner() {
-  lottieSpinner = lottie.loadAnimation({
-    container: document.getElementById('lottie-spinner'),
-    renderer: 'svg', loop: true, autoplay: false,
-    animationData: spinnerJson
-  });
+  for (const id of ['lottie-spinner', 'secondary-spinner']) {
+    const el = document.getElementById(id);
+    if (el) {
+      _spinners[id] = lottie.loadAnimation({
+        container: el, renderer: 'svg', loop: true, autoplay: false,
+        animationData: spinnerJson
+      });
+    }
+  }
 }
 
 export function playSpinner() {
-  if (lottieSpinner) lottieSpinner.play();
+  const id = activeView?.dom?.lottieSpinnerEl?.id;
+  if (id && _spinners[id]) _spinners[id].play();
 }
 
 export function stopSpinner() {
-  if (lottieSpinner) lottieSpinner.stop();
+  const id = activeView?.dom?.lottieSpinnerEl?.id;
+  if (id && _spinners[id]) _spinners[id].stop();
 }
 
 // === Markdown initialization ===
