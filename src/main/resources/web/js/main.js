@@ -2049,5 +2049,4 @@ window.Nebflow = {
 
 // ---------- 8. Start ----------
 connect();
-sendWs({ type: 'memoryStatus' });
 state.dom.input.focus();
