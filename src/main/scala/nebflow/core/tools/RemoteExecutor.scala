@@ -5,7 +5,7 @@ import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
-import nebflow.mesh.{CloudSessionSync, MeshService, PeerInfo}
+import nebflow.mesh.{MeshService, PeerInfo, RelayService}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -13,7 +13,7 @@ import scala.concurrent.duration.*
 /**
  * Executes tool calls on remote devices via P2P or cloud relay.
  *
- * Extracted from MeshTool — this is the routing engine that makes
+ * This is the routing engine that makes
  * every tool device-aware. When a tool call specifies device="win-build",
  * this executor routes the call to that device.
  *
@@ -53,7 +53,7 @@ class RemoteExecutor(meshService: MeshService):
         val body = io.circe.Json.obj("action" -> toolName.asJson, "params" -> params.asJson)
         val resp = basicRequest
           .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/remote-exec"))
-          .auth.bearer(token)
+          .header("X-Peer-Token", token)
           .contentType("application/json")
           .body(body.noSpaces)
           .readTimeout(60.seconds)
@@ -82,24 +82,14 @@ class RemoteExecutor(meshService: MeshService):
     params: JsonObject,
     p2pError: ToolError
   ): IO[Either[ToolError, String]] =
-    RemoteExecutor.cloudSessionSyncOpt match
+    RemoteExecutor.relayServiceOpt match
       case None => IO.pure(Left(p2pError))
-      case Some(css) =>
-        for
-          relayId <- css
-            .relaySubmit(peer.deviceId, toolName, params.asJson)
-            .handleErrorWith(e => IO.pure(""))
-          result <-
-            if relayId.isEmpty then
-              IO.pure(Left(ToolError(
-                s"P2P failed (${p2pError.message}) and relay submit also failed. Device may be offline."
-              )))
-            else
-              css.relayFetchResultBlocking(relayId, timeout = 180.seconds).map {
-                case Right(output) => Right(output)
-                case Left(err)     => Left(ToolError(s"Relay error: $err"))
-              }
-        yield result
+      case Some(rs) =>
+        rs.submitAndWait(peer.deviceId, toolName, params).map {
+          case Right(output) => Right(output)
+          case Left(err) =>
+            Left(ToolError(s"P2P failed (${p2pError.message}); relay: $err"))
+        }
 
   // ---- Helpers ----
 
@@ -112,10 +102,12 @@ class RemoteExecutor(meshService: MeshService):
       case Some(p) => Right(p)
       case None =>
         val available = peers.map(_.deviceName)
-        Left(ToolError(
-          if peers.isEmpty then s"No peer devices found."
-          else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
-        ))
+        Left(
+          ToolError(
+            if peers.isEmpty then s"No peer devices found."
+            else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
+          )
+        )
 
   private def checkReachable(address: String): IO[Either[ToolError, Unit]] =
     IO.blocking {
@@ -146,11 +138,11 @@ object RemoteExecutor:
   /** Get the current instance, or None if mesh is not initialized. */
   def current: Option[RemoteExecutor] = instance
 
-  @volatile private var cloudSessionSyncOpt: Option[CloudSessionSync] = None
+  @volatile private var relayServiceOpt: Option[RelayService] = None
 
-  /** Wire CloudSessionSync for relay fallback. */
-  def setCloudSessionSync(css: CloudSessionSync): Unit =
-    cloudSessionSyncOpt = Some(css)
+  /** Wire RelayService for relay fallback. */
+  def setRelayService(rs: RelayService): Unit =
+    relayServiceOpt = Some(rs)
 
   /**
    * Tools that support remote execution. Only these tools get the `device` parameter
@@ -168,10 +160,13 @@ object RemoteExecutor:
       val props = schema("properties")
         .flatMap(_.asObject)
         .getOrElse(JsonObject.empty)
-      props.add("device", io.circe.Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted.".asJson
-      )) match
+      props.add(
+        "device",
+        io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted.".asJson
+        )
+      ) match
         case newProps =>
           schema.add("properties", newProps.asJson)
 

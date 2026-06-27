@@ -6,12 +6,13 @@ import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
 import nebflow.llm.NebflowServiceConfig
-import nebflow.mesh.MeshService
+import nebflow.mesh.{MeshError, MeshService}
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.Authorization
+import org.typelevel.ci.CIStringSyntax
 
 /**
  * REST API routes for CLI consumption.
@@ -236,13 +237,7 @@ class RestApiRoutes(
           val password = hc.downField("password").as[String].toOption.filter(_.nonEmpty)
           (username, password) match
             case (Some(u), Some(p)) =>
-              ms.register(u, p)
-                .flatMap { acc =>
-                  Ok(Json.obj("ok" -> true.asJson, "username" -> acc.username.asJson))
-                }
-                .handleErrorWith { e =>
-                  BadRequest(Json.obj("error" -> e.getMessage.asJson))
-                }
+              ms.register(u, p).flatMap(meshErrResponse)
             case _ =>
               BadRequest(Json.obj("error" -> "Missing username or password".asJson))
         }
@@ -257,13 +252,7 @@ class RestApiRoutes(
           val password = hc.downField("password").as[String].toOption.filter(_.nonEmpty)
           (username, password) match
             case (Some(u), Some(p)) =>
-              ms.login(u, p)
-                .flatMap { acc =>
-                  Ok(Json.obj("ok" -> true.asJson, "username" -> acc.username.asJson))
-                }
-                .handleErrorWith { e =>
-                  BadRequest(Json.obj("error" -> e.getMessage.asJson))
-                }
+              ms.login(u, p).flatMap(meshErrResponse)
             case _ =>
               BadRequest(Json.obj("error" -> "Missing username or password".asJson))
         }
@@ -322,11 +311,7 @@ class RestApiRoutes(
             }
           end if
 
-    // Trigger sync with all peers
-    case req @ POST -> Root / "mesh" / "sync" =>
-      withMesh(req) { ms =>
-        ms.syncAll *> Ok(Json.obj("synced" -> true.asJson))
-      }
+    // Trigger sync — removed (file sync deleted)
 
     // Update mesh config (e.g. cloudUrl)
     case req @ PATCH -> Root / "mesh" / "config" =>
@@ -343,18 +328,7 @@ class RestApiRoutes(
         }
       }
 
-    // Cloud session sync toggle — read current state
-    case req @ GET -> Root / "mesh" / "sync-enabled" =>
-      val enabled = nebflow.core.tools.MeshTool.currentCloudSessionSync.exists(_.isSyncEnabled)
-      Ok(Json.obj("enabled" -> enabled.asJson))
-
-    // Cloud session sync toggle — set enabled/disabled
-    case req @ PUT -> Root / "mesh" / "sync-enabled" =>
-      req.as[Json].flatMap { body =>
-        val enabled = body.hcursor.downField("enabled").as[Boolean].getOrElse(true)
-        nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach(_.setSyncEnabled(enabled))
-        Ok(Json.obj("enabled" -> enabled.asJson))
-      }
+    // Cloud session sync toggle — removed (session sync deleted)
 
     // Update device capabilities / user description
     case req @ PUT -> Root / "mesh" / "device-info" =>
@@ -367,85 +341,14 @@ class RestApiRoutes(
         }
       }
 
-    // Fingerprints — returns local file fingerprints for peer sync
-    // Auth: Bearer must contain the local userId (peer trust)
-    case req @ GET -> Root / "mesh" / "fingerprints" =>
-      verifyPeerAccess(req).flatMap {
-        case Left(resp) => IO.pure(resp)
-        case Right(ms) =>
-          ms.computeLocalFingerprints.flatMap { fps =>
-            Ok(io.circe.Json.fromFields(fps.map { case (path, fp) =>
-              path -> fp.asJson
-            }))
-          }
-      }
-
-    // File download — returns file content for peer sync
-    case req @ GET -> Root / "mesh" / "file" =>
-      verifyPeerAccess(req).flatMap {
-        case Left(resp) => IO.pure(resp)
-        case Right(ms) =>
-          val relPath = req.params.getOrElse("path", "")
-          if relPath.isEmpty then BadRequest(Json.obj("error" -> "Missing path".asJson))
-          else
-            ms.readLocalFile(relPath).flatMap {
-              case None => NotFound(Json.obj("error" -> s"File not found: $relPath".asJson))
-              case Some((bytes, fp)) =>
-                val encoded = java.util.Base64.getEncoder.encodeToString(bytes)
-                Ok(
-                  Json.obj(
-                    "path" -> relPath.asJson,
-                    "content" -> encoded.asJson,
-                    "mtime" -> fp.mtime.asJson,
-                    "hash" -> fp.hash.asJson
-                  )
-                )
-            }
-          end if
-      }
-
-    // File upload — receives file content from a peer
-    case req @ PUT -> Root / "mesh" / "file" =>
-      verifyPeerAccess(req).flatMap {
-        case Left(resp) => IO.pure(resp)
-        case Right(ms) =>
-          req.as[Json].flatMap { body =>
-            val hc = body.hcursor
-            val relPath = hc.downField("path").as[String].getOrElse("")
-            val contentB64 = hc.downField("content").as[String].getOrElse("")
-            if relPath.isEmpty || contentB64.isEmpty
-            then BadRequest(Json.obj("error" -> "Missing path or content".asJson))
-            else
-              val bytes = java.util.Base64.getDecoder.decode(contentB64)
-              ms.writeLocalFile(relPath, bytes) *> Ok(Json.obj("ok" -> true.asJson))
-          }
-      }
+    // File sync endpoints (fingerprints, file GET/PUT) — removed
 
     // Peer notification — lightweight ping to trigger immediate sync
     case req @ POST -> Root / "mesh" / "notify" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(ms) =>
-          req.as[Json].flatMap { body =>
-            val notifType = body.hcursor.downField("type").as[String].getOrElse("")
-            // Fire-and-forget: trigger immediate sync based on notification type
-            notifType match
-              case "file" | "session" =>
-                // Unified: just pull changed files from cloud
-                sharedResources.dispatcher.unsafeRunAndForget(
-                  ms.syncFilesWithCloud.handleErrorWith(_ => IO.unit)
-                )
-                Ok(Json.obj("ok" -> true.asJson))
-              case "relay" =>
-                nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-                  sharedResources.dispatcher.unsafeRunAndForget(
-                    css.processRelayCommands.handleErrorWith(_ => IO.unit)
-                  )
-                }
-                Ok(Json.obj("ok" -> true.asJson))
-              case _ => Ok(Json.obj("ok" -> true.asJson))
-            end match
-          }
+          Ok(Json.obj("ok" -> true.asJson))
       }
 
     case req @ POST -> Root / "mesh" / "remote-exec" =>
@@ -484,20 +387,42 @@ class RestApiRoutes(
         case Some(ms) => f(ms)
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
 
-  /** Verify peer-to-peer access: Bearer format userId:deviceSecret, validated via MeshService. */
+  /**
+   * Map a MeshError result to a precise HTTP response. Success → 200 with the account;
+   * each MeshError variant gets its own status + code so the frontend can react precisely
+   * (e.g. CloudUrlNotConfigured → focus the server URL field).
+   */
+  private def meshErrResponse(
+    result: Either[MeshError, nebflow.mesh.AccountInfo]
+  ): IO[Response[IO]] =
+    result match
+      case Right(acc) =>
+        Ok(Json.obj("ok" -> true.asJson, "username" -> acc.username.asJson))
+      case Left(err) =>
+        val status = err match
+          case MeshError.CloudUrlNotConfigured => Status.BadRequest
+          case MeshError.AuthFailed(_) => Status.Unauthorized
+          case MeshError.NetworkError(_) => Status.BadGateway
+          case MeshError.CloudError(_) => Status.BadGateway
+        IO.pure(
+          Response[IO](status)
+            .withEntity(Json.obj("error" -> err.message.asJson, "code" -> err.code.asJson))
+        )
+
+  /**
+   * Verify peer-to-peer access: token format userId:deviceSecret, validated via MeshService.
+   * Uses X-Peer-Token header because http4s's Authorization parser rejects colons in bearer tokens.
+   */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
     meshService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
       case Some(ms) =>
-        val bearer = req.headers
-          .get[Authorization]
-          .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) => t }
-          .getOrElse("")
-        if bearer.isEmpty then
+        val token = req.headers.get(ci"X-Peer-Token").map(_.head.value).getOrElse("")
+        if token.isEmpty then
           IO.pure(Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Missing auth".asJson))))
         else
-          ms.verifyPeerToken(bearer).map {
+          ms.verifyPeerToken(token).map {
             case true => Right(ms)
             case false =>
               Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Invalid peer credentials".asJson)))

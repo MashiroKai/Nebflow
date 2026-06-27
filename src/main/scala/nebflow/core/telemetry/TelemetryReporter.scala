@@ -73,8 +73,10 @@ object TelemetryReporter:
 
   private def dataRoot: os.Path = nebflow.core.PathUtil.dataRoot
 
-  /** Telemetry is disabled — CloudBase dependency removed.
-   * To re-enable with self-hosted server, set endpoint and implement sender. */
+  /**
+   * Telemetry is disabled — CloudBase dependency removed.
+   * To re-enable with self-hosted server, set endpoint and implement sender.
+   */
   val DefaultEndpoint = ""
 
   /** Check if telemetry is enabled. Disabled by default — CloudBase dependency removed. */

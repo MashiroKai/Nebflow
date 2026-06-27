@@ -9,6 +9,46 @@ import nebflow.core.PathUtil
 
 import java.util.UUID
 
+// ===== Mesh Errors =====
+
+/**
+ * Structured mesh errors so the gateway can map them to precise HTTP responses and the
+ * frontend can react accordingly (e.g. prompt to configure the server URL).
+ */
+enum MeshError(val message: String, val code: String):
+  /** The relay server URL has not been configured. Frontend should ask the user to set it. */
+  case CloudUrlNotConfigured extends MeshError("服务器地址未配置", "cloud_url_missing")
+
+  /** Authentication failed (bad credentials / session). */
+  case AuthFailed(msg: String) extends MeshError(msg, "auth_failed")
+
+  /** Network-level failure reaching the relay server (timeout, connection refused, DNS). */
+  case NetworkError(msg: String) extends MeshError(msg, "network_error")
+
+  /** Any other cloud/relay error surfaced as a generic message. */
+  case CloudError(msg: String) extends MeshError(msg, "cloud_error")
+
+object MeshError:
+
+  /** Map a raw exception thrown during a cloud call onto a structured MeshError. */
+  def fromThrowable(e: Throwable): MeshError =
+    val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+    msg match
+      case m if m.startsWith("Cloud URL not configured") => CloudUrlNotConfigured
+      case m
+          if m.contains("Invalid username or password") ||
+            m.contains("Auth error") || m.contains("Session") =>
+        AuthFailed(m)
+      case m if m.contains("Cloud API") || m.contains("Cloud error") =>
+        CloudError(extractInner(m))
+      case _ => NetworkError(msg)
+
+  /** Strip the "Cloud error N: " / "Cloud API N: " prefix to surface the real message. */
+  private def extractInner(m: String): String =
+    val idx = m.indexOf(": ")
+    if idx >= 0 && idx < m.length - 2 then m.substring(idx + 2).trim else m
+end MeshError
+
 // ===== Account Info =====
 
 /** Nebflow account credentials — stored in ~/.nebflow/mesh/account.json. */
@@ -174,6 +214,7 @@ case class PeerInfo(
 
 object PeerInfo:
   given Encoder[PeerInfo] = deriveEncoder
+
   given Decoder[PeerInfo] = Decoder.instance { c =>
     for
       deviceId <- c.downField("deviceId").as[String]
@@ -187,80 +228,12 @@ object PeerInfo:
     yield PeerInfo(deviceId, deviceName, platform, address, deviceSecret, capabilities, userDescription, lastSeen)
   }
 
-// ===== File Fingerprint =====
-
-case class FileFingerprint(
-  mtime: Long,
-  size: Long,
-  hash: String
-)
-
-object FileFingerprint:
-  given Encoder[FileFingerprint] = deriveEncoder
-  given Decoder[FileFingerprint] = deriveDecoder
-
-  def compute(path: os.Path): Option[FileFingerprint] =
-    if !os.exists(path) then None
-    else
-      val stat = os.stat(path)
-      val content = os.read.bytes(path)
-      val hash = computeHash(content)
-      Some(FileFingerprint(stat.mtime.toMillis, stat.size, hash))
-
-  def computeHash(bytes: Array[Byte]): String =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
-    digest.update(bytes)
-    digest.digest().take(6).map(b => String.format("%02x", b)).mkString
-
-end FileFingerprint
-
-// ===== Cloud File Download =====
-
-case class CloudFileDownload(path: String, content: String, fingerprint: FileFingerprint)
-
-object CloudFileDownload:
-
-  given Decoder[CloudFileDownload] = Decoder.instance { c =>
-    for
-      path <- c.downField("path").as[String]
-      content <- c.downField("content").as[String]
-      fpMtime <- c.downField("fingerprint").downField("mtime").as[Long]
-      fpSize <- c.downField("fingerprint").downField("size").as[Long]
-      fpHash <- c.downField("fingerprint").downField("hash").as[String]
-    yield CloudFileDownload(path, content, FileFingerprint(fpMtime, fpSize, fpHash))
-  }
-
-/** COS-based download item — path + fileID, content fetched separately via file/download. */
-case class CloudFileDownloadItem(path: String, fileID: String)
-
-object CloudFileDownloadItem:
-
-  given Decoder[CloudFileDownloadItem] = Decoder.instance { c =>
-    for
-      path <- c.downField("path").as[String]
-      fileID <- c.downField("fileID").as[String]
-    yield CloudFileDownloadItem(path, fileID)
-  }
-
-// ===== Sync Diff =====
-
-case class SyncDiff(
-  needUpload: List[String],
-  needDownload: List[String],
-  unchanged: List[String]
-)
-
-object SyncDiff:
-  given Encoder[SyncDiff] = deriveEncoder
-  given Decoder[SyncDiff] = deriveDecoder
-
 // ===== Mesh Config =====
 
 case class MeshConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  cloudUrl: Option[String] = None,  // Self-hosted server URL, configured by user
-  syncEnabled: Boolean = true  // Cloud session sync on/off toggle (persists across restarts)
+  cloudUrl: Option[String] = None // Self-hosted server URL, configured by user
 )
 
 object MeshConfig:

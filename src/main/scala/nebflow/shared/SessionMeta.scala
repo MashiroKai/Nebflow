@@ -35,9 +35,14 @@ object SessionMeta:
     for
       id <- c.downField("id").as[String]
       name <- c.downField("name").as[String]
-      createdAt <- c.downField("createdAt").as[Option[Long]].map(_.orElse(
-        c.downField("updatedAt").as[Option[Long]].toOption.flatten
-      ).getOrElse(0L))
+      createdAt <- c
+        .downField("createdAt")
+        .as[Option[Long]]
+        .map(
+          _.orElse(
+            c.downField("updatedAt").as[Option[Long]].toOption.flatten
+          ).getOrElse(0L)
+        )
       updatedAt <- c.downField("updatedAt").as[Long]
       hasUnread <- c.downField("hasUnread").as[Option[Boolean]].map(_.getOrElse(false))
       agentName <- c.downField("agentName").as[Option[String]]

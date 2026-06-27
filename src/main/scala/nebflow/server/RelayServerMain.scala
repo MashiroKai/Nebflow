@@ -1,10 +1,11 @@
 package nebflow.server
 
-import cats.effect.{IO, Resource}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Resource}
 import com.comcast.ip4s.{Host, Port}
-import io.circe.{Json, parser}
+import fs2.Stream
 import io.circe.syntax.given
+import io.circe.{Json, parser}
 import nebflow.core.NebflowLogger
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -13,7 +14,6 @@ import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
-import fs2.Stream
 
 import scala.concurrent.duration.*
 
@@ -40,7 +40,8 @@ object RelayServerMain:
       wsManager <- Resource.eval(WebSocketManager.create)
       routes = new RelayRoutes(store, wsManager).routes
       _ <- Resource.eval(IO.delay(logger.info(s"Loaded ${store.userCount} users from disk")))
-      server <- EmberServerBuilder.default[IO]
+      server <- EmberServerBuilder
+        .default[IO]
         .withHost(Host.fromString("0.0.0.0").get)
         .withPort(Port.fromInt(port).get)
         .withHttpWebSocketApp(wsb => routes(wsb))
@@ -49,9 +50,9 @@ object RelayServerMain:
     yield server
 
     program.useForever.unsafeRunSync()
+  end main
 
-  extension (s: RelayStore)
-    def userCount: Int = 0 // best-effort, avoids exposing Ref
+  extension (s: RelayStore) def userCount: Int = 0 // best-effort, avoids exposing Ref
 end RelayServerMain
 
 /**
@@ -81,20 +82,24 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
         val deviceId = req.params.getOrElse("deviceId", "")
         val token = req.params.getOrElse("token", "")
 
-        if userId.isEmpty || deviceId.isEmpty || token.isEmpty then
-          Forbidden("Missing userId, deviceId, or token")
+        if userId.isEmpty || deviceId.isEmpty || token.isEmpty then Forbidden("Missing userId, deviceId, or token")
         else
-          store.verifySession(userId, token).flatMap { _ =>
-            wsManager.register(userId, deviceId).flatMap { topic =>
-              val sendStream = topic.subscribe(64).map(text => WebSocketFrame.Text(text: String))
-              wsb.build(sendStream, _.evalMap(_ => IO.unit))
+          store
+            .verifySession(userId, token)
+            .flatMap { _ =>
+              wsManager.register(userId, deviceId).flatMap { topic =>
+                val sendStream = topic.subscribe(64).map(text => WebSocketFrame.Text(text: String))
+                wsb.build(sendStream, _.evalMap(_ => IO.unit))
+              }
             }
-          }.handleErrorWith { e =>
-            Forbidden(s"Auth failed: ${e.getMessage}")
-          }
+            .handleErrorWith { e =>
+              Forbidden(s"Auth failed: ${e.getMessage}")
+            }
     }
 
     Router("/" -> httpRoutes).orNotFound
+
+  end routes
 
   private def dispatch(action: String, body: Json): IO[org.http4s.Response[IO]] =
     val hc = body.hcursor
@@ -118,19 +123,47 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
       case "discover/register" =>
         val userId = hc.downField("userId").as[String].getOrElse("")
         val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
+        val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+        val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
+        val platform = hc.downField("platform").as[String].getOrElse("")
+        val address = hc.downField("address").as[String].getOrElse("")
+        val caps = hc.downField("capabilities").as[Map[String, String]].getOrElse(Map.empty)
+        val userDesc = hc.downField("userDescription").as[String].getOrElse("")
+        val deviceSecret = hc.downField("deviceSecret").as[String].getOrElse("")
         for
           _ <- store.verifySession(userId, sessionToken)
           r <- store.registerDevice(
             userId,
-            hc.downField("deviceId").as[String].getOrElse(""),
-            hc.downField("deviceName").as[String].getOrElse("Unknown"),
-            hc.downField("platform").as[String].getOrElse(""),
-            hc.downField("address").as[String].getOrElse(""),
-            hc.downField("capabilities").as[Map[String, String]].getOrElse(Map.empty),
-            hc.downField("userDescription").as[String].getOrElse(""),
-            hc.downField("deviceSecret").as[String].getOrElse("")
+            deviceId,
+            deviceName,
+            platform,
+            address,
+            caps,
+            userDesc,
+            deviceSecret
           )
+          // Notify this account's other already-connected devices that a new peer joined,
+          // so they can re-run discovery immediately (seconds) instead of waiting for the
+          // next periodic tick. Best-effort: ignored if no WS clients connected.
+          _ <- wsManager
+            .broadcastToUser(
+              userId,
+              Json.obj(
+                "type" -> "peer-joined".asJson,
+                "device" -> Json.obj(
+                  "deviceId" -> deviceId.asJson,
+                  "deviceName" -> deviceName.asJson,
+                  "platform" -> platform.asJson,
+                  "address" -> address.asJson,
+                  "capabilities" -> caps.asJson,
+                  "userDescription" -> userDesc.asJson,
+                  "deviceSecret" -> deviceSecret.asJson
+                )
+              )
+            )
+            .handleErrorWith(_ => IO.unit)
         yield r
+        end for
 
       case "discover/lookup" =>
         val userId = hc.downField("userId").as[String].getOrElse("")
@@ -153,48 +186,7 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
           r <- store.registerDevice(userId, deviceId, "Unknown", "", "", caps, desc, "")
         yield r
 
-      // Session Sync
-      case "session/push-index" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessions = hc.downField("sessions").as[Json].getOrElse(Json.arr())
-        val folders = hc.downField("folders").as[Json].getOrElse(Json.arr())
-        for _ <- store.verifySession(userId, sessionToken); r <- store.pushIndex(userId, sessions, folders) yield r
-
-      case "session/pull-index" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.pullIndex(userId) yield r
-
-      case "session/push" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-        val messages = hc.downField("messages").as[Json].getOrElse(Json.arr())
-        val uiMessages = hc.downField("uiMessages").as[Json].getOrElse(Json.arr())
-        val meta = hc.downField("meta").as[Json].getOrElse(Json.obj())
-        for _ <- store.verifySession(userId, sessionToken); r <- store.pushSession(userId, sessionId, messages, uiMessages, meta) yield r
-
-      case "session/pull" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.pullSession(userId, sessionId) yield r
-
-      case "session/delete" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.deleteSession(userId, sessionId) yield r
-
-      case "session/busy" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val sessionId = hc.downField("sessionId").as[String].getOrElse("")
-        val busy = hc.downField("busy").as[Option[Boolean]].toOption.flatten
-        val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-        val deviceName = hc.downField("deviceName").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.sessionBusy(userId, sessionId, busy, deviceId, deviceName) yield r
+      // Session sync + busy lock — removed (session sync deleted)
 
       // Relay
       case "relay/submit" =>
@@ -208,7 +200,8 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
           _ <- store.verifySession(userId, sessionToken)
           r <- store.relaySubmit(userId, fromDeviceId, toDeviceId, realAction, params)
           relayId = r.hcursor.downField("relayId").as[String].getOrElse("")
-          _ <- wsManager.pushRelayCommand(userId, toDeviceId, relayId, fromDeviceId, realAction, params)
+          _ <- wsManager
+            .pushRelayCommand(userId, toDeviceId, relayId, fromDeviceId, realAction, params)
             .handleErrorWith(_ => IO.unit)
         yield r
 
@@ -228,7 +221,8 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
           _ <- store.verifySession(userId, sessionToken)
           r <- store.relayResult(relayId, resultStr, errorStr)
           // Push result to originator via WebSocket
-          _ <- wsManager.pushRelayResult(userId, relayId, resultStr, errorStr)
+          _ <- wsManager
+            .pushRelayResult(userId, relayId, resultStr, errorStr)
             .handleErrorWith(_ => IO.unit)
         yield r
 
@@ -238,37 +232,7 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
         val relayId = hc.downField("relayId").as[String].getOrElse("")
         for _ <- store.verifySession(userId, sessionToken); r <- store.relayFetchResult(relayId) yield r
 
-      // File Sync
-      case "file/sync" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val fingerprints = hc.downField("fingerprints").as[Json].getOrElse(Json.obj())
-        for _ <- store.verifySession(userId, sessionToken); r <- store.fileSync(userId, fingerprints) yield r
-
-      case "file/upload" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val path = hc.downField("path").as[String].getOrElse("")
-        val content = hc.downField("content").as[String].getOrElse("")
-        val fingerprint = hc.downField("fingerprint").as[Json].getOrElse(Json.obj())
-        for _ <- store.verifySession(userId, sessionToken); r <- store.fileUpload(userId, path, content, fingerprint) yield r
-
-      case "file/download" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        val fileID = hc.downField("fileID").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken); r <- store.fileDownload(userId, fileID) yield r
-
-      // Chunked upload — no-op on self-hosted (no size limit)
-      case "file/upload-chunk" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken) yield Json.obj("ok" -> true.asJson)
-
-      case "file/upload-complete" =>
-        val userId = hc.downField("userId").as[String].getOrElse("")
-        val sessionToken = hc.downField("sessionToken").as[String].getOrElse("")
-        for _ <- store.verifySession(userId, sessionToken) yield Json.obj("ok" -> true.asJson)
+      // File sync — removed
 
       // Agent status broadcast — pushes to all WebSocket clients of this user
       case "agent/status" =>
@@ -284,5 +248,6 @@ class RelayRoutes(store: RelayStore, wsManager: WebSocketManager):
         IO.pure(Json.obj("code" -> 400.asJson, "message" -> s"Unknown action: $other".asJson))
 
     result.flatMap(json => Ok(json))
+  end dispatch
 
 end RelayRoutes

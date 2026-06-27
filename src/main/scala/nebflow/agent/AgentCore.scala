@@ -8,7 +8,7 @@ import nebflow.agent.AgentCommand.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
-import nebflow.core.tools.{RemoteExecutor, ToolContext, ToolRegistry, ToolResultGuard}
+import nebflow.core.tools.*
 import nebflow.shared.*
 import nebflow.shared.given
 import org.apache.pekko.actor.typed.scaladsl.{ActorContext, Behaviors, StashBuffer}
@@ -700,18 +700,12 @@ private[agent] trait AgentCore:
                     val remoteInput = finalInput.remove("device")
                     val remoteSummary = s"[${deviceName}] ${tool.summarize(remoteInput)}"
                     logger.info(s"$logCtx Remote tool: $remoteSummary")
-                    // Broadcast status to other devices (fire-and-forget)
-                    val sid = ctx.sessionId.getOrElse("")
-                    RemoteExecutor.current.get.meshServiceOpt.foreach { ms =>
-                      given cats.effect.unsafe.IORuntime = cats.effect.unsafe.IORuntime.global
-                      ms.broadcastAgentStatus("executing", sid, deviceName, call.name)
-                        .unsafeRunAndForget()
-                    }
                     RemoteExecutor.current.get
                       .execute(deviceName, call.name, remoteInput)
                       .flatMap {
                         case Right(result) =>
-                          hookEngine.afterTool(call.name, finalInput, result, true, hookCtx)
+                          hookEngine
+                            .afterTool(call.name, finalInput, result, true, hookCtx)
                             .map { postResult =>
                               val hookSuffix = postResult.additionalContext.getOrElse("")
                               ToolExecResult(
@@ -720,7 +714,8 @@ private[agent] trait AgentCore:
                               )
                             }
                         case Left(err) =>
-                          hookEngine.afterToolFailure(call.name, finalInput, err.message, hookCtx)
+                          hookEngine
+                            .afterToolFailure(call.name, finalInput, err.message, hookCtx)
                             .map { postResult =>
                               val appended = postResult.additionalContext match
                                 case Some(ctx) => s"${err.message}\n\n$ctx"
@@ -755,18 +750,21 @@ private[agent] trait AgentCore:
                                 val llmSummary = s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
                                 ToolExecResult(
                                   llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                                  frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
+                                  frontendContent =
+                                    Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
                                 )
                               else if isFileEdit then
                                 val llmSummary = nebflow.core.summarizeToolResult(call, result)
                                 ToolExecResult(
                                   llmSummary + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                                  frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
+                                  frontendContent =
+                                    Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
                                 )
                               else
                                 ToolExecResult(
                                   result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                                  frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
+                                  frontendContent =
+                                    Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""))
                                 )
                               end if
                             }
@@ -929,8 +927,8 @@ private[agent] trait AgentCore:
       .collectFirst { case StreamChunk.Done(_, Some(u), _, _) if u.inputTokens > 0 => u }
       .orElse(chunks.collectFirst { case StreamChunk.Done(_, u, _, _) => u }.flatten)
     val stopReason = chunks.collectFirst { case StreamChunk.Done(sr, _, _, _) => sr }.flatten
-    val model = chunks.collectFirst {
-      case StreamChunk.Done(_, _, Some(meta), _) => s"${meta.providerId}/${meta.model}"
+    val model = chunks.collectFirst { case StreamChunk.Done(_, _, Some(meta), _) =>
+      s"${meta.providerId}/${meta.model}"
     }
     val contextWindow = chunks.collectFirst { case StreamChunk.Done(_, _, _, cw) => cw }.flatten
     ConsumeResult(
@@ -962,7 +960,7 @@ private[agent] trait AgentCore:
       if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt
       else Repl.loadSystemPrompt()
     val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
-    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth)  // device info moved to per-turn reminder
+    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth) // device info moved to per-turn reminder
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
   end buildSystemPrompt
@@ -983,21 +981,27 @@ private[agent] trait AgentCore:
         val localCaps = id.capabilities.keys.toList.sorted
         if localCaps.nonEmpty then parts += s"[${localCaps.mkString(", ")}]"
         val localStr = parts.result.mkString(" ")
-        val peerStrs = if loggedIn then peersList.map { p =>
-          val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
-          val desc = p.userDescription
-          val ps = List(p.deviceName) ++
-            (if caps.nonEmpty then List(s"[${caps.mkString(", ")}]") else Nil) ++
-            (if desc.nonEmpty then List(s"-$desc") else Nil)
-          ps.mkString(" ")
-        } else Nil
+        val peerStrs =
+          if loggedIn then
+            peersList.map { p =>
+              val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
+              val desc = p.userDescription
+              val ps = List(p.deviceName) ++
+                (if caps.nonEmpty then List(s"[${caps.mkString(", ")}]") else Nil) ++
+                (if desc.nonEmpty then List(s"-$desc") else Nil)
+              ps.mkString(" ")
+            }
+          else Nil
         val allDevices = (localStr :: peerStrs).mkString("; ")
-        val deviceHint = if loggedIn && peersList.nonEmpty then
-          "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
-        else ""
+        val deviceHint =
+          if loggedIn && peersList.nonEmpty then
+            "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
+          else ""
         Some(SystemReminder("devices", s"Devices: $allDevices$deviceHint"))
       catch case _: Exception => None
     }
+
+  end deviceReminder
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)
