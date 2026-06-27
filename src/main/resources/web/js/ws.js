@@ -61,6 +61,8 @@ export function connect() {
     }
     // Request skill list
     sendWs({type: 'getSkills'});
+    // Request memory status (must be inside onopen — sendWs drops messages while WS is CONNECTING)
+    sendWs({type: 'memoryStatus'});
     state.heartbeat = setInterval(() => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         sendWs({type: 'ping'});
@@ -117,7 +119,11 @@ export function connect() {
       const STREAM_MSG_TYPES = [
         'thinkingDelta', 'textDelta', 'textDone',
         'toolCallDetected', 'toolCallStart', 'toolCallChunk', 'toolStart', 'toolEnd',
-        'roundComplete'
+        'roundComplete',
+        // Sub-agent events need per-session resetStreamTimeout to fire for all sessions
+        'agentStart', 'agentTextDelta', 'agentToolCallDetected',
+        'agentToolStart', 'agentToolEnd', 'agentEnd',
+        'agentThinking', 'agentRetryStatus', 'agentDone'
       ];
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
           msg.sessionId !== state.secondarySessionId &&
