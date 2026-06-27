@@ -1428,6 +1428,9 @@ function restoreInputDraft(sessionId, view) {
 export function resetChatForActiveSession() {
   const pv = chatViews.primary;
   if (!pv) return;
+  // CRITICAL: sync the view's sessionId so findViewBySessionId can route
+  // historyPage and streaming events to this view after session switch.
+  pv.sessionId = state.activeSessionId;
   setActiveView(pv);
   pv.stream.aiText = '';
   pv.stream.currentAiBubble = null;
