@@ -279,6 +279,12 @@ class WebSocketRoutes(
             )
           )
           activeMeta <- sessionStore.getActiveMeta
+          // Ensure the singleton Jarvis session exists on connect so the main window
+          // has something to show immediately, not only after the user clicks the tab.
+          _ <- sessionStore.ensureAgentSession("Jarvis").flatMap { case (meta, created) =>
+            logger.info(s"[connect] ensureAgentSession(Jarvis): meta=${meta.id.take(8)} created=$created")
+            IO.pure(meta -> created)
+          }
           agentName = activeMeta.flatMap(_.agentName).getOrElse("Nebula")
           _ <- sessionService.sendSessionList(perConnWsSend, agentName)
           ws <- wsb.build(sendStream, receivePipe)
@@ -482,16 +488,16 @@ class WebSocketRoutes(
       logger.warn(s"Failed to persist thinking config: ${e.getMessage}")
     }
 
-  /** Send agent-filtered session list by looking up the session's agent name. */
+  /** Send unified session list by looking up the session's agent name (for agentName field only). */
   private def sendAgentSessionList(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
     sessionStore.getSessionMeta(sessionId).flatMap { metaOpt =>
       val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
       sendAgentSessionListByName(wsSend, agentName)
     }
 
-  /** Send agent-filtered session list for a known agent name. */
+  /** Send unified session list (all agents) — keeps sessions isolated from filtering issues. */
   private def sendAgentSessionListByName(wsSend: io.circe.Json => IO[Unit], agentName: String): IO[Unit] =
-    (sessionStore.listSessionsByAgent(agentName), sessionStore.listFolders(agentName)).flatMapN { (sessions, folders) =>
+    (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
       val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
       wsSend(
         io.circe.Json.obj(
@@ -610,6 +616,7 @@ class WebSocketRoutes(
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "modelOptions".asJson,
+                  "sessionId" -> sessionId.asJson,
                   "models" -> models.map { case (ref, label, desc) =>
                     io.circe.Json.obj(
                       "ref" -> ref.asJson,
@@ -694,10 +701,10 @@ class WebSocketRoutes(
               val tel = sharedResources.telemetry
               val telStart =
                 tel.fold(IO.unit)(_.record("session_start", io.circe.JsonObject("session_id" -> meta.id.asJson)))
-              // Send filtered session list for the agent tab
+              // Send unified session list (all agents)
               val sendList = agentName match
                 case Some(an) =>
-                  (sessionStore.listSessionsByAgent(an), sessionStore.listFolders(an)).flatMapN { (sessions, folders) =>
+                  (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
                     wsSend(
                       io.circe.Json.obj(
                         "type" -> "agentSessionList".asJson,
@@ -732,12 +739,6 @@ class WebSocketRoutes(
                   removeRootAgent(sessionId) *> sessionService
                     .deleteSession(sessionId)
                     .flatMap { _ =>
-                      // Cloud sync: delete from cloud (fire-and-forget)
-                      nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-                        sharedResources.dispatcher.unsafeRunAndForget(
-                          css.deleteFromCloud(sessionId).handleErrorWith(_ => IO.unit)
-                        )
-                      }
                       sendAgentSessionListByName(wsSend, agentName)
                     }
               }
@@ -760,15 +761,7 @@ class WebSocketRoutes(
                       sessionThinkingBuffers.update(_ - sid) *>
                       sessionTurnStarts.update(_ - sid) *>
                       removeRootAgent(sid) *>
-                      sessionService.deleteSession(sid) *>
-                      // Cloud sync: delete from cloud (fire-and-forget)
-                      IO {
-                        nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-                          sharedResources.dispatcher.unsafeRunAndForget(
-                            css.deleteFromCloud(sid).handleErrorWith(_ => IO.unit)
-                          )
-                        }
-                      }
+                      sessionService.deleteSession(sid)
                   }
                   .flatMap { _ =>
                     sendAgentSessionListByName(wsSend, agentName)
@@ -1061,8 +1054,11 @@ class WebSocketRoutes(
         case "listAgentSessions" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            (sessionStore.listSessionsByAgent(agentName), sessionStore.listFolders(agentName)).flatMapN {
-              (sessions, folders) =>
+            // Ensure Jarvis session exists (atomically — no race even under concurrent calls).
+            val ensureJarvis = sessionStore.ensureAgentSession("Jarvis").void
+            // Return ALL sessions and folders (unified list)
+            ensureJarvis *>
+              (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "agentSessionList".asJson,
@@ -1071,8 +1067,9 @@ class WebSocketRoutes(
                     "folders" -> folders.asJson
                   )
                 )
-            }
+              }
           else IO.unit
+          end if
 
         // ===== Folder Management =====
 
@@ -1450,7 +1447,7 @@ class WebSocketRoutes(
                     tag <- j.hcursor.downField("tag_name").as[String].toOption
                     name <- j.hcursor.downField("name").as[String].toOption
                   yield (tag, name)
-                val conn = new java.net.URL(url).openConnection()
+                val conn = java.net.URI.create(url).toURL.openConnection()
                 conn.setConnectTimeout(5000)
                 conn.setReadTimeout(5000)
                 val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8)
@@ -1664,12 +1661,6 @@ class WebSocketRoutes(
                             ).handleErrorWith(_ => IO.unit)
                           ) *> {
                             val blocksList = blocks.toList
-                            // Fire-and-forget: acquire cloud busy lock to signal other devices
-                            nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-                              sharedResources.dispatcher.unsafeRunAndForget(
-                                css.tryAcquireBusy(msgSessionId).handleErrorWith(_ => IO.unit)
-                              )
-                            }
                             routeToAgent(msgSessionId)(ref =>
                               IO(
                                 ref ! AgentCommand
@@ -2003,12 +1994,6 @@ class WebSocketRoutes(
 
       case "done" =>
         val model = hc.downField("model").as[Option[String]].getOrElse(None)
-        // Fire-and-forget: release cloud busy lock — AI response complete
-        nebflow.core.tools.MeshTool.currentCloudSessionSync.foreach { css =>
-          sharedResources.dispatcher.unsafeRunAndForget(
-            css.releaseBusy(sessionId).handleErrorWith(_ => IO.unit)
-          )
-        }
         // Track model for telemetry
         val trackModel = model match
           case Some(m) =>

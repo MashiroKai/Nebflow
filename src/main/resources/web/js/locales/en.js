@@ -392,4 +392,6 @@ export default {
   'mesh.deviceDescription': 'Device description',
   'mesh.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
   'mesh.save': 'Save',
+  'mesh.cloudSync': 'Cloud Sync',
+  'mesh.cloudSyncHint': 'Sync sessions across devices',
 };

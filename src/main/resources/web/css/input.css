@@ -221,7 +221,8 @@
 }
 
 /* ---------- Slash Command Autocomplete ---------- */
-#slash-dropdown {
+#slash-dropdown,
+#secondary-slash-dropdown {
   position: absolute;
   bottom: 100%;
   left: 0;
@@ -239,7 +240,8 @@
   display: none;
   z-index: 50;
 }
-#slash-dropdown.on { display: block; }
+#slash-dropdown.on,
+#secondary-slash-dropdown.on { display: block; }
 .slash-item {
   padding: 10px 14px;
   cursor: pointer;
@@ -307,7 +309,8 @@
   .icon-btn:active { background: rgba(255,255,255,0.10); transform: scale(0.96); }
   .icon-btn.recording { background: rgba(244,67,54,0.15); }
 
-  #slash-dropdown {
+  #slash-dropdown,
+  #secondary-slash-dropdown {
     background: rgba(28, 32, 42, 0.95);
     border: 1px solid var(--glass-border);
     box-shadow:

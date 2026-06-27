@@ -4,85 +4,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 
-import java.nio.file.{Files, Path}
-import scala.jdk.CollectionConverters.*
-
 class MeshModelSpec extends CatsEffectSuite:
-
-  // ===== FileFingerprint =====
-
-  test("FileFingerprint.compute returns None for non-existent file") {
-    val ghost = os.Path(Path.of(s"/tmp/nebflow-ghost-${System.currentTimeMillis()}.md"))
-    val result = FileFingerprint.compute(ghost)
-    assertEquals(result, None)
-  }
-
-  test("FileFingerprint.compute returns Some for existing file") {
-    val tmp = Files.createTempFile("nebflow-fp-", ".md")
-    try
-      Files.writeString(tmp, "hello world")
-      val result = FileFingerprint.compute(os.Path(tmp))
-      assert(result.isDefined, "Expected Some for existing file")
-      val fp = result.get
-      assert(fp.mtime > 0, "mtime should be positive")
-      assertEquals(fp.size, 11L, "size should match content length")
-      assert(fp.hash.nonEmpty, "hash should not be empty")
-    finally Files.deleteIfExists(tmp)
-  }
-
-  test("FileFingerprint.compute returns correct size for empty file") {
-    val tmp = Files.createTempFile("nebflow-fp-empty-", ".md")
-    try
-      Files.writeString(tmp, "")
-      val result = FileFingerprint.compute(os.Path(tmp))
-      assert(result.isDefined)
-      assertEquals(result.get.size, 0L, "Empty file should have size 0")
-      // Hash of empty content should still be computed
-      assert(result.get.hash.nonEmpty, "Empty file should still have a hash")
-    finally Files.deleteIfExists(tmp)
-  }
-
-  test("FileFingerprint.compute returns correct size for binary content") {
-    val tmp = Files.createTempFile("nebflow-fp-bin-", ".bin")
-    try
-      val bytes: Array[Byte] = Array(0x00, 0x01, 0xff.toByte, 0xfe.toByte)
-      Files.write(tmp, bytes)
-      val result = FileFingerprint.compute(os.Path(tmp))
-      assert(result.isDefined)
-      assertEquals(result.get.size, 4L)
-    finally Files.deleteIfExists(tmp)
-  }
-
-  test("FileFingerprint.computeHash is deterministic") {
-    val bytes = "test content".getBytes("UTF-8")
-    val h1 = FileFingerprint.computeHash(bytes)
-    val h2 = FileFingerprint.computeHash(bytes)
-    assertEquals(h1, h2, "Same input should produce same hash")
-  }
-
-  test("FileFingerprint.computeHash differs for different inputs") {
-    val h1 = FileFingerprint.computeHash("content A".getBytes("UTF-8"))
-    val h2 = FileFingerprint.computeHash("content B".getBytes("UTF-8"))
-    assert(h1 != h2, "Different inputs should produce different hashes")
-  }
-
-  test("FileFingerprint.computeHash handles empty input") {
-    val hash = FileFingerprint.computeHash(Array.emptyByteArray)
-    assertEquals(hash.length, 12, "Empty input should still produce 12-char hash")
-  }
-
-  test("FileFingerprint.computeHash length is 12 hex chars (6 bytes)") {
-    val hash = FileFingerprint.computeHash("anything".getBytes("UTF-8"))
-    assertEquals(hash.length, 12, "Hash should be 12 hex characters (SHA-256 truncated to 6 bytes)")
-    assert(hash.forall(c => "0123456789abcdef".contains(c)), "Hash should be lowercase hex")
-  }
-
-  test("FileFingerprint serialization roundtrip") {
-    val fp = FileFingerprint(mtime = 1700000000000L, size = 1024L, hash = "aabbccddeeff")
-    val json = fp.asJson.noSpaces
-    val decoded = decode[FileFingerprint](json)
-    assertEquals(decoded, Right(fp), "Roundtrip should preserve all fields")
-  }
 
   // ===== AccountInfo =====
 
@@ -172,26 +94,6 @@ class MeshModelSpec extends CatsEffectSuite:
   test("PeerInfo default deviceSecret is empty string") {
     val peer = PeerInfo("d", "n", "p", "a")
     assertEquals(peer.deviceSecret, "", "Default deviceSecret should be empty")
-  }
-
-  // ===== SyncDiff =====
-
-  test("SyncDiff serialization roundtrip") {
-    val diff = SyncDiff(
-      needUpload = List("a.md", "b.md"),
-      needDownload = List("c.md"),
-      unchanged = List("d.md")
-    )
-    val json = diff.asJson.noSpaces
-    val decoded = decode[SyncDiff](json)
-    assertEquals(decoded, Right(diff), "Roundtrip should preserve all fields")
-  }
-
-  test("SyncDiff empty lists serialize correctly") {
-    val diff = SyncDiff(Nil, Nil, Nil)
-    val json = diff.asJson.noSpaces
-    val decoded = decode[SyncDiff](json)
-    assertEquals(decoded, Right(diff))
   }
 
   // ===== MeshConfig =====

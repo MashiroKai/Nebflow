@@ -1,10 +1,12 @@
 import state from './state.js';
+import { findViewBySessionId } from './chatView.js';
 
-// ---------- Handler registry ----------
+// ---------- Handler registry (supports multiple handlers per type) ----------
 const handlers = {};
 
 export function onMessage(type, handler) {
-  handlers[type] = handler;
+  if (!handlers[type]) handlers[type] = [];
+  handlers[type].push(handler);
 }
 
 // ---------- Reconnection state ----------
@@ -118,12 +120,38 @@ export function connect() {
         'roundComplete'
       ];
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
+          msg.sessionId !== state.secondarySessionId &&
           !GLOBAL_MSG_TYPES.includes(msg.type) && !TERMINAL_MSG_TYPES.includes(msg.type) &&
           !STREAM_MSG_TYPES.includes(msg.type)) {
         return;
       }
-      const handler = handlers[msg.type];
-      if (handler) handler(msg);
+      // ── ChatView routing ─────────────────────────────────────────────
+      // For the secondary view: temporarily push its stream state into the
+      // global state + point state.dom at its DOM, so legacy handlers render
+      // into the right window. After handlers finish, pull changes back and
+      // restore the primary view's globals.
+      //
+      // The primary view needs NO push/pull — its stream state IS the global
+      // state (they share the same object references). This avoids 11 field
+      // copies on every primary-window message (including high-frequency
+      // textDelta/thinkingDelta).
+      const view = findViewBySessionId(msg.sessionId);
+      let _savedDom = null;
+      if (view && view.id !== 'primary') {
+        _savedDom = { ...state.dom };
+        view.pushToGlobal();
+        Object.assign(state.dom, view.dom);
+        state._secondaryActive = true;
+      }
+
+      const list = handlers[msg.type];
+      if (list) for (const h of list) h(msg);
+
+      if (view && view.id !== 'primary') {
+        view.pullFromGlobal();
+        Object.assign(state.dom, _savedDom);
+        state._secondaryActive = false;
+      }
     } catch (err) {
       console.error('[ws] message parse error:', err);
     }

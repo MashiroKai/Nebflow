@@ -17,15 +17,17 @@ export function getAgentColor(agentId) {
 
 // ---------- Status bar ----------
 export function setStatus(text) {
+  // state.dom is already pointed at the correct window by ChatView routing
+  // (Object.assign in ws.js), so no _secondaryActive branching needed.
   const { statusText, statusWrap } = state.dom;
-  statusText.textContent = text || '';
-  statusWrap.classList.add('on');
+  if (statusText) statusText.textContent = text || '';
+  if (statusWrap) statusWrap.classList.add('on');
   playSpinner();
 }
 
 export function clearStatus() {
   const { statusWrap } = state.dom;
-  statusWrap.classList.remove('on');
+  if (statusWrap) statusWrap.classList.remove('on');
   stopSpinner();
 }
 
@@ -52,7 +54,7 @@ export function clearRetryStatus() {
 export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
-  if (sessionId === state.activeSessionId) {
+  if (sessionId === state.activeSessionId || (state._secondaryActive && sessionId === state.secondarySessionId)) {
     const { input, sendBtn, stopBtn } = state.dom;
     input.disabled = true;
     sendBtn.style.display = 'none';
@@ -63,7 +65,7 @@ export function setBusy(sessionId) {
 export function clearBusy(sessionId) {
   state.busySessionIds.delete(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
-  if (sessionId === state.activeSessionId) {
+  if (sessionId === state.activeSessionId || (state._secondaryActive && sessionId === state.secondarySessionId)) {
     const { input, sendBtn, stopBtn } = state.dom;
     input.disabled = false;
     sendBtn.style.display = 'flex';
@@ -135,6 +137,13 @@ export function appendAiText(text) {
 
 export function finishAi(durationMs, model) {
   if (state.currentAiBubble) {
+    // Diagnostic: warn if finishAi is called while streaming is active.
+    // This helps catch any code path that prematurely resets the bubble.
+    const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
+    if (sinceActivity < 15000 && state.aiText) {
+      console.warn('[finishAi] Called during active streaming'
+        + ` (${sinceActivity}ms since last delta, textLen=${state.aiText.length})`);
+    }
     if (!state.aiText || !state.aiText.trim()) {
       const row = state.currentAiBubble.closest('.row');
       if (row) row.remove();
@@ -293,7 +302,7 @@ export function finishAgent(agentId) {
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || state.activeSessionId;
   // Guard: do not render into a different session's chat
-  if (sid && sid !== state.activeSessionId) return null;
+  if (sid && sid !== state.activeSessionId && !state._secondaryActive) return null;
   const chat = state.dom.chat;
   const pending = state.sessionToolCards[sid];
   if (pending) {
@@ -349,7 +358,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 export function renderToolPending(label, sessionId) {
   const sid = sessionId || state.activeSessionId;
   // Guard: only render into the active session
-  if (sid && sid !== state.activeSessionId) return;
+  if (sid && sid !== state.activeSessionId && !state._secondaryActive) return;
   const chat = state.dom.chat;
   if (state.currentAiBubble && state.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
@@ -644,7 +653,7 @@ export function renderAskUser(items, askSessionId) {
     return { type: 'askUser', items: [] };
   }
   const chat = state.dom.chat;
-  const sid = state.activeSessionId;
+  const sid = askSessionId || state.activeSessionId;
   if (sid && state.sessionToolCards[sid]) { state.sessionToolCards[sid].remove(); delete state.sessionToolCards[sid]; }
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -776,10 +785,15 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
 }
 
 // ---------- Attachment preview ----------
-export function renderAttachmentPreview() {
-  const attPreview = state.dom.attPreview;
+export function renderAttachmentPreview(target) {
+  // target: optional { attPreviewEl, attachments } for non-primary windows.
+  // Defaults to the primary window's attPreview + pendingAttachments so existing
+  // call sites are unaffected.
+  const attPreview = (target && target.attPreviewEl) || state.dom.attPreview;
+  const attachments = (target && target.attachments) || state.pendingAttachments;
+  if (!attPreview) return;
   attPreview.innerHTML = '';
-  state.pendingAttachments.forEach((att, idx) => {
+  attachments.forEach((att, idx) => {
     if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
       const wrap = document.createElement('div');
       wrap.style.position = 'relative';
@@ -792,8 +806,8 @@ export function renderAttachmentPreview() {
       rm.className = 'att-remove';
       rm.textContent = 'x';
       rm.onclick = () => {
-        state.pendingAttachments.splice(idx, 1);
-        renderAttachmentPreview();
+        attachments.splice(idx, 1);
+        renderAttachmentPreview(target);
       };
       wrap.appendChild(rm);
       attPreview.appendChild(wrap);
@@ -806,8 +820,8 @@ export function renderAttachmentPreview() {
       rm.style.cursor = 'pointer';
       rm.style.color = '#f44336';
       rm.onclick = () => {
-        state.pendingAttachments.splice(idx, 1);
-        renderAttachmentPreview();
+        attachments.splice(idx, 1);
+        renderAttachmentPreview(target);
       };
       wrap.appendChild(rm);
       attPreview.appendChild(wrap);
@@ -909,6 +923,10 @@ export function renderAskError(msg) {
 // O(n^2) slow as text grows and keeps the main thread busy — causing visible
 // lag when user tries to interact (e.g. switching agents).
 let _pendingThinkingRAF = null;
+// Capture the bubble + chat at schedule time so the rAF renders into the correct
+// window. For the secondary view, ws.js push/pull restores global state to primary
+// before the rAF fires — reading state.* at fire time would target the wrong window.
+let _thinkingRafTarget = null;
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
   state.thinkingText += delta;
@@ -938,16 +956,29 @@ export function appendThinkingDelta(delta) {
     chat.appendChild(row);
     state.currentThinkingBubble = bubble;
   }
+  // Capture the render target synchronously (correct during ws.js push/pull window).
+  // Store accumulated text on the bubble node so the rAF reads it regardless of
+  // which view global state points to at fire time.
+  _thinkingRafTarget = { bubble: state.currentThinkingBubble, chat: state.dom.chat };
+  _thinkingRafTarget.bubble._nfText = state.thinkingText;
   // Schedule a rAF render if one isn't already pending — caps re-render rate
   // and coalesces multiple deltas into a single DOM update.
   if (!_pendingThinkingRAF) {
     _pendingThinkingRAF = requestAnimationFrame(() => {
       _pendingThinkingRAF = null;
-      const contentEl = state.currentThinkingBubble?.querySelector('.thinking-content');
+      const target = _thinkingRafTarget;
+      _thinkingRafTarget = null;
+      if (!target || !target.bubble) return;
+      const contentEl = target.bubble.querySelector('.thinking-content');
       if (contentEl) {
-        contentEl.innerHTML = renderMarkdownWithMath(state.thinkingText || '') + '<span class="cursor"></span>';
+        contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
       }
-      smartScroll();
+      // Scroll the correct chat element directly — smartScroll() reads state.dom
+      // at rAF time which may be the wrong window.
+      const threshold = 60;
+      if (target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+        target.chat.scrollTop = target.chat.scrollHeight;
+      }
     });
   }
 }

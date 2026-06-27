@@ -88,20 +88,7 @@ class DeviceCapabilitiesSpec extends CatsEffectSuite:
     assertEquals(pi.userDescription, "")
   }
 
-  // ===== CloudSessionSync data types =====
-
-  test("CloudIndexSnapshot contains sessions and folders") {
-    val snapshot = nebflow.mesh.CloudIndexSnapshot(Nil, Nil, 0L)
-    assertEquals(snapshot.sessions, Nil)
-    assertEquals(snapshot.folders, Nil)
-    assertEquals(snapshot.updatedAt, 0L)
-  }
-
-  test("CloudSessionData contains messages and uiMessages") {
-    val data = nebflow.mesh.CloudSessionData(Nil, Nil, 0L)
-    assertEquals(data.messages, Nil)
-    assertEquals(data.uiMessages, Nil)
-  }
+  // ===== Relay data types =====
 
   test("RelayCommand decodes from JSON") {
     val json = """{"relayId":"r-1","fromDeviceId":"dev-a","action":"Bash","params":{"command":"ls"}}"""

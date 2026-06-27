@@ -35,10 +35,28 @@ async function meshApi(path, method = 'GET', body = null) {
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
     let msg = text.slice(0, 200);
-    try { msg = JSON.parse(text).error || msg; } catch {}
-    throw new Error(msg);
+    let code = '';
+    try {
+      const parsed = JSON.parse(text);
+      msg = parsed.error || msg;
+      code = parsed.code || '';
+    } catch {}
+    const err = new Error(msg);
+    err.code = code; // structured error code, e.g. 'cloud_url_missing'
+    throw err;
   }
   return resp.json();
+}
+
+/** Surface a mesh error to the user; focuses the server URL field when it's missing. */
+function reportMeshError(err) {
+  if (err.code === 'cloud_url_missing') {
+    showMeshError(err.message || '请填写服务器地址');
+    const urlInput = document.getElementById('gate-server-url') || document.getElementById('mesh-server-url');
+    if (urlInput) { urlInput.focus(); urlInput.classList.add('input-error'); }
+    return;
+  }
+  showMeshError(err.message);
 }
 
 // ---- Fetch status ----
@@ -361,7 +379,7 @@ async function doLogin(rerender) {
     await fetchMeshStatus();
     rerender();
   } catch (e) {
-    showMeshError(e.message);
+    reportMeshError(e);
   }
 }
 
@@ -379,7 +397,7 @@ async function doRegister(rerender) {
     await fetchMeshStatus();
     rerender();
   } catch (e) {
-    showMeshError(e.message);
+    reportMeshError(e);
   }
 }
 
@@ -411,6 +429,6 @@ async function doSaveDescription(rerender) {
 }
 
 // ---- Init (called once from main.js) ----
-export function initMesh() {
+export async function initMesh() {
   checkLoginGate();
 }
