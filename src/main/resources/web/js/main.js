@@ -1303,6 +1303,7 @@ onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessi
 
 onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
+  if (!view) return;
   const aid = msg.agentId || activeView.stream.activeAgentId;
   if (aid && activeView.stream.activeSubAgents && activeView.stream.activeSubAgents[aid]) {
     activeView.stream.activeSubAgents[aid].currentTool = msg.label;
@@ -1327,8 +1328,10 @@ onMessage('agentDone', (msg, view) => {
     setTimeout(() => {
       if (v.stream.activeSubAgents && v.stream.activeSubAgents[aid]) {
         delete v.stream.activeSubAgents[aid];
+        const saved = activeView;
         setActiveView(v);
         updateDelegateIndicator();
+        setActiveView(saved);
       }
     }, 2000);
   }
@@ -1799,7 +1802,12 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       const existing = state.sessionBgTasks[sid];
       if (existing) {
         state.sessionBgTasks[sid] = existing.filter(t => t.taskId !== taskId);
-        if (v && v.mounted) { setActiveView(v); updateBgTasksUI(); }
+        if (v && v.mounted) {
+          const saved = activeView;
+          setActiveView(v);
+          updateBgTasksUI();
+          setActiveView(saved);
+        }
       }
     }, 3000);
   }
