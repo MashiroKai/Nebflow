@@ -174,6 +174,7 @@ initChatViews(
     input: document.getElementById('input'),
     sendBtn: document.getElementById('send-btn'),
     stopBtn: document.getElementById('stop-btn'),
+    attachBtn: document.getElementById('attach-btn'),
     statusWrap: document.getElementById('status-wrap'),
     statusText: document.getElementById('status-text'),
     lottieSpinnerEl: document.getElementById('lottie-spinner'),
@@ -198,6 +199,7 @@ initChatViews(
     input: document.getElementById('secondary-input'),
     sendBtn: document.getElementById('secondary-send-btn'),
     stopBtn: document.getElementById('secondary-stop-btn'),
+    attachBtn: document.getElementById('secondary-attach-btn'),
     statusWrap: document.getElementById('secondary-status-wrap'),
     statusText: document.getElementById('secondary-status-text'),
     lottieSpinnerEl: document.getElementById('secondary-spinner'),
@@ -322,7 +324,8 @@ function resetStreamTimeout(sid) {
   state.sessionBusyTimeouts[sid] = setTimeout(() => {
     if (state.busySessionIds.has(sid)) {
       import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        if (sid === state.activeSessionId) renderTimeoutNotice();
+        const v = findViewBySessionId(sid);
+        if (v) { setActiveView(v); renderTimeoutNotice(); }
         clearBusy(sid);
         clearStatus();
       });
@@ -411,7 +414,7 @@ onMessage('thinking', (msg, view) => {
     // Guard against duplicate thinking bubbles: check both state ref and DOM.
     const existing = activeView.dom.chat.querySelector('.thinking-placeholder');
     if (!activeView.stream.currentAiBubble && !existing) {
-      const { chat } = state.dom;
+      const { chat } = activeView.dom;
       const row = document.createElement('div');
       row.className = 'row ai';
       activeView.stream.currentAiBubble = document.createElement('div');
@@ -529,6 +532,7 @@ function formatTokens(n) {
 }
 
 function updateHeaderModelInfo() {
+  if (!activeView) return;
   const el = activeView.dom.headerModelInfoEl;
   if (!el) return;
   const sid = activeView?.sessionId;
@@ -974,9 +978,7 @@ function clearHistoryIndicators() {
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg, view) => {
   const sid = msg.sessionId;
-  // Route to the ChatView that owns this session — replaces the old
-  // _secondaryActive ternary checks with unified view.pagination access.
-  const view = findViewBySessionId(sid);
+  // ws.js already passes the correct view — no need to look it up again.
   if (!view) return;
   view.pagination.loading = false;
   hideHistoryLoader();
@@ -1255,26 +1257,32 @@ function renderDelegateDropdown() {
   }).join('');
 }
 
-// Toggle dropdown on indicator click
-document.getElementById('delegate-indicator')?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const dropdown = document.getElementById('delegate-dropdown');
-  if (!dropdown) return;
-  if (dropdown.classList.contains('hidden')) {
-    renderDelegateDropdown();
-    dropdown.classList.remove('hidden');
-  } else {
-    dropdown.classList.add('hidden');
-  }
+// Toggle dropdown on indicator click — register for ALL views
+Object.values(chatViews).forEach(v => {
+  const indicator = v.dom.delegateIndicatorEl;
+  const dropdown = v.dom.delegateDropdownEl;
+  if (!indicator || !dropdown) return;
+  indicator.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setActiveView(v);
+    if (dropdown.classList.contains('hidden')) {
+      renderDelegateDropdown();
+      dropdown.classList.remove('hidden');
+    } else {
+      dropdown.classList.add('hidden');
+    }
+  });
 });
 
 // Close dropdown on outside click
 document.addEventListener('click', (e) => {
-  const dropdown = document.getElementById('delegate-dropdown');
-  const indicator = document.getElementById('delegate-indicator');
-  if (dropdown && !dropdown.contains(e.target) && !indicator?.contains(e.target)) {
-    dropdown.classList.add('hidden');
-  }
+  Object.values(chatViews).forEach(v => {
+    const dropdown = v.dom.delegateDropdownEl;
+    const indicator = v.dom.delegateIndicatorEl;
+    if (dropdown && !dropdown.contains(e.target) && indicator && !indicator.contains(e.target)) {
+      dropdown.classList.add('hidden');
+    }
+  });
 });
 
 onMessage('agentStart', (msg, view) => {
@@ -1316,12 +1324,13 @@ onMessage('agentDone', (msg, view) => {
   if (!view) return;
   const aid = msg.agentId || activeView.stream.activeAgentId;
   if (aid && activeView.stream.activeSubAgents) {
-    // Mark as done briefly so user sees transition, then remove
     if (activeView.stream.activeSubAgents[aid]) activeView.stream.activeSubAgents[aid].done = true;
     renderDelegateDropdown();
+    const v = activeView; // capture before setTimeout
     setTimeout(() => {
-      if (activeView.stream.activeSubAgents && activeView.stream.activeSubAgents[aid]) {
-        delete activeView.stream.activeSubAgents[aid];
+      if (v.stream.activeSubAgents && v.stream.activeSubAgents[aid]) {
+        delete v.stream.activeSubAgents[aid];
+        setActiveView(v);
         updateDelegateIndicator();
       }
     }, 2000);
@@ -1696,10 +1705,12 @@ function renderBgDropdown() {
 
 function startBgTimer() {
   if (_bgTimer) return;
+  const v = activeView; // capture at start time — interval fires later when activeView may have drifted
+  if (!v) return;
   _bgTimer = setInterval(() => {
-    const dropdown = activeView.dom.bgDropdownEl;
+    const dropdown = v.dom.bgDropdownEl;
     if (!dropdown || dropdown.classList.contains('hidden')) { stopBgTimer(); return; }
-    const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
+    const tasks = state.sessionBgTasks[v.sessionId] || [];
     const now = Date.now();
     dropdown.querySelectorAll('.bg-task-duration').forEach(el => {
       const t = tasks.find(t => t.taskId === el.dataset.taskId);
@@ -1734,29 +1745,35 @@ function updateBgTasksUI() {
 }
 state.updateBgTasksUI = updateBgTasksUI;
 
-// Toggle dropdown on indicator click
-document.getElementById('bg-indicator')?.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const dropdown = activeView.dom.bgDropdownEl;
-  if (!dropdown) return;
-  if (dropdown.classList.contains('hidden')) {
-    renderBgDropdown();
-    dropdown.classList.remove('hidden');
-    startBgTimer();
-  } else {
-    dropdown.classList.add('hidden');
-    stopBgTimer();
-  }
+// Toggle dropdown on indicator click — register for ALL views
+Object.values(chatViews).forEach(v => {
+  const indicator = v.dom.bgIndicatorEl;
+  const dropdown = v.dom.bgDropdownEl;
+  if (!indicator || !dropdown) return;
+  indicator.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setActiveView(v);
+    if (dropdown.classList.contains('hidden')) {
+      renderBgDropdown();
+      dropdown.classList.remove('hidden');
+      startBgTimer();
+    } else {
+      dropdown.classList.add('hidden');
+      stopBgTimer();
+    }
+  });
 });
 
-// Close dropdown when clicking outside
+// Close dropdown when clicking outside — check all views' dropdowns
 document.addEventListener('click', (e) => {
-  const dropdown = activeView.dom.bgDropdownEl;
-  const indicator = activeView.dom.bgIndicatorEl;
-  if (dropdown && !dropdown.contains(e.target) && !indicator?.contains(e.target)) {
-    dropdown.classList.add('hidden');
-    stopBgTimer();
-  }
+  Object.values(chatViews).forEach(v => {
+    const dropdown = v.dom.bgDropdownEl;
+    const indicator = v.dom.bgIndicatorEl;
+    if (dropdown && !dropdown.contains(e.target) && indicator && !indicator.contains(e.target)) {
+      dropdown.classList.add('hidden');
+    }
+  });
+  stopBgTimer();
 });
 
 onMessage('backgroundTaskUpdate', (msg, view) => {
@@ -1780,11 +1797,12 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   // Remove completed/failed tasks after a brief delay so user sees the count update
   if (msg.status === 'completed' || msg.status === 'failed') {
     const taskId = msg.taskId;
+    const v = activeView; // capture before setTimeout
     setTimeout(() => {
       const existing = state.sessionBgTasks[sid];
       if (existing) {
         state.sessionBgTasks[sid] = existing.filter(t => t.taskId !== taskId);
-        updateBgTasksUI();
+        if (v && v.mounted) { setActiveView(v); updateBgTasksUI(); }
       }
     }, 3000);
   }
@@ -1956,15 +1974,32 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 // Scroll listener (primary window)
 const _primChat = chatViews.primary.dom.chat;
 _primChat.addEventListener('scroll', () => {
-  chatViews.primary.stream.scrollSnapped = _primChat.scrollTop + _primChat.clientHeight >= _primChat.scrollHeight - 40;
-  // Scroll-to-top: load older messages
   const pv = chatViews.primary;
+  pv.stream.scrollSnapped = _primChat.scrollTop + _primChat.clientHeight >= _primChat.scrollHeight - 40;
+  // Scroll-to-top: load older messages
   if (_primChat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
     pv.pagination.loading = true;
+    setActiveView(pv);
     showHistoryLoader();
     sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
 });
+
+// Scroll listener (secondary window)
+const _secChat = chatViews.secondary?.dom?.chat;
+if (_secChat) {
+  _secChat.addEventListener('scroll', () => {
+    const sv = chatViews.secondary;
+    if (!sv || !sv.mounted) return;
+    sv.stream.scrollSnapped = _secChat.scrollTop + _secChat.clientHeight >= _secChat.scrollHeight - 40;
+    if (_secChat.scrollTop < 100 && sv?.pagination?.hasMore && !sv?.pagination?.loading && sv?.pagination?.offset > 0) {
+      sv.pagination.loading = true;
+      setActiveView(sv);
+      showHistoryLoader();
+      sendWs({ type: 'getHistory', sessionId: sv.sessionId, limit: 50, beforeIndex: sv.pagination.offset });
+    }
+  });
+}
 
 // ---------- 6. Expose global Nebflow API for plugins ----------
 // Theme tokens extracted from CSS custom properties — agents can read these for consistency.
