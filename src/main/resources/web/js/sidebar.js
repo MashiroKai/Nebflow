@@ -1193,7 +1193,8 @@ export function renderSessionSidebar(sessionData, activeId) {
     (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',') +
     '|folders:' + [...(state.expandedFolders || [])].sort().join(',') +
     '|pinned:' + [...(state.pinnedSessions || [])].sort().join(',') +
-    '|selected:' + [...state.selectedSessionIds].sort().join(',');
+    '|selected:' + [...state.selectedSessionIds].sort().join(',') +
+    '|locale:' + getLocale();
   const sessionList = state.dom.sessionList;
   if (sessionList && sessionList._lastFingerprint === fingerprint) {
     // Data unchanged — just update active highlight in-place (much cheaper than rebuild).
