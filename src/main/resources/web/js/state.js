@@ -112,9 +112,6 @@ export default {
   selectedSessionIds: new Set(),
   lastSelectedSessionId: null,
 
-  // Send lock (prevents rapid double-send)
-  isSending: false,
-
   // Skill list (from server)
   skills: [],
 

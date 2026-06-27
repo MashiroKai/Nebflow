@@ -78,6 +78,9 @@ export class ChatView {
       loading: false,
       pendingInitialLoad: false,
     };
+
+    // ── Send lock (prevents rapid double-send within a single view) ──
+    this.isSending = false;
   }
 
   /** Reset streaming state — called when switching to a different session. */

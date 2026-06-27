@@ -418,7 +418,7 @@ export async function addFileAttachment(file, callback, target) {
 
 // ---------- Send ----------
 export function send() {
-  if (state.isSending) {
+  if (activeView.isSending) {
     console.warn('[send] blocked: already sending');
     return;
   }
@@ -432,31 +432,31 @@ export function send() {
     if (!text || isBusy || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
       return;
     }
-    state.isSending = true;
+    activeView.isSending = true;
     if (activeView.sessionId) state.turnExpecting[activeView.sessionId] = true;
     sendWs({ type: 'skill', skillName, input: text, sessionId: activeView.sessionId });
     renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (activeView.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
     input.value = '';
     saveInputDraft(activeView.sessionId);
-    setTimeout(() => { state.isSending = false; }, 300);
+    setTimeout(() => { activeView.isSending = false; }, 300);
     return;
   }
   // If in ask mode, send as ask question
   if (activeView.stream.askMode) {
     cancelAskMode();
     if (!text || isBusy || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
-      state.isSending = false;
+      activeView.isSending = false;
       return;
     }
-    state.isSending = true;
+    activeView.isSending = true;
     if (activeView.sessionId) state.turnExpecting[activeView.sessionId] = true;
     sendWs({ type: 'ask', question: text, sessionId: activeView.sessionId });
     state.sessionAskBuffers[activeView.sessionId] = { question: text, answer: '' };
     renderAskBubble(text);
     input.value = '';
     saveInputDraft(activeView.sessionId);
-    setTimeout(() => { state.isSending = false; }, 300);
+    setTimeout(() => { activeView.isSending = false; }, 300);
     return;
   }
   // Allow slash commands (except /ask <question> which sends to the agent)
@@ -465,7 +465,7 @@ export function send() {
     if (handleSlash(text)) {
       input.value = '';
       saveInputDraft(activeView.sessionId);
-      setTimeout(() => { state.isSending = false; }, 300);
+      setTimeout(() => { activeView.isSending = false; }, 300);
       return;
     }
   }
@@ -477,7 +477,7 @@ export function send() {
     console.warn('[send] ws not open:', { ws: !!state.ws, readyState: state.ws?.readyState });
     return;
   }
-  state.isSending = true;
+  activeView.isSending = true;
   // Mark this session as expecting a turn (prevents stray thinking bubbles after done)
   if (activeView.sessionId) state.turnExpecting[activeView.sessionId] = true;
   // Intercept /ask <question> before normal slash handling
@@ -490,14 +490,14 @@ export function send() {
     }
     input.value = '';
     saveInputDraft(activeView.sessionId);
-    setTimeout(() => { state.isSending = false; }, 300);
+    setTimeout(() => { activeView.isSending = false; }, 300);
     return;
   }
   if (handleSlash(text)) {
     input.value = '';
     saveInputDraft(activeView.sessionId);
     // Debounce: keep lock briefly to prevent accidental double-trigger of slash commands
-    setTimeout(() => { state.isSending = false; }, 300);
+    setTimeout(() => { activeView.isSending = false; }, 300);
     return;
   }
   renderUserBubble(text, activeView.pendingAttachments);
@@ -536,7 +536,7 @@ export function send() {
   // Start turn timer
   state.turnStartTimes[activeView.sessionId] = Date.now();
   // Release send lock after a short debounce to prevent double-click / rapid Enter
-  setTimeout(() => { state.isSending = false; }, 300);
+  setTimeout(() => { activeView.isSending = false; }, 300);
   // Clean up any orphaned thinking placeholders from previous incomplete streams
   if (window.__stopThinkingTimer) window.__stopThinkingTimer();
   activeView.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
