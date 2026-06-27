@@ -15,7 +15,7 @@ import {
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
-  switchSession, deleteSession, formatSessionTime, setSessionAttention,
+  deleteSession, formatSessionTime, setSessionAttention,
   initHeaderModelInfo,
   persistUnread, createNewFolder,
   resetChatForActiveSession
@@ -37,6 +37,8 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
+import { initChatViews, chatViews, findViewBySessionId } from './chatView.js';
+import { initSecondaryChat } from './secondary-chat.js';
 import { initMesh } from './mesh.js';
 import { formatLiveDuration } from './chat.js';
 
@@ -152,7 +154,71 @@ state.dom = {
   bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
   bgDropdownEl: document.getElementById('bg-dropdown'),
   bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
+  // Header status indicators — surfaced on state.dom so the ws.js swap can redirect
+  // them to the secondary panel, giving both windows identical indicator behaviour.
+  headerModelInfoEl: document.getElementById('header-model-info'),
+  bypassBadgeEl: document.getElementById('bypass-badge'),
+  delegateIndicatorEl: document.getElementById('delegate-indicator'),
+  delegateDropdownEl: document.getElementById('delegate-dropdown'),
+  delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+  memoryBtnEl: document.getElementById('memory-btn'),
 };
+
+// ── Initialize ChatView instances ──────────────────────────────────────
+// Each window gets its own ChatView with scoped DOM refs + streaming state.
+// The secondary view is multi-purpose (chat today, mind-map/diff tomorrow),
+// so it starts unmounted; secondary-chat.js mounts it when a session opens.
+initChatViews(
+  // Primary window DOM refs — field names MUST match state.dom keys exactly,
+  // so Object.assign(state.dom, view.dom) correctly overrides each field.
+  {
+    chat: document.getElementById('chat'),
+    input: document.getElementById('input'),
+    sendBtn: document.getElementById('send-btn'),
+    stopBtn: document.getElementById('stop-btn'),
+    statusWrap: document.getElementById('status-wrap'),
+    statusText: document.getElementById('status-text'),
+    lottieSpinnerEl: document.getElementById('lottie-spinner'),
+    attPreview: document.getElementById('attachment-preview'),
+    slashDropdown: document.getElementById('slash-dropdown'),
+    voiceBtn: document.getElementById('voice-btn'),
+    voiceOverlay: document.getElementById('voice-overlay'),
+    voiceText: document.getElementById('voice-text'),
+    headerModelInfoEl: document.getElementById('header-model-info'),
+    bgIndicatorEl: document.getElementById('bg-indicator'),
+    bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
+    bgDropdownEl: document.getElementById('bg-dropdown'),
+    bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
+    delegateIndicatorEl: document.getElementById('delegate-indicator'),
+    delegateDropdownEl: document.getElementById('delegate-dropdown'),
+    delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+    sessionNameEl: document.getElementById('session-name'),
+  },
+  // Secondary panel DOM refs (chat subtree only — panel itself is multi-purpose)
+  {
+    chat: document.getElementById('secondary-chat'),
+    input: document.getElementById('secondary-input'),
+    sendBtn: document.getElementById('secondary-send-btn'),
+    stopBtn: document.getElementById('secondary-stop-btn'),
+    statusWrap: document.getElementById('secondary-status-wrap'),
+    statusText: document.getElementById('secondary-status-text'),
+    lottieSpinnerEl: document.getElementById('secondary-spinner'),
+    attPreview: document.getElementById('secondary-attachment-preview'),
+    slashDropdown: document.getElementById('secondary-slash-dropdown'),
+    voiceBtn: document.getElementById('secondary-voice-btn'),
+    voiceOverlay: document.getElementById('secondary-voice-overlay'),
+    voiceText: document.getElementById('secondary-voice-text'),
+    headerModelInfoEl: document.getElementById('secondary-header-model-info'),
+    bgIndicatorEl: document.getElementById('secondary-bg-indicator'),
+    bgCountEl: document.getElementById('secondary-bg-indicator')?.querySelector('.bg-count'),
+    bgDropdownEl: document.getElementById('secondary-bg-dropdown'),
+    bgDropdownListEl: document.getElementById('secondary-bg-dropdown')?.querySelector('.bg-dropdown-list'),
+    delegateIndicatorEl: document.getElementById('secondary-delegate-indicator'),
+    delegateDropdownEl: document.getElementById('secondary-delegate-dropdown'),
+    delegateDropdownListEl: document.getElementById('secondary-delegate-dropdown')?.querySelector('.bg-dropdown-list'),
+    sessionNameEl: document.getElementById('secondary-session-name'),
+  }
+);
 
 // ---------- 2. Init libraries ----------
 // Guard: Safari may execute module scripts before CDN scripts finish loading.
@@ -213,7 +279,44 @@ function updateAgentNotificationDot(agentName) {
 
 // Helper: is this event for the currently active session?
 function isActive(msg) {
-  return !msg.sessionId || msg.sessionId === state.activeSessionId;
+  if (!msg.sessionId || msg.sessionId === state.activeSessionId) return true;
+  // When ws.js sets _secondaryActive, the swap is already done — treat as active
+  if (state._secondaryActive) return true;
+  return false;
+}
+
+// Helper: which session is the "display target" right now?
+// During a secondary swap, rendering should target the secondary session's data;
+// otherwise it targets the primary active session. Functions that previously
+// hardcoded state.activeSessionId use this so they render the correct session's
+// model-info / background tasks / delegates in either window.
+function displaySessionId() {
+  return state._secondaryActive ? state.secondarySessionId : state.activeSessionId;
+}
+
+/** Render into a specific session's window from an async callback (outside
+ *  the normal ChatView push/pull window). Temporarily activates the target
+ *  view's stream + DOM so the render function writes to the right place,
+ *  then restores. Use this for showOptions confirm callbacks, setTimeout
+ *  callbacks, etc. where the original ChatView routing has already unwound. */
+function renderToSession(sessionId, fn) {
+  const view = findViewBySessionId(sessionId);
+  if (!view || view.id === 'primary') {
+    // Primary view or not found — just render directly (global state is primary's).
+    fn();
+    return;
+  }
+  // Secondary view: push + swap DOM, run fn, pull + restore.
+  const savedDom = { ...state.dom };
+  view.pushToGlobal();
+  Object.assign(state.dom, view.dom);
+  state._secondaryActive = true;
+  try { fn(); }
+  finally {
+    view.pullFromGlobal();
+    Object.assign(state.dom, savedDom);
+    state._secondaryActive = false;
+  }
 }
 
 // Helper: compute and clear turn duration for a session
@@ -265,6 +368,7 @@ onMessage('thinkingDelta', (msg) => {
   // Accumulate thinking text for ALL sessions
   if (sid) state.sessionThinkingBuffers[sid] = (state.sessionThinkingBuffers[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
+  state.lastStreamActivity = Date.now();
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
     stopThinkingTimer();
@@ -291,6 +395,7 @@ onMessage('textDelta', (msg) => {
   // Accumulate text for ALL sessions
   if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
+  state.lastStreamActivity = Date.now();
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
   if (isActive(msg)) {
     stopThinkingTimer();
@@ -453,9 +558,9 @@ function formatTokens(n) {
 }
 
 function updateHeaderModelInfo() {
-  const el = document.getElementById('header-model-info');
+  const el = state.dom.headerModelInfoEl;
   if (!el) return;
-  const sid = state.activeSessionId;
+  const sid = displaySessionId();
   const info = sid ? state.sessionModelInfo[sid] : null;
   if (!info || !info.contextWindow) {
     el.textContent = '';
@@ -588,7 +693,7 @@ onMessage('usageUpdate', (msg) => {
       inputTokens: msg.inputTokens,
       compactThreshold: msg.compactThreshold
     };
-    if (sid === state.activeSessionId) updateHeaderModelInfo();
+    if (isActive(msg)) updateHeaderModelInfo();
   }
 });
 
@@ -710,7 +815,9 @@ onMessage('error', (msg) => {
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
   // Reset history loading state — backend may fail mid-pagination
-  state.historyLoading = false;
+  const errView = findViewBySessionId(sid);
+  if (errView) errView.pagination.loading = false;
+  state.historyLoading = false; // legacy fallback
   hideHistoryLoader();
   if (isActive(msg)) {
     if (sid && state.sessionToolCards[sid]) {
@@ -831,22 +938,25 @@ onMessage('sessionList', (msg) => {
   const allFolders = msg.folders || [];
   allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
 
-  // Filter by selected agent if one is active (safety net — backend should send agentSessionList)
-  let sessionsToShow = allSessions;
-  if (state.selectedAgent) {
-    sessionsToShow = allSessions.filter(s => (s.agentName || 'Nebula') === state.selectedAgent);
-  }
+  // Dedup safety net for singleton agents only (same as agentSessionList).
+  const SINGLETON_AGENTS = new Set(['Jarvis']);
+  const sessionsToShow = allSessions.filter(s => {
+    const a = s.agentName || 'Nebula';
+    if (!SINGLETON_AGENTS.has(a)) return true;
+    const sameAgent = allSessions.filter(x => (x.agentName || 'Nebula') === a);
+    if (sameAgent.length <= 1) return true;
+    const keeper = sameAgent.reduce((m, x) => x.updatedAt > m.updatedAt ? x : m);
+    return s.id === keeper.id;
+  });
   state.folders = allFolders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
 
-  // Determine activeId: only use it if it belongs to the filtered (shown) sessions
-  let activeId = msg.activeId;
-  if (state.selectedAgent && activeId) {
-    const activeAgent = state.sessionAgentMap[activeId];
-    if (activeAgent !== state.selectedAgent) {
-      // activeId belongs to a different agent — pick the first session of the current agent instead
-      activeId = sessionsToShow[0]?.id || null;
-    }
+  // ── Main window locked to Jarvis ──
+  // Override the backend's activeId: the primary view always shows Jarvis.
+  const jarvisSess = sessionsToShow.find(s => s.agentName === 'Jarvis');
+  let activeId = jarvisSess ? jarvisSess.id : msg.activeId;
+  if (jarvisSess && chatViews.primary) {
+    chatViews.primary.sessionId = jarvisSess.id;
   }
 
   renderSessionSidebar(sessionsToShow, activeId);
@@ -893,17 +1003,17 @@ function clearHistoryIndicators() {
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg) => {
   const sid = msg.sessionId;
-  if (sid !== state.activeSessionId) return;
-  state.historyLoading = false;
+  // Route to the ChatView that owns this session — replaces the old
+  // _secondaryActive ternary checks with unified view.pagination access.
+  const view = findViewBySessionId(sid);
+  if (!view) return;
+  view.pagination.loading = false;
   hideHistoryLoader();
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
-  // resetChatForActiveSession sets pendingInitialLoad=true; we clear it here on first response.
-  // Subsequent historyPage responses (from duplicate getHistory) see pendingInitialLoad=false
-  // and go to the prepend path instead of clearing the DOM again.
-  const isInitialLoad = state.pendingInitialLoad;
+  const isInitialLoad = view.pagination.pendingInitialLoad;
   if (isInitialLoad) {
-    state.pendingInitialLoad = false;
+    view.pagination.pendingInitialLoad = false;
     // Initial load or full refresh — replace
     state.dom.chat.innerHTML = '';
     // Reset sessionToolCards — innerHTML clear above removes all tool pending
@@ -913,9 +1023,9 @@ onMessage('historyPage', (msg) => {
     Object.keys(state.sessionToolCards).forEach(sid => delete state.sessionToolCards[sid]);
     // Clear history indicators before rendering
     clearHistoryIndicators();
-    state.historyOffset = msg.offset;
-    state.historyTotal = msg.total;
-    state.historyHasMore = msg.hasMore;
+    view.pagination.offset = msg.offset;
+    view.pagination.total = msg.total;
+    view.pagination.hasMore = msg.hasMore;
     restoreFromBackendHistory(msg.messages);
 
     // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
@@ -1071,16 +1181,16 @@ onMessage('historyPage', (msg) => {
       renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel);
     }
 
-    if (!state.historyHasMore && msg.messages.length > 0) showHistoryEnd();
+    if (!view.pagination.hasMore && msg.messages.length > 0) showHistoryEnd();
 
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
     // is complete, ensure the viewport shows the latest content.
     // Uses rAF to avoid layout thrashing — fires after any pending style calculations.
     requestAnimationFrame(() => {
       const chat = state.dom.chat;
-      if (state.scrollSnapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
+      if (view.stream.scrollSnapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
         chat.scrollTop = chat.scrollHeight;
-        state.scrollSnapped = true;
+        view.stream.scrollSnapped = true;
       }
     });
 
@@ -1088,7 +1198,7 @@ onMessage('historyPage', (msg) => {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
     // if the response offset is >= what we already have, skip it to avoid duplicates.
-    if (msg.offset >= state.historyOffset && state.historyOffset > 0) {
+    if (msg.offset >= view.pagination.offset && view.pagination.offset > 0) {
       // Skipping duplicate response
       return;
     }
@@ -1114,9 +1224,9 @@ onMessage('historyPage', (msg) => {
     // Restore scroll position so user stays at the same message
     const newScrollHeight = chat.scrollHeight;
     chat.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
-    state.historyOffset = msg.offset;
-    state.historyHasMore = msg.hasMore;
-    if (!state.historyHasMore) showHistoryEnd();
+    view.pagination.offset = msg.offset;
+    view.pagination.hasMore = msg.hasMore;
+    if (!view.pagination.hasMore) showHistoryEnd();
   }
 });
 
@@ -1127,26 +1237,34 @@ onMessage('historyPage', (msg) => {
 // Click the indicator to see a dropdown with per-agent status.
 
 function updateDelegateIndicator() {
-  const el = document.getElementById('delegate-indicator');
+  const el = state.dom.delegateIndicatorEl;
   if (!el) return;
-  const count = Object.keys(state.activeSubAgents || {}).length;
+  // Only count sub-agents belonging to the currently displayed session
+  const sid = displaySessionId();
+  const count = Object.values(state.activeSubAgents || {})
+    .filter(info => !info.sessionId || info.sessionId === sid)
+    .length;
   if (count > 0) {
     el.classList.remove('hidden');
     el.querySelector('.delegate-count').textContent = count;
   } else {
     el.classList.add('hidden');
     // Also hide dropdown
-    const dropdown = document.getElementById('delegate-dropdown');
+    const dropdown = state.dom.delegateDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
   renderDelegateDropdown();
 }
+state.updateDelegateIndicator = updateDelegateIndicator;
 
 function renderDelegateDropdown() {
-  const listEl = document.querySelector('#delegate-dropdown .bg-dropdown-list');
+  const listEl = state.dom.delegateDropdownListEl;
   if (!listEl) return;
   const agents = state.activeSubAgents || {};
-  const entries = Object.entries(agents);
+  // Only show sub-agents belonging to the currently displayed session
+  const sid = displaySessionId();
+  const entries = Object.entries(agents)
+    .filter(([id, info]) => !info.sessionId || info.sessionId === sid);
   if (entries.length === 0) {
     listEl.innerHTML = '';
     return;
@@ -1198,7 +1316,8 @@ onMessage('agentStart', (msg) => {
     name: msg.name || aid,
     task: msg.taskDescription || '',
     currentTool: null,
-    done: false
+    done: false,
+    sessionId: msg.sessionId || state.activeSessionId
   };
   updateDelegateIndicator();
 });
@@ -1258,7 +1377,7 @@ onMessage('compactStart', (msg) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, true);
-  if (sid === state.activeSessionId) {
+  if (isActive(msg)) {
     renderSystemBubble(t('chat.compacting'));
   }
 });
@@ -1268,7 +1387,7 @@ onMessage('compactComplete', (msg) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
-  if (sid === state.activeSessionId) {
+  if (isActive(msg)) {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
   }
@@ -1279,7 +1398,7 @@ onMessage('compactFailed', (msg) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
-  if (sid === state.activeSessionId) {
+  if (isActive(msg)) {
     renderSystemBubble(t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts }));
   }
   if (msg.attempt >= msg.maxAttempts) {
@@ -1298,39 +1417,50 @@ onMessage('agentList', (msg) => {
   // Auto-select first agent if none selected
   if (!state.selectedAgent && state.agentsData.length > 0) {
     import('./sidebar.js').then(({ selectAgent }) => {
-      // Default to Nebula if present, otherwise first agent
-      const nebula = state.agentsData.find(a => a.name === 'Nebula');
-      selectAgent(nebula ? 'Nebula' : state.agentsData[0].name);
+      // Default to Jarvis (main orchestrator)
+      const jarvis = state.agentsData.find(a => a.name === 'Jarvis');
+      selectAgent(jarvis ? 'Jarvis' : (state.agentsData[0]?.name || 'Nebula'));
     });
   }
 });
 
 onMessage('agentSessionList', (msg) => {
-  // Safety: ignore if agent doesn't match the currently selected tab
-  // Prevents cross-agent session list contamination on stale messages
-  if (state.selectedAgent && msg.agentName !== state.selectedAgent) return;
-  // Render sessions for the selected agent
+  // Unified list — accept all sessions regardless of which agent triggered the request
   const agentName = msg.agentName;
-  const sessions = msg.sessions || [];
+  let sessions = msg.sessions || [];
   const folders = msg.folders || [];
   state.folders = folders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
+
+  // Front-end dedup safety net for singleton agents only (e.g. Jarvis must have
+  // exactly one session). Normal agents like Nebula may have many sessions.
+  // Keep the most recently updated one; this complements the backend dedup.
+  const SINGLETON_AGENTS = new Set(['Jarvis']);
+  sessions = sessions.filter(s => {
+    const a = s.agentName || agentName;
+    if (!SINGLETON_AGENTS.has(a)) return true;
+    const sameAgent = sessions.filter(x => (x.agentName || agentName) === a);
+    if (sameAgent.length <= 1) return true;
+    const keeper = sameAgent.reduce((m, x) => x.updatedAt > m.updatedAt ? x : m);
+    return s.id === keeper.id;
+  });
+
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
-  // Find active session for this agent
-  const prevActiveId = state.activeSessionId;
-  const newActiveId = sessions.find(s => s.id === prevActiveId) ? prevActiveId : (sessions[0]?.id || null);
-  // Clear memory cache when session changes so modal fetches fresh content from server
-  if (newActiveId && newActiveId !== prevActiveId) {
-    clearMemoryCache();
+
+  // ── Main window is locked to Jarvis ──────────────────────────────────
+  // The primary ChatView always shows the Jarvis session; agent tab switches
+  // only filter the sidebar list, they never change what the main window shows.
+  // Find (or create) the Jarvis session and pin the primary view to it.
+  const jarvisSession = sessions.find(s => s.agentName === 'Jarvis');
+  if (jarvisSession && chatViews.primary) {
+    if (chatViews.primary.sessionId !== jarvisSession.id) {
+      chatViews.primary.sessionId = jarvisSession.id;
+      state.activeSessionId = jarvisSession.id; // keep legacy in sync
+    }
   }
-  renderSessionSidebar(sessions, newActiveId);
-  // Sync backend active session when agent tab switch auto-selected a different session.
-  // Without this, getMemory/memoryStatus read backend's getActiveMeta which still
-  // points to the previous session → shows wrong memory content.
-  if (newActiveId && newActiveId !== prevActiveId) {
-    sendWs({type: 'switchSession', sessionId: newActiveId});
-  }
+  // Render sidebar — active highlight shows Jarvis (primary) session
+  renderSessionSidebar(sessions, state.activeSessionId);
   initHeaderModelInfo();
 });
 
@@ -1383,17 +1513,38 @@ onMessage('configUpdated', (msg) => {
 onMessage('modelOptions', (msg) => {
   const models = msg.models || [];
   const current = msg.current || null;
+  // Capture the session that requested the model list — the user's selection
+  // callback runs asynchronously (long after this handler returns), so we must
+  // NOT rely on state.activeSessionId which may have switched by then.
+  const targetSessionId = msg.sessionId || state.activeSessionId;
+  // Determine which chat window owns this session so the card renders in the right place.
+  const isSecondary = targetSessionId === state.secondarySessionId;
+  const chatEl = isSecondary ? document.getElementById('secondary-chat') : state.dom.chat;
+
+  function renderInto(fn) {
+    if (!isSecondary) { fn(); return; }
+    const orig = state.dom.chat;
+    state.dom.chat = chatEl;
+    try { fn(); }
+    finally { state.dom.chat = orig; }
+  }
+
   if (models.length === 0) {
-    renderSystemBubble(t('chat.noModels'));
+    renderInto(() => renderSystemBubble(t('chat.noModels')));
     return;
   }
-  if (!state.currentAiBubble) {
-    const row = document.createElement('div');
-    row.className = 'row ai';
-    state.currentAiBubble = document.createElement('div');
-    state.currentAiBubble.className = 'bubble ai';
-    row.appendChild(state.currentAiBubble);
-    state.dom.chat.appendChild(row);
+  // Use a local bubble reference for the secondary window; primary uses the shared state.currentAiBubble.
+  let bubble = isSecondary ? null : state.currentAiBubble;
+  if (!bubble) {
+    renderInto(() => {
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      row.appendChild(bubble);
+      chatEl.appendChild(row);
+    });
+    if (!isSecondary) state.currentAiBubble = bubble;
   }
   const options = models.map(m => {
     const isCurrent = current && m.ref === current;
@@ -1403,13 +1554,16 @@ onMessage('modelOptions', (msg) => {
   const defaultLabel = t('chat.modelDefault');
   options.unshift({label: defaultLabel, desc: t('chat.modelDefaultDesc'), ref: null});
   import('./chat.js').then(({ showOptions }) => {
-    showOptions(state.currentAiBubble, [
+    showOptions(bubble, [
       {question: t('chat.selectModel'), options: options.map(o => ({label: o.label, desc: o.desc})), allowOther: false}
     ], (answers) => {
       const selected = options.find(o => o.label === answers[0]);
       const modelRef = selected ? selected.ref : null;
-      sendWs({type: 'setSessionModel', sessionId: state.activeSessionId, modelRef: modelRef});
-      renderSystemBubble(t('chat.modelSet', { model: answers[0] === defaultLabel ? 'default' : answers[0].replace(' ✓', '') }));
+      // Use the captured session id, not the (possibly changed) activeSessionId.
+      sendWs({type: 'setSessionModel', sessionId: targetSessionId, modelRef: modelRef});
+      renderToSession(targetSessionId, () => {
+        renderSystemBubble(t('chat.modelSet', { model: answers[0] === defaultLabel ? 'default' : answers[0].replace(' ✓', '') }));
+      });
     }, t('chat.apply'));
   });
 });
@@ -1452,22 +1606,33 @@ onMessage('sessionBusy', (msg) => {
     delete state.pendingRestore[sid];
     if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
   }
-  // DOM-related cleanup only for active session
+  // DOM-related cleanup only for active session.
+  // Guard: if we received a textDelta/thinkingDelta very recently, the stream
+  // is still active — a stale sessionBusy(false) (e.g. from idle-entry delay,
+  // DeathWatcher broadcast, or crash-recovery race) must NOT finalize the bubble.
+  // Only do the defensive cleanup if the stream has been silent for 15s+,
+  // indicating the 'done' event was truly lost.
   if (isActive(msg) && !msg.busy && state.currentAiBubble) {
-    const durationMs = consumeTurnDuration(sid);
-    // IMPORTANT: do NOT use sessionModelInfo[sid]?.model here.
-    // If the user switched models (e.g. deepseek → glm), sessionModelInfo still
-    // holds the PREVIOUS turn's model. When sessionBusy(false) wins the race
-    // against 'done' (backend acknowledges this can happen), using the cache
-    // renders the wrong model name on the duration badge. Passing null means
-    // the badge shows the phrase without a model — the correct model comes from
-    // history when the user switches sessions.
-    const data = finishAi(durationMs, null);
-    if (data) saveMsg(data, sid);
-    Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
-    state.agentBubbles = {};
-    state.activeAgentId = null;
-    clearStatus();
+    const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
+    if (sinceActivity < 15000) {
+      console.warn('[sessionBusy(false)] Ignoring stale sessionBusy(false) during active streaming'
+        + ` (${sinceActivity}ms since last delta)`);
+    } else {
+      const durationMs = consumeTurnDuration(sid);
+      // IMPORTANT: do NOT use sessionModelInfo[sid]?.model here.
+      // If the user switched models (e.g. deepseek → glm), sessionModelInfo still
+      // holds the PREVIOUS turn's model. When sessionBusy(false) wins the race
+      // against 'done' (backend acknowledges this can happen), using the cache
+      // renders the wrong model name on the duration badge. Passing null means
+      // the badge shows the phrase without a model — the correct model comes from
+      // history when the user switches sessions.
+      const data = finishAi(durationMs, null);
+      if (data) saveMsg(data, sid);
+      Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
+      state.agentBubbles = {};
+      state.activeAgentId = null;
+      clearStatus();
+    }
   }
 });
 
@@ -1475,7 +1640,15 @@ onMessage('sessionBusy', (msg) => {
 onMessage('taskListUpdate', (msg) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
-  if (isActive(msg)) renderTaskList(msg.tasks);
+  // Secondary panel — check first to avoid isActive() matching during ws.js swap
+  if (state.secondarySessionId && msg.sessionId === state.secondarySessionId) {
+    renderTaskList(msg.tasks, document.getElementById('secondary-task-list'));
+    return;
+  }
+  // Main panel
+  if (msg.sessionId === state.activeSessionId || !msg.sessionId) {
+    renderTaskList(msg.tasks);
+  }
 });
 
 // --- Background task indicator in header ---
@@ -1491,7 +1664,7 @@ function formatDuration(ms) {
 }
 
 function renderBgDropdown() {
-  const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+  const tasks = state.sessionBgTasks[displaySessionId()] || [];
   const listEl = state.dom.bgDropdownListEl;
   const dropdown = state.dom.bgDropdownEl;
   if (!listEl || !dropdown) return;
@@ -1553,7 +1726,7 @@ function renderBgDropdown() {
       cancelBtn.classList.add('cancelling');
       cancelBtn.textContent = task.status === 'cancelling' ? t('bg.cancelling') : '...';
       task.status = 'cancelling';
-      sendWs({ type: 'cancelBackgroundJob', sessionId: state.activeSessionId, jobId: task.taskId });
+      sendWs({ type: 'cancelBackgroundJob', sessionId: displaySessionId(), jobId: task.taskId });
     };
     // If already cancelling, show the cancelling state
     if (task.status === 'cancelling') {
@@ -1572,7 +1745,7 @@ function startBgTimer() {
   _bgTimer = setInterval(() => {
     const dropdown = state.dom.bgDropdownEl;
     if (!dropdown || dropdown.classList.contains('hidden')) { stopBgTimer(); return; }
-    const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+    const tasks = state.sessionBgTasks[displaySessionId()] || [];
     const now = Date.now();
     dropdown.querySelectorAll('.bg-task-duration').forEach(el => {
       const t = tasks.find(t => t.taskId === el.dataset.taskId);
@@ -1586,7 +1759,7 @@ function stopBgTimer() {
 }
 
 function updateBgTasksUI() {
-  const tasks = state.sessionBgTasks[state.activeSessionId] || [];
+  const tasks = state.sessionBgTasks[displaySessionId()] || [];
   const active = tasks.filter(task => task.status === 'running' || task.status === 'cancelling');
   const el = state.dom.bgIndicatorEl;
   const countEl = state.dom.bgCountEl;
@@ -1709,6 +1882,10 @@ onMessage('skillList', (msg) => {
   registerSkillCommands(skills);
 });
 
+onMessage('skillError', (msg) => {
+  if (isActive(msg)) renderSystemBubble(msg.message || 'Skill error');
+});
+
 
 // --- Memory ---
 onMessage('memoryData', (msg) => handleMemoryData(msg));
@@ -1778,6 +1955,7 @@ initPathPicker();
 initInput();
 initMemory();
 initScheduledTask();
+initSecondaryChat();
 initMesh();
 
 // Sidebar collapse toggle
@@ -1825,10 +2003,11 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 state.dom.chat.addEventListener('scroll', () => {
   state.scrollSnapped = state.dom.chat.scrollTop + state.dom.chat.clientHeight >= state.dom.chat.scrollHeight - 40;
   // Scroll-to-top: load older messages
-  if (state.dom.chat.scrollTop < 100 && state.historyHasMore && !state.historyLoading && state.historyOffset > 0) {
-    state.historyLoading = true;
+  const pv = chatViews.primary;
+  if (state.dom.chat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
+    pv.pagination.loading = true;
     showHistoryLoader();
-    sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: state.historyOffset });
+    sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
 });
 

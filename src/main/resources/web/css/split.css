@@ -1,0 +1,554 @@
+/* ===== Schedule Section (top of sidebar) ===== */
+#schedule-section {
+  flex-shrink: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+.schedule-header {
+  padding: 10px 14px 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.schedule-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-frame-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.schedule-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.schedule-count {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  opacity: 0.5;
+}
+#schedule-list {
+  padding: 4px 6px 8px;
+  min-height: 40px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+#schedule-list::-webkit-scrollbar { width: 4px; }
+#schedule-list::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.15);
+  border-radius: 2px;
+}
+
+/* Section divider between schedule and sessions */
+.sidebar-section-divider {
+  height: 1px;
+  background: var(--glass-border);
+  flex-shrink: 0;
+}
+
+/* ===== Agent Badge (session list + secondary header) ===== */
+.agent-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+/* Session list agent tag */
+.session-agent-tag {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-frame-input-bg);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Jarvis session bold */
+.session-item.is-jarvis .session-name {
+  font-weight: 600;
+}
+
+/* ===== Secondary Panel (split view) ===== */
+#secondary-panel {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  background: var(--color-bg);
+  border-left: 1px solid var(--color-border);
+}
+/* Top fade — messages dissolve behind header */
+#secondary-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: linear-gradient(to bottom, var(--color-bg), transparent);
+  z-index: 15;
+  pointer-events: none;
+}
+/* Bottom fade — messages dissolve above input */
+#secondary-panel::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: linear-gradient(to top, var(--color-bg), transparent);
+  z-index: 15;
+  pointer-events: none;
+}
+#secondary-panel.visible {
+  display: flex;
+}
+#secondary-panel.hidden {
+  display: none;
+}
+
+/* ── Jarvis main window can be hidden (like the secondary panel) ──────────
+   Toggling body.jarvis-hidden simply collapses #main. The ChatView is NOT
+   unmounted and activeSessionId is unchanged, so Jarvis streaming keeps
+   accumulating into the (hidden) DOM and reappears when reopened. When #main
+   is hidden, the secondary panel (if visible) expands to fill via flex:1. */
+body.jarvis-hidden #main {
+  display: none;
+}
+
+/* "J" entry button in the sidebar topbar — reuses .panel-btn sizing.
+   Letter styling mirrors the agent-letter-icon look (sidebar.js). */
+.jarvis-toggle-btn .jarvis-letter {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+/* Highlight (primary color) when Jarvis is visible; dim when hidden.
+   This gives the button an active/inactive affordance matching its toggle. */
+body:not(.jarvis-hidden) .jarvis-toggle-btn {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  opacity: 1;
+}
+
+/* Close button in the main header reuses .secondary-close-btn. Add a touch of
+   left margin so it sits clear of the brand text. */
+.main-close-btn {
+  margin-left: 4px;
+}
+.secondary-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  margin: 8px;
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  color: var(--color-frame-text-bright);
+  font-size: 14px;
+  font-weight: 500;
+  flex-shrink: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255,255,255,0.25),
+    0px 2px 8px rgba(0,0,0,0.04),
+    0px 8px 24px rgba(0,0,0,0.06);
+}
+/* Three-segment layout mirroring the primary header (left brand / center name / right indicators) */
+.secondary-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.secondary-header-brand {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+  white-space: nowrap;
+}
+.secondary-header-center {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 40%;
+  overflow: hidden;
+  z-index: 10;
+}
+.secondary-header-center > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+.secondary-header::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%, transparent 90%);
+  pointer-events: none;
+  z-index: 1;
+}
+#secondary-session-name {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.secondary-close-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+}
+.secondary-close-btn:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+.secondary-close-btn svg {
+  width: 16px;
+  height: 16px;
+}
+/* Secondary overlays — task list etc. (mirrors #top-overlays) */
+#secondary-overlays {
+  position: absolute;
+  top: 56px;
+  left: 0;
+  right: 0;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+}
+#secondary-overlays > * { pointer-events: auto; }
+
+#secondary-chat {
+  flex: 1;
+  overflow-y: auto;
+  padding: 64px 12px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  scrollbar-color: var(--color-frame-border) transparent;
+}
+#secondary-input-area {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 20;
+  padding: 0 12px 12px 12px;
+}
+.secondary-input-bar {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  flex-shrink: 0;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+.secondary-input-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%
+  );
+  pointer-events: none;
+  z-index: 1;
+  border-radius: inherit;
+}
+#secondary-input-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+#secondary-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  border-radius: 18px;
+  padding: 8px 14px;
+  font-size: 14.5px;
+  outline: none;
+  width: 100%;
+  line-height: 1.4;
+  resize: none;
+  overflow-y: auto;
+  max-height: 200px;
+  font-family: inherit;
+  box-sizing: border-box;
+  color: var(--color-text);
+}
+#secondary-attachment-preview {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+#secondary-input::placeholder {
+  color: var(--color-text-muted);
+}
+#secondary-send-btn {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 36px; height: 36px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+#secondary-send-btn:hover { background: var(--color-primary-hover); }
+#secondary-send-btn:disabled { background: #ccc; cursor: default; }
+#secondary-send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
+
+/* Secondary status bar — floating pill matching #status-wrap */
+#secondary-status-wrap {
+  position: absolute;
+  bottom: 68px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 16px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+  z-index: 100;
+}
+#secondary-status-wrap.on { opacity: 1; }
+#secondary-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255,255,255,0.2);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: secondary-spin 0.8s linear infinite;
+}
+@keyframes secondary-spin { to { transform: rotate(360deg); } }
+
+/* Secondary stop button — matches #stop-btn */
+#secondary-stop-btn {
+  background: var(--color-error);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 36px; height: 36px;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+#secondary-stop-btn:hover { background: #d32f2f; }
+#secondary-stop-btn.visible { display: flex; }
+#secondary-stop-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
+
+/* Split view body state */
+body.split-view #main {
+  flex: 1;
+}
+body.split-view #secondary-panel.visible {
+  flex: 1;
+}
+
+/* ── Dark Theme — Secondary Panel ────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  .secondary-header {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .secondary-input-bar {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  #secondary-input {
+    color: #e0e2e5;
+  }
+  #secondary-input::placeholder { color: #555860; }
+  #secondary-status-wrap { background: rgba(23,26,33,0.9); }
+}
+
+/* ── Secondary indicator/banner placeholders ────────────────────────────
+   These mirror the primary window's ask/skill indicators and notification
+   banner. They stay hidden until a future change activates ask/skill mode
+   in the secondary window; for now they are DOM-only placeholders so the
+   layout matches the primary input area. */
+#secondary-ask-indicator,
+#secondary-skill-indicator {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  pointer-events: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  opacity: 0.5;
+  color: var(--color-text, #666);
+  white-space: nowrap;
+  user-select: none;
+}
+#secondary-ask-indicator.show,
+#secondary-skill-indicator.show { display: flex; }
+#secondary-skill-indicator-label {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#secondary-ask-indicator-cancel,
+#secondary-skill-indicator-cancel {
+  cursor: pointer;
+  pointer-events: auto;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+  padding: 0 2px;
+}
+#secondary-ask-indicator-cancel:hover,
+#secondary-skill-indicator-cancel:hover {
+  opacity: 1;
+}
+#secondary-notification-banner:empty { display: none; }
+
+/* ── Secondary header layout + indicator parity ─────────────────────────
+   The primary window styles its indicators via #header-scoped or id-specific
+   rules in chat.css. The secondary panel uses different ids (secondary-*), so
+   we replicate the essential layout here so both windows look identical. */
+.secondary-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  position: relative;
+  flex-shrink: 0;
+}
+/* Context-usage bar — same look as #header #header-model-info */
+#secondary-header-model-info {
+  display: none;
+  color: var(--color-frame-text-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+/* Background task indicator */
+#secondary-bg-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(7,193,96,0.15);
+  border-radius: 10px;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#secondary-bg-indicator:hover { background: rgba(7,193,96,0.25); }
+#secondary-bg-indicator.hidden { display: none; }
+/* Delegate sub-agent indicator */
+#secondary-delegate-indicator {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(59,130,246,0.15);
+  border-radius: 10px;
+  padding: 3px 9px;
+  font-size: 12px;
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+#secondary-delegate-indicator:hover { background: rgba(59,130,246,0.25); }
+#secondary-delegate-indicator.hidden { display: none; }
+/* Dropdowns (bg + delegate) — absolute under the header */
+#secondary-bg-dropdown,
+#secondary-delegate-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--sapphire-edge);
+  border-radius: 12px;
+  min-width: 280px;
+  max-width: 380px;
+  box-shadow:
+    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
+    0px 4px 16px rgba(0, 0, 0, 0.08),
+    0px 8px 32px rgba(0, 0, 0, 0.06);
+  z-index: 100;
+  overflow: hidden;
+}
+#secondary-bg-dropdown.hidden,
+#secondary-delegate-dropdown.hidden { display: none; }
+/* Bypass badge parity */
+#secondary-bypass-badge { white-space: nowrap; }
+#secondary-bypass-badge.hidden { display: none; }
+/* Memory button parity (shares .memory-btn class with primary) */
+#secondary-memory-btn.memory-btn { font-size: 12px; }
