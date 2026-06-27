@@ -1,7 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.IO
-import cats.effect.Deferred
+import cats.effect.{Deferred, IO}
 import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.agent.*
@@ -34,8 +33,7 @@ object DelegateTool extends Tool:
   /** Maximum sub-agent depth (matches AgentCore.MaxDepth). */
   val MaxDepth: Int = 5
 
-  /** Timeout for synchronous sub-agent completion. */
-  private val SubAgentTimeout = 10.minutes
+  /** Sub-agent completion relies on the agent loop turn limit (natural termination). */
 
   val name = "Delegate"
 
@@ -218,11 +216,6 @@ $prompt"""
       _ = logger.info(s"Spawned sync sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
       _ = subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
       result <- resultDeferred.get
-        .timeout(SubAgentTimeout)
-        .recover { case _: java.util.concurrent.TimeoutException =>
-          subagentRef ! AgentCommand.Stop("delegate-timeout")
-          Left(ToolError(s"Sub-agent '$agentName' timed out after ${SubAgentTimeout.toMinutes} minutes"))
-        }
     yield result
 
   /** Sync adapter: completes the Deferred, then cleans up. */

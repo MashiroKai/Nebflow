@@ -27,7 +27,6 @@ docs/
 *demo*.html
 /nebflow
 nul
-openclaw/
 cloud/**/node_modules/
 cloud/node_modules/
 
@@ -37,3 +36,4 @@ cloud/node_modules/
 credentials.json
 dist/
 beta.md
+typescript

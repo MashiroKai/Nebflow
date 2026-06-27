@@ -84,14 +84,19 @@ const slashCommands = {
  * Called when bypass mode is toggled.
  */
 function updateBypassBadge(enabled) {
-  const badge = document.getElementById('bypass-badge');
-  if (!badge) return;
-  const textEl = badge.querySelector('.bypass-badge-text');
-  if (enabled) {
-    badge.classList.remove('hidden');
-    if (textEl) textEl.textContent = t('chat.bypassBadge');
-  } else {
-    badge.classList.add('hidden');
+  // Bypass is a global toggle — keep both the primary and secondary header badges in sync.
+  for (const badge of [
+    document.getElementById('bypass-badge'),
+    document.getElementById('secondary-bypass-badge'),
+  ]) {
+    if (!badge) continue;
+    const textEl = badge.querySelector('.bypass-badge-text');
+    if (enabled) {
+      badge.classList.remove('hidden');
+      if (textEl) textEl.textContent = t('chat.bypassBadge');
+    } else {
+      badge.classList.add('hidden');
+    }
   }
 }
 
@@ -340,7 +345,10 @@ function compressImage(file, opts = {}) {
 }
 
 // ---------- File Attachment ----------
-export async function addFileAttachment(file, callback) {
+export async function addFileAttachment(file, callback, target) {
+  // target: optional { attPreviewEl, attachments } for non-primary windows.
+  // Defaults to primary window's pendingAttachments.
+  const attachments = (target && target.attachments) || state.pendingAttachments;
   if (file.type.startsWith('image/')) {
     if (file.size > 10 * 1024 * 1024) {
       alert('Image too large (max 10MB): ' + file.name);
@@ -348,7 +356,7 @@ export async function addFileAttachment(file, callback) {
     }
     try {
       const { dataUrl, w, h } = await compressImage(file);
-      state.pendingAttachments.push({
+      attachments.push({
         type: 'image', mimeType: 'image/jpeg',
         data: dataUrl.split(',')[1],
         name: file.name, preview: dataUrl
@@ -358,18 +366,18 @@ export async function addFileAttachment(file, callback) {
       // Fallback to original
       const reader = new FileReader();
       reader.onload = () => {
-        state.pendingAttachments.push({
+        attachments.push({
           type: 'image', mimeType: 'image/jpeg',
           data: reader.result.split(',')[1],
           name: file.name, preview: reader.result
         });
-        renderAttachmentPreview();
+        renderAttachmentPreview(target);
         if (callback) callback();
       };
       reader.readAsDataURL(file);
       return;
     }
-    renderAttachmentPreview();
+    renderAttachmentPreview(target);
     if (callback) callback();
   } else {
     // Non-image: compute SHA-256 hash for local file search, also keep data as fallback
@@ -393,11 +401,11 @@ export async function addFileAttachment(file, callback) {
       } catch (e) {
         console.warn('[input] SHA-256 computation failed:', e);
       }
-      state.pendingAttachments.push({
+      attachments.push({
         type: 'text', mimeType: file.type || 'application/octet-stream',
         data: base64Data, name: file.name, hash, size: file.size
       });
-      renderAttachmentPreview();
+      renderAttachmentPreview(target);
       if (callback) callback();
     };
     reader.onerror = () => {

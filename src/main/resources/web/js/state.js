@@ -19,6 +19,7 @@ export default {
 
   // Session
   activeSessionId: null,
+  secondarySessionId: null,
   activeFolderId: null,
   sessions: [],
   folders: [],
@@ -45,6 +46,10 @@ export default {
   compactingSessionIds: new Set(),
   currentAiBubble: null,
   aiText: '',
+
+  // Timestamp of the last textDelta/thinkingDelta received (ms).
+  // Used to guard against stale sessionBusy(false) resetting an active stream.
+  lastStreamActivity: 0,
 
   // Multi-agent
   activeAgentId: null,
@@ -97,6 +102,13 @@ export default {
 
   // Input
   pendingAttachments: [],
+  // Secondary panel has its own attachment queue so the two windows never
+  // cross-contaminate each other's pending attachments.
+  _secPendingAttachments: [],
+  // Secondary panel drafts (keyed by sessionId), kept separate from the primary
+  // window's sessionInputDrafts so switching the secondary session doesn't clobber
+  // the primary draft and vice versa.
+  _secInputDrafts: {},
   thinkingMode: null,
   recognition: null,
   inputHistory: safeParse(localStorage.getItem('nebflow_input_history'), []),
@@ -123,14 +135,12 @@ export default {
   // Scroll
   scrollSnapped: true,
 
-  // History pagination
+  // History pagination (legacy — primary window still reads these during the
+  // ChatView migration; secondary window uses chatViews.secondary.pagination)
   historyOffset: 0,
   historyTotal: 0,
   historyHasMore: false,
   historyLoading: false,
-  // Set true by resetChatForActiveSession, consumed by historyPage handler to distinguish
-  // initial load from scroll-up pagination. Prevents double chat.innerHTML='' from
-  // duplicate getHistory responses when offset happens to be 0.
   pendingInitialLoad: false,
 
   // IME
