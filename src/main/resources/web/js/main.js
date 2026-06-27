@@ -957,8 +957,7 @@ function showHistoryLoader() {
 }
 
 function hideHistoryLoader() {
-  const loader = activeView.dom.chat.querySelector('.history-loader');
-  if (loader) loader.remove();
+  document.querySelectorAll('.history-loader').forEach(el => el.remove());
 }
 
 function showHistoryEnd() {
@@ -978,10 +977,9 @@ function clearHistoryIndicators() {
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg, view) => {
   const sid = msg.sessionId;
-  // ws.js already passes the correct view — no need to look it up again.
+  hideHistoryLoader();
   if (!view) return;
   view.pagination.loading = false;
-  hideHistoryLoader();
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
   const isInitialLoad = view.pagination.pendingInitialLoad;
@@ -1165,6 +1163,8 @@ onMessage('historyPage', (msg, view) => {
         chat.scrollTop = chat.scrollHeight;
         view.stream.scrollSnapped = true;
       }
+      // Second pass after deferred markdown rendering settles
+      setTimeout(() => { chat.scrollTop = chat.scrollHeight; }, 150);
     });
 
   } else {

@@ -139,9 +139,7 @@ function loadSecondaryView(sessionId) {
   if (!view) return;
   // setSession resets stream + pagination + drafts, clears chat DOM
   view.setSession(sessionId);
-  // Show loading placeholder
-  const el = view.dom.chat;
-  if (el) el.innerHTML = '<div style="padding:24px;color:var(--color-text-muted);text-align:center;font-size:13px">Loading...</div>';
+  // Chat is already cleared by setSession — no need for a loading placeholder
   // Sync busy button state
   const sendBtn = document.getElementById('secondary-send-btn');
   const stopBtn = document.getElementById('secondary-stop-btn');
@@ -1058,12 +1056,7 @@ function renderOneSessionItem(s, container, opts = {}) {
     ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
     : '';
   const deleteBtnHtml = '<button class="session-delete" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
-  const inBatchMode = state.selectedSessionIds.size > 0;
-  const checkHtml = inBatchMode
-    ? '<div class="session-check' + (isSelected ? ' checked' : '') + '">' + (isSelected ? '<i data-lucide="check"></i>' : '') + '</div>'
-    : '';
   item.innerHTML =
-    checkHtml +
     '<div class="session-info">' +
     '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
     (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
@@ -1184,6 +1177,7 @@ export function renderSessionSidebar(sessionData, activeId) {
   if (activeId) state.activeSessionId = activeId;
   // If active session changed (new session, agent session, delete active), reset chat area
   if (activeId && activeId !== prevActiveId) {
+    setActiveView(chatViews.primary);
     saveInputDraft(prevActiveId);
     resetChatForActiveSession();
     restoreInputDraft(activeId);
