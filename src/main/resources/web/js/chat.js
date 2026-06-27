@@ -2,7 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
-import { activeView } from './chatView.js';
+import { activeView, setActiveView } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
@@ -410,6 +410,7 @@ export function renderError(msg) {
 
 // ---------- Timeout notice with retry ----------
 export function renderTimeoutNotice() {
+  const v = activeView; // capture before callback
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row error';
@@ -432,9 +433,8 @@ export function renderTimeoutNotice() {
     const history = state.inputHistory;
     const lastMsg = history.length > 0 ? history[history.length - 1] : '';
     if (lastMsg) {
-      activeView.dom.input.value = lastMsg;
-      // Import send from input.js dynamically to avoid circular dependency
-      import('./input.js').then(({ send }) => send());
+      v.dom.input.value = lastMsg;
+      import('./input.js').then(({ send }) => { setActiveView(v); send(); });
     }
   };
   card.appendChild(btn);
