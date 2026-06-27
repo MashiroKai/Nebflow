@@ -415,9 +415,8 @@ object AgentActor extends AgentCore with AgentSession:
       // These accumulate in the stash over many turns and eventually cause
       // StashOverflowException when legitimate user messages arrive during
       // a long LLM call. All are handled in processing state — in idle they are stale.
-      case _: AgentCommand.StreamFiberStarted |
-          _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
-          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
+      case _: AgentCommand.StreamFiberStarted | _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed |
+          _: AgentCommand.ToolsComplete | _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
           _: AgentCommand.UpdateGitBranch =>
         Behaviors.same
 

@@ -196,6 +196,23 @@ export function initNavTabs() {
       closeSecondaryPanel();
     });
   }
+
+  // Jarvis main window hide/show — toggles body.jarvis-hidden.
+  // The ChatView is NOT unmounted and activeSessionId is unchanged, so Jarvis
+  // streaming keeps accumulating into the hidden DOM and reappears on reopen.
+  // When #main is hidden, the secondary panel (if visible) expands via flex:1.
+  const mainCloseBtn = document.getElementById('main-close-btn');
+  if (mainCloseBtn) {
+    mainCloseBtn.addEventListener('click', () => {
+      document.body.classList.add('jarvis-hidden');
+    });
+  }
+  const jarvisToggleBtn = document.getElementById('jarvis-toggle-btn');
+  if (jarvisToggleBtn) {
+    jarvisToggleBtn.addEventListener('click', () => {
+      document.body.classList.toggle('jarvis-hidden');
+    });
+  }
 }
 
 // ---------- Agent icons in Nav Bar ----------
