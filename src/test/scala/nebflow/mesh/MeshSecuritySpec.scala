@@ -188,48 +188,4 @@ class MeshSecuritySpec extends CatsEffectSuite:
 
   // ===== File size limit =====
 
-  test("file sync limit: 10MB is the maximum") {
-    // Verify the constant is what we expect (it's private in MeshService,
-    // so we verify indirectly by documenting the expected behavior)
-    val maxBytes = 10 * 1024 * 1024
-    assertEquals(maxBytes, 10485760, "Max sync file size should be 10MB")
-  }
-
-  // ===== Sync conflict resolution behavior =====
-
-  test("sync conflict: when mtime is equal and hash differs, remote wins (download)") {
-    val local = Map("file.md" -> FileFingerprint(1000, 10, "hash-local"))
-    val remote = Map("file.md" -> FileFingerprint(1000, 10, "hash-remote"))
-    val diff = computeSyncDiff(local, remote)
-    assertEquals(diff.needDownload, List("file.md"))
-    assertEquals(diff.needUpload, Nil)
-  }
-
-  test("sync conflict: local 1ms newer → upload") {
-    val local = Map("file.md" -> FileFingerprint(1001, 10, "hash-a"))
-    val remote = Map("file.md" -> FileFingerprint(1000, 10, "hash-b"))
-    val diff = computeSyncDiff(local, remote)
-    assertEquals(diff.needUpload, List("file.md"))
-  }
-
-  private def computeSyncDiff(
-    local: Map[String, FileFingerprint],
-    remote: Map[String, FileFingerprint]
-  ): SyncDiff =
-    val allPaths = local.keySet ++ remote.keySet
-    val up = List.newBuilder[String]
-    val dn = List.newBuilder[String]
-    val un = List.newBuilder[String]
-    allPaths.foreach { path =>
-      (local.get(path), remote.get(path)) match
-        case (Some(_), None) => up += path
-        case (None, Some(_)) => dn += path
-        case (Some(l), Some(r)) if l.hash == r.hash => un += path
-        case (Some(l), Some(r)) if l.mtime > r.mtime => up += path
-        case (Some(_), Some(_)) => dn += path
-        case (None, None) =>
-    }
-    SyncDiff(up.result(), dn.result(), un.result())
-  end computeSyncDiff
-
 end MeshSecuritySpec

@@ -314,7 +314,9 @@ class CloudSyncSpec extends CatsEffectSuite:
       val local = List(UiMessage.User("local-a"), UiMessage.User("local-b"))
       val cloud = List(UiMessage.User("cloud-a"), UiMessage.User("cloud-b"))
       val merged = store.mergeUiMessages(local, cloud)
-      IO(assertEquals(merged.head.asInstanceOf[UiMessage.User].text, "local-a", "Should prefer local when equal length"))
+      IO(
+        assertEquals(merged.head.asInstanceOf[UiMessage.User].text, "local-a", "Should prefer local when equal length")
+      )
     }
   }
 

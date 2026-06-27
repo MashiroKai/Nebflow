@@ -47,6 +47,16 @@
   height: 100%;
 }
 .panel.active { display: flex; }
+
+/* ---------- Sidebar Top Bar — settings gear + connection indicator ---------- */
+.sidebar-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 14px;
+  flex-shrink: 0;
+}
 .panel-header {
   padding: 14px 14px;
   display: flex;
@@ -61,6 +71,17 @@
   color: var(--color-frame-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+/* ---------- Agent Group Headers ---------- */
+.agent-group-header {
+  padding: 8px 16px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-frame-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
 }
 
 /* Session list styles (within panel-sessions) */
@@ -95,6 +116,16 @@
   stroke-width: 1.8;
 }
 .panel-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); border-color: var(--color-frame-text-muted); opacity: 1; }
+
+/* Session management actions bar */
+.session-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 14px;
+  flex-shrink: 0;
+}
+
 #session-list {
   flex: 1;
   overflow-y: auto;

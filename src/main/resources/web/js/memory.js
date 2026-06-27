@@ -9,10 +9,12 @@ let activeScope = 'folder';
 /** Cache per-scope content so tab switches don't re-fetch within same session. */
 const cache = { user: null, agent: null, folder: null };
 
-/** Show the Memory button in header. */
+/** Show the Memory button in header (both windows). */
 export function showMemoryButton() {
-  const btn = document.getElementById('memory-btn');
-  if (btn) btn.style.display = '';
+  for (const id of ['memory-btn', 'secondary-memory-btn']) {
+    const btn = document.getElementById(id);
+    if (btn) btn.style.display = '';
+  }
 }
 
 /**
@@ -76,7 +78,9 @@ export function saveMemory() {
 
 /** Initialize memory UI — bind button, tabs, modal buttons, overlay dismiss. */
 export function initMemory() {
-  document.getElementById('memory-btn')?.addEventListener('click', openMemoryEditor);
+  for (const id of ['memory-btn', 'secondary-memory-btn']) {
+    document.getElementById(id)?.addEventListener('click', openMemoryEditor);
+  }
   document.querySelectorAll('.memory-tab').forEach(tab => {
     tab.addEventListener('click', () => switchTab(tab.dataset.scope));
   });

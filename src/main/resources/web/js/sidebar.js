@@ -9,6 +9,8 @@ import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 import { refreshScheduledTasks } from './scheduled-task.js';
+import { loadSecondary, saveSecondaryDraft } from './secondary-chat.js';
+import { chatViews } from './chatView.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
 
@@ -107,24 +109,110 @@ export function clearActiveFolder() {
   document.querySelectorAll('.folder-item.active').forEach(el => el.classList.remove('active'));
 }
 
-// ---------- Nav Bar Tab Switching ----------
+// ---------- Panel Switching ----------
+function showPanel(tab) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const panel = document.getElementById('panel-' + tab);
+  if (panel) panel.classList.add('active');
+}
+
+function closeSecondaryPanel() {
+  // Save the current secondary draft before tearing down, so reopening the same
+  // session restores the in-progress text/attachments.
+  if (state.secondarySessionId) saveSecondaryDraft(state.secondarySessionId);
+  state.secondarySessionId = null;
+  // Unmount the secondary ChatView — the panel is now free for non-chat content.
+  if (chatViews.secondary) {
+    chatViews.secondary.mounted = false;
+    chatViews.secondary.sessionId = null;
+  }
+  document.body.classList.remove('split-view');
+  const panel = document.getElementById('secondary-panel');
+  if (panel) {
+    panel.classList.remove('visible');
+    panel.classList.add('hidden');
+  }
+  renderSessionSidebar(state.sessions, state.activeSessionId);
+}
+
+function openInSecondary(session) {
+  // Save the draft of the session currently shown in the secondary panel (if any)
+  // before switching to a new one, mirroring how switchSession saves the primary draft.
+  if (state.secondarySessionId && state.secondarySessionId !== session.id) {
+    saveSecondaryDraft(state.secondarySessionId);
+  }
+  state.secondarySessionId = session.id;
+  // Mount the secondary ChatView to this session — ws.js will now route
+  // messages for this session to the secondary view.
+  if (chatViews.secondary) {
+    chatViews.secondary.mounted = true;
+    chatViews.secondary.sessionId = session.id;
+  }
+  // Clear unread state — user is now viewing this session
+  state.unreadSessions.delete(session.id);
+  state.markedUnreadSessions.delete(session.id);
+  persistUnread();
+  persistMarkedUnread();
+  updateSessionStatus(session.id);
+  document.body.classList.add('split-view');
+  const panel = document.getElementById('secondary-panel');
+  panel.classList.remove('hidden');
+  panel.classList.add('visible');
+  document.getElementById('secondary-session-name').textContent = session.name;
+  const badge = document.getElementById('secondary-agent-badge');
+  if (badge) {
+    // Use the agent's display name when available, matching the primary header brand.
+    const agentName = session.agentName || 'Nebula';
+    const agent = state.agentsData.find(a => a.name === agentName);
+    badge.textContent = agent ? (agent.displayName || agent.name) : agentName;
+  }
+  // Load session history into secondary chat
+  loadSecondary(session.id);
+  renderSessionSidebar(state.sessions, state.activeSessionId);
+}
+
 export function initNavTabs() {
-  document.querySelectorAll('.nav-item[data-tab]').forEach(item => {
-    item.addEventListener('click', () => {
-      const tab = item.dataset.tab;
-      document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
-      item.classList.add('active');
-      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-      document.getElementById('panel-' + tab).classList.add('active');
-      if (tab === 'settings') {
-        sendWs({type: 'getConfig'});
-        renderSettings();
-      } else {
-        // Returning to sessions from settings — switch back
-        document.querySelectorAll('.nav-item[data-tab]').forEach(n => n.classList.remove('active'));
-      }
+  // New layout: settings button in sessions panel header
+  const settingsBtn = document.getElementById('settings-btn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      showPanel('settings');
+      sendWs({type: 'getConfig'});
+      renderSettings();
     });
-  });
+  }
+
+  const settingsBackBtn = document.getElementById('settings-back-btn');
+  if (settingsBackBtn) {
+    settingsBackBtn.addEventListener('click', () => {
+      showPanel('sessions');
+    });
+  }
+
+  // Secondary panel close button
+  const secondaryCloseBtn = document.getElementById('secondary-close-btn');
+  if (secondaryCloseBtn) {
+    secondaryCloseBtn.addEventListener('click', () => {
+      closeSecondaryPanel();
+    });
+  }
+
+  // Jarvis main window hide/show — toggles body.jarvis-hidden.
+  // The ChatView is NOT unmounted and activeSessionId is unchanged, so Jarvis
+  // streaming keeps accumulating into the hidden DOM and reappears on reopen.
+  // When #main is hidden, the secondary panel (if visible) expands via flex:1.
+  const mainCloseBtn = document.getElementById('main-close-btn');
+  if (mainCloseBtn) {
+    mainCloseBtn.addEventListener('click', () => {
+      document.body.classList.add('jarvis-hidden');
+    });
+  }
+  const jarvisToggleBtn = document.getElementById('jarvis-toggle-btn');
+  if (jarvisToggleBtn) {
+    jarvisToggleBtn.addEventListener('click', () => {
+      document.body.classList.toggle('jarvis-hidden');
+    });
+  }
 }
 
 // ---------- Agent icons in Nav Bar ----------
@@ -249,8 +337,8 @@ export function selectAgent(agentName) {
     }
     return;
   }
-  // Save current input draft before switching agent tabs
-  saveInputDraft(state.activeSessionId);
+  // Agent tab switches only filter the sidebar list — the main window stays
+  // locked to Jarvis regardless. No draft saving / session switching needed.
   state.selectedAgent = agentName;
   // Clear unread count for this agent
   const prevCount = state.agentUnreadCounts[agentName] || 0;
@@ -923,7 +1011,7 @@ function renderOneSessionItem(s, container, opts = {}) {
   const isSelected = state.selectedSessionIds.has(s.id);
   item.className = 'session-item'
     + (inFolder ? ' in-folder' : '')
-    + (s.id === state.activeSessionId ? ' active' : '')
+    + (s.id === state.activeSessionId || s.id === state.secondarySessionId ? ' active' : '')
     + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
     + (isSelected ? ' selected' : '');
   item.dataset.id = s.id;
@@ -1017,19 +1105,26 @@ function renderOneSessionItem(s, container, opts = {}) {
         // do nothing, keep selection
       } else {
         exitBatchMode();
-        if (s.id !== state.activeSessionId) switchSession(s.id);
+        // Main window is locked to Jarvis — non-Jarvis sessions open in secondary.
+        openInSecondary(s);
       }
     } else {
       clearActiveFolder();
-      if (s.id !== state.activeSessionId) {
-        switchSession(s.id);
-      } else {
-        // Already active — still clear unread dot
+      const isJarvis = (s.agentName || 'Nebula') === 'Jarvis';
+      if (isJarvis) {
+        // Main window is locked to Jarvis — clicking the Jarvis session just
+        // clears unread and scrolls to top. No session switch needed.
         state.unreadSessions.delete(s.id);
         state.markedUnreadSessions.delete(s.id);
         persistUnread();
         persistMarkedUnread();
         updateSessionStatus(s.id);
+        renderSessionSidebar(state.sessions, state.activeSessionId);
+        // Scroll main chat to bottom
+        if (state.dom.chat) state.dom.chat.scrollTop = state.dom.chat.scrollHeight;
+      } else {
+        // Non-Jarvis session → secondary panel (画板)
+        openInSecondary(s);
       }
     }
   };
@@ -1044,6 +1139,22 @@ function renderOneSessionItem(s, container, opts = {}) {
   container.appendChild(item);
 }
 
+/** Update the main header's session name + brand based on the active session.
+ *  Extracted from renderSessionSidebar so the "skip rebuild" fast path can
+ *  still refresh the header without a full DOM rebuild. */
+function updateHeaderSessionName() {
+  const sessionNameEl = state.dom.sessionNameEl;
+  const active = state.sessions.find(s => s.id === state.activeSessionId);
+  if (active) {
+    const agentName = active.agentName || 'Nebula';
+    updateHeaderBrand(agentName);
+    // Session name always shown in the center, regardless of agent type.
+    if (sessionNameEl) { sessionNameEl.textContent = active.name; sessionNameEl.style.display = ''; }
+  } else {
+    if (sessionNameEl) { sessionNameEl.textContent = ''; sessionNameEl.style.display = 'none'; }
+  }
+}
+
 export function renderSessionSidebar(sessionData, activeId) {
   state.sessions = sessionData || [];
   const prevActiveId = state.activeSessionId;
@@ -1055,6 +1166,28 @@ export function renderSessionSidebar(sessionData, activeId) {
     restoreInputDraft(activeId);
   }
 
+  // ── Performance: skip full DOM rebuild when nothing changed ──────────
+  // sessionList and agentSessionList often carry identical data (especially during
+  // initial load where both fire in sequence). Detect this and avoid the expensive
+  // innerHTML='' + rebuild cycle. We compare a lightweight fingerprint: the set of
+  // session ids + their updatedAt timestamps + the active id + expanded folders
+  // (folder expand/collapse changes the DOM but not the session data).
+  const fingerprint = (activeId || '') + '|' +
+    (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',') +
+    '|folders:' + [...(state.expandedFolders || [])].sort().join(',') +
+    '|pinned:' + [...(state.pinnedSessions || [])].sort().join(',') +
+    '|batch:' + state.batchMode;
+  const sessionList = state.dom.sessionList;
+  if (sessionList && sessionList._lastFingerprint === fingerprint) {
+    // Data unchanged — just update active highlight in-place (much cheaper than rebuild).
+    sessionList.querySelectorAll('.session-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.sessionId === state.activeSessionId);
+    });
+    updateHeaderSessionName();
+    return;
+  }
+  if (sessionList) sessionList._lastFingerprint = fingerprint;
+
   // Clean up localStorage for deleted sessions
   const currentIds = new Set((sessionData || []).map(s => s.id));
   try {
@@ -1065,7 +1198,6 @@ export function renderSessionSidebar(sessionData, activeId) {
     }
     if (changed) { try { localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all)); } catch(e) {} }
   } catch(e) {}
-  const sessionList = state.dom.sessionList;
   sessionList.innerHTML = '';
 
   // Setup unified drop handler on sessionList (once)
@@ -1105,19 +1237,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     });
   }
 
-  // Separate sessions by folder
-  const rootSessions = [];
-  const sessionsByFolder = {};
-  const validFolderIds = new Set((state.folders || []).map(f => f.id));
-  (state.sessions || []).forEach(s => {
-    if (s.folderId && validFolderIds.has(s.folderId)) {
-      if (!sessionsByFolder[s.folderId]) sessionsByFolder[s.folderId] = [];
-      sessionsByFolder[s.folderId].push(s);
-    } else {
-      rootSessions.push(s);
-    }
-  });
-
+  // Sort sessions helper
   const sortSessions = (list) => [...list].sort((a, b) => {
     const pa = state.pinnedSessions.has(a.id) ? 1 : 0;
     const pb = state.pinnedSessions.has(b.id) ? 1 : 0;
@@ -1125,70 +1245,97 @@ export function renderSessionSidebar(sessionData, activeId) {
     return (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0);
   });
 
-  const sortedRoots = sortSessions(rootSessions);
-  Object.keys(sessionsByFolder).forEach(fid => {
-    sessionsByFolder[fid] = sortSessions(sessionsByFolder[fid]);
+  // Group sessions and folders by agent
+  const allFolders = state.folders || [];
+  const agentGroups = {};
+  (state.sessions || []).forEach(s => {
+    const agent = s.agentName || 'Nebula';
+    if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
+    agentGroups[agent].sessions.push(s);
+  });
+  allFolders.forEach(f => {
+    const agent = f.agentName || 'Nebula';
+    if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
+    agentGroups[agent].folders.push(f);
   });
 
-  // Filter root folders for current agent (agentName may be undefined when empty on backend)
-  const effectiveAgent = state.selectedAgent || 'Nebula';
-  const allAgentFolders = (state.folders || []).filter(f => {
-    const fa = f.agentName || '';
-    return fa === effectiveAgent || (fa === '' && effectiveAgent === 'Nebula');
-  });
-  const agentFolders = allAgentFolders.filter(f => !f.parentId);
-  // Sort root folders alphabetically by name
-  agentFolders.sort((a, b) => a.name.localeCompare(b.name));
+  // Skip Jarvis sessions — Jarvis is always in the main view, not in the sidebar
+  if (agentGroups['Jarvis']) {
+    delete agentGroups['Jarvis'];
+  }
 
-  // Build a mixed list of root sessions and folders, each with a pinned flag
-  const mixedItems = [];
-  sortedRoots.forEach(s => {
-    mixedItems.push({ type: 'session', data: s, pinned: state.pinnedSessions.has(s.id), time: s.updatedAt || s.createdAt || 0 });
-  });
-  agentFolders.forEach(f => {
-    mixedItems.push({ type: 'folder', data: f, pinned: state.pinnedFolders.has(f.id) });
-  });
+  // Sort remaining agent groups alphabetically
+  const agentOrder = Object.keys(agentGroups).sort((a, b) => a.localeCompare(b));
 
-  // Sort: pinned first, then folders before sessions, then alphabetically for folders / by time for sessions
-  mixedItems.sort((a, b) => {
-    if (b.pinned !== a.pinned) return b.pinned ? 1 : -1;
-    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
-    if (a.type === 'folder') return a.data.name.localeCompare(b.data.name);
-    return b.time - a.time;
-  });
+  // Render each agent group
+  agentOrder.forEach(agentName => {
+    const group = agentGroups[agentName];
 
-  // Render
-  let hasPinned = false;
-  let renderedDivider = false;
-  mixedItems.forEach(item => {
-    if (item.pinned) {
-      hasPinned = true;
-    } else if (hasPinned && !renderedDivider) {
-      const divider = document.createElement('div');
-      divider.className = 'session-divider';
-      sessionList.appendChild(divider);
-      renderedDivider = true;
+    // Agent group header (only when multiple agents exist)
+    if (agentOrder.length > 1) {
+      const header = document.createElement('div');
+      header.className = 'agent-group-header';
+      header.textContent = agentName;
+      sessionList.appendChild(header);
     }
-    if (item.type === 'session') {
-      renderOneSessionItem(item.data, sessionList, { inFolder: false });
-    } else {
-      renderFolderItem(item.data, sessionsByFolder[item.data.id] || [], sessionList);
-    }
+
+    // Separate sessions by folder within this agent group
+    const groupFolderIds = new Set(group.folders.map(f => f.id));
+    const rootSessions = [];
+    const sessionsByFolder = {};
+    group.sessions.forEach(s => {
+      if (s.folderId && groupFolderIds.has(s.folderId)) {
+        if (!sessionsByFolder[s.folderId]) sessionsByFolder[s.folderId] = [];
+        sessionsByFolder[s.folderId].push(s);
+      } else {
+        rootSessions.push(s);
+      }
+    });
+
+    const sortedRoots = sortSessions(rootSessions);
+    Object.keys(sessionsByFolder).forEach(fid => {
+      sessionsByFolder[fid] = sortSessions(sessionsByFolder[fid]);
+    });
+
+    const agentFolders = group.folders.filter(f => !f.parentId);
+    agentFolders.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Build mixed list of root sessions and folders
+    const mixedItems = [];
+    sortedRoots.forEach(s => {
+      mixedItems.push({ type: 'session', data: s, pinned: state.pinnedSessions.has(s.id), time: s.updatedAt || s.createdAt || 0 });
+    });
+    agentFolders.forEach(f => {
+      mixedItems.push({ type: 'folder', data: f, pinned: state.pinnedFolders.has(f.id) });
+    });
+    mixedItems.sort((a, b) => {
+      if (b.pinned !== a.pinned) return b.pinned ? 1 : -1;
+      if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+      if (a.type === 'folder') return a.data.name.localeCompare(b.data.name);
+      return b.time - a.time;
+    });
+
+    // Render items
+    let hasPinned = false;
+    let renderedDivider = false;
+    mixedItems.forEach(item => {
+      if (item.pinned) {
+        hasPinned = true;
+      } else if (hasPinned && !renderedDivider) {
+        const divider = document.createElement('div');
+        divider.className = 'session-divider';
+        sessionList.appendChild(divider);
+        renderedDivider = true;
+      }
+      if (item.type === 'session') {
+        renderOneSessionItem(item.data, sessionList, { inFolder: false });
+      } else {
+        renderFolderItem(item.data, sessionsByFolder[item.data.id] || [], sessionList);
+      }
+    });
   });
   if (typeof lucide !== 'undefined') lucide.createIcons();
-  // Update header session name + brand
-  const sessionNameEl = state.dom.sessionNameEl;
-  const active = state.sessions.find(s => s.id === state.activeSessionId);
-  if (active) {
-    sessionNameEl.textContent = active.name;
-    sessionNameEl.style.display = '';
-    // Update header brand based on session's agent
-    const agentName = active.agentName || 'Nebula';
-    updateHeaderBrand(agentName);
-  } else {
-    sessionNameEl.textContent = '';
-    sessionNameEl.style.display = 'none';
-  }
+  updateHeaderSessionName();
   computeAgentStates();
 }
 
@@ -1263,6 +1410,11 @@ export function resetChatForActiveSession() {
     if (state.sessionToolCards[sid]) state.sessionToolCards[sid].remove();
   });
   state.sessionToolCards = {};
+  // Reset primary ChatView pagination state
+  if (chatViews.primary) {
+    chatViews.primary.pagination = { offset: 0, total: 0, hasMore: false, loading: false, pendingInitialLoad: true };
+  }
+  // Keep legacy state in sync for any code still reading it during the migration
   state.historyOffset = 0;
   state.historyHasMore = false;
   state.historyLoading = false;
@@ -1367,32 +1519,8 @@ export function resetChatForActiveSession() {
   renderTaskList(state.sessionTasks[sid] || []);
   // Restore background task indicator for this session
   if (state.updateBgTasksUI) state.updateBgTasksUI();
-}
-
-export function switchSession(sessionId) {
-  // Clear unread + marked unread for this session
-  state.unreadSessions.delete(sessionId);
-  state.markedUnreadSessions.delete(sessionId);
-  persistUnread();
-  persistMarkedUnread();
-  // Save draft for the session we're leaving
-  saveInputDraft(state.activeSessionId);
-  const prevActiveId = state.activeSessionId;
-  // Switch active session
-  state.activeSessionId = sessionId;
-  // Clear memory cache so new session fetches fresh content
-  clearMemoryCache();
-  // Update sidebar status for both sessions (activeSessionId has changed,
-  // so getSessionStatusClass may return different values, e.g. compacting → busy or vice versa)
-  updateSessionStatus(sessionId);
-  if (prevActiveId && prevActiveId !== sessionId) updateSessionStatus(prevActiveId);
-  resetChatForActiveSession();
-  // Restore input draft for the new session
-  restoreInputDraft(sessionId);
-  // Task list and bg task indicator are restored inside resetChatForActiveSession()
-  sendWs({type: 'switchSession', sessionId});
-  // Refresh scheduled tasks for the new session
-  if (typeof refreshScheduledTasks === 'function') refreshScheduledTasks(sessionId);
+  // Refresh delegate indicator for this session
+  if (state.updateDelegateIndicator) state.updateDelegateIndicator();
 }
 
 export function deleteSession(sessionId) {
@@ -1476,12 +1604,8 @@ function showSessionCtxMenu(x, y, sessionId) {
   const session = state.sessions.find(s => s.id === sessionId);
   const currentFolderId = session?.folderId || null;
 
-  // Build folder submenu HTML
-  const effectiveAgent = state.selectedAgent || 'Nebula';
-  const agentFolders = (state.folders || []).filter(f => {
-    const fa = f.agentName || '';
-    return fa === effectiveAgent || (fa === '' && effectiveAgent === 'Nebula');
-  });
+  // Build folder submenu HTML — unified list, no agent filtering
+  const agentFolders = state.folders || [];
   let folderSubHtml = '';
   if (currentFolderId !== null) {
     folderSubHtml += '<div class="ctx-sub" data-folder-id="">' + t('ctx.removeFolder') + '</div>';
@@ -1891,6 +2015,18 @@ export function initHeaderModelInfo() {
   }
 }
 
+/** Determine which agent a new session/folder should belong to, based on context.
+ *  Mirrors the folder-id resolution logic: active folder → active session → fallback. */
+export function getTargetAgent() {
+  if (state.activeFolderId) {
+    const folder = (state.folders || []).find(f => f.id === state.activeFolderId);
+    if (folder?.agentName) return folder.agentName;
+  }
+  const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
+  if (active?.agentName) return active.agentName;
+  return 'Nebula';
+}
+
 /** Build a human-readable breadcrumb path for a folder ID, e.g. "项目A / 模块B". */
 export function getTargetPath(folderId) {
   if (!folderId) return null;
@@ -1946,7 +2082,7 @@ export function createNewFolder(parentFolderId) {
     const name = input.value.trim();
     row.remove();
     if (name) {
-      const payload = { type: 'createFolder', name, agentName: state.selectedAgent || 'Nebula' };
+      const payload = { type: 'createFolder', name, agentName: getTargetAgent() };
       if (parentFolderId) payload.parentId = parentFolderId;
       import('./ws.js').then(({ sendWs }) => sendWs(payload));
     }

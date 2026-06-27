@@ -72,7 +72,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private val uiCacheRef: Ref[IO, Map[String, List[UiMessage]]] =
     Ref.unsafe[IO, Map[String, List[UiMessage]]](Map.empty)
 
-  /** Optional hook — called with sessionId after any session data change. Used by CloudSessionSync for push. */
+  /** Optional hook — called with sessionId after any session data change. */
   private var sessionChangedHook: Option[String => IO[Unit]] = None
 
   /** Register a callback invoked after session data changes (messages saved, session created/deleted). */
@@ -361,6 +361,52 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
               indexRef.set((activeId, meta :: sessions, folders)) *> saveIndex *> IO.pure((meta, true))
           }
     }
+
+  /**
+   * Atomically ensure a singleton session exists for the given agentName.
+   *
+   * Unlike createSession (which always appends), this guarantees at most one session
+   * per agentName even under concurrent calls — the existence check and the index
+   * mutation happen in a single `indexRef.modify`, so two concurrent invocations can
+   * never both observe "missing" and both create.
+   *
+   * Used to guarantee Jarvis has exactly one persistent session. Returns (meta, wasCreated).
+   */
+  def ensureAgentSession(agentName: String): IO[(SessionMeta, Boolean)] =
+    // modify is an atomic read-modify-write: the decide-to-create and the state
+    // update happen in one step, closing the TOCTOU window that listSessions + createSession had.
+    // Also deduplicate: if past races/bugs left more than one session for this agent,
+    // keep the most recently updated one and drop the rest.
+    // Returns (meta, action) where action is "created" | "deduped" | "exists".
+    indexRef
+      .modify { case (activeId, sessions, folders) =>
+        val matching = sessions.filter(_.agentName.contains(agentName))
+        matching match
+          case Nil =>
+            val id = UUID.randomUUID().toString
+            val now = System.currentTimeMillis()
+            val meta = SessionMeta(id, agentName, now, now, hasUnread = false, agentName = Some(agentName))
+            ((activeId, meta :: sessions, folders), (meta, "created"))
+          case one :: Nil =>
+            ((activeId, sessions, folders), (one, "exists"))
+          case multiple =>
+            // Dedup: keep the newest (max updatedAt), drop the rest.
+            val keeper = multiple.maxBy(_.updatedAt)
+            val pruned = sessions.filterNot(s => s.agentName.contains(agentName) && s.id != keeper.id)
+            ((activeId, pruned, folders), (keeper, "deduped"))
+      }
+      .flatMap { case (meta, action) =>
+        // Persist: always save the index when we created or pruned sessions.
+        val persist =
+          if action == "exists" then IO.unit
+          else
+            val init = if action == "created" then saveSessionMessages(meta.id, Nil) else IO.unit
+            init *>
+              saveIndex *>
+              IO.delay(logger.info(s"ensureAgentSession($agentName): $action, session=${meta.id}, flushed index")) *>
+              notifySessionChanged(meta.id)
+        persist.as((meta, action != "exists"))
+      }
 
   def deleteSession(id: String): IO[Unit] =
     indexRef
@@ -654,19 +700,20 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       mergedMsgs = mergeMessages(localMsgs, cloudMessages)
       mergedUi = mergeUiMessages(localUi, cloudUiMessages)
       changed = mergedMsgs.length != localMsgs.length || mergedUi.length != localUi.length
-      _ <- if changed then
-        for
-          _ <- saveSessionMessages(sessionId, mergedMsgs)
-          _ <- saveUiMessages(sessionId, mergedUi)
-          _ <- indexRef.update { case (activeId, sessions, folders) =>
-            val now = System.currentTimeMillis()
-            val updated = sessions.map(s => if s.id == sessionId then s.copy(updatedAt = now) else s)
-            (activeId, updated, folders)
-          }
-          aid <- getActiveId
-          _ <- if aid == sessionId then activeMessagesRef.set(mergedMsgs) else IO.unit
-        yield ()
-      else IO.unit
+      _ <-
+        if changed then
+          for
+            _ <- saveSessionMessages(sessionId, mergedMsgs)
+            _ <- saveUiMessages(sessionId, mergedUi)
+            _ <- indexRef.update { case (activeId, sessions, folders) =>
+              val now = System.currentTimeMillis()
+              val updated = sessions.map(s => if s.id == sessionId then s.copy(updatedAt = now) else s)
+              (activeId, updated, folders)
+            }
+            aid <- getActiveId
+            _ <- if aid == sessionId then activeMessagesRef.set(mergedMsgs) else IO.unit
+          yield ()
+        else IO.unit
     yield MergeResult(mergedMsgs, mergedUi, changed)
 
   // ============================================================
