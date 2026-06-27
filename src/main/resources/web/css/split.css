@@ -140,10 +140,10 @@ body:not(.jarvis-hidden) .jarvis-toggle-btn {
   opacity: 1;
 }
 
-/* Close button in the main header reuses .secondary-close-btn. Add a touch of
-   left margin so it sits clear of the brand text. */
+/* Close button in the main header reuses .secondary-close-btn.
+   Positioned at the far-right of .header-right to match the secondary panel. */
 .main-close-btn {
-  margin-left: 4px;
+  margin-left: 10px;
 }
 .secondary-header {
   display: flex;
