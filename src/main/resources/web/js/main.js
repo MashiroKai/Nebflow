@@ -27,8 +27,7 @@ import {
   showAgentModal, hideAgentModal, initModals,
   startInlineNewSession
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands } from './input.js';
-import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
@@ -37,8 +36,7 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
-import { initChatViews, chatViews, findViewBySessionId } from './chatView.js';
-import { initSecondaryChat } from './secondary-chat.js';
+import { initChatViews, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { initMesh } from './mesh.js';
 import { formatLiveDuration } from './chat.js';
 
@@ -63,7 +61,7 @@ function startThinkingTimer() {
   if (!startTime) return;
 
   // Insert timer element into the existing thinking placeholder
-  const placeholder = state.dom.chat.querySelector('.thinking-placeholder');
+  const placeholder = activeView.dom.chat.querySelector('.thinking-placeholder');
   if (!placeholder) return;
 
   // Remove old thinking text, replace with indicator structure
@@ -277,45 +275,18 @@ function updateAgentNotificationDot(agentName) {
   }
 }
 
-// Helper: is this event for the currently active session?
-function isActive(msg) {
-  if (!msg.sessionId || msg.sessionId === state.activeSessionId) return true;
-  // When ws.js sets _secondaryActive, the swap is already done — treat as active
-  if (state._secondaryActive) return true;
-  return false;
-}
-
-// Helper: which session is the "display target" right now?
-// During a secondary swap, rendering should target the secondary session's data;
-// otherwise it targets the primary active session. Functions that previously
-// hardcoded state.activeSessionId use this so they render the correct session's
-// model-info / background tasks / delegates in either window.
-function displaySessionId() {
-  return state._secondaryActive ? state.secondarySessionId : state.activeSessionId;
-}
-
 /** Render into a specific session's window from an async callback (outside
- *  the normal ChatView push/pull window). Temporarily activates the target
- *  view's stream + DOM so the render function writes to the right place,
- *  then restores. Use this for showOptions confirm callbacks, setTimeout
- *  callbacks, etc. where the original ChatView routing has already unwound. */
+ *  the normal ws.js dispatch). Sets activeView to the target view so
+ *  rendering functions write to the correct DOM, then restores. */
 function renderToSession(sessionId, fn) {
   const view = findViewBySessionId(sessionId);
-  if (!view || view.id === 'primary') {
-    // Primary view or not found — just render directly (global state is primary's).
+  if (view) {
+    const saved = activeView;
+    setActiveView(view);
+    try { fn(); }
+    finally { setActiveView(saved); }
+  } else {
     fn();
-    return;
-  }
-  // Secondary view: push + swap DOM, run fn, pull + restore.
-  const savedDom = { ...state.dom };
-  view.pushToGlobal();
-  Object.assign(state.dom, view.dom);
-  state._secondaryActive = true;
-  try { fn(); }
-  finally {
-    view.pullFromGlobal();
-    Object.assign(state.dom, savedDom);
-    state._secondaryActive = false;
   }
 }
 
@@ -362,7 +333,7 @@ function resetStreamTimeout(sid) {
 // --- Chat streaming ---
 // ALL sessions: save to localStorage. Active session only: render DOM.
 
-onMessage('thinkingDelta', (msg) => {
+onMessage('thinkingDelta', (msg, view) => {
   const sid = msg.sessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   // Accumulate thinking text for ALL sessions
@@ -370,26 +341,26 @@ onMessage('thinkingDelta', (msg) => {
   resetStreamTimeout(sid);
   state.lastStreamActivity = Date.now();
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
-  if (isActive(msg)) {
+  if (view) {
     stopThinkingTimer();
     // Remove the generic thinking placeholder if it exists
-    const existing = state.dom.chat.querySelector('.thinking-placeholder');
+    const existing = activeView.dom.chat.querySelector('.thinking-placeholder');
     if (existing) {
       const row = existing.closest('.row');
       if (row) row.remove();
-      if (state.currentAiBubble === existing) state.currentAiBubble = null;
+      if (activeView.stream.currentAiBubble === existing) activeView.stream.currentAiBubble = null;
     }
     // Guard: only create thinking bubbles when a turn is expected (user sent
     // message or server explicitly started a new round). Prevents stray thinking
     // bubbles from late-arriving thinkingDelta after done has been processed.
-    if (!state.turnExpecting[sid] && !state.currentThinkingBubble && !state.currentAiBubble) {
+    if (!state.turnExpecting[sid] && !activeView.stream.currentThinkingBubble && !activeView.stream.currentAiBubble) {
       return;
     }
     appendThinkingDelta(msg.delta);
   }
 });
 
-onMessage('textDelta', (msg) => {
+onMessage('textDelta', (msg, view) => {
   const sid = msg.sessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   // Accumulate text for ALL sessions
@@ -397,20 +368,20 @@ onMessage('textDelta', (msg) => {
   resetStreamTimeout(sid);
   state.lastStreamActivity = Date.now();
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
-  if (isActive(msg)) {
+  if (view) {
     stopThinkingTimer();
     clearRetryStatus();
     // Finish thinking bubble before first text delta
-    if (state.currentThinkingBubble) finishThinking();
+    if (activeView.stream.currentThinkingBubble) finishThinking();
     appendAiText(msg.delta);
   }
 });
 
-onMessage('textDone', (msg) => {
+onMessage('textDone', (msg, view) => {
   const sid = msg.sessionId;
-  if (isActive(msg)) {
+  if (view) {
     stopThinkingTimer();
-    if (state.currentThinkingBubble) finishThinking();
+    if (activeView.stream.currentThinkingBubble) finishThinking();
     const tThinking = state.sessionThinkingBuffers[sid] || '';
     if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
     const durationMs = consumeTurnDuration(sid);
@@ -431,21 +402,21 @@ onMessage('textDone', (msg) => {
   }
 });
 
-onMessage('thinking', (msg) => {
+onMessage('thinking', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   resetStreamTimeout(sid);
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
-  if (isActive(msg)) {
+  if (view) {
     // Guard against duplicate thinking bubbles: check both state ref and DOM.
-    const existing = state.dom.chat.querySelector('.thinking-placeholder');
-    if (!state.currentAiBubble && !existing) {
+    const existing = activeView.dom.chat.querySelector('.thinking-placeholder');
+    if (!activeView.stream.currentAiBubble && !existing) {
       const { chat } = state.dom;
       const row = document.createElement('div');
       row.className = 'row ai';
-      state.currentAiBubble = document.createElement('div');
-      state.currentAiBubble.className = 'bubble ai thinking-placeholder';
-      row.appendChild(state.currentAiBubble);
+      activeView.stream.currentAiBubble = document.createElement('div');
+      activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
+      row.appendChild(activeView.stream.currentAiBubble);
       chat.appendChild(row);
       smartScroll();
       // Start live timer after a brief moment so DOM is settled
@@ -454,7 +425,7 @@ onMessage('thinking', (msg) => {
   }
 });
 
-onMessage('toolCallDetected', (msg) => {
+onMessage('toolCallDetected', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.name === 'AskUserQuestion') return;
   const sid = msg.sessionId;
@@ -476,9 +447,9 @@ onMessage('toolCallDetected', (msg) => {
   }
 
   if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
-  if (isActive(msg)) {
+  if (view) {
     clearRetryStatus();
-    if (state.currentThinkingBubble) finishThinking();
+    if (activeView.stream.currentThinkingBubble) finishThinking();
     // Flush thinking buffer for active sessions to prevent cross-turn concatenation.
     // finishAi() only returns text, so we read thinking separately from the buffer.
     const tThinking = state.sessionThinkingBuffers[sid] || '';
@@ -492,7 +463,7 @@ onMessage('toolCallDetected', (msg) => {
   }
 });
 
-onMessage('toolStart', (msg) => {
+onMessage('toolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   // Skip pending card for AskUser — the askUser event handles rendering directly
   if (msg.label && msg.label.startsWith('AskUser')) return;
@@ -514,11 +485,11 @@ onMessage('toolStart', (msg) => {
     if (state.sessionThinkingBuffers[toolStartSid]) delete state.sessionThinkingBuffers[toolStartSid];
   }
 
-  if (isActive(msg)) {
+  if (view) {
     if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
     // Finish the current AI bubble so that text after tool execution goes into a new bubble
-    if (state.currentThinkingBubble) finishThinking();
+    if (activeView.stream.currentThinkingBubble) finishThinking();
     // Flush thinking buffer for active sessions (same as toolCallDetected)
     const tThinking = state.sessionThinkingBuffers[toolStartSid] || '';
     if (toolStartSid && state.sessionThinkingBuffers[toolStartSid]) delete state.sessionThinkingBuffers[toolStartSid];
@@ -531,12 +502,12 @@ onMessage('toolStart', (msg) => {
   }
 });
 
-onMessage('toolEnd', (msg) => {
+onMessage('toolEnd', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.label && msg.label.startsWith('AskUser')) return;
   const toolEndSid = msg.sessionId;
   if (toolEndSid) delete state.sessionPendingTools[toolEndSid];
-  if (isActive(msg)) {
+  if (view) {
     const data = renderTool(msg.label, msg.summary, msg.content, msg.isError, msg.input, msg.sessionId);
     if (data) saveMsg(data, msg.sessionId);
   } else {
@@ -558,9 +529,9 @@ function formatTokens(n) {
 }
 
 function updateHeaderModelInfo() {
-  const el = state.dom.headerModelInfoEl;
+  const el = activeView.dom.headerModelInfoEl;
   if (!el) return;
-  const sid = displaySessionId();
+  const sid = activeView?.sessionId;
   const info = sid ? state.sessionModelInfo[sid] : null;
   if (!info || !info.contextWindow) {
     el.textContent = '';
@@ -684,7 +655,7 @@ function setupThresholdDrag(wrap, info, sid) {
 }
 
 // Real-time usage update after each LLM round (multi-round tool calling)
-onMessage('usageUpdate', (msg) => {
+onMessage('usageUpdate', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && msg.inputTokens != null && msg.contextWindow) {
     state.sessionModelInfo[sid] = {
@@ -693,11 +664,11 @@ onMessage('usageUpdate', (msg) => {
       inputTokens: msg.inputTokens,
       compactThreshold: msg.compactThreshold
     };
-    if (isActive(msg)) updateHeaderModelInfo();
+    if (view) updateHeaderModelInfo();
   }
 });
 
-onMessage('done', (msg) => {
+onMessage('done', (msg, view) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   // Defensive: clear attention when turn ends (in case answer callback didn't fire)
@@ -717,11 +688,11 @@ onMessage('done', (msg) => {
       compactThreshold: msg.compactThreshold != null ? msg.compactThreshold : state.sessionModelInfo[sid]?.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    if (isActive(msg)) updateHeaderModelInfo();
+    if (view) updateHeaderModelInfo();
   }
   // Flush any remaining buffered text/thinking for this session
   if (msg.sessionId) {
-    if (!isActive(msg)) {
+    if (!view) {
       const thinkingText = state.sessionThinkingBuffers[msg.sessionId] || '';
       // Save ALL pending segments accumulated at tool boundaries, then the final round.
       const pendingSegments = state.sessionPendingAiMessages[msg.sessionId] || [];
@@ -741,10 +712,10 @@ onMessage('done', (msg) => {
     } else {
       delete state.sessionTexts[msg.sessionId];
       // Note: sessionThinkingBuffers is NOT deleted here for active sessions —
-      // it's consumed by finishThinking() + the fallback read in the isActive(msg) block below.
+      // it's consumed by finishThinking() + the fallback read in the view block below.
     }
   }
-  if (isActive(msg)) {
+  if (view) {
     stopThinkingTimer();
     // Clean up per-session pending tool card for this session
     if (sid && state.sessionToolCards[sid]) {
@@ -760,15 +731,15 @@ onMessage('done', (msg) => {
     if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
     // Clear thinkingText unconditionally — when appendThinkingDelta skipped DOM
     // creation (second+ thinking block after text), finishThinking() had no bubble
-    // to clear and state.thinkingText retains skipped content.
-    state.thinkingText = '';
+    // to clear and activeView.stream.thinkingText retains skipped content.
+    activeView.stream.thinkingText = '';
     const data = finishAi(durationMs, msg.model);
     if (data) {
       data.thinking = thinkingText || undefined;
       saveMsg(data, msg.sessionId);
     } else if (thinkingText) {
       // Thinking-only response (no text): keep thinking bubble expanded
-      const thinkBubble = state.dom.chat.querySelector('.thinking-bubble');
+      const thinkBubble = activeView.dom.chat.querySelector('.thinking-bubble');
       if (thinkBubble) {
         const content = thinkBubble.querySelector('.thinking-content');
         const label = thinkBubble.querySelector('.thinking-label');
@@ -778,9 +749,9 @@ onMessage('done', (msg) => {
       // Save without text field so restoreFromStorage doesn't render an empty bubble
       saveMsg({ type: 'ai', thinking: thinkingText, durationMs, model: msg.model }, msg.sessionId);
     }
-    Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
-    state.agentBubbles = {};
-    state.activeAgentId = null;
+    Object.keys(activeView.stream.agentBubbles).forEach(id => finishAgent(id));
+    activeView.stream.agentBubbles = {};
+    activeView.stream.activeAgentId = null;
     clearStatus();
   } else {
     markSessionUnread(msg.sessionId);
@@ -790,10 +761,10 @@ onMessage('done', (msg) => {
 // roundComplete: backend signals the current round's text is finalized but a new
 // LLM round is about to start (e.g. pendingEvents injection). Finalize the
 // current AI bubble without ending the turn (no done/sessionBusy(false)).
-onMessage('roundComplete', (msg) => {
+onMessage('roundComplete', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
-  if (isActive(msg)) {
-    if (state.currentThinkingBubble) finishThinking();
+  if (view) {
+    if (activeView.stream.currentThinkingBubble) finishThinking();
     const tThinking = state.sessionThinkingBuffers[sid] || '';
     if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
     const prevData = finishAi();
@@ -804,7 +775,7 @@ onMessage('roundComplete', (msg) => {
   }
 });
 
-onMessage('error', (msg) => {
+onMessage('error', (msg, view) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
@@ -817,9 +788,9 @@ onMessage('error', (msg) => {
   // Reset history loading state — backend may fail mid-pagination
   const errView = findViewBySessionId(sid);
   if (errView) errView.pagination.loading = false;
-  state.historyLoading = false; // legacy fallback
+  if (view) view.pagination.loading = false;
   hideHistoryLoader();
-  if (isActive(msg)) {
+  if (view) {
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
@@ -834,7 +805,7 @@ onMessage('error', (msg) => {
   }
 });
 
-onMessage('interrupted', (msg) => {
+onMessage('interrupted', (msg, view) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
@@ -844,7 +815,7 @@ onMessage('interrupted', (msg) => {
   // Defensive: clear attention on interrupt
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
-  if (isActive(msg)) {
+  if (view) {
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
@@ -855,13 +826,13 @@ onMessage('interrupted', (msg) => {
   }
 });
 
-onMessage('timeout', (msg) => {
+onMessage('timeout', (msg, view) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) delete state.sessionPendingAiMessages[sid];
   if (sid) state.answeredPermissions.delete(sid);
-  if (isActive(msg)) {
+  if (view) {
     finishThinking();
     finishAi();
     renderTimeoutNotice();
@@ -871,7 +842,7 @@ onMessage('timeout', (msg) => {
   }
 });
 
-onMessage('maxTokens', (msg) => {
+onMessage('maxTokens', (msg, view) => {
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
@@ -880,7 +851,7 @@ onMessage('maxTokens', (msg) => {
   if (sid) delete state.turnExpecting[sid];
   if (sid && state.attentionSessions.has(sid)) setSessionAttention(sid, false);
   if (sid) state.answeredPermissions.delete(sid);
-  if (isActive(msg)) {
+  if (view) {
     if (sid && state.sessionToolCards[sid]) {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
@@ -895,14 +866,14 @@ onMessage('maxTokens', (msg) => {
 });
 
 // --- AskUser / Permission ---
-onMessage('askUser', (msg) => {
+onMessage('askUser', (msg, view) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
-  if (isActive(msg)) {
+  if (view) {
     // Defensive: finalize any in-flight AI bubble before rendering the question.
     // Normally roundComplete (sent before askUser by the backend) handles this,
     // but guard against edge cases where the bubble is still pending.
-    if (state.currentAiBubble) {
+    if (activeView.stream.currentAiBubble) {
       const prevData = finishAi();
       if (prevData) saveMsg(prevData, sid);
     }
@@ -914,7 +885,7 @@ onMessage('askUser', (msg) => {
   }
 });
 
-onMessage('askPermission', (msg) => {
+onMessage('askPermission', (msg, view) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
   // Clear stale "answered" tracking: a new permission request means any
@@ -922,7 +893,7 @@ onMessage('askPermission', (msg) => {
   // Without this, a second permission in the same turn would be stuck as
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
-  if (isActive(msg)) {
+  if (view) {
     renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
@@ -932,7 +903,7 @@ onMessage('askPermission', (msg) => {
 
 // --- Session list (global) ---
 let restoredSessionId = null;
-onMessage('sessionList', (msg) => {
+onMessage('sessionList', (msg, view) => {
   // Build sessionAgentMap from ALL sessions
   const allSessions = msg.sessions || [];
   const allFolders = msg.folders || [];
@@ -973,35 +944,35 @@ onMessage('sessionList', (msg) => {
 
 // --- History pagination indicators ---
 function showHistoryLoader() {
-  let loader = state.dom.chat.querySelector('.history-loader');
+  let loader = activeView.dom.chat.querySelector('.history-loader');
   if (loader) return;
   loader = document.createElement('div');
   loader.className = 'history-loader';
   loader.innerHTML = '<div class="history-spinner"></div><span>' + t('chat.loading') + '</span>';
-  state.dom.chat.prepend(loader);
+  activeView.dom.chat.prepend(loader);
 }
 
 function hideHistoryLoader() {
-  const loader = state.dom.chat.querySelector('.history-loader');
+  const loader = activeView.dom.chat.querySelector('.history-loader');
   if (loader) loader.remove();
 }
 
 function showHistoryEnd() {
-  if (state.dom.chat.querySelector('.history-end')) return;
+  if (activeView.dom.chat.querySelector('.history-end')) return;
   const end = document.createElement('div');
   end.className = 'history-end';
   end.textContent = t('chat.noMoreMessages');
-  state.dom.chat.prepend(end);
+  activeView.dom.chat.prepend(end);
 }
 
 function clearHistoryIndicators() {
-  state.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
+  activeView.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
 }
 
 // --- Backend history page ---
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
-onMessage('historyPage', (msg) => {
+onMessage('historyPage', (msg, view) => {
   const sid = msg.sessionId;
   // Route to the ChatView that owns this session — replaces the old
   // _secondaryActive ternary checks with unified view.pagination access.
@@ -1015,7 +986,7 @@ onMessage('historyPage', (msg) => {
   if (isInitialLoad) {
     view.pagination.pendingInitialLoad = false;
     // Initial load or full refresh — replace
-    state.dom.chat.innerHTML = '';
+    activeView.dom.chat.innerHTML = '';
     // Reset sessionToolCards — innerHTML clear above removes all tool pending
     // card DOM nodes, but renderToolPending uses sessionToolCards[sid] as an
     // existence check. A stale DOM reference causes it to skip card creation
@@ -1082,10 +1053,10 @@ onMessage('historyPage', (msg) => {
 
       // Restore thinking bubble
       if (thinkBuf) {
-        state.thinkingText = thinkBuf;
+        activeView.stream.thinkingText = thinkBuf;
         const hasText = !!txtBuf;
         const done = hasText || !isStillBusy;
-        const chat = state.dom.chat;
+        const chat = activeView.dom.chat;
         const row = document.createElement('div');
         row.className = 'row ai thinking-row';
         const bubble = document.createElement('div');
@@ -1104,47 +1075,47 @@ onMessage('historyPage', (msg) => {
             label.classList.toggle('expanded', !visible);
           };
         }
-        content.innerHTML = renderMarkdownWithMath(state.thinkingText) + (!done ? '<span class="cursor"></span>' : '');
+        content.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText) + (!done ? '<span class="cursor"></span>' : '');
         bubble.appendChild(label);
         bubble.appendChild(content);
         row.appendChild(bubble);
         chat.appendChild(row);
-        state.currentThinkingBubble = done ? null : bubble;
+        activeView.stream.currentThinkingBubble = done ? null : bubble;
       }
 
       // Restore text bubble
       if (txtBuf) {
-        state.aiText = txtBuf;
-        const chat = state.dom.chat;
+        activeView.stream.aiText = txtBuf;
+        const chat = activeView.dom.chat;
         const row = document.createElement('div');
         row.className = 'row ai';
-        state.currentAiBubble = document.createElement('div');
-        state.currentAiBubble.className = 'bubble ai';
-        state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText) + (isStillBusy ? '<span class="cursor"></span>' : '');
-        row.appendChild(state.currentAiBubble);
+        activeView.stream.currentAiBubble = document.createElement('div');
+        activeView.stream.currentAiBubble.className = 'bubble ai';
+        activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText) + (isStillBusy ? '<span class="cursor"></span>' : '');
+        row.appendChild(activeView.stream.currentAiBubble);
         chat.appendChild(row);
         if (!isStillBusy) {
-          state.currentAiBubble = null;
-          state.aiText = '';
+          activeView.stream.currentAiBubble = null;
+          activeView.stream.aiText = '';
           delete state.pendingRestore[sid];
         }
       }
 
       const askBuf = state.sessionAskBuffers[sid];
       if (isStillBusy && askBuf && askBuf.answer) {
-        state.askAnswerText = askBuf.answer;
-        const chat = state.dom.chat;
+        activeView.stream.askAnswerText = askBuf.answer;
+        const chat = activeView.dom.chat;
         const row = document.createElement('div');
-        state.currentAskBubble = document.createElement('div');
-        state.currentAskBubble.className = 'bubble ai';
+        activeView.stream.currentAskBubble = document.createElement('div');
+        activeView.stream.currentAskBubble.className = 'bubble ai';
         const label = document.createElement('div');
         label.className = 'ask-label';
         label.textContent = t('chat.askLabel');
         const content = document.createElement('div');
-        content.innerHTML = renderMarkdownWithMath(state.askAnswerText) + '<span class="cursor"></span>';
-        state.currentAskBubble.appendChild(label);
-        state.currentAskBubble.appendChild(content);
-        row.appendChild(state.currentAskBubble);
+        content.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText) + '<span class="cursor"></span>';
+        activeView.stream.currentAskBubble.appendChild(label);
+        activeView.stream.currentAskBubble.appendChild(content);
+        row.appendChild(activeView.stream.currentAskBubble);
         chat.appendChild(row);
       }
       // Re-create pending tool card if this session has an in-progress tool.
@@ -1163,7 +1134,7 @@ onMessage('historyPage', (msg) => {
     // there would be subsequent Ai/Tool messages after it, so it wouldn't be the last message.
     if (isAskUserPending) {
       // Remove ALL disabled askUser rows (restored by restoreFromBackendHistory).
-      state.dom.chat.querySelectorAll('.row.ai').forEach(row => {
+      activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.option-box')) row.remove();
       });
       renderAskUser(lastHistMsg.items, sid);
@@ -1175,7 +1146,7 @@ onMessage('historyPage', (msg) => {
     // (tool is still executing, askPermission is still the last history entry).
     if (isAskPermissionPending && !state.answeredPermissions.has(sid)) {
       // Remove the disabled askPermission row (restored by restoreFromBackendHistory).
-      state.dom.chat.querySelectorAll('.row.ai').forEach(row => {
+      activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
         if (row.querySelector('.permission-pending-box')) row.remove();
       });
       renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel);
@@ -1187,7 +1158,7 @@ onMessage('historyPage', (msg) => {
     // is complete, ensure the viewport shows the latest content.
     // Uses rAF to avoid layout thrashing — fires after any pending style calculations.
     requestAnimationFrame(() => {
-      const chat = state.dom.chat;
+      const chat = activeView.dom.chat;
       if (view.stream.scrollSnapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
         chat.scrollTop = chat.scrollHeight;
         view.stream.scrollSnapped = true;
@@ -1202,16 +1173,16 @@ onMessage('historyPage', (msg) => {
       // Skipping duplicate response
       return;
     }
-    const chat = state.dom.chat;
+    const chat = activeView.dom.chat;
     const prevScrollHeight = chat.scrollHeight;
     const prevScrollTop = chat.scrollTop;
     // Insert before first child
     const fragment = document.createDocumentFragment();
     const tempDiv = document.createElement('div');
-    const origChat = state.dom.chat;
-    state.dom.chat = tempDiv;
+    const origChat = activeView.dom.chat;
+    activeView.dom.chat = tempDiv;
     restoreFromBackendHistory(msg.messages, { scrollToBottom: false });
-    state.dom.chat = origChat;
+    activeView.dom.chat = origChat;
     // Move rendered children to fragment, skip animation on prepended rows
     while (tempDiv.firstChild) {
       const child = tempDiv.firstChild;
@@ -1237,11 +1208,11 @@ onMessage('historyPage', (msg) => {
 // Click the indicator to see a dropdown with per-agent status.
 
 function updateDelegateIndicator() {
-  const el = state.dom.delegateIndicatorEl;
+  const el = activeView.dom.delegateIndicatorEl;
   if (!el) return;
   // Only count sub-agents belonging to the currently displayed session
-  const sid = displaySessionId();
-  const count = Object.values(state.activeSubAgents || {})
+  const sid = activeView?.sessionId;
+  const count = Object.values(activeView.stream.activeSubAgents || {})
     .filter(info => !info.sessionId || info.sessionId === sid)
     .length;
   if (count > 0) {
@@ -1250,7 +1221,7 @@ function updateDelegateIndicator() {
   } else {
     el.classList.add('hidden');
     // Also hide dropdown
-    const dropdown = state.dom.delegateDropdownEl;
+    const dropdown = activeView.dom.delegateDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
   renderDelegateDropdown();
@@ -1258,11 +1229,11 @@ function updateDelegateIndicator() {
 state.updateDelegateIndicator = updateDelegateIndicator;
 
 function renderDelegateDropdown() {
-  const listEl = state.dom.delegateDropdownListEl;
+  const listEl = activeView.dom.delegateDropdownListEl;
   if (!listEl) return;
-  const agents = state.activeSubAgents || {};
+  const agents = activeView.stream.activeSubAgents || {};
   // Only show sub-agents belonging to the currently displayed session
-  const sid = displaySessionId();
+  const sid = activeView?.sessionId;
   const entries = Object.entries(agents)
     .filter(([id, info]) => !info.sessionId || info.sessionId === sid);
   if (entries.length === 0) {
@@ -1306,13 +1277,13 @@ document.addEventListener('click', (e) => {
   }
 });
 
-onMessage('agentStart', (msg) => {
+onMessage('agentStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (!isActive(msg)) return;
+  if (!view) return;
   const aid = msg.agentId || msg.name;
-  state.activeAgentId = aid;
-  if (!state.activeSubAgents) state.activeSubAgents = {};
-  state.activeSubAgents[aid] = {
+  activeView.stream.activeAgentId = aid;
+  if (!activeView.stream.activeSubAgents) activeView.stream.activeSubAgents = {};
+  activeView.stream.activeSubAgents[aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
     currentTool: null,
@@ -1322,40 +1293,40 @@ onMessage('agentStart', (msg) => {
   updateDelegateIndicator();
 });
 
-onMessage('agentTextDelta', (msg) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentToolCallDetected', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
-onMessage('agentToolStart', (msg) => {
+onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  const aid = msg.agentId || state.activeAgentId;
-  if (aid && state.activeSubAgents && state.activeSubAgents[aid]) {
-    state.activeSubAgents[aid].currentTool = msg.label;
+  const aid = msg.agentId || activeView.stream.activeAgentId;
+  if (aid && activeView.stream.activeSubAgents && activeView.stream.activeSubAgents[aid]) {
+    activeView.stream.activeSubAgents[aid].currentTool = msg.label;
     renderDelegateDropdown();
   }
 });
 
-onMessage('agentToolEnd', (msg) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentEnd', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
-onMessage('agentThinking', (msg) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentRetryStatus', (msg) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
-onMessage('agentDone', (msg) => {
+onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (!isActive(msg)) return;
-  const aid = msg.agentId || state.activeAgentId;
-  if (aid && state.activeSubAgents) {
+  if (!view) return;
+  const aid = msg.agentId || activeView.stream.activeAgentId;
+  if (aid && activeView.stream.activeSubAgents) {
     // Mark as done briefly so user sees transition, then remove
-    if (state.activeSubAgents[aid]) state.activeSubAgents[aid].done = true;
+    if (activeView.stream.activeSubAgents[aid]) activeView.stream.activeSubAgents[aid].done = true;
     renderDelegateDropdown();
     setTimeout(() => {
-      if (state.activeSubAgents && state.activeSubAgents[aid]) {
-        delete state.activeSubAgents[aid];
+      if (activeView.stream.activeSubAgents && activeView.stream.activeSubAgents[aid]) {
+        delete activeView.stream.activeSubAgents[aid];
         updateDelegateIndicator();
       }
     }, 2000);
   }
-  state.activeAgentId = null;
+  activeView.stream.activeAgentId = null;
 });
 
 // --- Compaction events (per-session) ---
@@ -1372,37 +1343,37 @@ function setCompacting(sessionId, active) {
   window.dispatchEvent(new CustomEvent('session-compacting', { detail: { sessionId } }));
 }
 
-onMessage('compactStart', (msg) => {
+onMessage('compactStart', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, true);
-  if (isActive(msg)) {
+  if (view) {
     renderSystemBubble(t('chat.compacting'));
   }
 });
 
-onMessage('compactComplete', (msg) => {
+onMessage('compactComplete', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
-  if (isActive(msg)) {
+  if (view) {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
   }
 });
 
-onMessage('compactFailed', (msg) => {
+onMessage('compactFailed', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
-  if (isActive(msg)) {
+  if (view) {
     renderSystemBubble(t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts }));
   }
   if (msg.attempt >= msg.maxAttempts) {
-    if (isActive(msg)) {
+    if (view) {
       renderError(t('chat.compactCircuitBreaker', { attempt: msg.attempt }));
     }
     clearBusyFor(msg);
@@ -1410,7 +1381,7 @@ onMessage('compactFailed', (msg) => {
 });
 
 // --- Agent panel events (global) ---
-onMessage('agentList', (msg) => {
+onMessage('agentList', (msg, view) => {
   state.agentsData = msg.agents || [];
   if (msg.availableTools) state.agentAvailableTools = msg.availableTools;
   renderAgentList();
@@ -1424,7 +1395,7 @@ onMessage('agentList', (msg) => {
   }
 });
 
-onMessage('agentSessionList', (msg) => {
+onMessage('agentSessionList', (msg, view) => {
   // Unified list — accept all sessions regardless of which agent triggered the request
   const agentName = msg.agentName;
   let sessions = msg.sessions || [];
@@ -1464,12 +1435,12 @@ onMessage('agentSessionList', (msg) => {
   initHeaderModelInfo();
 });
 
-onMessage('agentConfig', (msg) => showAgentModal(msg.name, msg.configJson || '', msg.systemMd || ''));
+onMessage('agentConfig', (msg, view) => showAgentModal(msg.name, msg.configJson || '', msg.systemMd || ''));
 onMessage('agentCreated', () => sendWs({ type: 'listAgents' }));
 onMessage('agentUpdated', () => sendWs({ type: 'listAgents' }));
 
 // --- Server config ---
-onMessage('serverConfig', (msg) => {
+onMessage('serverConfig', (msg, view) => {
   if (msg.streamTimeoutMs) state.streamTimeoutMs = msg.streamTimeoutMs;
   if (msg.version) state.serverVersion = msg.version;
   if (msg.thinking !== undefined) {
@@ -1485,11 +1456,11 @@ onMessage('serverConfig', (msg) => {
 });
 
 // MCP server list updated (after background init completes)
-onMessage('mcpServersUpdate', (msg) => {
+onMessage('mcpServersUpdate', (msg, view) => {
   if (msg.mcpServers) state.mcpServers = msg.mcpServers;
 });
 
-onMessage('configData', (msg) => {
+onMessage('configData', (msg, view) => {
   state.configText = msg.config || '';
   state._freshConfigText = state.configText; // Cache for slider's fetch-before-save
   try { state.parsedConfig = JSON.parse(state.configText); } catch { state.parsedConfig = null; }
@@ -1503,48 +1474,35 @@ onMessage('configData', (msg) => {
   }
 });
 
-onMessage('configUpdated', (msg) => {
+onMessage('configUpdated', (msg, view) => {
   if (!msg.success) { renderError(t('chat.configUpdateFailed')); return; }
   // Re-fetch config from server so UI reflects what was actually saved
   sendWs({type: 'getConfig'});
 });
 
 // --- Model selection ---
-onMessage('modelOptions', (msg) => {
+onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
   const current = msg.current || null;
   // Capture the session that requested the model list — the user's selection
   // callback runs asynchronously (long after this handler returns), so we must
-  // NOT rely on state.activeSessionId which may have switched by then.
-  const targetSessionId = msg.sessionId || state.activeSessionId;
-  // Determine which chat window owns this session so the card renders in the right place.
-  const isSecondary = targetSessionId === state.secondarySessionId;
-  const chatEl = isSecondary ? document.getElementById('secondary-chat') : state.dom.chat;
-
-  function renderInto(fn) {
-    if (!isSecondary) { fn(); return; }
-    const orig = state.dom.chat;
-    state.dom.chat = chatEl;
-    try { fn(); }
-    finally { state.dom.chat = orig; }
-  }
+  // NOT rely on the current activeView which may have switched by then.
+  const targetSessionId = msg.sessionId || activeView?.sessionId;
 
   if (models.length === 0) {
-    renderInto(() => renderSystemBubble(t('chat.noModels')));
+    renderSystemBubble(t('chat.noModels'));
     return;
   }
-  // Use a local bubble reference for the secondary window; primary uses the shared state.currentAiBubble.
-  let bubble = isSecondary ? null : state.currentAiBubble;
+  // Ensure bubble exists in the active view's chat
+  let bubble = activeView.stream.currentAiBubble;
   if (!bubble) {
-    renderInto(() => {
-      const row = document.createElement('div');
-      row.className = 'row ai';
-      bubble = document.createElement('div');
-      bubble.className = 'bubble ai';
-      row.appendChild(bubble);
-      chatEl.appendChild(row);
-    });
-    if (!isSecondary) state.currentAiBubble = bubble;
+    const row = document.createElement('div');
+    row.className = 'row ai';
+    bubble = document.createElement('div');
+    bubble.className = 'bubble ai';
+    row.appendChild(bubble);
+    activeView.dom.chat.appendChild(row);
+    activeView.stream.currentAiBubble = bubble;
   }
   const options = models.map(m => {
     const isCurrent = current && m.ref === current;
@@ -1568,17 +1526,17 @@ onMessage('modelOptions', (msg) => {
   });
 });
 
-onMessage('sessionModelSet', (msg) => {
+onMessage('sessionModelSet', (msg, view) => {
 });
 
 // --- Retry / fallback status ---
-onMessage('retryStatus', (msg) => {
+onMessage('retryStatus', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (isActive(msg)) renderRetryStatus(msg.message);
+  if (view) renderRetryStatus(msg.message);
 });
 
 // --- Bridge user message (e.g. from external platform) ---
-onMessage('bridgeUser', (msg) => {
+onMessage('bridgeUser', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   state.turnExpecting[sid] = true;
@@ -1590,7 +1548,7 @@ onMessage('bridgeUser', (msg) => {
 });
 
 // --- Session busy state (backend authority) ---
-onMessage('sessionBusy', (msg) => {
+onMessage('sessionBusy', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (msg.busy) {
     setBusy(msg.sessionId);
@@ -1612,7 +1570,7 @@ onMessage('sessionBusy', (msg) => {
   // DeathWatcher broadcast, or crash-recovery race) must NOT finalize the bubble.
   // Only do the defensive cleanup if the stream has been silent for 15s+,
   // indicating the 'done' event was truly lost.
-  if (isActive(msg) && !msg.busy && state.currentAiBubble) {
+  if (view && !msg.busy && activeView.stream.currentAiBubble) {
     const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
     if (sinceActivity < 15000) {
       console.warn('[sessionBusy(false)] Ignoring stale sessionBusy(false) during active streaming'
@@ -1628,25 +1586,21 @@ onMessage('sessionBusy', (msg) => {
       // history when the user switches sessions.
       const data = finishAi(durationMs, null);
       if (data) saveMsg(data, sid);
-      Object.keys(state.agentBubbles).forEach(id => finishAgent(id));
-      state.agentBubbles = {};
-      state.activeAgentId = null;
+      Object.keys(activeView.stream.agentBubbles).forEach(id => finishAgent(id));
+      activeView.stream.agentBubbles = {};
+      activeView.stream.activeAgentId = null;
       clearStatus();
     }
   }
 });
 
 // --- Task list ---
-onMessage('taskListUpdate', (msg) => {
+onMessage('taskListUpdate', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
-  // Secondary panel — check first to avoid isActive() matching during ws.js swap
-  if (state.secondarySessionId && msg.sessionId === state.secondarySessionId) {
+  if (view?.id === 'secondary') {
     renderTaskList(msg.tasks, document.getElementById('secondary-task-list'));
-    return;
-  }
-  // Main panel
-  if (msg.sessionId === state.activeSessionId || !msg.sessionId) {
+  } else if (view) {
     renderTaskList(msg.tasks);
   }
 });
@@ -1664,9 +1618,9 @@ function formatDuration(ms) {
 }
 
 function renderBgDropdown() {
-  const tasks = state.sessionBgTasks[displaySessionId()] || [];
-  const listEl = state.dom.bgDropdownListEl;
-  const dropdown = state.dom.bgDropdownEl;
+  const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
+  const listEl = activeView.dom.bgDropdownListEl;
+  const dropdown = activeView.dom.bgDropdownEl;
   if (!listEl || !dropdown) return;
   listEl.innerHTML = '';
   // Show running AND cancelling tasks (cancelling tasks stay visible until backend confirms)
@@ -1726,7 +1680,7 @@ function renderBgDropdown() {
       cancelBtn.classList.add('cancelling');
       cancelBtn.textContent = task.status === 'cancelling' ? t('bg.cancelling') : '...';
       task.status = 'cancelling';
-      sendWs({ type: 'cancelBackgroundJob', sessionId: displaySessionId(), jobId: task.taskId });
+      sendWs({ type: 'cancelBackgroundJob', sessionId: activeView?.sessionId, jobId: task.taskId });
     };
     // If already cancelling, show the cancelling state
     if (task.status === 'cancelling') {
@@ -1743,9 +1697,9 @@ function renderBgDropdown() {
 function startBgTimer() {
   if (_bgTimer) return;
   _bgTimer = setInterval(() => {
-    const dropdown = state.dom.bgDropdownEl;
+    const dropdown = activeView.dom.bgDropdownEl;
     if (!dropdown || dropdown.classList.contains('hidden')) { stopBgTimer(); return; }
-    const tasks = state.sessionBgTasks[displaySessionId()] || [];
+    const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
     const now = Date.now();
     dropdown.querySelectorAll('.bg-task-duration').forEach(el => {
       const t = tasks.find(t => t.taskId === el.dataset.taskId);
@@ -1759,11 +1713,11 @@ function stopBgTimer() {
 }
 
 function updateBgTasksUI() {
-  const tasks = state.sessionBgTasks[displaySessionId()] || [];
+  const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
   const active = tasks.filter(task => task.status === 'running' || task.status === 'cancelling');
-  const el = state.dom.bgIndicatorEl;
-  const countEl = state.dom.bgCountEl;
-  const dropdown = state.dom.bgDropdownEl;
+  const el = activeView.dom.bgIndicatorEl;
+  const countEl = activeView.dom.bgCountEl;
+  const dropdown = activeView.dom.bgDropdownEl;
   if (!el || !countEl) return;
   if (active.length > 0) {
     el.classList.remove('hidden');
@@ -1783,7 +1737,7 @@ state.updateBgTasksUI = updateBgTasksUI;
 // Toggle dropdown on indicator click
 document.getElementById('bg-indicator')?.addEventListener('click', (e) => {
   e.stopPropagation();
-  const dropdown = state.dom.bgDropdownEl;
+  const dropdown = activeView.dom.bgDropdownEl;
   if (!dropdown) return;
   if (dropdown.classList.contains('hidden')) {
     renderBgDropdown();
@@ -1797,15 +1751,15 @@ document.getElementById('bg-indicator')?.addEventListener('click', (e) => {
 
 // Close dropdown when clicking outside
 document.addEventListener('click', (e) => {
-  const dropdown = state.dom.bgDropdownEl;
-  const indicator = state.dom.bgIndicatorEl;
+  const dropdown = activeView.dom.bgDropdownEl;
+  const indicator = activeView.dom.bgIndicatorEl;
   if (dropdown && !dropdown.contains(e.target) && !indicator?.contains(e.target)) {
     dropdown.classList.add('hidden');
     stopBgTimer();
   }
 });
 
-onMessage('backgroundTaskUpdate', (msg) => {
+onMessage('backgroundTaskUpdate', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   if (!state.sessionBgTasks[sid]) state.sessionBgTasks[sid] = [];
@@ -1838,7 +1792,7 @@ onMessage('backgroundTaskUpdate', (msg) => {
 });
 
 // --- /ask command ---
-onMessage('askTextDelta', (msg) => {
+onMessage('askTextDelta', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   // Accumulate ask text for ALL sessions
@@ -1846,14 +1800,14 @@ onMessage('askTextDelta', (msg) => {
     if (!state.sessionAskBuffers[sid]) state.sessionAskBuffers[sid] = { question: '', answer: '' };
     state.sessionAskBuffers[sid].answer = (state.sessionAskBuffers[sid].answer || '') + msg.delta;
   }
-  if (isActive(msg)) appendAskAnswer(msg.delta);
+  if (view) appendAskAnswer(msg.delta);
 });
-onMessage('askDone', (msg) => {
+onMessage('askDone', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   const durationMs = consumeTurnDuration(sid) || msg.durationMs;
   const buf = sid ? state.sessionAskBuffers[sid] : null;
-  if (isActive(msg)) {
-    const answer = state.askAnswerText || (buf ? buf.answer : '') || '';
+  if (view) {
+    const answer = activeView.stream.askAnswerText || (buf ? buf.answer : '') || '';
     const question = buf ? buf.question : '';
     finishAskAnswer(durationMs, msg.model);
     if (question || answer) {
@@ -1867,45 +1821,45 @@ onMessage('askDone', (msg) => {
   // Clean up thinking buffer so the subsequent 'done' event doesn't save
   // ask-mode thinking as a separate AI message (stray thinking fragment).
   if (sid && state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
-  if (state.currentThinkingBubble) finishThinking();
+  if (activeView.stream.currentThinkingBubble) finishThinking();
 });
-onMessage('askError', (msg) => {
+onMessage('askError', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid) delete state.sessionAskBuffers[sid];
-  if (isActive(msg)) renderAskError(msg.message);
+  if (view) renderAskError(msg.message);
 });
 
 // --- Skills ---
-onMessage('skillList', (msg) => {
+onMessage('skillList', (msg, view) => {
   const skills = msg.skills || [];
   state.skills = skills;
   registerSkillCommands(skills);
 });
 
-onMessage('skillError', (msg) => {
-  if (isActive(msg)) renderSystemBubble(msg.message || 'Skill error');
+onMessage('skillError', (msg, view) => {
+  if (view) renderSystemBubble(msg.message || 'Skill error');
 });
 
 
 // --- Memory ---
-onMessage('memoryData', (msg) => handleMemoryData(msg));
+onMessage('memoryData', (msg, view) => handleMemoryData(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
-onMessage('memoryStatus', (msg) => showMemoryButton());
+onMessage('memoryStatus', (msg, view) => showMemoryButton());
 
 // --- Rules ---
-onMessage('rulesData', (msg) => handleRulesData(msg));
-onMessage('rulesSaved', (msg) => handleRulesSaved(msg));
-onMessage('rulesDeleted', (msg) => handleRulesDeleted(msg));
+onMessage('rulesData', (msg, view) => handleRulesData(msg));
+onMessage('rulesSaved', (msg, view) => handleRulesSaved(msg));
+onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 
 // --- Browse Result (path picker) ---
-onMessage('browseResult', (msg) => handleBrowseResult(msg));
+onMessage('browseResult', (msg, view) => handleBrowseResult(msg));
 
 // --- Card design prompt ---
-onMessage('cardDesignData', (msg) => { state.cardDesignPrompt = msg.content || ''; });
+onMessage('cardDesignData', (msg, view) => { state.cardDesignPrompt = msg.content || ''; });
 onMessage('cardDesignSaved', () => { /* saved confirmation */ });
 
 // --- Update check ---
-onMessage('updateCheckResult', (msg) => {
+onMessage('updateCheckResult', (msg, view) => {
   const statusEl = document.getElementById('update-status');
   const actionEl = document.getElementById('update-action');
   if (!statusEl) return;
@@ -1927,7 +1881,7 @@ onMessage('updateStarted', () => {
   if (statusEl) statusEl.textContent = t('settings.updating');
 });
 
-onMessage('updateCompleted', (msg) => {
+onMessage('updateCompleted', (msg, view) => {
   const btn = document.getElementById('btn-do-update');
   const statusEl = document.getElementById('update-status');
   if (btn) { btn.textContent = t('settings.checkUpdate'); btn.disabled = false; }
@@ -1952,10 +1906,10 @@ initNavTabs();
 initModals();
 initRulesModal();
 initPathPicker();
-initInput();
+initInput(chatViews.primary);
+initInput(chatViews.secondary);
 initMemory();
 initScheduledTask();
-initSecondaryChat();
 initMesh();
 
 // Sidebar collapse toggle
@@ -1999,12 +1953,13 @@ window.addEventListener('locale-changed', () => {
 document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(state.activeFolderId));
 
 
-// Scroll listener
-state.dom.chat.addEventListener('scroll', () => {
-  state.scrollSnapped = state.dom.chat.scrollTop + state.dom.chat.clientHeight >= state.dom.chat.scrollHeight - 40;
+// Scroll listener (primary window)
+const _primChat = chatViews.primary.dom.chat;
+_primChat.addEventListener('scroll', () => {
+  chatViews.primary.stream.scrollSnapped = _primChat.scrollTop + _primChat.clientHeight >= _primChat.scrollHeight - 40;
   // Scroll-to-top: load older messages
   const pv = chatViews.primary;
-  if (state.dom.chat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
+  if (_primChat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
     pv.pagination.loading = true;
     showHistoryLoader();
     sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
@@ -2049,4 +2004,4 @@ window.Nebflow = {
 
 // ---------- 8. Start ----------
 connect();
-state.dom.input.focus();
+chatViews.primary.dom.input.focus();
