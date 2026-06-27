@@ -1,4 +1,5 @@
 import state from './state.js';
+import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 
 // === Lottie spinner JSON (rotating ring) ===
@@ -290,17 +291,16 @@ export function attachToolClick(card) {
 
 // === Scroll helpers ===
 export function shouldAutoScroll() {
-  const chat = state.dom.chat;
+  if (!activeView) return false;
+  const chat = activeView.dom.chat;
   const threshold = 60;
   return chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold;
 }
 
 export function smartScroll() {
-  // Capture chat + scrollSnapped synchronously — for the secondary view, ws.js
-  // push/pull restores global state to primary before the rAF fires, so reading
-  // state.* inside the rAF would target the wrong window.
-  const chat = state.dom.chat;
-  const snapped = state.scrollSnapped;
+  if (!activeView) return;
+  const chat = activeView.dom.chat;
+  const snapped = activeView.stream.scrollSnapped;
   requestAnimationFrame(() => {
     const threshold = 60;
     if (snapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold) {
