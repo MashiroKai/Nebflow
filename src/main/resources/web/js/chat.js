@@ -55,8 +55,10 @@ export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
   if (sessionId === state.activeSessionId || (state._secondaryActive && sessionId === state.secondarySessionId)) {
-    const { input, sendBtn, stopBtn } = state.dom;
-    input.disabled = true;
+    const { sendBtn, stopBtn } = state.dom;
+    // Don't disable the input — user should be able to type slash commands
+    // (e.g. /model, /clear) and draft messages while busy. Regular sends are
+    // blocked by the isBusy gate in send().
     sendBtn.style.display = 'none';
     stopBtn.style.display = 'flex';
   }
@@ -67,7 +69,6 @@ export function clearBusy(sessionId) {
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
   if (sessionId === state.activeSessionId || (state._secondaryActive && sessionId === state.secondarySessionId)) {
     const { input, sendBtn, stopBtn } = state.dom;
-    input.disabled = false;
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'none';
     input.focus();

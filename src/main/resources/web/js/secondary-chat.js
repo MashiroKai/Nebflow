@@ -353,10 +353,10 @@ export function sendSecondary() {
 function showSecondaryBusy(busy) {
   const sendBtn = document.getElementById('secondary-send-btn');
   const stopBtn = document.getElementById('secondary-stop-btn');
-  const input = document.getElementById('secondary-input');
   if (sendBtn) sendBtn.style.display = busy ? 'none' : 'flex';
   if (stopBtn) stopBtn.style.display = busy ? 'flex' : 'none';
-  if (input) input.disabled = busy;
+  // Don't disable input — user should be able to type slash commands and draft
+  // messages even when busy. Regular sends are blocked by the busy guard.
 }
 
 function updateSecondarySendBtn() {

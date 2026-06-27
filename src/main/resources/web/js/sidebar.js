@@ -1040,7 +1040,12 @@ function renderOneSessionItem(s, container, opts = {}) {
     ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
     : '';
   const deleteBtnHtml = '<button class="session-delete" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
+  const inBatchMode = state.selectedSessionIds.size > 0;
+  const checkHtml = inBatchMode
+    ? '<div class="session-check' + (isSelected ? ' checked' : '') + '">' + (isSelected ? '<i data-lucide="check"></i>' : '') + '</div>'
+    : '';
   item.innerHTML =
+    checkHtml +
     '<div class="session-info">' +
     '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
     (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
@@ -1176,12 +1181,12 @@ export function renderSessionSidebar(sessionData, activeId) {
     (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',') +
     '|folders:' + [...(state.expandedFolders || [])].sort().join(',') +
     '|pinned:' + [...(state.pinnedSessions || [])].sort().join(',') +
-    '|batch:' + state.batchMode;
+    '|selected:' + [...state.selectedSessionIds].sort().join(',');
   const sessionList = state.dom.sessionList;
   if (sessionList && sessionList._lastFingerprint === fingerprint) {
     // Data unchanged — just update active highlight in-place (much cheaper than rebuild).
     sessionList.querySelectorAll('.session-item').forEach(el => {
-      el.classList.toggle('active', el.dataset.sessionId === state.activeSessionId);
+      el.classList.toggle('active', el.dataset.id === state.activeSessionId);
     });
     updateHeaderSessionName();
     return;
@@ -1501,10 +1506,10 @@ export function resetChatForActiveSession() {
     renderToolPending(state.sessionPendingTools[sid].label, sid);
   }
 
-  // Update busy UI
+  // Update busy UI (don't disable input — user should be able to type
+  // slash commands and draft messages even when session is busy)
   const isBusy = isStreaming;
-  const { input, sendBtn, stopBtn } = state.dom;
-  input.disabled = isBusy;
+  const { sendBtn, stopBtn } = state.dom;
   sendBtn.style.display = isBusy ? 'none' : 'flex';
   stopBtn.style.display = isBusy ? 'flex' : 'none';
 
