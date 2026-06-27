@@ -1152,8 +1152,6 @@ onMessage('historyPage', (msg, view) => {
       renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel);
     }
 
-    if (!view.pagination.hasMore && msg.messages.length > 0) showHistoryEnd();
-
     // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
     // is complete, ensure the viewport shows the latest content.
     // Uses rAF to avoid layout thrashing — fires after any pending style calculations.
@@ -1961,10 +1959,23 @@ initMesh();
 // Re-apply locale when language changes
 window.addEventListener('locale-changed', () => {
   applyLocaleToHtml();
-  // Re-render current session content to update translated text
-  if (state.activeSessionId) {
+  // Force session sidebar rebuild by invalidating fingerprint cache
+  const sl = state.dom.sessionList;
+  if (sl) sl._lastFingerprint = null;
+  if (state.sessions.length > 0) {
     renderSessionSidebar(state.sessions, state.activeSessionId);
-    resetChatForActiveSession();
+  }
+  // Re-render agent list to update localized labels
+  if (state.agentsData.length > 0) {
+    renderAgentList();
+  }
+  // Update input placeholders (may have been overwritten by skill/ask mode)
+  if (chatViews.primary?.dom?.input) {
+    const v = chatViews.primary;
+    setActiveView(v);
+    if (!v.skillMode && !v.stream.askMode) {
+      v.dom.input.placeholder = t('input.placeholder');
+    }
   }
 });
 // New Folder button
