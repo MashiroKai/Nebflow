@@ -241,7 +241,9 @@ object LlmInterface:
                                       // for any OpenAI-compatible provider). Use the actual providerId
                                       // from the candidate so the frontend shows correct provider name.
                                       val fixedMeta = done.meta.map(_.copy(providerId = candidate.providerId))
-                                      IO.pure(done.copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow)))
+                                      IO.pure(
+                                        done.copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
+                                      )
                                     else
                                       IO.raiseError(
                                         new RuntimeException(
