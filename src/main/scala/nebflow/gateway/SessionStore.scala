@@ -72,7 +72,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private val uiCacheRef: Ref[IO, Map[String, List[UiMessage]]] =
     Ref.unsafe[IO, Map[String, List[UiMessage]]](Map.empty)
 
-  /** Optional hook — called with sessionId after any session data change. Used by CloudSessionSync for push. */
+  /** Optional hook — called with sessionId after any session data change. */
   private var sessionChangedHook: Option[String => IO[Unit]] = None
 
   /** Register a callback invoked after session data changes (messages saved, session created/deleted). */
@@ -402,9 +402,9 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           else
             val init = if action == "created" then saveSessionMessages(meta.id, Nil) else IO.unit
             init *>
-            saveIndex *>
-            IO.delay(logger.info(s"ensureAgentSession($agentName): $action, session=${meta.id}, flushed index")) *>
-            notifySessionChanged(meta.id)
+              saveIndex *>
+              IO.delay(logger.info(s"ensureAgentSession($agentName): $action, session=${meta.id}, flushed index")) *>
+              notifySessionChanged(meta.id)
         persist.as((meta, action != "exists"))
       }
 
@@ -700,19 +700,20 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       mergedMsgs = mergeMessages(localMsgs, cloudMessages)
       mergedUi = mergeUiMessages(localUi, cloudUiMessages)
       changed = mergedMsgs.length != localMsgs.length || mergedUi.length != localUi.length
-      _ <- if changed then
-        for
-          _ <- saveSessionMessages(sessionId, mergedMsgs)
-          _ <- saveUiMessages(sessionId, mergedUi)
-          _ <- indexRef.update { case (activeId, sessions, folders) =>
-            val now = System.currentTimeMillis()
-            val updated = sessions.map(s => if s.id == sessionId then s.copy(updatedAt = now) else s)
-            (activeId, updated, folders)
-          }
-          aid <- getActiveId
-          _ <- if aid == sessionId then activeMessagesRef.set(mergedMsgs) else IO.unit
-        yield ()
-      else IO.unit
+      _ <-
+        if changed then
+          for
+            _ <- saveSessionMessages(sessionId, mergedMsgs)
+            _ <- saveUiMessages(sessionId, mergedUi)
+            _ <- indexRef.update { case (activeId, sessions, folders) =>
+              val now = System.currentTimeMillis()
+              val updated = sessions.map(s => if s.id == sessionId then s.copy(updatedAt = now) else s)
+              (activeId, updated, folders)
+            }
+            aid <- getActiveId
+            _ <- if aid == sessionId then activeMessagesRef.set(mergedMsgs) else IO.unit
+          yield ()
+        else IO.unit
     yield MergeResult(mergedMsgs, mergedUi, changed)
 
   // ============================================================
