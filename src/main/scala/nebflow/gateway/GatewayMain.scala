@@ -307,31 +307,16 @@ object GatewayMain extends IOApp.Simple:
 
                                   bridgeSetup.flatMap { bridgeManager =>
                                     meshServiceF.flatMap { meshService =>
-                                      // Register remote executor for cross-device tool dispatch
+                                      // Register remote executor for cross-device tool dispatch (P2P only)
                                       RemoteExecutor.initialize(meshService)
-                                      // Create relay service for cloud relay fallback (NAT traversal)
-                                      val relayService = RelayService(meshService)
-                                      RemoteExecutor.setRelayService(relayService)
-                                      // Create the WS relay client (real-time command/result delivery).
-                                      // Wired before hooks so login/logout can connect/disconnect it.
-                                      val meshRelayClient = new MeshRelayClient(
-                                        meshService,
-                                        relayService,
-                                        sharedResourcesWithDream.dispatcher
-                                      )
-                                      relayService.setWsClient(meshRelayClient)
-                                      // Login → connect WS; logout → disconnect. Connect is also safe to
-                                      // call at startup if a login was restored from disk.
-                                      meshService.addLoginHook(meshRelayClient.connect()) *>
-                                        meshService.addLogoutHook(meshRelayClient.disconnect()) *>
-                                        // If we restored a login at startup, open the WS now.
-                                        meshService.isLoggedIn.flatMap {
-                                          case true => meshRelayClient.connect().start
-                                          case false => IO.unit
-                                        } *>
-                                        // Start background relay poller (target side — executes commands
-                                        // from other devices; low-frequency sweep when WS is connected).
-                                        IO(relayService.startBackgroundPoller(sharedResourcesWithDream.dispatcher))
+                                      // Wire Tailscale discovery — replaces cloud relay entirely.
+                                      // Sync actor calls discoverCycle periodically; announce pushes give real-time discovery.
+                                      val tsDiscovery = new nebflow.mesh.TailscaleDiscovery(meshService, cfg.port.value)
+                                      meshService.setDiscoveryHook(
+                                        tsDiscovery.discoverCycle.handleErrorWith(e =>
+                                          logger.debug(s"Tailscale discovery: ${e.getMessage}").void
+                                        )
+                                      ) *> IO(meshService.syncActor ! nebflow.mesh.SyncCommand.PeerDiscovered)
 
                                       val sharedResourcesWithBridge =
                                         sharedResourcesWithDream.copy(
