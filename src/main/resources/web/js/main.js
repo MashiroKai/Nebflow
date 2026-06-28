@@ -1923,6 +1923,11 @@ onMessage('updateCompleted', (msg, view) => {
 window.__showDeleteModal = showDeleteModal;
 window.__showDeleteFolderModal = showDeleteFolderModal;
 
+// Fork complete — auto-switch to the forked session
+onMessage('forkComplete', (msg, view) => {
+  renderSessionSidebar(state.sessions, msg.sessionId);
+});
+
 // ---------- 5. Initialize UI modules ----------
 applyLocaleToHtml(); // Apply locale to static HTML elements
 initNavTabs();
