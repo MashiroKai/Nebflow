@@ -372,19 +372,24 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       sourceMetaOpt <- getSessionMeta(sourceId)
       sourceMeta <- sourceMetaOpt match
         case Some(m) => IO.pure(m)
-        case None    => IO.raiseError(new RuntimeException(s"Session not found: $sourceId"))
+        case None => IO.raiseError(new RuntimeException(s"Session not found: $sourceId"))
       sourceMsgs <- loadMessagesForSession(sourceId)
-      sourceUi   <- loadUiMessages(sourceId)
-      newMeta    <- createSession(newName, initialMsgs = sourceMsgs, agentName = sourceMeta.agentName, folderId = sourceMeta.folderId)
-      _          <- saveUiMessages(newMeta.id, sourceUi)
+      sourceUi <- loadUiMessages(sourceId)
+      newMeta <- createSession(
+        newName,
+        initialMsgs = sourceMsgs,
+        agentName = sourceMeta.agentName,
+        folderId = sourceMeta.folderId
+      )
+      _ <- saveUiMessages(newMeta.id, sourceUi)
       // Copy modelRef and bridges so the fork inherits the same configuration
-      _          <- indexRef.update { case (activeId, sessions, folders) =>
-                      val updated = sessions.map(s =>
-                        if s.id == newMeta.id then s.copy(modelRef = sourceMeta.modelRef, bridges = sourceMeta.bridges)
-                        else s
-                      )
-                      (activeId, updated, folders)
-                    } *> saveIndex
+      _ <- indexRef.update { case (activeId, sessions, folders) =>
+        val updated = sessions.map(s =>
+          if s.id == newMeta.id then s.copy(modelRef = sourceMeta.modelRef, bridges = sourceMeta.bridges)
+          else s
+        )
+        (activeId, updated, folders)
+      } *> saveIndex
     yield newMeta.copy(modelRef = sourceMeta.modelRef, bridges = sourceMeta.bridges)
 
   /**
