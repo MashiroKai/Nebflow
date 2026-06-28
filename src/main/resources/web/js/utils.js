@@ -1,4 +1,5 @@
 import state from './state.js';
+import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 
 // === Lottie spinner JSON (rotating ring) ===
@@ -25,22 +26,28 @@ export const spinnerJson = {
 };
 
 // === Lottie spinner initialization ===
-let lottieSpinner = null;
+const _spinners = {};
 
 export function initSpinner() {
-  lottieSpinner = lottie.loadAnimation({
-    container: document.getElementById('lottie-spinner'),
-    renderer: 'svg', loop: true, autoplay: false,
-    animationData: spinnerJson
-  });
+  for (const id of ['lottie-spinner', 'secondary-spinner']) {
+    const el = document.getElementById(id);
+    if (el) {
+      _spinners[id] = lottie.loadAnimation({
+        container: el, renderer: 'svg', loop: true, autoplay: false,
+        animationData: spinnerJson
+      });
+    }
+  }
 }
 
 export function playSpinner() {
-  if (lottieSpinner) lottieSpinner.play();
+  const id = activeView?.dom?.lottieSpinnerEl?.id;
+  if (id && _spinners[id]) _spinners[id].play();
 }
 
 export function stopSpinner() {
-  if (lottieSpinner) lottieSpinner.stop();
+  const id = activeView?.dom?.lottieSpinnerEl?.id;
+  if (id && _spinners[id]) _spinners[id].stop();
 }
 
 // === Markdown initialization ===
@@ -290,17 +297,16 @@ export function attachToolClick(card) {
 
 // === Scroll helpers ===
 export function shouldAutoScroll() {
-  const chat = state.dom.chat;
+  if (!activeView) return false;
+  const chat = activeView.dom.chat;
   const threshold = 60;
   return chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold;
 }
 
 export function smartScroll() {
-  // Capture chat + scrollSnapped synchronously — for the secondary view, ws.js
-  // push/pull restores global state to primary before the rAF fires, so reading
-  // state.* inside the rAF would target the wrong window.
-  const chat = state.dom.chat;
-  const snapped = state.scrollSnapped;
+  if (!activeView) return;
+  const chat = activeView.dom.chat;
+  const snapped = activeView.stream.scrollSnapped;
   requestAnimationFrame(() => {
     const threshold = 60;
     if (snapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < threshold) {

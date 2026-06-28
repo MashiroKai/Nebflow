@@ -266,6 +266,8 @@ export default {
   'slash.clearDone': '上下文已清除，LLM 记忆已重置。',
   'slash.compact': '手动触发上下文压缩',
   'slash.compactDone': '压缩已触发...',
+  'slash.fork': '分叉此会话（继承完整对话历史）',
+  'slash.forkPending': '正在分叉会话...',
   'slash.ask': '对最新回复提问（不影响上下文）',
   'slash.skillDefault': '运行技能',
   'slash.skillActivated': '使用技能: {skill}',
