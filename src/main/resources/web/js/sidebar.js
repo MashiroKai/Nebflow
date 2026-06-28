@@ -171,7 +171,9 @@ function openInSecondary(session) {
   state.secondarySessionId = session.id;
   if (chatViews.secondary) {
     chatViews.secondary.mounted = true;
-    chatViews.secondary.sessionId = session.id;
+    // Don't set sessionId here — loadSecondaryView→setSession handles it.
+    // Setting it early causes setSession's early-return guard to skip resetAll(),
+    // leaving stale messages and breaking scroll-to-bottom on session switch.
   }
   state.unreadSessions.delete(session.id);
   state.markedUnreadSessions.delete(session.id);
