@@ -179,7 +179,44 @@ class RestApiRoutes(
         }
       }
 
-    // ===== Mesh API =====
+    // ===== Mesh P2P Discovery (no gateway auth — used by other Nebflow instances) =====
+
+    // Return local device info for Tailscale discovery probes
+    case GET -> Root / "mesh" / "discover" =>
+      meshService match
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case Some(ms) =>
+          ms.identity.flatMap { id =>
+            Ok(
+              Json.obj(
+                "deviceId" -> id.deviceId.asJson,
+                "deviceName" -> id.deviceName.asJson,
+                "platform" -> id.platform.asJson,
+                "capabilities" -> id.capabilities.asJson,
+                "userDescription" -> id.userDescription.asJson
+              )
+            )
+          }
+
+    // Receive a peer's announcement ("I'm online, here's my info")
+    case req @ POST -> Root / "mesh" / "announce" =>
+      meshService match
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case Some(ms) =>
+          val remoteIp = req.remoteAddr.fold("")(a => a.toString)
+          if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          else
+            req.as[Json].flatMap { body =>
+              io.circe.parser.decode[nebflow.mesh.DeviceDiscoveryInfo](body.noSpaces) match
+                case Right(info) =>
+                  val port = body.hcursor.downField("port").as[Int].getOrElse(8080)
+                  ms.handleAnnounce(info, remoteIp, port) *>
+                    Ok(Json.obj("ok" -> true.asJson))
+                case Left(err) =>
+                  BadRequest(Json.obj("error" -> s"Invalid device info: ${err.getMessage}".asJson))
+            }
+
+    // ===== Mesh API (gateway auth required — for frontend) =====
 
     // Mesh status — identity, login state, peers
     case req @ GET -> Root / "mesh" / "status" =>
@@ -410,23 +447,24 @@ class RestApiRoutes(
         )
 
   /**
-   * Verify peer-to-peer access: token format userId:deviceSecret, validated via MeshService.
-   * Uses X-Peer-Token header because http4s's Authorization parser rejects colons in bearer tokens.
+   * Verify peer-to-peer access via Tailscale IP check.
+   * Only requests from the Tailscale CGNAT range (100.64.0.0/10) are accepted.
+   * Tailscale itself is the trust boundary — devices must be on the same tailnet.
    */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
     meshService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
       case Some(ms) =>
-        val token = req.headers.get(ci"X-Peer-Token").map(_.head.value).getOrElse("")
-        if token.isEmpty then
-          IO.pure(Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Missing auth".asJson))))
+        val remoteIp = req.remoteAddr.fold("")(a => a.toString)
+        if ms.isTailscalePeer(remoteIp) then IO.pure(Right(ms))
         else
-          ms.verifyPeerToken(token).map {
-            case true => Right(ms)
-            case false =>
-              Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Invalid peer credentials".asJson)))
-          }
+          IO.pure(
+            Left(
+              Response[IO](Status.Forbidden)
+                .withEntity(Json.obj("error" -> s"Not a Tailscale peer (from $remoteIp)".asJson))
+            )
+          )
 
   private def checkAuth(req: Request[IO]): Boolean =
     req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
