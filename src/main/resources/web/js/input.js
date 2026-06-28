@@ -30,6 +30,13 @@ const slashCommands = {
       renderSystemBubble(t('slash.compactDone'));
     }
   },
+  '/fork': {
+    desc: () => t('slash.fork'),
+    run: () => {
+      sendWs({type:'command', command:'fork', sessionId: activeView.sessionId});
+      renderSystemBubble(t('slash.forkPending'));
+    }
+  },
   '/ask': {
     desc: () => t('slash.ask'),
     run: () => {
