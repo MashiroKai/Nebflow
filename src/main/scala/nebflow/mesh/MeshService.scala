@@ -59,11 +59,17 @@ class MeshService private (
   private val logoutHooks: Ref[IO, List[IO[Unit]]] =
     Ref.unsafe[IO, List[IO[Unit]]](Nil)
 
+  /** Discovery hook — set to TailscaleDiscovery.discoverCycle at startup. */
+  private val discoveryHookRef: Ref[IO, IO[Unit]] = Ref.unsafe[IO, IO[Unit]](IO.unit)
+
   /** Register a side effect to run after a successful login (e.g. connect the WS relay client). */
   def addLoginHook(hook: IO[Unit]): IO[Unit] = loginHooks.update(_ :+ hook)
 
   /** Register a side effect to run on logout (e.g. disconnect the WS relay client). */
   def addLogoutHook(hook: IO[Unit]): IO[Unit] = logoutHooks.update(_ :+ hook)
+
+  /** Set the discovery hook (called periodically by the sync actor). */
+  def setDiscoveryHook(hook: IO[Unit]): IO[Unit] = discoveryHookRef.set(hook)
 
   // ===== Identity =====
 
@@ -229,6 +235,41 @@ class MeshService private (
 
   def peers: IO[List[PeerInfo]] = peersRef.get.map(_.values.toList)
 
+  /** Replace the entire peer list (called by TailscaleDiscovery after a scan). */
+  def updatePeers(newPeers: List[PeerInfo]): IO[Unit] =
+    identityRef.get.flatMap { id =>
+      val filtered = newPeers.filterNot(_.deviceId == id.deviceId)
+      peersRef.set(filtered.map(p => p.deviceId -> p).toMap)
+    }
+
+  /** Add or update a single peer from an announce push. */
+  def handleAnnounce(info: DeviceDiscoveryInfo, remoteIp: String, port: Int): IO[Unit] =
+    identityRef.get.flatMap { id =>
+      if info.deviceId == id.deviceId then IO.unit // ignore self-announce
+      else
+        val peer = PeerInfo(
+          deviceId = info.deviceId,
+          deviceName = info.deviceName,
+          platform = info.platform,
+          address = s"http://$remoteIp:$port",
+          capabilities = info.capabilities,
+          userDescription = info.userDescription
+        )
+        peersRef.update(_ + (info.deviceId -> peer)) *>
+          logger.info(s"Peer announced: ${info.deviceName} at ${peer.address}")
+    }
+
+  /** Check if an IP belongs to the Tailscale CGNAT range (100.64.0.0/10). */
+  def isTailscalePeer(remoteAddr: String): Boolean =
+    try
+      val parts = remoteAddr.split("\\.")
+      if parts.length == 4 then
+        val first = parts(0).toInt
+        val second = parts(1).toInt
+        first == 100 && second >= 64 && second <= 127
+      else false
+    catch case _: Exception => false
+
   /** Handle an incoming handshake from a peer. Called by the REST endpoint. */
   def handleHandshake(
     callerUserId: String,
@@ -270,8 +311,8 @@ class MeshService private (
 
   // ===== Sync =====
 
-  /** Run one sync cycle: cloud discover to keep peer list fresh. */
-  def runSyncCycle: IO[Unit] = cloudDiscover
+  /** Run one sync cycle: Tailscale discovery (replaces cloud discover). */
+  def runSyncCycle: IO[Unit] = discoveryHookRef.get.flatten
 
   // ===== Cloud Discovery =====
 
@@ -495,10 +536,9 @@ object MeshService:
       service = new MeshService(idRef, accRef, cfgRef, peersRef, serverPort, syncActorRef)
       _ = serviceBox.set(service)
       _ <- accountOpt match
-        case Some(acc) =>
-          logger.info(s"Restored mesh login: ${acc.username}") *>
-            IO(syncActorRef ! SyncCommand.StartSync)
+        case Some(acc) => logger.info(s"Restored mesh login: ${acc.username}")
         case None => IO.unit
+      _ = syncActorRef ! SyncCommand.StartSync
       _ = dispatcher.unsafeRunAndForget(
         service.selfCheckCapabilities.handleErrorWith(e => logger.debug(s"Capability detection: ${e.getMessage}"))
       )

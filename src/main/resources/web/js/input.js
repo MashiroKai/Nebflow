@@ -236,9 +236,10 @@ function updateAskIndicator() {
 }
 
 function updateInputIndicator() {
-  const askEl = document.getElementById('ask-indicator');
-  const skillEl = document.getElementById('skill-indicator');
-  const skillLabel = document.getElementById('skill-indicator-label');
+  const prefix = activeView.id === 'secondary' ? 'secondary-' : '';
+  const askEl = document.getElementById(prefix + 'ask-indicator');
+  const skillEl = document.getElementById(prefix + 'skill-indicator');
+  const skillLabel = document.getElementById(prefix + 'skill-indicator-label');
   const input = activeView.dom.input;
   // Ask mode takes priority over skill mode
   if (activeView.stream.askMode) {

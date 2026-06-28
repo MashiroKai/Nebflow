@@ -199,6 +199,21 @@ object DeviceIdentity:
     else id
 end DeviceIdentity
 
+// ===== Device Discovery Info =====
+
+/** Device info exchanged during Tailscale discovery (returned by GET /api/mesh/discover). */
+case class DeviceDiscoveryInfo(
+  deviceId: String,
+  deviceName: String,
+  platform: String,
+  capabilities: Map[String, String] = Map.empty,
+  userDescription: String = ""
+)
+
+object DeviceDiscoveryInfo:
+  given Encoder[DeviceDiscoveryInfo] = deriveEncoder
+  given Decoder[DeviceDiscoveryInfo] = deriveDecoder
+
 // ===== Peer Info =====
 
 case class PeerInfo(
@@ -227,6 +242,7 @@ object PeerInfo:
       lastSeen <- c.downField("lastSeen").as[Option[Long]].map(_.getOrElse(System.currentTimeMillis()))
     yield PeerInfo(deviceId, deviceName, platform, address, deviceSecret, capabilities, userDescription, lastSeen)
   }
+end PeerInfo
 
 // ===== Mesh Config =====
 
