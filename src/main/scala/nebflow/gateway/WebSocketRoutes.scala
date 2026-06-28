@@ -593,23 +593,28 @@ class WebSocketRoutes(
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
               for
                 sourceMetaOpt <- sessionStore.getSessionMeta(forkSessionId)
-                sourceName     = sourceMetaOpt.map(_.name).getOrElse("Session")
-                _              <- logger.info(s"Forking session $forkSessionId ($sourceName)")
-                newMeta        <- sessionStore.forkSession(forkSessionId, s"Fork of $sourceName")
-                _              <- (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-                  wsSend(io.circe.Json.obj(
-                    "type" -> "sessionList".asJson,
-                    "sessions" -> sessions.asJson,
-                    "folders" -> folders.asJson,
-                    "activeId" -> forkSessionId.asJson
-                  ))
+                sourceName = sourceMetaOpt.map(_.name).getOrElse("Session")
+                _ <- logger.info(s"Forking session $forkSessionId ($sourceName)")
+                newMeta <- sessionStore.forkSession(forkSessionId, s"Fork of $sourceName")
+                _ <- (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "sessionList".asJson,
+                      "sessions" -> sessions.asJson,
+                      "folders" -> folders.asJson,
+                      "activeId" -> forkSessionId.asJson
+                    )
+                  )
                 }
-                _              <- wsSend(io.circe.Json.obj(
-                  "type" -> "forkComplete".asJson,
-                  "sessionId" -> newMeta.id.asJson,
-                  "name" -> newMeta.name.asJson
-                ))
+                _ <- wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "forkComplete".asJson,
+                    "sessionId" -> newMeta.id.asJson,
+                    "name" -> newMeta.name.asJson
+                  )
+                )
               yield ()
+              end for
             case _ => IO.unit
           end match
 

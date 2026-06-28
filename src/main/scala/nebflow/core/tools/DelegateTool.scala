@@ -1,8 +1,8 @@
 package nebflow.core.tools
 
 import cats.effect.{Deferred, IO}
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.{Message, MessageRole}
@@ -30,12 +30,13 @@ import scala.concurrent.duration.*
 object DelegateTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
-  /** Wraps wsSend so that the parent session's sessionId is injected into every
-    * event JSON. This lets the frontend route sub-agent events to the correct
-    * window (primary or secondary) without modifying the sub-agent's internal
-    * state — the sub-agent still sees sessionId=None for session-busy / error
-    * logic, but its streaming events carry the parent's sessionId for display.
-    */
+  /**
+   * Wraps wsSend so that the parent session's sessionId is injected into every
+   * event JSON. This lets the frontend route sub-agent events to the correct
+   * window (primary or secondary) without modifying the sub-agent's internal
+   * state — the sub-agent still sees sessionId=None for session-busy / error
+   * logic, but its streaming events carry the parent's sessionId for display.
+   */
   private def routeWsSend(
     wsSend: Option[io.circe.Json => IO[Unit]],
     parentSessionId: Option[String]
@@ -43,7 +44,7 @@ object DelegateTool extends Tool:
     val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
     parentSessionId match
       case Some(sid) => json => base(json.deepMerge(Json.obj("sessionId" -> sid.asJson)))
-      case None      => base
+      case None => base
 
   /** Maximum sub-agent depth (matches AgentCore.MaxDepth). */
   val MaxDepth: Int = 5
