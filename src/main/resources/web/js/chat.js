@@ -2,6 +2,7 @@
 // All DOM manipulation for messages, bubbles, tool cards, option boxes, and status.
 
 import state, { AGENT_PALETTE } from './state.js';
+import { activeView, setActiveView } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
@@ -17,22 +18,20 @@ export function getAgentColor(agentId) {
 
 // ---------- Status bar ----------
 export function setStatus(text) {
-  // state.dom is already pointed at the correct window by ChatView routing
-  // (Object.assign in ws.js), so no _secondaryActive branching needed.
-  const { statusText, statusWrap } = state.dom;
+  const { statusText, statusWrap } = activeView.dom;
   if (statusText) statusText.textContent = text || '';
   if (statusWrap) statusWrap.classList.add('on');
   playSpinner();
 }
 
 export function clearStatus() {
-  const { statusWrap } = state.dom;
+  const { statusWrap } = activeView.dom;
   if (statusWrap) statusWrap.classList.remove('on');
   stopSpinner();
 }
 
 export function renderRetryStatus(msg) {
-  const { chat } = state.dom;
+  const { chat } = activeView.dom;
   let el = document.getElementById('retry-status');
   if (!el) {
     el = document.createElement('div');
@@ -54,11 +53,8 @@ export function clearRetryStatus() {
 export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
-  if (sessionId === state.activeSessionId || (state._secondaryActive && sessionId === state.secondarySessionId)) {
-    const { sendBtn, stopBtn } = state.dom;
-    // Don't disable the input — user should be able to type slash commands
-    // (e.g. /model, /clear) and draft messages while busy. Regular sends are
-    // blocked by the isBusy gate in send().
+  if (activeView && activeView.sessionId === sessionId) {
+    const { sendBtn, stopBtn } = activeView.dom;
     sendBtn.style.display = 'none';
     stopBtn.style.display = 'flex';
   }
@@ -67,8 +63,8 @@ export function setBusy(sessionId) {
 export function clearBusy(sessionId) {
   state.busySessionIds.delete(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
-  if (sessionId === state.activeSessionId || (state._secondaryActive && sessionId === state.secondarySessionId)) {
-    const { input, sendBtn, stopBtn } = state.dom;
+  if (activeView && activeView.sessionId === sessionId) {
+    const { input, sendBtn, stopBtn } = activeView.dom;
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'none';
     input.focus();
@@ -77,7 +73,7 @@ export function clearBusy(sessionId) {
 
 // ---------- User bubble ----------
 export function renderUserBubble(text, attachments) {
-  const chat = state.dom.chat;
+  const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -113,56 +109,56 @@ export function renderUserBubble(text, attachments) {
 
 // ---------- AI text streaming ----------
 export function appendAiText(text) {
-  const chat = state.dom.chat;
-  state.aiText += text;
-  if (state.currentAiBubble && state.currentAiBubble.classList.contains('thinking-placeholder')) {
+  const chat = activeView.dom.chat;
+  activeView.stream.aiText += text;
+  if (activeView.stream.currentAiBubble && activeView.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-    state.currentAiBubble.classList.remove('thinking-placeholder');
-    state.currentAiBubble.innerHTML = '';
+    activeView.stream.currentAiBubble.classList.remove('thinking-placeholder');
+    activeView.stream.currentAiBubble.innerHTML = '';
   }
-  if (!state.currentAiBubble) {
+  if (!activeView.stream.currentAiBubble) {
     const row = document.createElement('div');
     row.className = 'row ai';
-    state.currentAiBubble = document.createElement('div');
-    state.currentAiBubble.className = 'bubble ai';
-    row.appendChild(state.currentAiBubble);
+    activeView.stream.currentAiBubble = document.createElement('div');
+    activeView.stream.currentAiBubble.className = 'bubble ai';
+    row.appendChild(activeView.stream.currentAiBubble);
     chat.appendChild(row);
   }
-  const askBox = state.currentAiBubble.querySelector('.option-box');
+  const askBox = activeView.stream.currentAiBubble.querySelector('.option-box');
   if (askBox) askBox.remove();
   const cursor = '<span class="cursor"></span>';
-  state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText || '') + cursor;
-  if (askBox) state.currentAiBubble.appendChild(askBox);
+  activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '') + cursor;
+  if (askBox) activeView.stream.currentAiBubble.appendChild(askBox);
   smartScroll();
 }
 
 export function finishAi(durationMs, model) {
-  if (state.currentAiBubble) {
+  if (activeView.stream.currentAiBubble) {
     // Diagnostic: warn if finishAi is called while streaming is active.
     // This helps catch any code path that prematurely resets the bubble.
     const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
-    if (sinceActivity < 15000 && state.aiText) {
+    if (sinceActivity < 15000 && activeView.stream.aiText) {
       console.warn('[finishAi] Called during active streaming'
-        + ` (${sinceActivity}ms since last delta, textLen=${state.aiText.length})`);
+        + ` (${sinceActivity}ms since last delta, textLen=${activeView.stream.aiText.length})`);
     }
-    if (!state.aiText || !state.aiText.trim()) {
-      const row = state.currentAiBubble.closest('.row');
+    if (!activeView.stream.aiText || !activeView.stream.aiText.trim()) {
+      const row = activeView.stream.currentAiBubble.closest('.row');
       if (row) row.remove();
-      state.currentAiBubble = null;
-      state.aiText = '';
+      activeView.stream.currentAiBubble = null;
+      activeView.stream.aiText = '';
       return null;
     }
-    const askBox = state.currentAiBubble.querySelector('.option-box');
+    const askBox = activeView.stream.currentAiBubble.querySelector('.option-box');
     if (askBox) askBox.remove();
-    state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText || '');
-    if (askBox) state.currentAiBubble.appendChild(askBox);
+    activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
+    if (askBox) activeView.stream.currentAiBubble.appendChild(askBox);
     if (durationMs != null && durationMs > 0) {
-      const seed = state.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(state.currentAiBubble, durationMs, model, seed);
+      const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
+      renderDurationBadge(activeView.stream.currentAiBubble, durationMs, model, seed);
     }
-    const result = { type: 'ai', text: state.aiText, durationMs, model };
-    state.currentAiBubble = null;
-    state.aiText = '';
+    const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model };
+    activeView.stream.currentAiBubble = null;
+    activeView.stream.aiText = '';
     return result;
   }
   return null;
@@ -260,8 +256,8 @@ export function renderDurationBadge(bubble, durationMs, model, seed) {
 
 // ---------- Multi-agent rendering ----------
 export function appendAgentText(agentId, text) {
-  const chat = state.dom.chat;
-  if (!state.agentBubbles[agentId]) {
+  const chat = activeView.dom.chat;
+  if (!activeView.stream.agentBubbles[agentId]) {
     const row = document.createElement('div');
     row.className = 'row ai agent-row';
     const bubble = document.createElement('div');
@@ -278,9 +274,9 @@ export function appendAgentText(agentId, text) {
     }
     row.appendChild(bubble);
     chat.appendChild(row);
-    state.agentBubbles[agentId] = { bubble, text: '', row, badge };
+    activeView.stream.agentBubbles[agentId] = { bubble, text: '', row, badge };
   }
-  const a = state.agentBubbles[agentId];
+  const a = activeView.stream.agentBubbles[agentId];
   a.text += text;
   const cursor = '<span class="cursor"></span>';
   a.bubble.innerHTML = renderMarkdownWithMath(a.text) + cursor;
@@ -288,7 +284,7 @@ export function appendAgentText(agentId, text) {
 }
 
 export function finishAgent(agentId) {
-  const a = state.agentBubbles[agentId];
+  const a = activeView.stream.agentBubbles[agentId];
   if (a) {
     if (!a.text || a.text.trim() === '') {
       if (a.row) a.row.remove();
@@ -296,15 +292,13 @@ export function finishAgent(agentId) {
       a.bubble.innerHTML = renderMarkdownWithMath(a.text);
     }
   }
-  if (state.activeAgentId === agentId) state.activeAgentId = null;
+  if (activeView.stream.activeAgentId === agentId) activeView.stream.activeAgentId = null;
 }
 
 // ---------- Tool rendering ----------
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
-  const sid = sessionId || state.activeSessionId;
-  // Guard: do not render into a different session's chat
-  if (sid && sid !== state.activeSessionId && !state._secondaryActive) return null;
-  const chat = state.dom.chat;
+  const sid = sessionId || activeView.sessionId;
+  const chat = activeView.dom.chat;
   const pending = state.sessionToolCards[sid];
   if (pending) {
     pending.remove();
@@ -357,16 +351,14 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 }
 
 export function renderToolPending(label, sessionId) {
-  const sid = sessionId || state.activeSessionId;
-  // Guard: only render into the active session
-  if (sid && sid !== state.activeSessionId && !state._secondaryActive) return;
-  const chat = state.dom.chat;
-  if (state.currentAiBubble && state.currentAiBubble.classList.contains('thinking-placeholder')) {
+  const sid = sessionId || activeView.sessionId;
+  const chat = activeView.dom.chat;
+  if (activeView.stream.currentAiBubble && activeView.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-    const row = state.currentAiBubble.closest('.row');
+    const row = activeView.stream.currentAiBubble.closest('.row');
     if (row) row.remove();
-    state.currentAiBubble = null;
-    state.aiText = '';
+    activeView.stream.currentAiBubble = null;
+    activeView.stream.aiText = '';
   }
 
   // If a pending card already exists for this session, update it in-place
@@ -405,7 +397,7 @@ export function renderToolPending(label, sessionId) {
 
 // ---------- Error ----------
 export function renderError(msg) {
-  const chat = state.dom.chat;
+  const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row error';
   const card = document.createElement('div');
@@ -418,7 +410,8 @@ export function renderError(msg) {
 
 // ---------- Timeout notice with retry ----------
 export function renderTimeoutNotice() {
-  const chat = state.dom.chat;
+  const v = activeView; // capture before callback
+  const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row error';
   const card = document.createElement('div');
@@ -440,9 +433,8 @@ export function renderTimeoutNotice() {
     const history = state.inputHistory;
     const lastMsg = history.length > 0 ? history[history.length - 1] : '';
     if (lastMsg) {
-      state.dom.input.value = lastMsg;
-      // Import send from input.js dynamically to avoid circular dependency
-      import('./input.js').then(({ send }) => send());
+      v.dom.input.value = lastMsg;
+      import('./input.js').then(({ send }) => { setActiveView(v); send(); });
     }
   };
   card.appendChild(btn);
@@ -453,7 +445,7 @@ export function renderTimeoutNotice() {
 
 // ---------- System bubble ----------
 export function renderSystemBubble(text) {
-  const chat = state.dom.chat;
+  const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row notice';
   const card = document.createElement('div');
@@ -653,8 +645,8 @@ export function renderAskUser(items, askSessionId) {
     renderError(t('chat.waitingQuestion'));
     return { type: 'askUser', items: [] };
   }
-  const chat = state.dom.chat;
-  const sid = askSessionId || state.activeSessionId;
+  const chat = activeView.dom.chat;
+  const sid = askSessionId || activeView.sessionId;
   if (sid && state.sessionToolCards[sid]) { state.sessionToolCards[sid].remove(); delete state.sessionToolCards[sid]; }
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -663,7 +655,7 @@ export function renderAskUser(items, askSessionId) {
   row.appendChild(bubble);
   chat.appendChild(row);
   // Use the sessionId from the askUser message, not the currently active session
-  const targetSid = askSessionId || state.activeSessionId;
+  const targetSid = askSessionId || activeView.sessionId;
   try {
     showOptions(bubble, items, (answers) => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
@@ -685,7 +677,7 @@ export function renderAskUser(items, askSessionId) {
 
 // ---------- Permission prompt ----------
 export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel) {
-  const chat = state.dom.chat;
+  const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
   const bubble = document.createElement('div');
@@ -729,7 +721,7 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   row.appendChild(bubble);
   chat.appendChild(row);
 
-  const targetSid = permSessionId || state.activeSessionId;
+  const targetSid = permSessionId || activeView.sessionId;
 
   // If bypassAll is enabled, auto-approve immediately
   if (state.bypassAllPermission) {
@@ -790,8 +782,8 @@ export function renderAttachmentPreview(target) {
   // target: optional { attPreviewEl, attachments } for non-primary windows.
   // Defaults to the primary window's attPreview + pendingAttachments so existing
   // call sites are unaffected.
-  const attPreview = (target && target.attPreviewEl) || state.dom.attPreview;
-  const attachments = (target && target.attachments) || state.pendingAttachments;
+  const attPreview = (target && target.attPreviewEl) || activeView.dom.attPreview;
+  const attachments = (target && target.attachments) || activeView.pendingAttachments;
   if (!attPreview) return;
   attPreview.innerHTML = '';
   attachments.forEach((att, idx) => {
@@ -832,7 +824,7 @@ export function renderAttachmentPreview(target) {
 
 // ---------- /ask bubble rendering ----------
 export function renderAskBubble(question) {
-  const chat = state.dom.chat;
+  const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row user';
   const bubble = document.createElement('div');
@@ -850,7 +842,7 @@ export function renderAskBubble(question) {
 }
 
 export function renderSkillBubble(skillName, text) {
-  const chat = state.dom.chat;
+  const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row user';
   const bubble = document.createElement('div');
@@ -868,52 +860,52 @@ export function renderSkillBubble(skillName, text) {
 }
 
 export function appendAskAnswer(delta) {
-  const chat = state.dom.chat;
-  state.askAnswerText += delta;
-  if (!state.currentAskBubble) {
+  const chat = activeView.dom.chat;
+  activeView.stream.askAnswerText += delta;
+  if (!activeView.stream.currentAskBubble) {
     const row = document.createElement('div');
     row.className = 'row ai';
-    state.currentAskBubble = document.createElement('div');
-    state.currentAskBubble.className = 'bubble ai';
+    activeView.stream.currentAskBubble = document.createElement('div');
+    activeView.stream.currentAskBubble.className = 'bubble ai';
     const label = document.createElement('div');
     label.className = 'ask-label';
     label.textContent = t('chat.askLabel');
     const content = document.createElement('div');
-    state.currentAskBubble.appendChild(label);
-    state.currentAskBubble.appendChild(content);
-    row.appendChild(state.currentAskBubble);
+    activeView.stream.currentAskBubble.appendChild(label);
+    activeView.stream.currentAskBubble.appendChild(content);
+    row.appendChild(activeView.stream.currentAskBubble);
     chat.appendChild(row);
   }
-  const contentEl = state.currentAskBubble.querySelector('div:not(.ask-label)');
+  const contentEl = activeView.stream.currentAskBubble.querySelector('div:not(.ask-label)');
   if (contentEl) {
     const cursor = '<span class="cursor"></span>';
-    contentEl.innerHTML = renderMarkdownWithMath(state.askAnswerText || '') + cursor;
+    contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText || '') + cursor;
   }
   smartScroll();
 }
 
 export function finishAskAnswer(durationMs, model) {
-  if (state.currentAskBubble) {
-    const contentEl = state.currentAskBubble.querySelector('div:not(.ask-label)');
+  if (activeView.stream.currentAskBubble) {
+    const contentEl = activeView.stream.currentAskBubble.querySelector('div:not(.ask-label)');
     if (contentEl) {
-      contentEl.innerHTML = renderMarkdownWithMath(state.askAnswerText || '');
+      contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText || '');
     }
     if (durationMs != null && durationMs > 0) {
-      const seed = state.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(state.currentAskBubble, durationMs, model, seed);
+      const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
+      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed);
     }
-    state.currentAskBubble = null;
-    state.askAnswerText = '';
+    activeView.stream.currentAskBubble = null;
+    activeView.stream.askAnswerText = '';
   }
 }
 
 export function renderAskError(msg) {
   // Clean up any in-progress ask bubble
-  if (state.currentAskBubble) {
-    const row = state.currentAskBubble.closest('.row');
+  if (activeView.stream.currentAskBubble) {
+    const row = activeView.stream.currentAskBubble.closest('.row');
     if (row) row.remove();
-    state.currentAskBubble = null;
-    state.askAnswerText = '';
+    activeView.stream.currentAskBubble = null;
+    activeView.stream.askAnswerText = '';
   }
   renderError(msg || t('chat.askFailed'));
 }
@@ -930,18 +922,18 @@ let _pendingThinkingRAF = null;
 let _thinkingRafTarget = null;
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
-  state.thinkingText += delta;
+  activeView.stream.thinkingText += delta;
   // If text bubble already exists (e.g. second+ thinking block after text has started),
   // do NOT create a new thinking bubble — it would appear after the text (misplaced).
-  // The thinking content is still accumulated in state.thinkingText + sessionThinkingBuffers
+  // The thinking content is still accumulated in activeView.stream.thinkingText + sessionThinkingBuffers
   // and will be captured correctly by finishThinking() + done handler's fallback.
-  if (!state.currentThinkingBubble) {
-    if (state.currentAiBubble) {
+  if (!activeView.stream.currentThinkingBubble) {
+    if (activeView.stream.currentAiBubble) {
       // Text already showing — skip DOM bubble creation for this thinking block.
-      // Content is in state.thinkingText for persistence; no bubble needed.
+      // Content is in activeView.stream.thinkingText for persistence; no bubble needed.
       return;
     }
-    const chat = state.dom.chat;
+    const chat = activeView.dom.chat;
     const row = document.createElement('div');
     row.className = 'row ai thinking-row';
     const bubble = document.createElement('div');
@@ -955,13 +947,13 @@ export function appendThinkingDelta(delta) {
     bubble.appendChild(content);
     row.appendChild(bubble);
     chat.appendChild(row);
-    state.currentThinkingBubble = bubble;
+    activeView.stream.currentThinkingBubble = bubble;
   }
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
   // which view global state points to at fire time.
-  _thinkingRafTarget = { bubble: state.currentThinkingBubble, chat: state.dom.chat };
-  _thinkingRafTarget.bubble._nfText = state.thinkingText;
+  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat };
+  _thinkingRafTarget.bubble._nfText = activeView.stream.thinkingText;
   // Schedule a rAF render if one isn't already pending — caps re-render rate
   // and coalesces multiple deltas into a single DOM update.
   if (!_pendingThinkingRAF) {
@@ -994,15 +986,15 @@ export function cancelThinkingRAF() {
 
 export function finishThinking() {
   cancelThinkingRAF();
-  if (state.currentThinkingBubble) {
-    const contentEl = state.currentThinkingBubble.querySelector('.thinking-content');
+  if (activeView.stream.currentThinkingBubble) {
+    const contentEl = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {
-      contentEl.innerHTML = renderMarkdownWithMath(state.thinkingText || '');
+      contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText || '');
     }
     // Collapse: hide content, make label clickable
-    state.currentThinkingBubble.classList.add('thinking-done');
-    const label = state.currentThinkingBubble.querySelector('.thinking-label');
-    const content = state.currentThinkingBubble.querySelector('.thinking-content');
+    activeView.stream.currentThinkingBubble.classList.add('thinking-done');
+    const label = activeView.stream.currentThinkingBubble.querySelector('.thinking-label');
+    const content = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (content) content.style.display = 'none';
     if (label) {
       label.classList.add('collapsible');
@@ -1012,9 +1004,9 @@ export function finishThinking() {
         label.classList.toggle('expanded', !visible);
       };
     }
-    const text = state.thinkingText;
-    state.currentThinkingBubble = null;
-    state.thinkingText = '';
+    const text = activeView.stream.thinkingText;
+    activeView.stream.currentThinkingBubble = null;
+    activeView.stream.thinkingText = '';
     return text;
   }
   return '';

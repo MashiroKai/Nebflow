@@ -152,37 +152,13 @@
 
 /* Multi-selection styles */
 .session-item.selected {
-  background: hsla(145, 76%, 40%, 0.12);
-  box-shadow: inset 3px 0 0 var(--color-primary);
+  background: hsla(145, 76%, 40%, 0.08);
 }
 .session-item.selected .session-name {
   color: var(--color-frame-text-bright);
 }
 .session-item.selected:hover {
-  background: hsla(145, 76%, 40%, 0.18);
-}
-
-/* Checkbox indicator shown in batch mode */
-.session-check {
-  width: 16px;
-  height: 16px;
-  min-width: 16px;
-  border: 1.5px solid var(--color-frame-border);
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-right: 6px;
-  transition: border-color 0.15s, background 0.15s;
-}
-.session-check.checked {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-}
-.session-check.checked i {
-  width: 12px;
-  height: 12px;
-  color: #fff;
+  background: hsla(145, 76%, 40%, 0.12);
 }
 
 /* Multi-select floating toolbar */

@@ -9,8 +9,7 @@ import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
 import { refreshScheduledTasks } from './scheduled-task.js';
-import { loadSecondary, saveSecondaryDraft } from './secondary-chat.js';
-import { chatViews } from './chatView.js';
+import { chatViews, setActiveView, activeView } from './chatView.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
 
@@ -117,11 +116,11 @@ function showPanel(tab) {
 }
 
 function closeSecondaryPanel() {
-  // Save the current secondary draft before tearing down, so reopening the same
-  // session restores the in-progress text/attachments.
-  if (state.secondarySessionId) saveSecondaryDraft(state.secondarySessionId);
+  if (state.secondarySessionId && chatViews.secondary) {
+    chatViews.secondary.saveDraft(state.secondarySessionId);
+    saveInputDraft(state.secondarySessionId, chatViews.secondary);
+  }
   state.secondarySessionId = null;
-  // Unmount the secondary ChatView — the panel is now free for non-chat content.
   if (chatViews.secondary) {
     chatViews.secondary.mounted = false;
     chatViews.secondary.sessionId = null;
@@ -135,20 +134,47 @@ function closeSecondaryPanel() {
   renderSessionSidebar(state.sessions, state.activeSessionId);
 }
 
+/** Load a session into the secondary view — replaces the old loadSecondary. */
+function loadSecondaryView(sessionId) {
+  const view = chatViews.secondary;
+  if (!view) return;
+  // setSession resets stream + pagination + drafts, clears chat DOM
+  view.setSession(sessionId);
+  // Also restore from localStorage if no in-memory draft exists for this session
+  if (!view.inputDrafts[sessionId] && state.sessionInputDrafts[sessionId]) {
+    restoreInputDraft(sessionId, view);
+  }
+  // Chat is already cleared by setSession — no need for a loading placeholder
+  // Sync busy button state
+  const sendBtn = document.getElementById('secondary-send-btn');
+  const stopBtn = document.getElementById('secondary-stop-btn');
+  if (sendBtn) sendBtn.style.display = state.busySessionIds.has(sessionId) ? 'none' : 'flex';
+  if (stopBtn) stopBtn.style.display = state.busySessionIds.has(sessionId) ? 'flex' : 'none';
+  // Render task list
+  renderTaskList(state.sessionTasks[sessionId] || [], document.getElementById('secondary-task-list'));
+  // Refresh header indicators by briefly activating the secondary view
+  const saved = activeView;
+  setActiveView(view);
+  if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
+  if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
+  if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
+  setActiveView(saved);
+  // Request history
+  sendWs({ type: 'getHistory', sessionId, limit: 50 });
+}
+
 function openInSecondary(session) {
-  // Save the draft of the session currently shown in the secondary panel (if any)
-  // before switching to a new one, mirroring how switchSession saves the primary draft.
-  if (state.secondarySessionId && state.secondarySessionId !== session.id) {
-    saveSecondaryDraft(state.secondarySessionId);
+  if (state.secondarySessionId && state.secondarySessionId !== session.id && chatViews.secondary) {
+    chatViews.secondary.saveDraft(state.secondarySessionId);
+    saveInputDraft(state.secondarySessionId, chatViews.secondary);
   }
   state.secondarySessionId = session.id;
-  // Mount the secondary ChatView to this session — ws.js will now route
-  // messages for this session to the secondary view.
   if (chatViews.secondary) {
     chatViews.secondary.mounted = true;
-    chatViews.secondary.sessionId = session.id;
+    // Don't set sessionId here — loadSecondaryView→setSession handles it.
+    // Setting it early causes setSession's early-return guard to skip resetAll(),
+    // leaving stale messages and breaking scroll-to-bottom on session switch.
   }
-  // Clear unread state — user is now viewing this session
   state.unreadSessions.delete(session.id);
   state.markedUnreadSessions.delete(session.id);
   persistUnread();
@@ -161,13 +187,11 @@ function openInSecondary(session) {
   document.getElementById('secondary-session-name').textContent = session.name;
   const badge = document.getElementById('secondary-agent-badge');
   if (badge) {
-    // Use the agent's display name when available, matching the primary header brand.
     const agentName = session.agentName || 'Nebula';
     const agent = state.agentsData.find(a => a.name === agentName);
     badge.textContent = agent ? (agent.displayName || agent.name) : agentName;
   }
-  // Load session history into secondary chat
-  loadSecondary(session.id);
+  loadSecondaryView(session.id);
   renderSessionSidebar(state.sessions, state.activeSessionId);
 }
 
@@ -1040,12 +1064,7 @@ function renderOneSessionItem(s, container, opts = {}) {
     ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
     : '';
   const deleteBtnHtml = '<button class="session-delete" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
-  const inBatchMode = state.selectedSessionIds.size > 0;
-  const checkHtml = inBatchMode
-    ? '<div class="session-check' + (isSelected ? ' checked' : '') + '">' + (isSelected ? '<i data-lucide="check"></i>' : '') + '</div>'
-    : '';
   item.innerHTML =
-    checkHtml +
     '<div class="session-info">' +
     '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
     (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
@@ -1126,7 +1145,7 @@ function renderOneSessionItem(s, container, opts = {}) {
         updateSessionStatus(s.id);
         renderSessionSidebar(state.sessions, state.activeSessionId);
         // Scroll main chat to bottom
-        if (state.dom.chat) state.dom.chat.scrollTop = state.dom.chat.scrollHeight;
+        if (chatViews.primary?.dom?.chat) chatViews.primary.dom.chat.scrollTop = chatViews.primary.dom.chat.scrollHeight;
       } else {
         // Non-Jarvis session → secondary panel (画板)
         openInSecondary(s);
@@ -1148,7 +1167,7 @@ function renderOneSessionItem(s, container, opts = {}) {
  *  Extracted from renderSessionSidebar so the "skip rebuild" fast path can
  *  still refresh the header without a full DOM rebuild. */
 function updateHeaderSessionName() {
-  const sessionNameEl = state.dom.sessionNameEl;
+  const sessionNameEl = chatViews.primary?.dom?.sessionNameEl;
   const active = state.sessions.find(s => s.id === state.activeSessionId);
   if (active) {
     const agentName = active.agentName || 'Nebula';
@@ -1166,6 +1185,7 @@ export function renderSessionSidebar(sessionData, activeId) {
   if (activeId) state.activeSessionId = activeId;
   // If active session changed (new session, agent session, delete active), reset chat area
   if (activeId && activeId !== prevActiveId) {
+    setActiveView(chatViews.primary);
     saveInputDraft(prevActiveId);
     resetChatForActiveSession();
     restoreInputDraft(activeId);
@@ -1181,7 +1201,8 @@ export function renderSessionSidebar(sessionData, activeId) {
     (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',') +
     '|folders:' + [...(state.expandedFolders || [])].sort().join(',') +
     '|pinned:' + [...(state.pinnedSessions || [])].sort().join(',') +
-    '|selected:' + [...state.selectedSessionIds].sort().join(',');
+    '|selected:' + [...state.selectedSessionIds].sort().join(',') +
+    '|locale:' + getLocale();
   const sessionList = state.dom.sessionList;
   if (sessionList && sessionList._lastFingerprint === fingerprint) {
     // Data unchanged — just update active highlight in-place (much cheaper than rebuild).
@@ -1354,16 +1375,17 @@ function persistDrafts() {
 }
 
 // Save current input box content as draft for the given session
-export function saveInputDraft(sessionId) {
-  if (!sessionId || !state.dom.input) return;
-  const text = state.dom.input.value;
-  const attachments = state.pendingAttachments;
-  const skillMode = state.skillMode ? {
-    name: state.skillModeName,
-    desc: state.skillModeDesc,
-    argHint: state.skillModeArgHint,
+export function saveInputDraft(sessionId, view) {
+  view = view || activeView || chatViews.primary;
+  if (!sessionId || !view?.dom?.input) return;
+  const text = view.dom.input.value;
+  const attachments = view.pendingAttachments;
+  const skillMode = view.skillMode ? {
+    name: view.skillModeName,
+    desc: view.skillModeDesc,
+    argHint: view.skillModeArgHint,
   } : null;
-  const askMode = !!state.askMode;
+  const askMode = !!view.stream.askMode;
   if (text || attachments.length > 0 || skillMode || askMode) {
     state.sessionInputDrafts[sessionId] = {
       text,
@@ -1378,77 +1400,71 @@ export function saveInputDraft(sessionId) {
 }
 
 // Restore input box content from draft for the given session
-function restoreInputDraft(sessionId) {
-  const input = state.dom.input;
-  if (!input) return;
+function restoreInputDraft(sessionId, view) {
+  view = view || chatViews.primary;
+  if (!view?.dom?.input) return;
+  const input = view.dom.input;
   const draft = state.sessionInputDrafts[sessionId];
   if (draft) {
     input.value = draft.text;
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-    state.pendingAttachments = draft.attachments || [];
-    // Restore attachment preview if import available
+    view.pendingAttachments = draft.attachments || [];
     import('./chat.js').then(({ renderAttachmentPreview }) => {
+      setActiveView(view);
       renderAttachmentPreview();
     });
   } else {
     input.value = '';
     input.style.height = 'auto';
-    state.pendingAttachments = [];
-    if (state.dom.attPreview) state.dom.attPreview.innerHTML = '';
+    view.pendingAttachments = [];
+    if (view.dom.attPreview) view.dom.attPreview.innerHTML = '';
   }
-  // Restore skill/ask mode for this session
   import('./input.js').then(({ applyInputModes }) => {
+    setActiveView(view);
     applyInputModes(draft?.skillMode, draft?.askMode);
   });
 }
 
 // Reset chat area for the current activeSessionId (used after session list updates)
 export function resetChatForActiveSession() {
-  state.aiText = '';
-  state.currentAiBubble = null;
-  state.currentThinkingBubble = null;
-  state.thinkingText = '';
-  state.agentBubbles = {};
-  state.activeAgentId = null;
+  const pv = chatViews.primary;
+  if (!pv) return;
+  // CRITICAL: sync the view's sessionId so findViewBySessionId can route
+  // historyPage and streaming events to this view after session switch.
+  pv.sessionId = state.activeSessionId;
+  setActiveView(pv);
+  pv.stream.aiText = '';
+  pv.stream.currentAiBubble = null;
+  pv.stream.currentThinkingBubble = null;
+  pv.stream.thinkingText = '';
+  pv.stream.agentBubbles = {};
+  pv.stream.activeAgentId = null;
   Object.keys(state.sessionToolCards).forEach(sid => {
     if (state.sessionToolCards[sid]) state.sessionToolCards[sid].remove();
   });
   state.sessionToolCards = {};
-  // Reset primary ChatView pagination state
-  if (chatViews.primary) {
-    chatViews.primary.pagination = { offset: 0, total: 0, hasMore: false, loading: false, pendingInitialLoad: true };
-  }
-  // Keep legacy state in sync for any code still reading it during the migration
-  state.historyOffset = 0;
-  state.historyHasMore = false;
-  state.historyLoading = false;
-  state.pendingInitialLoad = true;
+  pv.pagination = { offset: 0, total: 0, hasMore: false, loading: false, pendingInitialLoad: true };
   cancelThinkingRAF();
-  state.dom.chat.innerHTML = '';
-  // Clear any history loader/end indicators (they live in chat, but belt-and-suspenders)
-  state.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
+  pv.dom.chat.innerHTML = '';
+  pv.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
 
   const sid = state.activeSessionId;
   const isStreaming = state.busySessionIds.has(sid);
 
-  // Request history from backend (historyPage handler in main.js will render it)
   if (sid) {
     sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
   }
 
-  // Restore buffered thinking + text.
-  // Two sources: in-progress streaming (sessionTexts/sessionThinkingBuffers) and
-  // completed-but-not-yet-in-history (pendingRestore).
+  // Restore buffered thinking + text
   const pendingData = state.pendingRestore[sid];
   const thinkingBuf = state.sessionThinkingBuffers[sid] || pendingData?.thinking;
   const textBuf = state.sessionTexts[sid] || pendingData?.text;
   if (thinkingBuf || textBuf) {
-    const chat = state.dom.chat;
+    const chat = pv.dom.chat;
 
-    // Restore thinking bubble (collapsed if text also exists or turn is complete)
     if (thinkingBuf) {
-      state.thinkingText = thinkingBuf;
+      pv.stream.thinkingText = thinkingBuf;
       const hasText = !!textBuf;
       const done = hasText || !isStreaming;
       const row = document.createElement('div');
@@ -1469,62 +1485,47 @@ export function resetChatForActiveSession() {
           label.classList.toggle('expanded', !visible);
         };
       }
-      content.innerHTML = renderMarkdownWithMath(state.thinkingText) + (!done ? '<span class="cursor"></span>' : '');
+      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText) + (!done ? '<span class="cursor"></span>' : '');
       bubble.appendChild(label);
       bubble.appendChild(content);
       row.appendChild(bubble);
       chat.appendChild(row);
-      state.currentThinkingBubble = done ? null : bubble;
+      pv.stream.currentThinkingBubble = done ? null : bubble;
     }
 
-    // Restore text bubble
     if (textBuf) {
-      state.aiText = textBuf;
+      pv.stream.aiText = textBuf;
       const row = document.createElement('div');
       row.className = 'row ai';
-      state.currentAiBubble = document.createElement('div');
-      state.currentAiBubble.className = 'bubble ai';
-      state.currentAiBubble.innerHTML = renderMarkdownWithMath(state.aiText) + (isStreaming ? '<span class="cursor"></span>' : '');
-      row.appendChild(state.currentAiBubble);
+      pv.stream.currentAiBubble = document.createElement('div');
+      pv.stream.currentAiBubble.className = 'bubble ai';
+      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText) + (isStreaming ? '<span class="cursor"></span>' : '');
+      row.appendChild(pv.stream.currentAiBubble);
       chat.appendChild(row);
-      // If turn is complete (not streaming), this is a completed bubble — clear refs
       if (!isStreaming) {
-        state.currentAiBubble = null;
-        state.aiText = '';
+        pv.stream.currentAiBubble = null;
+        pv.stream.aiText = '';
       }
     }
 
     smartScroll();
   }
 
-  // Interactive AskUser is re-rendered in the historyPage handler (main.js) after history loads
-
-  // Re-create pending tool card if this session has an in-progress tool
-  // Must be done here (not just in historyPage handler) so the spinner is visible
-  // immediately when switching back, before the async getHistory roundtrip completes.
   if (state.sessionPendingTools[sid]) {
     renderToolPending(state.sessionPendingTools[sid].label, sid);
   }
 
-  // Update busy UI (don't disable input — user should be able to type
-  // slash commands and draft messages even when session is busy)
   const isBusy = isStreaming;
-  const { sendBtn, stopBtn } = state.dom;
-  sendBtn.style.display = isBusy ? 'none' : 'flex';
-  stopBtn.style.display = isBusy ? 'flex' : 'none';
+  pv.dom.sendBtn.style.display = isBusy ? 'none' : 'flex';
+  pv.dom.stopBtn.style.display = isBusy ? 'flex' : 'none';
 
-  // Clear any residual status from previous session
-  const statusWrap = state.dom.statusWrap;
-  statusWrap.classList.remove('on');
+  pv.dom.statusWrap.classList.remove('on');
   stopSpinner();
 
-  if (!isBusy) input.focus();
+  if (!isBusy) pv.dom.input.focus();
 
-  // Restore cached task list for this session (or clear if none)
   renderTaskList(state.sessionTasks[sid] || []);
-  // Restore background task indicator for this session
   if (state.updateBgTasksUI) state.updateBgTasksUI();
-  // Refresh delegate indicator for this session
   if (state.updateDelegateIndicator) state.updateDelegateIndicator();
 }
 

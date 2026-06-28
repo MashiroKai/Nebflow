@@ -266,6 +266,8 @@ export default {
   'slash.clearDone': 'Context cleared. LLM memory reset.',
   'slash.compact': 'Manually trigger context compaction',
   'slash.compactDone': 'Compaction triggered...',
+  'slash.fork': 'Fork this session (branch the conversation)',
+  'slash.forkPending': 'Forking session...',
   'slash.ask': 'Ask a question about the latest response (does not affect context)',
   'slash.skillDefault': 'Run a skill',
   'slash.skillActivated': 'Using skill: {skill}',
