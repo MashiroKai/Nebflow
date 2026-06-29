@@ -470,14 +470,13 @@ class MeshService private (
 
   private def callCloud(cloudUrl: String, body: Json): IO[Json] =
     IO.blocking {
-      val backend = DefaultSyncBackend()
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(cloudUrl))
         .contentType("application/json")
         .body(body.noSpaces)
         .readTimeout(15.seconds)
         .response(asStringAlways)
-        .send(backend)
+        .send(httpBackend)
       if !resp.code.isSuccess then throw new RuntimeException(s"Cloud API ${resp.code}: ${resp.body.take(200)}")
       io.circe.parser.decode[Json](resp.body) match
         case Right(json) =>
