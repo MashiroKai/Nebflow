@@ -536,14 +536,10 @@ object MeshService:
       service = new MeshService(idRef, accRef, cfgRef, peersRef, serverPort, syncActorRef)
       _ = serviceBox.set(service)
       _ <- accountOpt match
-        case Some(acc) =>
-          logger.info(s"Restored mesh login: ${acc.username}") *>
-            // Already logged in (restored from disk) — resume discovery automatically.
-            IO(syncActorRef ! SyncCommand.StartSync)
-        case None =>
-          // Not logged in — keep the sync actor idle: zero discovery, zero network.
-          // Mesh is enabled automatically when the user logs in via startDiscovery.
-          IO.unit
+        case Some(acc) => logger.info(s"Restored mesh login: ${acc.username}")
+        case None => IO.unit
+      // Always start sync actor — Tailscale is the trust boundary, no login needed.
+      _ = syncActorRef ! SyncCommand.StartSync
       _ = dispatcher.unsafeRunAndForget(
         service.selfCheckCapabilities.handleErrorWith(e => logger.debug(s"Capability detection: ${e.getMessage}"))
       )
