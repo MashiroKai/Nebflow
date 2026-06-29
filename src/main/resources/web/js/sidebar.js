@@ -1172,7 +1172,6 @@ function updateHeaderSessionName() {
   const active = state.sessions.find(s => s.id === state.activeSessionId);
   if (active) {
     const agentName = active.agentName || 'Nebula';
-    updateHeaderBrand(agentName);
     // Show agent display name in center (session name is redundant when there's only one session).
     if (sessionNameEl) {
       const agent = state.agentsData.find(a => a.name === agentName);
