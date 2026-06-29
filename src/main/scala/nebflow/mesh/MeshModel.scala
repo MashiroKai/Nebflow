@@ -130,19 +130,13 @@ object DeviceIdentity:
     else "unknown"
 
   private def detectDeviceName: String =
-    val hostname = Option(System.getenv("HOSTNAME"))
+    Option(System.getenv("HOSTNAME"))
       .orElse(Option(System.getenv("COMPUTERNAME")))
       .orElse(
         try Some(java.net.InetAddress.getLocalHost.getHostName)
         catch case _: Exception => None
       )
       .getOrElse("Unknown")
-    val platform = detectPlatform match
-      case "macos" => "macOS"
-      case "windows" => "Windows"
-      case "linux" => "Linux"
-      case _ => ""
-    hostname
 
   /** Detect available tools by running `which`/`where`. Returns map of name → path. */
   def detectCapabilities: IO[Map[String, String]] =
