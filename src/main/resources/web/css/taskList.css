@@ -1,4 +1,5 @@
-#task-list {
+#task-list,
+#secondary-task-list {
   padding: 0 12px;
   margin: 0 8px 4px 8px;
   max-height: 0;
@@ -6,7 +7,8 @@
   transition: max-height 0.3s ease, padding 0.3s ease, margin 0.3s ease;
 }
 
-#task-list.has-tasks {
+#task-list.has-tasks,
+#secondary-task-list.has-tasks {
   max-height: 50vh;
   overflow-y: auto;
   padding: 10px 12px;
