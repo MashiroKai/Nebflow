@@ -2,6 +2,7 @@
 
 import state from './state.js';
 import { sendWs } from './ws.js';
+import { t } from './i18n.js';
 
 /** Currently active tab scope. */
 let activeScope = 'folder';
@@ -13,7 +14,10 @@ const cache = { user: null, agent: null, folder: null };
 export function showMemoryButton() {
   for (const id of ['memory-btn', 'secondary-memory-btn']) {
     const btn = document.getElementById(id);
-    if (btn) btn.style.display = '';
+    if (btn) {
+      btn.style.display = '';
+      btn.textContent = t('header.memory');
+    }
   }
 }
 
