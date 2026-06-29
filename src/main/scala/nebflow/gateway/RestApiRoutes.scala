@@ -301,51 +301,55 @@ class RestApiRoutes(
         ms.logout *> Ok(Json.obj("ok" -> true.asJson))
       }
 
-    // Handshake — called by a discovered peer to establish trust and exchange device secrets
+    // Handshake — called by a discovered peer to establish trust and exchange device secrets.
+    // Guarded by Tailscale IP check (same as /mesh/announce) — only tailnet members can reach this.
     case req @ POST -> Root / "mesh" / "handshake" =>
       meshService match
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
         case Some(ms) =>
-          // Bearer format: userId:callerDeviceSecret
-          val bearer = req.headers
-            .get[Authorization]
-            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-              t
-            }
-            .getOrElse("")
-          val parts = bearer.split(":", 2)
-          if parts.length != 2 || parts(0).isEmpty then
-            Forbidden(Json.obj("error" -> "Invalid peer auth format".asJson))
+          val callerIp = req.remoteAddr.fold("")(a => a.toString)
+          if !ms.isTailscalePeer(callerIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
           else
-            val callerUserId = parts(0)
-            val callerSecret = parts(1)
-            val callerIp = req.remoteAddr.fold("unknown")(_.toString)
-            req.as[Json].flatMap { body =>
-              val hc = body.hcursor
-              val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-              val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
-              val platform = hc.downField("platform").as[String].getOrElse("")
-              val port = hc.downField("port").as[Int].getOrElse(8080)
-              if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
-              else
-                ms.handleHandshake(callerUserId, deviceId, deviceName, platform, callerIp, port, callerSecret)
-                  .flatMap { _ =>
-                    ms.identity
-                      .map { id =>
-                        Json.obj(
-                          "deviceId" -> id.deviceId.asJson,
-                          "deviceName" -> id.deviceName.asJson,
-                          "platform" -> id.platform.asJson,
-                          "deviceSecret" -> id.deviceSecret.asJson
-                        )
-                      }
-                      .flatMap(Ok(_))
-                  }
-                  .handleErrorWith { e =>
-                    Forbidden(Json.obj("error" -> e.getMessage.asJson))
-                  }
-              end if
-            }
+            // Bearer format: userId:callerDeviceSecret
+            val bearer = req.headers
+              .get[Authorization]
+              .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+                t
+              }
+              .getOrElse("")
+            val parts = bearer.split(":", 2)
+            if parts.length != 2 || parts(0).isEmpty then
+              Forbidden(Json.obj("error" -> "Invalid peer auth format".asJson))
+            else
+              val callerUserId = parts(0)
+              val callerSecret = parts(1)
+              req.as[Json].flatMap { body =>
+                val hc = body.hcursor
+                val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+                val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
+                val platform = hc.downField("platform").as[String].getOrElse("")
+                val port = hc.downField("port").as[Int].getOrElse(8080)
+                if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
+                else
+                  ms.handleHandshake(callerUserId, deviceId, deviceName, platform, callerIp, port, callerSecret)
+                    .flatMap { _ =>
+                      ms.identity
+                        .map { id =>
+                          Json.obj(
+                            "deviceId" -> id.deviceId.asJson,
+                            "deviceName" -> id.deviceName.asJson,
+                            "platform" -> id.platform.asJson,
+                            "deviceSecret" -> id.deviceSecret.asJson
+                          )
+                        }
+                        .flatMap(Ok(_))
+                    }
+                    .handleErrorWith { e =>
+                      Forbidden(Json.obj("error" -> e.getMessage.asJson))
+                    }
+                end if
+              }
+            end if
           end if
 
     // Trigger sync — removed (file sync deleted)
