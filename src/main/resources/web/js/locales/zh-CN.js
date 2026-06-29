@@ -375,6 +375,8 @@ export default {
 
   // Mesh
   'mesh.title': 'Nebflow 账号',
+  'mesh.serverUrl': '服务器地址 (如 http://192.168.1.100:9090/api/mesh)',
+  'mesh.serverUrlMissing': '请填写服务器地址',
   'mesh.username': '用户名',
   'mesh.password': '密码',
   'mesh.login': '登录',

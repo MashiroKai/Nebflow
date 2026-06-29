@@ -51,8 +51,8 @@ async function meshApi(path, method = 'GET', body = null) {
 /** Surface a mesh error to the user; focuses the server URL field when it's missing. */
 function reportMeshError(err) {
   if (err.code === 'cloud_url_missing') {
-    showMeshError(err.message || '请填写服务器地址');
-    const urlInput = document.getElementById('gate-server-url') || document.getElementById('mesh-server-url');
+    showMeshError(err.message || t('mesh.serverUrlMissing'));
+    const urlInput = document.getElementById('mesh-login-server') || document.getElementById('mesh-reg-server');
     if (urlInput) { urlInput.focus(); urlInput.classList.add('input-error'); }
     return;
   }
@@ -69,17 +69,14 @@ export async function fetchMeshStatus() {
   }
 }
 
-// ===== Login Gate — full-screen login required before app use =====
+// ===== Server URL — written to backend via PATCH /api/mesh/config =====
 
-let gateTab = 'login'; // 'login' | 'register'
-let gateChecking = false;
-
-/** Load saved server URL from localStorage. */
+/** Load saved server URL from localStorage (used to pre-fill the settings form). */
 function getSavedServerUrl() {
   return localStorage.getItem('nebflow_server_url') || '';
 }
 
-/** Save server URL to localStorage. */
+/** Save server URL to localStorage so it persists across reloads. */
 function saveServerUrl(url) {
   localStorage.setItem('nebflow_server_url', url);
 }
@@ -93,124 +90,6 @@ async function configureServerUrl(url) {
     headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ cloudUrl: url })
   });
-}
-
-/** Check login status and show/hide the login gate accordingly. */
-export async function checkLoginGate() {
-  if (gateChecking) return;
-  gateChecking = true;
-  await fetchMeshStatus();
-  gateChecking = false;
-
-  const gate = document.getElementById('mesh-login-gate');
-  if (!gate) return;
-
-  if (meshState.loggedIn) {
-    hideLoginGate();
-  } else {
-    showLoginGate();
-    // Pre-fill server URL if saved
-    const saved = getSavedServerUrl();
-    const urlInput = document.getElementById('gate-server-url');
-    if (urlInput && saved) urlInput.value = saved;
-  }
-}
-
-function showLoginGate() {
-  const gate = document.getElementById('mesh-login-gate');
-  if (!gate) return;
-  gate.classList.remove('hidden');
-  bindGateEvents();
-}
-
-function hideLoginGate() {
-  const gate = document.getElementById('mesh-login-gate');
-  if (!gate) return;
-  gate.classList.add('hidden');
-}
-
-function bindGateEvents() {
-  // Tab switching
-  document.querySelectorAll('.login-gate-tab').forEach(tab => {
-    tab.onclick = () => {
-      gateTab = tab.dataset.tab;
-      document.querySelectorAll('.login-gate-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      const btn = document.getElementById('gate-submit-btn');
-      if (btn) btn.textContent = gateTab === 'login' ? '登录' : '注册';
-      const errEl = document.getElementById('gate-error');
-      if (errEl) errEl.textContent = '';
-    };
-  });
-
-  // Submit
-  const btn = document.getElementById('gate-submit-btn');
-  if (btn && !btn.dataset.bound) {
-    btn.dataset.bound = '1';
-    btn.onclick = doGateSubmit;
-  }
-
-  // Enter key — server URL → username → password → submit
-  const urlInput = document.getElementById('gate-server-url');
-  if (urlInput && !urlInput.dataset.bound) {
-    urlInput.dataset.bound = '1';
-    urlInput.onkeydown = (e) => { if (e.key === 'Enter') document.getElementById('gate-username')?.focus(); };
-  }
-  const passInput = document.getElementById('gate-password');
-  if (passInput && !passInput.dataset.bound) {
-    passInput.dataset.bound = '1';
-    passInput.onkeydown = (e) => { if (e.key === 'Enter') doGateSubmit(); };
-  }
-  const userInput = document.getElementById('gate-username');
-  if (userInput && !userInput.dataset.bound) {
-    userInput.dataset.bound = '1';
-    userInput.onkeydown = (e) => { if (e.key === 'Enter') document.getElementById('gate-password')?.focus(); };
-  }
-}
-
-async function doGateSubmit() {
-  const serverUrl = document.getElementById('gate-server-url')?.value?.trim();
-  const username = document.getElementById('gate-username')?.value?.trim();
-  const password = document.getElementById('gate-password')?.value;
-  const errEl = document.getElementById('gate-error');
-  const btn = document.getElementById('gate-submit-btn');
-
-  if (!serverUrl) {
-    if (errEl) errEl.textContent = '请填写服务器地址';
-    return;
-  }
-  if (!username || !password) {
-    if (errEl) errEl.textContent = '请输入用户名和密码';
-    return;
-  }
-  if (errEl) errEl.textContent = '';
-  if (btn) { btn.disabled = true; btn.textContent = '...'; }
-
-  try {
-    // Step 1: save server URL and configure backend
-    saveServerUrl(serverUrl);
-    await configureServerUrl(serverUrl);
-
-    // Step 2: login or register
-    const action = gateTab === 'login' ? 'login' : 'register';
-    await meshApi(action, 'POST', { username, password });
-    await fetchMeshStatus();
-    if (meshState.loggedIn) {
-      hideLoginGate();
-    } else {
-      if (errEl) errEl.textContent = '登录失败，请检查服务器地址和凭据';
-    }
-  } catch (e) {
-    if (errEl) errEl.textContent = e.message;
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = gateTab === 'login' ? '登录' : '注册'; }
-  }
-}
-
-/** Export for external logout handling — re-shows the gate. */
-export function showLoginGateFromLogout() {
-  meshState.loggedIn = false;
-  showLoginGate();
 }
 
 // ---- Inline error display ----
@@ -263,9 +142,12 @@ export function meshSettingsHTML() {
 }
 
 function meshLoginHTML() {
+  const serverUrl = meshState.cloudUrl || getSavedServerUrl() || '';
   return `
     <div class="mesh-auth-form">
       <div id="mesh-error" class="mesh-error" style="display:none"></div>
+      <input type="text" id="mesh-login-server" class="cfg-input"
+             placeholder="${t('mesh.serverUrl')}" value="${escapeHtml(serverUrl)}" style="margin-bottom:8px">
       <input type="text" id="mesh-login-user" class="cfg-input"
              placeholder="${t('mesh.username')}" autocomplete="username" style="margin-bottom:8px">
       <input type="password" id="mesh-login-pass" class="cfg-input"
@@ -278,9 +160,12 @@ function meshLoginHTML() {
 }
 
 function meshRegisterHTML() {
+  const serverUrl = meshState.cloudUrl || getSavedServerUrl() || '';
   return `
     <div class="mesh-auth-form">
       <div id="mesh-error" class="mesh-error" style="display:none"></div>
+      <input type="text" id="mesh-reg-server" class="cfg-input"
+             placeholder="${t('mesh.serverUrl')}" value="${escapeHtml(serverUrl)}" style="margin-bottom:8px">
       <input type="text" id="mesh-reg-user" class="cfg-input"
              placeholder="${t('mesh.username')} (3+)" autocomplete="username" style="margin-bottom:4px">
       <div id="mesh-username-hint" style="display:none;font-size:11px;margin-bottom:6px"></div>
@@ -343,11 +228,13 @@ export function bindMeshEvents(rerender) {
   hideMeshError();
   // Login
   document.getElementById('mesh-login-btn')?.addEventListener('click', () => doLogin(rerender));
+  document.getElementById('mesh-login-server')?.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('mesh-login-user')?.focus(); });
   ['mesh-login-user', 'mesh-login-pass'].forEach(id => {
     document.getElementById(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(rerender); });
   });
   // Register
   document.getElementById('mesh-register-btn')?.addEventListener('click', () => doRegister(rerender));
+  document.getElementById('mesh-reg-server')?.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('mesh-reg-user')?.focus(); });
   ['mesh-reg-user', 'mesh-reg-pass'].forEach(id => {
     document.getElementById(id)?.addEventListener('keydown', e => { if (e.key === 'Enter') doRegister(rerender); });
   });
@@ -368,14 +255,21 @@ export function bindMeshEvents(rerender) {
 
 // ---- Actions ----
 async function doLogin(rerender) {
+  const serverUrl = document.getElementById('mesh-login-server')?.value?.trim();
   const username = document.getElementById('mesh-login-user')?.value?.trim();
   const password = document.getElementById('mesh-login-pass')?.value;
+  if (!serverUrl) { showMeshError(t('mesh.serverUrlMissing')); return; }
   if (!username || !password) { showMeshError(t('mesh.fillBoth')); return; }
   try {
     hideMeshError();
+    // Step 1: write server URL to backend (login/register call the cloud function)
+    saveServerUrl(serverUrl);
+    await configureServerUrl(serverUrl);
+    // Step 2: login
     await meshApi('login', 'POST', { username, password });
     meshState.loggedIn = true;
     meshState.username = username;
+    meshState.cloudUrl = serverUrl;
     await fetchMeshStatus();
     rerender();
   } catch (e) {
@@ -384,16 +278,23 @@ async function doLogin(rerender) {
 }
 
 async function doRegister(rerender) {
+  const serverUrl = document.getElementById('mesh-reg-server')?.value?.trim();
   const username = document.getElementById('mesh-reg-user')?.value?.trim();
   const password = document.getElementById('mesh-reg-pass')?.value;
+  if (!serverUrl) { showMeshError(t('mesh.serverUrlMissing')); return; }
   if (!username || !password) { showMeshError(t('mesh.fillBoth')); return; }
   if (username.length < 3) { showMeshError(t('mesh.usernameShort')); return; }
   if (password.length < 6) { showMeshError(t('mesh.passwordShort')); return; }
   try {
     hideMeshError();
+    // Step 1: write server URL to backend (register calls the cloud function)
+    saveServerUrl(serverUrl);
+    await configureServerUrl(serverUrl);
+    // Step 2: register
     await meshApi('register', 'POST', { username, password });
     meshState.loggedIn = true;
     meshState.username = username;
+    meshState.cloudUrl = serverUrl;
     await fetchMeshStatus();
     rerender();
   } catch (e) {
@@ -408,9 +309,8 @@ async function doLogout(rerender) {
     meshState.username = null;
     meshState.peers = [];
     authTab = 'login';
+    // No more full-screen gate — rerender falls back to the settings login form.
     rerender();
-    // Re-show the login gate after logout
-    showLoginGate();
   } catch (e) {
     showMeshError(e.message);
   }
@@ -430,5 +330,7 @@ async function doSaveDescription(rerender) {
 
 // ---- Init (called once from main.js) ----
 export async function initMesh() {
-  checkLoginGate();
+  // Fetch mesh status only — login is now handled entirely in the settings panel.
+  // No full-screen gate: if not logged in, mesh simply stays disabled.
+  fetchMeshStatus();
 }
