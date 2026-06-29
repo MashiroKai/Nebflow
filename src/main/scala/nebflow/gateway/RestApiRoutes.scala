@@ -179,7 +179,44 @@ class RestApiRoutes(
         }
       }
 
-    // ===== Mesh API =====
+    // ===== Mesh P2P Discovery (no gateway auth — used by other Nebflow instances) =====
+
+    // Return local device info for Tailscale discovery probes
+    case GET -> Root / "mesh" / "discover" =>
+      meshService match
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case Some(ms) =>
+          ms.identity.flatMap { id =>
+            Ok(
+              Json.obj(
+                "deviceId" -> id.deviceId.asJson,
+                "deviceName" -> id.deviceName.asJson,
+                "platform" -> id.platform.asJson,
+                "capabilities" -> id.capabilities.asJson,
+                "userDescription" -> id.userDescription.asJson
+              )
+            )
+          }
+
+    // Receive a peer's announcement ("I'm online, here's my info")
+    case req @ POST -> Root / "mesh" / "announce" =>
+      meshService match
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case Some(ms) =>
+          val remoteIp = req.remoteAddr.fold("")(a => a.toString)
+          if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          else
+            req.as[Json].flatMap { body =>
+              io.circe.parser.decode[nebflow.mesh.DeviceDiscoveryInfo](body.noSpaces) match
+                case Right(info) =>
+                  val port = body.hcursor.downField("port").as[Int].getOrElse(8080)
+                  ms.handleAnnounce(info, remoteIp, port) *>
+                    Ok(Json.obj("ok" -> true.asJson))
+                case Left(err) =>
+                  BadRequest(Json.obj("error" -> s"Invalid device info: ${err.getMessage}".asJson))
+            }
+
+    // ===== Mesh API (gateway auth required — for frontend) =====
 
     // Mesh status — identity, login state, peers
     case req @ GET -> Root / "mesh" / "status" =>
@@ -264,51 +301,55 @@ class RestApiRoutes(
         ms.logout *> Ok(Json.obj("ok" -> true.asJson))
       }
 
-    // Handshake — called by a discovered peer to establish trust and exchange device secrets
+    // Handshake — called by a discovered peer to establish trust and exchange device secrets.
+    // Guarded by Tailscale IP check (same as /mesh/announce) — only tailnet members can reach this.
     case req @ POST -> Root / "mesh" / "handshake" =>
       meshService match
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
         case Some(ms) =>
-          // Bearer format: userId:callerDeviceSecret
-          val bearer = req.headers
-            .get[Authorization]
-            .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
-              t
-            }
-            .getOrElse("")
-          val parts = bearer.split(":", 2)
-          if parts.length != 2 || parts(0).isEmpty then
-            Forbidden(Json.obj("error" -> "Invalid peer auth format".asJson))
+          val callerIp = req.remoteAddr.fold("")(a => a.toString)
+          if !ms.isTailscalePeer(callerIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
           else
-            val callerUserId = parts(0)
-            val callerSecret = parts(1)
-            val callerIp = req.remoteAddr.fold("unknown")(_.toString)
-            req.as[Json].flatMap { body =>
-              val hc = body.hcursor
-              val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-              val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
-              val platform = hc.downField("platform").as[String].getOrElse("")
-              val port = hc.downField("port").as[Int].getOrElse(8080)
-              if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
-              else
-                ms.handleHandshake(callerUserId, deviceId, deviceName, platform, callerIp, port, callerSecret)
-                  .flatMap { _ =>
-                    ms.identity
-                      .map { id =>
-                        Json.obj(
-                          "deviceId" -> id.deviceId.asJson,
-                          "deviceName" -> id.deviceName.asJson,
-                          "platform" -> id.platform.asJson,
-                          "deviceSecret" -> id.deviceSecret.asJson
-                        )
-                      }
-                      .flatMap(Ok(_))
-                  }
-                  .handleErrorWith { e =>
-                    Forbidden(Json.obj("error" -> e.getMessage.asJson))
-                  }
-              end if
-            }
+            // Bearer format: userId:callerDeviceSecret
+            val bearer = req.headers
+              .get[Authorization]
+              .collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>
+                t
+              }
+              .getOrElse("")
+            val parts = bearer.split(":", 2)
+            if parts.length != 2 || parts(0).isEmpty then
+              Forbidden(Json.obj("error" -> "Invalid peer auth format".asJson))
+            else
+              val callerUserId = parts(0)
+              val callerSecret = parts(1)
+              req.as[Json].flatMap { body =>
+                val hc = body.hcursor
+                val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+                val deviceName = hc.downField("deviceName").as[String].getOrElse("Unknown")
+                val platform = hc.downField("platform").as[String].getOrElse("")
+                val port = hc.downField("port").as[Int].getOrElse(8080)
+                if deviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
+                else
+                  ms.handleHandshake(callerUserId, deviceId, deviceName, platform, callerIp, port, callerSecret)
+                    .flatMap { _ =>
+                      ms.identity
+                        .map { id =>
+                          Json.obj(
+                            "deviceId" -> id.deviceId.asJson,
+                            "deviceName" -> id.deviceName.asJson,
+                            "platform" -> id.platform.asJson,
+                            "deviceSecret" -> id.deviceSecret.asJson
+                          )
+                        }
+                        .flatMap(Ok(_))
+                    }
+                    .handleErrorWith { e =>
+                      Forbidden(Json.obj("error" -> e.getMessage.asJson))
+                    }
+                end if
+              }
+            end if
           end if
 
     // Trigger sync — removed (file sync deleted)
@@ -410,23 +451,24 @@ class RestApiRoutes(
         )
 
   /**
-   * Verify peer-to-peer access: token format userId:deviceSecret, validated via MeshService.
-   * Uses X-Peer-Token header because http4s's Authorization parser rejects colons in bearer tokens.
+   * Verify peer-to-peer access via Tailscale IP check.
+   * Only requests from the Tailscale CGNAT range (100.64.0.0/10) are accepted.
+   * Tailscale itself is the trust boundary — devices must be on the same tailnet.
    */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
     meshService match
       case None =>
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
       case Some(ms) =>
-        val token = req.headers.get(ci"X-Peer-Token").map(_.head.value).getOrElse("")
-        if token.isEmpty then
-          IO.pure(Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Missing auth".asJson))))
+        val remoteIp = req.remoteAddr.fold("")(a => a.toString)
+        if ms.isTailscalePeer(remoteIp) then IO.pure(Right(ms))
         else
-          ms.verifyPeerToken(token).map {
-            case true => Right(ms)
-            case false =>
-              Left(Response[IO](Status.Forbidden).withEntity(Json.obj("error" -> "Invalid peer credentials".asJson)))
-          }
+          IO.pure(
+            Left(
+              Response[IO](Status.Forbidden)
+                .withEntity(Json.obj("error" -> s"Not a Tailscale peer (from $remoteIp)".asJson))
+            )
+          )
 
   private def checkAuth(req: Request[IO]): Boolean =
     req.headers.get[Authorization].collectFirst { case Authorization(Credentials.Token(AuthScheme.Bearer, t)) =>

@@ -1,8 +1,8 @@
 package nebflow.core.tools
 
 import cats.effect.{Deferred, IO}
-import io.circe.JsonObject
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.{Message, MessageRole}
@@ -29,6 +29,22 @@ import scala.concurrent.duration.*
  */
 object DelegateTool extends Tool:
   private val logger = NebflowLogger(getClass)
+
+  /**
+   * Wraps wsSend so that the parent session's sessionId is injected into every
+   * event JSON. This lets the frontend route sub-agent events to the correct
+   * window (primary or secondary) without modifying the sub-agent's internal
+   * state — the sub-agent still sees sessionId=None for session-busy / error
+   * logic, but its streaming events carry the parent's sessionId for display.
+   */
+  private def routeWsSend(
+    wsSend: Option[io.circe.Json => IO[Unit]],
+    parentSessionId: Option[String]
+  ): io.circe.Json => IO[Unit] =
+    val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
+    parentSessionId match
+      case Some(sid) => json => base(json.deepMerge(Json.obj("sessionId" -> sid.asJson)))
+      case None => base
 
   /** Maximum sub-agent depth (matches AgentCore.MaxDepth). */
   val MaxDepth: Int = 5
@@ -146,7 +162,8 @@ $prompt"""
                   parentDepth = ctx.depth,
                   parentRef = ctx.agentActorRef,
                   wsSend = ctx.wsSend,
-                  projectRoot = ctx.projectRoot
+                  projectRoot = ctx.projectRoot,
+                  parentSessionId = ctx.sessionId
                 )
               else
                 spawnSync(
@@ -160,7 +177,8 @@ $prompt"""
                   parentDepth = ctx.depth,
                   parentRef = ctx.agentActorRef,
                   wsSend = ctx.wsSend,
-                  projectRoot = ctx.projectRoot
+                  projectRoot = ctx.projectRoot,
+                  parentSessionId = ctx.sessionId
                 )
           }
         case _ =>
@@ -183,7 +201,8 @@ $prompt"""
     parentDepth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],
-    projectRoot: String
+    projectRoot: String,
+    parentSessionId: Option[String] = None
   ): IO[Either[ToolError, String]] =
     for
       resultDeferred <- Deferred[IO, Either[ToolError, String]]
@@ -191,7 +210,7 @@ $prompt"""
       fileHistory <- FileHistory.create()
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
+      childWsSend = routeWsSend(wsSend, parentSessionId)
       subagentRef = system.systemActorOf(
         AgentActor(
           agentDef = agentDef,
@@ -253,14 +272,15 @@ $prompt"""
     parentDepth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],
-    projectRoot: String
+    projectRoot: String,
+    parentSessionId: Option[String] = None
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
+      childWsSend = routeWsSend(wsSend, parentSessionId)
       subagentRef = system.systemActorOf(
         AgentActor(
           agentDef = agentDef,

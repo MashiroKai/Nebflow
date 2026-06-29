@@ -3,6 +3,7 @@
 // for optimistic display during streaming, and a fallback when backend is unreachable.
 
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
+import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
@@ -64,7 +65,8 @@ export function loadMsgs() {
 // Builds DOM directly (doesn't call render functions from chat.js) to avoid
 // circular deps and to avoid re-saving.
 export function restoreFromStorage() {
-  const chat = state.dom.chat;
+  const chat = activeView?.dom?.chat;
+  if (!chat) return;
   const msgs = loadMsgs();
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
@@ -334,11 +336,11 @@ export function restoreFromStorage() {
     }
   });
   chat.scrollTop = chat.scrollHeight;
-  state.scrollSnapped = true;
+  if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
-  requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; });
-  setTimeout(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; }, 100);
-  setTimeout(() => { chat.scrollTop = chat.scrollHeight; state.scrollSnapped = true; }, 500);
+  requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; if (activeView) activeView.stream.scrollSnapped = true; });
+  setTimeout(() => { chat.scrollTop = chat.scrollHeight; if (activeView) activeView.stream.scrollSnapped = true; }, 100);
+  setTimeout(() => { chat.scrollTop = chat.scrollHeight; if (activeView) activeView.stream.scrollSnapped = true; }, 500);
 }
 
 // ---------- Replay backend history messages into the DOM ----------
@@ -346,7 +348,7 @@ export function restoreFromStorage() {
 // Uses DocumentFragment to batch DOM insertions and avoids redundant scroll operations.
 export function restoreFromBackendHistory(msgs, opts = {}) {
   const { scrollToBottom = true } = opts;
-  const chat = state.dom.chat;
+  const chat = activeView.dom.chat;
   const fragment = document.createDocumentFragment();
   let skipMsg = false;
   // Defer expensive markdown+KaTeX rendering into post-append batches.
@@ -637,7 +639,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
   if (scrollToBottom) {
     chat.scrollTop = chat.scrollHeight;
-    state.scrollSnapped = true;
+    if (activeView) activeView.stream.scrollSnapped = true;
   }
   // Batch-upgrade deferred markdown rendering (marked.parse + KaTeX) via rAF.
   // Processes a few elements per frame to avoid blocking the main thread.
@@ -653,7 +655,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       requestAnimationFrame(upgradeBatch);
     } else if (scrollToBottom) {
       chat.scrollTop = chat.scrollHeight;
-      state.scrollSnapped = true;
+      if (activeView) activeView.stream.scrollSnapped = true;
     }
   }
   if (pendingRenders.length > 0) {
@@ -674,7 +676,7 @@ export function migrateLegacyIfNeeded() {
       all[state.activeSessionId] = oldMsgs;
       safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
       // Re-render chat with the migrated data
-      state.dom.chat.innerHTML = '';
+      if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
       restoreFromStorage();
     }
   } catch(e) {}

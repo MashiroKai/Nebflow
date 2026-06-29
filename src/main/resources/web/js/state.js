@@ -40,24 +40,18 @@ export default {
   // Bypass all permission requests (auto-approve mode)
   bypassAllPermission: false,
 
-  // Chat streaming
+  // Chat streaming (per-session status sets — view-level state lives on ChatView)
   busySessionIds: new Set(),
   sessionBusyTimeouts: {},
   compactingSessionIds: new Set(),
-  currentAiBubble: null,
-  aiText: '',
 
   // Timestamp of the last textDelta/thinkingDelta received (ms).
-  // Used to guard against stale sessionBusy(false) resetting an active stream.
   lastStreamActivity: 0,
 
-  // Multi-agent
-  activeAgentId: null,
-  agentBubbles: {},
+  // Multi-agent (global color assignment — per-view bubbles live on ChatView)
   agentColors: {},
   agentColorIdx: 0,
   activeDelegates: 0,
-  activeSubAgents: {},  // {agentId: {description, currentTool, done}}
 
   // Per-session streaming text buffer: sessionId -> accumulated text
   sessionTexts: {},
@@ -100,20 +94,9 @@ export default {
   // Per-session input drafts: sessionId -> { text, attachments }
   sessionInputDrafts: safeParse(localStorage.getItem('nebflow_input_drafts'), {}),
 
-  // Input
-  pendingAttachments: [],
-  // Secondary panel has its own attachment queue so the two windows never
-  // cross-contaminate each other's pending attachments.
-  _secPendingAttachments: [],
-  // Secondary panel drafts (keyed by sessionId), kept separate from the primary
-  // window's sessionInputDrafts so switching the secondary session doesn't clobber
-  // the primary draft and vice versa.
-  _secInputDrafts: {},
+  // Input (view-level state lives on ChatView; only global input state here)
   thinkingMode: null,
-  recognition: null,
   inputHistory: safeParse(localStorage.getItem('nebflow_input_history'), []),
-  historyIndex: -1,
-  historyDraft: '',
   pendingDeleteId: null,
 
 
@@ -129,55 +112,15 @@ export default {
   selectedSessionIds: new Set(),
   lastSelectedSessionId: null,
 
-  // Send lock (prevents rapid double-send)
-  isSending: false,
-
-  // Scroll
-  scrollSnapped: true,
-
-  // History pagination (legacy — primary window still reads these during the
-  // ChatView migration; secondary window uses chatViews.secondary.pagination)
-  historyOffset: 0,
-  historyTotal: 0,
-  historyHasMore: false,
-  historyLoading: false,
-  pendingInitialLoad: false,
-
-  // IME
-  composing: false,
-
   // Skill list (from server)
   skills: [],
 
-  // /ask command
-  currentAskBubble: null,
-  askAnswerText: '',
-  askMode: false,
-
-  // Skill mode
-  skillMode: false,
-  skillModeName: '',
-  skillModeDesc: '',
-  skillModeArgHint: '',
-
-  // Thinking bubble
-  currentThinkingBubble: null,
-  thinkingText: '',
   // Per-session thinking buffer: sessionId -> accumulated thinking text
   sessionThinkingBuffers: {},
   // Per-session last completed turn data (kept alive until historyPage confirms it).
-  // Prevents lost messages on switch-back when backend hasn't persisted yet.
   pendingRestore: {},
-  // Per-session flag: true when a turn is in progress (user sent message or server
-  // explicitly set busy). Prevents stray thinkingDelta after done from creating bubbles.
+  // Per-session flag: true when a turn is in progress
   turnExpecting: {},
-
-  // Slash autocomplete
-  slashSelectedIndex: 0,
-  slashMatches: [],
-
-  // Search navigation target: { sessionId, messageIndex } or null
-
 
   // Per-session background tasks: sessionId -> [{ taskId, description, status }]
   sessionBgTasks: {},

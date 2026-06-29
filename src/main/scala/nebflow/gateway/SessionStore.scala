@@ -363,6 +363,36 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     }
 
   /**
+   * Fork (branch) a session: create a new session that inherits the full
+   * conversation history (LLM messages + UI messages) from the source.
+   * Like a git branch — the fork can diverge independently from here.
+   */
+  def forkSession(sourceId: String, newName: String): IO[SessionMeta] =
+    for
+      sourceMetaOpt <- getSessionMeta(sourceId)
+      sourceMeta <- sourceMetaOpt match
+        case Some(m) => IO.pure(m)
+        case None => IO.raiseError(new RuntimeException(s"Session not found: $sourceId"))
+      sourceMsgs <- loadMessagesForSession(sourceId)
+      sourceUi <- loadUiMessages(sourceId)
+      newMeta <- createSession(
+        newName,
+        initialMsgs = sourceMsgs,
+        agentName = sourceMeta.agentName,
+        folderId = sourceMeta.folderId
+      )
+      _ <- saveUiMessages(newMeta.id, sourceUi)
+      // Copy modelRef and bridges so the fork inherits the same configuration
+      _ <- indexRef.update { case (activeId, sessions, folders) =>
+        val updated = sessions.map(s =>
+          if s.id == newMeta.id then s.copy(modelRef = sourceMeta.modelRef, bridges = sourceMeta.bridges)
+          else s
+        )
+        (activeId, updated, folders)
+      } *> saveIndex
+    yield newMeta.copy(modelRef = sourceMeta.modelRef, bridges = sourceMeta.bridges)
+
+  /**
    * Atomically ensure a singleton session exists for the given agentName.
    *
    * Unlike createSession (which always appends), this guarantees at most one session
