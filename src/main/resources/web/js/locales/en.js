@@ -374,6 +374,8 @@ export default {
 
   // Mesh
   'mesh.title': 'Nebflow Account',
+  'mesh.serverUrl': 'Server URL (e.g. http://192.168.1.100:9090/api/mesh)',
+  'mesh.serverUrlMissing': 'Please enter the server URL',
   'mesh.username': 'Username',
   'mesh.password': 'Password',
   'mesh.login': 'Login',
