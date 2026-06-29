@@ -19,32 +19,6 @@
   <link rel="stylesheet" href="css/split.css">
 </head>
 <body>
-  <!-- Mesh Login Gate — full-screen overlay shown until user logs in -->
-  <div id="mesh-login-gate" class="login-gate">
-    <div class="login-gate-card">
-      <div class="login-gate-logo">
-        <svg width="48" height="48" viewBox="0 0 100 100" fill="none">
-          <circle cx="50" cy="50" r="45" stroke="var(--color-primary)" stroke-width="2" opacity="0.3"/>
-          <circle cx="50" cy="50" r="30" stroke="var(--color-primary)" stroke-width="2" opacity="0.5"/>
-          <circle cx="50" cy="50" r="15" stroke="var(--color-primary)" stroke-width="2" opacity="0.7"/>
-          <circle cx="50" cy="50" r="5" fill="var(--color-primary)"/>
-        </svg>
-      </div>
-      <h1 class="login-gate-title">Nebflow</h1>
-      <div class="login-gate-tabs">
-        <button class="login-gate-tab active" data-tab="login">登录</button>
-        <button class="login-gate-tab" data-tab="register">注册</button>
-      </div>
-      <div class="login-gate-form">
-        <input type="text" id="gate-server-url" class="login-gate-input" placeholder="服务器地址 (如 http://192.168.1.100:9090/api/mesh)">
-        <input type="text" id="gate-username" class="login-gate-input" placeholder="用户名" autocomplete="username">
-        <input type="password" id="gate-password" class="login-gate-input" placeholder="密码" autocomplete="current-password">
-        <button id="gate-submit-btn" class="login-gate-btn">登录</button>
-      </div>
-      <div id="gate-error" class="login-gate-error"></div>
-    </div>
-  </div>
-
   <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
   <!-- Sidebar — unified glass card (schedule + session list) -->
   <div id="sidebar">
@@ -161,10 +135,11 @@
   <div id="secondary-panel" class="hidden">
     <div class="secondary-header">
       <div class="secondary-header-left">
-        <span id="secondary-header-model-info"></span>
+        <span class="secondary-header-brand" id="secondary-agent-badge"></span>
       </div>
-      <div class="secondary-header-center"><span class="secondary-header-brand" id="secondary-agent-badge"></span><button id="secondary-memory-btn" class="memory-btn" style="display:none">Memory</button></div>
+      <div class="secondary-header-center"><span id="secondary-session-name"></span><button id="secondary-memory-btn" class="memory-btn" style="display:none">Memory</button></div>
       <div class="secondary-header-right">
+        <span id="secondary-header-model-info"></span>
         <span id="secondary-bypass-badge" class="bypass-badge hidden"><span class="bypass-badge-text"></span></span>
         <div id="secondary-bg-indicator" class="hidden">
           <span class="bg-dot"></span>
