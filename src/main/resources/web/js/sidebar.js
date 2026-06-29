@@ -184,7 +184,8 @@ function openInSecondary(session) {
   const panel = document.getElementById('secondary-panel');
   panel.classList.remove('hidden');
   panel.classList.add('visible');
-  document.getElementById('secondary-session-name')?.textContent = session.name;
+  const nameEl = document.getElementById('secondary-session-name');
+  if (nameEl) nameEl.textContent = session.name;
   const badge = document.getElementById('secondary-agent-badge');
   if (badge) {
     const agentName = session.agentName || 'Nebula';
