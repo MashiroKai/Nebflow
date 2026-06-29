@@ -1173,8 +1173,12 @@ function updateHeaderSessionName() {
   if (active) {
     const agentName = active.agentName || 'Nebula';
     updateHeaderBrand(agentName);
-    // Session name always shown in the center, regardless of agent type.
-    if (sessionNameEl) { sessionNameEl.textContent = active.name; sessionNameEl.style.display = ''; }
+    // Show agent display name in center (session name is redundant when there's only one session).
+    if (sessionNameEl) {
+      const agent = state.agentsData.find(a => a.name === agentName);
+      sessionNameEl.textContent = agent ? (agent.displayName || agent.name) : agentName;
+      sessionNameEl.style.display = '';
+    }
   } else {
     if (sessionNameEl) { sessionNameEl.textContent = ''; sessionNameEl.style.display = 'none'; }
   }
