@@ -44,18 +44,20 @@ final class TailscaleDiscovery(
    */
   private def scanTailnet: IO[List[PeerInfo]] =
     getTailscalePeers.flatMap { entries =>
-      entries.traverse { entry =>
-        probeNebflow(entry.ip).map(_.map { info =>
-          PeerInfo(
-            deviceId = info.deviceId,
-            deviceName = info.deviceName,
-            platform = info.platform,
-            address = s"http://${entry.ip}:$serverPort",
-            capabilities = info.capabilities,
-            userDescription = info.userDescription
-          )
-        })
-      }.map(_.flatten)
+      entries
+        .traverse { entry =>
+          probeNebflow(entry.ip).map(_.map { info =>
+            PeerInfo(
+              deviceId = info.deviceId,
+              deviceName = info.deviceName,
+              platform = info.platform,
+              address = s"http://${entry.ip}:$serverPort",
+              capabilities = info.capabilities,
+              userDescription = info.userDescription
+            )
+          })
+        }
+        .map(_.flatten)
     }
 
   /**
@@ -71,11 +73,12 @@ final class TailscaleDiscovery(
         val is = proc.getInputStream
         try
           val output = scala.io.Source.fromInputStream(is).mkString
-          proc.waitFor()
-          parseStatusOutput(output)
+          if !proc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) then
+            proc.destroyForcibly()
+            Nil
+          else parseStatusOutput(output)
         finally is.close()
-      catch
-        case _: Exception => Nil
+      catch case _: Exception => Nil
       end try
     }
 
@@ -91,8 +94,7 @@ final class TailscaleDiscovery(
           val hostname = parts(1)
           val status = parts(4)
           // Skip offline peers (status is just "-")
-          if ip.startsWith("100.") && status != "-" then
-            Some(TailscaleEntry(ip, hostname))
+          if ip.startsWith("100.") && status != "-" then Some(TailscaleEntry(ip, hostname))
           else None
         else None
       }
@@ -107,11 +109,9 @@ final class TailscaleDiscovery(
           .readTimeout(3.seconds)
           .response(asStringAlways)
           .send(backend)
-        if resp.code.isSuccess then
-          decode[DeviceDiscoveryInfo](resp.body).toOption
+        if resp.code.isSuccess then decode[DeviceDiscoveryInfo](resp.body).toOption
         else None
-      catch
-        case _: Exception => None
+      catch case _: Exception => None
     }.handleErrorWith(_ => IO.pure(None))
 
   // ===== Announce =====
