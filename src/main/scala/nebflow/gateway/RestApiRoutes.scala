@@ -432,8 +432,9 @@ class RestApiRoutes(
                 )
                 tool.call(params, ctx).attempt.flatMap {
                   case Right(Right(result)) => Ok(Json.obj("output" -> result.asJson))
-                  case Right(Left(err))     => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
-                  case Left(e)              => Ok(Json.obj("error" -> s"Tool execution failed: ${e.getMessage}".asJson, "output" -> "".asJson))
+                  case Right(Left(err)) => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
+                  case Left(e) =>
+                    Ok(Json.obj("error" -> s"Tool execution failed: ${e.getMessage}".asJson, "output" -> "".asJson))
                 }
               case None =>
                 BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
