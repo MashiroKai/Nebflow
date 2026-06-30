@@ -89,12 +89,9 @@ final class TailscaleDiscovery(
       .drop(1) // first line is always self
       .flatMap { line =>
         val parts = line.split("\\s+")
-        if parts.length >= 5 then
+        if parts.length >= 4 then
           val ip = parts(0)
-          val hostname = parts(1)
-          val status = parts(4)
-          // Skip offline peers (status is just "-")
-          if ip.startsWith("100.") && status != "-" then Some(TailscaleEntry(ip, hostname))
+          if ip.startsWith("100.") then Some(TailscaleEntry(ip))
           else None
         else None
       }
@@ -141,5 +138,5 @@ final class TailscaleDiscovery(
       }.handleErrorWith(_ => IO.unit)
     }
 
-  private case class TailscaleEntry(ip: String, hostname: String)
+  private case class TailscaleEntry(ip: String)
 end TailscaleDiscovery
