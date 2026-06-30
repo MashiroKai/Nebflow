@@ -623,7 +623,7 @@ object MeshService:
       try
         import cats.effect.unsafe.implicits.global
         serviceBox.get.meshConfig.unsafeRunSync().syncIntervalSec.max(10)
-      catch case _: Exception => 300
+      catch case _: Exception => 30
     timers.startSingleTimer(SyncCommand.SyncTick, secs.seconds)
 
   private def doSync(serviceBox: AtomicServiceBox, dispatcher: Dispatcher[IO]): Unit =
