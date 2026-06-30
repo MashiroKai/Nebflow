@@ -318,8 +318,7 @@ object GatewayMain extends IOApp.Simple:
                                         )
                                       ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *> IO(
                                         meshService.syncActor ! nebflow.mesh.SyncCommand.PeerDiscovered
-                                      )
-
+                                      ) *> {
                                       val sharedResourcesWithBridge =
                                         sharedResourcesWithDream.copy(
                                           bridgeManager = Some(bridgeManager),
@@ -451,7 +450,8 @@ object GatewayMain extends IOApp.Simple:
                                               actorSystem.whenTerminated
                                             }).void
                                         )
-                                    } // end meshService
+                                    } // end meshService setup block
+                                  } // end meshService
                                   } // end bridgeManager
                                 } // end telemetry.flatMap
                               } // end fileLockMgr
