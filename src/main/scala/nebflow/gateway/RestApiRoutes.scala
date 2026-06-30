@@ -468,12 +468,10 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTailscalePeer(remoteIp) then
-            Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
           else
             val peerDeviceId = req.params.getOrElse("deviceId", "")
-            if peerDeviceId.isEmpty then
-              BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
+            if peerDeviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
             else
               val peerDeviceName = req.params.getOrElse("deviceName", "Unknown")
               val peerPlatform = req.params.getOrElse("platform", "")
@@ -482,7 +480,11 @@ class RestApiRoutes(
               val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
               val userDesc = req.params.getOrElse("userDescription", "")
               val info = nebflow.mesh.DeviceDiscoveryInfo(
-                peerDeviceId, peerDeviceName, peerPlatform, capabilities, userDesc
+                peerDeviceId,
+                peerDeviceName,
+                peerPlatform,
+                capabilities,
+                userDesc
               )
               ms.handleAnnounce(info, remoteIp, peerPort).flatMap { _ =>
                 Queue.unbounded[IO, WebSocketFrame].flatMap { sendQueue =>
@@ -508,6 +510,8 @@ class RestApiRoutes(
                   wsb.build(send, receive)
                 }
               }
+            end if
+          end if
   }
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
