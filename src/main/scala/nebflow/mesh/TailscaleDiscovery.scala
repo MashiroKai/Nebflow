@@ -92,18 +92,26 @@ final class TailscaleDiscovery(
 
   /** Find the tailscale binary — try PATH first, then common absolute paths. */
   private def findTailscaleBinary: Option[String] =
-    val candidates = if System.getProperty("os.name").toLowerCase.contains("win") then
-      List("tailscale.exe", "C:\\Program Files\\Tailscale\\tailscale.exe", "C:\\Program Files (x86)\\Tailscale\\tailscale.exe")
-    else
-      List("tailscale", "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/usr/bin/tailscale")
+    val candidates =
+      if System.getProperty("os.name").toLowerCase.contains("win") then
+        List(
+          "tailscale.exe",
+          "C:\\Program Files\\Tailscale\\tailscale.exe",
+          "C:\\Program Files (x86)\\Tailscale\\tailscale.exe"
+        )
+      else List("tailscale", "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/usr/bin/tailscale")
     candidates.find { cmd =>
       try
         val p = new ProcessBuilder(cmd, "version").redirectErrorStream(true).start()
-        val ok = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
+        val exited = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+        if !exited then p.destroyForcibly()
+        val ok = exited && p.exitValue() == 0
         p.getInputStream.close()
         ok
       catch case _: Exception => false
     }
+
+  end findTailscaleBinary
 
   /** Parse `tailscale status` text output into peer entries. */
   private def parseStatusOutput(output: String): List[TailscaleEntry] =
