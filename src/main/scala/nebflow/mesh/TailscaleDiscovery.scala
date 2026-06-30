@@ -25,14 +25,59 @@ final class TailscaleDiscovery(
 ):
   private val logger = NebflowLogger.forName("nebflow.mesh.tailscale")
 
-  /** One discovery cycle: scan tailnet → update peers → announce to all. */
+  private val cycleCount = new java.util.concurrent.atomic.AtomicInteger(0)
+
+  /**
+   * Discovery cycle — runs every ~5 seconds:
+   *   - Most cycles: fast health check on known peers (remove offline ones)
+   *   - Every 6th cycle (~30s): full tailnet scan to discover NEW peers + announce
+   */
   def discoverCycle: IO[Unit] =
-    for
-      peers <- scanTailnet
-      _ <- meshService.updatePeers(peers)
-      _ <- peers.traverse_(announceTo)
-      _ <- logger.debug(s"Discovery cycle complete: ${peers.size} Nebflow peer(s)")
-    yield ()
+    val n = cycleCount.incrementAndGet()
+    if n % 6 == 0 then
+      for
+        peers <- scanTailnet
+        _ <- meshService.updatePeers(peers)
+        _ <- peers.traverse_(announceTo)
+        _ <- logger.debug(s"Full scan: ${peers.size} peer(s)")
+      yield ()
+    else
+      healthCheck
+
+  /** Quick probe of known peers — removes offline ones within seconds. */
+  private def healthCheck: IO[Unit] =
+    meshService.peers.flatMap { current =>
+      if current.isEmpty then IO.unit
+      else
+        current.parTraverse { peer =>
+          probeKnownPeer(peer).map(peer -> _)
+        }.flatMap { results =>
+          val alive = results.collect { case (peer, true) => peer }
+          val aliveInfo = results.collect { case (peer, true) => peer.deviceId }
+          val dead = results.collect { case (peer, false) => peer.deviceName }
+          if dead.nonEmpty then
+            meshService.updatePeers(alive) *>
+              logger.debug(s"Health check: ${alive.size} alive, removed ${dead.mkString(", ")}")
+          else IO.unit
+        }
+    }
+
+  /** Probe a known peer — returns true if alive. */
+  private def probeKnownPeer(peer: PeerInfo): IO[Boolean] =
+    IO.blocking {
+      try
+        val addr = peer.address.replaceFirst("https?://", "")
+        val ip = addr.substring(0, addr.indexOf(':')).trim
+        val url = java.net.URI(s"http://$ip:$serverPort/api/mesh/discover").toURL
+        val conn = url.openConnection(java.net.Proxy.NO_PROXY).asInstanceOf[java.net.HttpURLConnection]
+        conn.setConnectTimeout(2000)
+        conn.setReadTimeout(2000)
+        conn.connect()
+        val ok = conn.getResponseCode == 200
+        conn.disconnect()
+        ok
+      catch case _: Exception => false
+    }.handleErrorWith(_ => IO.pure(false))
 
   /** Diagnostic scan — returns every intermediate step for debugging. */
   def diagnosticScan: IO[Json] =
