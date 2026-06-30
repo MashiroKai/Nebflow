@@ -287,7 +287,7 @@ final class ShellSession private (
         // Without this, cmd.exe and its child processes output in the system OEM
         // code page (GBK/CP936 on Chinese Windows), causing garbled text when
         // readStream decodes as UTF-8.
-        new ProcessBuilder("cmd.exe", "/c", "chcp 65001 >nul && " + command)
+        new ProcessBuilder("cmd.exe", "/c", "chcp 65001 >nul 2>nul & " + command)
       else new ProcessBuilder("bash", "-c", command)
     // Empty or invalid working directory causes cmd.exe to fail on Windows
     // with "文件名、目录名或卷标语法不正确". Fall back to user home.
