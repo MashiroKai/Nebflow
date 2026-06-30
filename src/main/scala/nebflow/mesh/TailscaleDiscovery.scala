@@ -12,26 +12,29 @@ import scala.concurrent.duration.*
 /**
  * Discovers Nebflow peers on the Tailscale network.
  *
- * Two-phase design per cycle:
- *   1. Scan: `tailscale status` → probe each active peer's gateway → build peer list.
- *   2. Announce: push our device info to every discovered peer so they know we're online.
+ * Each cycle runs a full `tailscale status` scan to discover peers, then:
+ *   1. syncPeers — establishes/maintains WebSocket presence connections via MeshPresenceService.
+ *   2. announce — pushes our device info to every discovered peer.
  *
- * This replaces the cloud relay discovery entirely. Tailscale is the trust boundary:
- * only devices on the same tailnet can reach each other's gateway.
+ * Known-peer liveness is maintained entirely by WS connections (heartbeat + TCP RST).
+ * The periodic scan only discovers NEW devices — it does not poll known peers.
+ *
+ * Tailscale is the trust boundary: only devices on the same tailnet can reach each other.
  */
 final class TailscaleDiscovery(
   meshService: MeshService,
-  serverPort: Int
+  serverPort: Int,
+  presenceService: MeshPresenceService
 ):
   private val logger = NebflowLogger.forName("nebflow.mesh.tailscale")
 
-  /** One discovery cycle: scan tailnet → update peers → announce to all. */
+  /** Discovery cycle — full tailnet scan + WS presence sync + announce. */
   def discoverCycle: IO[Unit] =
     for
       peers <- scanTailnet
-      _ <- meshService.updatePeers(peers)
+      _ <- presenceService.syncPeers(peers)
       _ <- peers.traverse_(announceTo)
-      _ <- logger.debug(s"Discovery cycle complete: ${peers.size} Nebflow peer(s)")
+      _ <- logger.debug(s"Full scan: ${peers.size} peer(s)")
     yield ()
 
   /** Diagnostic scan — returns every intermediate step for debugging. */
