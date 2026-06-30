@@ -426,12 +426,14 @@ class RestApiRoutes(
             val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
             toolOpt match
               case Some(tool) =>
+                val projectRoot = hc.downField("projectRoot").as[String].getOrElse(System.getProperty("user.dir", "."))
                 val ctx = nebflow.core.tools.ToolContext(
-                  projectRoot = System.getProperty("user.dir", ".")
+                  projectRoot = projectRoot
                 )
-                tool.call(params, ctx).flatMap {
-                  case Right(result) => Ok(Json.obj("output" -> result.asJson))
-                  case Left(err) => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
+                tool.call(params, ctx).attempt.flatMap {
+                  case Right(Right(result)) => Ok(Json.obj("output" -> result.asJson))
+                  case Right(Left(err))     => Ok(Json.obj("error" -> err.message.asJson, "output" -> "".asJson))
+                  case Left(e)              => Ok(Json.obj("error" -> s"Tool execution failed: ${e.getMessage}".asJson, "output" -> "".asJson))
                 }
               case None =>
                 BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
