@@ -241,12 +241,13 @@ class MeshService private (
 
   def peers: IO[List[PeerInfo]] = peersRef.get.map(_.values.toList)
 
-  /** Replace the entire peer list (called by TailscaleDiscovery after a scan). */
-  def updatePeers(newPeers: List[PeerInfo]): IO[Unit] =
-    identityRef.get.flatMap { id =>
-      val filtered = newPeers.filterNot(_.deviceId == id.deviceId)
-      peersRef.set(filtered.map(p => p.deviceId -> p).toMap)
-    }
+  /** Add or update a single peer from discovery scan results. */
+  def upsertPeer(peer: PeerInfo): IO[Unit] =
+    peersRef.update(_ + (peer.deviceId -> peer))
+
+  /** Remove a peer when its WS presence connection drops. */
+  def removePeer(deviceId: String): IO[Unit] =
+    peersRef.update(_ - deviceId)
 
   /** Add or update a single peer from an announce push. */
   def handleAnnounce(info: DeviceDiscoveryInfo, remoteIp: String, port: Int): IO[Unit] =
