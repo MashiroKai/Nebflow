@@ -319,139 +319,141 @@ object GatewayMain extends IOApp.Simple:
                                       ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *> IO(
                                         meshService.syncActor ! nebflow.mesh.SyncCommand.PeerDiscovered
                                       ) *> {
-                                      val sharedResourcesWithBridge =
-                                        sharedResourcesWithDream.copy(
-                                          bridgeManager = Some(bridgeManager),
-                                          meshService = Some(meshService)
-                                        )
-
-                                      // --- Create Scheduled Task Actor before wsRoutes ---
-                                      // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
-                                      var scheduledTaskActorRefHolder: Option[org.apache.pekko.actor.typed.ActorRef[
-                                        nebflow.core.scheduler.ScheduledTaskCommand
-                                      ]] = None
-                                      val scheduledTaskActor = new ScheduledTaskActor(
-                                        actorSystem,
-                                        sharedResourcesWithBridge.dispatcher,
-                                        sharedResourcesWithBridge.scheduledTaskStore,
-                                        (sid, event) =>
-                                          wsRoutesHolder match
-                                            case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
-                                            case None => IO.unit,
-                                        wsHub.broadcast
-                                      )
-                                      scheduledTaskActorRefHolder = Some(scheduledTaskActor.ref)
-                                      val sharedResourcesFinal = sharedResourcesWithBridge.copy(
-                                        scheduledTaskActorRef = scheduledTaskActorRefHolder
-                                      )
-
-                                      EmberServerBuilder
-                                        .default[IO]
-                                        .withHost(cfg.host)
-                                        .withPort(cfg.port)
-                                        .withIdleTimeout(1.hour)
-                                        .withHttpWebSocketApp { wsb =>
-                                          val wsRoutes = new WebSocketRoutes(
-                                            wsb,
-                                            sessionService,
-                                            agentService,
-                                            configService,
-                                            configRef,
-                                            rateLimiter,
-                                            token,
-                                            fileTracker,
-                                            sessionStore,
-                                            wsHub,
-                                            actorSystem,
-                                            contextWindow,
-                                            sharedResourcesFinal,
-                                            mcpManager
-                                          )
-                                          wsRoutesHolder = Some(wsRoutes)
-
-                                          // REST API routes for CLI consumption
-                                          val restApiRoutes = new RestApiRoutes(
-                                            token,
-                                            configRef,
-                                            sharedResourcesFinal,
-                                            sessionStore,
-                                            wsRoutes,
+                                        val sharedResourcesWithBridge =
+                                          sharedResourcesWithDream.copy(
+                                            bridgeManager = Some(bridgeManager),
                                             meshService = Some(meshService)
                                           )
 
-                                          Router(
-                                            "/api" -> (chatRoutes.routes <+> restApiRoutes.routes),
-                                            "/" -> wsRoutes.routes
-                                          ).orNotFound
-                                        }
-                                        .build
-                                        .use { _ =>
-                                          // Wire bridge inject ref
-                                          val wireBridge = wsRoutesHolder match
-                                            case Some(wsRoutes) =>
-                                              bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
-                                            case None => IO.unit
-                                          wireBridge *> (for
-                                            _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
-                                            _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
-                                            // Telemetry: app_start
-                                            _ <- telemetry.fold(IO.unit)(
-                                              _.record("app_start", io.circe.JsonObject.empty)
-                                            )
-                                            // Register bridge as WsHub listener for agent events
-                                            _ <- wsHub.register(json =>
-                                              val sessionId =
-                                                json.hcursor.downField("sessionId").as[String].getOrElse("")
-                                              if sessionId.nonEmpty then
-                                                bridgeManager.dispatchAgentEvent(sessionId, json)
-                                              else IO.unit
-                                            )
-                                            _ <- bridgeManager.startAll.start // start in background
-                                            _ <- openBrowser(url)
-                                            // --- Background init: skills dir, MCP servers ---
-                                            _ <- SkillService
-                                              .ensureDefaults()
-                                              .handleErrorWith(e => logger.warn(s"Skills init failed: ${e.getMessage}"))
-                                              .start
-                                            // --- Background init: MCP servers ---
-                                            _ <- startMcpServers(config, mcpManager, agentLibrary)
-                                              .flatMap { _ =>
-                                                // Broadcast updated MCP server list to all connected clients
-                                                mcpManager.listServers
-                                                  .map(_.map { case (id, enabled) =>
-                                                    io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
-                                                  })
-                                                  .flatMap { mcpJson =>
-                                                    wsHub.broadcast(
-                                                      io.circe.Json.obj(
-                                                        "type" -> "mcpServersUpdate".asJson,
-                                                        "mcpServers" -> mcpJson.asJson
-                                                      )
-                                                    )
-                                                  }
-                                              }
-                                              .handleErrorWith { e =>
-                                                logger.warn(s"Background init failed: ${e.getMessage}")
-                                              }
-                                              .start
-                                            // --- Mesh: sync is event-driven (actor), no background loops needed ---
-                                            _ <- logger.info(
-                                              "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
-                                            ) *> waitForQuit
-                                          yield ())
-                                        }
-                                        .guarantee(
-                                          logger.info("shutting down...") *>
-                                            telemetry.fold(IO.unit)(_.shutdown) *>
-                                            mcpManager.stopAll() *>
-                                            releaseBackend *>
-                                            IO.fromFuture(IO {
-                                              actorSystem.terminate()
-                                              actorSystem.whenTerminated
-                                            }).void
+                                        // --- Create Scheduled Task Actor before wsRoutes ---
+                                        // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
+                                        var scheduledTaskActorRefHolder: Option[org.apache.pekko.actor.typed.ActorRef[
+                                          nebflow.core.scheduler.ScheduledTaskCommand
+                                        ]] = None
+                                        val scheduledTaskActor = new ScheduledTaskActor(
+                                          actorSystem,
+                                          sharedResourcesWithBridge.dispatcher,
+                                          sharedResourcesWithBridge.scheduledTaskStore,
+                                          (sid, event) =>
+                                            wsRoutesHolder match
+                                              case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
+                                              case None => IO.unit,
+                                          wsHub.broadcast
                                         )
-                                    } // end meshService setup block
-                                  } // end meshService
+                                        scheduledTaskActorRefHolder = Some(scheduledTaskActor.ref)
+                                        val sharedResourcesFinal = sharedResourcesWithBridge.copy(
+                                          scheduledTaskActorRef = scheduledTaskActorRefHolder
+                                        )
+
+                                        EmberServerBuilder
+                                          .default[IO]
+                                          .withHost(cfg.host)
+                                          .withPort(cfg.port)
+                                          .withIdleTimeout(1.hour)
+                                          .withHttpWebSocketApp { wsb =>
+                                            val wsRoutes = new WebSocketRoutes(
+                                              wsb,
+                                              sessionService,
+                                              agentService,
+                                              configService,
+                                              configRef,
+                                              rateLimiter,
+                                              token,
+                                              fileTracker,
+                                              sessionStore,
+                                              wsHub,
+                                              actorSystem,
+                                              contextWindow,
+                                              sharedResourcesFinal,
+                                              mcpManager
+                                            )
+                                            wsRoutesHolder = Some(wsRoutes)
+
+                                            // REST API routes for CLI consumption
+                                            val restApiRoutes = new RestApiRoutes(
+                                              token,
+                                              configRef,
+                                              sharedResourcesFinal,
+                                              sessionStore,
+                                              wsRoutes,
+                                              meshService = Some(meshService)
+                                            )
+
+                                            Router(
+                                              "/api" -> (chatRoutes.routes <+> restApiRoutes.routes),
+                                              "/" -> wsRoutes.routes
+                                            ).orNotFound
+                                          }
+                                          .build
+                                          .use { _ =>
+                                            // Wire bridge inject ref
+                                            val wireBridge = wsRoutesHolder match
+                                              case Some(wsRoutes) =>
+                                                bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
+                                              case None => IO.unit
+                                            wireBridge *> (for
+                                              _ <- logger.info(s"gateway listening on ${cfg.host}:${cfg.port}")
+                                              _ <- logger.info(s"access URL: $baseUrl (token in ~/.nebflow/.token)")
+                                              // Telemetry: app_start
+                                              _ <- telemetry.fold(IO.unit)(
+                                                _.record("app_start", io.circe.JsonObject.empty)
+                                              )
+                                              // Register bridge as WsHub listener for agent events
+                                              _ <- wsHub.register(json =>
+                                                val sessionId =
+                                                  json.hcursor.downField("sessionId").as[String].getOrElse("")
+                                                if sessionId.nonEmpty then
+                                                  bridgeManager.dispatchAgentEvent(sessionId, json)
+                                                else IO.unit
+                                              )
+                                              _ <- bridgeManager.startAll.start // start in background
+                                              _ <- openBrowser(url)
+                                              // --- Background init: skills dir, MCP servers ---
+                                              _ <- SkillService
+                                                .ensureDefaults()
+                                                .handleErrorWith(e =>
+                                                  logger.warn(s"Skills init failed: ${e.getMessage}")
+                                                )
+                                                .start
+                                              // --- Background init: MCP servers ---
+                                              _ <- startMcpServers(config, mcpManager, agentLibrary)
+                                                .flatMap { _ =>
+                                                  // Broadcast updated MCP server list to all connected clients
+                                                  mcpManager.listServers
+                                                    .map(_.map { case (id, enabled) =>
+                                                      io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+                                                    })
+                                                    .flatMap { mcpJson =>
+                                                      wsHub.broadcast(
+                                                        io.circe.Json.obj(
+                                                          "type" -> "mcpServersUpdate".asJson,
+                                                          "mcpServers" -> mcpJson.asJson
+                                                        )
+                                                      )
+                                                    }
+                                                }
+                                                .handleErrorWith { e =>
+                                                  logger.warn(s"Background init failed: ${e.getMessage}")
+                                                }
+                                                .start
+                                              // --- Mesh: sync is event-driven (actor), no background loops needed ---
+                                              _ <- logger.info(
+                                                "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
+                                              ) *> waitForQuit
+                                            yield ())
+                                          }
+                                          .guarantee(
+                                            logger.info("shutting down...") *>
+                                              telemetry.fold(IO.unit)(_.shutdown) *>
+                                              mcpManager.stopAll() *>
+                                              releaseBackend *>
+                                              IO.fromFuture(IO {
+                                                actorSystem.terminate()
+                                                actorSystem.whenTerminated
+                                              }).void
+                                          )
+                                      } // end meshService setup block
+                                    } // end meshService
                                   } // end bridgeManager
                                 } // end telemetry.flatMap
                               } // end fileLockMgr
