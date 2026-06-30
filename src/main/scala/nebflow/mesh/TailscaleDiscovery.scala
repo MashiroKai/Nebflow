@@ -6,7 +6,6 @@ import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
-import sttp.client4.{DefaultSyncBackend, asStringAlways, basicRequest}
 
 import scala.concurrent.duration.*
 
@@ -25,7 +24,6 @@ final class TailscaleDiscovery(
   serverPort: Int
 ):
   private val logger = NebflowLogger.forName("nebflow.mesh.tailscale")
-  private val backend = DefaultSyncBackend()
 
   /** One discovery cycle: scan tailnet → update peers → announce to all. */
   def discoverCycle: IO[Unit] =
