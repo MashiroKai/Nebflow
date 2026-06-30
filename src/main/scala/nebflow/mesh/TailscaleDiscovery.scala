@@ -128,23 +128,29 @@ final class TailscaleDiscovery(
       }
       .toList
 
-  /** Probe a peer's gateway to check if it's a Nebflow instance. */
+  /** Probe a peer's gateway to check if it's a Nebflow instance. Uses Proxy.NO_PROXY to bypass HTTP proxies. */
   private def probeNebflow(ip: String): IO[Option[DeviceDiscoveryInfo]] =
     IO.blocking {
       try
-        val resp = basicRequest
-          .get(sttp.model.Uri.unsafeParse(s"http://$ip:$serverPort/api/mesh/discover"))
-          .readTimeout(3.seconds)
-          .response(asStringAlways)
-          .send(backend)
-        if resp.code.isSuccess then decode[DeviceDiscoveryInfo](resp.body).toOption
-        else None
+        val url = java.net.URI(s"http://$ip:$serverPort/api/mesh/discover").toURL
+        val conn = url.openConnection(java.net.Proxy.NO_PROXY).asInstanceOf[java.net.HttpURLConnection]
+        conn.setConnectTimeout(3000)
+        conn.setReadTimeout(3000)
+        conn.setRequestMethod("GET")
+        conn.connect()
+        if conn.getResponseCode == 200 then
+          val body = scala.io.Source.fromInputStream(conn.getInputStream).mkString
+          conn.disconnect()
+          decode[DeviceDiscoveryInfo](body).toOption
+        else
+          conn.disconnect()
+          None
       catch case _: Exception => None
     }.handleErrorWith(_ => IO.pure(None))
 
   // ===== Announce =====
 
-  /** Send our device info to a peer so they add us to their peer list immediately. */
+  /** Send our device info to a peer so they add us to their peer list immediately. Uses Proxy.NO_PROXY. */
   private def announceTo(peer: PeerInfo): IO[Unit] =
     meshService.identity.flatMap { id =>
       IO.blocking {
@@ -157,13 +163,17 @@ final class TailscaleDiscovery(
             "userDescription" -> id.userDescription.asJson,
             "port" -> serverPort.asJson
           )
-          basicRequest
-            .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/announce"))
-            .contentType("application/json")
-            .body(body.noSpaces)
-            .readTimeout(5.seconds)
-            .response(asStringAlways)
-            .send(backend)
+          val url = java.net.URI(s"${peer.address}/api/mesh/announce").toURL
+          val conn = url.openConnection(java.net.Proxy.NO_PROXY).asInstanceOf[java.net.HttpURLConnection]
+          conn.setConnectTimeout(5000)
+          conn.setReadTimeout(5000)
+          conn.setRequestMethod("POST")
+          conn.setRequestProperty("Content-Type", "application/json")
+          conn.setDoOutput(true)
+          conn.getOutputStream.write(body.noSpaces.getBytes("UTF-8"))
+          conn.getOutputStream.close()
+          conn.getResponseCode // trigger request
+          conn.disconnect()
           ()
         catch case _: Exception => ()
       }.handleErrorWith(_ => IO.unit)
