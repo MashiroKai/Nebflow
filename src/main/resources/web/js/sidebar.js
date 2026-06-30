@@ -539,6 +539,17 @@ export function renderSettings() {
 
   bindSettingsEvents(content, cfg, allModels);
   bindMeshEvents(() => renderSettings());
+
+  // Refresh mesh peers when settings opens (discovery may have found new devices since startup)
+  fetchMeshStatus().then(() => {
+    const meshDiv = content.querySelector('.mesh-logged-in');
+    if (meshDiv) {
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = meshSettingsHTML();
+      meshDiv.replaceWith(wrapper.firstElementChild);
+      bindMeshEvents(() => renderSettings());
+    }
+  });
 }
 
 function renderProviderCard(name, p) {
