@@ -337,7 +337,15 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const localSummary = localizeToolSummary(summary, label);
   const labelParts = localLabel.split('\n', 2);
   const truncBadge = ''; // placeholder for future truncated content indicator
-  const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(localSummary) + truncBadge
+  // Device tag — subtle indicator when tool runs on a remote device
+  let deviceTag = '';
+  if (inputJson) {
+    try {
+      const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+      if (inp.device) deviceTag = '<span class="tool-device-tag">' + escapeHtml(String(inp.device)) + '</span>';
+    } catch {}
+  }
+  const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(localSummary) + truncBadge + deviceTag
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div>' +
