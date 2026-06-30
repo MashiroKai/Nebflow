@@ -314,6 +314,10 @@ class MeshService private (
   /** Run one sync cycle: Tailscale discovery (replaces cloud discover). */
   def runSyncCycle: IO[Unit] = discoveryHookRef.get.flatten
 
+  /** Trigger discovery immediately and return current peers. */
+  def scanNow: IO[List[PeerInfo]] =
+    discoveryHookRef.get.flatten *> peers
+
   // ===== Cloud Discovery =====
 
   def cloudDiscover: IO[Unit] =
