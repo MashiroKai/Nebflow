@@ -64,6 +64,7 @@ class RemoteExecutor(meshService: MeshService):
     }.handleErrorWith { e =>
       IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: ${e.getMessage}")))
     }
+  end p2pExecute
 
   // ---- Helpers ----
 
