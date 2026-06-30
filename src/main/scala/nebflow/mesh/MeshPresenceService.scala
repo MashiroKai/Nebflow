@@ -10,14 +10,9 @@ import nebflow.core.NebflowLogger
 
 import java.net.URI
 import java.net.http.{HttpClient, WebSocket}
+import java.util.concurrent.*
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
-import java.util.concurrent.{
-  CompletionStage,
-  ConcurrentHashMap,
-  Executors,
-  ScheduledExecutorService,
-  TimeUnit
-}
+
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -82,9 +77,7 @@ final class MeshPresenceService(
       _ <- IO.blocking(staleIds.foreach(id => disconnectPeer(id)))
       _ <- staleIds.traverse_(id => meshService.removePeer(id))
       // Connect to newly discovered peers (fire-and-forget — don't block the scan cycle)
-      _ <- peers.filter(p => !connections.containsKey(p.deviceId)).traverse_(p =>
-        connect(p).start.void
-      )
+      _ <- peers.filter(p => !connections.containsKey(p.deviceId)).traverse_(p => connect(p).start.void)
     yield ()
 
   /** Establish an outgoing WS presence connection to a peer. No-op if already connected. */
@@ -94,59 +87,62 @@ final class MeshPresenceService(
       extractHost(peer.address) match
         case None => IO.unit
         case Some(host) =>
-          meshService.identity.flatMap { id =>
-            // IO.blocking returns Either(errorMsg, ()) so logging happens in IO context
-            IO.blocking {
-              val wsUri = buildWsUri(host, id)
-              try
-                val alive = new AtomicBoolean(true)
-                val lastPong = new AtomicLong(System.currentTimeMillis())
-                val heartbeat = Executors.newSingleThreadScheduledExecutor { r =>
-                  val t = new Thread(r, s"presence-hb-${peer.deviceName}")
-                  t.setDaemon(true)
-                  t
-                }
+          meshService.identity
+            .flatMap { id =>
+              // IO.blocking returns Either(errorMsg, ()) so logging happens in IO context
+              IO.blocking {
+                val wsUri = buildWsUri(host, id)
+                try
+                  val alive = new AtomicBoolean(true)
+                  val lastPong = new AtomicLong(System.currentTimeMillis())
+                  val heartbeat = Executors.newSingleThreadScheduledExecutor { r =>
+                    val t = new Thread(r, s"presence-hb-${peer.deviceName}")
+                    t.setDaemon(true)
+                    t
+                  }
 
-                val listener = new PresenceWsListener(this, peer)
-                val client = HttpClient
-                  .newBuilder()
-                  .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for Tailscale
-                  .build()
-                val ws = client
-                  .newWebSocketBuilder()
-                  .buildAsync(URI.create(wsUri), listener)
-                  .get(5, TimeUnit.SECONDS)
+                  val listener = new PresenceWsListener(this, peer)
+                  val client = HttpClient
+                    .newBuilder()
+                    .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for Tailscale
+                    .build()
+                  val ws = client
+                    .newWebSocketBuilder()
+                    .buildAsync(URI.create(wsUri), listener)
+                    .get(5, TimeUnit.SECONDS)
 
-                val conn = PresenceConnection(ws, alive, lastPong, heartbeat)
-                connections.put(peer.deviceId, conn)
+                  val conn = PresenceConnection(ws, alive, lastPong, heartbeat)
+                  connections.put(peer.deviceId, conn)
 
-                // Heartbeat: send ping every 10s; close if pong overdue (> 20s)
-                heartbeat.scheduleAtFixedRate(
-                  () =>
-                    try
-                      if alive.get() then
-                        if System.currentTimeMillis() - lastPong.get() > 20_000L then
-                          logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
-                          ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
-                        else ws.sendText("""{"type":"ping"}""", true)
-                    catch case _: Exception => (),
-                  10,
-                  10,
-                  TimeUnit.SECONDS
-                )
+                  // Heartbeat: send ping every 10s; close if pong overdue (> 20s)
+                  heartbeat.scheduleAtFixedRate(
+                    { () =>
+                      try
+                        if alive.get() then
+                          if System.currentTimeMillis() - lastPong.get() > 20_000L then
+                            logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
+                            ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
+                          else ws.sendText("""{"type":"ping"}""", true)
+                      catch case _: Exception => ()
+                    },
+                    10,
+                    10,
+                    TimeUnit.SECONDS
+                  )
 
-                Right(())
-              catch
-                case _: java.util.concurrent.TimeoutException =>
-                  Left("timeout")
-                case e: Exception =>
-                  Left(e.getMessage)
-              end try
-            }.flatMap {
-              case Right(_) => logger.info(s"Presence connected: ${peer.deviceName} ($host)")
-              case Left(err) => logger.debug(s"Presence connect failed: ${peer.deviceName} - $err")
+                  Right(())
+                catch
+                  case _: java.util.concurrent.TimeoutException =>
+                    Left("timeout")
+                  case e: Exception =>
+                    Left(e.getMessage)
+                end try
+              }.flatMap {
+                case Right(_) => logger.info(s"Presence connected: ${peer.deviceName} ($host)")
+                case Left(err) => logger.debug(s"Presence connect failed: ${peer.deviceName} - $err")
+              }
             }
-          }.handleErrorWith(e => logger.debug(s"Presence connect error: ${e.getMessage}"))
+            .handleErrorWith(e => logger.debug(s"Presence connect error: ${e.getMessage}"))
 
   /** Explicitly disconnect from a peer by deviceId. */
   def disconnect(deviceId: String): IO[Unit] =
@@ -252,6 +248,8 @@ private final class PresenceWsListener(
     catch case _: Exception => ()
     ws.request(1)
     null
+
+  end onText
 
   override def onClose(ws: WebSocket, statusCode: Int, reason: String): CompletionStage[?] =
     service.onClosed(peer.deviceId, peer)
