@@ -316,7 +316,9 @@ object GatewayMain extends IOApp.Simple:
                                         tsDiscovery.discoverCycle.handleErrorWith(e =>
                                           logger.debug(s"Tailscale discovery: ${e.getMessage}").void
                                         )
-                                      ) *> IO(meshService.syncActor ! nebflow.mesh.SyncCommand.PeerDiscovered)
+                                      ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *> IO(
+                                        meshService.syncActor ! nebflow.mesh.SyncCommand.PeerDiscovered
+                                      )
 
                                       val sharedResourcesWithBridge =
                                         sharedResourcesWithDream.copy(

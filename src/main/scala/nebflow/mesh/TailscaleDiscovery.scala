@@ -34,6 +34,26 @@ final class TailscaleDiscovery(
       _ <- logger.debug(s"Discovery cycle complete: ${peers.size} Nebflow peer(s)")
     yield ()
 
+  /** Diagnostic scan — returns every intermediate step for debugging. */
+  def diagnosticScan: IO[Json] =
+    for
+      binary <- IO.blocking(findTailscaleBinary)
+      tailnetPeers <- getTailscalePeers
+      probeResults <- tailnetPeers.traverse { entry =>
+        probeNebflow(entry.ip).map {
+          case Some(info) => Json.obj("ip" -> entry.ip.asJson, "status" -> "found".asJson, "device" -> info.deviceName.asJson)
+          case None       => Json.obj("ip" -> entry.ip.asJson, "status" -> "no-response".asJson)
+        }
+      }
+      currentPeers <- meshService.peers
+    yield Json.obj(
+      "tailscaleBinary" -> binary.asJson,
+      "tailnetPeerCount" -> tailnetPeers.length.asJson,
+      "tailnetPeers" -> tailnetPeers.map(_.ip).asJson,
+      "probeResults" -> probeResults.asJson,
+      "currentPeers" -> currentPeers.map(p => p.deviceName).asJson
+    )
+
   // ===== Scan =====
 
   /**
