@@ -36,8 +36,13 @@ class RemoteExecutor(meshService: MeshService):
   // ---- P2P Direct ----
 
   private def p2pExecute(peer: PeerInfo, toolName: String, params: JsonObject): IO[Either[ToolError, String]] =
+    val projectRoot = System.getProperty("user.dir", "")
     IO.blocking {
-      val body = io.circe.Json.obj("action" -> toolName.asJson, "params" -> params.asJson)
+      val body = io.circe.Json.obj(
+        "action" -> toolName.asJson,
+        "params" -> params.asJson,
+        "projectRoot" -> projectRoot.asJson
+      )
       val resp = basicRequest
         .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/remote-exec"))
         .contentType("application/json")
