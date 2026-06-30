@@ -218,6 +218,23 @@ class RestApiRoutes(
 
     // ===== Mesh API (gateway auth required — for frontend) =====
 
+    // Mesh scan — trigger Tailscale discovery immediately, return updated peers
+    case req @ POST -> Root / "mesh" / "scan" =>
+      withMesh(req) { ms =>
+        ms.scanNow.flatMap { peersList =>
+          Ok(Json.obj(
+            "peers" -> peersList.map(p => Json.obj(
+              "deviceId" -> p.deviceId.asJson,
+              "deviceName" -> p.deviceName.asJson,
+              "platform" -> p.platform.asJson,
+              "capabilities" -> p.capabilities.asJson,
+              "userDescription" -> p.userDescription.asJson
+            )).asJson,
+            "peerCount" -> peersList.length.asJson
+          ))
+        }
+      }
+
     // Mesh status — identity, login state, peers
     case req @ GET -> Root / "mesh" / "status" =>
       withMesh(req) { ms =>
