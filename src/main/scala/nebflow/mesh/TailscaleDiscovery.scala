@@ -67,19 +67,42 @@ final class TailscaleDiscovery(
    */
   private def getTailscalePeers: IO[List[TailscaleEntry]] =
     IO.blocking {
-      var proc: Process = null
-      try
-        proc = new ProcessBuilder("tailscale", "status").redirectErrorStream(true).start()
-        val is = proc.getInputStream
+      val binary = findTailscaleBinary
+      if binary.isEmpty then
+        logger.warn("tailscale binary not found — discovery skipped")
+        Nil
+      else
+        var proc: Process = null
         try
-          val output = scala.io.Source.fromInputStream(is).mkString
-          if !proc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) then
-            proc.destroyForcibly()
+          proc = new ProcessBuilder(binary.get, "status").redirectErrorStream(true).start()
+          val is = proc.getInputStream
+          try
+            val output = scala.io.Source.fromInputStream(is).mkString
+            if !proc.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) then
+              proc.destroyForcibly()
+              Nil
+            else parseStatusOutput(output)
+          finally is.close()
+        catch
+          case e: Exception =>
+            logger.warn(s"tailscale status failed: ${e.getMessage}")
             Nil
-          else parseStatusOutput(output)
-        finally is.close()
-      catch case _: Exception => Nil
-      end try
+      end if
+    }
+
+  /** Find the tailscale binary — try PATH first, then common absolute paths. */
+  private def findTailscaleBinary: Option[String] =
+    val candidates = if System.getProperty("os.name").toLowerCase.contains("win") then
+      List("tailscale.exe", "C:\\Program Files\\Tailscale\\tailscale.exe", "C:\\Program Files (x86)\\Tailscale\\tailscale.exe")
+    else
+      List("tailscale", "/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale", "/usr/bin/tailscale")
+    candidates.find { cmd =>
+      try
+        val p = new ProcessBuilder(cmd, "version").redirectErrorStream(true).start()
+        val ok = p.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
+        p.getInputStream.close()
+        ok
+      catch case _: Exception => false
     }
 
   /** Parse `tailscale status` text output into peer entries. */
