@@ -309,14 +309,17 @@ object GatewayMain extends IOApp.Simple:
                                     meshServiceF.flatMap { meshService =>
                                       // Register remote executor for cross-device tool dispatch (P2P only)
                                       RemoteExecutor.initialize(meshService)
+                                      // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
+                                      val presenceService = new nebflow.mesh.MeshPresenceService(meshService, cfg.port.value)(dispatcher)
                                       // Wire Tailscale discovery — replaces cloud relay entirely.
-                                      // Sync actor calls discoverCycle periodically; announce pushes give real-time discovery.
-                                      val tsDiscovery = new nebflow.mesh.TailscaleDiscovery(meshService, cfg.port.value)
+                                      // Sync actor calls discoverCycle periodically; WS presence connections maintain liveness.
+                                      val tsDiscovery = new nebflow.mesh.TailscaleDiscovery(meshService, cfg.port.value, presenceService)
                                       meshService.setDiscoveryHook(
                                         tsDiscovery.discoverCycle.handleErrorWith(e =>
                                           logger.debug(s"Tailscale discovery: ${e.getMessage}").void
                                         )
-                                      ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *> IO(
+                                      ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *>
+                                        meshService.addLogoutHook(presenceService.disconnectAll()) *> IO(
                                         meshService.syncActor ! nebflow.mesh.SyncCommand.PeerDiscovered
                                       ) *> {
                                         val sharedResourcesWithBridge =
@@ -380,7 +383,7 @@ object GatewayMain extends IOApp.Simple:
                                             )
 
                                             Router(
-                                              "/api" -> (chatRoutes.routes <+> restApiRoutes.routes),
+                                              "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes.presenceWsRoutes(wsb)),
                                               "/" -> wsRoutes.routes
                                             ).orNotFound
                                           }

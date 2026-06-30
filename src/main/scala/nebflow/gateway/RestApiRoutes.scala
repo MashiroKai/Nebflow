@@ -1,7 +1,9 @@
 package nebflow.gateway
 
 import cats.effect.IO
+import cats.effect.std.Queue
 import cats.syntax.all.*
+import fs2.{Pipe, Stream}
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
@@ -12,7 +14,11 @@ import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.Authorization
+import org.http4s.server.websocket.WebSocketBuilder2
+import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIStringSyntax
+
+import scala.concurrent.duration.*
 
 /**
  * REST API routes for CLI consumption.
@@ -440,6 +446,68 @@ class RestApiRoutes(
                 BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
           }
       }
+  }
+
+  // ===== WebSocket Presence Server Endpoint =====
+
+  /**
+   * Accepts incoming WS presence connections from Tailscale peers.
+   *
+   * The peer's device info arrives as query params on the WS upgrade request.
+   * Once the WS is established:
+   *   - Server sends heartbeat pings every 10s.
+   *   - Server responds to client pings with pongs.
+   *   - On disconnect, the peer is removed from the peer list.
+   *
+   * This is a separate HttpRoutes value because it needs WebSocketBuilder2,
+   * which is only available inside `withHttpWebSocketApp` in GatewayMain.
+   */
+  def presenceWsRoutes(wsb: WebSocketBuilder2[IO]): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case req @ GET -> Root / "mesh" / "presence" =>
+      meshService match
+        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case Some(ms) =>
+          val remoteIp = req.remoteAddr.fold("")(a => a.toString)
+          if !ms.isTailscalePeer(remoteIp) then
+            Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          else
+            val peerDeviceId = req.params.getOrElse("deviceId", "")
+            if peerDeviceId.isEmpty then
+              BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
+            else
+              val peerDeviceName = req.params.getOrElse("deviceName", "Unknown")
+              val peerPlatform = req.params.getOrElse("platform", "")
+              val peerPort = req.params.getOrElse("port", "8080").toIntOption.getOrElse(8080)
+              val capsStr = req.params.getOrElse("capabilities", "{}")
+              val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
+              val userDesc = req.params.getOrElse("userDescription", "")
+              val info = nebflow.mesh.DeviceDiscoveryInfo(
+                peerDeviceId, peerDeviceName, peerPlatform, capabilities, userDesc
+              )
+              ms.handleAnnounce(info, remoteIp, peerPort).flatMap { _ =>
+                Queue.unbounded[IO, WebSocketFrame].flatMap { sendQueue =>
+                  val heartbeat = Stream
+                    .awakeEvery[IO](10.seconds)
+                    .map(_ => WebSocketFrame.Text("""{"type":"ping"}"""))
+                  val queued = Stream.fromQueueUnterminated(sendQueue)
+                  val send = queued.merge(heartbeat)
+                  val receive: Pipe[IO, WebSocketFrame, Unit] =
+                    _.evalMap {
+                      case WebSocketFrame.Text(text, _) =>
+                        parser.parse(text).toOption match
+                          case Some(json) =>
+                            json.hcursor.downField("type").as[String].getOrElse("") match
+                              case "ping" =>
+                                sendQueue.offer(WebSocketFrame.Text("""{"type":"pong"}"""))
+                              case _ => IO.unit
+                          case None => IO.unit
+                      case _ => IO.unit
+                    }.onFinalize(
+                      ms.removePeer(peerDeviceId).handleErrorWith(_ => IO.unit)
+                    )
+                  wsb.build(send, receive)
+                }
+              }
   }
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
