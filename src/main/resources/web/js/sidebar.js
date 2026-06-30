@@ -554,7 +554,7 @@ export function renderSettings() {
   };
   refreshMesh();
   if (window._meshRefreshTimer) clearInterval(window._meshRefreshTimer);
-  window._meshRefreshTimer = setInterval(refreshMesh, 10000);
+  window._meshRefreshTimer = setInterval(refreshMesh, 3000);
 }
 
 function renderProviderCard(name, p) {
