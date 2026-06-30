@@ -71,6 +71,11 @@ class MeshService private (
   /** Set the discovery hook (called periodically by the sync actor). */
   def setDiscoveryHook(hook: IO[Unit]): IO[Unit] = discoveryHookRef.set(hook)
 
+  /** Set diagnostic function for the scan endpoint. */
+  private val diagnosticRef: Ref[IO, IO[io.circe.Json]] = Ref.unsafe[IO, IO[io.circe.Json]](IO.pure(io.circe.Json.obj("error" -> "not configured".asJson)))
+  def setDiagnostic(fn: IO[io.circe.Json]): IO[Unit] = diagnosticRef.set(fn)
+  def diagnosticScan: IO[io.circe.Json] = diagnosticRef.get.flatten
+
   // ===== Identity =====
 
   def identity: IO[DeviceIdentity] = identityRef.get
