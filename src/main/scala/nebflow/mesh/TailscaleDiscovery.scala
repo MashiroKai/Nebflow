@@ -41,8 +41,9 @@ final class TailscaleDiscovery(
       tailnetPeers <- getTailscalePeers
       probeResults <- tailnetPeers.traverse { entry =>
         probeNebflow(entry.ip).map {
-          case Some(info) => Json.obj("ip" -> entry.ip.asJson, "status" -> "found".asJson, "device" -> info.deviceName.asJson)
-          case None       => Json.obj("ip" -> entry.ip.asJson, "status" -> "no-response".asJson)
+          case Some(info) =>
+            Json.obj("ip" -> entry.ip.asJson, "status" -> "found".asJson, "device" -> info.deviceName.asJson)
+          case None => Json.obj("ip" -> entry.ip.asJson, "status" -> "no-response".asJson)
         }
       }
       currentPeers <- meshService.peers
