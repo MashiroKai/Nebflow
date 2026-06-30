@@ -222,16 +222,22 @@ class RestApiRoutes(
     case req @ POST -> Root / "mesh" / "scan" =>
       withMesh(req) { ms =>
         ms.scanNow.flatMap { peersList =>
-          Ok(Json.obj(
-            "peers" -> peersList.map(p => Json.obj(
-              "deviceId" -> p.deviceId.asJson,
-              "deviceName" -> p.deviceName.asJson,
-              "platform" -> p.platform.asJson,
-              "capabilities" -> p.capabilities.asJson,
-              "userDescription" -> p.userDescription.asJson
-            )).asJson,
-            "peerCount" -> peersList.length.asJson
-          ))
+          Ok(
+            Json.obj(
+              "peers" -> peersList
+                .map(p =>
+                  Json.obj(
+                    "deviceId" -> p.deviceId.asJson,
+                    "deviceName" -> p.deviceName.asJson,
+                    "platform" -> p.platform.asJson,
+                    "capabilities" -> p.capabilities.asJson,
+                    "userDescription" -> p.userDescription.asJson
+                  )
+                )
+                .asJson,
+              "peerCount" -> peersList.length.asJson
+            )
+          )
         }
       }
 
