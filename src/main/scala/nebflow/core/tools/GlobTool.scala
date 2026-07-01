@@ -92,6 +92,7 @@ object GlobTool extends Tool:
       "--color=never",
       "--hidden",
       "--no-ignore",
+      "--no-messages",
       // Exclude VCS directories
       "--glob",
       "!.git",
@@ -111,7 +112,7 @@ object GlobTool extends Tool:
     RgHelper.runRg(args.toList, ctx.projectRoot) match
       case Left(err) => Left(err)
       case Right((stdoutStr, stderrStr, exitCode)) =>
-        if exitCode == 2 then
+        if stdoutStr.trim.isEmpty && exitCode == 2 then
           Left(
             ToolError(s"Error: ${if stderrStr.trim.nonEmpty then stderrStr.trim else s"rg exited with code $exitCode"}")
           )
