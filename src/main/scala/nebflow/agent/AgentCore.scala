@@ -701,7 +701,7 @@ private[agent] trait AgentCore:
                     val remoteSummary = s"[${deviceName}] ${tool.summarize(remoteInput)}"
                     logger.info(s"$logCtx Remote tool: $remoteSummary")
                     RemoteExecutor.current.get
-                      .execute(deviceName, call.name, remoteInput)
+                      .execute(deviceName, call.name, remoteInput, Some(ctx))
                       .flatMap {
                         case Right(result) =>
                           hookEngine

@@ -1,9 +1,11 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.effect.std.Dispatcher
 import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.agent.AgentCommand
 import nebflow.core.NebflowLogger
 import nebflow.mesh.{MeshService, PeerInfo}
 import sttp.client4.*
@@ -18,24 +20,153 @@ import scala.concurrent.duration.*
  *
  * Tailscale provides the connectivity layer — no relay server needed.
  */
-class RemoteExecutor(meshService: MeshService):
+class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
+
+  private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
   /** Expose MeshService for system prompt generation (device list). */
   def meshServiceOpt: Option[MeshService] = Some(meshService)
 
-  def execute(deviceName: String, toolName: String, params: JsonObject): IO[Either[ToolError, String]] =
+  def execute(
+      deviceName: String,
+      toolName: String,
+      params: JsonObject,
+      ctxOpt: Option[ToolContext] = None
+  ): IO[Either[ToolError, String]] =
+    val isBackground = params("run_in_background").flatMap(_.asBoolean).getOrElse(false)
+
     for
       peers <- meshService.peers
       result <- resolvePeer(deviceName, peers) match
         case Left(err) => IO.pure(Left(err))
         case Right(peer) =>
           if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
-          else p2pExecute(peer, toolName, params)
+          else if isBackground && ctxOpt.isDefined then
+            executeRemoteBackground(peer, toolName, params, ctxOpt.get)
+          else
+            p2pExecute(peer, toolName, params, 60.seconds)
     yield result
+
+  // ---- Remote background task: Mac manages lifecycle locally ----
+
+  /**
+   * When the LLM requests a remote background task, Mac handles the lifecycle:
+   * 1. Strip `run_in_background` so KAI executes synchronously
+   * 2. Emit "running" indicator to frontend
+   * 3. Start a detached fiber that does the synchronous HTTP call to KAI
+   * 4. Return "[Background job started]" to the LLM immediately
+   * 5. When the HTTP call returns, notify agent (ExternalEvent) + frontend (WS)
+   */
+  private def executeRemoteBackground(
+      peer: PeerInfo,
+      toolName: String,
+      params: JsonObject,
+      ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    val remoteParams = params.remove("run_in_background")
+    val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
+    val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
+    val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
+
+    for
+      jobId <- IO.randomUUID.map(_.toString.take(8))
+      _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
+      // 1. Emit "running" to frontend
+      _ <- emitBgTaskStarted(ctx, jobId, description)
+      // 2. Start detached fiber — synchronous HTTP to KAI, then notify on completion
+      _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description))
+    yield Right(
+      s"[Background job started] Job ID: $jobId\nThe command is running in the background on ${peer.deviceName}. You will be automatically notified when it finishes — continue with other work or finish your turn."
+    )
+
+  /** Launch the HTTP call in a detached fiber; notify agent + frontend when done. */
+  private def startRemoteBgFiber(
+      peer: PeerInfo,
+      toolName: String,
+      params: JsonObject,
+      ctx: ToolContext,
+      jobId: String,
+      description: String
+  ): Unit =
+    val completionIO =
+      for
+        result <- p2pExecute(peer, toolName, params, 3600.seconds)
+        _ <- result match
+          case Right(output) =>
+            // Notify agent so the result is injected into conversation
+            ctx.agentActorRef.fold(IO.unit)(ref =>
+              IO(ref ! AgentCommand.ExternalEvent(
+                source = "background-task",
+                eventType = "completed",
+                payload = s"[Background task completed] \"$description\":\n$output",
+                metadata = JsonObject(
+                  "description" -> description.asJson,
+                  "output" -> output.asJson
+                )
+              ))
+            ) *>
+              // Notify frontend to dismiss the indicator
+              emitBgTaskFinished(ctx, jobId, description, "completed") *>
+              logger.info(s"Remote background task $jobId completed on ${peer.deviceName}")
+          case Left(err) =>
+            ctx.agentActorRef.fold(IO.unit)(ref =>
+              IO(ref ! AgentCommand.ExternalEvent(
+                source = "background-task",
+                eventType = "failed",
+                payload = s"[Background task failed] \"$description\":\n${err.message}",
+                metadata = JsonObject("description" -> description.asJson)
+              ))
+            ) *>
+              emitBgTaskFinished(ctx, jobId, description, "failed") *>
+              logger.warn(s"Remote background task $jobId failed on ${peer.deviceName}: ${err.message}")
+      yield ()
+
+    dispatcher.unsafeRunAndForget(completionIO.handleErrorWith(e =>
+      logger.warn(s"Remote background fiber $jobId crashed: ${e.getMessage}") *>
+        emitBgTaskFinished(ctx, jobId, description, "failed")
+    ))
+  end startRemoteBgFiber
+
+  // ---- WS helpers (match BashTool's backgroundTaskUpdate format) ----
+
+  private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
+    ctx.wsSend.fold(
+      logger.warn(s"Cannot notify frontend for remote background job $jobId: no wsSend")
+    )(send =>
+      send(io.circe.Json.obj(
+        "type" -> "backgroundTaskUpdate".asJson,
+        "sessionId" -> ctx.sessionId.asJson,
+        "taskId" -> jobId.asJson,
+        "description" -> description.asJson,
+        "status" -> "running".asJson,
+        "startedAt" -> System.currentTimeMillis().asJson
+      )).handleErrorWith(e => logger.warn(s"WS send failed for remote job $jobId: ${e.getMessage}"))
+    )
+
+  private def emitBgTaskFinished(
+      ctx: ToolContext,
+      jobId: String,
+      description: String,
+      status: String
+  ): IO[Unit] =
+    ctx.wsSend.fold(IO.unit)(send =>
+      send(io.circe.Json.obj(
+        "type" -> "backgroundTaskUpdate".asJson,
+        "sessionId" -> ctx.sessionId.asJson,
+        "taskId" -> jobId.asJson,
+        "description" -> description.asJson,
+        "status" -> status.asJson
+      )).handleErrorWith(_ => IO.unit)
+    )
 
   // ---- P2P Direct ----
 
-  private def p2pExecute(peer: PeerInfo, toolName: String, params: JsonObject): IO[Either[ToolError, String]] =
+  private def p2pExecute(
+      peer: PeerInfo,
+      toolName: String,
+      params: JsonObject,
+      timeout: FiniteDuration
+  ): IO[Either[ToolError, String]] =
     IO.blocking {
       val body = io.circe.Json.obj(
         "action" -> toolName.asJson,
@@ -45,7 +176,7 @@ class RemoteExecutor(meshService: MeshService):
         .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/remote-exec"))
         .contentType("application/json")
         .body(body.noSpaces)
-        .readTimeout(60.seconds)
+        .readTimeout(timeout)
         .response(asStringAlways)
         .send(meshService.httpBackend)
 
@@ -90,9 +221,9 @@ object RemoteExecutor:
 
   @volatile private var instance: Option[RemoteExecutor] = None
 
-  /** Wire the RemoteExecutor with a MeshService. Called on startup. */
-  def initialize(meshService: MeshService): Unit =
-    instance = Some(new RemoteExecutor(meshService))
+  /** Wire the RemoteExecutor with a MeshService and Dispatcher. Called on startup. */
+  def initialize(meshService: MeshService, dispatcher: Dispatcher[IO]): Unit =
+    instance = Some(new RemoteExecutor(meshService, dispatcher))
 
   /** Get the current instance, or None if mesh is not initialized. */
   def current: Option[RemoteExecutor] = instance
