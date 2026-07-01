@@ -1725,7 +1725,11 @@ function stopBgTimer() {
 
 function updateBgTasksUI() {
   const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
-  const active = tasks.filter(task => task.status === 'running' || task.status === 'cancelling');
+  const now = Date.now();
+  const active = tasks.filter(task =>
+    task.status === 'running' || task.status === 'cancelling' ||
+    (task.finishedAt && (now - task.finishedAt < 3000))
+  );
   const el = activeView.dom.bgIndicatorEl;
   const countEl = activeView.dom.bgCountEl;
   const dropdown = activeView.dom.bgDropdownEl;
@@ -1784,6 +1788,9 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   const idx = tasks.findIndex(t => t.taskId === msg.taskId);
   if (idx >= 0) {
     tasks[idx].status = msg.status;
+    if (msg.status === 'completed' || msg.status === 'failed') {
+      tasks[idx].finishedAt = Date.now();
+    }
     if (msg.heartbeat) tasks[idx].heartbeat = msg.heartbeat;
   } else {
     tasks.push({
@@ -1791,7 +1798,8 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       description: msg.description,
       status: msg.status,
       startedAt: msg.startedAt || Date.now(),
-      heartbeat: msg.heartbeat || null
+      heartbeat: msg.heartbeat || null,
+      finishedAt: (msg.status === 'completed' || msg.status === 'failed') ? Date.now() : undefined
     });
   }
   // Remove completed/failed tasks after a brief delay so user sees the count update
