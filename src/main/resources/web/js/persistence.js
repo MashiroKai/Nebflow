@@ -183,7 +183,9 @@ export function restoreFromStorage() {
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
-        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
+        let _deviceTag = '';
+        if (m.input) { try { const _inp = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp.device) _deviceTag = '<span class="tool-device-tag">' + esc(String(_inp.device)) + '</span>'; } catch {} }
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div>' +
@@ -475,7 +477,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
-        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
+        let _deviceTag2 = '';
+        if (m.input) { try { const _inp2 = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp2.device) _deviceTag2 = '<span class="tool-device-tag">' + esc(String(_inp2.device)) + '</span>'; } catch {} }
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag2
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div>' +
