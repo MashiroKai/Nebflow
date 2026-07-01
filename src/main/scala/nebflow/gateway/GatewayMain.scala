@@ -308,7 +308,7 @@ object GatewayMain extends IOApp.Simple:
                                   bridgeSetup.flatMap { bridgeManager =>
                                     meshServiceF.flatMap { meshService =>
                                       // Register remote executor for cross-device tool dispatch (P2P only)
-                                      RemoteExecutor.initialize(meshService)
+                                      RemoteExecutor.initialize(meshService, dispatcher)
                                       // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
                                       val presenceService =
                                         new nebflow.mesh.MeshPresenceService(meshService, cfg.port.value)(dispatcher)
