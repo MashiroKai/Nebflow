@@ -715,19 +715,21 @@
 .tool-card .label .tool-detail { color: #999; font-size: 11px; }
 .tool-card .label .tool-device-tag {
   display: inline-block;
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  opacity: 0.45;
-  color: var(--color-text, #666);
-  margin-left: 6px;
-  padding: 1px 5px;
-  border-radius: 3px;
-  border: 1px solid currentColor;
+  font-size: 11px;
+  font-weight: 500;
+  font-style: italic;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, #c0c0c8, #8a8a92, #b0b0b8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-left: 8px;
+  padding: 0 2px;
   vertical-align: 1px;
   white-space: nowrap;
   user-select: none;
+  opacity: 0.85;
 }
 .tool-card .body {
   color: #333;
