@@ -3,14 +3,13 @@ package nebflow.core.tools
 import cats.effect.std.Semaphore
 import cats.effect.{IO, Ref}
 import io.circe.{Json, JsonObject}
+import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.agent.*
 import nebflow.core.hooks.*
 import nebflow.core.task.TaskStore
 import nebflow.core.{AskItem, AskOption, FileChangeTracker}
 import nebflow.shared.*
-import org.apache.pekko.actor.typed.ActorRef
 
-/** Tool execution context — provides all dependencies a tool may need. */
 case class ToolContext(
   projectRoot: String,
   llm: Option[LlmHandle[IO]] = None,
@@ -23,38 +22,26 @@ case class ToolContext(
   wsSend: Option[Json => IO[Unit]] = None,
   readTracker: Option[ReadTracker] = None,
   fileHistory: Option[FileHistory] = None,
-  // Agent-scoped context for formerly-synthetic tools
   parentRef: Option[ActorRef[AgentCommand]] = None,
   depth: Int = 0,
   agentDef: Option[AgentDef] = None,
   agentLibrary: Option[AgentLibrary] = None,
   askSemaphore: Option[Semaphore[IO]] = None,
-  pekkoScheduler: Option[org.apache.pekko.actor.typed.Scheduler] = None,
   fileLockManager: Option[FileLockManager] = None,
   fileChangeTracker: Option[FileChangeTracker] = None,
-  // Hook system
   hookEngine: HookEngine = HookEngine.noop,
   hookContext: HookContext = HookContext(None, "", ""),
   folderId: Option[String] = None,
-  // Agent identity for file history attribution
   mailboxAddress: Option[String] = None,
-  // Dream scheduler — WriteMemoryTool sends entries here directly
-  dreamSchedulerRef: Option[ActorRef[DreamCommand]] = None,
-  /** Full SharedResources — needed by DelegateTool to spawn sub-agent actors. */
+  dreamSchedulerRef: Option[DreamScheduler] = None,
   sharedResources: Option[SharedResources] = None,
-  /** ActorSystem — needed by DelegateTool to spawn sub-agent actors. */
-  actorSystem: Option[org.apache.pekko.actor.typed.ActorSystem[?]] = None,
-  /** Current conversation messages — needed by DelegateTool for fork support. */
+  actorSystem: Option[ActorSystem] = None,
   messages: List[Message] = Nil
 )
 
-/** Tool error */
 case class ToolError(message: String)
-
-/** Process execution result */
 case class ProcessResult(stdout: String, stderr: String, exitCode: Int, cwd: String)
 
-/** Tool interface — all tools (built-in, synthetic, MCP) implement this trait. */
 trait Tool:
   def name: String
   def description: String
@@ -62,10 +49,4 @@ trait Tool:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]]
   def summarize(input: JsonObject): String
   def summarizeResult(input: JsonObject, result: String): String
-
-  /**
-   * Maximum result size in characters before the result is persisted to disk.
-   *  Clamped by Defaults.DefaultMaxResultSizeChars. Use Int.MaxValue to exempt
-   *  (e.g. Read tool controls its own output via the limit parameter).
-   */
   def maxResultSizeChars: Int = Defaults.DefaultMaxResultSizeChars
