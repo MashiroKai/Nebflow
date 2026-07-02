@@ -49,11 +49,12 @@ object LlmInterface:
     sessionOverrides: Ref[IO, Map[String, ModelCandidate]],
     options: Option[LlmOptions] = None,
     configRef: Option[Ref[IO, NebflowServiceConfig]] = None
-  ): IO[(LlmHandle[IO], ProviderRegistry, IO[Unit])] =
+  ): IO[(LlmHandle[IO], ProviderRegistry, ProviderHealthMonitor, IO[Unit])] =
     HttpClientFs2Backend.resource[IO]().allocated.flatMap { case (backend, release) =>
       val config = Config.loadServiceConfig(options.flatMap(_.configPath))
       val cfgRef: Ref[IO, NebflowServiceConfig] = configRef.getOrElse(Ref.unsafe(config))
       val registry = ProviderRegistry(cfgRef, backend)
+      val healthMonitor = ProviderHealthMonitor(registry)
       val result =
 
         val handle = new LlmHandle[IO]:
@@ -62,77 +63,73 @@ object LlmInterface:
             (for
               overrides <- sessionOverrides.get
               regCandidates <- registry.getCandidates()
-            yield overrides.get(req.sessionId).toList ++ regCandidates
-              .filterNot(c =>
-                overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
-              )).flatMap { candidates =>
-              Fallback
-                .tryProviderWithFallback[AdapterResponse](
-                  candidates,
-                  candidate =>
-                    // Cap thinking budget to fit within candidate's maxTokens
-                    val cappedThinking = req.thinking.map { t =>
-                      t.hcursor.downField("budget_tokens").as[Int] match
-                        case Right(budget) if budget > candidate.maxTokens / 2 =>
-                          t.deepMerge(
-                            io.circe.Json.obj(
-                              "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
-                            )
-                          )
-                        case _ => t
-                    }
-                    registry
-                      .getAdapter(candidate.providerId)
-                      .flatMap(
-                        _.sendMessage(
-                          SendMessageParams(
-                            req.messages,
-                            candidate.model,
-                            req.tools,
-                            Some(candidate.maxTokens),
-                            cappedThinking,
-                            req.systemStable,
-                            req.systemDynamic,
-                            Some(req.sessionId),
-                            Some(req.agentId)
+              candidates = overrides.get(req.sessionId).toList ++ regCandidates
+                .filterNot(c =>
+                  overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
+                )
+              (up, _) <- healthMonitor.filterCandidates(candidates)
+              _ <- IO.raiseWhen(up.isEmpty)(new RuntimeException("All providers unavailable"))
+              result <- Fallback.tryProviderWithFallback[AdapterResponse](
+                up,
+                candidate =>
+                  val cappedThinking = req.thinking.map { t =>
+                    t.hcursor.downField("budget_tokens").as[Int] match
+                      case Right(budget) if budget > candidate.maxTokens / 2 =>
+                        t.deepMerge(
+                          io.circe.Json.obj(
+                            "budget_tokens" -> io.circe.Json.fromInt(candidate.maxTokens / 2)
                           )
                         )
+                      case _ => t
+                  }
+                  registry
+                    .getAdapter(candidate.providerId)
+                    .flatMap(
+                      _.sendMessage(
+                        SendMessageParams(
+                          req.messages,
+                          candidate.model,
+                          req.tools,
+                          Some(candidate.maxTokens),
+                          cappedThinking,
+                          req.systemStable,
+                          req.systemDynamic,
+                          Some(req.sessionId),
+                          Some(req.agentId)
+                        )
                       )
-                  ,
-                  onAttempt = None
-                )
-                .flatMap { result =>
-                  val durationMs = System.currentTimeMillis() - start
-                  val failedAttempts = result.attempts.filter(_.reason.isDefined)
-                  val fallbackChain =
-                    if failedAttempts.nonEmpty then
-                      Some(
-                        result.attempts
-                          .map(a => FallbackStep(a.providerId, a.model, a.reason.map(_.toString), a.durationMs))
-                      )
-                    else None
-
-                  val overrideUpdate =
-                    if failedAttempts.nonEmpty then sessionOverrides.update(_ + (req.sessionId -> result.usedCandidate))
-                    else IO.unit
-
-                  overrideUpdate.as(
-                    LlmResponse(
-                      reply = result.data.reply,
-                      toolCalls = result.data.toolCalls,
-                      usage = result.data.usage,
-                      meta = LlmMeta(
-                        sessionId = req.sessionId,
-                        agentId = req.agentId,
-                        providerId = result.usedCandidate.providerId,
-                        model = result.usedCandidate.model,
-                        durationMs = durationMs,
-                        fallbackChain = fallbackChain,
-                        contextWindow = Some(result.usedCandidate.contextWindow)
-                      )
-                    )
+                    ),
+                onAttempt = None,
+                onProviderExhausted = Some(c =>
+                  healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
+              )
+            yield result).flatMap { result =>
+              val durationMs = System.currentTimeMillis() - start
+              val failedAttempts = result.attempts.filter(_.reason.isDefined)
+              val fallbackChain =
+                if failedAttempts.nonEmpty then
+                  Some(
+                    result.attempts
+                      .map(a => FallbackStep(a.providerId, a.model, a.reason.map(_.toString), a.durationMs))
                   )
-                }
+                else None
+
+              IO.pure(
+                LlmResponse(
+                  reply = result.data.reply,
+                  toolCalls = result.data.toolCalls,
+                  usage = result.data.usage,
+                  meta = LlmMeta(
+                    sessionId = req.sessionId,
+                    agentId = req.agentId,
+                    providerId = result.usedCandidate.providerId,
+                    model = result.usedCandidate.model,
+                    durationMs = durationMs,
+                    fallbackChain = fallbackChain,
+                    contextWindow = Some(result.usedCandidate.contextWindow)
+                  )
+                )
+              )
             }
           end send
 
@@ -152,13 +149,43 @@ object LlmInterface:
               )
               .flatMap { candidates =>
 
-                val firstCandidate = candidates.headOption
-
                 val maxRetries = Fallback.MaxRetries
 
                 fs2.Stream.eval(IO.ref(false)).flatMap { lockedRef =>
                   fs2.Stream.eval(IO.ref(List.empty[FallbackAttempt])).flatMap { failureRef =>
                     fs2.Stream.eval(IO.ref(Option.empty[ModelCandidate])).flatMap { winnerRef =>
+
+                      // Health-check wrapper: filters candidates by health state.
+                      // If all are Down, notifies the frontend and blocks until
+                      // at least one provider recovers, then re-filters.
+                      def attemptWithHealthCheck: fs2.Stream[IO, StreamChunk] =
+                        fs2.Stream.eval(healthMonitor.filterCandidates(candidates)).flatMap {
+                          case (Nil, _) =>
+                            val notifyDown = onAttempt.traverse_(_.apply(
+                              FallbackAttempt(
+                                providerId = "", model = "",
+                                reason = None, permanence = None,
+                                durationMs = 0, retriesUsed = 0,
+                                timestamp = java.time.Instant.now().toString,
+                                message = Some("所有模型不可用，等待恢复中...")
+                              )
+                            ))
+                            fs2.Stream.eval(notifyDown *> healthMonitor.waitForAnyUp()).flatMap { _ =>
+                              val notifyUp = onAttempt.traverse_(_.apply(
+                                FallbackAttempt(
+                                  providerId = "", model = "",
+                                  reason = Some(FailoverReason.Unknown), permanence = None,
+                                  durationMs = 0, retriesUsed = 0,
+                                  timestamp = java.time.Instant.now().toString,
+                                  message = Some("模型已恢复，继续处理...")
+                                )
+                              ))
+                              fs2.Stream.eval(notifyUp).drain ++ attemptWithHealthCheck
+                            }
+                          case (up, _) =>
+                            tryCandidate(up)
+                        }
+
                       def tryCandidate(
                         remaining: List[ModelCandidate],
                         retriesLeft: Int = maxRetries,
@@ -166,27 +193,9 @@ object LlmInterface:
                       ): fs2.Stream[IO, StreamChunk] =
                         remaining match
                           case Nil =>
-                            fs2.Stream.eval(
-                              failureRef.get.flatMap { failures =>
-                                IO.raiseError(
-                                  new FallbackExhaustedError(
-                                    if failures.nonEmpty then failures
-                                    else
-                                      candidates.map(c =>
-                                        FallbackAttempt(
-                                          c.providerId,
-                                          c.model,
-                                          None,
-                                          None,
-                                          0,
-                                          0,
-                                          java.time.Instant.now().toString
-                                        )
-                                      )
-                                  )
-                                )
-                              }
-                            )
+                            // All up candidates exhausted during this attempt —
+                            // cycle back through health check (will block if all Down)
+                            attemptWithHealthCheck
                           case candidate :: rest =>
                             // Cap thinking budget to fit within candidate's maxTokens.
                             // Some providers (e.g. zhipu/glm-5.1 with maxTokens=32000) crash
@@ -292,6 +301,8 @@ object LlmInterface:
                                     classification.message.orElse(Option(err.getMessage))
                                   )
                                   val notify = onAttempt.traverse_(_.apply(attempt))
+                                  val downReason = classification.message.orElse(Option(err.getMessage))
+                                    .getOrElse(classification.reason.toString)
 
                                   if classification.permanence == ErrorPermanence.Permanent then
                                     fs2.Stream.eval(
@@ -301,6 +312,7 @@ object LlmInterface:
                                         )
                                         *> failureRef.update(_ :+ attempt)
                                         *> notify
+                                        *> healthMonitor.markDown(candidate.providerId, candidate.model, downReason)
                                     ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                   else if retriesLeft > 0 && !isTimeout then
                                     // Only retry same provider for non-timeout errors.
@@ -323,30 +335,21 @@ object LlmInterface:
                                       )
                                         *> failureRef.update(_ :+ attempt)
                                         *> notify
+                                        *> healthMonitor.markDown(candidate.providerId, candidate.model, downReason)
                                     ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
                                   end if
                                 end if
                               }
                             }
 
-                      tryCandidate(candidates)
-                        .onFinalize {
-                          // Persist fallback winner so subsequent calls use the working model
-                          winnerRef.get.flatMap { winnerOpt =>
-                            (winnerOpt, firstCandidate) match
-                              case (Some(winner), Some(first))
-                                  if winner.providerId != first.providerId || winner.model != first.model =>
-                                sessionOverrides.update(_ + (req.sessionId -> winner))
-                              case _ => IO.unit
-                          }
-                        }
+                      attemptWithHealthCheck
                     }
                   }
                 }
               }
           end sendStream
 
-        (handle, registry, release)
+        (handle, registry, healthMonitor, release)
       end result
       IO(result).onError(_ => release)
     }
