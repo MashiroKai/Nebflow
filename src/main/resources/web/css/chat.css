@@ -170,8 +170,17 @@
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--color-success);
   flex-shrink: 0;
+  transition: background 0.3s;
 }
 .conn.off { background: var(--color-error); }
+.conn.off.reconnecting {
+  background: var(--color-warning);
+  animation: conn-pulse 1.5s ease-in-out infinite;
+}
+@keyframes conn-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
 /* Background task indicator — in header */
 #bg-indicator {
   display: flex;
