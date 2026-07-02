@@ -140,10 +140,9 @@ class WebSocketRoutes(
     rootAgents.modify { agents =>
       agents.get(sessionId) match
         case Some(ref) =>
-          ref ! AgentCommand.Stop(s"session $sessionId deleted")
           (
             agents - sessionId,
-            IO.unit
+            ref ! AgentCommand.Stop(s"session $sessionId deleted")
           )
         case None => (agents, IO.unit)
     }.flatten
@@ -185,14 +184,12 @@ class WebSocketRoutes(
             // pendingEvents and can be injected at the next ToolsComplete gap —
             // avoids being stashed until the entire turn finishes.
             routeToAgent(sessionId)(ref =>
-              IO(
-                ref ! AgentCommand.ExternalEvent(
-                  source = "bridge",
-                  eventType = "user-message",
-                  payload = content,
-                  metadata = io.circe.JsonObject("senderId" -> senderId.asJson),
-                  correlationId = None
-                )
+              ref ! AgentCommand.ExternalEvent(
+                source = "bridge",
+                eventType = "user-message",
+                payload = content,
+                metadata = io.circe.JsonObject("senderId" -> senderId.asJson),
+                correlationId = None
               )
             )
       }
@@ -203,7 +200,7 @@ class WebSocketRoutes(
    */
   def handleBridgeAgentCommand(sessionId: String, command: AgentCommand): IO[Unit] =
     if sessionId.isEmpty then IO.unit
-    else routeToAgent(sessionId)(ref => IO(ref ! command))
+    else routeToAgent(sessionId)(ref => ref ! command)
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ GET -> Root / "ws" =>
@@ -520,18 +517,18 @@ class WebSocketRoutes(
             case (Right(answers), Right(askSessionId)) =>
               val answerText = answers.mkString("\n")
               sessionStore.appendUiMessages(askSessionId, List(UiMessage.User(answerText))) *>
-                routeToAgent(askSessionId)(ref => IO(ref ! AgentCommand.UserAnswered(answers)))
+                routeToAgent(askSessionId)(ref => ref ! AgentCommand.UserAnswered(answers))
             case _ => IO.unit
 
         case "permissionAnswer" =>
           val approved = parse(text).flatMap(_.hcursor.downField("approved").as[Boolean]).getOrElse(false)
           val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
           logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
-            routeToAgent(permSessionId)(ref => IO(ref ! AgentCommand.PermissionAnswered(approved)))
+            routeToAgent(permSessionId)(ref => ref ! AgentCommand.PermissionAnswered(approved))
 
         case "interrupt" =>
           val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-          logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => IO(ref ! AgentCommand.Interrupt()))
+          logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
 
         case "command" =>
           val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
@@ -553,12 +550,12 @@ class WebSocketRoutes(
                     "sessionId" -> clearSessionId.asJson
                   )
                 ) *>
-                routeToAgent(clearSessionId)(ref => IO(ref ! AgentCommand.ResetSession))
+                routeToAgent(clearSessionId)(ref => ref ! AgentCommand.ResetSession)
             case "compact" =>
               val compactSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
               logger.info("Manual compaction triggered") *>
-                routeToAgent(compactSessionId)(ref => IO(ref ! AgentCommand.TriggerCompaction("full")))
+                routeToAgent(compactSessionId)(ref => ref ! AgentCommand.TriggerCompaction("full"))
             case "fork" =>
               val forkSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
@@ -654,7 +651,7 @@ class WebSocketRoutes(
                   overrides.get(sessionId) match
                     case Some(candidate) =>
                       routeToAgent(sessionId)(ref =>
-                        IO(ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
+                        ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow)
                       )
                     case None => IO.unit
                 }
@@ -940,16 +937,14 @@ class WebSocketRoutes(
                   logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
                     // Notify agent so it can process cancellation
                     routeToAgent(cancelSessionId) { ref =>
-                      IO(
-                        ref ! AgentCommand.ExternalEvent(
-                          source = "background-task",
-                          eventType = "cancelled",
-                          payload = s"[Background task cancelled] Job ID: $jobId",
-                          metadata = io.circe.JsonObject(
-                            "jobId" -> jobId.asJson
-                          ),
-                          correlationId = Some(jobId)
-                        )
+                      ref ! AgentCommand.ExternalEvent(
+                        source = "background-task",
+                        eventType = "cancelled",
+                        payload = s"[Background task cancelled] Job ID: $jobId",
+                        metadata = io.circe.JsonObject(
+                          "jobId" -> jobId.asJson
+                        ),
+                        correlationId = Some(jobId)
                       )
                     } *>
                     // Send completion update to frontend so the task is removed from the dropdown
@@ -1656,16 +1651,14 @@ class WebSocketRoutes(
                           ) *> {
                             val blocksList = blocks.toList
                             routeToAgent(msgSessionId)(ref =>
-                              IO(
-                                ref ! AgentCommand
-                                  .UserInput(
-                                    content,
-                                    None,
-                                    clientMessageId,
-                                    Some(blocksList).filter(_.nonEmpty),
-                                    chatWidth
-                                  )
-                              )
+                              ref ! AgentCommand
+                                .UserInput(
+                                  content,
+                                  None,
+                                  clientMessageId,
+                                  Some(blocksList).filter(_.nonEmpty),
+                                  chatWidth
+                                )
                             )
                           }
                         }
@@ -2131,7 +2124,7 @@ class WebSocketRoutes(
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
     // Route /ask to the agent actor — it handles inline via pipeLlmCall with askMode
-    routeToAgent(sessionId)(ref => IO(ref ! AgentCommand.AskQuestion(question, sessionId)))
+    routeToAgent(sessionId)(ref => ref ! AgentCommand.AskQuestion(question, sessionId))
 
   private def executeSkill(
     skillName: String,
@@ -2146,14 +2139,12 @@ class WebSocketRoutes(
           SkillService.loadSkill(skillInfo.filePath).flatMap {
             case Some(content) =>
               routeToAgent(sessionId) { ref =>
-                IO(
-                  ref ! AgentCommand.SkillActivate(
-                    skillName,
-                    input,
-                    sessionId,
-                    content.content,
-                    content.baseDir
-                  )
+                ref ! AgentCommand.SkillActivate(
+                  skillName,
+                  input,
+                  sessionId,
+                  content.content,
+                  content.baseDir
                 )
               }
             case None =>

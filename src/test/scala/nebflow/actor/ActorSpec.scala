@@ -140,4 +140,30 @@ class ActorSpec extends CatsEffectSuite:
     yield assertEquals(finalCount, 1)
   }
 
+  // ============================================================
+  // Regression: ref ! msg returns IO[Unit] — wrapping in IO(...) silently discards it
+  // ============================================================
+
+  test("ref ! msg delivers when used directly as IO[Unit] (not wrapped in IO(...))") {
+    val system = ActorSystem("test-device")
+    def listener(received: Ref[IO, List[String]]): Behavior[String] =
+      Behaviors.receiveMessage[String] { msg =>
+        received.update(_ :+ msg).as(listener(received))
+      }
+    for
+      received <- Ref.of[IO, List[String]](Nil)
+      ref <- system.spawn(listener(received), "delivery-test")
+      // This mirrors the production routeToAgent pattern: a function
+      // ActorRef[Msg] => IO[Unit] that must return ref ! msg directly.
+      // Writing IO(ref ! msg) instead would trigger Scala value-discarding,
+      // producing IO(()) — a no-op that never delivers the message.
+      routeToActor: (String => IO[Unit]) = msg => ref ! msg
+      _ <- routeToActor("first")
+      _ <- routeToActor("second")
+      _ <- IO.sleep(100.millis)
+      messages <- received.get
+      _ <- system.stopAll
+    yield assertEquals(messages, List("first", "second"))
+  }
+
 end ActorSpec
