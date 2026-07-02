@@ -1167,8 +1167,9 @@ onMessage('historyPage', (msg, view) => {
   } else {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
-    // if the response offset is >= what we already have, skip it to avoid duplicates.
-    if (msg.offset >= view.pagination.offset && view.pagination.offset > 0) {
+    // Skip if the response offset is >= what we already have, OR if offset is 0
+    // (offset 0 means "no older messages" — there is nothing valid to prepend).
+    if (msg.offset >= view.pagination.offset || msg.offset === 0) {
       // Skipping duplicate response
       return;
     }
