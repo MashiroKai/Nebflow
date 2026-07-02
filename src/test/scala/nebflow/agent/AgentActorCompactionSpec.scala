@@ -6,9 +6,7 @@ import nebflow.shared.{Message, MessageRole, TokenUsage}
 
 /**
  * Lightweight state-level circuit breaker tests.
- *  Full Pekko actor integration tests would require pekko-actor-testkit-typed
- *  dependency and extensive mocking; these tests validate the core state
- *  transition logic that the actor relies on.
+ * These tests validate the core state transition logic that the actor relies on.
  */
 class AgentActorCompactionSpec extends FunSuite:
 

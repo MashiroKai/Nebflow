@@ -94,13 +94,12 @@ When in doubt, prefer a narrower scope. You can always promote to a wider scope 
       IO.pure(Left(ToolError(s"Unknown scope: $scopeStr")))
     else
       ctx.dreamSchedulerRef match
-        case Some(ref) =>
+        case Some(scheduler) =>
           val source = ctx.agentDef.map(_.name).getOrElse("unknown")
           val folderId = ctx.folderId
-          // Send entry directly to Dream actor mailbox — fire-and-forget, non-blocking
-          IO.delay {
-            ref ! DreamCommand.ProcessEntry(scopeStr, content, detail, source, folderId)
-          }.as(Right("Queued for Dream processing."))
+          // Send entry directly to Dream scheduler queue — fire-and-forget, non-blocking
+          scheduler.submitEntry(DreamCommand.ProcessEntry(scopeStr, content, detail, source, folderId))
+            .as(Right("Queued for Dream processing."))
         case None =>
           IO.pure(Left(ToolError("Dream scheduler not available")))
   end call
