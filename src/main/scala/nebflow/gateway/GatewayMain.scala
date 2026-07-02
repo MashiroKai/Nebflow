@@ -184,7 +184,7 @@ object GatewayMain extends IOApp.Simple:
             val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
             sessionStore.load.flatMap { _ =>
               LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
-                case (handle, registry, releaseBackend) =>
+                case (handle, registry, healthMonitor, releaseBackend) =>
                   // Load persisted session model overrides
                   sessionStore.listSessions.flatMap { sessions =>
                     val persisted = sessions.flatMap { s =>
@@ -243,6 +243,7 @@ object GatewayMain extends IOApp.Simple:
                                   fileLockManager = fileLockMgr,
                                   sessionModelOverrides = sessionModelOverrides,
                                   providerRegistry = registry,
+                                  healthMonitor = healthMonitor,
                                   hookEngine = hookEngine
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
@@ -405,6 +406,8 @@ object GatewayMain extends IOApp.Simple:
                                                   else IO.unit
                                                 )
                                                 _ <- bridgeManager.startAll.start // start in background
+                                                // --- Background: LLM provider health monitoring ---
+                                                _ <- healthMonitor.start().void.start
                                                 _ <- openBrowser(url)
                                                 // --- Background init: skills dir, MCP servers ---
                                                 _ <- SkillService
