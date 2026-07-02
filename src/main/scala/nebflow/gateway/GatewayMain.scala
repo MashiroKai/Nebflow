@@ -10,7 +10,7 @@ import nebflow.bridge.*
 import nebflow.core.*
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
-import nebflow.core.scheduler.{ScheduledTaskActor, ScheduledTaskStore}
+import nebflow.core.scheduler.ScheduledTaskStore
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
@@ -19,8 +19,7 @@ import nebflow.llm.*
 import nebflow.mesh.*
 import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.*
-import org.apache.pekko.actor.typed.ActorSystem
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
+import nebflow.core.scheduler.ScheduledTaskService
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 
@@ -228,9 +227,6 @@ object GatewayMain extends IOApp.Simple:
                               nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                 val hooksConfig = HooksConfigLoader.load(os.pwd)
                                 val hookEngine = HookEngine(hooksConfig)
-                                // Actor system must be created before SharedResources
-                                // because MemoryAgentManager needs it
-                                val actorSystem = ActorSystem[Nothing](Behaviors.empty, "nebflow-guardian")
                                 val sharedResources = SharedResources(
                                   llm = handle,
                                   dispatcher = dispatcher,
@@ -263,13 +259,12 @@ object GatewayMain extends IOApp.Simple:
 
                                   // Dream scheduler: event-driven memory consolidation + pattern extraction
                                   val memoryAgentManager = new MemoryAgentManager(
-                                    actorSystem,
                                     dispatcher,
                                     sessionStore
                                   )
-                                  // Wire dreamSchedulerRef into SharedResources (created after SharedResources init)
+                                  // Wire dreamScheduler into SharedResources (created after SharedResources init)
                                   val sharedResourcesWithDream = sharedResourcesWithTelemetry.copy(
-                                    dreamSchedulerRef = Some(memoryAgentManager.dreamSchedulerRef)
+                                    dreamSchedulerRef = Some(memoryAgentManager.dreamScheduler)
                                   )
                                   memoryAgentManager.setSharedResources(sharedResourcesWithDream)
                                   memoryAgentManager.setWsHub(wsHub)
@@ -303,7 +298,7 @@ object GatewayMain extends IOApp.Simple:
 
                                   // Create mesh service (device discovery only, no file sync)
                                   val meshServiceF: IO[MeshService] =
-                                    MeshService.create(cfg.port.value, actorSystem, dispatcher)
+                                    MeshService.create(cfg.port.value, dispatcher)
 
                                   bridgeSetup.flatMap { bridgeManager =>
                                     meshServiceF.flatMap { meshService =>
@@ -324,22 +319,17 @@ object GatewayMain extends IOApp.Simple:
                                           logger.debug(s"Tailscale discovery: ${e.getMessage}").void
                                         )
                                       ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *>
-                                        meshService.addLogoutHook(presenceService.disconnectAll()) *> IO(
-                                          meshService.syncActor ! nebflow.mesh.SyncCommand.PeerDiscovered
-                                        ) *> {
+                                        meshService.addLogoutHook(presenceService.disconnectAll()) *>
+                                          meshService.sendSync(nebflow.mesh.SyncCommand.PeerDiscovered) *> {
                                           val sharedResourcesWithBridge =
                                             sharedResourcesWithDream.copy(
                                               bridgeManager = Some(bridgeManager),
                                               meshService = Some(meshService)
                                             )
 
-                                          // --- Create Scheduled Task Actor before wsRoutes ---
+                                          // --- Create Scheduled Task Service before wsRoutes ---
                                           // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
-                                          var scheduledTaskActorRefHolder: Option[org.apache.pekko.actor.typed.ActorRef[
-                                            nebflow.core.scheduler.ScheduledTaskCommand
-                                          ]] = None
-                                          val scheduledTaskActor = new ScheduledTaskActor(
-                                            actorSystem,
+                                          val scheduledTaskService = new ScheduledTaskService(
                                             sharedResourcesWithBridge.dispatcher,
                                             sharedResourcesWithBridge.scheduledTaskStore,
                                             (sid, event) =>
@@ -348,9 +338,9 @@ object GatewayMain extends IOApp.Simple:
                                                 case None => IO.unit,
                                             wsHub.broadcast
                                           )
-                                          scheduledTaskActorRefHolder = Some(scheduledTaskActor.ref)
+                                          dispatcher.unsafeRunAndForget(scheduledTaskService.start())
                                           val sharedResourcesFinal = sharedResourcesWithBridge.copy(
-                                            scheduledTaskActorRef = scheduledTaskActorRefHolder
+                                            scheduledTaskService = Some(scheduledTaskService)
                                           )
 
                                           EmberServerBuilder
@@ -370,7 +360,6 @@ object GatewayMain extends IOApp.Simple:
                                                 fileTracker,
                                                 sessionStore,
                                                 wsHub,
-                                                actorSystem,
                                                 contextWindow,
                                                 sharedResourcesFinal,
                                                 mcpManager
@@ -456,11 +445,7 @@ object GatewayMain extends IOApp.Simple:
                                               logger.info("shutting down...") *>
                                                 telemetry.fold(IO.unit)(_.shutdown) *>
                                                 mcpManager.stopAll() *>
-                                                releaseBackend *>
-                                                IO.fromFuture(IO {
-                                                  actorSystem.terminate()
-                                                  actorSystem.whenTerminated
-                                                }).void
+                                                releaseBackend
                                             )
                                         } // end meshService setup block
                                     } // end meshService
