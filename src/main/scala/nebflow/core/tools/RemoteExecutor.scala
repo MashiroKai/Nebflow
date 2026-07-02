@@ -95,7 +95,7 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
           case Right(output) =>
             // Notify agent so the result is injected into conversation
             ctx.agentActorRef.fold(IO.unit)(ref =>
-              IO(ref ! AgentCommand.ExternalEvent(
+              ref ! AgentCommand.ExternalEvent(
                 source = "background-task",
                 eventType = "completed",
                 payload = s"[Background task completed] \"$description\":\n$output",
@@ -103,19 +103,19 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
                   "description" -> description.asJson,
                   "output" -> output.asJson
                 )
-              ))
+              )
             ) *>
               // Notify frontend to dismiss the indicator
               emitBgTaskFinished(ctx, jobId, description, "completed") *>
               logger.info(s"Remote background task $jobId completed on ${peer.deviceName}")
           case Left(err) =>
             ctx.agentActorRef.fold(IO.unit)(ref =>
-              IO(ref ! AgentCommand.ExternalEvent(
+              ref ! AgentCommand.ExternalEvent(
                 source = "background-task",
                 eventType = "failed",
                 payload = s"[Background task failed] \"$description\":\n${err.message}",
                 metadata = JsonObject("description" -> description.asJson)
-              ))
+              )
             ) *>
               emitBgTaskFinished(ctx, jobId, description, "failed") *>
               logger.warn(s"Remote background task $jobId failed on ${peer.deviceName}: ${err.message}")
