@@ -1,4 +1,7 @@
 <configuration>
+
+  <!-- Suppress harmless WebSocket disconnection stack traces from OS sleep/wake -->
+  <turboFilter class="nebflow.core.WsTimeoutFilter"/>
   <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
     <encoder>
       <pattern>%d{HH:mm:ss.SSS} %msg%n</pattern>
