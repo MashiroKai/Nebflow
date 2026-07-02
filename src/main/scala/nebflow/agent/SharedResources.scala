@@ -11,7 +11,7 @@ import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderRegistry, ThinkingConfig}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ProviderRegistry, ThinkingConfig}
 import nebflow.mesh.MeshService
 import nebflow.actor.ActorRef
 import nebflow.shared.*
@@ -38,6 +38,7 @@ case class SharedResources(
   fileLockManager: FileLockManager,
   sessionModelOverrides: cats.effect.Ref[IO, Map[String, ModelCandidate]],
   providerRegistry: ProviderRegistry,
+  healthMonitor: ProviderHealthMonitor,
   hookEngine: HookEngine = HookEngine.noop,
   bridgeManager: Option[BridgeManager] = None,
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
