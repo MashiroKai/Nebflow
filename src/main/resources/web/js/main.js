@@ -310,10 +310,9 @@ function clearBusyFor(msg) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
   }
-  // Only release the send lock for the currently active session
-  if (sid === state.activeSessionId && chatViews.primary) {
-    chatViews.primary.isSending = false;
-  }
+  // Release the send lock for the view displaying this session
+  const view = findViewBySessionId(sid);
+  if (view) view.isSending = false;
 }
 // Helper: reset activity-based stream timeout for a busy session
 function resetStreamTimeout(sid) {
