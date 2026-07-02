@@ -192,7 +192,7 @@ final class MeshRelayClient(
 
   /** A new peer appeared on this account — trigger immediate discovery. */
   private def handlePeerJoined(): Unit =
-    meshService.syncActor ! SyncCommand.PeerDiscovered
+    dispatcher.unsafeRunAndForget(meshService.sendSync(SyncCommand.PeerDiscovered))
 end MeshRelayClient
 
 /**
