@@ -489,7 +489,9 @@ class RestApiRoutes(
               // Silent upsert — the HTTP /mesh/announce endpoint already handles logging.
               // Calling handleAnnounce here too produces duplicate "Peer announced" logs.
               val peer = nebflow.mesh.PeerInfo(
-                peerDeviceId, peerDeviceName, peerPlatform,
+                peerDeviceId,
+                peerDeviceName,
+                peerPlatform,
                 s"http://$remoteIp:$peerPort",
                 capabilities = capabilities,
                 userDescription = userDesc
