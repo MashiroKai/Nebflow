@@ -5,13 +5,13 @@ import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.{ActorRef, ActorSystem as NebulaActorSystem}
 import nebflow.agent.AgentCommand.*
 import nebflow.core.tools.{FileHistory, ReadTracker}
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.gateway.{SessionRecorder, SessionStore, WsHub}
 import nebflow.service.{MemoryStore, NebflowBackup}
 import nebflow.shared.UiMessage
-import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 
 import java.util.concurrent.atomic.AtomicLong
 
@@ -22,21 +22,21 @@ import scala.concurrent.duration.*
  * Manages the Dream session for memory consolidation and pattern extraction.
  *
  * Event-driven design:
- *   - WriteMemory calls directly send entries to the Dream actor mailbox.
+ *   - WriteMemory calls directly send entries to the Dream scheduler queue.
  *   - 24-hour full cycle uses a single-shot timer (rescheduled after each cycle).
  *   - No polling, no staging file, no periodic scanning.
  *
  * The scheduler state machine is delegated to [[DreamScheduler]] for testability.
  * This class provides the hooks (trigger, stop, lifecycle) that the scheduler calls.
  *
- * Mac sleep / network offline: messages wait in the Pekko mailbox until the
- * actor processes them. No repeated work, no wasted CPU.
+ * Mac sleep / network offline: messages wait in the queue until the
+ * scheduler processes them. No repeated work, no wasted CPU.
  */
 class MemoryAgentManager(
-  actorSystem: ActorSystem[?],
   dispatcher: Dispatcher[IO],
   sessionStore: SessionStore
 ):
+  private val nebulaSystem = NebulaActorSystem("local")
 
   private val logger = NebflowLogger.forName("nebflow.memory-manager")
   private val counter = new AtomicLong()
@@ -44,7 +44,42 @@ class MemoryAgentManager(
   @volatile private var _resources: SharedResources = uninitialized
   @volatile private var _wsHub: WsHub = uninitialized
   @volatile private var _dreamRef: ActorRef[AgentCommand] = uninitialized
-  @volatile private var _schedulerRef: ActorRef[DreamCommand] = uninitialized
+
+  // Fixed session ID
+  private val DreamSessionId = "memory-agent-dream"
+  private val DreamSessionName = "Dream / 梦境"
+
+  // Debounce: wait this long after the first entry before processing the batch
+  private val DebounceDelay = 2.minutes
+
+  // Full cycle interval
+  private val FullCycleInterval = 24.hours
+
+  // Safety timeout: if Dream agent doesn't signal completion within this duration,
+  // force-proceed to avoid blocking forever (agent may have crashed or hung).
+  private val DreamTimeoutDuration = 5.minutes
+
+  private val _dreamScheduler = new DreamScheduler(
+    new DreamScheduler.Hooks:
+      def trigger(entries: List[DreamCommand.ProcessEntry], isFullCycle: Boolean): Boolean =
+        triggerDream(entries, isFullCycle)
+
+      def stopDreamAgent(): Unit =
+        if _dreamRef != null then dispatcher.unsafeRunAndForget(_dreamRef ! Stop("cycle-complete"))
+        _dreamRef = null
+
+      def touchLastDreamTime(): Unit =
+        lastDreamTime = System.currentTimeMillis()
+    ,
+    DebounceDelay,
+    FullCycleInterval,
+    DreamTimeoutDuration
+  )(using dispatcher)
+
+  // Start scheduler loop in background on construction
+  locally {
+    dispatcher.unsafeRunAndForget(_dreamScheduler.start)
+  }
 
   /** Set SharedResources after construction (breaks circular dependency). */
   def setSharedResources(resources: SharedResources): Unit =
@@ -62,20 +97,6 @@ class MemoryAgentManager(
     if _wsHub == null then throw new IllegalStateException("MemoryAgentManager: WsHub not set yet")
     _wsHub
 
-  // Fixed session ID
-  private val DreamSessionId = "memory-agent-dream"
-  private val DreamSessionName = "Dream / 梦境"
-
-  // Debounce: wait this long after the first entry before processing the batch
-  private val DebounceDelay = 2.minutes
-
-  // Full cycle interval
-  private val FullCycleInterval = 24.hours
-
-  // Safety timeout: if Dream agent doesn't signal completion within this duration,
-  // force-proceed to avoid blocking forever (agent may have crashed or hung).
-  private val DreamTimeoutDuration = 5.minutes
-
   // Current agent name for file listing
   private def currentAgentName: String =
     try
@@ -87,42 +108,19 @@ class MemoryAgentManager(
         "Nebula"
 
   // ============================================================
-  // DreamScheduler.Hooks implementation
-  // ============================================================
-
-  private val hooks = new DreamScheduler.Hooks:
-    def trigger(entries: List[DreamCommand.ProcessEntry], isFullCycle: Boolean): Boolean =
-      triggerDream(entries, isFullCycle)
-
-    def stopDreamAgent(): Unit =
-      if _dreamRef != null then _dreamRef ! Stop("cycle-complete")
-      _dreamRef = null
-
-    def touchLastDreamTime(): Unit =
-      lastDreamTime = System.currentTimeMillis()
-
-  // Spawn Dream scheduler on construction
-  locally {
-    _schedulerRef = actorSystem.systemActorOf(
-      DreamScheduler(hooks, DebounceDelay, FullCycleInterval, DreamTimeoutDuration),
-      "memory-dream-scheduler"
-    )
-  }
-
-  // ============================================================
   // Public API
   // ============================================================
 
-  /** ActorRef of the Dream scheduler — WriteMemoryTool sends entries here. */
-  def dreamSchedulerRef: ActorRef[DreamCommand] = _schedulerRef
+  /** DreamScheduler instance — WriteMemoryTool submits entries here. */
+  def dreamScheduler: DreamScheduler = _dreamScheduler
 
   /** Stop Dream actor and scheduler. */
   def shutdownAll(): IO[Unit] =
-    IO {
-      if _dreamRef != null then _dreamRef ! Stop("shutdown")
-      if _schedulerRef != null then _schedulerRef ! DreamCommand.Shutdown
-      logger.infoSync("Memory Agent Manager: shutdown complete")
-    }
+    for
+      _ <- if _dreamRef != null then _dreamRef ! Stop("shutdown") else IO.unit
+      _ <- _dreamScheduler.shutdown
+      _ <- IO.delay(logger.infoSync("Memory Agent Manager: shutdown complete"))
+    yield ()
 
   // ============================================================
   // Trigger Dream — spawn agent and send payload
@@ -151,10 +149,12 @@ class MemoryAgentManager(
       val ref = dispatcher.unsafeRunSync(createDreamAgent())
       _dreamRef = ref
       dispatcher.unsafeRunSync(recordUserMessage(DreamSessionId, payload, injected = true))
-      ref ! ExternalEvent(
-        source = "memory-manager",
-        eventType = "dream",
-        payload = payload
+      dispatcher.unsafeRunAndForget(
+        ref ! ExternalEvent(
+          source = "memory-manager",
+          eventType = "dream",
+          payload = payload
+        )
       )
       logger.infoSync(
         s"Dream triggered (${if isFullCycle then "full" else "entries"}): ${entries.size} entries, ${allFiles.size} files"
@@ -189,31 +189,30 @@ class MemoryAgentManager(
       // Intercept Done event to signal Dream completion back to the scheduler.
       // This is how the scheduler knows the Dream agent finished processing
       // and it's safe to start a new cycle (or process buffered entries).
-      schedulerRef = _schedulerRef
+      scheduler = _dreamScheduler
       wsSendWithDone = (json: Json) =>
-        if json.hcursor.downField("type").as[String].toOption.contains("done") then
-          schedulerRef ! DreamCommand.DreamComplete
-        recorder(json)
-      ref <- IO {
-        actorSystem.systemActorOf(
-          AgentActor(
-            agentDef,
-            resources,
-            wsSend = wsSendWithDone,
-            depth = 0,
-            parentRef = None,
-            sessionId = Some(DreamSessionId),
-            sessionName = Some(DreamSessionName),
-            initialMessages = Nil,
-            readTracker = Some(readTracker),
-            fileHistory = Some(fileHistory),
-            contextWindow = resources.contextWindow,
-            projectRoot = Some((PathUtil.dataRoot).toString),
-            folderId = None
-          ),
-          s"$DreamSessionId-${counter.incrementAndGet()}"
-        )
-      }
+        val signalIO =
+          if json.hcursor.downField("type").as[String].toOption.contains("done") then scheduler.signalComplete
+          else IO.unit
+        signalIO *> recorder(json)
+      ref <- nebulaSystem.spawn(
+        AgentActor(
+          agentDef,
+          resources,
+          wsSend = wsSendWithDone,
+          depth = 0,
+          parentRef = None,
+          sessionId = Some(DreamSessionId),
+          sessionName = Some(DreamSessionName),
+          initialMessages = Nil,
+          readTracker = Some(readTracker),
+          fileHistory = Some(fileHistory),
+          contextWindow = resources.contextWindow,
+          projectRoot = Some((PathUtil.dataRoot).toString),
+          folderId = None
+        ),
+        s"$DreamSessionId-${counter.incrementAndGet()}"
+      )
       _ = logger.infoSync("Spawned Dream MemoryAgent actor")
     yield ref
 

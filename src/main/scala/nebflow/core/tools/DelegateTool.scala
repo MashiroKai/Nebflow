@@ -3,11 +3,10 @@ package nebflow.core.tools
 import cats.effect.{Deferred, IO}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.{Message, MessageRole}
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
-import org.apache.pekko.actor.typed.{ActorRef, ActorSystem}
 
 import scala.concurrent.duration.*
 
@@ -196,7 +195,7 @@ $prompt"""
     description: String,
     agentName: String,
     initialMessages: List[Message],
-    system: ActorSystem[?],
+    system: ActorSystem,
     resources: SharedResources,
     parentDepth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
@@ -211,7 +210,7 @@ $prompt"""
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
       childWsSend = routeWsSend(wsSend, parentSessionId)
-      subagentRef = system.systemActorOf(
+      subagentRef <- system.spawn(
         AgentActor(
           agentDef = agentDef,
           resources = resources,
@@ -228,12 +227,12 @@ $prompt"""
         ),
         subagentId
       )
-      adapterRef = system.systemActorOf(
+      adapterRef <- system.spawn(
         syncAdapter(subagentRef, agentName, resources, resultDeferred),
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned sync sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
-      _ = subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
+      _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
       result <- resultDeferred.get
     yield result
 
@@ -243,8 +242,8 @@ $prompt"""
     agentName: String,
     resources: SharedResources,
     resultDeferred: Deferred[IO, Either[ToolError, String]]
-  ): Behaviors.Receive[AgentEvent] =
-    Behaviors.receive[AgentEvent] { (_, event) =>
+  ): Behavior[AgentEvent] =
+    Behaviors.receiveMessage { (event: AgentEvent) =>
       val result: Either[ToolError, String] = event match
         case AgentEvent.Completed(_, messages) =>
           val text = extractLastAssistantText(messages)
@@ -252,9 +251,10 @@ $prompt"""
         case AgentEvent.Failed(_, error) =>
           Left(ToolError(s"Sub-agent '$agentName' failed: ${error.message}"))
 
-      resources.dispatcher.unsafeRunAndForget(resultDeferred.complete(result))
-      subagentRef ! AgentCommand.Stop("delegate-complete")
-      Behaviors.stopped
+      (resultDeferred.complete(result).void *>
+        (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
+        IO.pure(Behaviors.stopped))
+        .handleErrorWith(_ => IO.pure(Behaviors.stopped))
     }
 
   // ============================================================
@@ -267,7 +267,7 @@ $prompt"""
     description: String,
     agentName: String,
     initialMessages: List[Message],
-    system: ActorSystem[?],
+    system: ActorSystem,
     resources: SharedResources,
     parentDepth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
@@ -281,7 +281,7 @@ $prompt"""
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
       childWsSend = routeWsSend(wsSend, parentSessionId)
-      subagentRef = system.systemActorOf(
+      subagentRef <- system.spawn(
         AgentActor(
           agentDef = agentDef,
           resources = resources,
@@ -298,12 +298,12 @@ $prompt"""
         ),
         subagentId
       )
-      adapterRef = system.systemActorOf(
+      adapterRef <- system.spawn(
         backgroundAdapter(subagentRef, parentRef, description, agentName, subagentId, resources),
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
-      _ = subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
+      _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-agent '$agentName' started in background for: $description.
 You will be notified when it completes via a system message.
@@ -318,8 +318,8 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     agentName: String,
     subagentId: String,
     resources: SharedResources
-  ): Behaviors.Receive[AgentEvent] =
-    Behaviors.receive[AgentEvent] { (_, event) =>
+  ): Behavior[AgentEvent] =
+    Behaviors.receiveMessage { (event: AgentEvent) =>
       val (eventType, payload) = event match
         case AgentEvent.Completed(_, messages) =>
           val text = extractLastAssistantText(messages)
@@ -328,21 +328,21 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
         case AgentEvent.Failed(_, error) =>
           ("failed", s"[Sub-agent failed] \"$description\": ${error.message}")
 
-      parentRef.foreach(
-        _ ! AgentCommand.ExternalEvent(
-          source = "delegate",
-          eventType = eventType,
-          payload = payload,
-          metadata = io.circe.JsonObject(
-            "description" -> description.asJson,
-            "agentName" -> agentName.asJson
-          ),
-          correlationId = Some(subagentId)
-        )
-      )
+      val notifyParent = parentRef match
+        case Some(ref) =>
+          ref ! AgentCommand.ExternalEvent(
+            source = "delegate",
+            eventType = eventType,
+            payload = payload,
+            metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
+            correlationId = Some(subagentId)
+          )
+        case None => IO.unit
 
-      subagentRef ! AgentCommand.Stop("delegate-complete")
-      Behaviors.stopped
+      (notifyParent *>
+        (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
+        IO.pure(Behaviors.stopped))
+        .handleErrorWith(_ => IO.pure(Behaviors.stopped))
     }
 
   /** Extract the last assistant message text from a list of messages. */

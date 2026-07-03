@@ -1,7 +1,8 @@
 package nebflow.agent
 
-import org.apache.pekko.actor.typed.scaladsl.{Behaviors, TimerScheduler}
-import org.apache.pekko.actor.typed.{ActorRef, Behavior}
+import cats.effect.IO
+import cats.effect.std.{Dispatcher, Queue}
+import cats.effect.unsafe.implicits.global
 
 import scala.concurrent.duration.*
 
@@ -9,7 +10,7 @@ import scala.concurrent.duration.*
 // Dream command protocol — public so WriteMemoryTool can reference it
 // ============================================================
 
-/** Commands accepted by the Dream scheduler actor. */
+/** Commands accepted by the Dream scheduler. */
 sealed trait DreamCommand
 
 object DreamCommand:
@@ -71,100 +72,141 @@ object DreamScheduler:
     def touchLastDreamTime(): Unit
   end Hooks
 
-  /** Factory: create the scheduler behavior. */
-  def apply(
-    hooks: Hooks,
-    debounceDelay: FiniteDuration = 2.minutes,
-    fullCycleInterval: FiniteDuration = 24.hours,
-    dreamTimeout: FiniteDuration = 5.minutes
-  ): Behavior[DreamCommand] =
-    Behaviors.withTimers { timers =>
-      timers.startSingleTimer(DreamCommand.FullCycleTick, fullCycleInterval)
-      idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-    }
+end DreamScheduler
+
+/**
+ * IO-based Dream scheduler — replaces the old Pekko typed actor.
+ *
+ * The two-phase state machine (idle → dreaming) is preserved as recursive IO.
+ * Entry submission and completion signals go through a Queue.
+ *
+ * Timer handling:
+ *   - Full cycle timer always runs (in both idle and dreaming states).
+ *   - Debounce timer starts on the FIRST entry only — subsequent entries
+ *     do NOT restart it. Tracked via a deadline timestamp.
+ *   - Dream timeout runs only in dreaming state.
+ */
+class DreamScheduler(
+  hooks: DreamScheduler.Hooks,
+  debounceDelay: FiniteDuration = 2.minutes,
+  fullCycleInterval: FiniteDuration = 24.hours,
+  dreamTimeout: FiniteDuration = 5.minutes
+)(using dispatcher: Dispatcher[IO]):
+
+  private val queue: Queue[IO, DreamCommand] =
+    dispatcher.unsafeRunSync(Queue.unbounded[IO, DreamCommand])
+
+  /** Submit a new memory entry for Dream processing. */
+  def submitEntry(entry: DreamCommand.ProcessEntry): IO[Unit] =
+    queue.offer(entry)
+
+  /** Signal that the Dream agent has finished processing. */
+  def signalComplete: IO[Unit] =
+    queue.offer(DreamCommand.DreamComplete)
+
+  /** Signal that the Dream agent timed out. */
+  def signalTimeout: IO[Unit] =
+    queue.offer(DreamCommand.DreamTimeout)
+
+  /** Shut down the scheduler loop. */
+  def shutdown: IO[Unit] =
+    queue.offer(DreamCommand.Shutdown)
+
+  /** Launch the background loop. Call once at startup. */
+  def start: IO[Unit] = idleLoop(Nil, None)
 
   // ============================================================
   // State: idle — no Dream agent running
   // ============================================================
 
-  private def idle(
+  private def idleLoop(
     buffer: List[DreamCommand.ProcessEntry],
-    timers: TimerScheduler[DreamCommand],
-    hooks: Hooks,
-    debounceDelay: FiniteDuration,
-    fullCycleInterval: FiniteDuration,
-    dreamTimeout: FiniteDuration
-  ): Behavior[DreamCommand] =
-    Behaviors.receiveMessage {
-      case entry: DreamCommand.ProcessEntry =>
-        val newBuffer = buffer :+ entry
-        if buffer.isEmpty then timers.startSingleTimer(DreamCommand.FlushEntries, debounceDelay)
-        idle(newBuffer, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
+    debounceDeadline: Option[Long]
+  ): IO[Unit] =
+    val timer: IO[Boolean] =
+      if buffer.isEmpty then
+        // Only the full cycle timer is active
+        IO.sleep(fullCycleInterval).as(true)
+      else
+        // Debounce timer — sleep until deadline, race with full cycle
+        val remaining = debounceDeadline match
+          case Some(deadline) =>
+            val ms = deadline - System.currentTimeMillis()
+            ms.max(1).millis
+          case None => debounceDelay
+        IO.race(IO.sleep(remaining), IO.sleep(fullCycleInterval)).map {
+          case Left(_) => false // debounce fired
+          case Right(_) => true // full cycle fired
+        }
 
-      case DreamCommand.FlushEntries =>
-        if buffer.nonEmpty then
-          if hooks.trigger(buffer, isFullCycle = false) then
-            hooks.touchLastDreamTime()
-            timers.startSingleTimer(DreamCommand.DreamTimeout, dreamTimeout)
-            dreaming(Nil, pendingFullCycle = false, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-          else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-        else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-
-      case DreamCommand.FullCycleTick =>
-        if buffer.nonEmpty then timers.cancel(DreamCommand.FlushEntries)
-        val triggered = hooks.trigger(buffer, isFullCycle = true)
-        timers.startSingleTimer(DreamCommand.FullCycleTick, fullCycleInterval)
-        if triggered then
-          hooks.touchLastDreamTime()
-          timers.startSingleTimer(DreamCommand.DreamTimeout, dreamTimeout)
-          dreaming(Nil, pendingFullCycle = false, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-        else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-
-      case DreamCommand.Shutdown =>
-        Behaviors.stopped
-
-      // Stale completion signals from a previous cycle — ignore
-      case DreamCommand.DreamComplete | DreamCommand.DreamTimeout =>
-        Behaviors.same
+    IO.race(queue.take, timer).flatMap {
+      case Left(cmd) => handleIdle(cmd, buffer, debounceDeadline)
+      case Right(isFullCycle) => flushIdle(buffer, isFullCycle)
     }
+
+  end idleLoop
+
+  private def handleIdle(
+    cmd: DreamCommand,
+    buffer: List[DreamCommand.ProcessEntry],
+    debounceDeadline: Option[Long]
+  ): IO[Unit] =
+    cmd match
+      case pe: DreamCommand.ProcessEntry =>
+        val newBuffer = buffer :+ pe
+        // Start debounce only on first entry (when buffer was empty)
+        val newDeadline = debounceDeadline.orElse(Some(System.currentTimeMillis() + debounceDelay.toMillis))
+        idleLoop(newBuffer, newDeadline)
+      case DreamCommand.FlushEntries => flushIdle(buffer, isFullCycle = false)
+      case DreamCommand.FullCycleTick => flushIdle(buffer, isFullCycle = true)
+      // Stale completion signals from a previous cycle — ignore
+      case DreamCommand.DreamComplete | DreamCommand.DreamTimeout => idleLoop(buffer, debounceDeadline)
+      case DreamCommand.Shutdown => IO.unit
+
+  private def flushIdle(buffer: List[DreamCommand.ProcessEntry], isFullCycle: Boolean): IO[Unit] =
+    if buffer.isEmpty && !isFullCycle then idleLoop(Nil, None)
+    else if hooks.trigger(buffer, isFullCycle) then
+      hooks.touchLastDreamTime()
+      dreamingLoop(Nil, pendingFullCycle = false)
+    else idleLoop(Nil, None)
 
   // ============================================================
   // State: dreaming — Dream agent is running
   // ============================================================
 
-  private def dreaming(
+  private def dreamingLoop(
     buffer: List[DreamCommand.ProcessEntry],
-    pendingFullCycle: Boolean,
-    timers: TimerScheduler[DreamCommand],
-    hooks: Hooks,
-    debounceDelay: FiniteDuration,
-    fullCycleInterval: FiniteDuration,
-    dreamTimeout: FiniteDuration
-  ): Behavior[DreamCommand] =
-    Behaviors.receiveMessage {
-      case entry: DreamCommand.ProcessEntry =>
-        dreaming(buffer :+ entry, pendingFullCycle, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
+    pendingFullCycle: Boolean
+  ): IO[Unit] =
+    val timer: IO[Boolean] =
+      IO.race(IO.sleep(dreamTimeout), IO.sleep(fullCycleInterval)).map {
+        case Left(_) => false // dream timeout
+        case Right(_) => true // full cycle fired
+      }
 
-      case DreamCommand.DreamComplete =>
-        timers.cancel(DreamCommand.DreamTimeout)
-        onDreamFinished(buffer, pendingFullCycle, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-
-      case DreamCommand.DreamTimeout =>
-        timers.cancel(DreamCommand.DreamTimeout)
-        onDreamFinished(buffer, pendingFullCycle, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-
-      // Stale debounce timer from idle — ignore
-      case DreamCommand.FlushEntries =>
-        Behaviors.same
-
-      // Full cycle fires while Dream running — defer to after completion
-      case DreamCommand.FullCycleTick =>
-        timers.startSingleTimer(DreamCommand.FullCycleTick, fullCycleInterval)
-        dreaming(buffer, pendingFullCycle = true, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-
-      case DreamCommand.Shutdown =>
-        Behaviors.stopped
+    IO.race(queue.take, timer).flatMap {
+      case Left(cmd) => handleDreaming(cmd, buffer, pendingFullCycle)
+      case Right(isFullCycle) =>
+        if isFullCycle then dreamingLoop(buffer, pendingFullCycle = true)
+        else onDreamFinished(buffer, pendingFullCycle) // dream timeout
     }
+
+  end dreamingLoop
+
+  private def handleDreaming(
+    cmd: DreamCommand,
+    buffer: List[DreamCommand.ProcessEntry],
+    pendingFullCycle: Boolean
+  ): IO[Unit] =
+    cmd match
+      case pe: DreamCommand.ProcessEntry => dreamingLoop(buffer :+ pe, pendingFullCycle)
+      case DreamCommand.DreamComplete => onDreamFinished(buffer, pendingFullCycle)
+      case DreamCommand.DreamTimeout => onDreamFinished(buffer, pendingFullCycle)
+      // Stale debounce timer from idle — ignore
+      case DreamCommand.FlushEntries => dreamingLoop(buffer, pendingFullCycle)
+      // Full cycle fires while Dream running — defer to after completion
+      case DreamCommand.FullCycleTick => dreamingLoop(buffer, pendingFullCycle = true)
+      case DreamCommand.Shutdown => IO.unit
 
   // ============================================================
   // Helper: handle Dream completion
@@ -172,22 +214,15 @@ object DreamScheduler:
 
   private def onDreamFinished(
     buffer: List[DreamCommand.ProcessEntry],
-    pendingFullCycle: Boolean,
-    timers: TimerScheduler[DreamCommand],
-    hooks: Hooks,
-    debounceDelay: FiniteDuration,
-    fullCycleInterval: FiniteDuration,
-    dreamTimeout: FiniteDuration
-  ): Behavior[DreamCommand] =
+    pendingFullCycle: Boolean
+  ): IO[Unit] =
     hooks.stopDreamAgent()
 
     if buffer.nonEmpty || pendingFullCycle then
       if hooks.trigger(buffer, isFullCycle = pendingFullCycle) then
         if pendingFullCycle then hooks.touchLastDreamTime()
-        timers.startSingleTimer(DreamCommand.DreamTimeout, dreamTimeout)
-        dreaming(Nil, pendingFullCycle = false, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-      else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-    else idle(Nil, timers, hooks, debounceDelay, fullCycleInterval, dreamTimeout)
-  end onDreamFinished
+        dreamingLoop(Nil, pendingFullCycle = false)
+      else idleLoop(Nil, None)
+    else idleLoop(Nil, None)
 
 end DreamScheduler

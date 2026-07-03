@@ -48,65 +48,8 @@ const slashCommands = {
     run: () => {
       sendWs({type: 'getModelOptions', sessionId: activeView.sessionId});
     }
-  },
-  '/bypass': {
-    desc: () => t('slash.bypass'),
-    run: () => {
-      // Show a selection card to toggle bypass-all mode
-      if (!activeView.stream.currentAiBubble) {
-        const row = document.createElement('div');
-        row.className = 'row ai';
-        activeView.stream.currentAiBubble = document.createElement('div');
-        activeView.stream.currentAiBubble.className = 'bubble ai';
-        row.appendChild(activeView.stream.currentAiBubble);
-        activeView.dom.chat.appendChild(row);
-      }
-      const isEnabled = state.bypassAllPermission;
-      import('./chat.js').then(({ showOptions }) => {
-        showOptions(activeView.stream.currentAiBubble, [
-          {
-            question: isEnabled ? t('slash.bypassDisableQ') : t('slash.bypassEnableQ'),
-            options: [
-              { label: isEnabled ? t('slash.bypassDisable') : t('slash.bypassEnable'), desc: t('slash.bypassDesc') },
-              { label: t('chat.cancel'), desc: '' }
-            ],
-            allowOther: false
-          }
-        ], (answers) => {
-          const confirmed = answers[0] === (isEnabled ? t('slash.bypassDisable') : t('slash.bypassEnable'));
-          if (confirmed) {
-            state.bypassAllPermission = !isEnabled;
-            updateBypassBadge(state.bypassAllPermission);
-            renderSystemBubble(
-              state.bypassAllPermission ? t('slash.bypassEnabled') : t('slash.bypassDisabled')
-            );
-          }
-        }, t('chat.apply'));
-      });
-    }
   }
 };
-
-/**
- * Show or hide the bypass badge in the header.
- * Called when bypass mode is toggled.
- */
-function updateBypassBadge(enabled) {
-  // Bypass is a global toggle — keep both the primary and secondary header badges in sync.
-  for (const badge of [
-    document.getElementById('bypass-badge'),
-    document.getElementById('secondary-bypass-badge'),
-  ]) {
-    if (!badge) continue;
-    const textEl = badge.querySelector('.bypass-badge-text');
-    if (enabled) {
-      badge.classList.remove('hidden');
-      if (textEl) textEl.textContent = t('chat.bypassBadge');
-    } else {
-      badge.classList.add('hidden');
-    }
-  }
-}
 
 /** Register skill commands from the server-provided skill list. */
 export function registerSkillCommands(skills) {
@@ -426,45 +369,50 @@ export async function addFileAttachment(file, callback, target) {
 
 // ---------- Send ----------
 export function send() {
-  if (activeView.isSending) {
+  // Capture the view at entry — activeView is a live module binding that ws.js
+  // changes on every incoming message. Without capturing, setTimeout closures
+  // (e.g. the 300ms isSending debounce) would clear the flag on the wrong view
+  // when another session's streaming messages arrive during the window.
+  const v = activeView;
+  if (v.isSending) {
     console.warn('[send] blocked: already sending');
     return;
   }
-  const input = activeView.dom.input;
+  const input = v.dom.input;
   const text = input.value.trim();
-  const isBusy = state.busySessionIds.has(activeView.sessionId);
+  const isBusy = state.busySessionIds.has(v.sessionId);
   // If in skill mode, send as skill activation
-  if (activeView.skillMode) {
-    const skillName = activeView.skillModeName;
+  if (v.skillMode) {
+    const skillName = v.skillModeName;
     cancelSkillMode();
     if (!text || isBusy || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
       return;
     }
-    activeView.isSending = true;
-    if (activeView.sessionId) state.turnExpecting[activeView.sessionId] = true;
-    sendWs({ type: 'skill', skillName, input: text, sessionId: activeView.sessionId });
+    v.isSending = true;
+    if (v.sessionId) state.turnExpecting[v.sessionId] = true;
+    sendWs({ type: 'skill', skillName, input: text, sessionId: v.sessionId });
     renderSkillBubble(skillName, text);
-    saveMsg({type:'user', text, attachments: (activeView.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
+    saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
     input.value = '';
-    saveInputDraft(activeView.sessionId);
-    setTimeout(() => { activeView.isSending = false; }, 300);
+    saveInputDraft(v.sessionId);
+    setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
   // If in ask mode, send as ask question
-  if (activeView.stream.askMode) {
+  if (v.stream.askMode) {
     cancelAskMode();
     if (!text || isBusy || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
-      activeView.isSending = false;
+      v.isSending = false;
       return;
     }
-    activeView.isSending = true;
-    if (activeView.sessionId) state.turnExpecting[activeView.sessionId] = true;
-    sendWs({ type: 'ask', question: text, sessionId: activeView.sessionId });
-    state.sessionAskBuffers[activeView.sessionId] = { question: text, answer: '' };
+    v.isSending = true;
+    if (v.sessionId) state.turnExpecting[v.sessionId] = true;
+    sendWs({ type: 'ask', question: text, sessionId: v.sessionId });
+    state.sessionAskBuffers[v.sessionId] = { question: text, answer: '' };
     renderAskBubble(text);
     input.value = '';
-    saveInputDraft(activeView.sessionId);
-    setTimeout(() => { activeView.isSending = false; }, 300);
+    saveInputDraft(v.sessionId);
+    setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
   // Allow slash commands (except /ask <question> which sends to the agent)
@@ -472,44 +420,44 @@ export function send() {
   if (text.startsWith('/') && !text.startsWith('/ask ')) {
     if (handleSlash(text)) {
       input.value = '';
-      saveInputDraft(activeView.sessionId);
-      setTimeout(() => { activeView.isSending = false; }, 300);
+      saveInputDraft(v.sessionId);
+      setTimeout(() => { v.isSending = false; }, 300);
       return;
     }
   }
-  if ((!text && activeView.pendingAttachments.length === 0) || isBusy) {
-    console.warn('[send] blocked:', { text: text.slice(0,20), busy: state.busySessionIds.has(activeView.sessionId), wsState: state.ws?.readyState });
+  if ((!text && v.pendingAttachments.length === 0) || isBusy) {
+    console.warn('[send] blocked:', { text: text.slice(0,20), busy: state.busySessionIds.has(v.sessionId), wsState: state.ws?.readyState });
     return;
   }
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
     console.warn('[send] ws not open:', { ws: !!state.ws, readyState: state.ws?.readyState });
     return;
   }
-  activeView.isSending = true;
+  v.isSending = true;
   // Mark this session as expecting a turn (prevents stray thinking bubbles after done)
-  if (activeView.sessionId) state.turnExpecting[activeView.sessionId] = true;
+  if (v.sessionId) state.turnExpecting[v.sessionId] = true;
   // Intercept /ask <question> before normal slash handling
   if (text.startsWith('/ask ')) {
     const question = text.slice(5).trim();
     if (question) {
-      sendWs({ type: 'ask', question, sessionId: activeView.sessionId });
-      state.sessionAskBuffers[activeView.sessionId] = { question, answer: '' };
+      sendWs({ type: 'ask', question, sessionId: v.sessionId });
+      state.sessionAskBuffers[v.sessionId] = { question, answer: '' };
       renderAskBubble(question);
     }
     input.value = '';
-    saveInputDraft(activeView.sessionId);
-    setTimeout(() => { activeView.isSending = false; }, 300);
+    saveInputDraft(v.sessionId);
+    setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
   if (handleSlash(text)) {
     input.value = '';
-    saveInputDraft(activeView.sessionId);
+    saveInputDraft(v.sessionId);
     // Debounce: keep lock briefly to prevent accidental double-trigger of slash commands
-    setTimeout(() => { activeView.isSending = false; }, 300);
+    setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
-  renderUserBubble(text, activeView.pendingAttachments);
-  saveMsg({type:'user', text, attachments: (activeView.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
+  renderUserBubble(text, v.pendingAttachments);
+  saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
   // Save to input history
   if (text && text !== '/clear') {
     state.inputHistory.push(text);
@@ -518,46 +466,46 @@ export function send() {
       console.warn('[input] history save failed:', e);
     }
   }
-  activeView.historyIndex = -1;
-  activeView.historyDraft = '';
+  v.historyIndex = -1;
+  v.historyDraft = '';
   try {
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     sendWs({
       content: text,
-      attachments: activeView.pendingAttachments.map(a => ({
+      attachments: v.pendingAttachments.map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
       clientMessageId,
-      sessionId: activeView.sessionId,
-      chatWidth: activeView.dom.chat?.clientWidth || 0
+      sessionId: v.sessionId,
+      chatWidth: v.dom.chat?.clientWidth || 0
     });
   } catch (e) {
     console.error('WebSocket send failed:', e);
   }
   input.value = '';
   input.style.height = 'auto';
-  activeView.pendingAttachments = [];
-  activeView.dom.attPreview.innerHTML = '';
+  v.pendingAttachments = [];
+  v.dom.attPreview.innerHTML = '';
   // Immediately clear the draft for this session so it is not restored after refresh
-  saveInputDraft(activeView.sessionId);
-  setBusy(activeView.sessionId);
+  saveInputDraft(v.sessionId);
+  setBusy(v.sessionId);
   // Start turn timer
-  state.turnStartTimes[activeView.sessionId] = Date.now();
+  state.turnStartTimes[v.sessionId] = Date.now();
   // Release send lock after a short debounce to prevent double-click / rapid Enter
-  setTimeout(() => { activeView.isSending = false; }, 300);
+  setTimeout(() => { v.isSending = false; }, 300);
   // Clean up any orphaned thinking placeholders from previous incomplete streams
   if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-  activeView.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+  v.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
     const row = el.closest('.row');
     if (row) row.remove();
   });
-  activeView.stream.currentAiBubble = null;
-  activeView.stream.aiText = '';
-  activeView.stream.currentThinkingBubble = null;
-  activeView.stream.thinkingText = '';
+  v.stream.currentAiBubble = null;
+  v.stream.aiText = '';
+  v.stream.currentThinkingBubble = null;
+  v.stream.thinkingText = '';
   // Safety timeout: backend sends 'timeout' event, but this is a last-resort fallback
   // in case the backend event never arrives. Uses streamTimeoutMs from server config (+ 30s buffer).
-  const sid = activeView.sessionId;
+  const sid = v.sessionId;
   if (sid && state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
@@ -570,8 +518,8 @@ export function send() {
       // click Stop (which does send interrupt).
       sendWs({type: 'interrupt', sessionId: sid});
       import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const v = findViewBySessionId(sid);
-        if (v) { setActiveView(v); renderTimeoutNotice(); }
+        const timeoutView = findViewBySessionId(sid);
+        if (timeoutView) { setActiveView(timeoutView); renderTimeoutNotice(); }
         clearBusy(sid);
         clearStatus();
       });

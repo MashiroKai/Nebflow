@@ -69,7 +69,7 @@ Example: rounds=3 means summarize the last 3 rounds of tool call results."""
           // Use a Deferred to get the result back from the actor
           for
             deferred <- cats.effect.Deferred[IO, Either[String, Int]]
-            _ <- IO(ref ! AgentCommand.ReplaceToolResults(rounds, summary, deferred))
+            _ <- ref ! AgentCommand.ReplaceToolResults(rounds, summary, deferred)
             result <- deferred.get
           yield result match
             case Right(count) => Right(s"Replaced $count tool result(s). Summary: $summary")

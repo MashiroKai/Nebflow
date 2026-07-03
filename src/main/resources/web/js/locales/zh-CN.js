@@ -214,7 +214,6 @@ export default {
   'chat.permLevel.dangerous': '危险操作：{detail}',
   'chat.permLevel.critical': '严重操作：{detail}',
   'chat.permExecCmd': '执行命令',
-  'chat.bypassBadge': '自动放行',
   'chat.copied': '已复制！',
   'chat.copy': '复制',
   'chat.noMoreMessages': '— 没有更多消息 —',
@@ -273,14 +272,7 @@ export default {
   'slash.skillActivated': '使用技能: {skill}',
   'slash.skillBadge': '技能',
   'slash.model': '选择本次会话的模型',
-  'slash.bypass': '切换自动放行模式（跳过所有权限审批）',
-  'slash.bypassEnable': '开启自动放行',
-  'slash.bypassEnableQ': '开启自动放行模式？',
-  'slash.bypassDisable': '关闭自动放行',
-  'slash.bypassDisableQ': '关闭自动放行模式？',
-  'slash.bypassDesc': '开启后所有工具将自动通过审批，无需确认。请谨慎使用。',
-  'slash.bypassEnabled': '自动放行模式已开启 — 所有工具将自动通过。',
-  'slash.bypassDisabled': '自动放行模式已关闭 — 工具将需要审批确认。',
+  'bypass.toggle': '自动放行：跳过当前会话的所有权限审批',
 
   // === Voice ===
   'voice.listening': '正在聆听...',
