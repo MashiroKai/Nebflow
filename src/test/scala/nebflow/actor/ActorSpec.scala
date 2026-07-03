@@ -41,8 +41,8 @@ class ActorSpec extends CatsEffectSuite:
 
     def counter(value: Int): Behavior[Cmd] =
       Behaviors.receiveMessage {
-        case Add(n)    => IO.pure(counter(value + n))
-        case Get(r)    => (r ! value) *> IO.pure(counter(value))
+        case Add(n) => IO.pure(counter(value + n))
+        case Get(r) => (r ! value) *> IO.pure(counter(value))
       }
 
     for
@@ -69,15 +69,17 @@ class ActorSpec extends CatsEffectSuite:
       Behaviors.setup { ctx =>
         IO.pure(Behaviors.receiveMessage[Cmd] {
           case Start =>
-            ctx.forkTurn(
-              IO.sleep(10.seconds) *> completed.set(true) *> (ctx.self ! Done("finished"))
-            ).as(
-              Behaviors.receiveMessage[Cmd] {
-                case Done(_)     => IO.pure(Behaviors.stopped)
-                case Interrupt    => IO.pure(Behaviors.stopped)
-                case Start        => IO.pure(Behaviors.stopped)
-              }
-            )
+            ctx
+              .forkTurn(
+                IO.sleep(10.seconds) *> completed.set(true) *> (ctx.self ! Done("finished"))
+              )
+              .as(
+                Behaviors.receiveMessage[Cmd] {
+                  case Done(_) => IO.pure(Behaviors.stopped)
+                  case Interrupt => IO.pure(Behaviors.stopped)
+                  case Start => IO.pure(Behaviors.stopped)
+                }
+              )
           case Interrupt =>
             ctx.cancelCurrentTurn().as(Behaviors.stopped)
           case Done(_) => IO.pure(Behaviors.stopped)
@@ -105,8 +107,8 @@ class ActorSpec extends CatsEffectSuite:
     sealed trait Cmd
     case class Ping(replyTo: ActorRef[String]) extends Cmd
 
-    val pong = Behaviors.receiveMessage[Cmd] {
-      case Ping(r) => (r ! "pong") *> IO.pure(Behaviors.stopped)
+    val pong = Behaviors.receiveMessage[Cmd] { case Ping(r) =>
+      (r ! "pong") *> IO.pure(Behaviors.stopped)
     }
 
     for
@@ -138,6 +140,7 @@ class ActorSpec extends CatsEffectSuite:
       finalCount <- count.get
       _ <- system.stopAll
     yield assertEquals(finalCount, 1)
+    end for
   }
 
   // ============================================================
