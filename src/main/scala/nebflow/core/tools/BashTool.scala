@@ -512,6 +512,8 @@ Git safety:
           payload = payload,
           metadata = metadata
         )
+      ).handleErrorWith(e =>
+        logger.warn(s"Failed to notify agent for background job $jobId: ${e.getMessage}")
       )
 
       // Notify frontend via WS so the indicator dismisses
@@ -524,14 +526,14 @@ Git safety:
             "description" -> description.asJson,
             "status" -> eventType.asJson
           )
-        ).handleErrorWith(_ => IO.unit)
+        ).handleErrorWith(e => logger.warn(s"WS send failed for background job $jobId: ${e.getMessage}"))
       }
 
-      notifyFrontend *> notifyAgent *>
-        logger.info(
-          s"Background job $jobId \"$description\" $eventType$exitInfo",
-          "sessionId" -> ctx.sessionId.getOrElse("")
-        )
+      // Log first so we know the callback fired, then send both notifications
+      // independently — each has its own error recovery so one failure
+      // doesn't prevent the other.
+      logger.info(s"Background job $jobId callback: $eventType$exitInfo", "sessionId" -> ctx.sessionId.getOrElse("")) *>
+        notifyFrontend.void *> notifyAgent
     }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
