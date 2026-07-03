@@ -143,7 +143,7 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
 
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
     ctx.wsSend.fold(
-      logger.warn(s"Cannot notify frontend for remote background job $jobId: no wsSend")
+      logger.debug(s"Cannot notify frontend for remote background job $jobId: no wsSend")
     )(send =>
       send(
         io.circe.Json.obj(
