@@ -572,8 +572,6 @@ body.split-view #secondary-panel.visible {
 }
 #secondary-bg-dropdown.hidden,
 #secondary-delegate-dropdown.hidden { display: none; }
-/* Bypass badge parity */
-#secondary-bypass-badge { white-space: nowrap; }
-#secondary-bypass-badge.hidden { display: none; }
+/* Bypass toggle parity — shares .bypass-toggle class with primary */
 /* Memory button parity (shares .memory-btn class with primary) */
 #secondary-memory-btn.memory-btn { font-size: 12px; }

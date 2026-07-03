@@ -25,9 +25,11 @@ class WsHub:
 
   /** Broadcast a JSON message to every registered connection. */
   def broadcast(json: Json): IO[Unit] =
-    connsRef.get.flatMap(_.values.toList.traverse_(_.apply(json)))
+    connsRef.get.flatMap { conns =>
+      conns.values.toList.traverse_(send => send(json).handleErrorWith(_ => IO.unit))
+    }
 
   /** Send to a single connection by its handle. */
   def sendTo(id: String, json: Json): IO[Unit] =
-    connsRef.get.flatMap(_.get(id).traverse_(_.apply(json)))
+    connsRef.get.flatMap(_.get(id).traverse_(send => send(json).handleErrorWith(_ => IO.unit)))
 end WsHub

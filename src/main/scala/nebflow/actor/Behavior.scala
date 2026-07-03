@@ -2,18 +2,20 @@ package nebflow.actor
 
 import cats.effect.IO
 
-/** An actor's behavior: process one message, return the next behavior.
-  *
-  * State is carried through the returned behavior's closure. This is the
-  * classic Actor model pattern — each message handler returns the next
-  * behavior, carrying the updated state.
-  *
-  * The key difference from Pekko: receive returns IO[Behavior[Msg]],
-  * making the message handler cancelable, composable, and resource-safe.
-  */
+/**
+ * An actor's behavior: process one message, return the next behavior.
+ *
+ * State is carried through the returned behavior's closure. This is the
+ * classic Actor model pattern — each message handler returns the next
+ * behavior, carrying the updated state.
+ *
+ * The key difference from Pekko: receive returns IO[Behavior[Msg]],
+ * making the message handler cancelable, composable, and resource-safe.
+ */
 trait Behavior[Msg]:
   def receive(ctx: ActorContext[Msg], msg: Msg): IO[Behavior[Msg]]
   def isStopped: Boolean = false
+
   /** Called on actor spawn. Setup behaviors override to initialize context. */
   def onStart(ctx: ActorContext[Msg]): IO[Behavior[Msg]] = IO.pure(this)
 
@@ -21,6 +23,7 @@ object Behaviors:
 
   /** Setup behavior — runs factory on spawn to produce initial behavior. */
   final case class Setup[Msg](factory: ActorContext[Msg] => IO[Behavior[Msg]]) extends Behavior[Msg]:
+
     def receive(ctx: ActorContext[Msg], msg: Msg): IO[Behavior[Msg]] =
       factory(ctx).flatMap(_.receive(ctx, msg))
     override def onStart(ctx: ActorContext[Msg]): IO[Behavior[Msg]] = factory(ctx)
@@ -39,6 +42,7 @@ object Behaviors:
 
   /** Terminal behavior — actor stops after returning this. */
   object Stopped extends Behavior[Nothing]:
+
     def receive(ctx: ActorContext[Nothing], msg: Nothing): IO[Behavior[Nothing]] =
       IO.pure(this)
     override def isStopped: Boolean = true

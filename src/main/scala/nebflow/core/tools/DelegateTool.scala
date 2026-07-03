@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.{Deferred, IO}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
+import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.{Message, MessageRole}
@@ -212,12 +212,20 @@ $prompt"""
       childWsSend = routeWsSend(wsSend, parentSessionId)
       subagentRef <- system.spawn(
         AgentActor(
-          agentDef = agentDef, resources = resources, wsSend = childWsSend,
-          depth = childDepth, parentRef = parentRef, sessionId = None,
-          sessionName = Some(description), initialMessages = initialMessages,
-          readTracker = Some(readTracker), fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow, projectRoot = Some(projectRoot)
-        ), subagentId
+          agentDef = agentDef,
+          resources = resources,
+          wsSend = childWsSend,
+          depth = childDepth,
+          parentRef = parentRef,
+          sessionId = None,
+          sessionName = Some(description),
+          initialMessages = initialMessages,
+          readTracker = Some(readTracker),
+          fileHistory = Some(fileHistory),
+          contextWindow = resources.contextWindow,
+          projectRoot = Some(projectRoot)
+        ),
+        subagentId
       )
       adapterRef <- system.spawn(
         syncAdapter(subagentRef, agentName, resources, resultDeferred),
@@ -275,12 +283,20 @@ $prompt"""
       childWsSend = routeWsSend(wsSend, parentSessionId)
       subagentRef <- system.spawn(
         AgentActor(
-          agentDef = agentDef, resources = resources, wsSend = childWsSend,
-          depth = childDepth, parentRef = parentRef, sessionId = None,
-          sessionName = Some(description), initialMessages = initialMessages,
-          readTracker = Some(readTracker), fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow, projectRoot = Some(projectRoot)
-        ), subagentId
+          agentDef = agentDef,
+          resources = resources,
+          wsSend = childWsSend,
+          depth = childDepth,
+          parentRef = parentRef,
+          sessionId = None,
+          sessionName = Some(description),
+          initialMessages = initialMessages,
+          readTracker = Some(readTracker),
+          fileHistory = Some(fileHistory),
+          contextWindow = resources.contextWindow,
+          projectRoot = Some(projectRoot)
+        ),
+        subagentId
       )
       adapterRef <- system.spawn(
         backgroundAdapter(subagentRef, parentRef, description, agentName, subagentId, resources),
@@ -315,9 +331,12 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
       val notifyParent = parentRef match
         case Some(ref) =>
           ref ! AgentCommand.ExternalEvent(
-            source = "delegate", eventType = eventType, payload = payload,
+            source = "delegate",
+            eventType = eventType,
+            payload = payload,
             metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
-            correlationId = Some(subagentId))
+            correlationId = Some(subagentId)
+          )
         case None => IO.unit
 
       (notifyParent *>

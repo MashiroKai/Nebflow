@@ -98,7 +98,8 @@ When in doubt, prefer a narrower scope. You can always promote to a wider scope 
           val source = ctx.agentDef.map(_.name).getOrElse("unknown")
           val folderId = ctx.folderId
           // Send entry directly to Dream scheduler queue — fire-and-forget, non-blocking
-          scheduler.submitEntry(DreamCommand.ProcessEntry(scopeStr, content, detail, source, folderId))
+          scheduler
+            .submitEntry(DreamCommand.ProcessEntry(scopeStr, content, detail, source, folderId))
             .as(Right("Queued for Dream processing."))
         case None =>
           IO.pure(Left(ToolError("Dream scheduler not available")))

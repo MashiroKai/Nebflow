@@ -1,7 +1,7 @@
 package nebflow.core.scheduler
 
-import cats.effect.{Deferred, IO, Ref}
 import cats.effect.std.Dispatcher
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -48,7 +48,7 @@ class ScheduledTaskService(
   def notifyTaskChange(): IO[Unit] =
     wakeupRef.get.flatMap {
       case Some(d) => d.complete(()).void
-      case None    => IO.unit
+      case None => IO.unit
     }
 
   // ============================================================
@@ -57,14 +57,12 @@ class ScheduledTaskService(
 
   private def loop: IO[Unit] =
     for
-      _ <- fireDueTasks.handleErrorWith(e =>
-        logger.warn(s"Scheduled task loop error: ${e.getMessage}").void
-      )
+      _ <- fireDueTasks.handleErrorWith(e => logger.warn(s"Scheduled task loop error: ${e.getMessage}").void)
       delay <- nextDelay
       sigOpt <- wakeupRef.get
       _ <- sigOpt match
         case Some(sig) => IO.race(IO.sleep(delay), sig.get).void
-        case None      => IO.sleep(delay)
+        case None => IO.sleep(delay)
       // Create a fresh Deferred for the next round
       newSig <- Deferred[IO, Unit]
       _ <- wakeupRef.set(Some(newSig))
@@ -90,7 +88,7 @@ class ScheduledTaskService(
     val formattedTime = formatTime(task.triggerAt)
     val refNote = task.referencePath match
       case Some(path) => s"\n（参考文档: $path）"
-      case None       => ""
+      case None => ""
     val payload = s"[定时任务触发] ${task.content}$refNote\n（预定于 $formattedTime 触发）"
 
     val event = AgentCommand.ExternalEvent(
@@ -127,6 +125,10 @@ class ScheduledTaskService(
         )
       )
     yield ()
+
+    end for
+
+  end triggerTask
 
   private def formatTime(epochMs: Long): String =
     val instant = Instant.ofEpochMilli(epochMs)

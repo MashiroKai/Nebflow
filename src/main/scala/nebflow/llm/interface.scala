@@ -98,10 +98,10 @@ object LlmInterface:
                           Some(req.agentId)
                         )
                       )
-                    ),
+                    )
+                ,
                 onAttempt = None,
-                onProviderExhausted = Some(c =>
-                  healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
+                onProviderExhausted = Some(c => healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
               )
             yield result).flatMap { result =>
               val durationMs = System.currentTimeMillis() - start
@@ -161,25 +161,35 @@ object LlmInterface:
                       def attemptWithHealthCheck: fs2.Stream[IO, StreamChunk] =
                         fs2.Stream.eval(healthMonitor.filterCandidates(candidates)).flatMap {
                           case (Nil, _) =>
-                            val notifyDown = onAttempt.traverse_(_.apply(
-                              FallbackAttempt(
-                                providerId = "", model = "",
-                                reason = None, permanence = None,
-                                durationMs = 0, retriesUsed = 0,
-                                timestamp = java.time.Instant.now().toString,
-                                message = Some("所有模型不可用，等待恢复中...")
-                              )
-                            ))
-                            fs2.Stream.eval(notifyDown *> healthMonitor.waitForAnyUp()).flatMap { _ =>
-                              val notifyUp = onAttempt.traverse_(_.apply(
+                            val notifyDown = onAttempt.traverse_(
+                              _.apply(
                                 FallbackAttempt(
-                                  providerId = "", model = "",
-                                  reason = Some(FailoverReason.Unknown), permanence = None,
-                                  durationMs = 0, retriesUsed = 0,
+                                  providerId = "",
+                                  model = "",
+                                  reason = None,
+                                  permanence = None,
+                                  durationMs = 0,
+                                  retriesUsed = 0,
                                   timestamp = java.time.Instant.now().toString,
-                                  message = Some("模型已恢复，继续处理...")
+                                  message = Some("所有模型不可用，等待恢复中...")
                                 )
-                              ))
+                              )
+                            )
+                            fs2.Stream.eval(notifyDown *> healthMonitor.waitForAnyUp()).flatMap { _ =>
+                              val notifyUp = onAttempt.traverse_(
+                                _.apply(
+                                  FallbackAttempt(
+                                    providerId = "",
+                                    model = "",
+                                    reason = Some(FailoverReason.Unknown),
+                                    permanence = None,
+                                    durationMs = 0,
+                                    retriesUsed = 0,
+                                    timestamp = java.time.Instant.now().toString,
+                                    message = Some("模型已恢复，继续处理...")
+                                  )
+                                )
+                              )
                               fs2.Stream.eval(notifyUp).drain ++ attemptWithHealthCheck
                             }
                           case (up, _) =>
@@ -301,7 +311,8 @@ object LlmInterface:
                                     classification.message.orElse(Option(err.getMessage))
                                   )
                                   val notify = onAttempt.traverse_(_.apply(attempt))
-                                  val downReason = classification.message.orElse(Option(err.getMessage))
+                                  val downReason = classification.message
+                                    .orElse(Option(err.getMessage))
                                     .getOrElse(classification.reason.toString)
 
                                   if classification.permanence == ErrorPermanence.Permanent then
