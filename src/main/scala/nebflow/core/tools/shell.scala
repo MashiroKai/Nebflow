@@ -387,10 +387,15 @@ final class ShellSession private (
           // Without this, a construction-time throw bypasses handleErrorWith
           // and silently kills the fiber — the deferred is already completed
           // so the job looks done, but the notification is never sent.
-          IO.delay(cb(result)).flatten.handleErrorWith(e =>
-            IO.delay(NebflowLogger.forName("nebflow.shell")
-              .warn(s"Background job callback failed: ${e.getMessage}"))
-          )
+          IO.delay(cb(result))
+            .flatten
+            .handleErrorWith(e =>
+              IO.delay(
+                NebflowLogger
+                  .forName("nebflow.shell")
+                  .warn(s"Background job callback failed: ${e.getMessage}")
+              )
+            )
         }
     }
 
