@@ -40,10 +40,8 @@ Usage:
 - Use this tool for accessing URLs provided by the user or found via WebSearch
 - Supports HTML pages, plain text, JSON, and other text-based content
 - Automatically skips binary content (images, videos, archives)
-- For sites behind anti-bot protection (ScienceDirect, IEEE, etc.), automatically
-  falls back to a headless browser, then to a headed browser window where you
-  can complete any human verification (e.g. Cloudflare challenge). Once verified,
-  the session cookie is cached for subsequent requests.
+- For sites behind anti-bot protection, falls back to Obscura or Playwright
+  (if available) for stealth-rendered page extraction.
 - Returns the content in markdown (default) or plain text format"""
 
   val inputSchema = JsonObject.fromIterable(
@@ -160,11 +158,6 @@ Usage:
     case NeedBrowser
     case Error(msg: String)
 
-  private enum BrowserOutcome:
-    case Success(text: String)
-    case NeedHeaded
-    case Error(msg: String)
-
   // ── Layer 1: HTTP fetch ────────────────────────────────────────────
 
   private def tryHttp(url: String, maxChars: Int, format: String): IO[HttpOutcome] =
@@ -257,52 +250,23 @@ Usage:
     }
   end tryHttp
 
-  // ── Layer 2/3: Browser fetch ───────────────────────────────────────
+  // ── Layer 2: Browser fallback (Obscura → Playwright) ───────────────
 
-  private def tryBrowser(url: String, maxChars: Int, format: String, headless: Boolean): IO[BrowserOutcome] =
-    val maxWait = if headless then 10 else 30
-    BrowserManager
-      .fetch(url, headless = headless, maxWaitSeconds = maxWait)
-      .map { result =>
-        // Challenge detection: title-based + status+content based
-        // ScienceDirect returns 403 with title "ScienceDirect" (not a standard challenge title),
-        // so we also check for Cloudflare challenge markers in content
-        val isChallenge = isChallengeTitle(result.title) ||
-          (result.status == 403 && result.content.contains("challenge-platform")) ||
-          result.status == 418
-        if isChallenge then
-          if headless then
-            logger.infoSync(s"WebFetch headless challenge, upgrading to headed", "url" -> url.take(80))
-            BrowserOutcome.NeedHeaded
+  private def tryBrowser(url: String, maxChars: Int, format: String): IO[Either[ToolError, String]] =
+    BrowserManager.fetch(url, maxWaitSeconds = 15).map { result =>
+      if result.status == 0 then Left(ToolError(s"Anti-bot page could not be fetched: ${result.title}"))
+      else
+        val (title, text, metaDesc) =
+          if result.isMarkdown then (Option(result.title).filter(_.nonEmpty), result.content, None)
           else
-            BrowserOutcome.Error(
-              "Anti-bot challenge not resolved. Try opening the URL in your browser manually."
-            )
-        else
-          // Browser may return Markdown (Obscura/DOM-to-Markdown) or raw HTML
-          val (title, text, metaDesc) =
-            if result.isMarkdown then (Option(result.title).filter(_.nonEmpty), result.content, None)
-            else
-              val (t, txt, md) = extractHtmlText(result.content)
-              (t.orElse(Option(result.title).filter(_.nonEmpty)), txt, md)
-          val output = buildOutput(title, text, metaDesc, format)
-          val (truncated, _) = truncate(output, maxChars)
-          writeCache(url, truncated)
-          logger.infoSync(
-            s"WebFetch browser success",
-            "url" -> url.take(80),
-            "headless" -> headless.toString,
-            "resultLen" -> truncated.length.toString
-          )
-          BrowserOutcome.Success(truncated)
-        end if
-      }
-      .handleError { e =>
-        val err = describeError(e)
-        logger.errorSync(s"WebFetch browser error: $err", "url" -> url.take(80))
-        if headless then BrowserOutcome.NeedHeaded else BrowserOutcome.Error(s"Browser fetch failed: $err")
-      }
-  end tryBrowser
+            val (t, txt, md) = extractHtmlText(result.content)
+            (t.orElse(Option(result.title).filter(_.nonEmpty)), txt, md)
+        val output = buildOutput(title, text, metaDesc, format)
+        val (truncated, _) = truncate(output, maxChars)
+        writeCache(url, truncated)
+        logger.infoSync(s"WebFetch browser success", "url" -> url.take(80), "resultLen" -> truncated.length.toString)
+        Right(truncated)
+    }
 
   // ── Main entry: layered fallback ───────────────────────────────────
 
@@ -326,24 +290,8 @@ Usage:
           case HttpOutcome.Success(text) => IO.pure(Right(text))
           case HttpOutcome.Error(msg) => IO.pure(Left(ToolError(msg)))
           case HttpOutcome.NeedBrowser =>
-            // Layer 2: headless browser
-            tryBrowser(url, maxChars, format, headless = true).flatMap {
-              case BrowserOutcome.Success(text) => IO.pure(Right(text))
-              case BrowserOutcome.Error(msg) => IO.pure(Left(ToolError(msg)))
-              case BrowserOutcome.NeedHeaded =>
-                // Layer 3: headed browser (user may need to complete verification)
-                logger.infoSync(s"WebFetch opening headed browser for user verification", "url" -> url.take(80))
-                tryBrowser(url, maxChars, format, headless = false).map {
-                  case BrowserOutcome.Success(text) => Right(text)
-                  case BrowserOutcome.Error(msg) => Left(ToolError(msg))
-                  case BrowserOutcome.NeedHeaded =>
-                    Left(
-                      ToolError(
-                        "Anti-bot challenge could not be resolved. Try opening the URL in your browser."
-                      )
-                    )
-                }
-            }
+            // Layer 2: Obscura → Playwright (if available)
+            tryBrowser(url, maxChars, format)
         }
     end match
   end call

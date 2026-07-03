@@ -40,10 +40,10 @@ lazy val root = (project in file("."))
       // Logging
       logbackClassic,
       logbackCore,
+      // Browser automation (optional — not bundled in distribution, detected at runtime)
+      playwright % "provided",
       // Diff
       diffUtils,
-      // Browser automation (lazy-loaded at runtime, adds ~40MB JAR)
-      playwright,
       // Testing
       munit,
       munitCatsEffect,
