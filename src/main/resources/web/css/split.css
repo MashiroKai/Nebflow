@@ -524,13 +524,14 @@ body.split-view #secondary-panel.visible {
 }
 #secondary-delegate-indicator:hover { background: rgba(59,130,246,0.25); }
 #secondary-delegate-indicator.hidden { display: none; }
-/* Dropdowns (bg + delegate) — sapphire glass, aligned with sidebar/header */
+/* Dropdowns (bg + delegate) — sapphire glass.
+   Positioned relative to #secondary-panel (not .secondary-header-right) so
+   backdrop-filter can blur chat content. */
 #secondary-bg-dropdown,
 #secondary-delegate-dropdown {
   position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 6px;
+  top: 50px;
+  right: 24px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
