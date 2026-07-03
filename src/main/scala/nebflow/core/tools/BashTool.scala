@@ -413,11 +413,12 @@ Git safety:
   ): Either[ToolError, String] =
     val prefix = desc.map(d => s"[$d]\n").getOrElse("")
     val dirLine = s"(cwd: ${result.cwd})\n"
+    val exitLine = if result.exitCode != 0 then s"(exit ${result.exitCode})\n" else ""
     val cleanedOut = cleanOutput(sanitizeCardOutput(result.stdout))
     val cleanedErr = cleanOutput(result.stderr)
     val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
     val output = cleanedOut + errLine
-    val full = prefix + dirLine + output
+    val full = prefix + dirLine + exitLine + output
     if full.trim.isEmpty then Right("[Command executed successfully with no output]")
     else Right(full)
 
