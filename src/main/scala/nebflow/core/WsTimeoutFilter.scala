@@ -1,8 +1,8 @@
 package nebflow.core
 
-import ch.qos.logback.classic.{Level, Logger}
 import ch.qos.logback.classic.spi.IThrowableProxy
 import ch.qos.logback.classic.turbo.TurboFilter
+import ch.qos.logback.classic.{Level, Logger}
 import ch.qos.logback.core.spi.FilterReply
 import org.slf4j.Marker
 
@@ -33,12 +33,12 @@ class WsTimeoutFilter extends TurboFilter:
   )
 
   override def decide(
-      marker: Marker,
-      logger: Logger,
-      level: Level,
-      format: String,
-      params: Array[Object],
-      t: Throwable
+    marker: Marker,
+    logger: Logger,
+    level: Level,
+    format: String,
+    params: Array[Object],
+    t: Throwable
   ): FilterReply =
     if t == null || format == null then FilterReply.NEUTRAL
     else if !format.toLowerCase.contains("terminated") then FilterReply.NEUTRAL
@@ -47,16 +47,15 @@ class WsTimeoutFilter extends TurboFilter:
       def isBenign(throwable: Throwable): Boolean =
         val className = throwable.getClass.getName
         val msg = Option(throwable.getMessage).getOrElse("")
-        benignThrowables.contains(className) && benignMessages.exists(m =>
-          msg.toLowerCase.contains(m.toLowerCase)
-        )
+        benignThrowables.contains(className) && benignMessages.exists(m => msg.toLowerCase.contains(m.toLowerCase))
 
       def checkCause(throwable: Throwable, depth: Int): Boolean =
         if depth > 5 then false
         else if isBenign(throwable) then true
-        else Option(throwable.getCause) match
-          case Some(c) if c != throwable => checkCause(c, depth + 1)
-          case _                          => false
+        else
+          Option(throwable.getCause) match
+            case Some(c) if c != throwable => checkCause(c, depth + 1)
+            case _ => false
 
       if checkCause(t, 0) then FilterReply.DENY
       else FilterReply.NEUTRAL
