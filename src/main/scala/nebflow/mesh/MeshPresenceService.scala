@@ -149,7 +149,7 @@ final class MeshPresenceService(
                     Left(e.getMessage)
                 end try
               }.flatMap {
-                case Right(_) => logger.info(s"Presence connected: ${peer.deviceName} ($host)")
+                case Right(_) => logger.debug(s"Presence connected: ${peer.deviceName} ($host)")
                 case Left(err) => logger.debug(s"Presence connect failed: ${peer.deviceName} - $err")
               }
             }

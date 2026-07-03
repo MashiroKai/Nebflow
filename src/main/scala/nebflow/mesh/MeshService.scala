@@ -265,7 +265,7 @@ class MeshService private (
           userDescription = info.userDescription
         )
         peersRef.update(_ + (info.deviceId -> peer)) *>
-          logger.info(s"Peer announced: ${info.deviceName} at ${peer.address}")
+          logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
     }
 
   /** Check if an IP belongs to the Tailscale CGNAT range (100.64.0.0/10). */
