@@ -135,14 +135,16 @@ class DreamScheduler(
             ms.max(1).millis
           case None => debounceDelay
         IO.race(IO.sleep(remaining), IO.sleep(fullCycleInterval)).map {
-          case Left(_)  => false // debounce fired
-          case Right(_) => true  // full cycle fired
+          case Left(_) => false // debounce fired
+          case Right(_) => true // full cycle fired
         }
 
     IO.race(queue.take, timer).flatMap {
-      case Left(cmd)           => handleIdle(cmd, buffer, debounceDeadline)
-      case Right(isFullCycle)  => flushIdle(buffer, isFullCycle)
+      case Left(cmd) => handleIdle(cmd, buffer, debounceDeadline)
+      case Right(isFullCycle) => flushIdle(buffer, isFullCycle)
     }
+
+  end idleLoop
 
   private def handleIdle(
     cmd: DreamCommand,
@@ -155,8 +157,8 @@ class DreamScheduler(
         // Start debounce only on first entry (when buffer was empty)
         val newDeadline = debounceDeadline.orElse(Some(System.currentTimeMillis() + debounceDelay.toMillis))
         idleLoop(newBuffer, newDeadline)
-      case DreamCommand.FlushEntries     => flushIdle(buffer, isFullCycle = false)
-      case DreamCommand.FullCycleTick    => flushIdle(buffer, isFullCycle = true)
+      case DreamCommand.FlushEntries => flushIdle(buffer, isFullCycle = false)
+      case DreamCommand.FullCycleTick => flushIdle(buffer, isFullCycle = true)
       // Stale completion signals from a previous cycle — ignore
       case DreamCommand.DreamComplete | DreamCommand.DreamTimeout => idleLoop(buffer, debounceDeadline)
       case DreamCommand.Shutdown => IO.unit
@@ -178,16 +180,18 @@ class DreamScheduler(
   ): IO[Unit] =
     val timer: IO[Boolean] =
       IO.race(IO.sleep(dreamTimeout), IO.sleep(fullCycleInterval)).map {
-        case Left(_)  => false // dream timeout
-        case Right(_) => true  // full cycle fired
+        case Left(_) => false // dream timeout
+        case Right(_) => true // full cycle fired
       }
 
     IO.race(queue.take, timer).flatMap {
-      case Left(cmd)  => handleDreaming(cmd, buffer, pendingFullCycle)
+      case Left(cmd) => handleDreaming(cmd, buffer, pendingFullCycle)
       case Right(isFullCycle) =>
         if isFullCycle then dreamingLoop(buffer, pendingFullCycle = true)
         else onDreamFinished(buffer, pendingFullCycle) // dream timeout
     }
+
+  end dreamingLoop
 
   private def handleDreaming(
     cmd: DreamCommand,
@@ -196,13 +200,13 @@ class DreamScheduler(
   ): IO[Unit] =
     cmd match
       case pe: DreamCommand.ProcessEntry => dreamingLoop(buffer :+ pe, pendingFullCycle)
-      case DreamCommand.DreamComplete    => onDreamFinished(buffer, pendingFullCycle)
-      case DreamCommand.DreamTimeout     => onDreamFinished(buffer, pendingFullCycle)
+      case DreamCommand.DreamComplete => onDreamFinished(buffer, pendingFullCycle)
+      case DreamCommand.DreamTimeout => onDreamFinished(buffer, pendingFullCycle)
       // Stale debounce timer from idle — ignore
       case DreamCommand.FlushEntries => dreamingLoop(buffer, pendingFullCycle)
       // Full cycle fires while Dream running — defer to after completion
       case DreamCommand.FullCycleTick => dreamingLoop(buffer, pendingFullCycle = true)
-      case DreamCommand.Shutdown      => IO.unit
+      case DreamCommand.Shutdown => IO.unit
 
   // ============================================================
   // Helper: handle Dream completion

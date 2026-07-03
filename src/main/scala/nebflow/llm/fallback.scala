@@ -146,8 +146,7 @@ object Fallback:
 
           val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate))
 
-          if classification.permanence == ErrorPermanence.Permanent then
-            notifyExhausted *> fallback(allFailures)
+          if classification.permanence == ErrorPermanence.Permanent then notifyExhausted *> fallback(allFailures)
           else if retriesLeft > 0 then
             val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
             val delay = math.min(backoffMs + jitter, MaxBackoffMs)

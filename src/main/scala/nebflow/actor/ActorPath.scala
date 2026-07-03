@@ -1,14 +1,16 @@
 package nebflow.actor
 
-/** Address of an actor in the Nebflow actor system.
-  *
-  * Format: nebflow://device/segment1/segment2/...
-  *
-  * Examples:
-  *   nebflow://macbook/Nebula/abc-123
-  *   nebflow://pi-livingroom/SensorAgent/env
-  */
+/**
+ * Address of an actor in the Nebflow actor system.
+ *
+ * Format: nebflow://device/segment1/segment2/...
+ *
+ * Examples:
+ *   nebflow://macbook/Nebula/abc-123
+ *   nebflow://pi-livingroom/SensorAgent/env
+ */
 final case class ActorPath(device: String, segments: List[String]):
+
   override def toString: String =
     if segments.isEmpty then s"nebflow://$device"
     else s"nebflow://$device/${segments.mkString("/")}"
@@ -19,6 +21,7 @@ final case class ActorPath(device: String, segments: List[String]):
   def isLocal(localDevice: String): Boolean = device == localDevice
 
 object ActorPath:
+
   def apply(device: String, path: String): ActorPath =
     ActorPath(device, path.split("/").filter(_.nonEmpty).toList)
 

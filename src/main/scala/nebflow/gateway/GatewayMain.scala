@@ -10,7 +10,7 @@ import nebflow.bridge.*
 import nebflow.core.*
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
-import nebflow.core.scheduler.ScheduledTaskStore
+import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
@@ -19,7 +19,6 @@ import nebflow.llm.*
 import nebflow.mesh.*
 import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.*
-import nebflow.core.scheduler.ScheduledTaskService
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
 
@@ -321,7 +320,7 @@ object GatewayMain extends IOApp.Simple:
                                         )
                                       ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *>
                                         meshService.addLogoutHook(presenceService.disconnectAll()) *>
-                                          meshService.sendSync(nebflow.mesh.SyncCommand.PeerDiscovered) *> {
+                                        meshService.sendSync(nebflow.mesh.SyncCommand.PeerDiscovered) *> {
                                           val sharedResourcesWithBridge =
                                             sharedResourcesWithDream.copy(
                                               bridgeManager = Some(bridgeManager),

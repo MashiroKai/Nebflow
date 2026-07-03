@@ -526,22 +526,22 @@ class MeshService private (
 
   private def syncLoop(running: Boolean): IO[Unit] =
     for
-      _ <- if running then
-        runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}").void)
-      else IO.unit
+      _ <-
+        if running then runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}").void)
+        else IO.unit
       interval <- configRef.get.map(_.syncIntervalSec.max(10).seconds)
       sleepIO: IO[Unit] = if running then IO.sleep(interval) else IO.never
       result <- IO.race(sleepIO, syncQueue.take)
       nextRunning = result match
-        case Left(_)    => running
+        case Left(_) => running
         case Right(cmd) => processSyncCommand(cmd, running)
       _ <- syncLoop(nextRunning)
     yield ()
 
   private def processSyncCommand(cmd: SyncCommand, currentlyRunning: Boolean): Boolean =
     cmd match
-      case SyncCommand.StartSync     => true
-      case SyncCommand.StopSync      => false
+      case SyncCommand.StartSync => true
+      case SyncCommand.StopSync => false
       case SyncCommand.PeerDiscovered =>
         if currentlyRunning then
           dispatcher.unsafeRunAndForget(
