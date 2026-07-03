@@ -65,6 +65,8 @@ export function applyLocaleToHtml() {
     'panel-title-settings': ['text', 'sidebar.settingsTitle'],
     'memory-btn': ['text', 'header.memory'],
     'secondary-memory-btn': ['text', 'header.memory'],
+    'bypass-toggle': ['title', 'bypass.toggle'],
+    'secondary-bypass-toggle': ['title', 'bypass.toggle'],
     'input': ['placeholder', 'input.placeholder'],
     'secondary-input': ['placeholder', 'input.placeholder'],
     'voice-text': ['text', 'input.voiceListening'],

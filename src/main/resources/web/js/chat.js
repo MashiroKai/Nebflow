@@ -731,8 +731,8 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
 
   const targetSid = permSessionId || activeView.sessionId;
 
-  // If bypassAll is enabled, auto-approve immediately
-  if (state.bypassAllPermission) {
+  // If bypass is enabled for this session, auto-approve immediately
+  if (state.bypassSessions.has(targetSid)) {
     if (state.ws && state.ws.readyState === WebSocket.OPEN) {
       state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: targetSid, approved: true }));
     }
