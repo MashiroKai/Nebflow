@@ -53,7 +53,7 @@ object Dependencies {
   val logbackClassic = "ch.qos.logback" % "logback-classic" % "1.5.16"
   val logbackCore    = "ch.qos.logback" % "logback-core" % "1.5.16"
 
-  // Browser automation
+  // Browser automation (optional — "provided" scope, detected at runtime)
   val PlaywrightVer = "1.52.0"
   val playwright = "com.microsoft.playwright" % "playwright" % PlaywrightVer
 
