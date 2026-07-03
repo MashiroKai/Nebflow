@@ -185,10 +185,13 @@ Edit patterns:
           // Normalize \r\n → \n so that matching works regardless of the file's
           // line endings.  writeFile converts back to lineSep on output.
           val content = rawContent.replace("\r\n", "\n")
+          // Also normalize old_string — it may contain \r\n if the LLM copied
+          // it from a source that preserved Windows line endings.
+          val searchStr = oldString.replace("\r\n", "\n")
           val mtime = Files.getLastModifiedTime(filePath)
 
           // Fuzzy matching
-          StringMatcher.findActualString(content, oldString) match
+          StringMatcher.findActualString(content, searchStr) match
             case None =>
               Left(
                 ToolError(
@@ -207,7 +210,7 @@ Edit patterns:
               else
                 // Apply preserveQuoteStyle when fuzzy match was used
                 val effectiveNew =
-                  if actualOld != oldString then StringMatcher.preserveQuoteStyle(oldString, actualOld, newString)
+                  if actualOld != searchStr then StringMatcher.preserveQuoteStyle(searchStr, actualOld, newString)
                   else newString
 
                 // Double-check concurrency: mtime + content comparison
