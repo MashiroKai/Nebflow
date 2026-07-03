@@ -158,12 +158,19 @@ function loadSecondaryView(sessionId) {
   if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
+  if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(view);
   setActiveView(saved);
   // Request history
   sendWs({ type: 'getHistory', sessionId, limit: 50 });
 }
 
 function openInSecondary(session) {
+  // Same-session guard: if this session is already displayed in the secondary
+  // view, skip everything. Without this, repeated clicks send redundant
+  // getHistory requests, and since setSession no-ops for the same session,
+  // pagination state isn't reset — causing duplicate messages.
+  if (state.secondarySessionId === session.id && chatViews.secondary?.mounted) return;
+
   if (state.secondarySessionId && state.secondarySessionId !== session.id && chatViews.secondary) {
     chatViews.secondary.saveDraft(state.secondarySessionId);
     saveInputDraft(state.secondarySessionId, chatViews.secondary);
@@ -1219,7 +1226,8 @@ export function renderSessionSidebar(sessionData, activeId) {
   // (folder expand/collapse changes the DOM but not the session data).
   const fingerprint = (activeId || '') + '|' +
     (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',') +
-    '|folders:' + [...(state.expandedFolders || [])].sort().join(',') +
+    '|folders:' + (state.folders || []).map(f => f.id + ':' + (f.parentId || '')).sort().join(';') +
+    '|expanded:' + [...(state.expandedFolders || [])].sort().join(',') +
     '|pinned:' + [...(state.pinnedSessions || [])].sort().join(',') +
     '|selected:' + [...state.selectedSessionIds].sort().join(',') +
     '|locale:' + getLocale();
@@ -1547,6 +1555,7 @@ export function resetChatForActiveSession() {
   renderTaskList(state.sessionTasks[sid] || []);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   if (state.updateDelegateIndicator) state.updateDelegateIndicator();
+  if (state.updateBypassToggle) state.updateBypassToggle(pv);
 }
 
 export function deleteSession(sessionId) {
@@ -2044,12 +2053,20 @@ export function initHeaderModelInfo() {
 /** Determine which agent a new session/folder should belong to, based on context.
  *  Mirrors the folder-id resolution logic: active folder → active session → fallback. */
 export function getTargetAgent() {
+  // 1. Active folder context
   if (state.activeFolderId) {
     const folder = (state.folders || []).find(f => f.id === state.activeFolderId);
-    if (folder?.agentName) return folder.agentName;
+    if (folder?.agentName && folder.agentName !== 'Jarvis') return folder.agentName;
   }
+  // 2. Secondary view session (the session the user is currently looking at)
+  if (state.secondarySessionId) {
+    const sec = (state.sessions || []).find(s => s.id === state.secondarySessionId);
+    if (sec?.agentName && sec.agentName !== 'Jarvis') return sec.agentName;
+  }
+  // 3. Active session — but never Jarvis (it's a singleton locked to main view,
+  //    and Jarvis sessions are hidden from the sidebar)
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
-  if (active?.agentName) return active.agentName;
+  if (active?.agentName && active.agentName !== 'Jarvis') return active.agentName;
   return 'Nebula';
 }
 

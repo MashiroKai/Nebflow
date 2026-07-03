@@ -121,7 +121,18 @@ final class MeshPresenceService(
                         if alive.get() then
                           if System.currentTimeMillis() - lastPong.get() > 20_000L then
                             logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
-                            ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
+                            // Force immediate cleanup — don't rely on onClose (may never fire
+                            // if the TCP connection is broken, e.g. after sleep/wake)
+                            val zombie = connections.remove(peer.deviceId)
+                            if zombie != null then
+                              try zombie.heartbeat.shutdownNow()
+                              catch case _: Exception => ()
+                            dispatcher.unsafeRunAndForget(
+                              meshService.removePeer(peer.deviceId) *>
+                                logger.debug(s"Presence force-removed after timeout: ${peer.deviceName}")
+                            )
+                            try ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
+                            catch case _: Exception => ()
                           else ws.sendText("""{"type":"ping"}""", true)
                       catch case _: Exception => ()
                     },
