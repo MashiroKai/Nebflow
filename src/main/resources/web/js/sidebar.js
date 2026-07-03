@@ -158,6 +158,7 @@ function loadSecondaryView(sessionId) {
   if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
+  if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(view);
   setActiveView(saved);
   // Request history
   sendWs({ type: 'getHistory', sessionId, limit: 50 });
@@ -1554,6 +1555,7 @@ export function resetChatForActiveSession() {
   renderTaskList(state.sessionTasks[sid] || []);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   if (state.updateDelegateIndicator) state.updateDelegateIndicator();
+  if (state.updateBypassToggle) state.updateBypassToggle(pv);
 }
 
 export function deleteSession(sessionId) {

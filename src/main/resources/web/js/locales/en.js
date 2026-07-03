@@ -214,7 +214,6 @@ export default {
   'chat.permLevel.dangerous': 'Dangerous: {detail}',
   'chat.permLevel.critical': 'Critical: {detail}',
   'chat.permExecCmd': 'Execute command',
-  'chat.bypassBadge': 'Bypass',
   'chat.copied': 'Copied!',
   'chat.copy': 'Copy',
   'chat.noMoreMessages': '— No more messages —',
@@ -273,14 +272,7 @@ export default {
   'slash.skillActivated': 'Using skill: {skill}',
   'slash.skillBadge': 'skill',
   'slash.model': 'Select model for this session',
-  'slash.bypass': 'Toggle auto-approve mode for all permission requests',
-  'slash.bypassEnable': 'Enable bypass',
-  'slash.bypassEnableQ': 'Enable bypass-all permission?',
-  'slash.bypassDisable': 'Disable bypass',
-  'slash.bypassDisableQ': 'Disable bypass-all permission?',
-  'slash.bypassDesc': 'All tools will be auto-approved without asking. Use with caution.',
-  'slash.bypassEnabled': 'Bypass mode enabled — all tools will be auto-approved.',
-  'slash.bypassDisabled': 'Bypass mode disabled — tools will ask for approval.',
+  'bypass.toggle': 'Auto-approve: skip all permission prompts for this session',
 
   // === Voice ===
   'voice.listening': 'Listening...',
