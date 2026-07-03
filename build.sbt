@@ -30,10 +30,6 @@ lazy val root = (project in file("."))
       fs2Core,
       // Effect
       catsEffect,
-      // Actor
-      pekkoActorTyped,
-      // Test: Pekko typed actor test kit
-      pekkoActorTestkitTyped,
       // JSON
       circeCore,
       circeParser,

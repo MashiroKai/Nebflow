@@ -1,7 +1,7 @@
 import state from './state.js';
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
-import { connect, onMessage, sendWs } from './ws.js';
+import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
   renderUserBubble, appendAiText, finishAi,
@@ -155,7 +155,7 @@ state.dom = {
   // Header status indicators — surfaced on state.dom so the ws.js swap can redirect
   // them to the secondary panel, giving both windows identical indicator behaviour.
   headerModelInfoEl: document.getElementById('header-model-info'),
-  bypassBadgeEl: document.getElementById('bypass-badge'),
+  bypassToggleEl: document.getElementById('bypass-toggle'),
   delegateIndicatorEl: document.getElementById('delegate-indicator'),
   delegateDropdownEl: document.getElementById('delegate-dropdown'),
   delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
@@ -310,10 +310,9 @@ function clearBusyFor(msg) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
   }
-  // Only release the send lock for the currently active session
-  if (sid === state.activeSessionId && chatViews.primary) {
-    chatViews.primary.isSending = false;
-  }
+  // Release the send lock for the view displaying this session
+  const view = findViewBySessionId(sid);
+  if (view) view.isSending = false;
 }
 // Helper: reset activity-based stream timeout for a busy session
 function resetStreamTimeout(sid) {
@@ -1167,8 +1166,9 @@ onMessage('historyPage', (msg, view) => {
   } else {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
-    // if the response offset is >= what we already have, skip it to avoid duplicates.
-    if (msg.offset >= view.pagination.offset && view.pagination.offset > 0) {
+    // Skip if the response offset is >= what we already have, OR if offset is 0
+    // (offset 0 means "no older messages" — there is nothing valid to prepend).
+    if (msg.offset >= view.pagination.offset || msg.offset === 0) {
       // Skipping duplicate response
       return;
     }
@@ -1725,7 +1725,11 @@ function stopBgTimer() {
 
 function updateBgTasksUI() {
   const tasks = state.sessionBgTasks[activeView?.sessionId] || [];
-  const active = tasks.filter(task => task.status === 'running' || task.status === 'cancelling');
+  const now = Date.now();
+  const active = tasks.filter(task =>
+    task.status === 'running' || task.status === 'cancelling' ||
+    (task.finishedAt && (now - task.finishedAt < 3000))
+  );
   const el = activeView.dom.bgIndicatorEl;
   const countEl = activeView.dom.bgCountEl;
   const dropdown = activeView.dom.bgDropdownEl;
@@ -1784,6 +1788,9 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   const idx = tasks.findIndex(t => t.taskId === msg.taskId);
   if (idx >= 0) {
     tasks[idx].status = msg.status;
+    if (msg.status === 'completed' || msg.status === 'failed') {
+      tasks[idx].finishedAt = Date.now();
+    }
     if (msg.heartbeat) tasks[idx].heartbeat = msg.heartbeat;
   } else {
     tasks.push({
@@ -1791,7 +1798,8 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       description: msg.description,
       status: msg.status,
       startedAt: msg.startedAt || Date.now(),
-      heartbeat: msg.heartbeat || null
+      heartbeat: msg.heartbeat || null,
+      finishedAt: (msg.status === 'completed' || msg.status === 'failed') ? Date.now() : undefined
     });
   }
   // Remove completed/failed tasks after a brief delay so user sees the count update
@@ -1940,6 +1948,36 @@ initMemory();
 initScheduledTask();
 initMesh();
 
+// ---------- Bypass toggle (per-session auto-approve) ----------
+(function initBypassToggle() {
+  /** Update the toggle button's active state for the given view's session. */
+  state.updateBypassToggle = function(view) {
+    const v = view || activeView;
+    if (!v || !v.sessionId) return;
+    const enabled = state.bypassSessions.has(v.sessionId);
+    const prefix = v.id === 'secondary' ? 'secondary-' : '';
+    const btn = document.getElementById(prefix + 'bypass-toggle');
+    if (btn) btn.classList.toggle('active', enabled);
+  };
+
+  // Click handler: toggle bypass for the current session
+  for (const v of Object.values(chatViews)) {
+    const prefix = v.id === 'secondary' ? 'secondary-' : '';
+    const btn = document.getElementById(prefix + 'bypass-toggle');
+    if (!btn) continue;
+    btn.addEventListener('click', () => {
+      setActiveView(v);
+      if (!v.sessionId) return;
+      if (state.bypassSessions.has(v.sessionId)) {
+        state.bypassSessions.delete(v.sessionId);
+      } else {
+        state.bypassSessions.add(v.sessionId);
+      }
+      state.updateBypassToggle(v);
+    });
+  }
+})();
+
 // Sidebar collapse toggle
 (function initSidebarToggle() {
   const LS_KEY = 'nebflow_sidebar_collapsed';
@@ -1993,6 +2031,20 @@ window.addEventListener('locale-changed', () => {
 // New Folder button
 document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(state.activeFolderId));
 
+
+// ---------- Reconnect: refresh active session history ----------
+// After OS sleep/wake or network drop, the agent may have produced output
+// while the frontend was disconnected. On reconnect, re-fetch the active
+// session's history so the user sees the latest state.
+onReconnect(() => {
+  const sid = state.activeSessionId;
+  if (!sid) return;
+  const view = findViewBySessionId(sid);
+  if (view) {
+    view.pagination.pendingInitialLoad = true;
+    sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
+  }
+});
 
 // Scroll listener (primary window)
 const _primChat = chatViews.primary.dom.chat;

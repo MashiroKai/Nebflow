@@ -1,13 +1,11 @@
 package nebflow.mesh
 
-import cats.effect.std.Dispatcher
+import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.NebflowLogger
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
-import org.apache.pekko.actor.typed.{ActorRef, ActorSystem, Behavior}
 import sttp.client4.*
 
 import scala.compiletime.uninitialized
@@ -37,7 +35,7 @@ end SyncCommand
  * Core mesh service — account-based login, cloud discovery, cross-device tool execution.
  *
  * Event-driven design:
- *   - SyncActor replaces the old recursive IO.sleep loop.
+ *   - IO-based sync loop replaces the old Pekko actor.
  *   - No UDP broadcast/listen — cloud discovery is sufficient for peer detection.
  *   - Sync only runs when logged in. Logged out = zero CPU, zero network.
  */
@@ -47,7 +45,8 @@ class MeshService private (
   configRef: Ref[IO, MeshConfig],
   peersRef: Ref[IO, Map[String, PeerInfo]],
   serverPort: Int,
-  private val _syncActorRef: ActorRef[SyncCommand]
+  private val syncQueue: Queue[IO, SyncCommand],
+  private val dispatcher: Dispatcher[IO]
 ):
   private val logger = NebflowLogger.forName("nebflow.mesh")
 
@@ -117,8 +116,11 @@ class MeshService private (
 
   def userId: IO[Option[String]] = accountRef.get.map(_.map(_.userId))
 
-  /** ActorRef of the sync actor — callers can send commands directly. */
-  def syncActor: ActorRef[SyncCommand] = _syncActorRef
+  /** Send a command to the sync loop. */
+  def sendSync(cmd: SyncCommand): IO[Unit] = syncQueue.offer(cmd)
+
+  /** Launch the background sync loop. Call once at startup. */
+  def startSyncLoop: IO[Unit] = syncLoop(true)
 
   /** P2P auth token: userId:deviceSecret. Used as Bearer in peer-to-peer requests. */
   def peerAuthToken: IO[String] =
@@ -218,7 +220,7 @@ class MeshService private (
       _ <- peersRef.set(Map.empty)
       _ <- configRef.update(cfg => cfg.copy(enabled = false))
       _ <- configRef.get.flatMap(cfg => MeshConfig.save(cfg))
-      _ = _syncActorRef ! SyncCommand.StopSync
+      _ <- sendSync(SyncCommand.StopSync)
       // Run logout hooks (e.g. disconnect the WS relay client) before we finish.
       _ <- logoutHooks.get.flatMap(
         _.sequence_.handleErrorWith(e => logger.debug(s"Logout hook failed: ${e.getMessage}"))
@@ -307,7 +309,7 @@ class MeshService private (
       // silently breaking discovery after a restart.
       _ <- configRef.update(_.copy(enabled = true))
       _ <- configRef.get.flatMap(MeshConfig.save)
-      _ = _syncActorRef ! SyncCommand.StartSync
+      _ <- sendSync(SyncCommand.StartSync)
       // Fire one immediate discovery so this device registers itself and learns its peers
       // right at login, instead of waiting for the first periodic tick.
       _ <- cloudDiscover.handleErrorWith(e => logger.debug(s"Initial discovery: ${e.getMessage}"))
@@ -518,6 +520,36 @@ class MeshService private (
   private def validatePassword(password: String): IO[Unit] =
     IO.raiseWhen(password.length < 6)(new RuntimeException("Password must be at least 6 characters"))
 
+  // ============================================================
+  // Sync loop — event-driven, no polling when idle
+  // ============================================================
+
+  private def syncLoop(running: Boolean): IO[Unit] =
+    for
+      _ <-
+        if running then runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}").void)
+        else IO.unit
+      interval <- configRef.get.map(_.syncIntervalSec.max(10).seconds)
+      sleepIO: IO[Unit] = if running then IO.sleep(interval) else IO.never
+      result <- IO.race(sleepIO, syncQueue.take)
+      nextRunning = result match
+        case Left(_) => running
+        case Right(cmd) => processSyncCommand(cmd, running)
+      _ <- syncLoop(nextRunning)
+    yield ()
+
+  private def processSyncCommand(cmd: SyncCommand, currentlyRunning: Boolean): Boolean =
+    cmd match
+      case SyncCommand.StartSync => true
+      case SyncCommand.StopSync => false
+      case SyncCommand.PeerDiscovered =>
+        if currentlyRunning then
+          dispatcher.unsafeRunAndForget(
+            runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}"))
+          )
+        currentlyRunning
+      case SyncCommand.SyncTick => currentlyRunning
+
 end MeshService
 
 object MeshService:
@@ -525,7 +557,6 @@ object MeshService:
 
   def create(
     serverPort: Int = 8080,
-    actorSystem: ActorSystem[?],
     dispatcher: Dispatcher[IO]
   ): IO[MeshService] =
     for
@@ -536,101 +567,16 @@ object MeshService:
       accRef <- Ref.of[IO, Option[AccountInfo]](accountOpt)
       cfgRef <- Ref.of[IO, MeshConfig](config)
       peersRef <- Ref.of[IO, Map[String, PeerInfo]](Map.empty)
-      serviceBox = new AtomicServiceBox
-      syncActorRef <- IO {
-        actorSystem.systemActorOf(
-          syncActor(serviceBox, dispatcher),
-          "mesh-sync"
-        )
-      }
-      service = new MeshService(idRef, accRef, cfgRef, peersRef, serverPort, syncActorRef)
-      _ = serviceBox.set(service)
+      syncQueue <- Queue.unbounded[IO, SyncCommand]
+      service = new MeshService(idRef, accRef, cfgRef, peersRef, serverPort, syncQueue, dispatcher)
       _ <- accountOpt match
         case Some(acc) => logger.info(s"Restored mesh login: ${acc.username}")
         case None => IO.unit
-      // Always start sync actor — Tailscale is the trust boundary, no login needed.
-      _ = syncActorRef ! SyncCommand.StartSync
+      // Start sync loop — Tailscale is the trust boundary, no login needed.
+      _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
       _ = dispatcher.unsafeRunAndForget(
         service.selfCheckCapabilities.handleErrorWith(e => logger.debug(s"Capability detection: ${e.getMessage}"))
       )
     yield service
-
-  private class AtomicServiceBox:
-    @volatile private var _service: MeshService = uninitialized
-    def set(s: MeshService): Unit = _service = s
-
-    def get: MeshService =
-      if _service == null then throw new IllegalStateException("MeshService not initialized")
-      _service
-
-  // ============================================================
-  // Sync actor — event-driven, no polling when logged out
-  // ============================================================
-
-  private def syncActor(
-    serviceBox: AtomicServiceBox,
-    dispatcher: Dispatcher[IO]
-  ): Behavior[SyncCommand] =
-    Behaviors.withTimers { timers =>
-      idle(timers, serviceBox, dispatcher)
-    }
-
-  private def idle(
-    timers: org.apache.pekko.actor.typed.scaladsl.TimerScheduler[SyncCommand],
-    serviceBox: AtomicServiceBox,
-    dispatcher: Dispatcher[IO]
-  ): Behavior[SyncCommand] =
-    Behaviors.receiveMessage {
-      case SyncCommand.StartSync =>
-        doSync(serviceBox, dispatcher)
-        scheduleNextTick(timers, serviceBox)
-        running(timers, serviceBox, dispatcher)
-      case SyncCommand.StopSync => Behaviors.same
-      case SyncCommand.SyncTick => Behaviors.same
-      // Activate the dormant fast-path: a peer joined (signaled via WS peer-joined push).
-      // Discover immediately even before we've entered the running state, so newly-logged-in
-      // peers become visible in seconds rather than after the first periodic tick.
-      case SyncCommand.PeerDiscovered =>
-        doSync(serviceBox, dispatcher)
-        Behaviors.same
-    }
-
-  private def running(
-    timers: org.apache.pekko.actor.typed.scaladsl.TimerScheduler[SyncCommand],
-    serviceBox: AtomicServiceBox,
-    dispatcher: Dispatcher[IO]
-  ): Behavior[SyncCommand] =
-    Behaviors.receiveMessage {
-      case SyncCommand.SyncTick =>
-        doSync(serviceBox, dispatcher)
-        scheduleNextTick(timers, serviceBox)
-        Behaviors.same
-      case SyncCommand.StopSync =>
-        timers.cancelAll()
-        idle(timers, serviceBox, dispatcher)
-      case SyncCommand.StartSync => Behaviors.same
-      case SyncCommand.PeerDiscovered =>
-        doSync(serviceBox, dispatcher)
-        Behaviors.same
-    }
-
-  private def scheduleNextTick(
-    timers: org.apache.pekko.actor.typed.scaladsl.TimerScheduler[SyncCommand],
-    serviceBox: AtomicServiceBox
-  ): Unit =
-    // Read the configured interval instead of a hardcoded constant, so PATCH /mesh/config
-    // (syncIntervalSec) actually takes effect. Pure in-memory Ref read — safe to run inline.
-    val secs =
-      try
-        import cats.effect.unsafe.implicits.global
-        serviceBox.get.meshConfig.unsafeRunSync().syncIntervalSec.max(10)
-      catch case _: Exception => 5
-    timers.startSingleTimer(SyncCommand.SyncTick, secs.seconds)
-
-  private def doSync(serviceBox: AtomicServiceBox, dispatcher: Dispatcher[IO]): Unit =
-    val service = serviceBox.get
-    dispatcher.unsafeRunAndForget(
-      service.runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}"))
-    )
 
 end MeshService

@@ -3,19 +3,14 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.JsonObject
 import io.circe.syntax.*
+import nebflow.actor.ActorRef
 import nebflow.agent.AgentCommand
 import nebflow.core.{AskItem, AskOption}
-import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
-import org.apache.pekko.util.Timeout
-
-import java.util.concurrent.TimeUnit
 
 import scala.concurrent.duration.*
 
 object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
-
-  private implicit val askTimeout: Timeout = Timeout(5.minutes)
 
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended.
@@ -106,23 +101,14 @@ Behavior:
         ctx.agentActorRef match
           case Some(agentRef) =>
             val requestId = java.util.UUID.randomUUID().toString.take(8)
-            ctx.pekkoScheduler match
-              case Some(scheduler) =>
-                IO.fromFuture(
-                  IO(
-                    agentRef.ask[List[String]](replyTo => AgentCommand.AskUser(requestId, items, Some(replyTo)))(using
-                      askTimeout,
-                      scheduler
-                    )
-                  )
-                ).map { answers =>
-                  Right(formatAnswer(items, answers))
-                }.recover { case _: java.util.concurrent.TimeoutException =>
-                  Right("[Timeout] User did not respond within the timeout period. Proceed with your best judgment.")
-                }
-              case None =>
-                IO.pure(Left(ToolError("AskUserQuestion requires Pekko scheduler")))
-            end match
+            agentRef
+              .?((replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, items, Some(replyTo)))
+              .map { answers =>
+                Right(formatAnswer(items, answers))
+              }
+              .recover { case _: java.util.concurrent.TimeoutException =>
+                Right("[Timeout] User did not respond within the timeout period. Proceed with your best judgment.")
+              }
           case None =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
       end if

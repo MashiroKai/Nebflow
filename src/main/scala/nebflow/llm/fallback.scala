@@ -94,7 +94,8 @@ object Fallback:
     candidates: List[ModelCandidate],
     action: ModelCandidate => IO[T],
     maxRetries: Int = MaxRetries,
-    onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    onAttempt: Option[FallbackAttempt => IO[Unit]] = None,
+    onProviderExhausted: Option[ModelCandidate => IO[Unit]] = None
   ): IO[FallbackResult[T]] =
 
     def tryWithRetry(
@@ -143,13 +144,15 @@ object Fallback:
           onAttempt.traverse_(_.apply(failAttempt))
           val allFailures = priorFailures :+ failAttempt
 
-          if classification.permanence == ErrorPermanence.Permanent then fallback(allFailures)
+          val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate))
+
+          if classification.permanence == ErrorPermanence.Permanent then notifyExhausted *> fallback(allFailures)
           else if retriesLeft > 0 then
             val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
             val delay = math.min(backoffMs + jitter, MaxBackoffMs)
             IO.sleep(delay.millis) *>
               tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
-          else fallback(allFailures)
+          else notifyExhausted *> fallback(allFailures)
       }
     end tryWithRetry
 
