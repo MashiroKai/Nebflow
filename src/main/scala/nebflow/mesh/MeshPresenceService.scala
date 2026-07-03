@@ -125,7 +125,8 @@ final class MeshPresenceService(
                             // if the TCP connection is broken, e.g. after sleep/wake)
                             val zombie = connections.remove(peer.deviceId)
                             if zombie != null then
-                              try zombie.heartbeat.shutdownNow() catch case _: Exception => ()
+                              try zombie.heartbeat.shutdownNow()
+                              catch case _: Exception => ()
                             dispatcher.unsafeRunAndForget(
                               meshService.removePeer(peer.deviceId) *>
                                 logger.debug(s"Presence force-removed after timeout: ${peer.deviceName}")

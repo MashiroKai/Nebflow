@@ -7,6 +7,7 @@ import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
+import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
@@ -16,7 +17,6 @@ import nebflow.core.{PathUtil, *}
 import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
 import nebflow.shared.*
-import nebflow.actor.ActorSystem as NebulaActorSystem
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -106,13 +106,22 @@ class WebSocketRoutes(
             }.flatten
             ref <- nebulaSystem.spawn(
               AgentActor(
-                agentDef, sharedResources, recordingWsSend, depth = 0,
-                parentRef = None, sessionId = Some(sessionId),
-                sessionName = metaOpt.map(_.name), initialMessages = history,
-                readTracker = Some(readTracker), fileHistory = Some(fileHistory),
-                contextWindow = contextWindow, projectRoot = effectiveProjectRoot,
-                rulesMd = resolvedRules, folderId = folderId
-              ), s"agent-$sessionId"
+                agentDef,
+                sharedResources,
+                recordingWsSend,
+                depth = 0,
+                parentRef = None,
+                sessionId = Some(sessionId),
+                sessionName = metaOpt.map(_.name),
+                initialMessages = history,
+                readTracker = Some(readTracker),
+                fileHistory = Some(fileHistory),
+                contextWindow = contextWindow,
+                projectRoot = effectiveProjectRoot,
+                rulesMd = resolvedRules,
+                folderId = folderId
+              ),
+              s"agent-$sessionId"
             )
             pr = effectiveProjectRoot.getOrElse("")
           yield (ref, pr)
@@ -223,7 +232,14 @@ class WebSocketRoutes(
             wsHub.unregister(hubConnId)
           )
 
-          sendStream = Stream.fromQueueUnterminated(outbound)
+          // sendStream: read from outbound queue, send via WebSocket.
+          // Client disconnects are expected (browser tab close, network change) and
+          // produce IOException during write. Catch and swallow gracefully.
+          sendStream = Stream
+            .fromQueueUnterminated(outbound)
+            .handleErrorWith { e =>
+              Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
+            }
           _ <- logger.info("WebSocket client connected")
           thinkingCfg <- sharedResources.thinkingConfigRef.get
           toolsList = ToolRegistry.ALL_TOOLS.map(t =>
@@ -650,9 +666,7 @@ class WebSocketRoutes(
                 val notifyAgent = sharedResources.sessionModelOverrides.get.flatMap { overrides =>
                   overrides.get(sessionId) match
                     case Some(candidate) =>
-                      routeToAgent(sessionId)(ref =>
-                        ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow)
-                      )
+                      routeToAgent(sessionId)(ref => ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
                     case None => IO.unit
                 }
                 notifyAgent *> wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))

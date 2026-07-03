@@ -164,24 +164,26 @@ body.sidebar-collapsed #sidebar {
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
-/* ===== Bypass Badge ===== */
-.bypass-badge {
+/* ===== Bypass Toggle ===== */
+.bypass-toggle {
   display: inline-flex;
   align-items: center;
-  padding: 2px 9px;
-  border-radius: 9999px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #e03e2f;
-  background: rgba(224, 62, 47, 0.1);
-  white-space: nowrap;
-  line-height: 1.6;
-  animation: bypassBadgeIn 0.3s ease;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.bypass-badge.hidden {
-  display: none;
+.bypass-toggle:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
 }
-@keyframes bypassBadgeIn {
-  from { opacity: 0; transform: scale(0.85); }
-  to { opacity: 1; transform: scale(1); }
+.bypass-toggle.active {
+  color: #e8923c;
+  background: rgba(232, 146, 60, 0.12);
 }

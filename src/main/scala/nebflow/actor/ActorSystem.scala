@@ -1,18 +1,19 @@
 package nebflow.actor
 
-import cats.effect.{Fiber, IO, Ref}
 import cats.effect.std.Queue
+import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration
 
-/** The actor system — registry + message routing.
-  *
-  * spawn creates local actors (Queue + Fiber + Behavior loop).
-  * resolve looks up actors by path (local registry lookup).
-  * stop cancels an actor's fiber, releasing all resources.
-  */
+/**
+ * The actor system — registry + message routing.
+ *
+ * spawn creates local actors (Queue + Fiber + Behavior loop).
+ * resolve looks up actors by path (local registry lookup).
+ * stop cancels an actor's fiber, releasing all resources.
+ */
 trait ActorSystem:
   def localDevice: String
   def spawn[Msg](behavior: Behavior[Msg], name: String, ttl: Option[FiniteDuration] = None): IO[ActorRef[Msg]]
@@ -37,16 +38,16 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
   private val log = NebflowLogger.forName("nebflow.actor")
 
   private case class RegistryEntry(
-      ref: ActorRef[?],
-      fiber: Fiber[IO, Throwable, Unit]
+    ref: ActorRef[?],
+    fiber: Fiber[IO, Throwable, Unit]
   )
 
   private val registry: Ref[IO, Map[String, RegistryEntry]] = Ref.unsafe(Map.empty)
 
   def spawn[Msg](
-      behavior: Behavior[Msg],
-      name: String,
-      ttl: Option[FiniteDuration] = None
+    behavior: Behavior[Msg],
+    name: String,
+    ttl: Option[FiniteDuration] = None
   ): IO[ActorRef[Msg]] =
     val path = ActorPath(localDevice, name)
     val ctxLog = NebflowLogger.forName(s"nebflow.actor.$name")
@@ -64,14 +65,15 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
       _ <- registry.update(_.updated(path.toString, RegistryEntry(ref, fiber)))
     yield ref
 
+  end spawn
+
   def resolve[Msg](pathStr: String): IO[ActorRef[Msg]] =
     ActorPath.parse(pathStr) match
       case Right(path) =>
         if path.isLocal(localDevice) then
           registry.get.map(_.get(path.toString) match
             case Some(entry) => entry.ref.asInstanceOf[ActorRef[Msg]]
-            case None => throw new NoSuchElementException(s"Actor not found: $pathStr")
-          )
+            case None => throw new NoSuchElementException(s"Actor not found: $pathStr"))
         else
           IO.raiseError(
             new NotImplementedError(s"Remote actor resolution not yet implemented: $pathStr")
@@ -98,18 +100,18 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
   // ============================================================
 
   private def actorLoop[Msg](
-      path: ActorPath,
-      ctx: LocalActorContext[Msg],
-      queue: Queue[IO, Msg],
-      behaviorRef: Ref[IO, Behavior[Msg]],
-      ttl: Option[FiniteDuration],
-      childrenRef: Ref[IO, List[ActorRef[?]]]
+    path: ActorPath,
+    ctx: LocalActorContext[Msg],
+    queue: Queue[IO, Msg],
+    behaviorRef: Ref[IO, Behavior[Msg]],
+    ttl: Option[FiniteDuration],
+    childrenRef: Ref[IO, List[ActorRef[?]]]
   ): IO[Unit] =
     val take: IO[Option[Msg]] = ttl match
       case Some(duration) =>
         IO.race(queue.take, IO.sleep(duration)).map {
           case Left(msg) => Some(msg)
-          case Right(_)  => None
+          case Right(_) => None
         }
       case None =>
         queue.take.map(Some(_))
@@ -123,13 +125,13 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
         case Some(msg) =>
           (for
             current <- behaviorRef.get
-            next    <- current
-                         .receive(ctx, msg)
-                         .handleErrorWith { err =>
-                           ctx.log.error(s"Actor $path error in message processing: ${err.getMessage}")
-                           IO.pure(current) // supervision: resume with same behavior
-                         }
-            _       <- behaviorRef.set(next)
+            next <- current
+              .receive(ctx, msg)
+              .handleErrorWith { err =>
+                ctx.log.error(s"Actor $path error in message processing: ${err.getMessage}")
+                IO.pure(current) // supervision: resume with same behavior
+              }
+            _ <- behaviorRef.set(next)
           yield next).flatMap {
             case b if b.isStopped =>
               ctx.log.info(s"Actor $path stopped")
@@ -147,7 +149,7 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
     childrenRef.get.flatMap { children =>
       children.traverse_ {
         case r: LocalActorRef[?] => r.stop
-        case _                   => IO.unit
+        case _ => IO.unit
       } *> childrenRef.set(Nil)
     }
 
