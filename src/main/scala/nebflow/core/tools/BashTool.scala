@@ -537,7 +537,7 @@ Git safety:
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
     ctx.wsSend.fold(
-      logger.warn(s"Cannot notify frontend for background job $jobId: no wsSend")
+      logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")
     ) { send =>
       val json = io.circe.Json.obj(
         "type" -> "backgroundTaskUpdate".asJson,
