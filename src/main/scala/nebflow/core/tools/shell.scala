@@ -283,11 +283,20 @@ final class ShellSession private (
   private def buildProcessBuilder(command: String, cwd: String): ProcessBuilder =
     val pb =
       if isWindows then
-        // Prefix with "chcp 65001 >nul" to switch the console code page to UTF-8.
-        // Without this, cmd.exe and its child processes output in the system OEM
-        // code page (GBK/CP936 on Chinese Windows), causing garbled text when
-        // readStream decodes as UTF-8.
-        new ProcessBuilder("cmd.exe", "/c", "chcp 65001 >nul 2>nul & " + command)
+        // Use PowerShell instead of cmd.exe so that PowerShell cmdlets (Remove-Item,
+        // Get-ChildItem, etc.) work natively.  cmd.exe aliases (del, dir, copy, type)
+        // still work in PowerShell as aliases.  -NoProfile avoids loading the user's
+        // PowerShell profile (faster startup, no side effects).
+        // Prefix with [Console]::OutputEncoding to force UTF-8 output — without this,
+        // PowerShell and child processes output in the system OEM code page
+        // (GBK/CP936 on Chinese Windows), causing garbled text.
+        new ProcessBuilder(
+          "powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " + command
+        )
       else new ProcessBuilder("bash", "-c", command)
     // Empty or invalid working directory causes cmd.exe to fail on Windows
     // with "文件名、目录名或卷标语法不正确". Fall back to user home.
