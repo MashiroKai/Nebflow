@@ -102,6 +102,7 @@ final class MeshRelayClient(
                 .get() // throws on failure → caught below
               wsRef.set(socket)
               reconnectAttempt.set(0)
+              startPingLoop(socket)
               logger.info(s"WS relay client connected: user=${acc.userId.take(8)} device=${identity.deviceName}")
             catch
               case e: Exception =>
@@ -148,6 +149,28 @@ final class MeshRelayClient(
       val n = reconnectAttempt.getAndIncrement()
       val secs = if n <= 0 then 2 else math.min(30, math.pow(2.0, n.toDouble).toInt)
       dispatcher.unsafeRunAndForget(IO.sleep(secs.seconds) *> connect())
+
+  /**
+   * Send periodic WebSocket pings to keep the connection alive through NAT/firewalls.
+   * Stops automatically when the socket is replaced or nulled (checked via wsRef identity).
+   */
+  private def startPingLoop(socket: WebSocket): Unit =
+    val pingPayload = java.nio.ByteBuffer.wrap(Array[Byte](0x70, 0x69, 0x6e, 0x67))
+    def go(): Unit =
+      dispatcher.unsafeRunAndForget(
+        IO.sleep(25.seconds) *>
+          IO.blocking {
+            if wsRef.get() == socket then
+              try socket.sendPing(pingPayload)
+              catch case _: Exception => ()
+          } *>
+          IO.delay {
+            if wsRef.get() == socket then go()
+          }
+      )
+    go()
+
+  end startPingLoop
 
   private def buildWsUri(cloudUrl: String, userId: String, deviceId: String, token: String): String =
     val wsBase = cloudUrl.stripSuffix("/").replaceFirst("^http", "ws")

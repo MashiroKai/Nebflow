@@ -35,15 +35,24 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
   ): IO[Either[ToolError, String]] =
     val isBackground = params("run_in_background").flatMap(_.asBoolean).getOrElse(false)
 
-    for
-      peers <- meshService.peers
-      result <- resolvePeer(deviceName, peers) match
-        case Left(err) => IO.pure(Left(err))
-        case Right(peer) =>
-          if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
-          else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
-          else p2pExecute(peer, toolName, params, 60.seconds)
-    yield result
+    def runOnPeer(peer: PeerInfo): IO[Either[ToolError, String]] =
+      if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
+      else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
+      else p2pExecute(peer, toolName, params, 60.seconds)
+
+    meshService.peers.flatMap { peers =>
+      resolvePeer(deviceName, peers) match
+        case Right(peer) => runOnPeer(peer)
+        case Left(_) =>
+          // Device not in peer list — the list might be stale. Trigger one immediate
+          // discovery scan before giving up, so transient gaps don't cause false errors.
+          logger.info(s"Device '$deviceName' not found in ${peers.size} peer(s), triggering discovery scan") *>
+            meshService.scanNow.flatMap { refreshedPeers =>
+              resolvePeer(deviceName, refreshedPeers) match
+                case Right(peer) => runOnPeer(peer)
+                case Left(err) => IO.pure(Left(err))
+            }
+    }
   end execute
 
   // ---- Remote background task: Mac manages lifecycle locally ----
@@ -216,8 +225,8 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
         Left(
           ToolError(
             if peers.isEmpty then
-              "No peer devices found. Ensure Tailscale is running and other devices have Nebflow started."
-            else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
+              s"No peer devices discovered after scan. Check: (1) Tailscale is running on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are logged into the same Mesh account."
+            else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
           )
         )
 

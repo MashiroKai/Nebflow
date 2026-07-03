@@ -58,8 +58,8 @@ object DelegateTool extends Tool:
 By default the tool call BLOCKS until the sub-agent completes — the result IS the sub-agent's output. Set run_in_background=true to return immediately and be notified later.
 
 Available sub-agents (pass as agentName):
-- "Explorer" — Read-only code exploration and research. Use for: searching codebases, understanding architecture, finding relevant files. Cannot modify files.
-- "Planner" — Analyze requirements and create implementation plans. Use for: breaking down complex tasks, studying code before implementation. Cannot modify files.
+- "Explorer" — Code exploration and research. Use for: searching codebases, understanding architecture, finding relevant files, running git/test commands for investigation. Cannot modify files.
+- "Planner" — Analyze requirements and create implementation plans. Use for: breaking down complex tasks, studying code before implementation, running git/test commands for analysis. Cannot modify files.
 - "Nebula" — Full tool access (default). Use for: implementation tasks that require writing code.
 
 Use Delegate when:
