@@ -504,17 +504,15 @@ Git safety:
             s" ($errInfo)"
           )
 
-      // Notify agent via ExternalEvent
-      val notifyAgent = IO(
-        ref ! AgentCommand.ExternalEvent(
-          source = "background-task",
-          eventType = eventType,
-          payload = payload,
-          metadata = metadata
-        )
-      ).handleErrorWith(e =>
-        logger.warn(s"Failed to notify agent for background job $jobId: ${e.getMessage}")
-      )
+      // Notify agent via ExternalEvent.
+      // ref ! returns IO[Unit] already — do NOT wrap in IO() or it
+      // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
+      val notifyAgent = (ref ! AgentCommand.ExternalEvent(
+        source = "background-task",
+        eventType = eventType,
+        payload = payload,
+        metadata = metadata
+      )).handleErrorWith(e => logger.warn(s"Failed to notify agent for background job $jobId: ${e.getMessage}"))
 
       // Notify frontend via WS so the indicator dismisses
       val notifyFrontend = ctx.wsSend.fold(IO.unit) { send =>
