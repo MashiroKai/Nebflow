@@ -180,8 +180,11 @@ Edit patterns:
         if size > MaxEditFileSize then
           Left(ToolError(s"File too large to edit (${formatSize(size)}). Maximum is ${formatSize(MaxEditFileSize)}."))
         else
-          val content = DiffUtil.readFile(filePath)
-          val lineSep = DiffUtil.detectLineSep(content)
+          val rawContent = DiffUtil.readFile(filePath)
+          val lineSep = DiffUtil.detectLineSep(rawContent)
+          // Normalize \r\n → \n so that matching works regardless of the file's
+          // line endings.  writeFile converts back to lineSep on output.
+          val content = rawContent.replace("\r\n", "\n")
           val mtime = Files.getLastModifiedTime(filePath)
 
           // Fuzzy matching
@@ -210,7 +213,7 @@ Edit patterns:
                 // Double-check concurrency: mtime + content comparison
                 val currentMtime = Files.getLastModifiedTime(filePath)
                 if currentMtime != mtime then
-                  val currentContent = DiffUtil.readFile(filePath)
+                  val currentContent = DiffUtil.readFile(filePath).replace("\r\n", "\n")
                   if currentContent != content then
                     Left(ToolError("File was modified externally. Please re-read and retry."))
                   else performReplace(filePath.toString, content, actualOld, effectiveNew, replaceAll, lineSep)
