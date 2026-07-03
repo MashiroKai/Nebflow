@@ -110,8 +110,7 @@ export function renderTaskList(tasks, container) {
       card.classList.toggle('collapsed', nowCollapsed);
       setCollapsed(nowCollapsed);
       toggleBtn.title = nowCollapsed ? t('task.expand') : t('task.collapse');
-      const icon = toggleBtn.querySelector('i');
-      if (icon) icon.setAttribute('data-lucide', nowCollapsed ? 'chevron-down' : 'chevron-up');
+      toggleBtn.innerHTML = `<i data-lucide="${nowCollapsed ? 'chevron-down' : 'chevron-up'}"></i>`;
       if (typeof lucide !== 'undefined') lucide.createIcons();
     });
   }
