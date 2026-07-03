@@ -3,6 +3,7 @@ package nebflow.core.tools
 import cats.effect.*
 import cats.effect.std.Mutex
 import cats.syntax.all.*
+import nebflow.core.NebflowLogger
 import nebflow.shared.Defaults
 
 import java.io.{BufferedReader, File, InputStreamReader}
@@ -379,7 +380,18 @@ final class ShellSession private (
   ): IO[Unit] =
     // Background jobs have no timeout — they run until completion or cancellation
     execute(command, 365.days, Some(health)).attempt.flatMap { result =>
-      deferred.complete(result).void *> on_complete.fold(IO.unit)(cb => cb(result).handleErrorWith(_ => IO.unit))
+      deferred.complete(result).void *>
+        on_complete.fold(IO.unit) { cb =>
+          // IO.delay catches exceptions thrown during IO construction
+          // (e.g. if cb(result) throws while preparing the payload).
+          // Without this, a construction-time throw bypasses handleErrorWith
+          // and silently kills the fiber — the deferred is already completed
+          // so the job looks done, but the notification is never sent.
+          IO.delay(cb(result)).flatten.handleErrorWith(e =>
+            IO.delay(NebflowLogger.forName("nebflow.shell")
+              .warn(s"Background job callback failed: ${e.getMessage}"))
+          )
+        }
     }
 
   /**
