@@ -9,15 +9,38 @@ export function onMessage(type, handler) {
   handlers[type].push(handler);
 }
 
+// ---------- Reconnect callback registry ----------
+// Called after the connection is re-established (not on first connect).
+// Used by main.js to re-fetch session history that may have been generated
+// by the agent while the frontend was disconnected (e.g. during OS sleep).
+const reconnectCallbacks = [];
+let hasConnectedBefore = false;
+
+export function onReconnect(callback) {
+  reconnectCallbacks.push(callback);
+}
+
 // ---------- Reconnection state ----------
+// No hard limit on attempts — this is a desktop app; the connection should
+// always recover from sleep / wake, network changes, or server restarts.
 let reconnectAttempts = 0;
-const MAX_RECONNECT_ATTEMPTS = 10;
+let reconnectTimer = null;
 const BASE_RECONNECT_DELAY = 2000;
 const MAX_RECONNECT_DELAY = 30000;
 
 function reconnectDelay() {
   const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
   return delay * (0.8 + Math.random() * 0.4);
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return; // already scheduled
+  const delay = reconnectDelay();
+  reconnectAttempts++;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, delay);
 }
 
 // ---------- Send ----------
@@ -41,17 +64,14 @@ export function connect() {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
     console.error('[ws] WebSocket constructor failed:', e);
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-      const delay = reconnectDelay();
-      reconnectAttempts++;
-      setTimeout(connect, delay);
-    }
+    scheduleReconnect();
     return;
   }
 
   state.ws.onopen = () => {
     reconnectAttempts = 0;
     state.dom.connEl.classList.remove('off');
+    state.dom.connEl.classList.remove('reconnecting');
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
@@ -62,23 +82,24 @@ export function connect() {
         sendWs({type: 'ping'});
       }
     }, 30000);
+    // On reconnect (not first connect), notify callbacks so they can
+    // re-fetch state that may have changed during the disconnect.
+    if (hasConnectedBefore) {
+      reconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] reconnect callback error:', e); } });
+    }
+    hasConnectedBefore = true;
   };
 
   state.ws.onclose = () => {
     state.dom.connEl?.classList.add('off');
+    state.dom.connEl?.classList.add('reconnecting');
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
-    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-      const delay = reconnectDelay();
-      reconnectAttempts++;
-      setTimeout(connect, delay);
-    }
+    scheduleReconnect();
   };
 
   state.ws.onerror = () => {
-    if (reconnectAttempts < 3) {
-      console.warn('[ws] connection failed, reconnecting...');
-    }
     state.dom.connEl?.classList.add('off');
+    state.dom.connEl?.classList.add('reconnecting');
   };
 
   state.ws.onmessage = (e) => {
@@ -137,3 +158,28 @@ export function connect() {
     }
   };
 }
+
+// ---------- Wake-up / network recovery ----------
+// When the OS sleeps, the browser suspends timers and the WebSocket dies at the
+// TCP level. On wake, detect this immediately and reconnect — don't wait for
+// the exponential backoff timer (which may not fire for a while).
+function checkConnection() {
+  if (!state.ws || state.ws.readyState === WebSocket.CLOSED || state.ws.readyState === WebSocket.CLOSING) {
+    // Connection is dead — cancel any pending slow reconnect and reconnect now
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    reconnectAttempts = 0; // reset so we use the minimum delay
+    connect();
+  } else if (state.ws.readyState === WebSocket.OPEN) {
+    // Connection looks alive — send a ping to verify it actually works
+    sendWs({type: 'ping'});
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') checkConnection();
+});
+
+window.addEventListener('online', () => {
+  // Network came back — give it a moment then check
+  setTimeout(checkConnection, 500);
+});
