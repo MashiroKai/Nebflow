@@ -223,7 +223,14 @@ class WebSocketRoutes(
             wsHub.unregister(hubConnId)
           )
 
-          sendStream = Stream.fromQueueUnterminated(outbound)
+          // sendStream: read from outbound queue, send via WebSocket.
+          // Client disconnects are expected (browser tab close, network change) and
+          // produce IOException during write. Catch and swallow gracefully.
+          sendStream = Stream
+            .fromQueueUnterminated(outbound)
+            .handleErrorWith { e =>
+              Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
+            }
           _ <- logger.info("WebSocket client connected")
           thinkingCfg <- sharedResources.thinkingConfigRef.get
           toolsList = ToolRegistry.ALL_TOOLS.map(t =>
