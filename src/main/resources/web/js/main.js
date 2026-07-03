@@ -1,7 +1,7 @@
 import state from './state.js';
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
-import { connect, onMessage, sendWs } from './ws.js';
+import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
   renderUserBubble, appendAiText, finishAi,
@@ -2031,6 +2031,20 @@ window.addEventListener('locale-changed', () => {
 // New Folder button
 document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(state.activeFolderId));
 
+
+// ---------- Reconnect: refresh active session history ----------
+// After OS sleep/wake or network drop, the agent may have produced output
+// while the frontend was disconnected. On reconnect, re-fetch the active
+// session's history so the user sees the latest state.
+onReconnect(() => {
+  const sid = state.activeSessionId;
+  if (!sid) return;
+  const view = findViewBySessionId(sid);
+  if (view) {
+    view.pagination.pendingInitialLoad = true;
+    sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
+  }
+});
 
 // Scroll listener (primary window)
 const _primChat = chatViews.primary.dom.chat;
