@@ -1,19 +1,20 @@
 package nebflow.actor
 
-import cats.effect.{Deferred, Fiber, IO, Ref}
+import cats.effect.*
 import nebflow.core.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration
 
-/** Local actor implementation: backed by a Queue + Fiber.
-  *
-  * Messages are offered to the queue. A fiber processes them one at a time
-  * by applying the current Behavior. Cancellation is via fiber.cancel.
-  */
+/**
+ * Local actor implementation: backed by a Queue + Fiber.
+ *
+ * Messages are offered to the queue. A fiber processes them one at a time
+ * by applying the current Behavior. Cancellation is via fiber.cancel.
+ */
 final class LocalActorRef[Msg](
-    val path: ActorPath,
-    queue: cats.effect.std.Queue[IO, Msg],
-    fiberPromise: Deferred[IO, Fiber[IO, Throwable, Unit]]
+  val path: ActorPath,
+  queue: cats.effect.std.Queue[IO, Msg],
+  fiberPromise: Deferred[IO, Fiber[IO, Throwable, Unit]]
 ) extends ActorRef[Msg]:
 
   def !(msg: Msg): IO[Unit] = queue.offer(msg)

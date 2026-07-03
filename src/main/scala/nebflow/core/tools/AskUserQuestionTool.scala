@@ -101,13 +101,14 @@ Behavior:
         ctx.agentActorRef match
           case Some(agentRef) =>
             val requestId = java.util.UUID.randomUUID().toString.take(8)
-            agentRef.?((replyTo: ActorRef[List[String]]) =>
-              AgentCommand.AskUser(requestId, items, Some(replyTo))
-            ).map { answers =>
-              Right(formatAnswer(items, answers))
-            }.recover { case _: java.util.concurrent.TimeoutException =>
-              Right("[Timeout] User did not respond within the timeout period. Proceed with your best judgment.")
-            }
+            agentRef
+              .?((replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, items, Some(replyTo)))
+              .map { answers =>
+                Right(formatAnswer(items, answers))
+              }
+              .recover { case _: java.util.concurrent.TimeoutException =>
+                Right("[Timeout] User did not respond within the timeout period. Proceed with your best judgment.")
+              }
           case None =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
       end if

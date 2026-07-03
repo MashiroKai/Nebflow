@@ -37,8 +37,8 @@ export default {
   answeredPermissions: new Set(),
   legacyMigrated: false,
 
-  // Bypass all permission requests (auto-approve mode)
-  bypassAllPermission: false,
+  // Per-session bypass: sessions whose permission requests are auto-approved
+  bypassSessions: new Set(),
 
   // Chat streaming (per-session status sets — view-level state lives on ChatView)
   busySessionIds: new Set(),
@@ -139,6 +139,7 @@ export default {
   // Per-session model info: sessionId -> { model, contextWindow, inputTokens }
   sessionModelInfo: safeParse(localStorage.getItem('nebflow_model_info'), {}),
   updateHeaderModelInfo: null,
+  updateBypassToggle: null,
   COMPACT_THRESHOLD: 0.90,
 
   // Card design prompt

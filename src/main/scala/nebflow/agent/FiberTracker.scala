@@ -1,13 +1,14 @@
 package nebflow.agent
 
-import cats.effect.{Fiber, IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
+import cats.effect.{Fiber, IO, Ref}
 import cats.syntax.all.*
 
-/** Tracks IO fibers forked from an actor. Enables cancellation of all
-  * in-flight work on Interrupt/Stop/SessionReset.
-  */
+/**
+ * Tracks IO fibers forked from an actor. Enables cancellation of all
+ * in-flight work on Interrupt/Stop/SessionReset.
+ */
 class FiberTracker(dispatcher: Dispatcher[IO]):
   private val fibers = Ref.unsafe[IO, List[Fiber[IO, Throwable, Unit]]](Nil)
 

@@ -5,13 +5,13 @@ import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.{ActorRef, ActorSystem as NebulaActorSystem}
 import nebflow.agent.AgentCommand.*
 import nebflow.core.tools.{FileHistory, ReadTracker}
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.gateway.{SessionRecorder, SessionStore, WsHub}
 import nebflow.service.{MemoryStore, NebflowBackup}
 import nebflow.shared.UiMessage
-import nebflow.actor.{ActorRef, ActorSystem as NebulaActorSystem}
 
 import java.util.concurrent.atomic.AtomicLong
 
@@ -69,7 +69,8 @@ class MemoryAgentManager(
         _dreamRef = null
 
       def touchLastDreamTime(): Unit =
-        lastDreamTime = System.currentTimeMillis(),
+        lastDreamTime = System.currentTimeMillis()
+    ,
     DebounceDelay,
     FullCycleInterval,
     DreamTimeoutDuration
@@ -148,11 +149,13 @@ class MemoryAgentManager(
       val ref = dispatcher.unsafeRunSync(createDreamAgent())
       _dreamRef = ref
       dispatcher.unsafeRunSync(recordUserMessage(DreamSessionId, payload, injected = true))
-      dispatcher.unsafeRunAndForget(ref ! ExternalEvent(
-        source = "memory-manager",
-        eventType = "dream",
-        payload = payload
-      ))
+      dispatcher.unsafeRunAndForget(
+        ref ! ExternalEvent(
+          source = "memory-manager",
+          eventType = "dream",
+          payload = payload
+        )
+      )
       logger.infoSync(
         s"Dream triggered (${if isFullCycle then "full" else "entries"}): ${entries.size} entries, ${allFiles.size} files"
       )
@@ -189,28 +192,27 @@ class MemoryAgentManager(
       scheduler = _dreamScheduler
       wsSendWithDone = (json: Json) =>
         val signalIO =
-          if json.hcursor.downField("type").as[String].toOption.contains("done") then
-            scheduler.signalComplete
+          if json.hcursor.downField("type").as[String].toOption.contains("done") then scheduler.signalComplete
           else IO.unit
         signalIO *> recorder(json)
       ref <- nebulaSystem.spawn(
-          AgentActor(
-            agentDef,
-            resources,
-            wsSend = wsSendWithDone,
-            depth = 0,
-            parentRef = None,
-            sessionId = Some(DreamSessionId),
-            sessionName = Some(DreamSessionName),
-            initialMessages = Nil,
-            readTracker = Some(readTracker),
-            fileHistory = Some(fileHistory),
-            contextWindow = resources.contextWindow,
-            projectRoot = Some((PathUtil.dataRoot).toString),
-            folderId = None
-          ),
-          s"$DreamSessionId-${counter.incrementAndGet()}"
-        )
+        AgentActor(
+          agentDef,
+          resources,
+          wsSend = wsSendWithDone,
+          depth = 0,
+          parentRef = None,
+          sessionId = Some(DreamSessionId),
+          sessionName = Some(DreamSessionName),
+          initialMessages = Nil,
+          readTracker = Some(readTracker),
+          fileHistory = Some(fileHistory),
+          contextWindow = resources.contextWindow,
+          projectRoot = Some((PathUtil.dataRoot).toString),
+          folderId = None
+        ),
+        s"$DreamSessionId-${counter.incrementAndGet()}"
+      )
       _ = logger.infoSync("Spawned Dream MemoryAgent actor")
     yield ref
 

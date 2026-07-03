@@ -68,14 +68,18 @@ object AgentCommand:
   case class AskQuestion(question: String, sessionId: String) extends AgentCommand
 
   case class SkillActivate(
-    skillName: String, input: String, sessionId: String,
-    skillContent: String, skillBaseDir: String
+    skillName: String,
+    input: String,
+    sessionId: String,
+    skillContent: String,
+    skillBaseDir: String
   ) extends AgentCommand
 
   case class UpdateContextWindow(window: Int) extends AgentCommand
 
   case class ReplaceToolResults(
-    rounds: Int, summary: String,
+    rounds: Int,
+    summary: String,
     replyTo: cats.effect.Deferred[IO, Either[String, Int]]
   ) extends AgentCommand
 
@@ -90,11 +94,16 @@ object AgentCommand:
   case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
 
   case class BackgroundTaskNotification(
-    taskId: String, description: String, status: String,
-    output: String, exitCode: Option[Int] = None
+    taskId: String,
+    description: String,
+    status: String,
+    output: String,
+    exitCode: Option[Int] = None
   ) extends AgentCommand:
+
     def toExternalEvent: ExternalEvent = ExternalEvent(
-      source = "background-task", eventType = status,
+      source = "background-task",
+      eventType = status,
       payload = status match
         case "completed" =>
           val exitInfo = exitCode.filter(_ != 0).map(c => s" (exit code $c)").getOrElse("")
@@ -102,8 +111,10 @@ object AgentCommand:
         case "failed" => s"[Background task failed] \"$description\":\n$output"
         case _ => s"[Background task stopped] \"$description\"",
       metadata = JsonObject(
-        "taskId" -> taskId.asJson, "description" -> description.asJson,
-        "status" -> status.asJson, "output" -> output.asJson,
+        "taskId" -> taskId.asJson,
+        "description" -> description.asJson,
+        "status" -> status.asJson,
+        "output" -> output.asJson,
         "exitCode" -> exitCode.asJson
       ),
       correlationId = Option(taskId).filter(_.nonEmpty)
@@ -111,7 +122,9 @@ object AgentCommand:
   end BackgroundTaskNotification
 
   case class ExternalEvent(
-    source: String, eventType: String, payload: String,
+    source: String,
+    eventType: String,
+    payload: String,
     metadata: JsonObject = JsonObject.empty,
     correlationId: Option[String] = None
   ) extends AgentCommand
@@ -132,8 +145,13 @@ enum AgentStreamEvent:
   case Thinking
   case ToolCallDetected(name: String)
   case RetryStatus(message: String)
-  case Done(model: Option[String] = None, contextWindow: Option[Int] = None,
-    inputTokens: Option[Int] = None, compactThreshold: Option[Double] = None)
+
+  case Done(
+    model: Option[String] = None,
+    contextWindow: Option[Int] = None,
+    inputTokens: Option[Int] = None,
+    compactThreshold: Option[Double] = None
+  )
   case UsageUpdate(inputTokens: Int, contextWindow: Int, compactThreshold: Double)
   case CompactStart(mode: String, inputTokens: Option[Int], threshold: Option[Int])
   case CompactComplete(before: Int, after: Int, reportPath: Option[String] = None)
@@ -144,64 +162,135 @@ enum AgentStreamEvent:
 
   def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
     case TextDelta(text) =>
-      if isSubagent then Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> agentId.asJson, "delta" -> text.asJson)
+      if isSubagent then
+        Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> agentId.asJson, "delta" -> text.asJson)
       else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
     case ToolStart(label) =>
-      if isSubagent then Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
+      if isSubagent then
+        Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
       else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
     case ToolEnd(label, summary, content, isError, input) =>
-      val base = if isSubagent then Json.obj("type" -> "agentToolEnd".asJson, "agentId" -> agentId.asJson,
-        "label" -> label.asJson, "summary" -> summary.asJson, "content" -> content.asJson, "isError" -> isError.asJson)
-      else Json.obj("type" -> "toolEnd".asJson, "sessionId" -> sessionId.asJson,
-        "label" -> label.asJson, "summary" -> summary.asJson, "content" -> content.asJson, "isError" -> isError.asJson)
+      val base =
+        if isSubagent then
+          Json.obj(
+            "type" -> "agentToolEnd".asJson,
+            "agentId" -> agentId.asJson,
+            "label" -> label.asJson,
+            "summary" -> summary.asJson,
+            "content" -> content.asJson,
+            "isError" -> isError.asJson
+          )
+        else
+          Json.obj(
+            "type" -> "toolEnd".asJson,
+            "sessionId" -> sessionId.asJson,
+            "label" -> label.asJson,
+            "summary" -> summary.asJson,
+            "content" -> content.asJson,
+            "isError" -> isError.asJson
+          )
       input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
     case AgentStart(name, agentType, taskDescription) =>
-      val base = Json.obj("type" -> "agentStart".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson, "agentType" -> agentType.asJson)
+      val base = Json.obj(
+        "type" -> "agentStart".asJson,
+        "agentId" -> agentId.asJson,
+        "name" -> name.asJson,
+        "agentType" -> agentType.asJson
+      )
       taskDescription.fold(base)(desc => base.deepMerge(Json.obj("taskDescription" -> desc.asJson)))
     case AgentEnd(name) => Json.obj("type" -> "agentEnd".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
     case Thinking =>
       if isSubagent then Json.obj("type" -> "agentThinking".asJson, "agentId" -> agentId.asJson)
       else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
     case ToolCallDetected(name) =>
-      if isSubagent then Json.obj("type" -> "agentToolCallDetected".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
+      if isSubagent then
+        Json.obj("type" -> "agentToolCallDetected".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
       else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
     case RetryStatus(message) =>
-      if isSubagent then Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
+      if isSubagent then
+        Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
       else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
     case Done(model, contextWindow, inputTokens, compactThreshold) =>
-      val base = if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
-      else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
+      val base =
+        if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
+        else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
       val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
       val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
       val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
       compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
     case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
-      Json.obj("type" -> "usageUpdate".asJson, "sessionId" -> sessionId.asJson,
-        "inputTokens" -> inputTokens.asJson, "contextWindow" -> contextWindow.asJson, "compactThreshold" -> compactThreshold.asJson)
+      Json.obj(
+        "type" -> "usageUpdate".asJson,
+        "sessionId" -> sessionId.asJson,
+        "inputTokens" -> inputTokens.asJson,
+        "contextWindow" -> contextWindow.asJson,
+        "compactThreshold" -> compactThreshold.asJson
+      )
     case CompactStart(mode, inputTokens, threshold) =>
-      if isSubagent then Json.obj("type" -> "agentCompactStart".asJson, "agentId" -> agentId.asJson,
-        "mode" -> mode.asJson, "inputTokens" -> inputTokens.asJson, "threshold" -> threshold.asJson)
-      else Json.obj("type" -> "compactStart".asJson, "sessionId" -> sessionId.asJson,
-        "mode" -> mode.asJson, "inputTokens" -> inputTokens.asJson, "threshold" -> threshold.asJson)
+      if isSubagent then
+        Json.obj(
+          "type" -> "agentCompactStart".asJson,
+          "agentId" -> agentId.asJson,
+          "mode" -> mode.asJson,
+          "inputTokens" -> inputTokens.asJson,
+          "threshold" -> threshold.asJson
+        )
+      else
+        Json.obj(
+          "type" -> "compactStart".asJson,
+          "sessionId" -> sessionId.asJson,
+          "mode" -> mode.asJson,
+          "inputTokens" -> inputTokens.asJson,
+          "threshold" -> threshold.asJson
+        )
     case CompactComplete(before, after, reportPath) =>
-      val base = if isSubagent then Json.obj("type" -> "agentCompactComplete".asJson, "agentId" -> agentId.asJson,
-        "before" -> before.asJson, "after" -> after.asJson)
-      else Json.obj("type" -> "compactComplete".asJson, "sessionId" -> sessionId.asJson,
-        "before" -> before.asJson, "after" -> after.asJson)
+      val base =
+        if isSubagent then
+          Json.obj(
+            "type" -> "agentCompactComplete".asJson,
+            "agentId" -> agentId.asJson,
+            "before" -> before.asJson,
+            "after" -> after.asJson
+          )
+        else
+          Json.obj(
+            "type" -> "compactComplete".asJson,
+            "sessionId" -> sessionId.asJson,
+            "before" -> before.asJson,
+            "after" -> after.asJson
+          )
       reportPath.fold(base)(p => base.deepMerge(Json.obj("reportPath" -> p.asJson)))
     case CompactFailed(reason, attempt, maxAttempts) =>
-      if isSubagent then Json.obj("type" -> "agentCompactFailed".asJson, "agentId" -> agentId.asJson,
-        "reason" -> reason.asJson, "attempt" -> attempt.asJson, "maxAttempts" -> maxAttempts.asJson)
-      else Json.obj("type" -> "compactFailed".asJson, "sessionId" -> sessionId.asJson,
-        "reason" -> reason.asJson, "attempt" -> attempt.asJson, "maxAttempts" -> maxAttempts.asJson)
+      if isSubagent then
+        Json.obj(
+          "type" -> "agentCompactFailed".asJson,
+          "agentId" -> agentId.asJson,
+          "reason" -> reason.asJson,
+          "attempt" -> attempt.asJson,
+          "maxAttempts" -> maxAttempts.asJson
+        )
+      else
+        Json.obj(
+          "type" -> "compactFailed".asJson,
+          "sessionId" -> sessionId.asJson,
+          "reason" -> reason.asJson,
+          "attempt" -> attempt.asJson,
+          "maxAttempts" -> maxAttempts.asJson
+        )
     case BackgroundTaskUpdate(taskId, description, status) =>
-      Json.obj("type" -> "backgroundTaskUpdate".asJson,
-        "taskId" -> taskId.asJson, "description" -> description.asJson, "status" -> status.asJson,
-        "sessionId" -> sessionId.asJson)
+      Json.obj(
+        "type" -> "backgroundTaskUpdate".asJson,
+        "taskId" -> taskId.asJson,
+        "description" -> description.asJson,
+        "status" -> status.asJson,
+        "sessionId" -> sessionId.asJson
+      )
     case ExternalEventReceived(source, eventType, correlationId) =>
-      val base = Json.obj("type" -> "externalEventReceived".asJson, "source" -> source.asJson, "eventType" -> eventType.asJson)
-      val withSession = if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
-      else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+      val base =
+        Json.obj("type" -> "externalEventReceived".asJson, "source" -> source.asJson, "eventType" -> eventType.asJson)
+      val withSession =
+        if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
+        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
       correlationId.fold(withSession)(id => withSession.deepMerge(Json.obj("correlationId" -> id.asJson)))
     case Interrupted =>
       val base = Json.obj("type" -> "interrupted".asJson)
@@ -210,8 +299,11 @@ enum AgentStreamEvent:
 end AgentStreamEvent
 
 case class AgentInfo(
-  name: String, description: String, tools: List[String],
-  displayName: Option[String] = None, avatar: Option[String] = None,
+  name: String,
+  description: String,
+  tools: List[String],
+  displayName: Option[String] = None,
+  avatar: Option[String] = None,
   mcpServers: List[String] = Nil
 )
 
@@ -219,8 +311,11 @@ enum AgentErrorType:
   case LlmFailed, ToolFailed, Timeout, Interrupted, DepthExceeded, Unknown
 
 case class AgentError(
-  agentId: String, agentName: String, depth: Int,
-  errorType: AgentErrorType, message: String,
+  agentId: String,
+  agentName: String,
+  depth: Int,
+  errorType: AgentErrorType,
+  message: String,
   cause: Option[AgentError] = None
 )
 
@@ -233,37 +328,49 @@ enum AgentStatus:
 case class CompactionResult(before: Int, after: Int)
 
 case class CompactionJob(
-  subagentId: String, mode: String,
+  subagentId: String,
+  mode: String,
   replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
   replyTo: Option[ActorRef[AgentEvent]] = None,
   resumeAfterCompact: Boolean = true
 )
 
 case class TurnContext(
-  agentDef: AgentDef, systemPrefix: String, projectRoot: Option[String],
-  rulesMd: Option[String], memoryBlock: String,
+  agentDef: AgentDef,
+  systemPrefix: String,
+  projectRoot: Option[String],
+  rulesMd: Option[String],
+  memoryBlock: String,
   thinkingConfig: nebflow.llm.ThinkingConfig,
   branchChange: Option[SystemReminder] = None,
   currentBranch: Option[String] = None
 )
 
 case class LifecycleContext(
-  systemPrefix: String, agentDef: AgentDef, memoryBlock: String,
-  rulesMd: Option[String], projectRoot: Option[String]
+  systemPrefix: String,
+  agentDef: AgentDef,
+  memoryBlock: String,
+  rulesMd: Option[String],
+  projectRoot: Option[String]
 )
 
 case class SessionContext(
-  sessionId: Option[String] = None, sessionName: Option[String] = None,
+  sessionId: Option[String] = None,
+  sessionName: Option[String] = None,
   recentMessageIds: List[String] = Nil,
   wsSend: Json => IO[Unit] = _ => IO.unit,
   depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None,
   fileHistory: Option[nebflow.core.tools.FileHistory] = None,
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
-  askMode: Option[String] = None, language: Option[String] = None,
-  projectRoot: Option[String] = None, rulesMd: Option[String] = None,
-  folderId: Option[String] = None, lifecycle: Option[LifecycleContext] = None,
-  chatWidth: Int = 0, gitBranch: Option[String] = None
+  askMode: Option[String] = None,
+  language: Option[String] = None,
+  projectRoot: Option[String] = None,
+  rulesMd: Option[String] = None,
+  folderId: Option[String] = None,
+  lifecycle: Option[LifecycleContext] = None,
+  chatWidth: Int = 0,
+  gitBranch: Option[String] = None
 )
 
 case class InteractionState(
@@ -273,8 +380,10 @@ case class InteractionState(
 )
 
 case class ExecutionContext(
-  messages: List[Message] = Nil, status: AgentStatus = AgentStatus.Idle,
-  turnIdx: Int = 0, currentTurnId: Long = 0L,
+  messages: List[Message] = Nil,
+  status: AgentStatus = AgentStatus.Idle,
+  turnIdx: Int = 0,
+  currentTurnId: Long = 0L,
   activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
   interaction: Option[InteractionState] = None,
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
@@ -282,49 +391,75 @@ case class ExecutionContext(
 )
 
 object ExecutionContext:
+
   def idle(messages: List[Message], turnIdx: Int = 0, currentTurnId: Long = 0L): ExecutionContext =
-    ExecutionContext(messages = messages, status = AgentStatus.Idle, turnIdx = turnIdx,
-      currentTurnId = currentTurnId, activeStreamFiber = None, interaction = None,
-      pendingEvents = Nil, emptyResponseRetries = 0)
+    ExecutionContext(
+      messages = messages,
+      status = AgentStatus.Idle,
+      turnIdx = turnIdx,
+      currentTurnId = currentTurnId,
+      activeStreamFiber = None,
+      interaction = None,
+      pendingEvents = Nil,
+      emptyResponseRetries = 0
+    )
 end ExecutionContext
 
 case class CompactionState(
-  pendingJob: Option[CompactionJob] = None, compactionFailures: Int = 0,
-  lastCompactionFailureAt: Long = 0L, latestUsage: Option[TokenUsage] = None,
+  pendingJob: Option[CompactionJob] = None,
+  compactionFailures: Int = 0,
+  lastCompactionFailureAt: Long = 0L,
+  latestUsage: Option[TokenUsage] = None,
   lastModel: Option[String] = None
 )
 
 case class AgentState(
-  session: SessionContext, execution: ExecutionContext, compaction: CompactionState
+  session: SessionContext,
+  execution: ExecutionContext,
+  compaction: CompactionState
 )
 
 object AgentState:
+
   def apply(
-    messages: List[Message] = Nil, status: AgentStatus = AgentStatus.Idle,
+    messages: List[Message] = Nil,
+    status: AgentStatus = AgentStatus.Idle,
     depth: Int = 0,
     activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
-    sessionId: Option[String] = None, sessionName: Option[String] = None,
-    pendingCompaction: Option[CompactionJob] = None, compactionFailures: Int = 0,
+    sessionId: Option[String] = None,
+    sessionName: Option[String] = None,
+    pendingCompaction: Option[CompactionJob] = None,
+    compactionFailures: Int = 0,
     latestUsage: Option[TokenUsage] = None,
     pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
     pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
-    turnIdx: Int = 0, wsSend: Json => IO[Unit] = _ => IO.unit,
+    turnIdx: Int = 0,
+    wsSend: Json => IO[Unit] = _ => IO.unit,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
     recentMessageIds: List[String] = Nil,
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
-    projectRoot: Option[String] = None, rulesMd: Option[String] = None,
+    projectRoot: Option[String] = None,
+    rulesMd: Option[String] = None,
     folderId: Option[String] = None
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
       case _ => Some(InteractionState(pendingAskUser, pendingPermission))
     new AgentState(
-      SessionContext(sessionId = sessionId, sessionName = sessionName,
-        recentMessageIds = recentMessageIds, wsSend = wsSend, depth = depth,
-        readTracker = readTracker, fileHistory = fileHistory,
-        contextWindow = contextWindow, folderId = folderId,
-        projectRoot = projectRoot, rulesMd = rulesMd),
+      SessionContext(
+        sessionId = sessionId,
+        sessionName = sessionName,
+        recentMessageIds = recentMessageIds,
+        wsSend = wsSend,
+        depth = depth,
+        readTracker = readTracker,
+        fileHistory = fileHistory,
+        contextWindow = contextWindow,
+        folderId = folderId,
+        projectRoot = projectRoot,
+        rulesMd = rulesMd
+      ),
       ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
     )
@@ -349,7 +484,9 @@ extension (s: AgentState)
   def lastModel: Option[String] = s.compaction.lastModel
   def emptyResponseRetries: Int = s.execution.emptyResponseRetries
   def pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = s.execution.interaction.flatMap(_.pendingAskUser)
-  def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = s.execution.interaction.flatMap(_.pendingPermission)
+
+  def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
+    s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
   def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
   def contextWindow: Int = s.session.contextWindow
@@ -368,41 +505,71 @@ extension (s: AgentState)
   def withStatus(st: AgentStatus): AgentState = s.copy(execution = s.execution.copy(status = st))
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
   def withCurrentTurnId(id: Long): AgentState = s.copy(execution = s.execution.copy(currentTurnId = id))
+
   def withActiveStreamFiber(fiber: Option[cats.effect.Fiber[IO, Throwable, Unit]]): AgentState =
     s.copy(execution = s.execution.copy(activeStreamFiber = fiber))
+
   def withInteraction(interaction: Option[InteractionState]): AgentState =
     s.copy(execution = s.execution.copy(interaction = interaction))
+
   def withPendingAskUser(d: Option[cats.effect.Deferred[IO, List[String]]]): AgentState =
-    s.copy(execution = s.execution.copy(interaction = Some(s.execution.interaction.getOrElse(InteractionState()).copy(pendingAskUser = d))))
+    s.copy(execution =
+      s.execution.copy(interaction =
+        Some(s.execution.interaction.getOrElse(InteractionState()).copy(pendingAskUser = d))
+      )
+    )
+
   def withPendingPermission(d: Option[cats.effect.Deferred[IO, Boolean]]): AgentState =
-    s.copy(execution = s.execution.copy(interaction = Some(s.execution.interaction.getOrElse(InteractionState()).copy(pendingPermission = d))))
+    s.copy(execution =
+      s.execution.copy(interaction =
+        Some(s.execution.interaction.getOrElse(InteractionState()).copy(pendingPermission = d))
+      )
+    )
   def withRecentMessageIds(ids: List[String]): AgentState = s.copy(session = s.session.copy(recentMessageIds = ids))
   def withContextWindow(window: Int): AgentState = s.copy(session = s.session.copy(contextWindow = window))
   def withAskMode(mode: Option[String]): AgentState = s.copy(session = s.session.copy(askMode = mode))
   def withLanguage(lang: Option[String]): AgentState = s.copy(session = s.session.copy(language = lang))
+
   def withPendingCompaction(job: Option[CompactionJob]): AgentState =
     s.copy(compaction = s.compaction.copy(pendingJob = job))
-  def withCompactionFailures(failures: Int): AgentState = s.copy(compaction = s.compaction.copy(compactionFailures = failures))
-  def withLastCompactionFailureAt(ts: Long): AgentState = s.copy(compaction = s.compaction.copy(lastCompactionFailureAt = ts))
-  def withEmptyResponseRetries(count: Int): AgentState = s.copy(execution = s.execution.copy(emptyResponseRetries = count))
+
+  def withCompactionFailures(failures: Int): AgentState =
+    s.copy(compaction = s.compaction.copy(compactionFailures = failures))
+
+  def withLastCompactionFailureAt(ts: Long): AgentState =
+    s.copy(compaction = s.compaction.copy(lastCompactionFailureAt = ts))
+
+  def withEmptyResponseRetries(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(emptyResponseRetries = count))
   def withLifecycle(lc: LifecycleContext): AgentState = s.copy(session = s.session.copy(lifecycle = Some(lc)))
   def withLifecycleCleared: AgentState = s.copy(session = s.session.copy(lifecycle = None))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
-  def withLatestUsage(usage: Option[TokenUsage]): AgentState = s.copy(compaction = s.compaction.copy(latestUsage = usage))
+
+  def withLatestUsage(usage: Option[TokenUsage]): AgentState =
+    s.copy(compaction = s.compaction.copy(latestUsage = usage))
   def withLastModel(model: Option[String]): AgentState = s.copy(compaction = s.compaction.copy(lastModel = model))
+
   def updateContextWindowIfNeeded(reported: Option[Int]): AgentState = reported match
     case Some(cw) if cw != s.session.contextWindow => s.copy(session = s.session.copy(contextWindow = cw))
     case _ => s
+
   def resetToIdle(messages: List[Message], turnIdx: Int = s.execution.turnIdx): AgentState =
     s.copy(execution = ExecutionContext.idle(messages, turnIdx, s.execution.currentTurnId))
+
   def resetForInterrupt: AgentState = s.copy(
     execution = ExecutionContext.idle(s.execution.messages, s.execution.turnIdx, s.execution.currentTurnId),
-    compaction = s.compaction.copy(pendingJob = None))
+    compaction = s.compaction.copy(pendingJob = None)
+  )
 end extension
 
 case class ConsumeResult(
-  text: String, toolCalls: List[ToolCall], results: List[(ToolCall, ToolExecResult)],
-  stopReason: Option[String], usage: Option[TokenUsage] = None,
-  thinking: Option[String] = None, thinkingSignature: Option[String] = None,
-  model: Option[String] = None, contextWindow: Option[Int] = None
+  text: String,
+  toolCalls: List[ToolCall],
+  results: List[(ToolCall, ToolExecResult)],
+  stopReason: Option[String],
+  usage: Option[TokenUsage] = None,
+  thinking: Option[String] = None,
+  thinkingSignature: Option[String] = None,
+  model: Option[String] = None,
+  contextWindow: Option[Int] = None
 )

@@ -155,7 +155,7 @@ state.dom = {
   // Header status indicators — surfaced on state.dom so the ws.js swap can redirect
   // them to the secondary panel, giving both windows identical indicator behaviour.
   headerModelInfoEl: document.getElementById('header-model-info'),
-  bypassBadgeEl: document.getElementById('bypass-badge'),
+  bypassToggleEl: document.getElementById('bypass-toggle'),
   delegateIndicatorEl: document.getElementById('delegate-indicator'),
   delegateDropdownEl: document.getElementById('delegate-dropdown'),
   delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
@@ -1947,6 +1947,36 @@ initInput(chatViews.secondary);
 initMemory();
 initScheduledTask();
 initMesh();
+
+// ---------- Bypass toggle (per-session auto-approve) ----------
+(function initBypassToggle() {
+  /** Update the toggle button's active state for the given view's session. */
+  state.updateBypassToggle = function(view) {
+    const v = view || activeView;
+    if (!v || !v.sessionId) return;
+    const enabled = state.bypassSessions.has(v.sessionId);
+    const prefix = v.id === 'secondary' ? 'secondary-' : '';
+    const btn = document.getElementById(prefix + 'bypass-toggle');
+    if (btn) btn.classList.toggle('active', enabled);
+  };
+
+  // Click handler: toggle bypass for the current session
+  for (const v of Object.values(chatViews)) {
+    const prefix = v.id === 'secondary' ? 'secondary-' : '';
+    const btn = document.getElementById(prefix + 'bypass-toggle');
+    if (!btn) continue;
+    btn.addEventListener('click', () => {
+      setActiveView(v);
+      if (!v.sessionId) return;
+      if (state.bypassSessions.has(v.sessionId)) {
+        state.bypassSessions.delete(v.sessionId);
+      } else {
+        state.bypassSessions.add(v.sessionId);
+      }
+      state.updateBypassToggle(v);
+    });
+  }
+})();
 
 // Sidebar collapse toggle
 (function initSidebarToggle() {

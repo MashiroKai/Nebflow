@@ -2,6 +2,7 @@ package nebflow.agent
 
 import cats.effect.std.{Dispatcher, Semaphore}
 import cats.effect.{IO, Ref}
+import nebflow.actor.ActorRef
 import nebflow.bridge.BridgeManager
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.hooks.{HookEngine, HooksConfig}
@@ -11,9 +12,8 @@ import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ProviderRegistry, ThinkingConfig}
+import nebflow.llm.*
 import nebflow.mesh.MeshService
-import nebflow.actor.ActorRef
 import nebflow.shared.*
 
 /**

@@ -48,65 +48,8 @@ const slashCommands = {
     run: () => {
       sendWs({type: 'getModelOptions', sessionId: activeView.sessionId});
     }
-  },
-  '/bypass': {
-    desc: () => t('slash.bypass'),
-    run: () => {
-      // Show a selection card to toggle bypass-all mode
-      if (!activeView.stream.currentAiBubble) {
-        const row = document.createElement('div');
-        row.className = 'row ai';
-        activeView.stream.currentAiBubble = document.createElement('div');
-        activeView.stream.currentAiBubble.className = 'bubble ai';
-        row.appendChild(activeView.stream.currentAiBubble);
-        activeView.dom.chat.appendChild(row);
-      }
-      const isEnabled = state.bypassAllPermission;
-      import('./chat.js').then(({ showOptions }) => {
-        showOptions(activeView.stream.currentAiBubble, [
-          {
-            question: isEnabled ? t('slash.bypassDisableQ') : t('slash.bypassEnableQ'),
-            options: [
-              { label: isEnabled ? t('slash.bypassDisable') : t('slash.bypassEnable'), desc: t('slash.bypassDesc') },
-              { label: t('chat.cancel'), desc: '' }
-            ],
-            allowOther: false
-          }
-        ], (answers) => {
-          const confirmed = answers[0] === (isEnabled ? t('slash.bypassDisable') : t('slash.bypassEnable'));
-          if (confirmed) {
-            state.bypassAllPermission = !isEnabled;
-            updateBypassBadge(state.bypassAllPermission);
-            renderSystemBubble(
-              state.bypassAllPermission ? t('slash.bypassEnabled') : t('slash.bypassDisabled')
-            );
-          }
-        }, t('chat.apply'));
-      });
-    }
   }
 };
-
-/**
- * Show or hide the bypass badge in the header.
- * Called when bypass mode is toggled.
- */
-function updateBypassBadge(enabled) {
-  // Bypass is a global toggle — keep both the primary and secondary header badges in sync.
-  for (const badge of [
-    document.getElementById('bypass-badge'),
-    document.getElementById('secondary-bypass-badge'),
-  ]) {
-    if (!badge) continue;
-    const textEl = badge.querySelector('.bypass-badge-text');
-    if (enabled) {
-      badge.classList.remove('hidden');
-      if (textEl) textEl.textContent = t('chat.bypassBadge');
-    } else {
-      badge.classList.add('hidden');
-    }
-  }
-}
 
 /** Register skill commands from the server-provided skill list. */
 export function registerSkillCommands(skills) {

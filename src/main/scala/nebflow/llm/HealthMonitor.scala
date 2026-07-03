@@ -16,6 +16,7 @@ enum HealthState:
 object ProviderHealthMonitor:
   /** Interval between probe cycles for Down providers (5 minutes). */
   val ProbeIntervalSec = 300
+
   /** Timeout for a single probe request (15 seconds). */
   val ProbeTimeoutSec = 15
 
@@ -78,7 +79,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
       candidates.partition { c =>
         states.get(key(c.providerId, c.model)) match
           case Some(HealthState.Down(_, _)) => false
-          case _                            => true
+          case _ => true
       }
     }
 
@@ -98,7 +99,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
           Deferred[IO, Unit].flatMap { fresh =>
             signalRef.tryModify {
               case `current` => (fresh, ())
-              case other     => (other, ())
+              case other => (other, ())
             }.void
           }
         case None => current.get
@@ -114,15 +115,16 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
     def loop: IO[Unit] =
       for
         candidates <- registry.getCandidates()
-        states     <- statesRef.get
+        states <- statesRef.get
         downCandidates = candidates.filter(c =>
           states.get(key(c.providerId, c.model)).exists {
             case HealthState.Down(_, _) => true
-            case HealthState.Up         => false
+            case HealthState.Up => false
           }
         )
-        _ <- if downCandidates.nonEmpty then downCandidates.traverse_(probe)
-             else IO.unit
+        _ <-
+          if downCandidates.nonEmpty then downCandidates.traverse_(probe)
+          else IO.unit
         _ <- IO.sleep(ProviderHealthMonitor.ProbeIntervalSec.seconds)
         _ <- loop
       yield ()
@@ -148,6 +150,8 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
         case Left(err) =>
           logger.debug(s"Probe failed for ${candidate.providerId}/${candidate.model}: ${err.getMessage}")
       }
+
+  end probe
 
   /** Complete the current signal Deferred (wake all waiters). */
   private def signalRecovery(): IO[Unit] =
