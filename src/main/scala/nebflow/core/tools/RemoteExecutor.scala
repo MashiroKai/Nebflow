@@ -28,10 +28,10 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
   def meshServiceOpt: Option[MeshService] = Some(meshService)
 
   def execute(
-      deviceName: String,
-      toolName: String,
-      params: JsonObject,
-      ctxOpt: Option[ToolContext] = None
+    deviceName: String,
+    toolName: String,
+    params: JsonObject,
+    ctxOpt: Option[ToolContext] = None
   ): IO[Either[ToolError, String]] =
     val isBackground = params("run_in_background").flatMap(_.asBoolean).getOrElse(false)
 
@@ -41,11 +41,10 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
         case Left(err) => IO.pure(Left(err))
         case Right(peer) =>
           if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
-          else if isBackground && ctxOpt.isDefined then
-            executeRemoteBackground(peer, toolName, params, ctxOpt.get)
-          else
-            p2pExecute(peer, toolName, params, 60.seconds)
+          else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
+          else p2pExecute(peer, toolName, params, 60.seconds)
     yield result
+  end execute
 
   // ---- Remote background task: Mac manages lifecycle locally ----
 
@@ -58,10 +57,10 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
    * 5. When the HTTP call returns, notify agent (ExternalEvent) + frontend (WS)
    */
   private def executeRemoteBackground(
-      peer: PeerInfo,
-      toolName: String,
-      params: JsonObject,
-      ctx: ToolContext
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     val remoteParams = params.remove("run_in_background")
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
@@ -79,14 +78,16 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
       s"[Background job started] Job ID: $jobId\nThe command is running in the background on ${peer.deviceName}. You will be automatically notified when it finishes — continue with other work or finish your turn."
     )
 
+  end executeRemoteBackground
+
   /** Launch the HTTP call in a detached fiber; notify agent + frontend when done. */
   private def startRemoteBgFiber(
-      peer: PeerInfo,
-      toolName: String,
-      params: JsonObject,
-      ctx: ToolContext,
-      jobId: String,
-      description: String
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    ctx: ToolContext,
+    jobId: String,
+    description: String
   ): Unit =
     val completionIO =
       for
@@ -121,10 +122,12 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
               logger.warn(s"Remote background task $jobId failed on ${peer.deviceName}: ${err.message}")
       yield ()
 
-    dispatcher.unsafeRunAndForget(completionIO.handleErrorWith(e =>
-      logger.warn(s"Remote background fiber $jobId crashed: ${e.getMessage}") *>
-        emitBgTaskFinished(ctx, jobId, description, "failed")
-    ))
+    dispatcher.unsafeRunAndForget(
+      completionIO.handleErrorWith(e =>
+        logger.warn(s"Remote background fiber $jobId crashed: ${e.getMessage}") *>
+          emitBgTaskFinished(ctx, jobId, description, "failed")
+      )
+    )
   end startRemoteBgFiber
 
   // ---- WS helpers (match BashTool's backgroundTaskUpdate format) ----
@@ -133,39 +136,43 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
     ctx.wsSend.fold(
       logger.warn(s"Cannot notify frontend for remote background job $jobId: no wsSend")
     )(send =>
-      send(io.circe.Json.obj(
-        "type" -> "backgroundTaskUpdate".asJson,
-        "sessionId" -> ctx.sessionId.asJson,
-        "taskId" -> jobId.asJson,
-        "description" -> description.asJson,
-        "status" -> "running".asJson,
-        "startedAt" -> System.currentTimeMillis().asJson
-      )).handleErrorWith(e => logger.warn(s"WS send failed for remote job $jobId: ${e.getMessage}"))
+      send(
+        io.circe.Json.obj(
+          "type" -> "backgroundTaskUpdate".asJson,
+          "sessionId" -> ctx.sessionId.asJson,
+          "taskId" -> jobId.asJson,
+          "description" -> description.asJson,
+          "status" -> "running".asJson,
+          "startedAt" -> System.currentTimeMillis().asJson
+        )
+      ).handleErrorWith(e => logger.warn(s"WS send failed for remote job $jobId: ${e.getMessage}"))
     )
 
   private def emitBgTaskFinished(
-      ctx: ToolContext,
-      jobId: String,
-      description: String,
-      status: String
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    status: String
   ): IO[Unit] =
     ctx.wsSend.fold(IO.unit)(send =>
-      send(io.circe.Json.obj(
-        "type" -> "backgroundTaskUpdate".asJson,
-        "sessionId" -> ctx.sessionId.asJson,
-        "taskId" -> jobId.asJson,
-        "description" -> description.asJson,
-        "status" -> status.asJson
-      )).handleErrorWith(_ => IO.unit)
+      send(
+        io.circe.Json.obj(
+          "type" -> "backgroundTaskUpdate".asJson,
+          "sessionId" -> ctx.sessionId.asJson,
+          "taskId" -> jobId.asJson,
+          "description" -> description.asJson,
+          "status" -> status.asJson
+        )
+      ).handleErrorWith(_ => IO.unit)
     )
 
   // ---- P2P Direct ----
 
   private def p2pExecute(
-      peer: PeerInfo,
-      toolName: String,
-      params: JsonObject,
-      timeout: FiniteDuration
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    timeout: FiniteDuration
   ): IO[Either[ToolError, String]] =
     IO.blocking {
       val body = io.circe.Json.obj(

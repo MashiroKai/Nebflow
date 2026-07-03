@@ -22,37 +22,68 @@ object AgentActor extends AgentCore with AgentSession:
   private val logger = NebflowLogger.forName("nebflow.agent")
 
   def apply(
-    agentDef: AgentDef, resources: SharedResources,
-    wsSend: io.circe.Json => IO[Unit], depth: Int,
+    agentDef: AgentDef,
+    resources: SharedResources,
+    wsSend: io.circe.Json => IO[Unit],
+    depth: Int,
     parentRef: Option[ActorRef[AgentCommand]] = None,
-    sessionId: Option[String] = None, sessionName: Option[String] = None,
+    sessionId: Option[String] = None,
+    sessionName: Option[String] = None,
     initialMessages: List[Message] = Nil,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
     contextWindow: Int = Defaults.ContextWindow,
-    projectRoot: Option[String] = None, rulesMd: Option[String] = None,
+    projectRoot: Option[String] = None,
+    rulesMd: Option[String] = None,
     folderId: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
-      logAgentEvent(agentDef, depth, sessionId, sessionName, "spawn",
-        s"parent=${parentRef.map(_.path.name).getOrElse("-")} msgs=${initialMessages.size}")(using ctx)
-      IO.pure(idle(agentDef, resources, depth, parentRef, AgentState(
-        messages = initialMessages, status = AgentStatus.Idle, depth = depth,
-        activeStreamFiber = None, sessionId = sessionId, sessionName = sessionName,
-        pendingCompaction = None, latestUsage = None, pendingAskUser = None,
-        pendingPermission = None, wsSend = wsSend, readTracker = readTracker,
-        fileHistory = fileHistory, contextWindow = contextWindow,
-        projectRoot = projectRoot, rulesMd = rulesMd, folderId = folderId
-      ))(using ctx))
+      logAgentEvent(
+        agentDef,
+        depth,
+        sessionId,
+        sessionName,
+        "spawn",
+        s"parent=${parentRef.map(_.path.name).getOrElse("-")} msgs=${initialMessages.size}"
+      )(using ctx)
+      IO.pure(
+        idle(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          AgentState(
+            messages = initialMessages,
+            status = AgentStatus.Idle,
+            depth = depth,
+            activeStreamFiber = None,
+            sessionId = sessionId,
+            sessionName = sessionName,
+            pendingCompaction = None,
+            latestUsage = None,
+            pendingAskUser = None,
+            pendingPermission = None,
+            wsSend = wsSend,
+            readTracker = readTracker,
+            fileHistory = fileHistory,
+            contextWindow = contextWindow,
+            projectRoot = projectRoot,
+            rulesMd = rulesMd,
+            folderId = folderId
+          )
+        )(using ctx)
+      )
     }
 
   private def buildHookContext(state: AgentState): nebflow.core.hooks.HookContext =
     nebflow.core.hooks.HookContext(
-      sessionId = state.sessionId, projectRoot = state.projectRoot.getOrElse(""),
-      cwd = state.projectRoot.getOrElse(""))
+      sessionId = state.sessionId,
+      projectRoot = state.projectRoot.getOrElse(""),
+      cwd = state.projectRoot.getOrElse("")
+    )
 
-  private def fireLifecycleStopHooks(resources: SharedResources, state: AgentState)(
-    using ctx: ActorContext[AgentCommand]
+  private def fireLifecycleStopHooks(resources: SharedResources, state: AgentState)(using
+    ctx: ActorContext[AgentCommand]
   ): IO[Unit] =
     if state.depth == 0 then
       val hookCtx = buildHookContext(state)
@@ -64,8 +95,11 @@ object AgentActor extends AgentCore with AgentSession:
   // ============================================================
 
   private def idle(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
@@ -75,8 +109,7 @@ object AgentActor extends AgentCore with AgentSession:
           logger.info(s"Dropping duplicate message with clientMessageId=${clientMessageId.getOrElse("")}")
           IO.pure(idle(agentDef, resources, depth, parentRef, state))
         else
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "start",
-            s"msgs=${state.messages.size}")
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "start", s"msgs=${state.messages.size}")
           val stateWithLang =
             if depth == 0 && parentRef.isEmpty && dedupedState.messages.isEmpty then
               LanguageDetector.detect(text) match
@@ -92,20 +125,27 @@ object AgentActor extends AgentCore with AgentSession:
             case Some(bl) => Message(MessageRole.User, Right(bl))
             case None => Message(MessageRole.User, Left(text))
           val newMessages = stateWithWidth.messages :+ userMsg
-          val sessionBusyIO = if depth == 0 then
-            stateWithWidth.sessionId.fold(IO.unit)(sid =>
-              ctx.forkTurn(emitSessionBusy(stateWithWidth.wsSend, sid, busy = true)))
-          else IO.unit
+          val sessionBusyIO =
+            if depth == 0 then
+              stateWithWidth.sessionId.fold(IO.unit)(sid =>
+                ctx.forkTurn(emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
+              )
+            else IO.unit
           for
             _ <- sessionBusyIO
-            result <- pipeLlmCall(agentDef, resources, depth, parentRef,
-              stateWithWidth.withMessages(newMessages).withEmptyResponseRetries(0), replyTo)
+            result <- pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              stateWithWidth.withMessages(newMessages).withEmptyResponseRetries(0),
+              replyTo
+            )
           yield result
         end if
 
       case AgentCommand.AskQuestion(question, askSessionId) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "ask-start",
-          s"q=${question.take(60)}")
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "ask-start", s"q=${question.take(60)}")
         val askReminder = AskService.buildAskReminder(question)
         val askState = state
           .withMessages(state.messages :+ askReminder)
@@ -114,15 +154,21 @@ object AgentActor extends AgentCore with AgentSession:
         pipeLlmCall(agentDef, resources, depth, parentRef, askState, None)
 
       case AgentCommand.SkillActivate(skillName, input, skillSessionId, skillContent, skillBaseDir) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "skill-start",
-          s"skill=$skillName input=${input.take(60)}")
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "skill-start",
+          s"skill=$skillName input=${input.take(60)}"
+        )
         val combinedText = s"<skill name=\"$skillName\">\n$skillContent\n</skill>\n\n$input"
         val processingState = state
           .withMessages(state.messages :+ Message(MessageRole.User, Left(combinedText)))
           .withStatus(AgentStatus.Processing)
-          val sessionBusyIO2 = if depth == 0 then
-            state.sessionId.fold(IO.unit)(sid =>
-              ctx.forkTurn(emitSessionBusy(state.wsSend, sid, busy = true)))
+        val sessionBusyIO2 =
+          if depth == 0 then
+            state.sessionId.fold(IO.unit)(sid => ctx.forkTurn(emitSessionBusy(state.wsSend, sid, busy = true)))
           else IO.unit
         for
           _ <- sessionBusyIO2
@@ -135,8 +181,7 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.Stop(_) =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f =>
-            ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
@@ -147,19 +192,30 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.ResetSession =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f =>
-            ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
           _ <- state.readTracker.fold(IO.unit)(t => ctx.forkTurn(t.clear()))
         yield
           val resetState = state
-            .withMessages(Nil).withLatestUsage(None).withPendingCompaction(None)
-            .withCompactionFailures(0).withLastCompactionFailureAt(0L)
-            .withRecentMessageIds(Nil).withLifecycleCleared
+            .withMessages(Nil)
+            .withLatestUsage(None)
+            .withPendingCompaction(None)
+            .withCompactionFailures(0)
+            .withLastCompactionFailureAt(0L)
+            .withRecentMessageIds(Nil)
+            .withLifecycleCleared
           idle(agentDef, resources, depth, parentRef, resetState)
 
       case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
-        handleTriggerCompaction(agentDef, resources, depth, parentRef, state,
-          mode, replyDeferred, resumeAfterCompact = false)
+        handleTriggerCompaction(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          mode,
+          replyDeferred,
+          resumeAfterCompact = false
+        )
 
       case AgentCommand.UpdateContextWindow(window) =>
         val newState = state.withContextWindow(window).withLifecycleCleared
@@ -167,42 +223,79 @@ object AgentActor extends AgentCore with AgentSession:
         val config = CompactConfig()
         val threshold = window - config.bufferForWindow(window)
         if newState.messages.nonEmpty && estimatedTokens > threshold then
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "model-switch-compact",
-            s"newWindow=$window estimated=$estimatedTokens threshold=$threshold msgs=${newState.messages.size}")
-          handleTriggerCompaction(agentDef, resources, depth, parentRef, newState,
-            "full", None, resumeAfterCompact = false)
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "model-switch-compact",
+            s"newWindow=$window estimated=$estimatedTokens threshold=$threshold msgs=${newState.messages.size}"
+          )
+          handleTriggerCompaction(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            newState,
+            "full",
+            None,
+            resumeAfterCompact = false
+          )
         else IO.pure(idle(agentDef, resources, depth, parentRef, newState))
+        end if
 
       case n: AgentCommand.BackgroundTaskNotification =>
         (ctx.self ! n.toExternalEvent) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "external-event",
-          s"source=$source type=$eventType")
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "external-event",
+          s"source=$source type=$eventType"
+        )
         for
-          _ <- emitStream(state.wsSend,
+          _ <- emitStream(
+            state.wsSend,
             AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-            isSubagent = depth > 0, state.sessionId)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef,
-            state.withMessages(state.messages :+ Message(MessageRole.User, Left(payload))), None)
+            isSubagent = depth > 0,
+            state.sessionId
+          )
+          result <- pipeLlmCall(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withMessages(state.messages :+ Message(MessageRole.User, Left(payload))),
+            None
+          )
         yield result
+        end for
 
       case AgentCommand.UserAnswered(answers) =>
         state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
           case Some(replyTo) =>
-            (replyTo ! answers) *> IO.pure(
-              idle(agentDef, resources, depth, parentRef, state.withInteraction(None)))
+            (replyTo ! answers) *> IO.pure(idle(agentDef, resources, depth, parentRef, state.withInteraction(None)))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case AgentCommand.CompactionComplete(result) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
           "stale-compaction-discarded",
-          result.fold(err => s"err=${err.take(60)}", msgs => s"ok=${msgs.size}msgs"))
+          result.fold(err => s"err=${err.take(60)}", msgs => s"ok=${msgs.size}msgs")
+        )
         state.pendingCompaction.flatMap(_.replyDeferred) match
           case Some(d) =>
-            ctx.forkTurn(d.complete(
-              Left("Compaction result arrived after agent returned to idle")).void
-                .handleErrorWith(_ => IO.unit)) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
+            ctx.forkTurn(
+              d.complete(Left("Compaction result arrived after agent returned to idle"))
+                .void
+                .handleErrorWith(_ => IO.unit)
+            ) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case AgentCommand.PermissionAnswered(approved) =>
@@ -212,9 +305,8 @@ object AgentActor extends AgentCore with AgentSession:
               IO.pure(idle(agentDef, resources, depth, parentRef, state))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
-      case _: AgentCommand.StreamFiberStarted | _: AgentCommand.LlmComplete |
-          _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
-          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
+      case _: AgentCommand.StreamFiberStarted | _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed |
+          _: AgentCommand.ToolsComplete | _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
           _: AgentCommand.UpdateGitBranch =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
@@ -226,8 +318,11 @@ object AgentActor extends AgentCore with AgentSession:
   // ============================================================
 
   private def processing(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
     pending: List[AgentCommand] = Nil
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
@@ -244,8 +339,14 @@ object AgentActor extends AgentCore with AgentSession:
       // --- LLM completed ---
       case LlmComplete(result, replyTo, turnId) =>
         if turnId != state.currentTurnId then
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-            "stale-llm-complete-discarded", s"turnId=$turnId current=${state.currentTurnId}")
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "stale-llm-complete-discarded",
+            s"turnId=$turnId current=${state.currentTurnId}"
+          )
           IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
           val updatedState = state
@@ -253,56 +354,98 @@ object AgentActor extends AgentCore with AgentSession:
             .withLastModel(result.model.orElse(state.lastModel))
             .updateContextWindowIfNeeded(result.contextWindow)
           val isSubagent = depth > 0
-          val usageEvent: IO[Unit] = if !isSubagent then
-            updatedState.latestUsage.fold(IO.unit)(usage =>
-              emitStream(state.wsSend,
-                AgentStreamEvent.UsageUpdate(usage.inputTokens, updatedState.contextWindow,
-                  CompactConfig().compactionTriggerRatio(updatedState.contextWindow)),
-                isSubagent = false, state.sessionId))
-          else IO.unit
+          val usageEvent: IO[Unit] =
+            if !isSubagent then
+              updatedState.latestUsage.fold(IO.unit)(usage =>
+                emitStream(
+                  state.wsSend,
+                  AgentStreamEvent.UsageUpdate(
+                    usage.inputTokens,
+                    updatedState.contextWindow,
+                    CompactConfig().compactionTriggerRatio(updatedState.contextWindow)
+                  ),
+                  isSubagent = false,
+                  state.sessionId
+                )
+              )
+            else IO.unit
           usageEvent *> handleLlmCompleteBranch(
-            agentDef, resources, depth, parentRef, updatedState, replyTo, result, pending)
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            updatedState,
+            replyTo,
+            result,
+            pending
+          )
         end if
 
       case LlmFailed(error, replyTo, turnId) =>
         if turnId != state.currentTurnId then
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-            "stale-llm-failed-discarded", s"turnId=$turnId current=${state.currentTurnId}")
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "stale-llm-failed-discarded",
+            s"turnId=$turnId current=${state.currentTurnId}"
+          )
           IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
           val cleanedState = state.withActiveStreamFiber(None)
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "llm-fail",
-            s"err=${error.getMessage.take(80)}")
-          val agentError = AgentError(
-            ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "llm-fail",
+            s"err=${error.getMessage.take(80)}"
+          )
+          val agentError =
+            AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
           val errMsg = error match
             case e: FallbackExhaustedError =>
-              val attempts = e.attempts.map { a =>
-                val detail = a.message.getOrElse(a.reason.map(_.toString).getOrElse("unknown"))
-                s"${a.providerId}/${a.model}: $detail"
-              }.mkString("; ")
+              val attempts = e.attempts
+                .map { a =>
+                  val detail = a.message.getOrElse(a.reason.map(_.toString).getOrElse("unknown"))
+                  s"${a.providerId}/${a.model}: $detail"
+                }
+                .mkString("; ")
               s"All providers failed: $attempts"
             case _ =>
-              Option(error.getMessage).filter(_.nonEmpty)
+              Option(error.getMessage)
+                .filter(_.nonEmpty)
                 .map(m => s"LLM request failed: ${m.take(200)}")
                 .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
           for
-            _ <- state.activeStreamFiber.fold(IO.unit)(f =>
-              ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+            _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
             _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
               val doneEvent = AgentStreamEvent.Done(None)
               val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
               ctx.forkTurn(
-                (cleanedState.wsSend(Json.obj(
-                  "type" -> "error".asJson, "sessionId" -> cleanedState.sessionId.asJson,
-                  "message" -> errMsg.asJson))
+                (cleanedState
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "error".asJson,
+                      "sessionId" -> cleanedState.sessionId.asJson,
+                      "message" -> errMsg.asJson
+                    )
+                  )
                   .handleErrorWith(_ => IO.unit)) *>
                   cleanedState.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
-                  emitSessionBusy(cleanedState.wsSend, sid, busy = false))
+                  emitSessionBusy(cleanedState.wsSend, sid, busy = false)
+              )
             }
             _ <- replyTo.traverse_(_ ! AgentEvent.Failed(cleanedState.sessionId.getOrElse(""), agentError))
-          yield idle(agentDef, resources, depth, parentRef,
-            cleanedState.withStatus(AgentStatus.Error(error.getMessage)))
+          yield idle(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            cleanedState.withStatus(AgentStatus.Error(error.getMessage))
+          )
+          end for
         end if
 
       // --- Tools completed ---
@@ -314,23 +457,33 @@ object AgentActor extends AgentCore with AgentSession:
         toolCalls.foreach(c => assistantBlocks += ContentBlock.ToolUse(c.id, c.name, c.input))
         val assistantMsg = Message(MessageRole.Assistant, Right(assistantBlocks.toList))
         val resultBlocks = tc.results.map { (call, r) =>
-          ContentBlock.ToolResult(call.id, r.content, Some(r.isError)) }
+          ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
+        }
         val resultMsg = Message(MessageRole.User, Right(resultBlocks))
         val baseMessages = tc.compactedMessages.getOrElse(state.messages)
         val pendingEvents = state.execution.pendingEvents
         val eventMessages = if pendingEvents.nonEmpty then
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-            "pending-events-injected-at-tools-complete", s"events=${pendingEvents.size}")
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "pending-events-injected-at-tools-complete",
+            s"events=${pendingEvents.size}"
+          )
           val remindersText = pendingEvents.map(e => e.payload).mkString("\n\n")
           List(Message(MessageRole.User, Left(s"<system-reminder>\n$remindersText\n</system-reminder>")))
         else Nil
         val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ eventMessages
-        val updatedState = state.copy(
-          execution = state.execution.copy(messages = newMessages, interaction = None, pendingEvents = Nil))
+        val updatedState =
+          state.copy(execution = state.execution.copy(messages = newMessages, interaction = None, pendingEvents = Nil))
         for
-          _ <- ctx.forkTurn(persistIfSession(resources, updatedState)
-            .handleErrorWith(e =>
-              IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}"))))
+          _ <- ctx.forkTurn(
+            persistIfSession(resources, updatedState)
+              .handleErrorWith(e =>
+                IO(NebflowLogger.forName("nebflow.agent").warn(s"Persist session failed: ${e.getMessage}"))
+              )
+          )
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
         yield result
 
@@ -339,13 +492,12 @@ object AgentActor extends AgentCore with AgentSession:
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user")
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f =>
-            ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted,
-            isSubagent = depth > 0, state.sessionId)
+          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
         yield
           state.pendingCompaction.flatMap(_.replyDeferred).foreach { d =>
-            ctx.forkTurn(d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit)) }
+            ctx.forkTurn(d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
+          }
           val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
 
@@ -354,8 +506,7 @@ object AgentActor extends AgentCore with AgentSession:
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f =>
-            ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
@@ -365,16 +516,19 @@ object AgentActor extends AgentCore with AgentSession:
 
       case AgentCommand.ResetSession =>
         for
-          _ <- state.activeStreamFiber.fold(IO.unit)(f =>
-            ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
           _ <- state.readTracker.fold(IO.unit)(t => ctx.forkTurn(t.clear()))
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted,
-            isSubagent = depth > 0, state.sessionId)
+          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
         yield
           val resetState = state
-            .withMessages(Nil).withLatestUsage(None).withPendingCompaction(None)
-            .withCompactionFailures(0).withLastCompactionFailureAt(0L)
-            .withRecentMessageIds(Nil).withLifecycleCleared.resetToIdle(Nil)
+            .withMessages(Nil)
+            .withLatestUsage(None)
+            .withPendingCompaction(None)
+            .withCompactionFailures(0)
+            .withLastCompactionFailureAt(0L)
+            .withRecentMessageIds(Nil)
+            .withLifecycleCleared
+            .resetToIdle(Nil)
           idle(agentDef, resources, depth, parentRef, resetState)
 
       // --- ReplaceToolResults ---
@@ -382,8 +536,7 @@ object AgentActor extends AgentCore with AgentSession:
         replaceToolResults(state.messages, rounds, summary) match
           case Right((updatedMessages, count)) =>
             ctx.forkTurn(replyTo.complete(Right(count)).void.handleErrorWith(_ => IO.unit)) *>
-              IO.pure(processing(agentDef, resources, depth, parentRef,
-                state.withMessages(updatedMessages), pending))
+              IO.pure(processing(agentDef, resources, depth, parentRef, state.withMessages(updatedMessages), pending))
           case Left(err) =>
             ctx.forkTurn(replyTo.complete(Left(err)).void.handleErrorWith(_ => IO.unit)) *>
               IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
@@ -396,102 +549,154 @@ object AgentActor extends AgentCore with AgentSession:
           val compactionPending = state.pendingCompaction
           result match
             case Right(compactedMessages) =>
-              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
                 "compaction-complete",
-                s"before=${state.messages.size} after=${compactedMessages.size}")
+                s"before=${state.messages.size} after=${compactedMessages.size}"
+              )
               val archiveIO = state.sessionId match
                 case Some(sid) =>
-                  resources.historyArchiver.archiveCompaction(sessionId = sid,
-                    sessionName = state.sessionName, agentName = agentDef.name,
-                    before = state.messages, after = compactedMessages,
+                  resources.historyArchiver.archiveCompaction(
+                    sessionId = sid,
+                    sessionName = state.sessionName,
+                    agentName = agentDef.name,
+                    before = state.messages,
+                    after = compactedMessages,
                     mode = compactionPending.map(_.mode).getOrElse("full"),
-                    extra = Map("preservedRounds" -> "0"))
+                    extra = Map("preservedRounds" -> "0")
+                  )
                 case None => IO.pure(Left("no sessionId"))
-              val compactEmitIO = archiveIO.flatMap {
-                case Right(archive) =>
-                  emitStreamIO(state.wsSend,
-                    AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size,
-                      Some(archive.reportPath)),
-                    isSubagent = depth > 0, state.sessionId)
-                case Left(err) =>
-                  NebflowLogger.forName("nebflow.agent").warn(s"Compaction archive failed: $err")
-                  emitStreamIO(state.wsSend,
-                    AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size, None),
-                    isSubagent = depth > 0, state.sessionId)
-              }.handleErrorWith(_ => IO.unit)
+              val compactEmitIO = archiveIO
+                .flatMap {
+                  case Right(archive) =>
+                    emitStreamIO(
+                      state.wsSend,
+                      AgentStreamEvent
+                        .CompactComplete(state.messages.size, compactedMessages.size, Some(archive.reportPath)),
+                      isSubagent = depth > 0,
+                      state.sessionId
+                    )
+                  case Left(err) =>
+                    NebflowLogger.forName("nebflow.agent").warn(s"Compaction archive failed: $err")
+                    emitStreamIO(
+                      state.wsSend,
+                      AgentStreamEvent.CompactComplete(state.messages.size, compactedMessages.size, None),
+                      isSubagent = depth > 0,
+                      state.sessionId
+                    )
+                }
+                .handleErrorWith(_ => IO.unit)
               val compactedState = state
-                .withMessages(compactedMessages).withPendingCompaction(None)
-                .withCompactionFailures(0).withEmptyResponseRetries(0)
-                .withLatestUsage(None).withLifecycleCleared
+                .withMessages(compactedMessages)
+                .withPendingCompaction(None)
+                .withCompactionFailures(0)
+                .withEmptyResponseRetries(0)
+                .withLatestUsage(None)
+                .withLifecycleCleared
               if compactionPending.exists(_.resumeAfterCompact) then
                 ctx.forkTurn(compactEmitIO) *>
-                  pipeLlmCall(agentDef, resources, depth, parentRef, compactedState,
-                    compactionPending.flatMap(_.replyTo))
+                  pipeLlmCall(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    compactedState,
+                    compactionPending.flatMap(_.replyTo)
+                  )
               else
                 for
                   _ <- ctx.forkTurn(compactEmitIO)
-                  _ <- ctx.forkTurn(persistIfSession(resources, compactedState)
-                    .handleErrorWith(e =>
-                      IO(NebflowLogger.forName("nebflow.agent").warn(
-                        s"Persist after compact failed: ${e.getMessage}"))))
+                  _ <- ctx.forkTurn(
+                    persistIfSession(resources, compactedState)
+                      .handleErrorWith(e =>
+                        IO(
+                          NebflowLogger.forName("nebflow.agent").warn(s"Persist after compact failed: ${e.getMessage}")
+                        )
+                      )
+                  )
                 yield idle(agentDef, resources, depth, parentRef, compactedState)
               end if
             case Left(err) =>
-              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-                "compaction-failed", s"err=$err")
+              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "compaction-failed", s"err=$err")
               val now = System.currentTimeMillis()
               val failedState = state
                 .withPendingCompaction(None)
                 .withCompactionFailures(state.compactionFailures + 1)
                 .withLastCompactionFailureAt(now)
               val baseIO: IO[Unit] = for
-                _ <- ctx.forkTurn(emitStreamIO(state.wsSend,
-                  AgentStreamEvent.CompactFailed(err, state.compactionFailures + 1,
-                    CompactConfig().circuitBreakerMax),
-                  isSubagent = depth > 0, state.sessionId).handleErrorWith(_ => IO.unit))
-                _ <- compactionPending.flatMap(_.replyDeferred).fold(IO.unit)(d =>
-                  ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
+                _ <- ctx.forkTurn(
+                  emitStreamIO(
+                    state.wsSend,
+                    AgentStreamEvent.CompactFailed(
+                      err,
+                      state.compactionFailures + 1,
+                      CompactConfig().circuitBreakerMax
+                    ),
+                    isSubagent = depth > 0,
+                    state.sessionId
+                  ).handleErrorWith(_ => IO.unit)
+                )
+                _ <- compactionPending
+                  .flatMap(_.replyDeferred)
+                  .fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
               yield ()
               compactionPending.flatMap(_.replyTo) match
                 case Some(replyTo) =>
-                  baseIO *> finishTurn(agentDef, resources, depth, parentRef, failedState,
+                  baseIO *> finishTurn(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    failedState,
                     Some(replyTo),
                     s"Context compaction failed: $err. Please start a new session or use /clear to reset.",
-                    None, None, textAlreadyStreamed = false, None)
+                    None,
+                    None,
+                    textAlreadyStreamed = false,
+                    None
+                  )
                 case None =>
                   if compactionPending.exists(!_.resumeAfterCompact) then
                     baseIO *> IO.pure(idle(agentDef, resources, depth, parentRef, failedState))
-                  else
-                    baseIO *> IO.pure(
-                      processing(agentDef, resources, depth, parentRef, failedState, pending))
+                  else baseIO *> IO.pure(processing(agentDef, resources, depth, parentRef, failedState, pending))
               end match
           end match
         end if
 
       // --- Background task completed while processing ---
       case n: AgentCommand.BackgroundTaskNotification =>
-        (ctx.self ! n.toExternalEvent) *> IO.pure(
-          processing(agentDef, resources, depth, parentRef, state, pending))
+        (ctx.self ! n.toExternalEvent) *> IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       // --- External event while processing ---
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId) =>
-        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-          "external-event-queued", s"source=$source type=$eventType")
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "external-event-queued",
+          s"source=$source type=$eventType"
+        )
         val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
-        val updatedExec = state.execution.copy(
-          pendingEvents = state.execution.pendingEvents :+ event)
-        emitStream(state.wsSend,
+        val updatedExec = state.execution.copy(pendingEvents = state.execution.pendingEvents :+ event)
+        emitStream(
+          state.wsSend,
           AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-          isSubagent = depth > 0, state.sessionId) *> IO.pure(
-          processing(agentDef, resources, depth, parentRef,
-            state.copy(execution = updatedExec), pending))
+          isSubagent = depth > 0,
+          state.sessionId
+        ) *> IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
 
       // --- AskUser from tool ---
       case AgentCommand.AskUser(requestId, items, replyToOpt) =>
         val roundCompleteJson = state.sessionId.map { sid =>
-          Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson) }
+          Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson)
+        }
         val askJson = Json.obj(
-          "type" -> "askUser".asJson, "sessionId" -> state.sessionId.asJson,
+          "type" -> "askUser".asJson,
+          "sessionId" -> state.sessionId.asJson,
           "items" -> Json.fromValues(items.map { item =>
             Json.obj(
               "question" -> item.question.asJson,
@@ -500,49 +705,75 @@ object AgentActor extends AgentCore with AgentSession:
                 opt.description.foreach(d => fields += "description" -> d.asJson)
                 Json.obj(fields.toList*)
               }),
-              "allowOther" -> item.allowOther.asJson) }))
-        val updatedInteraction = Some(InteractionState(
-          pendingAskUser = None, pendingPermission = state.pendingPermission,
-          pendingAskUserReplyTo = replyToOpt))
-        val updatedState = state.copy(
-          execution = state.execution.copy(interaction = updatedInteraction))
+              "allowOther" -> item.allowOther.asJson
+            )
+          })
+        )
+        val updatedInteraction = Some(
+          InteractionState(
+            pendingAskUser = None,
+            pendingPermission = state.pendingPermission,
+            pendingAskUserReplyTo = replyToOpt
+          )
+        )
+        val updatedState = state.copy(execution = state.execution.copy(interaction = updatedInteraction))
         ctx.forkTurn(
           (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
             state.wsSend(askJson).handleErrorWith { e =>
               replyToOpt.foreach(replyTo => ctx.forkTurn(replyTo ! Nil))
-              IO.unit }
+              IO.unit
+            }
         ) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
 
       // --- User answered while processing ---
       case AgentCommand.UserAnswered(answers) =>
         state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
           case Some(replyTo) =>
-            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-              "user-answered-in-processing", s"answers=${answers.size}")
-            (replyTo ! answers) *> IO.pure(processing(agentDef, resources, depth, parentRef,
-              state.withInteraction(None), pending))
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "user-answered-in-processing",
+              s"answers=${answers.size}"
+            )
+            (replyTo ! answers) *> IO.pure(
+              processing(agentDef, resources, depth, parentRef, state.withInteraction(None), pending)
+            )
           case None => IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       // --- Permission answered while processing ---
       case AgentCommand.PermissionAnswered(approved) =>
         state.pendingPermission match
           case Some(deferred) =>
-            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-              "permission-answered-in-processing", s"approved=$approved")
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "permission-answered-in-processing",
+              s"approved=$approved"
+            )
             ctx.forkTurn(deferred.complete(approved).void.handleErrorWith(_ => IO.unit)) *>
-              IO.pure(processing(agentDef, resources, depth, parentRef,
-                state.withPendingPermission(None), pending))
+              IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(None), pending))
           case None => IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       // --- Set permission deferred while processing ---
       case AgentCommand.SetPermissionDeferred(deferred) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef,
-          state.withPendingPermission(Some(deferred)), pending))
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef,
-          state.withContextWindow(window).withLifecycleCleared, pending))
+        IO.pure(
+          processing(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withContextWindow(window).withLifecycleCleared,
+            pending
+          )
+        )
 
       // --- Buffer user-initiated messages during processing ---
       case msg: AgentCommand.UserInput =>
@@ -560,40 +791,55 @@ object AgentActor extends AgentCore with AgentSession:
   // ============================================================
 
   private def handleLlmCompleteBranch(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
-    replyTo: Option[ActorRef[AgentEvent]], result: ConsumeResult,
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    result: ConsumeResult,
     pending: List[AgentCommand]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     if state.pendingCompaction.isDefined && result.toolCalls.isEmpty && result.text.nonEmpty then
       handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
     else if state.pendingCompaction.isDefined && result.toolCalls.nonEmpty then
-      handleCompactFailure(agentDef, resources, depth, parentRef, state,
-        "Compact model unexpectedly called tools")
+      handleCompactFailure(agentDef, resources, depth, parentRef, state, "Compact model unexpectedly called tools")
     else if state.askMode.isDefined && result.toolCalls.isEmpty then
       handleAskComplete(agentDef, resources, depth, parentRef, state, result.text, result.model)
     else if result.toolCalls.nonEmpty then
-      pipeToolExecutions(agentDef, resources, depth, parentRef,
-        state.withEmptyResponseRetries(0), result, replyTo)
+      pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
     else if result.text.nonEmpty || result.thinking.nonEmpty then
-      finishTurn(agentDef, resources, depth, parentRef,
-        state.withEmptyResponseRetries(0), replyTo,
-        result.text, result.thinking, result.thinkingSignature,
-        textAlreadyStreamed = true, result.model)
-    else
-      handleEmptyResponse(agentDef, resources, depth, parentRef, state, replyTo, result)
+      finishTurn(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state.withEmptyResponseRetries(0),
+        replyTo,
+        result.text,
+        result.thinking,
+        result.thinkingSignature,
+        textAlreadyStreamed = true,
+        result.model
+      )
+    else handleEmptyResponse(agentDef, resources, depth, parentRef, state, replyTo, result)
 
   // ============================================================
   // Finish turn
   // ============================================================
 
   private def finishTurn(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]],
-    text: String, thinking: Option[String] = None,
+    text: String,
+    thinking: Option[String] = None,
     thinkingSignature: Option[String] = None,
-    textAlreadyStreamed: Boolean = false, model: Option[String] = None
+    textAlreadyStreamed: Boolean = false,
+    model: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val isSubagent = parentRef.isDefined
     val sendText = !textAlreadyStreamed && text.nonEmpty
@@ -603,53 +849,97 @@ object AgentActor extends AgentCore with AgentSession:
       case (Some(t), txt) =>
         Right(List(ContentBlock.Thinking(t, thinkingSignature), ContentBlock.Text(txt)))
     val newMessages = state.messages :+ Message(MessageRole.Assistant, assistantContent)
-      val sendTextIO = if sendText then
-        emitStream(state.wsSend, AgentStreamEvent.TextDelta(text),
-          isSubagent = isSubagent, state.sessionId)
+    val sendTextIO =
+      if sendText then
+        emitStream(state.wsSend, AgentStreamEvent.TextDelta(text), isSubagent = isSubagent, state.sessionId)
       else IO.unit
-      for
-        _ <- sendTextIO
-        result <- finishTurnCont(agentDef, resources, depth, parentRef, state, replyTo,
-        newMessages, text, model, thinking, thinkingSignature, sendText, isSubagent)
+    for
+      _ <- sendTextIO
+      result <- finishTurnCont(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state,
+        replyTo,
+        newMessages,
+        text,
+        model,
+        thinking,
+        thinkingSignature,
+        sendText,
+        isSubagent
+      )
     yield result
 
+    end for
+
+  end finishTurn
+
   private def finishTurnCont(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
-    replyTo: Option[ActorRef[AgentEvent]], newMessages: List[Message],
-    text: String, model: Option[String], thinking: Option[String],
-    thinkingSignature: Option[String], textAlreadyStreamed: Boolean, isSubagent: Boolean
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    newMessages: List[Message],
+    text: String,
+    model: Option[String],
+    thinking: Option[String],
+    thinkingSignature: Option[String],
+    textAlreadyStreamed: Boolean,
+    isSubagent: Boolean
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "turn-complete",
+    logAgentEvent(
+      agentDef,
+      depth,
+      state.sessionId,
+      state.sessionName,
+      "turn-complete",
       s"msgs=${state.messages.size} textLen=${text.length} textStreamed=$textAlreadyStreamed " +
-      s"thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}")
+        s"thinking=${thinking.map(_.length).getOrElse(0)} model=${model.getOrElse("-")}"
+    )
     val queuedEvents = state.execution.pendingEvents
     if queuedEvents.nonEmpty then
-      val roundCompleteIO: IO[Unit] = if !isSubagent then
-        state.sessionId.fold(IO.unit)(sid =>
-          ctx.forkTurn(state.wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
-            .handleErrorWith(e =>
-              IO(NebflowLogger.forName("nebflow.agent").warn(
-                s"roundComplete delivery failed: ${e.getMessage}")))))
-      else IO.unit
+      val roundCompleteIO: IO[Unit] =
+        if !isSubagent then
+          state.sessionId.fold(IO.unit)(sid =>
+            ctx.forkTurn(
+              state
+                .wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
+                .handleErrorWith(e =>
+                  IO(NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}"))
+                )
+            )
+          )
+        else IO.unit
       val remindersText = queuedEvents.map(_.payload).mkString("\n\n")
       val eventMessages = List(
-        Message(MessageRole.User, Left(s"<system-reminder>\n$remindersText\n</system-reminder>")))
+        Message(MessageRole.User, Left(s"<system-reminder>\n$remindersText\n</system-reminder>"))
+      )
       val messagesWithPending = newMessages ++ eventMessages
-      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-        "pending-messages-injected", s"events=${queuedEvents.size}")
-      val updatedState = state.copy(
-        execution = ExecutionContext.idle(messagesWithPending, state.execution.turnIdx))
+      logAgentEvent(
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "pending-messages-injected",
+        s"events=${queuedEvents.size}"
+      )
+      val updatedState = state.copy(execution = ExecutionContext.idle(messagesWithPending, state.execution.turnIdx))
       for
         _ <- roundCompleteIO
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
             (resources.sessionStore.saveMessagesForSession(sid, messagesWithPending) *>
               resources.sessionStore.flushIndex)
-              .handleErrorWith(e => IO(NebflowLogger.forName("nebflow.agent").warn(
-                s"Save/flush session failed: ${e.getMessage}")))))
-        _ <- replyTo.traverse_(_ ! AgentEvent.Completed(
-          state.sessionId.getOrElse(""), messagesWithPending))
+              .handleErrorWith(e =>
+                IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+              )
+          )
+        )
+        _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
     else
@@ -660,66 +950,108 @@ object AgentActor extends AgentCore with AgentSession:
         model.orElse(state.lastModel),
         contextWindow = if !isSubagent then Some(state.contextWindow) else None,
         inputTokens = if !isSubagent then state.latestUsage.map(_.inputTokens) else None,
-        compactThreshold = doneCompactThreshold)
-      val emitDoneIO = if isSubagent then
-        emitStream(state.wsSend, doneEvent, isSubagent = true, state.sessionId)
-      else
-        state.sessionId.fold(IO.unit) { sid =>
-          val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
-          NebflowLogger.forName("nebflow.agent").info(
-            s"finishTurn: sending Done sessionId=$sid jsonLen=${doneJson.noSpaces.length}")
-          ctx.forkTurn(
-            (state.wsSend(doneJson).handleErrorWith(e =>
-              IO(NebflowLogger.forName("nebflow.agent").warn(
-                s"finishTurn: Done event delivery failed: ${e.getMessage}"))) *>
-              emitSessionBusy(state.wsSend, sid, busy = false))
-              .handleErrorWith(e =>
-                IO(NebflowLogger.forName("nebflow.agent").warn(
-                  s"finishTurn: Done+sessionBusy chain failed: ${e.getMessage}"))))
-        }
+        compactThreshold = doneCompactThreshold
+      )
+      val emitDoneIO =
+        if isSubagent then emitStream(state.wsSend, doneEvent, isSubagent = true, state.sessionId)
+        else
+          state.sessionId.fold(IO.unit) { sid =>
+            val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
+            NebflowLogger
+              .forName("nebflow.agent")
+              .info(s"finishTurn: sending Done sessionId=$sid jsonLen=${doneJson.noSpaces.length}")
+            ctx.forkTurn(
+              (state
+                .wsSend(doneJson)
+                .handleErrorWith(e =>
+                  IO(
+                    NebflowLogger
+                      .forName("nebflow.agent")
+                      .warn(s"finishTurn: Done event delivery failed: ${e.getMessage}")
+                  )
+                ) *>
+                emitSessionBusy(state.wsSend, sid, busy = false))
+                .handleErrorWith(e =>
+                  IO(
+                    NebflowLogger
+                      .forName("nebflow.agent")
+                      .warn(s"finishTurn: Done+sessionBusy chain failed: ${e.getMessage}")
+                  )
+                )
+            )
+          }
       for
         _ <- emitDoneIO
         _ <- state.sessionId.fold(IO.unit)(sid =>
           ctx.forkTurn(
             (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
               resources.sessionStore.flushIndex)
-              .handleErrorWith(e => IO(NebflowLogger.forName("nebflow.agent").warn(
-                s"Save/flush session failed: ${e.getMessage}")))))
-        _ <- replyTo.traverse_(_ ! AgentEvent.Completed(
-          state.sessionId.getOrElse(""), newMessages))
+              .handleErrorWith(e =>
+                IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+              )
+          )
+        )
+        _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), newMessages))
       yield
-        val updatedState = state.copy(
-          execution = ExecutionContext.idle(newMessages, state.execution.turnIdx))
+        val updatedState = state.copy(execution = ExecutionContext.idle(newMessages, state.execution.turnIdx))
         idle(agentDef, resources, depth, parentRef, updatedState)
+      end for
     end if
+  end finishTurnCont
 
   // ============================================================
   // Pipe wrappers
   // ============================================================
 
   private def pipeLlmCall(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    super.pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo,
-      (ad, r, d, p, s) => processing(ad, r, d, p, s))
+    super.pipeLlmCall(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state,
+      replyTo,
+      (ad, r, d, p, s) => processing(ad, r, d, p, s)
+    )
 
   private def pipeToolExecutions(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
-    result: ConsumeResult, replyTo: Option[ActorRef[AgentEvent]]
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    result: ConsumeResult,
+    replyTo: Option[ActorRef[AgentEvent]]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    super.pipeToolExecutions(agentDef, resources, depth, parentRef, state, result, replyTo,
-      (ad, r, d, p, s) => processing(ad, r, d, p, s))
+    super.pipeToolExecutions(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state,
+      result,
+      replyTo,
+      (ad, r, d, p, s) => processing(ad, r, d, p, s)
+    )
 
   // ============================================================
   // Compact response handlers
   // ============================================================
 
   private def handleCompactResponse(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState, responseText: String
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    responseText: String
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val pending = state.pendingCompaction
     val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
@@ -729,13 +1061,13 @@ object AgentActor extends AgentCore with AgentSession:
     val hookIO = CompactService.runPreCompactHook(state.messages, resources, sessionId)
     val rootIO: IO[String] = state.folderId match
       case Some(fid) =>
-        resources.sessionStore.resolveProjectRoot(Some(fid)).map(
-          _.getOrElse(resources.projectRoot.toString))
+        resources.sessionStore.resolveProjectRoot(Some(fid)).map(_.getOrElse(resources.projectRoot.toString))
       case None => IO.pure(resources.projectRoot.toString)
-    for
-      _ <- ctx.forkTurn(
-        (readPathsIO, hookIO, rootIO).mapN { (readPaths, hookResult, effectiveRoot) =>
-            (readPaths, hookResult, effectiveRoot) }
+    for _ <- ctx.forkTurn(
+        (readPathsIO, hookIO, rootIO)
+          .mapN { (readPaths, hookResult, effectiveRoot) =>
+            (readPaths, hookResult, effectiveRoot)
+          }
           .flatMap { (readPaths, hookResult, effectiveRoot) =>
             hookResult match
               case Left(reason) =>
@@ -745,77 +1077,127 @@ object AgentActor extends AgentCore with AgentSession:
                   case Left(err) =>
                     ctx.self ! AgentCommand.CompactionComplete(Left(err))
                   case Right(compactedMessages) =>
-                    val postHookIO = CompactService.runPostCompactHook(
-                      state.messages.size, compactedMessages.size, resources, sessionId)
+                    val postHookIO = CompactService
+                      .runPostCompactHook(state.messages.size, compactedMessages.size, resources, sessionId)
                       .handleErrorWith(_ => IO.unit)
-                    ctx.forkTurn(postHookIO).flatMap(_ =>
-                      ctx.self ! AgentCommand.CompactionComplete(Right(compactedMessages)))
+                    ctx
+                      .forkTurn(postHookIO)
+                      .flatMap(_ => ctx.self ! AgentCommand.CompactionComplete(Right(compactedMessages)))
           }
-          .handleErrorWith(e =>
-            ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage))))
+          .handleErrorWith(e => ctx.self ! AgentCommand.CompactionComplete(Left(e.getMessage)))
+      )
     yield processing(agentDef, resources, depth, parentRef, state)
 
+  end handleCompactResponse
+
   private def handleCompactFailure(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState, err: String
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    err: String
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val pending = state.pendingCompaction
     val now = System.currentTimeMillis()
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-      "compaction-failed", s"err=$err")
+    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "compaction-failed", s"err=$err")
     val failedState = state
       .withPendingCompaction(None)
       .withCompactionFailures(state.compactionFailures + 1)
       .withLastCompactionFailureAt(now)
     for
-      _ <- ctx.forkTurn(emitStreamIO(state.wsSend,
-        AgentStreamEvent.CompactFailed(err, state.compactionFailures + 1,
-          CompactConfig().circuitBreakerMax),
-        isSubagent = depth > 0, state.sessionId).handleErrorWith(_ => IO.unit))
-      _ <- pending.flatMap(_.replyDeferred).fold(IO.unit)(d =>
-        ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
+      _ <- ctx.forkTurn(
+        emitStreamIO(
+          state.wsSend,
+          AgentStreamEvent.CompactFailed(err, state.compactionFailures + 1, CompactConfig().circuitBreakerMax),
+          isSubagent = depth > 0,
+          state.sessionId
+        ).handleErrorWith(_ => IO.unit)
+      )
+      _ <- pending
+        .flatMap(_.replyDeferred)
+        .fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
       result <- pending.flatMap(_.replyTo) match
         case Some(replyTo) =>
-          finishTurn(agentDef, resources, depth, parentRef, failedState, Some(replyTo),
-            s"Context compaction failed: $err.", None, None,
-            textAlreadyStreamed = false, None)
+          finishTurn(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            failedState,
+            Some(replyTo),
+            s"Context compaction failed: $err.",
+            None,
+            None,
+            textAlreadyStreamed = false,
+            None
+          )
         case None =>
           if pending.exists(!_.resumeAfterCompact) then
             IO.pure(idle(agentDef, resources, depth, parentRef, failedState))
-          else
-            IO.pure(processing(agentDef, resources, depth, parentRef, failedState))
+          else IO.pure(processing(agentDef, resources, depth, parentRef, failedState))
     yield result
+    end for
+  end handleCompactFailure
 
   // ============================================================
   // Ask complete
   // ============================================================
 
   private def handleAskComplete(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
-    answerText: String, model: Option[String]
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    answerText: String,
+    model: Option[String]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val question = state.askMode.getOrElse("")
     val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "ask-complete",
-      s"q=${question.take(40)} a=${answerText.take(40)}")
+    logAgentEvent(
+      agentDef,
+      depth,
+      state.sessionId,
+      state.sessionName,
+      "ask-complete",
+      s"q=${question.take(40)} a=${answerText.take(40)}"
+    )
     for
       _ <- ctx.forkTurn(
-        (state.wsSend(Json.obj(
-          "type" -> "askDone".asJson, "sessionId" -> sessionId.asJson,
-          "durationMs" -> 0L.asJson, "model" -> model.getOrElse("").asJson))
+        (state
+          .wsSend(
+            Json.obj(
+              "type" -> "askDone".asJson,
+              "sessionId" -> sessionId.asJson,
+              "durationMs" -> 0L.asJson,
+              "model" -> model.getOrElse("").asJson
+            )
+          )
           .handleErrorWith(_ => IO.unit)) *>
-          emitSessionBusy(state.wsSend, sessionId, busy = false))
-      _ <- ctx.forkTurn(resources.sessionStore
-        .appendUiMessages(sessionId, List(UiMessage.Ask(question, answerText, Some(0L), model)))
-        .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}"))))
+          emitSessionBusy(state.wsSend, sessionId, busy = false)
+      )
+      _ <- ctx.forkTurn(
+        resources.sessionStore
+          .appendUiMessages(sessionId, List(UiMessage.Ask(question, answerText, Some(0L), model)))
+          .handleErrorWith(e => IO(logger.warn(s"Failed to persist ask UiMessage: ${e.getMessage}")))
+      )
     yield
       val originalMessages = state.messages.takeWhile(m => !isAskReminder(m))
       val restoredMessages =
         if originalMessages.size == state.messages.size then state.messages.dropRight(1)
         else originalMessages
-      idle(agentDef, resources, depth, parentRef,
-        state.withAskMode(None).withMessages(restoredMessages).resetToIdle(restoredMessages))
+      idle(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state.withAskMode(None).withMessages(restoredMessages).resetToIdle(restoredMessages)
+      )
+
+    end for
+
+  end handleAskComplete
 
   private def isAskReminder(msg: Message): Boolean =
     msg.role == MessageRole.User && (msg.content match
@@ -827,20 +1209,28 @@ object AgentActor extends AgentCore with AgentSession:
   // ============================================================
 
   private def handleTriggerCompaction(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
-    mode: String, replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]],
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    mode: String,
+    replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]],
     resumeAfterCompact: Boolean = true
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val config = CompactConfig()
     if state.pendingCompaction.isDefined then
       val reason = "Compaction already in progress"
       for
-        _ <- replyDeferred.fold(IO.unit)(d =>
-          ctx.forkTurn(d.complete(Left(reason)).void.handleErrorWith(_ => IO.unit)))
-        _ <- ctx.forkTurn(emitStreamIO(state.wsSend,
-          AgentStreamEvent.CompactFailed(reason, state.compactionFailures, config.circuitBreakerMax),
-          isSubagent = depth > 0, state.sessionId).handleErrorWith(_ => IO.unit))
+        _ <- replyDeferred.fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(reason)).void.handleErrorWith(_ => IO.unit)))
+        _ <- ctx.forkTurn(
+          emitStreamIO(
+            state.wsSend,
+            AgentStreamEvent.CompactFailed(reason, state.compactionFailures, config.circuitBreakerMax),
+            isSubagent = depth > 0,
+            state.sessionId
+          ).handleErrorWith(_ => IO.unit)
+        )
       yield idle(agentDef, resources, depth, parentRef, state)
     else
       val backoffOk =
@@ -850,32 +1240,48 @@ object AgentActor extends AgentCore with AgentSession:
           config.isBackoffSatisfied(state.compactionFailures, elapsed)
       if !backoffOk then
         val err = s"Compaction retry backed off (${state.compactionFailures} failures)"
-        replyDeferred.fold(IO.unit)(d =>
-          ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))) *>
+        replyDeferred.fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))) *>
           IO.pure(idle(agentDef, resources, depth, parentRef, state))
       else if state.compactionFailures >= config.circuitBreakerMax then
         val err = s"Compaction circuit breaker open after ${state.compactionFailures} attempts"
         for
-          _ <- replyDeferred.fold(IO.unit)(d =>
-            ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
-          _ <- ctx.forkTurn(emitStreamIO(state.wsSend,
-            AgentStreamEvent.CompactFailed(err, state.compactionFailures, config.circuitBreakerMax),
-            isSubagent = depth > 0, state.sessionId).handleErrorWith(_ => IO.unit))
+          _ <- replyDeferred.fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
+          _ <- ctx.forkTurn(
+            emitStreamIO(
+              state.wsSend,
+              AgentStreamEvent.CompactFailed(err, state.compactionFailures, config.circuitBreakerMax),
+              isSubagent = depth > 0,
+              state.sessionId
+            ).handleErrorWith(_ => IO.unit)
+          )
         yield idle(agentDef, resources, depth, parentRef, state)
       else
-        startDirectCompaction(agentDef, resources, depth, parentRef, state, None,
-          (ad, r, d, p, s) => processing(ad, r, d, p, s), mode)
+        startDirectCompaction(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          None,
+          (ad, r, d, p, s) => processing(ad, r, d, p, s),
+          mode
+        )
       end if
     end if
+  end handleTriggerCompaction
 
   // ============================================================
   // Empty response handler
   // ============================================================
 
   private def handleEmptyResponse(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState,
-    replyTo: Option[ActorRef[AgentEvent]], result: ConsumeResult
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    result: ConsumeResult
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val stopReason = result.stopReason.getOrElse("")
     val isContextError = stopReason.toLowerCase.contains("context") ||
@@ -884,42 +1290,82 @@ object AgentActor extends AgentCore with AgentSession:
     val isMaxTokens = stopReason.equalsIgnoreCase("max_tokens") ||
       stopReason.equalsIgnoreCase("length")
     if isContextError then
-      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-        "context-exceeded", s"stopReason=$stopReason")
+      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "context-exceeded", s"stopReason=$stopReason")
       if state.pendingCompaction.isDefined || state.compactionFailures >= CompactConfig().circuitBreakerMax then
-        finishTurn(agentDef, resources, depth, parentRef, state, replyTo,
+        finishTurn(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          replyTo,
           "Context window exceeded and compaction is unavailable. " +
-          "Please start a new session or use /clear to reset.",
-          None, None, textAlreadyStreamed = false, result.model)
+            "Please start a new session or use /clear to reset.",
+          None,
+          None,
+          textAlreadyStreamed = false,
+          result.model
+        )
       else
-        startDirectCompaction(agentDef, resources, depth, parentRef, state, replyTo,
-          (ad, r, d, p, s) => processing(ad, r, d, p, s), "full")
+        startDirectCompaction(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          replyTo,
+          (ad, r, d, p, s) => processing(ad, r, d, p, s),
+          "full"
+        )
       end if
     else if isMaxTokens then
-      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-        "max-tokens", s"stopReason=$stopReason")
+      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "max-tokens", s"stopReason=$stopReason")
       for
-        _ <- ctx.forkTurn(state.wsSend(
-          Json.obj("type" -> "maxTokens".asJson, "sessionId" -> state.sessionId.asJson))
-          .handleErrorWith(_ => IO.unit))
-        result <- finishTurn(agentDef, resources, depth, parentRef, state, replyTo,
-          "[Response truncated: max output tokens reached]", None, None,
-          textAlreadyStreamed = false, result.model)
+        _ <- ctx.forkTurn(
+          state
+            .wsSend(Json.obj("type" -> "maxTokens".asJson, "sessionId" -> state.sessionId.asJson))
+            .handleErrorWith(_ => IO.unit)
+        )
+        result <- finishTurn(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state,
+          replyTo,
+          "[Response truncated: max output tokens reached]",
+          None,
+          None,
+          textAlreadyStreamed = false,
+          result.model
+        )
       yield result
+      end for
     else
       val retryCount = state.emptyResponseRetries
-      logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "empty-response",
+      logAgentEvent(
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "empty-response",
         s"stopReason=$stopReason retry=$retryCount/$MaxEmptyResponseRetries " +
-        s"usage=${result.usage.map(u => s"in=${u.inputTokens} out=${u.outputTokens}").getOrElse("none")}")
+          s"usage=${result.usage.map(u => s"in=${u.inputTokens} out=${u.outputTokens}").getOrElse("none")}"
+      )
       if retryCount < MaxEmptyResponseRetries then
         val stateForRetry = state.withEmptyResponseRetries(retryCount + 1)
-        logger.info(
-          s"Empty response, retrying (${retryCount + 1}/$MaxEmptyResponseRetries) stopReason=$stopReason")
+        logger.info(s"Empty response, retrying (${retryCount + 1}/$MaxEmptyResponseRetries) stopReason=$stopReason")
         for
-          _ <- ctx.forkTurn(emitStreamIO(state.wsSend,
-            AgentStreamEvent.RetryStatus(
-              s"Empty response from LLM, retrying (${retryCount + 1}/$MaxEmptyResponseRetries)..."),
-            isSubagent = depth > 0, state.sessionId).handleErrorWith(_ => IO.unit))
+          _ <- ctx.forkTurn(
+            emitStreamIO(
+              state.wsSend,
+              AgentStreamEvent.RetryStatus(
+                s"Empty response from LLM, retrying (${retryCount + 1}/$MaxEmptyResponseRetries)..."
+              ),
+              isSubagent = depth > 0,
+              state.sessionId
+            ).handleErrorWith(_ => IO.unit)
+          )
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, stateForRetry, replyTo)
         yield result
       else
@@ -927,29 +1373,32 @@ object AgentActor extends AgentCore with AgentSession:
           if stopReason.nonEmpty then
             s"LLM returned empty response after $MaxEmptyResponseRetries retries (stopReason: $stopReason)"
           else s"LLM returned empty response with no content after $MaxEmptyResponseRetries retries"
-        for
-          _ <- state.sessionId.fold(IO.unit) { sid =>
+        for _ <- state.sessionId.fold(IO.unit) { sid =>
             val doneEvent = AgentStreamEvent.Done(result.model)
             val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
             ctx.forkTurn(
-              (state.wsSend(Json.obj(
-                "type" -> "error".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "message" -> errMsg.asJson))
+              (state
+                .wsSend(
+                  Json.obj("type" -> "error".asJson, "sessionId" -> state.sessionId.asJson, "message" -> errMsg.asJson)
+                )
                 .handleErrorWith(_ => IO.unit)) *>
                 state.wsSend(doneJson).handleErrorWith(_ => IO.unit) *>
-                emitSessionBusy(state.wsSend, sid, busy = false))
+                emitSessionBusy(state.wsSend, sid, busy = false)
+            )
           }
         yield idle(agentDef, resources, depth, parentRef, state)
       end if
     end if
+  end handleEmptyResponse
 
   // ============================================================
   // Tool result replacement
   // ============================================================
 
   private def replaceToolResults(
-    messages: List[Message], rounds: Int, summary: String
+    messages: List[Message],
+    rounds: Int,
+    summary: String
   ): Either[String, (List[Message], Int)] =
     val allToolUseIds = messages.flatMap {
       case Message(MessageRole.Assistant, Right(blocks), _) =>
@@ -966,11 +1415,14 @@ object AgentActor extends AgentCore with AgentSession:
             val (newBlocks, nc) = blocks.foldLeft((Vector.empty[ContentBlock], c)) {
               case ((ba, bc), tr: ContentBlock.ToolResult) if selectedIds.contains(tr.toolUseId) =>
                 (ba :+ tr.copy(content = s"[Replaced — see RemoveUnnecessary result above]"), bc + 1)
-              case ((ba, bc), other) => (ba :+ other, bc) }
+              case ((ba, bc), other) => (ba :+ other, bc)
+            }
             (acc :+ msg.copy(content = Right(newBlocks.toList)), nc)
-          case ((acc, c), other) => (acc :+ other, c) }
+          case ((acc, c), other) => (acc :+ other, c)
+        }
         if count == 0 then Left("No matching tool results found")
         else Right((updated.toList, count))
     end if
+  end replaceToolResults
 
 end AgentActor

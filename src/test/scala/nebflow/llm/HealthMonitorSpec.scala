@@ -24,8 +24,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
     val monitor = newMonitor
     val cs = List(candidate("glm", "glm-5"), candidate("kimi", "moonshot-v1"))
 
-    for
-      (up, down) <- monitor.filterCandidates(cs)
+    for (up, down) <- monitor.filterCandidates(cs)
     yield
       assertEquals(up.size, 2)
       assertEquals(down.size, 0)
@@ -127,8 +126,8 @@ class HealthMonitorSpec extends CatsEffectSuite:
 
     for
       _ <- monitor.markDown("glm", "glm-5", "down")
-      _ <- monitor.markUp("glm", "glm-5")    // fires signal
-      _ <- monitor.waitForAnyUp()             // should not block
+      _ <- monitor.markUp("glm", "glm-5") // fires signal
+      _ <- monitor.waitForAnyUp() // should not block
     yield ()
   }
 
