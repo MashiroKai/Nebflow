@@ -5,6 +5,7 @@
 import state from './state.js';
 import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
+import { onMessage } from './ws.js';
 
 let meshState = {
   device: null,
@@ -114,4 +115,7 @@ async function doSaveDescription(rerender) {
 // ---- Init (called once from main.js) ----
 export async function initMesh() {
   await fetchMeshStatus();
+  // Push-based peer status: when backend broadcasts peerListChanged,
+  // immediately re-fetch mesh status instead of waiting for poll.
+  onMessage('peerListChanged', () => { fetchMeshStatus(); });
 }
