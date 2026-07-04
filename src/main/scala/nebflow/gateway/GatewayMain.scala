@@ -319,7 +319,9 @@ object GatewayMain extends IOApp.Simple:
                                           logger.debug(s"Tailscale discovery: ${e.getMessage}").void
                                         )
                                       ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *>
-                                        meshService.addLogoutHook(presenceService.disconnectAll()) *> {
+                                        meshService.addPeerChangeCallback(
+                                          wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
+                                        ) *> meshService.addLogoutHook(presenceService.disconnectAll()) *> {
                                           val sharedResourcesWithBridge =
                                             sharedResourcesWithDream.copy(
                                               bridgeManager = Some(bridgeManager),
