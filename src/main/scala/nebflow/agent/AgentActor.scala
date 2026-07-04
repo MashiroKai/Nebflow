@@ -498,7 +498,10 @@ object AgentActor extends AgentCore with AgentSession:
         else Nil
         val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ eventMessages ++ immediateMessages
         val updatedState =
-          state.copy(execution = state.execution.copy(messages = newMessages, interaction = None, pendingEvents = Nil, pendingImmediateInputs = Nil))
+          state.copy(execution =
+            state.execution
+              .copy(messages = newMessages, interaction = None, pendingEvents = Nil, pendingImmediateInputs = Nil)
+          )
         for
           _ <- ctx.forkTurn(
             persistIfSession(resources, updatedState)
@@ -962,8 +965,11 @@ object AgentActor extends AgentCore with AgentSession:
         "pending-messages-injected",
         s"events=${queuedEvents.size}"
       )
-      val updatedState = state.copy(execution = ExecutionContext.idle(messagesWithPending, state.execution.turnIdx)
-        .copy(pendingImmediateInputs = state.execution.pendingImmediateInputs))
+      val updatedState = state.copy(execution =
+        ExecutionContext
+          .idle(messagesWithPending, state.execution.turnIdx)
+          .copy(pendingImmediateInputs = state.execution.pendingImmediateInputs)
+      )
       for
         _ <- roundCompleteIO
         _ <- state.sessionId.fold(IO.unit)(sid =>

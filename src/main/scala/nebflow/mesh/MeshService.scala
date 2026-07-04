@@ -58,6 +58,7 @@ class MeshService private (
 
   private def notifyPeersChanged: IO[Unit] =
     peerChangeCallbacks.get.flatMap(_.traverse_(_.handleErrorWith(_ => IO.unit)))
+
   /** Discovery hook — set to TailscaleDiscovery.discoverCycle at startup. */
   private val discoveryHookRef: Ref[IO, IO[Unit]] = Ref.unsafe[IO, IO[Unit]](IO.unit)
 
@@ -130,8 +131,7 @@ class MeshService private (
   /** Remove a peer when its WS presence connection drops. Fires callback. */
   def removePeer(deviceId: String): IO[Unit] =
     peersRef.get.flatMap { peers =>
-      if peers.contains(deviceId) then
-        peersRef.update(_ - deviceId) *> notifyPeersChanged
+      if peers.contains(deviceId) then peersRef.update(_ - deviceId) *> notifyPeersChanged
       else IO.unit
     }
 
