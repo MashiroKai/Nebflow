@@ -67,8 +67,8 @@ Usage:
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val content = input("content").flatMap(_.asString).getOrElse("")
     val filePath =
-      if java.nio.file.Paths.get(filePathStr).isAbsolute then Paths.get(filePathStr)
-      else Paths.get(ctx.projectRoot, filePathStr)
+      if nebflow.core.PathUtil.isAbsolute(filePathStr) then Paths.get(filePathStr)
+      else return IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
 
     doWrite(filePath, content, ctx)
 

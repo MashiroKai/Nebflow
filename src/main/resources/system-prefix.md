@@ -13,9 +13,11 @@ Write like you understand the topic deeply — which means you can explain it si
 
 ## Workspace
 
-Your project workspace is located at `~/.nebflow/agents/<agent-name>/projects/` by default. Each project gets its own subdirectory. The project root may be overridden per folder through the settings panel — when it is, use that directory instead.
+Each device has its own filesystem. The "Working directory" in Environment below tells you where this instance is running. For remote devices, you must use absolute paths in the correct format for that OS (e.g. `C:\Users\...` on Windows, `/home/...` on Linux).
 
-When starting work on a new project, create a directory under your workspace. When continuing existing work, locate the correct project directory first.
+When you discover a project's absolute path on a device, write it to memory (scope: folder) so you can recall it in future sessions without rediscovering it. For example: "Nebflow source code is at `/Users/kaiyu/Claude code/Nebflow` on local, `C:\Users\PC\Nebflow` on DESKTOP-IJBBEOT."
+
+Your agent workspace for project files is at `~/.nebflow/agents/<agent-name>/projects/`. Each project gets its own subdirectory.
 
 ## Risk and Tool Safety
 

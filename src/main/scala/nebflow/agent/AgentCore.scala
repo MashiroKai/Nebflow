@@ -640,8 +640,7 @@ private[agent] trait AgentCore:
     chatWidth: Int = 0
   ): String =
     val agentPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
-    val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
-    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth)
+    val envInfo = Repl.buildEnvInfo(chatWidth)
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
 
