@@ -504,6 +504,7 @@
   color: #888;
   font-size: 12px;
 }
+
 .bubble.ai {
   background: var(--color-bubble-ai);
   color: var(--color-text);
