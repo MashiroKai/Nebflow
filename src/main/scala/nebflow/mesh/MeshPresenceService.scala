@@ -21,16 +21,17 @@ import scala.jdk.CollectionConverters.*
  *
  * When device A discovers device B via `tailscale status`, A opens a persistent
  * WebSocket to `ws://B:8080/api/mesh/presence`. As long as the WS is open, both
- * devices consider each other online. When the WS drops (TCP RST or heartbeat
- * timeout), both sides remove the peer.
+ * devices consider each other online.
  *
  * Heartbeat: ping every 10s; if no pong for 20s the connection is forcibly closed.
- * Reconnection: the periodic `syncPeers` call (driven by the sync actor) re-establishes
- * connections for peers still present in the tailnet scan.
  *
- * Built on the JDK's built-in WebSocket (zero extra dependencies), mirroring the
- * pattern used by MeshRelayClient. ProxySelector.of(null) bypasses any configured
- * HTTP proxy so Tailscale traffic goes direct.
+ * Auto-reconnect: when a connection drops unexpectedly (TCP RST, heartbeat
+ * timeout, sleep/wake), an exponential-backoff loop immediately starts trying
+ * to reconnect: 1s -> 2s -> 4s -> 8s -> 16s -> 30s (capped). This ensures
+ * sub-second recovery when the network recovers, instead of waiting up to
+ * 5 minutes for the next periodic scan. The loop stops after ~20 attempts
+ * (~5 min total) or when the peer is explicitly disconnected (left tailnet /
+ * logout).
  */
 final class MeshPresenceService(
   meshService: MeshService,
@@ -38,15 +39,6 @@ final class MeshPresenceService(
 )(dispatcher: Dispatcher[IO]):
   private val logger = NebflowLogger.forName("nebflow.mesh.presence")
 
-  /**
-   * One outgoing presence connection.
-   *
-   * @param ws        The JDK WebSocket handle.
-   * @param alive     False once disconnect() has been called — distinguishes explicit
-   *                  disconnect from an unexpected drop.
-   * @param lastPong  Epoch millis of the last pong received from the peer.
-   * @param heartbeat Scheduled executor for ping/pong heartbeat.
-   */
   private case class PresenceConnection(
     ws: WebSocket,
     alive: AtomicBoolean,
@@ -57,27 +49,40 @@ final class MeshPresenceService(
   /** deviceId -> active outgoing connection. */
   private val connections = new ConcurrentHashMap[String, PresenceConnection]()
 
+  /** Peers currently in the reconnection loop (deviceId -> PeerInfo). */
+  private val reconnecting = new ConcurrentHashMap[String, PeerInfo]()
+
+  /** Device IDs whose reconnection should stop (explicit disconnect / peer left tailnet). */
+  private val cancelReconnect = new ConcurrentHashMap[String, java.lang.Boolean]()
+
   // ===== Public API =====
 
   /**
    * Reconcile active WS connections with a freshly scanned peer list.
    *
    * - Upserts discovered peers into the MeshService peer list.
-   * - Connects to peers that are in the list but have no active WS.
+   * - Connects to peers that are in the list but have no active WS (and aren't
+   *   already being auto-reconnected).
    * - Disconnects from peers that have a WS but are no longer in the list.
+   * - Cancels auto-reconnect for peers that left the tailnet.
    */
   def syncPeers(peers: List[PeerInfo]): IO[Unit] =
     val peerIds = peers.iterator.map(_.deviceId).toSet
     val staleIds =
       connections.keySet().asScala.filterNot(peerIds.contains).toList
+    val staleReconnectIds =
+      reconnecting.keySet().asScala.filterNot(peerIds.contains).toList
     for
-      // Upsert discovered peers into MeshService peer list
       _ <- peers.traverse_(peer => meshService.upsertPeer(peer))
       // Disconnect peers that left the tailnet
       _ <- IO.blocking(staleIds.foreach(id => disconnectPeer(id)))
       _ <- staleIds.traverse_(id => meshService.removePeer(id))
-      // Connect to newly discovered peers (fire-and-forget — don't block the scan cycle)
-      _ <- peers.filter(p => !connections.containsKey(p.deviceId)).traverse_(p => connect(p).start.void)
+      // Cancel reconnection for peers no longer in the tailnet
+      _ <- IO.blocking(staleReconnectIds.foreach(id => cancelReconnect.put(id, true)))
+      // Connect to peers without active connection, skip those already reconnecting
+      _ <- peers.filter(p =>
+        !connections.containsKey(p.deviceId) && !reconnecting.containsKey(p.deviceId)
+      ).traverse_(p => connect(p).start.void)
     yield ()
 
   /** Establish an outgoing WS presence connection to a peer. No-op if already connected. */
@@ -89,7 +94,6 @@ final class MeshPresenceService(
         case Some(host) =>
           meshService.identity
             .flatMap { id =>
-              // IO.blocking returns Either(errorMsg, ()) so logging happens in IO context
               IO.blocking {
                 val wsUri = buildWsUri(host, id)
                 try
@@ -114,12 +118,12 @@ final class MeshPresenceService(
                   val conn = PresenceConnection(ws, alive, lastPong, heartbeat)
                   connections.put(peer.deviceId, conn)
 
-                  // Heartbeat: send ping every 10s; close if pong overdue (> 20s)
+                  // Heartbeat: send ping every 5s; force-close if pong overdue (> 10s)
                   heartbeat.scheduleAtFixedRate(
                     { () =>
                       try
                         if alive.get() then
-                          if System.currentTimeMillis() - lastPong.get() > 20_000L then
+                          if System.currentTimeMillis() - lastPong.get() > 10_000L then
                             logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
                             // Force immediate cleanup — don't rely on onClose (may never fire
                             // if the TCP connection is broken, e.g. after sleep/wake)
@@ -127,17 +131,19 @@ final class MeshPresenceService(
                             if zombie != null then
                               try zombie.heartbeat.shutdownNow()
                               catch case _: Exception => ()
+                            // Remove peer and trigger auto-reconnect
                             dispatcher.unsafeRunAndForget(
                               meshService.removePeer(peer.deviceId) *>
-                                logger.debug(s"Presence force-removed after timeout: ${peer.deviceName}")
+                                logger.info(s"Heartbeat timeout: ${peer.deviceName}, auto-reconnecting...") *>
+                                startReconnect(peer)
                             )
                             try ws.sendClose(WebSocket.NORMAL_CLOSURE, "heartbeat timeout")
                             catch case _: Exception => ()
                           else ws.sendText("""{"type":"ping"}""", true)
                       catch case _: Exception => ()
                     },
-                    10,
-                    10,
+                    5,
+                    5,
                     TimeUnit.SECONDS
                   )
 
@@ -155,33 +161,27 @@ final class MeshPresenceService(
             }
             .handleErrorWith(e => logger.debug(s"Presence connect error: ${e.getMessage}"))
 
-  /** Explicitly disconnect from a peer by deviceId. */
+  /** Explicitly disconnect from a peer by deviceId. Cancels any pending reconnection. */
   def disconnect(deviceId: String): IO[Unit] =
     IO.blocking(disconnectPeer(deviceId))
 
-  /** Disconnect all peers (e.g. on logout). */
+  /** Disconnect all peers and cancel all reconnections (e.g. on logout). */
   def disconnectAll(): IO[Unit] =
-    IO.blocking(
+    IO.blocking {
+      // Signal all reconnection loops to stop
+      val allIds = Set[String]() ++ connections.keySet().asScala ++ reconnecting.keySet().asScala
+      allIds.foreach(id => cancelReconnect.put(id, true))
+      allIds.foreach(id => reconnecting.remove(id))
+      // Close all active connections
       connections.keySet().asScala.foreach(id => disconnectPeer(id))
-    )
+    }
 
-  // ===== Internal (called from WS listener threads) =====
-
-  /** Close WS, shut down heartbeat, remove from map. */
-  private def disconnectPeer(deviceId: String): Unit =
-    val conn = connections.remove(deviceId)
-    if conn != null then
-      conn.alive.set(false)
-      try conn.heartbeat.shutdownNow()
-      catch case _: Exception => ()
-      try conn.ws.sendClose(WebSocket.NORMAL_CLOSURE, "disconnect")
-      catch case _: Exception => ()
+  // ===== Internal (called from WS listener / heartbeat threads) =====
 
   /**
    * Called by the WS listener when the connection closes or errors.
-   * If the close was unexpected (alive still true), removes the peer from
-   * MeshService. The next `syncPeers` cycle will reconnect if the peer is
-   * still in the tailnet.
+   * If the close was unexpected (alive still true), removes the peer and
+   * starts auto-reconnection immediately.
    */
   private[mesh] def onClosed(deviceId: String, peer: PeerInfo): Unit =
     val conn = connections.remove(deviceId)
@@ -189,16 +189,87 @@ final class MeshPresenceService(
       try conn.heartbeat.shutdownNow()
       catch case _: Exception => ()
       if conn.alive.get() then
-        // Unexpected close — remove peer so the UI reflects it immediately
+        // Unexpected close — remove peer and auto-reconnect
         dispatcher.unsafeRunAndForget(
           meshService.removePeer(deviceId) *>
-            logger.debug(s"Presence disconnected: ${peer.deviceName}")
+            logger.info(s"Presence disconnected: ${peer.deviceName}, auto-reconnecting...") *>
+            startReconnect(peer)
         )
+    // If conn is null, heartbeat-timeout or disconnectPeer already handled it.
 
   /** Called by the WS listener when a pong frame arrives — refreshes liveness. */
   private[mesh] def updateLastPong(deviceId: String): Unit =
     val conn = connections.get(deviceId)
     if conn != null then conn.lastPong.set(System.currentTimeMillis())
+
+  /**
+   * Start an auto-reconnection loop for a peer. Idempotent: if the peer is
+   * already being reconnected, or was explicitly cancelled, does nothing.
+   */
+  private def startReconnect(peer: PeerInfo): IO[Unit] =
+    IO.blocking {
+      if cancelReconnect.remove(peer.deviceId) != null then
+        reconnecting.remove(peer.deviceId)
+        false // was cancelled
+      else
+        reconnecting.putIfAbsent(peer.deviceId, peer) == null // true if we won the slot
+    }.flatMap {
+      case false => IO.unit
+      case true  => reconnectLoop(peer, 0)
+    }
+
+  /**
+   * Reconnection with immediate first attempt, then exponential backoff:
+   * 0s (immediate) -> 1s -> 2s -> 4s -> 8s -> 16s -> 30s (capped).
+   * Gives up after 20 attempts (~5 min total), falling back to periodic scan.
+   */
+  private def reconnectLoop(peer: PeerInfo, attempt: Int): IO[Unit] =
+    if cancelReconnect.remove(peer.deviceId) != null then
+      reconnecting.remove(peer.deviceId)
+      IO.unit
+    else if attempt >= 20 then
+      reconnecting.remove(peer.deviceId)
+      logger.info(s"Reconnect gave up after $attempt attempts: ${peer.deviceName}")
+    else if connections.containsKey(peer.deviceId) then
+      // Already reconnected (e.g. by syncPeers)
+      reconnecting.remove(peer.deviceId)
+      IO.unit
+    else
+      // attempt 0: immediate. Then 1, 2, 4, 8, 16, 30, 30, ...
+      val delaySecs = attempt match
+        case 0 => 0
+        case n => math.min(30, 1 << (n - 1))
+      IO.sleep(delaySecs.seconds) *>
+        IO.blocking(Option(cancelReconnect.remove(peer.deviceId))).flatMap {
+          case Some(_) =>
+            // Cancelled during sleep
+            reconnecting.remove(peer.deviceId)
+            IO.unit
+          case None =>
+            connect(peer).flatMap { _ =>
+              if connections.containsKey(peer.deviceId) then
+                // Success — re-add peer to MeshService and clean up
+                reconnecting.remove(peer.deviceId)
+                meshService.upsertPeer(peer) *>
+                  logger.info(s"Reconnected to ${peer.deviceName} after ${attempt + 1} attempt(s)")
+              else
+                reconnectLoop(peer, attempt + 1)
+            }.handleErrorWith(_ => reconnectLoop(peer, attempt + 1))
+        }
+
+  // ===== Explicit disconnect (cancels reconnection) =====
+
+  /** Close WS, shut down heartbeat, remove from map. Signals reconnection to stop. */
+  private def disconnectPeer(deviceId: String): Unit =
+    cancelReconnect.put(deviceId, true)
+    reconnecting.remove(deviceId)
+    val conn = connections.remove(deviceId)
+    if conn != null then
+      conn.alive.set(false)
+      try conn.heartbeat.shutdownNow()
+      catch case _: Exception => ()
+      try conn.ws.sendClose(WebSocket.NORMAL_CLOSURE, "disconnect")
+      catch case _: Exception => ()
 
   // ===== Helpers =====
 

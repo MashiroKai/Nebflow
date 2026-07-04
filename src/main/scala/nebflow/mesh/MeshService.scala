@@ -48,6 +48,16 @@ class MeshService private (
 ):
   private val logger = NebflowLogger.forName("nebflow.mesh")
 
+  /** Callbacks fired when a peer goes online/offline. Wired to WsHub.broadcast by GatewayMain. */
+  private val peerChangeCallbacks: Ref[IO, List[IO[Unit]]] =
+    Ref.unsafe[IO, List[IO[Unit]]](Nil)
+
+  /** Register a callback to fire when peers come or go. */
+  def addPeerChangeCallback(cb: IO[Unit]): IO[Unit] =
+    peerChangeCallbacks.update(_ :+ cb)
+
+  private def notifyPeersChanged: IO[Unit] =
+    peerChangeCallbacks.get.flatMap(_.traverse_(_.handleErrorWith(_ => IO.unit)))
   /** Discovery hook — set to TailscaleDiscovery.discoverCycle at startup. */
   private val discoveryHookRef: Ref[IO, IO[Unit]] = Ref.unsafe[IO, IO[Unit]](IO.unit)
 
@@ -109,13 +119,21 @@ class MeshService private (
 
   def peers: IO[List[PeerInfo]] = peersRef.get.map(_.values.toList)
 
-  /** Add or update a single peer from discovery scan results. */
+  /** Add or update a single peer. Fires callback only when peer is newly discovered. */
   def upsertPeer(peer: PeerInfo): IO[Unit] =
-    peersRef.update(_ + (peer.deviceId -> peer))
+    for
+      isNew <- peersRef.get.map(!_.contains(peer.deviceId))
+      _ <- peersRef.update(_ + (peer.deviceId -> peer))
+      _ <- if isNew then notifyPeersChanged else IO.unit
+    yield ()
 
-  /** Remove a peer when its WS presence connection drops. */
+  /** Remove a peer when its WS presence connection drops. Fires callback. */
   def removePeer(deviceId: String): IO[Unit] =
-    peersRef.update(_ - deviceId)
+    peersRef.get.flatMap { peers =>
+      if peers.contains(deviceId) then
+        peersRef.update(_ - deviceId) *> notifyPeersChanged
+      else IO.unit
+    }
 
   /** Add or update a single peer from an announce push. */
   def handleAnnounce(info: DeviceDiscoveryInfo, remoteIp: String, port: Int): IO[Unit] =

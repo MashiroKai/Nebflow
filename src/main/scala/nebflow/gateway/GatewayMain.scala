@@ -319,6 +319,9 @@ object GatewayMain extends IOApp.Simple:
                                           logger.debug(s"Tailscale discovery: ${e.getMessage}").void
                                         )
                                       ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *>
+                                        meshService.addPeerChangeCallback(
+                                          wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
+                                        ) *>
                                         // Trigger an immediate discovery cycle now that the Tailscale hook is wired.
                                         // Without this, the sync loop's first meaningful cycle is delayed by
                                         // syncIntervalSec (default 300s) because the very first cycle runs before
