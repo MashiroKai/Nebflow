@@ -6,9 +6,10 @@ import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.Defaults
 
-import java.io.{BufferedReader, File, InputStreamReader}
+import java.io.{BufferedReader, File, InputStreamReader, PushbackInputStream}
 import java.lang.Process
-import java.nio.charset.StandardCharsets
+import java.nio.ByteBuffer
+import java.nio.charset.{CharacterCodingException, Charset, CodingErrorAction, StandardCharsets}
 import java.util.concurrent.atomic.*
 
 import scala.concurrent.TimeoutException
@@ -494,7 +495,16 @@ final class ShellSession private (
   end startJobHealthCheck
 
   private def readStream(is: java.io.InputStream, onLine: String => Unit = _ => ()): String =
-    Using.resource(new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) { reader =>
+    // On Windows, detect whether the output is UTF-8 or system ANSI code page
+    // (GBK on Chinese Windows). Git Bash and Python (with PYTHONUTF8=1) output
+    // UTF-8, but native Windows programs (ipconfig, systeminfo, cmd, etc.) output
+    // in the system ANSI code page. We probe the first chunk to pick the right
+    // charset, then read the entire stream with it.
+    val (stream, charset) =
+      if isWindows then probeCharset(is)
+      else (is, StandardCharsets.UTF_8)
+
+    Using.resource(new BufferedReader(new InputStreamReader(stream, charset))) { reader =>
       val sb = new StringBuilder
       var line: String = null
       val truncationMarker = "\n[Output truncated due to size limit]\n"
@@ -517,6 +527,37 @@ final class ShellSession private (
       val s = sb.toString()
       if s.trim.isEmpty then "" else s
     }
+
+  /**
+   * Probe the first bytes of a stream to detect UTF-8 vs system ANSI code page.
+   * Returns the stream (rewound via PushbackInputStream) and the detected charset.
+   *
+   * UTF-8 has strict multi-byte structure — GBK output almost certainly contains
+   * byte sequences that violate it, so strict UTF-8 decoding is a reliable detector.
+   * The probe bytes are pushed back so the caller's InputStreamReader sees the
+   * complete stream from the beginning.
+   */
+  private def probeCharset(is: java.io.InputStream): (java.io.InputStream, Charset) =
+    val ProbeSize = 4096
+    val pushback = new PushbackInputStream(is, ProbeSize)
+    val probe = new Array[Byte](ProbeSize)
+    val n = pushback.read(probe)
+    if n <= 0 then
+      (pushback, StandardCharsets.UTF_8)
+    else
+      pushback.unread(probe, 0, n)
+      val charset =
+        try
+          val decoder = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+          decoder.decode(ByteBuffer.wrap(probe, 0, n))
+          StandardCharsets.UTF_8
+        catch
+          case _: CharacterCodingException =>
+            try Charset.forName("GBK")
+            catch case _: Exception => StandardCharsets.UTF_8
+      (pushback, charset)
 
 end ShellSession
 
