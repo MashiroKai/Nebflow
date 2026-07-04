@@ -23,6 +23,7 @@ Usage:
 - The file_path parameter must be an absolute path, not a relative path.
 - By default, it reads up to 2000 lines starting from the beginning of the file.
 - You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file when the file is of reasonable size.
+- Use the filter parameter to extract matching lines from large files (e.g. logs). Only lines matching the regex are returned, with their original line numbers preserved. offset/limit then paginate the filtered results.
 - Results are returned using cat -n format, with line numbers starting at 1.
 - ALWAYS use Read (not Bash with cat/head/tail) to read files.
 - Always read a file before editing it."""
@@ -35,7 +36,11 @@ Usage:
           .obj("type" -> "string".asJson, "description" -> "The absolute path to the file to read".asJson),
         "offset" -> io.circe.Json
           .obj("type" -> "number".asJson, "description" -> "The line number to start reading from (1-based)".asJson),
-        "limit" -> io.circe.Json.obj("type" -> "number".asJson, "description" -> "The number of lines to read".asJson)
+        "limit" -> io.circe.Json.obj("type" -> "number".asJson, "description" -> "The number of lines to read".asJson),
+        "filter" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Regex pattern to filter lines. Only matching lines are returned (with original line numbers). Useful for large log files. offset/limit paginate the filtered results.".asJson
+        )
       ),
       "required" -> io.circe.Json.arr("file_path".asJson)
     )
@@ -46,9 +51,11 @@ Usage:
     val short = path.split("/").lastOption.getOrElse(path)
     val offset = input("offset").flatMap(_.asNumber).flatMap(_.toInt)
     val limit = input("limit").flatMap(_.asNumber).flatMap(_.toInt)
+    val filter = input("filter").flatMap(_.asString)
     val params = List(
       offset.map(o => s"offset=$o"),
-      limit.map(l => s"limit=$l")
+      limit.map(l => s"limit=$l"),
+      filter.map(f => s"filter=$f")
     ).flatten.mkString(", ")
     val paramStr = if params.nonEmpty then s", $params" else ""
     s"""Read($short$paramStr)\n  ("$path")"""
@@ -82,23 +89,42 @@ Usage:
       else
         try
           val content = new String(Files.readAllBytes(filePath), java.nio.charset.StandardCharsets.UTF_8)
-          val lines = content.split("\\r?\\n").toList
+          val allLines = content.split("\\r?\\n").toList
+          val filterOpt = input("filter").flatMap(_.asString).filter(_.nonEmpty)
+
+          // If filter is provided, narrow to matching lines (preserving original line numbers)
+          val (workingLines, workingIndices, filterInfo) = filterOpt match
+            case Some(pattern) =>
+              val regex = java.util.regex.Pattern.compile(pattern)
+              val matched = allLines.zipWithIndex.filter { case (line, _) => regex.matcher(line).find() }
+              (matched.map(_._1), matched.map(_._2), s", filter: \"$pattern\" — ${matched.length} match(es) in ${allLines.length} lines")
+            case None =>
+              (allLines, allLines.indices.toList, "")
+
           val start = input("offset").flatMap(_.asNumber).flatMap(_.toInt).map(_ - 1).getOrElse(0)
           val end = input("limit").flatMap(_.asNumber).flatMap(_.toInt) match
             case Some(limit) => start + limit
-            case None => Math.min(lines.length, start + MAX_LINE_COUNT)
-          val selected = lines.slice(start, end)
+            case None => Math.min(workingLines.length, start + MAX_LINE_COUNT)
+          val selected = workingLines.slice(start, end)
+          val selectedIndices = workingIndices.slice(start, end)
 
-          val result = selected.zipWithIndex
-            .map { case (line, i) =>
-              s"${start + i + 1}\t$line"
+          val result = selected.zip(selectedIndices)
+            .map { case (line, originalIdx) =>
+              s"${originalIdx + 1}\t$line"
             }
             .mkString("\n")
 
-          val totalLines = lines.length
+          val totalLines = workingLines.length
           val showedLines = selected.length
-          val isPartialView = start > 0 || showedLines < totalLines
-          val suffix = if showedLines < totalLines then s"\n\n(showing $showedLines of $totalLines lines)" else ""
+          val isPartialView = start > 0 || (filterOpt.isEmpty && showedLines < allLines.length) || (filterOpt.isDefined && showedLines < workingLines.length)
+          val suffix =
+            if filterOpt.isDefined && showedLines < workingLines.length then
+              s"\n\n(showing $showedLines of $totalLines matched lines$filterInfo)"
+            else if filterOpt.isDefined then
+              s"\n\n($totalLines matched lines$filterInfo)"
+            else if showedLines < allLines.length then
+              s"\n\n(showing $showedLines of ${allLines.length} lines)"
+            else ""
           Right((result + suffix, isPartialView))
         catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
     }.flatMap {
