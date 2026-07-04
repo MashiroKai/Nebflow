@@ -310,6 +310,11 @@ object AgentActor extends AgentCore with AgentSession:
           _: AgentCommand.UpdateGitBranch =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
+      // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
+      case AgentCommand.ImmediateInput(text, blocks) =>
+        ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0)
+        IO.pure(idle(agentDef, resources, depth, parentRef, state))
+
       case _ =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
   end idle
@@ -474,9 +479,29 @@ object AgentActor extends AgentCore with AgentSession:
           val remindersText = pendingEvents.map(e => e.payload).mkString("\n\n")
           List(Message(MessageRole.User, Left(s"<system-reminder>\n$remindersText\n</system-reminder>")))
         else Nil
-        val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ eventMessages
+        // Inject queued immediate user inputs alongside tool results
+        val immInputs = state.execution.pendingImmediateInputs
+        val immediateMessages = if immInputs.nonEmpty then
+          logAgentEvent(
+            agentDef,
+            depth,
+            state.sessionId,
+            state.sessionName,
+            "immediate-inputs-injected-at-tools-complete",
+            s"count=${immInputs.size}"
+          )
+          immInputs.map(imm =>
+            imm.blocks match
+              case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+              case _ => Message(MessageRole.User, Left(imm.text))
+          )
+        else Nil
+        val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ eventMessages ++ immediateMessages
         val updatedState =
-          state.copy(execution = state.execution.copy(messages = newMessages, interaction = None, pendingEvents = Nil))
+          state.copy(execution =
+            state.execution
+              .copy(messages = newMessages, interaction = None, pendingEvents = Nil, pendingImmediateInputs = Nil)
+          )
         for
           _ <- ctx.forkTurn(
             persistIfSession(resources, updatedState)
@@ -782,6 +807,19 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending :+ msg))
       case msg: AgentCommand.AskQuestion =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending :+ msg))
+      case msg: AgentCommand.ImmediateInput =>
+        logAgentEvent(
+          agentDef,
+          depth,
+          state.sessionId,
+          state.sessionName,
+          "immediate-input-queued",
+          s"textLen=${msg.text.length}"
+        )
+        val updatedExec = state.execution.copy(
+          pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg
+        )
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
 
       case _ =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
@@ -927,7 +965,11 @@ object AgentActor extends AgentCore with AgentSession:
         "pending-messages-injected",
         s"events=${queuedEvents.size}"
       )
-      val updatedState = state.copy(execution = ExecutionContext.idle(messagesWithPending, state.execution.turnIdx))
+      val updatedState = state.copy(execution =
+        ExecutionContext
+          .idle(messagesWithPending, state.execution.turnIdx)
+          .copy(pendingImmediateInputs = state.execution.pendingImmediateInputs)
+      )
       for
         _ <- roundCompleteIO
         _ <- state.sessionId.fold(IO.unit)(sid =>
@@ -940,6 +982,51 @@ object AgentActor extends AgentCore with AgentSession:
           )
         )
         _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithPending))
+        result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
+      yield result
+    else if state.execution.pendingImmediateInputs.nonEmpty then
+      // Immediate user inputs arrived during the final LLM call (no tool gap).
+      // Inject them and continue the turn so the LLM sees them right away.
+      val immInputs = state.execution.pendingImmediateInputs
+      logAgentEvent(
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
+        "immediate-inputs-injected-at-turn-end",
+        s"count=${immInputs.size}"
+      )
+      val roundCompleteIO: IO[Unit] =
+        if !isSubagent then
+          state.sessionId.fold(IO.unit)(sid =>
+            ctx.forkTurn(
+              state
+                .wsSend(Json.obj("type" -> "roundComplete".asJson, "sessionId" -> sid.asJson))
+                .handleErrorWith(e =>
+                  IO(NebflowLogger.forName("nebflow.agent").warn(s"roundComplete delivery failed: ${e.getMessage}"))
+                )
+            )
+          )
+        else IO.unit
+      val immMessages = immInputs.map(imm =>
+        imm.blocks match
+          case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
+          case _ => Message(MessageRole.User, Left(imm.text))
+      )
+      val messagesWithImmediate = newMessages ++ immMessages
+      val updatedState = state.copy(execution = ExecutionContext.idle(messagesWithImmediate, state.execution.turnIdx))
+      for
+        _ <- roundCompleteIO
+        _ <- state.sessionId.fold(IO.unit)(sid =>
+          ctx.forkTurn(
+            (resources.sessionStore.saveMessagesForSession(sid, messagesWithImmediate) *>
+              resources.sessionStore.flushIndex)
+              .handleErrorWith(e =>
+                IO(NebflowLogger.forName("nebflow.agent").warn(s"Save/flush session failed: ${e.getMessage}"))
+              )
+          )
+        )
+        _ <- replyTo.traverse_(_ ! AgentEvent.Completed(state.sessionId.getOrElse(""), messagesWithImmediate))
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
     else

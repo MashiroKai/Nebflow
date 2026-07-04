@@ -27,7 +27,7 @@ import {
   showAgentModal, hideAgentModal, initModals,
   startInlineNewSession
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
@@ -180,6 +180,7 @@ initChatViews(
     lottieSpinnerEl: document.getElementById('lottie-spinner'),
     attPreview: document.getElementById('attachment-preview'),
     slashDropdown: document.getElementById('slash-dropdown'),
+    queueBar: document.getElementById('queue-bar'),
     voiceBtn: document.getElementById('voice-btn'),
     voiceOverlay: document.getElementById('voice-overlay'),
     voiceText: document.getElementById('voice-text'),
@@ -205,6 +206,7 @@ initChatViews(
     lottieSpinnerEl: document.getElementById('secondary-spinner'),
     attPreview: document.getElementById('secondary-attachment-preview'),
     slashDropdown: document.getElementById('secondary-slash-dropdown'),
+    queueBar: document.getElementById('secondary-queue-bar'),
     voiceBtn: document.getElementById('secondary-voice-btn'),
     voiceOverlay: document.getElementById('secondary-voice-overlay'),
     voiceText: document.getElementById('secondary-voice-text'),
@@ -758,6 +760,10 @@ onMessage('done', (msg, view) => {
   } else {
     markSessionUnread(msg.sessionId);
   }
+  // Drain queued messages: send the first one as a normal UserInput
+  if (sid) {
+    setTimeout(() => drainMessageQueue(sid), 50);
+  }
 });
 
 // roundComplete: backend signals the current round's text is finalized but a new
@@ -871,6 +877,11 @@ onMessage('maxTokens', (msg, view) => {
 onMessage('askUser', (msg, view) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
+  // AskUser waits for human response — suppress stream timeout indefinitely
+  if (sid && state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
   if (view) {
     // Defensive: finalize any in-flight AI bubble before rendering the question.
     // Normally roundComplete (sent before askUser by the backend) handles this,
@@ -890,6 +901,11 @@ onMessage('askUser', (msg, view) => {
 onMessage('askPermission', (msg, view) => {
   const sid = msg.sessionId;
   if (sid) setSessionAttention(sid, true);
+  // Permission prompt waits for human response — suppress stream timeout indefinitely
+  if (sid && state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
   // Clear stale "answered" tracking: a new permission request means any
   // previous answer in this session (same turn) is no longer relevant.
   // Without this, a second permission in the same turn would be stuck as
