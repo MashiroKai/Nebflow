@@ -18,6 +18,7 @@ object AgentCommand:
     blocks: Option[List[ContentBlock]] = None,
     chatWidth: Int = 0
   ) extends AgentCommand
+
   case class ImmediateInput(
     text: String,
     blocks: Option[List[ContentBlock]] = None
