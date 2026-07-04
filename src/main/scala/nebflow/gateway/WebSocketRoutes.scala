@@ -1492,12 +1492,17 @@ class WebSocketRoutes(
           result
 
         case "doUpdate" =>
+          val beta = parse(text).toOption.flatMap(_.hcursor.downField("beta").as[Boolean].toOption).getOrElse(false)
           wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson)) *>
             IO.blocking {
               import sys.process.*
               val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
               val script =
-                if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
+                if beta then
+                  if isWindows then
+                    """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
+                  else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
+                else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
                 else "curl -fsSL https://nebflow.space/install.sh | sh"
               val exitCode = script.!
               if exitCode == 0 then
@@ -1518,6 +1523,72 @@ class WebSocketRoutes(
                     .obj("type" -> "updateCompleted".asJson, "success" -> false.asJson, "error" -> e.getMessage.asJson)
                 )
               }
+
+        case "remoteUpdate" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val targetDevice = hc.downField("device").as[String].getOrElse("")
+          val beta = hc.downField("beta").as[Boolean].getOrElse(false)
+          if targetDevice.isEmpty then
+            wsSend(io.circe.Json.obj("type" -> "remoteUpdateResult".asJson, "success" -> false.asJson, "error" -> "Missing device name".asJson))
+          else
+            sharedResources.meshService match
+              case None =>
+                wsSend(io.circe.Json.obj("type" -> "remoteUpdateResult".asJson, "success" -> false.asJson, "error" -> "Mesh not enabled".asJson))
+              case Some(meshService) =>
+                meshService.peers.flatMap { peers =>
+                  peers.find(p =>
+                    p.deviceName.equalsIgnoreCase(targetDevice) ||
+                      p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
+                  ) match
+                    case None =>
+                      wsSend(io.circe.Json.obj(
+                        "type" -> "remoteUpdateResult".asJson,
+                        "success" -> false.asJson,
+                        "error" -> s"Device '$targetDevice' not found".asJson
+                      ))
+                    case Some(peer) =>
+                      if peer.address.isEmpty then
+                        wsSend(io.circe.Json.obj(
+                          "type" -> "remoteUpdateResult".asJson,
+                          "success" -> false.asJson,
+                          "error" -> s"Device '$targetDevice' has no address".asJson
+                        ))
+                      else
+                        logger.info(s"Remote update: sending update request to ${peer.deviceName} at ${peer.address} (beta=$beta)") *>
+                          IO.blocking {
+                            import sttp.client4.*
+                            val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
+                            val resp = basicRequest
+                              .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/update"))
+                              .contentType("application/json")
+                              .body(body)
+                              .readTimeout(180.seconds)
+                              .response(asStringAlways)
+                              .send(meshService.httpBackend)
+                            resp
+                          }.flatMap { resp =>
+                            if resp.code.isSuccess then
+                              wsSend(io.circe.Json.obj(
+                                "type" -> "remoteUpdateResult".asJson,
+                                "success" -> true.asJson,
+                                "device" -> peer.deviceName.asJson,
+                                "message" -> "Update installed, device is restarting...".asJson
+                              ))
+                            else
+                              wsSend(io.circe.Json.obj(
+                                "type" -> "remoteUpdateResult".asJson,
+                                "success" -> false.asJson,
+                                "error" -> s"Remote returned HTTP ${resp.code}".asJson
+                              ))
+                          }.handleErrorWith { e =>
+                            wsSend(io.circe.Json.obj(
+                              "type" -> "remoteUpdateResult".asJson,
+                              "success" -> false.asJson,
+                              "error" -> s"Cannot reach ${peer.deviceName}: ${e.getMessage}".asJson
+                            ))
+                          }
+                  end match
+                }
 
         case "getConfig" =>
           configService.isConfigured.flatMap { configured =>

@@ -114,7 +114,9 @@ export function connect() {
         'memoryData', 'memorySaved', 'memoryStatus',
         'cardDesignData', 'cardDesignSaved',
         'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
-        'browseResult'
+        'browseResult',
+        'updateCheckResult', 'updateStarted', 'updateCompleted',
+        'remoteUpdateResult', 'peerListChanged'
       ];
       const TERMINAL_MSG_TYPES = [
         'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

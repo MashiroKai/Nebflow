@@ -16,6 +16,12 @@ object GatewayConfig:
 
   def setPort(port: Int): Unit = _portOverride = Some(port)
 
+  /** When true, skip opening the browser on startup (used by auto-start). */
+  @volatile private var _noBrowser: Boolean = false
+
+  def setNoBrowser(v: Boolean): Unit = _noBrowser = v
+  def noBrowser: Boolean = _noBrowser
+
   def load: IO[GatewayConfig] = IO.delay {
     val host = sys.env
       .get(HostEnv)
