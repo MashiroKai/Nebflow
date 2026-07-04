@@ -18,6 +18,10 @@ object AgentCommand:
     blocks: Option[List[ContentBlock]] = None,
     chatWidth: Int = 0
   ) extends AgentCommand
+  case class ImmediateInput(
+    text: String,
+    blocks: Option[List[ContentBlock]] = None
+  ) extends AgentCommand
   case class Interrupt() extends AgentCommand
 
   case class AskUser(
@@ -387,6 +391,7 @@ case class ExecutionContext(
   activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
   interaction: Option[InteractionState] = None,
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
+  pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
   emptyResponseRetries: Int = 0
 )
 
@@ -401,6 +406,7 @@ object ExecutionContext:
       activeStreamFiber = None,
       interaction = None,
       pendingEvents = Nil,
+      pendingImmediateInputs = Nil,
       emptyResponseRetries = 0
     )
 end ExecutionContext
