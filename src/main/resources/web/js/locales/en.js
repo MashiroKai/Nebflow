@@ -375,4 +375,10 @@ export default {
   'mesh.deviceDescription': 'Device description',
   'mesh.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
   'mesh.save': 'Save',
+  'mesh.update': 'Update',
+  'mesh.stable': 'Stable',
+  'mesh.beta': 'Beta',
+  'mesh.cancel': 'Cancel',
+  'mesh.updating': 'Updating...',
+  'mesh.restarting': 'Restarting...',
 };
