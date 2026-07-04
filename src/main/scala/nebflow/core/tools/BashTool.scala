@@ -504,15 +504,15 @@ Git safety:
             s" ($errInfo)"
           )
 
-      // Notify agent via ExternalEvent
-      val notifyAgent = IO(
-        ref ! AgentCommand.ExternalEvent(
-          source = "background-task",
-          eventType = eventType,
-          payload = payload,
-          metadata = metadata
-        )
-      )
+      // Notify agent via ExternalEvent.
+      // ref ! returns IO[Unit] already — do NOT wrap in IO() or it
+      // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
+      val notifyAgent = (ref ! AgentCommand.ExternalEvent(
+        source = "background-task",
+        eventType = eventType,
+        payload = payload,
+        metadata = metadata
+      )).handleErrorWith(e => logger.warn(s"Failed to notify agent for background job $jobId: ${e.getMessage}"))
 
       // Notify frontend via WS so the indicator dismisses
       val notifyFrontend = ctx.wsSend.fold(IO.unit) { send =>
@@ -524,20 +524,20 @@ Git safety:
             "description" -> description.asJson,
             "status" -> eventType.asJson
           )
-        ).handleErrorWith(_ => IO.unit)
+        ).handleErrorWith(e => logger.warn(s"WS send failed for background job $jobId: ${e.getMessage}"))
       }
 
-      notifyFrontend *> notifyAgent *>
-        logger.info(
-          s"Background job $jobId \"$description\" $eventType$exitInfo",
-          "sessionId" -> ctx.sessionId.getOrElse("")
-        )
+      // Log first so we know the callback fired, then send both notifications
+      // independently — each has its own error recovery so one failure
+      // doesn't prevent the other.
+      logger.info(s"Background job $jobId callback: $eventType$exitInfo", "sessionId" -> ctx.sessionId.getOrElse("")) *>
+        notifyFrontend.void *> notifyAgent
     }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
     ctx.wsSend.fold(
-      logger.warn(s"Cannot notify frontend for background job $jobId: no wsSend")
+      logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")
     ) { send =>
       val json = io.circe.Json.obj(
         "type" -> "backgroundTaskUpdate".asJson,

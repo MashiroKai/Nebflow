@@ -232,12 +232,13 @@
 #delegate-indicator { cursor: pointer; }
 #delegate-indicator:hover { background: rgba(59,130,246,0.25); }
 
-/* Delegate dropdown — sapphire glass */
+/* Delegate dropdown — sapphire glass.
+   Positioned relative to #main (not .header-right) so backdrop-filter
+   can blur chat content instead of being trapped inside #header's backdrop root. */
 #delegate-dropdown {
   position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 6px;
+  top: 50px;
+  right: 24px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -281,12 +282,12 @@
 .delegate-done { color: var(--color-success); font-size: 11px; }
 .delegate-tool { font-size: 10px; color: var(--color-text-muted); display: block; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Background tasks dropdown — sapphire glass */
+/* Background tasks dropdown — sapphire glass.
+   Positioned relative to #main (not .header-right) so backdrop-filter works. */
 #bg-dropdown {
   position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 6px;
+  top: 50px;
+  right: 24px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
