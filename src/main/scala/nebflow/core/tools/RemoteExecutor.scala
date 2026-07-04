@@ -235,6 +235,8 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
       }
     attempt(0)
 
+  end p2pExecuteWithRetry
+
   /** Connection-level failures worth retrying. Excludes HTTP/tool errors. */
   private def isTransientError(err: ToolError): Boolean =
     val msg = err.message.toLowerCase
