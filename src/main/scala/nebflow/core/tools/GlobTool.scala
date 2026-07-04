@@ -65,21 +65,22 @@ object GlobTool extends Tool:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val rawPattern = input("pattern").flatMap(_.asString).getOrElse("")
     val pathOpt = input("path").flatMap(_.asString)
+    val workDir = System.getProperty("user.dir")
 
     // Resolve search directory
     val (baseFromPattern, relPattern) = extractBaseDir(rawPattern)
     val explicitPath = pathOpt.map { p =>
       if p.startsWith("/") || (p.length >= 2 && p.charAt(1) == ':') then os.Path(p)
-      else nebflow.core.PathUtil.resolvePath(p, os.Path(ctx.projectRoot))
+      else nebflow.core.PathUtil.resolvePath(p, os.Path(workDir))
     }
-    val projectRootPath = os.Path(ctx.projectRoot)
+    val workDirPath = os.Path(workDir)
     val searchRootPath =
       if baseFromPattern.startsWith("/") || (baseFromPattern.length >= 2 && baseFromPattern.charAt(1) == ':') then
         os.Path(baseFromPattern)
       else if baseFromPattern.nonEmpty then
-        val base = explicitPath.getOrElse(projectRootPath)
+        val base = explicitPath.getOrElse(workDirPath)
         base / baseFromPattern
-      else explicitPath.getOrElse(projectRootPath)
+      else explicitPath.getOrElse(workDirPath)
 
     // Use ripgrep for file listing — much faster than Java NIO Files.walk
     // --no-ignore: match old behavior (Files.walk ignores .gitignore, so should we)
@@ -109,7 +110,7 @@ object GlobTool extends Tool:
     // Search from the resolved root
     args += searchRootPath.toString
 
-    RgHelper.runRg(args.toList, ctx.projectRoot) match
+    RgHelper.runRg(args.toList, workDir) match
       case Left(err) => Left(err)
       case Right((stdoutStr, stderrStr, exitCode)) =>
         if stdoutStr.trim.isEmpty && exitCode == 2 then
