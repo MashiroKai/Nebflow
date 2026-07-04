@@ -118,12 +118,12 @@ final class MeshPresenceService(
                   val conn = PresenceConnection(ws, alive, lastPong, heartbeat)
                   connections.put(peer.deviceId, conn)
 
-                  // Heartbeat: send ping every 10s; force-close if pong overdue (> 20s)
+                  // Heartbeat: send ping every 5s; force-close if pong overdue (> 10s)
                   heartbeat.scheduleAtFixedRate(
                     { () =>
                       try
                         if alive.get() then
-                          if System.currentTimeMillis() - lastPong.get() > 20_000L then
+                          if System.currentTimeMillis() - lastPong.get() > 10_000L then
                             logger.debugSync(s"Heartbeat timeout: ${peer.deviceName}")
                             // Force immediate cleanup — don't rely on onClose (may never fire
                             // if the TCP connection is broken, e.g. after sleep/wake)
@@ -142,8 +142,8 @@ final class MeshPresenceService(
                           else ws.sendText("""{"type":"ping"}""", true)
                       catch case _: Exception => ()
                     },
-                    10,
-                    10,
+                    5,
+                    5,
                     TimeUnit.SECONDS
                   )
 
@@ -219,7 +219,8 @@ final class MeshPresenceService(
     }
 
   /**
-   * Exponential backoff reconnection: 1s -> 2s -> 4s -> 8s -> 16s -> 30s (capped).
+   * Reconnection with immediate first attempt, then exponential backoff:
+   * 0s (immediate) -> 1s -> 2s -> 4s -> 8s -> 16s -> 30s (capped).
    * Gives up after 20 attempts (~5 min total), falling back to periodic scan.
    */
   private def reconnectLoop(peer: PeerInfo, attempt: Int): IO[Unit] =
@@ -234,7 +235,10 @@ final class MeshPresenceService(
       reconnecting.remove(peer.deviceId)
       IO.unit
     else
-      val delaySecs = math.min(30, math.pow(2.0, attempt.toDouble).toInt.max(1))
+      // attempt 0: immediate. Then 1, 2, 4, 8, 16, 30, 30, ...
+      val delaySecs = attempt match
+        case 0 => 0
+        case n => math.min(30, 1 << (n - 1))
       IO.sleep(delaySecs.seconds) *>
         IO.blocking(Option(cancelReconnect.remove(peer.deviceId))).flatMap {
           case Some(_) =>
