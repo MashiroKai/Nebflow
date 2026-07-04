@@ -387,6 +387,52 @@ class RestApiRoutes(
                 BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
           }
       }
+
+    // ===== Remote Update (P2P — triggered by another Nebflow instance) =====
+    // Downloads and installs the latest JAR, then restarts Nebflow.
+    // The caller must be a Tailscale peer (verified by IP).
+    case req @ POST -> Root / "mesh" / "update" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(_) =>
+          req.as[Json].flatMap { body =>
+            val beta = body.hcursor.downField("beta").as[Boolean].getOrElse(false)
+            val isWindows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+            val script =
+              if beta then
+                if isWindows then
+                  """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
+                else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
+              else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
+              else "curl -fsSL https://nebflow.space/install.sh | sh"
+
+            logger.info(s"[mesh] Remote update requested (beta=$beta), running install script...") *>
+              IO.blocking {
+                import sys.process.*
+                val exitCode = script.!
+                exitCode
+              }.flatMap { exitCode =>
+                if exitCode == 0 then
+                  logger.info("[mesh] Install succeeded, spawning restart helper and shutting down...") *>
+                    IO.blocking(nebflow.core.RestartHelper.spawnRestart()) *>
+                    // Schedule JVM exit after 1 second (allows HTTP response to be sent)
+                    IO.delay {
+                      sharedResources.dispatcher.unsafeRunAndForget(
+                        IO.sleep(1.second) *> IO(System.exit(0))
+                      )
+                    } *>
+                    Ok(Json.obj(
+                      "ok" -> true.asJson,
+                      "message" -> "Update installed, restarting...".asJson
+                    ))
+                else
+                  Ok(Json.obj(
+                    "ok" -> false.asJson,
+                    "error" -> s"Install script failed (exit code: $exitCode)".asJson
+                  ))
+              }
+          }
+      }
   }
 
   // ===== WebSocket Presence Server Endpoint =====
