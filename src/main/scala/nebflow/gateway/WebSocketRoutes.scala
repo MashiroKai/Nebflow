@@ -546,6 +546,16 @@ class WebSocketRoutes(
           val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
           logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
 
+        case "immediateInput" =>
+          val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
+          val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
+          if immSessionId.nonEmpty && immContent.nonEmpty then
+            logger.info(s"Immediate input for session $immSessionId (${immContent.length} chars)") *>
+              sessionStore.appendUiMessages(immSessionId, List(UiMessage.User(immContent, Nil))) *>
+              routeToAgent(immSessionId)(ref => ref ! AgentCommand.ImmediateInput(immContent))
+          else IO.unit
+
         case "command" =>
           val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
           command match
