@@ -6,6 +6,8 @@ import io.circe.parser.*
 import io.circe.syntax.*
 import nebflow.service.ConfigSnapshot
 
+import scala.concurrent.duration.*
+
 // ===== System Commands (Offline) =====
 
 object HelpCommand extends CliCommand:
@@ -33,30 +35,84 @@ object UpdateCommand extends CliCommand:
   def name = "update"
   def description = "Update nebflow to the latest version"
   def subcommands = List(UpdateRun)
-  def examples = List("nebflow update", "nebflow update --beta")
+  def examples = List("nebflow update", "nebflow update --beta", "nebflow update --device DESKTOP-IJBBEOT")
 
   private object UpdateRun extends CliSubcommand:
     def name = "run"
-    def description = "Run update (--beta for latest beta)"
+    def description = "Run update (--beta for latest beta, --device for remote)"
 
     def params = List(
-      CliParam("beta", short = Some('b'), description = "Install latest beta version", isFlag = true)
+      CliParam("beta", short = Some('b'), description = "Install latest beta version", isFlag = true),
+      CliParam("device", short = Some('d'), description = "Update a remote device (requires running gateway)")
     )
 
     def run(ctx: CliContext): IO[CliResult] =
-      IO.blocking {
-        import sys.process.*
-        val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
-        val script =
-          if ctx.args.get("beta").contains("true") then
-            if isWindows then
-              """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
-            else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
-          else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
-          else "curl -fsSL https://nebflow.space/install.sh | sh"
-        val exitCode = script.!
-        if exitCode == 0 then CliResult.text("Update completed")
-        else CliResult.Error("Update failed", exitCode)
+      ctx.args.get("device") match
+        case Some(deviceName) if deviceName != "true" =>
+          // Remote update — call the target device's /api/mesh/update via mesh
+          remoteUpdate(deviceName, ctx.args.get("beta").contains("true"))
+        case _ =>
+          // Local update (existing behavior)
+          IO.blocking {
+            import sys.process.*
+            val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
+            val script =
+              if ctx.args.get("beta").contains("true") then
+                if isWindows then
+                  """powershell -Command "$env:CHANNEL='beta'; iwr https://nebflow.space/install.ps1 | iex" """
+                else "curl -fsSL https://nebflow.space/install.sh | sh -s -- --beta"
+              else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
+              else "curl -fsSL https://nebflow.space/install.sh | sh"
+            val exitCode = script.!
+            if exitCode == 0 then CliResult.text("Update completed")
+            else CliResult.Error("Update failed", exitCode)
+          }
+
+    /** Trigger update on a remote device via mesh P2P. */
+    private def remoteUpdate(deviceName: String, beta: Boolean): IO[CliResult] =
+      GatewayClient.create.flatMap {
+        case None =>
+          IO.pure(CliResult.Error("Gateway not running. Start with 'nebflow start' (local gateway needed for mesh status)"))
+        case Some(client) =>
+          client.get("/api/mesh/status").flatMap { statusJson =>
+            val peers = statusJson.hcursor.downField("peers").as[List[Json]].getOrElse(Nil)
+            // Find the target device (fuzzy match like RemoteExecutor)
+            val matchOpt = peers.find { p =>
+              val name = p.hcursor.downField("deviceName").as[String].getOrElse("")
+              name.equalsIgnoreCase(deviceName) ||
+                name.toLowerCase.contains(deviceName.toLowerCase)
+            }
+            matchOpt match
+              case None =>
+                val available = peers.map(_.hcursor.downField("deviceName").as[String].getOrElse("?"))
+                IO.pure(CliResult.Error(
+                  if peers.isEmpty then s"No peer devices discovered. Ensure Tailscale is running on both machines."
+                  else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
+                ))
+              case Some(peer) =>
+                val address = peer.hcursor.downField("address").as[String].getOrElse("")
+                if address.isEmpty then IO.pure(CliResult.Error(s"Device '$deviceName' has no address"))
+                else
+                  IO.blocking {
+                    // POST to remote device's /api/mesh/update (Tailscale IP auth — no token needed)
+                    import sttp.client4.*
+                    val backend = DefaultSyncBackend()
+                    val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
+                    val resp = basicRequest
+                      .post(sttp.model.Uri.unsafeParse(s"$address/api/mesh/update"))
+                      .contentType("application/json")
+                      .body(body)
+                      .readTimeout(180.seconds)
+                      .response(asStringAlways)
+                      .send(backend)
+                    if resp.code.isSuccess then
+                      CliResult.text(s"Remote update on $deviceName: update installed, device is restarting...")
+                    else
+                      CliResult.Error(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}")
+                  }.handleErrorWith { e =>
+                    IO.pure(CliResult.Error(s"Cannot reach $deviceName at $address: ${e.getMessage}"))
+                  }
+          }
       }
 
   end UpdateRun

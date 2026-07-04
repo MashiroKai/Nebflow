@@ -90,6 +90,71 @@
   max-width: 120px;
 }
 
+/* Peer update button */
+.mesh-peer-update-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.mesh-peer-update-btn:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* Inline channel selection */
+.mesh-update-inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.mesh-ch-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: none;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.mesh-ch-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.mesh-ch-btn.mesh-ch-beta:hover {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+.mesh-ch-cancel {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.mesh-ch-cancel:hover { color: var(--color-text); }
+
+/* Update status indicators */
+.mesh-update-status {
+  font-size: 11px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mesh-update-status.updating { color: var(--color-warning); }
+.mesh-update-status.done { color: var(--color-success); }
+.mesh-update-status.error { color: var(--color-error); }
+
 .mesh-caps-display {
   font-size: 11px;
   color: var(--color-text-muted);

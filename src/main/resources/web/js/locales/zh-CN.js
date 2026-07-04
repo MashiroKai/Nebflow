@@ -376,4 +376,10 @@ export default {
   'mesh.deviceDescription': '设备描述',
   'mesh.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',
   'mesh.save': '保存',
+  'mesh.update': '更新',
+  'mesh.stable': '稳定版',
+  'mesh.beta': '测试版',
+  'mesh.cancel': '取消',
+  'mesh.updating': '更新中…',
+  'mesh.restarting': '重启中…',
 };
