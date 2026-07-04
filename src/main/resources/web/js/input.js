@@ -11,6 +11,7 @@ import { saveInputDraft } from './sidebar.js';
 import { renderTaskList } from './taskList.js';
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
+import { renderQueueBar } from './chatQueue.js';
 
 // ---------- Slash Commands ----------
 const slashCommands = {
@@ -425,8 +426,19 @@ export function send() {
       return;
     }
   }
-  if ((!text && v.pendingAttachments.length === 0) || isBusy) {
-    console.warn('[send] blocked:', { text: text.slice(0,20), busy: state.busySessionIds.has(v.sessionId), wsState: state.ws?.readyState });
+  // Empty input — just ignore
+  if (!text && v.pendingAttachments.length === 0) {
+    return;
+  }
+  // LLM is busy — queue the message instead of blocking
+  if (isBusy) {
+    queueMessage(v, text, v.pendingAttachments);
+    input.value = '';
+    input.style.height = 'auto';
+    v.pendingAttachments = [];
+    v.dom.attPreview.innerHTML = '';
+    saveInputDraft(v.sessionId);
+    setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
@@ -525,6 +537,137 @@ export function send() {
       });
     }
   }, state.streamTimeoutMs + 30000);
+}
+
+// ---------- Input Queue (messages typed while LLM is busy) ----------
+
+let queueCounter = 0;
+
+/** Helper: re-render the queue bar for a session with standard handlers. */
+function refreshQueue(sessionId) {
+  renderQueueBar(sessionId, {
+    onImmediate: (item) => sendImmediate(sessionId, item),
+    onRemove: (item) => removeQueuedItem(sessionId, item)
+  });
+}
+
+// Re-render queue bar when user switches to a different session
+window.addEventListener('queuebar-refresh', (e) => {
+  refreshQueue(e.detail.sessionId);
+});
+
+function queueMessage(view, text, attachments) {
+  const sid = view.sessionId;
+  const item = {
+    id: ++queueCounter,
+    text,
+    attachments: attachments.map(a => ({ ...a }))
+  };
+  if (!state.messageQueue[sid]) state.messageQueue[sid] = [];
+  state.messageQueue[sid].push(item);
+  refreshQueue(sid);
+}
+
+function sendImmediate(sessionId, item) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  sendWs({ type: 'immediateInput', content: item.text, sessionId });
+  // Render as normal user bubble in chat
+  if (activeView && activeView.sessionId === sessionId) {
+    renderUserBubble(item.text, item.attachments);
+  }
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
+  // Remove from queue and refresh bar
+  const q = state.messageQueue[sessionId];
+  if (q) {
+    const idx = q.indexOf(item);
+    if (idx >= 0) q.splice(idx, 1);
+  }
+  refreshQueue(sessionId);
+}
+
+function removeQueuedItem(sessionId, item) {
+  const q = state.messageQueue[sessionId];
+  if (!q) return;
+  const idx = q.indexOf(item);
+  if (idx >= 0) q.splice(idx, 1);
+  refreshQueue(sessionId);
+}
+
+/** Called on 'done' event — send first queued message as normal UserInput. */
+export function drainMessageQueue(sessionId) {
+  const q = state.messageQueue[sessionId];
+  if (!q || q.length === 0) return false;
+  const item = q[0];
+  const view = findViewBySessionId(sessionId);
+  if (!view || !state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+
+  // Remove from queue
+  q.shift();
+  refreshQueue(sessionId);
+
+  // Render as normal user bubble in chat (only if this is the active view)
+  if (activeView && activeView.sessionId === sessionId) {
+    renderUserBubble(item.text, item.attachments);
+  }
+
+  // Save to history
+  if (item.text) {
+    state.inputHistory.push(item.text);
+    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
+    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
+  }
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) });
+
+  // Send as normal UserInput
+  view.isSending = true;
+  if (sessionId) state.turnExpecting[sessionId] = true;
+  view.historyIndex = -1;
+  view.historyDraft = '';
+
+  const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  sendWs({
+    content: item.text,
+    attachments: (item.attachments || []).map(a => ({
+      mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+    })),
+    clientMessageId,
+    sessionId,
+    chatWidth: view.dom.chat?.clientWidth || 0
+  });
+
+  setBusy(sessionId);
+  state.turnStartTimes[sessionId] = Date.now();
+
+  // Safety timeout
+  if (state.sessionBusyTimeouts[sessionId]) {
+    clearTimeout(state.sessionBusyTimeouts[sessionId]);
+    delete state.sessionBusyTimeouts[sessionId];
+  }
+  state.sessionBusyTimeouts[sessionId] = setTimeout(() => {
+    if (state.busySessionIds.has(sessionId)) {
+      sendWs({ type: 'interrupt', sessionId });
+      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
+        const timeoutView = findViewBySessionId(sessionId);
+        if (timeoutView) { setActiveView(timeoutView); renderTimeoutNotice(); }
+        clearBusy(sessionId);
+        clearStatus();
+      });
+    }
+  }, state.streamTimeoutMs + 30000);
+
+  // Clean up thinking placeholders
+  if (window.__stopThinkingTimer) window.__stopThinkingTimer();
+  view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+    const row = el.closest('.row');
+    if (row) row.remove();
+  });
+  view.stream.currentAiBubble = null;
+  view.stream.aiText = '';
+  view.stream.currentThinkingBubble = null;
+  view.stream.thinkingText = '';
+
+  setTimeout(() => { view.isSending = false; }, 300);
+  return true;
 }
 
 // ---------- Inject User Message (for plugin card interactions) ----------

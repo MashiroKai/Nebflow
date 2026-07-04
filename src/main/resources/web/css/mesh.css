@@ -13,52 +13,6 @@
   margin-bottom: 8px;
 }
 
-/* Auth form */
-.mesh-auth-form {
-  max-width: 260px;
-}
-
-.mesh-auth-switch {
-  text-align: center;
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-.mesh-auth-switch a {
-  color: var(--color-primary);
-  text-decoration: none;
-  cursor: pointer;
-}
-.mesh-auth-switch a:hover {
-  text-decoration: underline;
-}
-
-/* Logged in */
-.mesh-logged-in {
-  /* no special layout needed, flows with settings */
-}
-
-.mesh-user-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.mesh-user-badge {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-primary);
-}
-
-.mesh-logout-btn {
-  padding: 4px 12px !important;
-  font-size: 12px !important;
-  background: transparent !important;
-  color: var(--color-error) !important;
-  border: 1px solid var(--color-border) !important;
-}
-
 .mesh-section-label {
   font-size: 11px;
   font-weight: 600;
@@ -143,33 +97,6 @@
   padding: 4px 6px;
   background: var(--color-bg);
   border-radius: 4px;
-}
-
-/* Cloud sync toggle switch */
-.mesh-switch-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: #ccc;
-  border-radius: 24px;
-  transition: 0.3s;
-}
-.mesh-switch-slider::before {
-  position: absolute;
-  content: "";
-  height: 18px;
-  width: 18px;
-  left: 3px;
-  bottom: 3px;
-  background: white;
-  border-radius: 50%;
-  transition: 0.3s;
-}
-.mesh-switch input:checked + .mesh-switch-slider {
-  background: var(--color-primary, #07c160);
-}
-.mesh-switch input:checked + .mesh-switch-slider::before {
-  transform: translateX(18px);
 }
 
 /* Actions */
