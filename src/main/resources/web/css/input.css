@@ -220,25 +220,31 @@
   flex-shrink: 0;
 }
 
-/* ---------- Slash Command Autocomplete ---------- */
+/* ---------- Slash Command Autocomplete ----------
+   Now children of #input-area / #secondary-input-area (not #input-wrap) so
+   backdrop-filter can blur chat content instead of being trapped inside
+   #input-bar's backdrop root. */
 #slash-dropdown,
 #secondary-slash-dropdown {
   position: absolute;
   bottom: 100%;
-  left: 0;
-  right: 0;
-  background: rgba(255, 255, 255, 0.92);
+  left: 12px;
+  right: 12px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.20),
-    0px 4px 16px rgba(0, 0, 0, 0.06),
-    0px 8px 24px rgba(0, 0, 0, 0.04);
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
   margin-bottom: 4px;
   max-height: 200px;
   overflow-y: auto;
   display: none;
   z-index: 50;
+  pointer-events: auto;
 }
 #slash-dropdown.on,
 #secondary-slash-dropdown.on { display: block; }
@@ -311,8 +317,6 @@
 
   #slash-dropdown,
   #secondary-slash-dropdown {
-    background: rgba(28, 32, 42, 0.95);
-    border: 1px solid var(--glass-border);
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 4px 16px rgba(0, 0, 0, 0.30),

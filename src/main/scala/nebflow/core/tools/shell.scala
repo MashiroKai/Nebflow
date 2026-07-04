@@ -3,6 +3,7 @@ package nebflow.core.tools
 import cats.effect.*
 import cats.effect.std.Mutex
 import cats.syntax.all.*
+import nebflow.core.NebflowLogger
 import nebflow.shared.Defaults
 
 import java.io.{BufferedReader, File, InputStreamReader}
@@ -90,7 +91,10 @@ final class ShellSession private (
       _ <- checkAlive *> touch
       cwd <- currentDir.get
       result <- runProcess(command, cwd, timeout, health)
-      newCwd <- runProcess("pwd", cwd, 5.seconds).attempt.map {
+      // On Windows (Git Bash), pwd -W returns Windows-style paths (C:/Users/...)
+      // which Java's File and Paths APIs accept. Plain pwd would return MSYS2
+      // paths (/c/Users/...) which are unusable for Read/Write/Edit tools.
+      newCwd <- runProcess(if isWindows then "pwd -W" else "pwd", cwd, 5.seconds).attempt.map {
         case Right(r) => r.stdout.trim
         case Left(_) => cwd // keep old cwd if pwd fails
       }
@@ -280,26 +284,29 @@ final class ShellSession private (
   private val isWindows: Boolean =
     sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
 
+  /**
+   * Find Git Bash on Windows. Git for Windows is a declared dependency.
+   * We check common installation paths explicitly to avoid picking up
+   * WSL's bash.exe (C:\Windows\System32\bash.exe), which uses a different
+   * filesystem layout.
+   */
+  private lazy val windowsBashPath: String =
+    val progFiles = sys.env.getOrElse("ProgramFiles", "C:\\Program Files")
+    val progFilesX86 = sys.env.getOrElse("ProgramFiles(x86)", "C:\\Program Files (x86)")
+    val localAppData = sys.env.getOrElse("LOCALAPPDATA", "")
+    val candidates = List(
+      s"$progFiles\\Git\\bin\\bash.exe",
+      s"$progFilesX86\\Git\\bin\\bash.exe"
+    ) ++ (if localAppData.nonEmpty then List(s"$localAppData\\Programs\\Git\\bin\\bash.exe") else Nil)
+    candidates.find(p => new File(p).exists()).getOrElse("bash")
+
   private def buildProcessBuilder(command: String, cwd: String): ProcessBuilder =
-    val pb =
-      if isWindows then
-        // Use PowerShell instead of cmd.exe so that PowerShell cmdlets (Remove-Item,
-        // Get-ChildItem, etc.) work natively.  cmd.exe aliases (del, dir, copy, type)
-        // still work in PowerShell as aliases.  -NoProfile avoids loading the user's
-        // PowerShell profile (faster startup, no side effects).
-        // Prefix with [Console]::OutputEncoding to force UTF-8 output — without this,
-        // PowerShell and child processes output in the system OEM code page
-        // (GBK/CP936 on Chinese Windows), causing garbled text.
-        new ProcessBuilder(
-          "powershell.exe",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " + command
-        )
-      else new ProcessBuilder("bash", "-c", command)
-    // Empty or invalid working directory causes cmd.exe to fail on Windows
-    // with "文件名、目录名或卷标语法不正确". Fall back to user home.
+    // On all platforms (including Windows), use bash -c for full shell
+    // compatibility: &&, ||, multi-line scripts, pipes, etc.
+    // On Windows, bash.exe comes from Git for Windows (a declared dependency).
+    val bashPath = if isWindows then windowsBashPath else "bash"
+    val pb = new ProcessBuilder(bashPath, "-c", command)
+    // Empty or invalid working directory causes failures. Fall back to user home.
     val safeCwd =
       if cwd == null || cwd.isEmpty || !new File(cwd).exists() then
         sys.props.getOrElse("user.home", if isWindows then "C:\\" else "/tmp")
@@ -307,8 +314,7 @@ final class ShellSession private (
     pb.directory(new File(safeCwd))
     if isWindows then
       pb.redirectInput(ProcessBuilder.Redirect.PIPE)
-      // Inject UTF-8 env vars for common runtimes that don't respect the
-      // console code page (e.g. Python uses the C runtime locale by default).
+      // Force UTF-8 for Python's C runtime (Git Bash itself is already UTF-8).
       val env = pb.environment()
       env.put("PYTHONUTF8", "1")
       env.put("PYTHONIOENCODING", "utf-8")
@@ -328,9 +334,9 @@ final class ShellSession private (
       buildProcessBuilder(command, cwd).start()
     }.bracket { proc =>
       val storeProc = health.fold(IO.unit)(h => IO(h.processRef.set(proc)))
-      // On Windows, close stdin immediately to prevent the cmd.exe process
-      // from hanging on commands that try to read stdin. This also avoids a
-      // potential JVM bug with Redirect.DISCARD on certain Windows builds.
+      // On Windows, close stdin immediately to prevent bash.exe from hanging
+      // on commands that try to read stdin. This also avoids a potential JVM
+      // bug with Redirect.DISCARD on certain Windows builds.
       val closeStdin = IO {
         if isWindows then
           try proc.getOutputStream().close()
@@ -374,7 +380,23 @@ final class ShellSession private (
   ): IO[Unit] =
     // Background jobs have no timeout — they run until completion or cancellation
     execute(command, 365.days, Some(health)).attempt.flatMap { result =>
-      deferred.complete(result).void *> on_complete.fold(IO.unit)(cb => cb(result).handleErrorWith(_ => IO.unit))
+      deferred.complete(result).void *>
+        on_complete.fold(IO.unit) { cb =>
+          // IO.delay catches exceptions thrown during IO construction
+          // (e.g. if cb(result) throws while preparing the payload).
+          // Without this, a construction-time throw bypasses handleErrorWith
+          // and silently kills the fiber — the deferred is already completed
+          // so the job looks done, but the notification is never sent.
+          IO.delay(cb(result))
+            .flatten
+            .handleErrorWith(e =>
+              IO.delay(
+                NebflowLogger
+                  .forName("nebflow.shell")
+                  .warn(s"Background job callback failed: ${e.getMessage}")
+              )
+            )
+        }
     }
 
   /**

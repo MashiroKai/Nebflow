@@ -486,7 +486,17 @@ class RestApiRoutes(
                 capabilities,
                 userDesc
               )
-              ms.handleAnnounce(info, remoteIp, peerPort).flatMap { _ =>
+              // Silent upsert — the HTTP /mesh/announce endpoint already handles logging.
+              // Calling handleAnnounce here too produces duplicate "Peer announced" logs.
+              val peer = nebflow.mesh.PeerInfo(
+                peerDeviceId,
+                peerDeviceName,
+                peerPlatform,
+                s"http://$remoteIp:$peerPort",
+                capabilities = capabilities,
+                userDescription = userDesc
+              )
+              ms.upsertPeer(peer).flatMap { _ =>
                 Queue.unbounded[IO, WebSocketFrame].flatMap { sendQueue =>
                   val heartbeat = Stream
                     .awakeEvery[IO](10.seconds)
