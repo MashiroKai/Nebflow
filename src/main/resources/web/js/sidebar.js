@@ -1425,6 +1425,46 @@ export function saveInputDraft(sessionId, view) {
     delete state.sessionInputDrafts[sessionId];
   }
   persistDrafts();
+  updateSessionDraftDisplay(sessionId);
+}
+
+/** Lightweight in-place update of a single session's draft/time display in the sidebar.
+ *  Avoids a full renderSessionSidebar rebuild — just swaps the draft text or timestamp
+ *  in the existing DOM node. */
+function updateSessionDraftDisplay(sessionId) {
+  if (!sessionId || !state.dom.sessionList) return;
+  const item = state.dom.sessionList.querySelector('.session-item[data-id="' + sessionId + '"]');
+  if (!item) return;
+  const infoEl = item.querySelector('.session-info');
+  if (!infoEl) return;
+  const draft = state.sessionInputDrafts[sessionId];
+  const existingDraft = infoEl.querySelector('.session-draft');
+  const existingTime = infoEl.querySelector('.session-time');
+  if (draft && draft.text) {
+    const draftText = draft.text.replace(/\n/g, ' ').slice(0, 60);
+    if (existingDraft) {
+      existingDraft.textContent = draftText;
+    } else {
+      if (existingTime) existingTime.remove();
+      const el = document.createElement('div');
+      el.className = 'session-draft';
+      el.textContent = draftText;
+      infoEl.appendChild(el);
+    }
+  } else {
+    if (existingDraft) {
+      existingDraft.remove();
+    }
+    if (!existingTime) {
+      const session = (state.sessions || []).find(s => s.id === sessionId);
+      if (session) {
+        const el = document.createElement('div');
+        el.className = 'session-time';
+        el.textContent = formatSessionTime(session.updatedAt || session.createdAt);
+        infoEl.appendChild(el);
+      }
+    }
+  }
 }
 
 // Restore input box content from draft for the given session
@@ -2068,6 +2108,21 @@ export function getTargetAgent() {
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
   if (active?.agentName && active.agentName !== 'Jarvis') return active.agentName;
   return 'Nebula';
+}
+
+/** Resolve the target folder ID for creating new sessions/folders, based on context.
+ *  Priority: explicitly selected folder → secondary session's folder → active session's folder. */
+export function getCurrentFolderId() {
+  // 1. Active folder context (user clicked on a folder in the sidebar)
+  if (state.activeFolderId) return state.activeFolderId;
+  // 2. Secondary view session (the session the user is currently looking at)
+  if (state.secondarySessionId) {
+    const sec = (state.sessions || []).find(s => s.id === state.secondarySessionId);
+    if (sec?.folderId) return sec.folderId;
+  }
+  // 3. Main view session
+  const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
+  return active?.folderId || null;
 }
 
 /** Build a human-readable breadcrumb path for a folder ID, e.g. "项目A / 模块B". */
