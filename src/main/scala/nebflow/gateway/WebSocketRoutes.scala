@@ -105,22 +105,40 @@ class WebSocketRoutes(
               )
             }.flatten
             ref <- nebulaSystem.spawn(
-              AgentActor(
-                agentDef,
-                sharedResources,
-                recordingWsSend,
-                depth = 0,
-                parentRef = None,
-                sessionId = Some(sessionId),
-                sessionName = metaOpt.map(_.name),
-                initialMessages = history,
-                readTracker = Some(readTracker),
-                fileHistory = Some(fileHistory),
-                contextWindow = contextWindow,
-                projectRoot = effectiveProjectRoot,
-                rulesMd = resolvedRules,
-                folderId = folderId
-              ),
+              if agentDef.name == "Jarvis" then
+                JarvisActor(
+                  agentDef,
+                  sharedResources,
+                  recordingWsSend,
+                  depth = 0,
+                  parentRef = None,
+                  sessionId = Some(sessionId),
+                  sessionName = metaOpt.map(_.name),
+                  initialMessages = history,
+                  readTracker = Some(readTracker),
+                  fileHistory = Some(fileHistory),
+                  contextWindow = contextWindow,
+                  projectRoot = effectiveProjectRoot,
+                  rulesMd = resolvedRules,
+                  folderId = folderId
+                )
+              else
+                AgentActor(
+                  agentDef,
+                  sharedResources,
+                  recordingWsSend,
+                  depth = 0,
+                  parentRef = None,
+                  sessionId = Some(sessionId),
+                  sessionName = metaOpt.map(_.name),
+                  initialMessages = history,
+                  readTracker = Some(readTracker),
+                  fileHistory = Some(fileHistory),
+                  contextWindow = contextWindow,
+                  projectRoot = effectiveProjectRoot,
+                  rulesMd = resolvedRules,
+                  folderId = folderId
+                ),
               s"agent-$sessionId"
             )
             pr = effectiveProjectRoot.getOrElse("")
