@@ -122,6 +122,10 @@ export default {
   // Per-session flag: true when a turn is in progress
   turnExpecting: {},
 
+  // Per-session message queue: sessionId -> [{ id, text, attachments, row }]
+  // Messages typed while LLM is busy; sent on 'done' (normal) or via 立即 (immediate)
+  messageQueue: {},
+
   // Per-session background tasks: sessionId -> [{ taskId, description, status }]
   sessionBgTasks: {},
 

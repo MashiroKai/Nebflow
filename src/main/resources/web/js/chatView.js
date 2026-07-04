@@ -145,8 +145,15 @@ export class ChatView {
     if (this.dom.chat) {
       this.dom.chat.innerHTML = '';
     }
+    // Clear queue bar — will be re-rendered by the event listener in input.js
+    if (this.dom.queueBar) {
+      this.dom.queueBar.innerHTML = '';
+      this.dom.queueBar.classList.remove('visible');
+    }
     // Restore draft for the new session
     this.restoreDraft(sessionId);
+    // Notify queue bar to re-render for the new session
+    window.dispatchEvent(new CustomEvent('queuebar-refresh', { detail: { sessionId } }));
   }
 
   // ── Draft management ──────────────────────────────────────────────────
