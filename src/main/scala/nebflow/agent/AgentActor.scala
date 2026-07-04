@@ -821,6 +821,20 @@ object AgentActor extends AgentCore with AgentSession:
         )
         IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
 
+      // --- Session management (persistent sub-agents) ---
+      case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
+        val session = AgentSessionInfo(address, agentName, taskDescription, "running")
+        IO.pure(processing(agentDef, resources, depth, parentRef,
+          state.withAgentSessions(state.agentSessions :+ session), pending))
+
+      case AgentCommand.SessionUpdate(address, status) =>
+        val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), pending))
+
+      case AgentCommand.SessionClosed(address) =>
+        val updated = state.agentSessions.filterNot(_.address == address)
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.withAgentSessions(updated), pending))
+
       case _ =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
   end processing
