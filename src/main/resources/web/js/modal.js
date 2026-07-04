@@ -2,7 +2,7 @@
 
 import state from './state.js';
 import { sendWs } from './ws.js';
-import { batchDeleteSelected, deleteFolder, getTargetPath, getTargetAgent } from './sidebar.js';
+import { batchDeleteSelected, deleteFolder, getTargetPath, getTargetAgent, getCurrentFolderId } from './sidebar.js';
 import { t } from './i18n.js';
 
 // ---------- Session Modals ----------
@@ -25,22 +25,16 @@ export function confirmNewSession() {
   hideModals();
   if (!name) return;
   const payload = {type: 'createSession', name, agentName: getTargetAgent()};
-  const folderId = state.activeFolderId || getCurrentSessionFolderId();
+  const folderId = getCurrentFolderId();
   if (folderId) payload.folderId = folderId;
   sendWs(payload);
-}
-
-/** Get the folderId of the currently displayed session, or null if at root. */
-function getCurrentSessionFolderId() {
-  const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
-  return active ? (active.folderId || null) : null;
 }
 
 // ---------- Inline New Session ----------
 export function startInlineNewSession() {
   const sessionList = state.dom.sessionList;
   if (sessionList.querySelector('.new-session-input')) return;
-  const folderId = state.activeFolderId || getCurrentSessionFolderId();
+  const folderId = getCurrentFolderId();
   const targetPath = getTargetPath(folderId) || t('path.root');
   const wrapper = document.createElement('div');
   wrapper.className = 'session-item';

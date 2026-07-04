@@ -17,7 +17,7 @@ import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
   initHeaderModelInfo,
-  persistUnread, createNewFolder,
+  persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession
 } from './sidebar.js';
 import {
@@ -900,6 +900,24 @@ onMessage('askUser', (msg, view) => {
 
 onMessage('askPermission', (msg, view) => {
   const sid = msg.sessionId;
+  // Bypass mode: auto-approve immediately without showing attention indicator.
+  // This must run for BOTH active and non-active sessions — previously only
+  // active sessions got bypass treatment (inside renderPermissionPrompt),
+  // leaving non-active sessions stuck with a yellow indicator that never clears.
+  if (sid && state.bypassSessions.has(sid)) {
+    if (view) {
+      // Active session: renderPermissionPrompt detects bypass, sends approval,
+      // and shows the "auto-approved" badge. Let it handle everything.
+      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
+    } else {
+      // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true }));
+      }
+      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true }, sid);
+    }
+    return;
+  }
   if (sid) setSessionAttention(sid, true);
   // Permission prompt waits for human response — suppress stream timeout indefinitely
   if (sid && state.sessionBusyTimeouts[sid]) {
@@ -2045,7 +2063,7 @@ window.addEventListener('locale-changed', () => {
   }
 });
 // New Folder button
-document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(state.activeFolderId));
+document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(getCurrentFolderId()));
 
 
 // ---------- Reconnect: refresh active session history ----------
