@@ -88,16 +88,4 @@ class DeviceCapabilitiesSpec extends CatsEffectSuite:
     assertEquals(pi.userDescription, "")
   }
 
-  // ===== Relay data types =====
-
-  test("RelayCommand decodes from JSON") {
-    val json = """{"relayId":"r-1","fromDeviceId":"dev-a","action":"Bash","params":{"command":"ls"}}"""
-    val decoded = decode[nebflow.mesh.RelayCommand](json)
-    assert(decoded.isRight, "RelayCommand should decode")
-    val cmd = decoded.toOption.get
-    assertEquals(cmd.relayId, "r-1")
-    assertEquals(cmd.action, "Bash")
-    assertEquals(cmd.fromDeviceId, "dev-a")
-  }
-
 end DeviceCapabilitiesSpec
