@@ -111,16 +111,17 @@ Usage:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] = IO.blocking {
     val pattern = input("pattern").flatMap(_.asString).getOrElse("")
     val pathOpt = input("path").flatMap(_.asString)
+    val workDir = System.getProperty("user.dir")
     val searchRoot = pathOpt match
       case Some(p) if p.startsWith("/") || (p.length >= 2 && p.charAt(1) == ':') => p
-      case Some(p) => nebflow.core.PathUtil.resolvePath(p, os.Path(ctx.projectRoot)).toString
-      case None => ctx.projectRoot
+      case Some(p) => nebflow.core.PathUtil.resolvePath(p, os.Path(workDir)).toString
+      case None => workDir
 
     val mode = input("output_mode").flatMap(_.asString).getOrElse("files_with_matches")
     val limit = input("head_limit").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(DEFAULT_HEAD_LIMIT)
     val offset = input("offset").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(0)
     val effectiveLimit = if limit == 0 then Int.MaxValue else limit
-    val projectRootPath = os.Path(ctx.projectRoot)
+    val workDirPath = os.Path(workDir)
 
     val args = scala.collection.mutable.ListBuffer[String](
       "--color=never",
@@ -156,7 +157,7 @@ Usage:
 
     args += searchRoot
 
-    RgHelper.runRg(args.toList, ctx.projectRoot) match
+    RgHelper.runRg(args.toList, workDir) match
       case Left(err) => Left(err)
       case Right((stdoutStr, stderrStr, exitCode)) =>
         if exitCode == 2 then
@@ -171,19 +172,19 @@ Usage:
           mode match
             case "content" =>
               val sliced = allLines.slice(offset, offset + effectiveLimit)
-              val result = sliced.map(relativizeLine(_, projectRootPath, hasColon = true)).mkString("\n")
+              val result = sliced.map(relativizeLine(_, workDirPath, hasColon = true)).mkString("\n")
               val pagination = formatPagination(allLines.length, offset, effectiveLimit)
               Right(result + pagination)
 
             case "files_with_matches" =>
               val sliced = allLines.slice(offset, offset + effectiveLimit)
-              val result = sliced.map(relativizeLine(_, projectRootPath, hasColon = false)).mkString("\n")
+              val result = sliced.map(relativizeLine(_, workDirPath, hasColon = false)).mkString("\n")
               val pagination = formatPagination(allLines.length, offset, effectiveLimit)
               Right(result + pagination)
 
             case "count" =>
               val sliced = allLines.slice(offset, offset + effectiveLimit)
-              val result = sliced.map(relativizeLine(_, projectRootPath, hasColon = true)).mkString("\n")
+              val result = sliced.map(relativizeLine(_, workDirPath, hasColon = true)).mkString("\n")
               val pagination = formatPagination(allLines.length, offset, effectiveLimit)
               var totalMatches = 0
               var fileCount = 0
