@@ -38,7 +38,7 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
     def runOnPeer(peer: PeerInfo): IO[Either[ToolError, String]] =
       if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
       else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
-      else p2pExecute(peer, toolName, params, 60.seconds)
+      else p2pExecuteWithRetry(peer, toolName, params, 60.seconds)
 
     meshService.peers.flatMap { peers =>
       resolvePeer(deviceName, peers) match
@@ -210,6 +210,35 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
       IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: ${e.getMessage}")))
     }
   end p2pExecute
+
+  /**
+   * Wraps p2pExecute with retry logic for transient network failures.
+   * Retries up to 3 times with 1s, 2s delays on connection errors only.
+   * Does NOT retry on HTTP errors or remote tool execution errors — those
+   * indicate the remote device is running but the request itself failed.
+   */
+  private def p2pExecuteWithRetry(
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    timeout: FiniteDuration,
+    maxRetries: Int = 3
+  ): IO[Either[ToolError, String]] =
+    def attempt(n: Int): IO[Either[ToolError, String]] =
+      p2pExecute(peer, toolName, params, timeout).flatMap {
+        case Right(result) => IO.pure(Right(result))
+        case Left(err) if n < maxRetries && isTransientError(err) =>
+          val delay = (n + 1).seconds
+          logger.info(s"Retrying ${peer.deviceName} in ${delay.toSeconds}s (attempt ${n + 1}/$maxRetries)") *>
+            IO.sleep(delay) *> attempt(n + 1)
+        case Left(err) => IO.pure(Left(err))
+      }
+    attempt(0)
+
+  /** Connection-level failures worth retrying. Excludes HTTP/tool errors. */
+  private def isTransientError(err: ToolError): Boolean =
+    val msg = err.message.toLowerCase
+    msg.startsWith("cannot reach") // connection refused, timeout, DNS failure
 
   // ---- Helpers ----
 
