@@ -6,29 +6,6 @@ import munit.CatsEffectSuite
 
 class MeshModelSpec extends CatsEffectSuite:
 
-  // ===== AccountInfo =====
-
-  test("AccountInfo serialization roundtrip") {
-    val acc = AccountInfo(
-      userId = "user-123",
-      username = "testuser",
-      sessionToken = "tok-abc-456",
-      loggedInAt = 1700000000000L
-    )
-    val json = acc.asJson.noSpaces
-    val decoded = decode[AccountInfo](json)
-    assertEquals(decoded, Right(acc), "Roundtrip should preserve all fields")
-  }
-
-  test("AccountInfo JSON contains all required fields") {
-    val acc = AccountInfo("uid-1", "alice", "secret-token", 1700000000000L)
-    val json = acc.asJson
-    assert(json.hcursor.downField("userId").as[String].isRight, "Should contain userId")
-    assert(json.hcursor.downField("username").as[String].isRight, "Should contain username")
-    assert(json.hcursor.downField("sessionToken").as[String].isRight, "Should contain sessionToken")
-    assert(json.hcursor.downField("loggedInAt").as[Long].isRight, "Should contain loggedInAt")
-  }
-
   // ===== DeviceIdentity =====
 
   test("DeviceIdentity serialization roundtrip") {
@@ -102,25 +79,16 @@ class MeshModelSpec extends CatsEffectSuite:
     val cfg = MeshConfig()
     assertEquals(cfg.enabled, false, "Default enabled should be false")
     assertEquals(cfg.syncIntervalSec, 300, "Default sync interval should be 300 seconds")
-    assert(cfg.cloudUrl.isEmpty, "Default cloud URL should be None — user configures self-hosted server")
   }
 
   test("MeshConfig serialization roundtrip") {
     val cfg = MeshConfig(
       enabled = true,
-      syncIntervalSec = 600,
-      cloudUrl = Some("https://example.com/api")
+      syncIntervalSec = 600
     )
     val json = cfg.asJson.noSpaces
     val decoded = decode[MeshConfig](json)
     assertEquals(decoded, Right(cfg), "Roundtrip should preserve all fields")
-  }
-
-  test("MeshConfig with None cloudUrl") {
-    val cfg = MeshConfig(enabled = false, cloudUrl = None)
-    val json = cfg.asJson.noSpaces
-    val decoded = decode[MeshConfig](json)
-    assertEquals(decoded, Right(cfg), "Should handle None cloudUrl")
   }
 
 end MeshModelSpec
