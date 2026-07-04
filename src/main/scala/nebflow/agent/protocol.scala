@@ -133,6 +133,15 @@ object AgentCommand:
     metadata: JsonObject = JsonObject.empty,
     correlationId: Option[String] = None
   ) extends AgentCommand
+
+  case class SessionStarted(
+    address: String,
+    agentName: String,
+    taskDescription: String
+  ) extends AgentCommand
+
+  case class SessionClosed(address: String) extends AgentCommand
+  case class SessionUpdate(address: String, status: String) extends AgentCommand
 end AgentCommand
 
 sealed trait AgentEvent
@@ -420,10 +429,19 @@ case class CompactionState(
   lastModel: Option[String] = None
 )
 
+case class AgentSessionInfo(
+  address: String,
+  agentName: String,
+  taskDescription: String,
+  status: String = "running",
+  createdAt: Long = System.currentTimeMillis()
+)
+
 case class AgentState(
   session: SessionContext,
   execution: ExecutionContext,
-  compaction: CompactionState
+  compaction: CompactionState,
+  agentSessions: List[AgentSessionInfo]
 )
 
 object AgentState:
@@ -468,7 +486,8 @@ object AgentState:
         rulesMd = rulesMd
       ),
       ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
-      CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage)
+      CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
+      Nil
     )
   end apply
 end AgentState
@@ -508,6 +527,7 @@ extension (s: AgentState)
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
   def withCompaction(compaction: CompactionState): AgentState = s.copy(compaction = compaction)
+  def withAgentSessions(sessions: List[AgentSessionInfo]): AgentState = s.copy(agentSessions = sessions)
   def withMessages(msgs: List[Message]): AgentState = s.copy(execution = s.execution.copy(messages = msgs))
   def withStatus(st: AgentStatus): AgentState = s.copy(execution = s.execution.copy(status = st))
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
