@@ -80,10 +80,12 @@ final class MeshPresenceService(
       // Cancel reconnection for peers no longer in the tailnet
       _ <- IO.blocking(staleReconnectIds.foreach(id => cancelReconnect.put(id, true)))
       // Connect to peers without active connection, skip those already reconnecting
-      _ <- peers.filter(p =>
-        !connections.containsKey(p.deviceId) && !reconnecting.containsKey(p.deviceId)
-      ).traverse_(p => connect(p).start.void)
+      _ <- peers
+        .filter(p => !connections.containsKey(p.deviceId) && !reconnecting.containsKey(p.deviceId))
+        .traverse_(p => connect(p).start.void)
     yield ()
+
+  end syncPeers
 
   /** Establish an outgoing WS presence connection to a peer. No-op if already connected. */
   def connect(peer: PeerInfo): IO[Unit] =
@@ -130,7 +132,8 @@ final class MeshPresenceService(
                             val zombie = connections.remove(peer.deviceId)
                             if zombie != null then
                               try zombie.heartbeat.shutdownNow()
-                              catch case _: Exception => ()
+                              catch
+                                case _: Exception => ()
                             // Remove peer and trigger auto-reconnect
                             dispatcher.unsafeRunAndForget(
                               meshService.removePeer(peer.deviceId) *>
@@ -211,11 +214,10 @@ final class MeshPresenceService(
       if cancelReconnect.remove(peer.deviceId) != null then
         reconnecting.remove(peer.deviceId)
         false // was cancelled
-      else
-        reconnecting.putIfAbsent(peer.deviceId, peer) == null // true if we won the slot
+      else reconnecting.putIfAbsent(peer.deviceId, peer) == null // true if we won the slot
     }.flatMap {
       case false => IO.unit
-      case true  => reconnectLoop(peer, 0)
+      case true => reconnectLoop(peer, 0)
     }
 
   /**
@@ -246,15 +248,16 @@ final class MeshPresenceService(
             reconnecting.remove(peer.deviceId)
             IO.unit
           case None =>
-            connect(peer).flatMap { _ =>
-              if connections.containsKey(peer.deviceId) then
-                // Success — re-add peer to MeshService and clean up
-                reconnecting.remove(peer.deviceId)
-                meshService.upsertPeer(peer) *>
-                  logger.info(s"Reconnected to ${peer.deviceName} after ${attempt + 1} attempt(s)")
-              else
-                reconnectLoop(peer, attempt + 1)
-            }.handleErrorWith(_ => reconnectLoop(peer, attempt + 1))
+            connect(peer)
+              .flatMap { _ =>
+                if connections.containsKey(peer.deviceId) then
+                  // Success — re-add peer to MeshService and clean up
+                  reconnecting.remove(peer.deviceId)
+                  meshService.upsertPeer(peer) *>
+                    logger.info(s"Reconnected to ${peer.deviceName} after ${attempt + 1} attempt(s)")
+                else reconnectLoop(peer, attempt + 1)
+              }
+              .handleErrorWith(_ => reconnectLoop(peer, attempt + 1))
         }
 
   // ===== Explicit disconnect (cancels reconnection) =====
