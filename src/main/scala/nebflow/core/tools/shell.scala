@@ -301,11 +301,16 @@ final class ShellSession private (
     candidates.find(p => new File(p).exists()).getOrElse("bash")
 
   private def buildProcessBuilder(command: String, cwd: String): ProcessBuilder =
-    // On all platforms (including Windows), use bash -c for full shell
-    // compatibility: &&, ||, multi-line scripts, pipes, etc.
-    // On Windows, bash.exe comes from Git for Windows (a declared dependency).
+    // On Mac/Linux: bash -c "command" — straightforward.
+    // On Windows: bash -s — read commands from stdin. This avoids Java
+    // ProcessBuilder's Windows argument quoting (which uses \" to escape
+    // embedded double quotes) being misinterpreted by Cygwin/MSYS2 bash's
+    // argument parser, causing commands with quotes, &&, ||, or newlines
+    // to be mangled.
     val bashPath = if isWindows then windowsBashPath else "bash"
-    val pb = new ProcessBuilder(bashPath, "-c", command)
+    val pb =
+      if isWindows then new ProcessBuilder(bashPath, "-s")
+      else new ProcessBuilder(bashPath, "-c", command)
     // Empty or invalid working directory causes failures. Fall back to user home.
     val safeCwd =
       if cwd == null || cwd.isEmpty || !new File(cwd).exists() then
@@ -334,12 +339,15 @@ final class ShellSession private (
       buildProcessBuilder(command, cwd).start()
     }.bracket { proc =>
       val storeProc = health.fold(IO.unit)(h => IO(h.processRef.set(proc)))
-      // On Windows, close stdin immediately to prevent bash.exe from hanging
-      // on commands that try to read stdin. This also avoids a potential JVM
-      // bug with Redirect.DISCARD on certain Windows builds.
-      val closeStdin = IO {
+      // On Windows, write the command to bash's stdin (bash -s mode), then
+      // close stdin to signal EOF. This avoids Java ProcessBuilder's Windows
+      // argument quoting which mangles double quotes and special characters.
+      val writeStdin = IO {
         if isWindows then
-          try proc.getOutputStream().close()
+          try
+            val os = proc.getOutputStream()
+            os.write(command.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            os.close()
           catch case _: java.io.IOException => ()
       }
       val stdoutIO = IO.blocking(
@@ -358,7 +366,7 @@ final class ShellSession private (
         proc.exitValue()
       }
 
-      storeProc *> closeStdin *> (stdoutIO, stderrIO, waitIO)
+      storeProc *> writeStdin *> (stdoutIO, stderrIO, waitIO)
         .parMapN { (out, err, code) =>
           ProcessResult(out, err, code, cwd)
         }
