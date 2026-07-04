@@ -256,7 +256,7 @@ Git safety:
     // If background_job_id is provided, enter query/cancel mode
     bgJobId match
       case Some(jobId) =>
-        ShellSession.forSession(sessionId, Some(ctx.projectRoot)).flatMap { shell =>
+        ShellSession.forSession(sessionId).flatMap { shell =>
           if cancelBg then
             shell.cancelBackgroundJob(jobId).map { cancelled =>
               if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
@@ -306,7 +306,7 @@ Git safety:
               )
             )
           else
-            ShellSession.forSession(sessionId, Some(ctx.projectRoot)).flatMap { shell =>
+            ShellSession.forSession(sessionId).flatMap { shell =>
               if background then
                 val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
                 val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
