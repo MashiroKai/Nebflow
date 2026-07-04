@@ -90,16 +90,19 @@
           <span class="delegate-dot"></span>
           <span class="delegate-count">0</span>
         </div>
-        <div id="delegate-dropdown" class="hidden">
-          <div class="bg-dropdown-header">Sub-agents</div>
-          <div class="bg-dropdown-list"></div>
-        </div>
-        <div id="bg-dropdown" class="hidden">
-          <div class="bg-dropdown-header">Background tasks</div>
-          <div class="bg-dropdown-list"></div>
-        </div>
         <button id="main-close-btn" class="secondary-close-btn main-close-btn" title="Hide Jarvis"><i data-lucide="x"></i></button>
       </div>
+    </div>
+    <!-- Dropdowns moved outside #header so backdrop-filter can blur chat content.
+         #header has its own backdrop-filter which creates a backdrop root, preventing
+         child elements from blurring content behind the header. -->
+    <div id="delegate-dropdown" class="hidden">
+      <div class="bg-dropdown-header">Sub-agents</div>
+      <div class="bg-dropdown-list"></div>
+    </div>
+    <div id="bg-dropdown" class="hidden">
+      <div class="bg-dropdown-header">Background tasks</div>
+      <div class="bg-dropdown-list"></div>
     </div>
     <div id="top-overlays">
       <div id="task-list"></div>
@@ -116,6 +119,8 @@
         <div class="voice-text" id="voice-text">Listening...</div>
         <div class="voice-hint" id="voice-hint">Release to send</div>
       </div>
+      <!-- Moved outside #input-bar so backdrop-filter can blur chat content -->
+      <div id="slash-dropdown"></div>
       <div id="input-bar">
         <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
       <div id="input-wrap" style="position:relative;">
@@ -123,7 +128,6 @@
         <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
         <div id="skill-indicator"><span id="skill-indicator-label">SKILL</span><span id="skill-indicator-cancel">&times;</span></div>
         <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
-        <div id="slash-dropdown"></div>
       </div>
       <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
       <button id="send-btn"><i data-lucide="send"></i></button>
@@ -152,18 +156,19 @@
           <span class="delegate-dot"></span>
           <span class="delegate-count">0</span>
         </div>
-        <div id="secondary-delegate-dropdown" class="hidden">
-          <div class="bg-dropdown-header">Sub-agents</div>
-          <div class="bg-dropdown-list"></div>
-        </div>
-        <div id="secondary-bg-dropdown" class="hidden">
-          <div class="bg-dropdown-header">Background tasks</div>
-          <div class="bg-dropdown-list"></div>
-        </div>
         <button id="secondary-close-btn" class="secondary-close-btn" title="Close">
           <i data-lucide="x"></i>
         </button>
       </div>
+    </div>
+    <!-- Dropdowns moved outside .secondary-header so backdrop-filter can blur chat content -->
+    <div id="secondary-delegate-dropdown" class="hidden">
+      <div class="bg-dropdown-header">Sub-agents</div>
+      <div class="bg-dropdown-list"></div>
+    </div>
+    <div id="secondary-bg-dropdown" class="hidden">
+      <div class="bg-dropdown-header">Background tasks</div>
+      <div class="bg-dropdown-list"></div>
     </div>
     <div id="secondary-overlays">
       <div id="secondary-task-list"></div>
@@ -180,6 +185,8 @@
         <div class="voice-text" id="secondary-voice-text">Listening...</div>
         <div class="voice-hint" id="secondary-voice-hint">Release to send</div>
       </div>
+      <!-- Moved outside .secondary-input-bar so backdrop-filter can blur chat content -->
+      <div id="secondary-slash-dropdown"></div>
       <div class="secondary-input-bar">
         <button class="icon-btn" id="secondary-voice-btn" title="Voice"><i data-lucide="mic"></i></button>
         <div id="secondary-input-wrap" style="position:relative;">
@@ -187,7 +194,6 @@
           <div id="secondary-ask-indicator"><span id="secondary-ask-indicator-label">ASK</span><span id="secondary-ask-indicator-cancel">&times;</span></div>
           <div id="secondary-skill-indicator"><span id="secondary-skill-indicator-label">SKILL</span><span id="secondary-skill-indicator-cancel">&times;</span></div>
           <textarea id="secondary-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
-          <div id="secondary-slash-dropdown"></div>
         </div>
         <button class="icon-btn" id="secondary-attach-btn" title="Attach"><i data-lucide="paperclip"></i></button>
         <button id="secondary-send-btn"><i data-lucide="send"></i></button>

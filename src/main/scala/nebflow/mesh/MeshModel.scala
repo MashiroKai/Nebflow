@@ -136,6 +136,7 @@ object DeviceIdentity:
         try Some(java.net.InetAddress.getLocalHost.getHostName)
         catch case _: Exception => None
       )
+      .map(_.stripSuffix(".local")) // macOS mDNS returns "hostname.local"
       .getOrElse("Unknown")
 
   /** Detect available tools by running `which`/`where`. Returns map of name → path. */
@@ -164,13 +165,15 @@ object DeviceIdentity:
     IO.blocking {
       if os.exists(devicePath) then
         decode[DeviceIdentity](os.read(devicePath)) match
-          case Right(d) => ensureSecret(d)
+          case Right(d) => ensureSecret(ensureCleanDeviceName(d))
           case Left(_) => createNew()
       else createNew()
     }.flatMap { id =>
-      // Persist if file doesn't exist yet, or if we just migrated (added deviceSecret)
+      // Persist if file doesn't exist yet, or if we just migrated (deviceSecret or deviceName)
       val needsSave = !os.exists(devicePath) ||
-        decode[DeviceIdentity](os.read(devicePath)).toOption.exists(_.deviceSecret.isEmpty)
+        decode[DeviceIdentity](os.read(devicePath)).toOption.exists { saved =>
+          saved.deviceSecret.isEmpty || saved.deviceName != id.deviceName
+        }
       if needsSave then save(id).as(id) else IO.pure(id)
     }
 
@@ -190,6 +193,11 @@ object DeviceIdentity:
   /** Migrate old DeviceIdentity without deviceSecret — generate one on first load. */
   private def ensureSecret(id: DeviceIdentity): DeviceIdentity =
     if id.deviceSecret.isEmpty then id.copy(deviceSecret = UUID.randomUUID().toString + UUID.randomUUID().toString)
+    else id
+
+  /** Migrate old DeviceIdentity with ".local" suffix in deviceName (macOS mDNS artifact). */
+  private def ensureCleanDeviceName(id: DeviceIdentity): DeviceIdentity =
+    if id.deviceName.endsWith(".local") then id.copy(deviceName = id.deviceName.stripSuffix(".local"))
     else id
 end DeviceIdentity
 
