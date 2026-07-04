@@ -97,7 +97,11 @@ Usage:
             case Some(pattern) =>
               val regex = java.util.regex.Pattern.compile(pattern)
               val matched = allLines.zipWithIndex.filter { case (line, _) => regex.matcher(line).find() }
-              (matched.map(_._1), matched.map(_._2), s", filter: \"$pattern\" — ${matched.length} match(es) in ${allLines.length} lines")
+              (
+                matched.map(_._1),
+                matched.map(_._2),
+                s", filter: \"$pattern\" — ${matched.length} match(es) in ${allLines.length} lines"
+              )
             case None =>
               (allLines, allLines.indices.toList, "")
 
@@ -108,7 +112,8 @@ Usage:
           val selected = workingLines.slice(start, end)
           val selectedIndices = workingIndices.slice(start, end)
 
-          val result = selected.zip(selectedIndices)
+          val result = selected
+            .zip(selectedIndices)
             .map { case (line, originalIdx) =>
               s"${originalIdx + 1}\t$line"
             }
@@ -116,14 +121,13 @@ Usage:
 
           val totalLines = workingLines.length
           val showedLines = selected.length
-          val isPartialView = start > 0 || (filterOpt.isEmpty && showedLines < allLines.length) || (filterOpt.isDefined && showedLines < workingLines.length)
+          val isPartialView =
+            start > 0 || (filterOpt.isEmpty && showedLines < allLines.length) || (filterOpt.isDefined && showedLines < workingLines.length)
           val suffix =
             if filterOpt.isDefined && showedLines < workingLines.length then
               s"\n\n(showing $showedLines of $totalLines matched lines$filterInfo)"
-            else if filterOpt.isDefined then
-              s"\n\n($totalLines matched lines$filterInfo)"
-            else if showedLines < allLines.length then
-              s"\n\n(showing $showedLines of ${allLines.length} lines)"
+            else if filterOpt.isDefined then s"\n\n($totalLines matched lines$filterInfo)"
+            else if showedLines < allLines.length then s"\n\n(showing $showedLines of ${allLines.length} lines)"
             else ""
           Right((result + suffix, isPartialView))
         catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
