@@ -17,6 +17,7 @@ object CommandRegistry:
       HelpCommand,
       UpdateCommand,
       UninstallCommand,
+      AutoStartCommand,
       // Gateway commands
       ChatCommand,
       AskCommand,

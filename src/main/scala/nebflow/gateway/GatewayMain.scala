@@ -413,7 +413,7 @@ object GatewayMain extends IOApp.Simple:
                                                 _ <- bridgeManager.startAll.start // start in background
                                                 // --- Background: LLM provider health monitoring ---
                                                 _ <- healthMonitor.start().void.start
-                                                _ <- openBrowser(url)
+                                                _ <- if GatewayConfig.noBrowser then IO.unit else openBrowser(url)
                                                 // --- Background init: skills dir, MCP servers ---
                                                 _ <- SkillService
                                                   .ensureDefaults()

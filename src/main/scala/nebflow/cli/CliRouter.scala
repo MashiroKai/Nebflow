@@ -93,7 +93,8 @@ object CliRouter:
     val (named, positional) = parseArgs(args, sub.params)
     val isOffline = cmd.name == "version" || cmd.name == "update" ||
       cmd.name == "doctor" || cmd.name == "uninstall" ||
-      cmd.name == "start" || cmd.name == "stop" || cmd.name == "status"
+      cmd.name == "start" || cmd.name == "stop" || cmd.name == "status" ||
+      cmd.name == "autostart"
 
     val ctxIO: IO[CliContext] =
       if isOffline then IO.pure(CliContext(named, positional, jsonMode, quietMode, None, PathUtil.dataRoot))
@@ -237,6 +238,6 @@ object CliRouter:
         }
 
   private def isOfflineCmd(cmd: CliCommand): Boolean =
-    Set("version", "start", "stop", "status", "update", "doctor", "uninstall").contains(cmd.name)
+    Set("version", "start", "stop", "status", "update", "doctor", "uninstall", "autostart").contains(cmd.name)
 
 end CliRouter
