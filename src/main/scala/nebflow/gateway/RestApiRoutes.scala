@@ -8,7 +8,7 @@ import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.agent.SharedResources
 import nebflow.llm.NebflowServiceConfig
-import nebflow.mesh.MeshService
+import nebflow.neblink.NeblinkService
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -30,7 +30,7 @@ class RestApiRoutes(
   sharedResources: SharedResources,
   sessionStore: SessionStore,
   wsRoutes: WebSocketRoutes,
-  meshService: Option[MeshService] = None
+  neblinkService: Option[NeblinkService] = None
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
@@ -185,12 +185,12 @@ class RestApiRoutes(
         }
       }
 
-    // ===== Mesh P2P Discovery (no gateway auth — used by other Nebflow instances) =====
+    // ===== NebLink P2P Discovery (no gateway auth — used by other Nebflow instances) =====
 
     // Return local device info for Tailscale discovery probes
-    case GET -> Root / "mesh" / "discover" =>
-      meshService match
-        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+    case GET -> Root / "neblink" / "discover" =>
+      neblinkService match
+        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           ms.identity.flatMap { id =>
             Ok(
@@ -205,15 +205,15 @@ class RestApiRoutes(
           }
 
     // Receive a peer's announcement ("I'm online, here's my info")
-    case req @ POST -> Root / "mesh" / "announce" =>
-      meshService match
-        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+    case req @ POST -> Root / "neblink" / "announce" =>
+      neblinkService match
+        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
           if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
           else
             req.as[Json].flatMap { body =>
-              io.circe.parser.decode[nebflow.mesh.DeviceDiscoveryInfo](body.noSpaces) match
+              io.circe.parser.decode[nebflow.neblink.DeviceDiscoveryInfo](body.noSpaces) match
                 case Right(info) =>
                   val port = body.hcursor.downField("port").as[Int].getOrElse(8080)
                   ms.handleAnnounce(info, remoteIp, port) *>
@@ -222,11 +222,11 @@ class RestApiRoutes(
                   BadRequest(Json.obj("error" -> s"Invalid device info: ${err.getMessage}".asJson))
             }
 
-    // ===== Mesh API (gateway auth required — for frontend) =====
+    // ===== NebLink API (gateway auth required — for frontend) =====
 
-    // Mesh scan — trigger Tailscale discovery immediately, return updated peers
-    case req @ POST -> Root / "mesh" / "scan" =>
-      withMesh(req) { ms =>
+    // NebLink scan — trigger Tailscale discovery immediately, return updated peers
+    case req @ POST -> Root / "neblink" / "scan" =>
+      withNeblink(req) { ms =>
         ms.scanNow.flatMap { peersList =>
           Ok(
             Json.obj(
@@ -247,9 +247,9 @@ class RestApiRoutes(
         }
       }
 
-    // Mesh status — identity, peers
-    case req @ GET -> Root / "mesh" / "status" =>
-      withMesh(req) { ms =>
+    // NebLink status — identity, peers
+    case req @ GET -> Root / "neblink" / "status" =>
+      withNeblink(req) { ms =>
         ms.identity.flatMap { id =>
           ms.peers.flatMap { peersList =>
             Ok(
@@ -277,10 +277,10 @@ class RestApiRoutes(
       }
 
     // Handshake — called by a discovered peer to establish trust and exchange device secrets.
-    // Guarded by Tailscale IP check (same as /mesh/announce) — only tailnet members can reach this.
-    case req @ POST -> Root / "mesh" / "handshake" =>
-      meshService match
-        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+    // Guarded by Tailscale IP check (same as /neblink/announce) — only tailnet members can reach this.
+    case req @ POST -> Root / "neblink" / "handshake" =>
+      neblinkService match
+        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val callerIp = req.remoteAddr.fold("")(a => a.toString)
           if !ms.isTailscalePeer(callerIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
@@ -326,9 +326,9 @@ class RestApiRoutes(
             end if
           end if
 
-    // Update mesh config (e.g. syncIntervalSec)
-    case req @ PATCH -> Root / "mesh" / "config" =>
-      withMesh(req) { ms =>
+    // Update neblink config (e.g. syncIntervalSec)
+    case req @ PATCH -> Root / "neblink" / "config" =>
+      withNeblink(req) { ms =>
         req.as[Json].flatMap { body =>
           val syncInterval = body.hcursor.downField("syncIntervalSec").as[Option[Int]].toOption.flatten
           ms.updateConfig { cfg =>
@@ -342,8 +342,8 @@ class RestApiRoutes(
     // Cloud session sync toggle — removed (session sync deleted)
 
     // Update device capabilities / user description
-    case req @ PUT -> Root / "mesh" / "device-info" =>
-      withMesh(req) { ms =>
+    case req @ PUT -> Root / "neblink" / "device-info" =>
+      withNeblink(req) { ms =>
         req.as[Json].flatMap { body =>
           val userDesc = body.hcursor.downField("userDescription").as[Option[String]].toOption.flatten
           val caps = body.hcursor.downField("capabilities").as[Option[Map[String, String]]].toOption.flatten
@@ -355,14 +355,14 @@ class RestApiRoutes(
     // File sync endpoints (fingerprints, file GET/PUT) — removed
 
     // Peer notification — lightweight ping to trigger immediate sync
-    case req @ POST -> Root / "mesh" / "notify" =>
+    case req @ POST -> Root / "neblink" / "notify" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(ms) =>
           Ok(Json.obj("ok" -> true.asJson))
       }
 
-    case req @ POST -> Root / "mesh" / "remote-exec" =>
+    case req @ POST -> Root / "neblink" / "remote-exec" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(ms) =>
@@ -391,7 +391,7 @@ class RestApiRoutes(
     // ===== Remote Update (P2P — triggered by another Nebflow instance) =====
     // Downloads and installs the latest JAR, then restarts Nebflow.
     // The caller must be a Tailscale peer (verified by IP).
-    case req @ POST -> Root / "mesh" / "update" =>
+    case req @ POST -> Root / "neblink" / "update" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(_) =>
@@ -406,14 +406,14 @@ class RestApiRoutes(
               else if isWindows then """powershell -Command "& { iwr https://nebflow.space/install.ps1 | iex }" """
               else "curl -fsSL https://nebflow.space/install.sh | sh"
 
-            logger.info(s"[mesh] Remote update requested (beta=$beta), running install script...") *>
+            logger.info(s"[neblink] Remote update requested (beta=$beta), running install script...") *>
               IO.blocking {
                 import sys.process.*
                 val exitCode = script.!
                 exitCode
               }.flatMap { exitCode =>
                 if exitCode == 0 then
-                  logger.info("[mesh] Install succeeded, spawning restart helper and shutting down...") *>
+                  logger.info("[neblink] Install succeeded, spawning restart helper and shutting down...") *>
                     IO.blocking(nebflow.core.RestartHelper.spawnRestart()) *>
                     // Schedule JVM exit after 1 second (allows HTTP response to be sent)
                     IO.delay {
@@ -421,17 +421,64 @@ class RestApiRoutes(
                         IO.sleep(1.second) *> IO(System.exit(0))
                       )
                     } *>
-                    Ok(Json.obj(
-                      "ok" -> true.asJson,
-                      "message" -> "Update installed, restarting...".asJson
-                    ))
+                    Ok(
+                      Json.obj(
+                        "ok" -> true.asJson,
+                        "message" -> "Update installed, restarting...".asJson
+                      )
+                    )
                 else
-                  Ok(Json.obj(
-                    "ok" -> false.asJson,
-                    "error" -> s"Install script failed (exit code: $exitCode)".asJson
-                  ))
+                  Ok(
+                    Json.obj(
+                      "ok" -> false.asJson,
+                      "error" -> s"Install script failed (exit code: $exitCode)".asJson
+                    )
+                  )
               }
           }
+      }
+
+    // ===== NebLink File Transfer (P2P — Tailscale IP auth) =====
+
+    // Push a file to this device
+    case req @ POST -> Root / "neblink" / "transfer" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(ms) =>
+          req.as[Json].flatMap { body =>
+            val path = body.hcursor.downField("path").as[String].getOrElse("")
+            val contentB64 = body.hcursor.downField("content").as[String].getOrElse("")
+            val overwrite = body.hcursor.downField("overwrite").as[Boolean].getOrElse(false)
+            if path.isEmpty then BadRequest(Json.obj("error" -> "Missing path".asJson))
+            else if contentB64.isEmpty then BadRequest(Json.obj("error" -> "Missing content".asJson))
+            else
+              val content = java.util.Base64.getDecoder.decode(contentB64)
+              ms.receiveFile(path, content, overwrite)
+                .flatMap(size => Ok(Json.obj("ok" -> true.asJson, "path" -> path.asJson, "size" -> size.asJson)))
+                .handleErrorWith(e => Ok(Json.obj("ok" -> false.asJson, "error" -> e.getMessage.asJson)))
+          }
+      }
+
+    // Pull a file from this device
+    case req @ GET -> Root / "neblink" / "transfer" =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(ms) =>
+          val path = req.params.getOrElse("path", "")
+          if path.isEmpty then BadRequest(Json.obj("error" -> "Missing path parameter".asJson))
+          else
+            ms.sendFile(path).flatMap {
+              case Some(content) =>
+                val b64 = java.util.Base64.getEncoder.encodeToString(content)
+                Ok(
+                  Json.obj(
+                    "path" -> path.asJson,
+                    "content" -> b64.asJson,
+                    "size" -> content.length.asJson
+                  )
+                )
+              case None => NotFound(Json.obj("error" -> s"File not found: $path".asJson))
+            }
       }
   }
 
@@ -450,9 +497,9 @@ class RestApiRoutes(
    * which is only available inside `withHttpWebSocketApp` in GatewayMain.
    */
   def presenceWsRoutes(wsb: WebSocketBuilder2[IO]): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> Root / "mesh" / "presence" =>
-      meshService match
-        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+    case req @ GET -> Root / "neblink" / "presence" =>
+      neblinkService match
+        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
           if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
@@ -466,16 +513,16 @@ class RestApiRoutes(
               val capsStr = req.params.getOrElse("capabilities", "{}")
               val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
               val userDesc = req.params.getOrElse("userDescription", "")
-              val info = nebflow.mesh.DeviceDiscoveryInfo(
+              val info = nebflow.neblink.DeviceDiscoveryInfo(
                 peerDeviceId,
                 peerDeviceName,
                 peerPlatform,
                 capabilities,
                 userDesc
               )
-              // Silent upsert — the HTTP /mesh/announce endpoint already handles logging.
+              // Silent upsert — the HTTP /neblink/announce endpoint already handles logging.
               // Calling handleAnnounce here too produces duplicate "Peer announced" logs.
-              val peer = nebflow.mesh.PeerInfo(
+              val peer = nebflow.neblink.PeerInfo(
                 peerDeviceId,
                 peerDeviceName,
                 peerPlatform,
@@ -498,6 +545,9 @@ class RestApiRoutes(
                             json.hcursor.downField("type").as[String].getOrElse("") match
                               case "ping" =>
                                 sendQueue.offer(WebSocketFrame.Text("""{"type":"pong"}"""))
+                              case "data" =>
+                                val payload = json.hcursor.downField("payload").focus.getOrElse(Json.Null)
+                                ms.handleDataMessage(payload)
                               case _ => IO.unit
                           case None => IO.unit
                       case _ => IO.unit
@@ -515,23 +565,23 @@ class RestApiRoutes(
     if checkAuth(req) then f
     else Forbidden(Json.obj("error" -> "Unauthorized".asJson))
 
-  /** Run block only if MeshService is available and request is authenticated. */
-  private def withMesh(req: Request[IO])(f: MeshService => IO[Response[IO]]): IO[Response[IO]] =
+  /** Run block only if NeblinkService is available and request is authenticated. */
+  private def withNeblink(req: Request[IO])(f: NeblinkService => IO[Response[IO]]): IO[Response[IO]] =
     if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
     else
-      meshService match
+      neblinkService match
         case Some(ms) => f(ms)
-        case None => NotFound(Json.obj("error" -> "Mesh not enabled".asJson))
+        case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
 
   /**
    * Verify peer-to-peer access via Tailscale IP check.
    * Only requests from the Tailscale CGNAT range (100.64.0.0/10) are accepted.
    * Tailscale itself is the trust boundary — devices must be on the same tailnet.
    */
-  private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], MeshService]] =
-    meshService match
+  private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =
+    neblinkService match
       case None =>
-        IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "Mesh not enabled".asJson))))
+        IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
       case Some(ms) =>
         val remoteIp = req.remoteAddr.fold("")(a => a.toString)
         if ms.isTailscalePeer(remoteIp) then IO.pure(Right(ms))

@@ -1,14 +1,14 @@
-# Nebflow Mesh — 设计文档
+# Nebflow NebLink — 设计文档
 
 > 状态：账号系统实施中
-> 分支：feature/mesh
+> 分支：feature/neblink
 > 更新：2026-06-08
 
 ## 1. 目标
 
 让多台 Nebflow 实例通过 Nebflow 账号自动发现彼此、直连通信。
 
-核心场景：用户在 Mac 上写 Verilog 代码，agent 通过 MeshTool 直接在 Windows 上执行 Vivado。
+核心场景：用户在 Mac 上写 Verilog 代码，agent 通过 NebLink 直接在 Windows 上执行 Vivado。
 
 设计原则：
 
@@ -38,15 +38,15 @@
 
 **注册流程：**
 
-1. 用户在 Mesh 面板输入用户名 + 密码
+1. 用户在 NebLink 面板输入用户名 + 密码
 2. Nebflow 调用云函数 `auth/register`
 3. 云函数检查用户名唯一性，bcrypt 哈希密码，创建账号
 4. 返回 `{ userId, sessionToken }`
-5. Nebflow 本地保存 `~/.nebflow/mesh/account.json`
+5. Nebflow 本地保存 `~/.nebflow/neblink/account.json`
 
 **登录流程：**
 
-1. 用户在 Mesh 面板输入用户名 + 密码
+1. 用户在 NebLink 面板输入用户名 + 密码
 2. Nebflow 调用云函数 `auth/login`
 3. 云函数验证密码，生成 sessionToken（有效期 30 天）
 4. 返回 `{ userId, sessionToken }`
@@ -71,7 +71,7 @@
 设备 B 收到广播：
   1. 计算 sha256(自己的 userId)
   2. 匹配 → 回复 HTTP handshake
-  3. POST → http://{sender_ip}:{sender_port}/api/mesh/handshake
+  3. POST → http://{sender_ip}:{sender_port}/api/neblink/handshake
      Authorization: Bearer {userId}
      Body: { "deviceId": "...", "deviceName": "...", "platform": "...", "port": ... }
 ```
@@ -88,7 +88,7 @@ POST cloud-function { action: "discover/lookup", userId, sessionToken, deviceId 
 所有设备间通信走 HTTP，`userId` 做 Bearer 认证（同账号即信任）：
 
 ```
-POST /api/mesh/remote-exec
+POST /api/neblink/remote-exec
 Authorization: Bearer {userId}
 { "action": "Bash", "params": { "command": "vivado ..." } }
 ```
@@ -110,7 +110,7 @@ case class AccountInfo(
 )
 ```
 
-存储：`~/.nebflow/mesh/account.json`
+存储：`~/.nebflow/neblink/account.json`
 
 ### 3.2 DeviceIdentity
 
@@ -124,10 +124,10 @@ case class DeviceIdentity(
 
 不再有 `groupId` — 分组信息由 `AccountInfo.userId` 提供。
 
-### 3.3 MeshConfig
+### 3.3 NebLinkConfig
 
 ```scala
-case class MeshConfig(
+case class NebLinkConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
   cloudUrl: Option[String] = None  // 云函数地址
@@ -136,26 +136,26 @@ case class MeshConfig(
 
 ## 4. API 端点
 
-### Mesh 管理
+### NebLink 管理
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/mesh/status` | 账号状态 + peer 列表 |
-| POST | `/api/mesh/register` | 注册 Nebflow 账号 |
-| POST | `/api/mesh/login` | 登录 Nebflow 账号 |
-| POST | `/api/mesh/logout` | 退出登录，停止发现 |
-| POST | `/api/mesh/handshake` | 被发现设备调用，验证 userId |
-| PATCH | `/api/mesh/config` | 更新配置（cloudUrl 等） |
+| GET | `/api/neblink/status` | 账号状态 + peer 列表 |
+| POST | `/api/neblink/register` | 注册 Nebflow 账号 |
+| POST | `/api/neblink/login` | 登录 Nebflow 账号 |
+| POST | `/api/neblink/logout` | 退出登录，停止发现 |
+| POST | `/api/neblink/handshake` | 被发现设备调用，验证 userId |
+| PATCH | `/api/neblink/config` | 更新配置（cloudUrl 等） |
 
 ### 同步 & 远程执行（不变）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/mesh/fingerprints` | 返回本机文件指纹表 |
-| GET | `/api/mesh/file` | 下载指定文件 |
-| PUT | `/api/mesh/file` | 上传文件 |
-| POST | `/api/mesh/sync` | 触发完整同步 |
-| POST | `/api/mesh/remote-exec` | 在本机执行工具 |
+| GET | `/api/neblink/fingerprints` | 返回本机文件指纹表 |
+| GET | `/api/neblink/file` | 下载指定文件 |
+| PUT | `/api/neblink/file` | 上传文件 |
+| POST | `/api/neblink/sync` | 触发完整同步 |
+| POST | `/api/neblink/remote-exec` | 在本机执行工具 |
 
 ## 5. 云函数 API
 
@@ -170,8 +170,8 @@ discover/lookup:   { userId, sessionToken, deviceId }      → { peers: [...] }
 ```
 
 数据库集合：
-- `mesh_users`: { userId, username, passwordHash, createdAt }
-- `mesh_discovery`: { userId, deviceId, deviceName, platform, address, expiresAt }
+- `neblink_users`: { userId, username, passwordHash, createdAt }
+- `neblink_discovery`: { userId, deviceId, deviceName, platform, address, expiresAt }
 
 ## 6. 前端 UI
 

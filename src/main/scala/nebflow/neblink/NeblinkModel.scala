@@ -1,4 +1,4 @@
-package nebflow.mesh
+package nebflow.neblink
 
 import cats.effect.IO
 import io.circe.generic.semiauto.*
@@ -122,7 +122,7 @@ end DeviceIdentity
 
 // ===== Device Discovery Info =====
 
-/** Device info exchanged during Tailscale discovery (returned by GET /api/mesh/discover). */
+/** Device info exchanged during Tailscale discovery (returned by GET /api/neblink/discover). */
 case class DeviceDiscoveryInfo(
   deviceId: String,
   deviceName: String,
@@ -165,30 +165,30 @@ object PeerInfo:
   }
 end PeerInfo
 
-// ===== Mesh Config =====
+// ===== Neblink Config =====
 
-case class MeshConfig(
+case class NeblinkConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300
 )
 
-object MeshConfig:
-  given Encoder[MeshConfig] = deriveEncoder
-  given Decoder[MeshConfig] = deriveDecoder
+object NeblinkConfig:
+  given Encoder[NeblinkConfig] = deriveEncoder
+  given Decoder[NeblinkConfig] = deriveDecoder
 
-  private val configPath = PathUtil.dataRoot / "mesh" / "config.json"
+  private val configPath = PathUtil.dataRoot / "neblink" / "config.json"
 
-  def load: IO[MeshConfig] =
+  def load: IO[NeblinkConfig] =
     IO.blocking {
       if os.exists(configPath) then
-        decode[MeshConfig](os.read(configPath)) match
+        decode[NeblinkConfig](os.read(configPath)) match
           case Right(c) => c
-          case Left(_) => MeshConfig()
-      else MeshConfig()
+          case Left(_) => NeblinkConfig()
+      else NeblinkConfig()
     }
 
-  def save(config: MeshConfig): IO[Unit] =
+  def save(config: NeblinkConfig): IO[Unit] =
     IO.blocking {
       os.write.over(configPath, config.asJson.spaces2, createFolders = true)
     }
-end MeshConfig
+end NeblinkConfig

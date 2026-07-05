@@ -456,8 +456,10 @@ You will be notified when the initial task completes."""
             payload = payload,
             metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
             correlationId = Some(subagentId)
-          )) *> (ref ! AgentCommand.SessionUpdate(address,
-            if eventType == "completed" then "idle (awaiting instructions)" else "failed"))
+          )) *> (ref ! AgentCommand.SessionUpdate(
+            address,
+            if eventType == "completed" then "idle (awaiting instructions)" else "failed"
+          ))
         case None => IO.unit
 
       // Adapter stops itself; sub-agent stays alive for future MailAgent messages

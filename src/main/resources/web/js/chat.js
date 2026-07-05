@@ -306,8 +306,8 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
   const row = document.createElement('div');
   row.className = 'row tool';
-  // Mesh tool marker
-  if (label && label.startsWith('[Mesh]')) row.classList.add('mesh-row');
+  // NebLink tool marker
+  if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
   card.className = 'tool-card';
 
@@ -388,7 +388,7 @@ export function renderToolPending(label, sessionId) {
 
   const row = document.createElement('div');
   row.className = 'row tool';
-  if (label && label.startsWith('[Mesh]')) row.classList.add('mesh-row');
+  if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
   card.className = 'tool-card tool-card--pending';
   const localLabel = localizeToolLabel(label);

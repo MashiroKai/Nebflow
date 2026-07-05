@@ -1,5 +1,5 @@
 /**
- * Mesh — Tailscale P2P device discovery.
+ * NebLink — Tailscale P2P device discovery.
  * No login, no relay server. Tailscale is the trust boundary.
  */
 import state from './state.js';
@@ -7,7 +7,7 @@ import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 
-let meshState = {
+let neblinkState = {
   device: null,
   peers: []
 };
@@ -21,25 +21,25 @@ function getAuthToken() {
 }
 
 // ---- Fetch status ----
-export async function fetchMeshStatus() {
+export async function fetchNeblinkStatus() {
   try {
     const token = getAuthToken();
-    const resp = await fetch('/api/mesh/status', {
+    const resp = await fetch('/api/neblink/status', {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     if (!resp.ok) return;
     const data = await resp.json();
-    meshState.device = data.device || null;
-    meshState.peers = data.peers || [];
+    neblinkState.device = data.device || null;
+    neblinkState.peers = data.peers || [];
   } catch (e) {
-    // mesh not available yet
+    // neblink not available yet
   }
 }
 
 // ---- Settings section HTML ----
-export function meshSettingsHTML() {
-  const local = meshState.device || {};
-  const peers = meshState.peers || [];
+export function neblinkSettingsHTML() {
+  const local = neblinkState.device || {};
+  const peers = neblinkState.peers || [];
 
   const allDevices = [
     { ...local, isLocal: true },
@@ -49,10 +49,10 @@ export function meshSettingsHTML() {
   const deviceRows = allDevices.map(d => {
     const caps = d.capabilities ? Object.keys(d.capabilities) : [];
     const capStr = caps.length > 0
-      ? `<span class="mesh-peer-caps">${caps.join(', ')}</span>`
+      ? `<span class="neblink-peer-caps">${caps.join(', ')}</span>`
       : '';
     const descStr = d.userDescription
-      ? `<span class="mesh-peer-desc">${escapeHtml(d.userDescription)}</span>`
+      ? `<span class="neblink-peer-desc">${escapeHtml(d.userDescription)}</span>`
       : '';
 
     // Build update UI for peer devices
@@ -62,33 +62,33 @@ export function meshSettingsHTML() {
       const dn = escapeHtml(d.deviceName);
       switch (st.status) {
         case 'select':
-          updateUI = `<span class="mesh-update-inline">` +
-            `<button class="mesh-ch-btn" data-device="${dn}" data-beta="false">${t('mesh.stable')}</button>` +
-            `<button class="mesh-ch-btn mesh-ch-beta" data-device="${dn}" data-beta="true">${t('mesh.beta')}</button>` +
-            `<button class="mesh-ch-cancel" data-device="${dn}">${t('mesh.cancel')}</button>` +
+          updateUI = `<span class="neblink-update-inline">` +
+            `<button class="neblink-ch-btn" data-device="${dn}" data-beta="false">${t('neblink.stable')}</button>` +
+            `<button class="neblink-ch-btn neblink-ch-beta" data-device="${dn}" data-beta="true">${t('neblink.beta')}</button>` +
+            `<button class="neblink-ch-cancel" data-device="${dn}">${t('neblink.cancel')}</button>` +
             `</span>`;
           break;
         case 'updating':
-          updateUI = `<span class="mesh-update-status updating">${t('mesh.updating')}</span>`;
+          updateUI = `<span class="neblink-update-status updating">${t('neblink.updating')}</span>`;
           break;
         case 'done':
-          updateUI = `<span class="mesh-update-status done">${t('mesh.restarting')}</span>`;
+          updateUI = `<span class="neblink-update-status done">${t('neblink.restarting')}</span>`;
           break;
         case 'error':
-          updateUI = `<span class="mesh-update-status error" title="${escapeHtml(st.message || '')}">${escapeHtml(st.message || 'Error')}</span>`;
+          updateUI = `<span class="neblink-update-status error" title="${escapeHtml(st.message || '')}">${escapeHtml(st.message || 'Error')}</span>`;
           break;
         default:
-          updateUI = `<button class="mesh-peer-update-btn" data-device="${dn}">${t('mesh.update')}</button>`;
+          updateUI = `<button class="neblink-peer-update-btn" data-device="${dn}">${t('neblink.update')}</button>`;
       }
     }
 
     return `
-      <div class="mesh-peer">
-        <span class="mesh-peer-dot dot-on"></span>
-        <span class="mesh-peer-name">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
+      <div class="neblink-peer">
+        <span class="neblink-peer-dot dot-on"></span>
+        <span class="neblink-peer-name">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
         ${d.isLocal
-          ? '<span class="mesh-peer-status local-tag">' + t('mesh.thisDevice') + '</span>'
-          : '<span class="mesh-peer-status">' + t('mesh.connected') + '</span>'}
+          ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
+          : '<span class="neblink-peer-status">' + t('neblink.connected') + '</span>'}
         ${capStr}
         ${descStr}
         ${updateUI}
@@ -98,39 +98,39 @@ export function meshSettingsHTML() {
   const localDesc = local.userDescription || '';
   const localCaps = local.capabilities ? Object.keys(local.capabilities) : [];
   const capsDisplay = localCaps.length > 0
-    ? `<div class="mesh-caps-display">${t('mesh.detectedTools')}: ${localCaps.join(', ')}</div>`
+    ? `<div class="neblink-caps-display">${t('neblink.detectedTools')}: ${localCaps.join(', ')}</div>`
     : '';
 
   const peerHint = peers.length === 0
-    ? `<div class="cfg-hint" style="margin-top:6px">${t('mesh.noPeersHint') || 'No other devices found. Ensure Tailscale is running on both devices.'}</div>`
+    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure Tailscale is running on both devices.'}</div>`
     : '';
 
   return `
-    <div class="mesh-logged-in">
-      <div class="mesh-section-label">${t('mesh.devices')}</div>
-      <div class="mesh-peers-list">${deviceRows}</div>
+    <div class="neblink-logged-in">
+      <div class="neblink-section-label">${t('neblink.devices')}</div>
+      <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
       ${capsDisplay}
-      <div class="mesh-section-label" style="margin-top:10px">${t('mesh.deviceDescription')}</div>
-      <input type="text" id="mesh-device-desc" class="cfg-input"
-             placeholder="${t('mesh.deviceDescHint')}"
+      <div class="neblink-section-label" style="margin-top:10px">${t('neblink.deviceDescription')}</div>
+      <input type="text" id="neblink-device-desc" class="cfg-input"
+             placeholder="${t('neblink.deviceDescHint')}"
              value="${escapeHtml(localDesc)}"
              style="margin-bottom:6px">
-      <button class="cfg-btn" id="mesh-save-desc" style="width:100%">${t('mesh.save')}</button>
+      <button class="cfg-btn" id="neblink-save-desc" style="width:100%">${t('neblink.save')}</button>
     </div>`;
 }
 
 // ---- Bind events after HTML insert ----
-export function bindMeshEvents(rerender) {
+export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
 
-  document.getElementById('mesh-save-desc')?.addEventListener('click', () => doSaveDescription(rerender));
-  document.getElementById('mesh-device-desc')?.addEventListener('keydown', e => {
+  document.getElementById('neblink-save-desc')?.addEventListener('click', () => doSaveDescription(rerender));
+  document.getElementById('neblink-device-desc')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') doSaveDescription(rerender);
   });
 
   // Peer update buttons
-  document.querySelectorAll('.mesh-peer-update-btn').forEach(btn => {
+  document.querySelectorAll('.neblink-peer-update-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const device = btn.dataset.device;
       deviceUpdateState[device] = { status: 'select' };
@@ -139,7 +139,7 @@ export function bindMeshEvents(rerender) {
   });
 
   // Channel selection (stable / beta)
-  document.querySelectorAll('.mesh-ch-btn').forEach(btn => {
+  document.querySelectorAll('.neblink-ch-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const device = btn.dataset.device;
       const beta = btn.dataset.beta === 'true';
@@ -150,7 +150,7 @@ export function bindMeshEvents(rerender) {
   });
 
   // Cancel channel selection
-  document.querySelectorAll('.mesh-ch-cancel').forEach(btn => {
+  document.querySelectorAll('.neblink-ch-cancel').forEach(btn => {
     btn.addEventListener('click', () => {
       const device = btn.dataset.device;
       delete deviceUpdateState[device];
@@ -161,15 +161,15 @@ export function bindMeshEvents(rerender) {
 
 // ---- Actions ----
 async function doSaveDescription(rerender) {
-  const desc = document.getElementById('mesh-device-desc')?.value?.trim() || '';
+  const desc = document.getElementById('neblink-device-desc')?.value?.trim() || '';
   try {
     const token = getAuthToken();
-    await fetch('/api/mesh/device-info', {
+    await fetch('/api/neblink/device-info', {
       method: 'PUT',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ userDescription: desc })
     });
-    if (meshState.device) meshState.device.userDescription = desc;
+    if (neblinkState.device) neblinkState.device.userDescription = desc;
     rerender();
   } catch (e) {
     // ignore
@@ -177,11 +177,11 @@ async function doSaveDescription(rerender) {
 }
 
 // ---- Init (called once from main.js) ----
-export async function initMesh() {
-  await fetchMeshStatus();
+export async function initNeblink() {
+  await fetchNeblinkStatus();
   // Push-based peer status: when backend broadcasts peerListChanged,
-  // immediately re-fetch mesh status instead of waiting for poll.
-  onMessage('peerListChanged', () => { fetchMeshStatus(); });
+  // immediately re-fetch neblink status instead of waiting for poll.
+  onMessage('peerListChanged', () => { fetchNeblinkStatus(); });
 
   // Handle remote update result
   onMessage('remoteUpdateResult', (msg) => {
