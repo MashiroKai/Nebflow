@@ -528,6 +528,8 @@ final class ShellSession private (
       if s.trim.isEmpty then "" else s
     }
 
+  end readStream
+
   /**
    * Probe the first bytes of a stream to detect UTF-8 vs system ANSI code page.
    * Returns the stream (rewound via PushbackInputStream) and the detected charset.
@@ -542,13 +544,13 @@ final class ShellSession private (
     val pushback = new PushbackInputStream(is, ProbeSize)
     val probe = new Array[Byte](ProbeSize)
     val n = pushback.read(probe)
-    if n <= 0 then
-      (pushback, StandardCharsets.UTF_8)
+    if n <= 0 then (pushback, StandardCharsets.UTF_8)
     else
       pushback.unread(probe, 0, n)
       val charset =
         try
-          val decoder = StandardCharsets.UTF_8.newDecoder()
+          val decoder = StandardCharsets.UTF_8
+            .newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
           decoder.decode(ByteBuffer.wrap(probe, 0, n))
@@ -558,6 +560,8 @@ final class ShellSession private (
             try Charset.forName("GBK")
             catch case _: Exception => StandardCharsets.UTF_8
       (pushback, charset)
+    end if
+  end probeCharset
 
 end ShellSession
 

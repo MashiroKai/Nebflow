@@ -500,15 +500,42 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   box.className = 'option-box';
   const answers = new Array(questions.length).fill(null);
   const confirmLabel = doneLabel || t('chat.confirm');
-
-  // Restore saved drafts for this session
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
+  const questionWrappers = [];
 
+  // --- Conditional branching helpers ---
+  function shouldShow(qi) {
+    const item = questions[qi];
+    if (!item.dependsOn) return true;
+    const dep = item.dependsOn;
+    const refIdx = questions.findIndex(q => q.id === dep.ref);
+    if (refIdx === -1) return true;
+    return answers[refIdx] === dep.equals;
+  }
+
+  function updateVisibility() {
+    questionWrappers.forEach((wrapper, qi) => {
+      const visible = shouldShow(qi);
+      wrapper.style.display = visible ? '' : 'none';
+      if (!visible && answers[qi] !== null) {
+        answers[qi] = null;
+        wrapper.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+        const input = wrapper.querySelector('.option-custom-input');
+        if (input) input.value = '';
+      }
+    });
+  }
+
+  // --- Build question DOM ---
   questions.forEach((item, qi) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'option-q-wrapper';
+    questionWrappers.push(wrapper);
+
     const q = document.createElement('div');
     q.className = 'option-q';
     q.innerHTML = item.question;
-    box.appendChild(q);
+    wrapper.appendChild(q);
 
     const optsDiv = document.createElement('div');
     optsDiv.className = 'option-opts';
@@ -527,37 +554,37 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
             el.classList.toggle('picked', i === oi);
           });
-          customInput && (customInput.style.display = 'none');
-          customInput.value = '';
+          if (customInput) {
+            customInput.style.display = 'none';
+            customInput.value = '';
+          }
           if (askSessionId) saveAskDraft(askSessionId, qi, '');
+          updateVisibility();
           checkAllAnswered();
         };
         optsDiv.appendChild(btn);
       });
     }
 
-    // "Other" option for custom input (shown when allowOther is true)
-    const allowOther = item.allowOther !== false; // default true
+    const allowOther = item.allowOther !== false;
     const customInput = document.createElement('textarea');
     customInput.className = 'option-custom-input';
     customInput.placeholder = t('chat.typeAnswer');
     customInput.rows = 2;
 
-    // Restore saved draft text for this question
     const savedVal = saved[qi];
     if (savedVal) {
       customInput.value = savedVal;
       answers[qi] = savedVal;
     }
 
-    if (!hasOptions) customInput.style.display = ''; // visible by default for open-ended
+    if (!hasOptions) customInput.style.display = '';
 
     let otherBtn = null;
     if (hasOptions && allowOther) {
       otherBtn = document.createElement('button');
       otherBtn.className = 'option-btn';
       otherBtn.textContent = t('chat.other');
-      // If a custom draft exists, auto-select "Other" for this option set
       if (savedVal && !item.options.some(o => (typeof o === 'string' ? o : o.label) === savedVal)) {
         otherBtn.classList.add('picked');
         customInput.style.display = '';
@@ -572,15 +599,14 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (customInput.value.trim()) {
           answers[qi] = customInput.value.trim();
         }
+        updateVisibility();
         checkAllAnswered();
       };
       optsDiv.appendChild(otherBtn);
     } else if (hasOptions) {
-      // No "Other" — hide custom input
       customInput.style.display = 'none';
     } else {
-      // Open-ended: auto-focus and show input immediately
-      answers[qi] = null; // needs to be filled
+      answers[qi] = null;
     }
 
     customInput.oninput = () => {
@@ -597,11 +623,16 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         answers[qi] = null;
       }
       if (askSessionId) saveAskDraft(askSessionId, qi, val);
+      updateVisibility();
       checkAllAnswered();
     };
     optsDiv.appendChild(customInput);
-    box.appendChild(optsDiv);
+    wrapper.appendChild(optsDiv);
+    box.appendChild(wrapper);
   });
+
+  // Apply initial visibility after all questions are in DOM
+  updateVisibility();
 
   const btnRow = document.createElement('div');
   btnRow.className = 'option-btn-row';
@@ -620,7 +651,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'option-confirm';
   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + escapeHtml(confirmLabel) + '</span>';
-  confirmBtn.disabled = !answers.every(a => a !== null);
+  confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
   confirmBtn.onclick = () => {
     box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
@@ -630,11 +661,12 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
     const ansDiv = document.createElement('div');
     ansDiv.className = 'option-answer';
-    ansDiv.textContent = '-> ' + answers.join(', ');
+    ansDiv.textContent = '-> ' + answers.filter(a => a).join(', ');
     box.appendChild(ansDiv);
 
     if (askSessionId) clearAskDrafts(askSessionId);
-    if (onConfirm) onConfirm(answers);
+    const finalAnswers = answers.map(a => a !== null ? a : '');
+    if (onConfirm) onConfirm(finalAnswers);
   };
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(confirmBtn);
@@ -644,7 +676,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   smartScroll();
 
   function checkAllAnswered() {
-    confirmBtn.disabled = !answers.every(a => a !== null);
+    confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
   }
 }
 
