@@ -1,4 +1,4 @@
-package nebflow.mesh
+package nebflow.neblink
 
 import io.circe.parser.decode
 import io.circe.syntax.*

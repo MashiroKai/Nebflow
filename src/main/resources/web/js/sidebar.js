@@ -11,7 +11,7 @@ import { clearMemoryCache } from './memory.js';
 import { refreshScheduledTasks } from './scheduled-task.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchMeshStatus, meshSettingsHTML, bindMeshEvents } from './mesh.js';
+import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
@@ -441,8 +441,8 @@ export function renderSettings() {
 
   content.innerHTML = `
     <div class="settings-section">
-      <div class="settings-section-title">${t('mesh.title')}</div>
-      ${meshSettingsHTML()}
+      <div class="settings-section-title">${t('neblink.title')}</div>
+      ${neblinkSettingsHTML()}
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.runtime')}</div>
@@ -545,23 +545,23 @@ export function renderSettings() {
     </div>`;
 
   bindSettingsEvents(content, cfg, allModels);
-  bindMeshEvents(() => renderSettings());
+  bindNeblinkEvents(() => renderSettings());
 
-  // Refresh mesh peers periodically while settings panel is open
-  const refreshMesh = () => {
-    fetchMeshStatus().then(() => {
-      const meshDiv = content.querySelector('.mesh-logged-in');
-      if (meshDiv && document.getElementById('settings-content').contains(meshDiv)) {
+  // Refresh neblink peers periodically while settings panel is open
+  const refreshNeblink = () => {
+    fetchNeblinkStatus().then(() => {
+      const neblinkDiv = content.querySelector('.neblink-logged-in');
+      if (neblinkDiv && document.getElementById('settings-content').contains(neblinkDiv)) {
         const wrapper = document.createElement('div');
-        wrapper.innerHTML = meshSettingsHTML();
-        meshDiv.replaceWith(wrapper.firstElementChild);
-        bindMeshEvents(() => renderSettings());
+        wrapper.innerHTML = neblinkSettingsHTML();
+        neblinkDiv.replaceWith(wrapper.firstElementChild);
+        bindNeblinkEvents(() => renderSettings());
       }
     });
   };
-  refreshMesh();
-  if (window._meshRefreshTimer) clearInterval(window._meshRefreshTimer);
-  window._meshRefreshTimer = setInterval(refreshMesh, 3000);
+  refreshNeblink();
+  if (window._neblinkRefreshTimer) clearInterval(window._neblinkRefreshTimer);
+  window._neblinkRefreshTimer = setInterval(refreshNeblink, 3000);
 }
 
 function renderProviderCard(name, p) {

@@ -7,7 +7,7 @@ import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
 import nebflow.core.NebflowLogger
-import nebflow.mesh.{MeshService, PeerInfo}
+import nebflow.neblink.{NeblinkService, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -16,11 +16,11 @@ import scala.concurrent.duration.*
  * Executes tool calls on remote devices via direct P2P over Tailscale.
  *
  * When a tool call specifies device="desktop-v7eucht", this executor routes
- * the call to that device's gateway via HTTP (POST /api/mesh/remote-exec).
+ * the call to that device's gateway via HTTP (POST /api/neblink/remote-exec).
  *
  * Tailscale provides the connectivity layer — no relay server needed.
  */
-class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
+class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO]):
 
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
@@ -31,8 +31,8 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
   /** Timeout for background remote calls — the HTTP call waits up to this long. */
   private val BgTimeout = 3600.seconds
 
-  /** Expose MeshService for system prompt generation (device list). */
-  def meshServiceOpt: Option[MeshService] = Some(meshService)
+  /** Expose NeblinkService for system prompt generation (device list). */
+  def neblinkServiceOpt: Option[NeblinkService] = Some(neblinkService)
 
   def execute(
     deviceName: String,
@@ -48,14 +48,14 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
       else if ctxOpt.isDefined then executeForegroundWithAutoBackground(peer, toolName, params, ctxOpt.get)
       else p2pExecuteWithRetry(peer, toolName, params, SyncTimeout)
 
-    meshService.peers.flatMap { peers =>
+    neblinkService.peers.flatMap { peers =>
       resolvePeer(deviceName, peers) match
         case Right(peer) => runOnPeer(peer)
         case Left(_) =>
           // Device not in peer list — the list might be stale. Trigger one immediate
           // discovery scan before giving up, so transient gaps don't cause false errors.
           logger.info(s"Device '$deviceName' not found in ${peers.size} peer(s), triggering discovery scan") *>
-            meshService.scanNow.flatMap { refreshedPeers =>
+            neblinkService.scanNow.flatMap { refreshedPeers =>
               resolvePeer(deviceName, refreshedPeers) match
                 case Right(peer) => runOnPeer(peer)
                 case Left(err) => IO.pure(Left(err))
@@ -273,12 +273,12 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
         "params" -> params.asJson
       )
       val resp = basicRequest
-        .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/remote-exec"))
+        .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/remote-exec"))
         .contentType("application/json")
         .body(body.noSpaces)
         .readTimeout(timeout)
         .response(asStringAlways)
-        .send(meshService.httpBackend)
+        .send(neblinkService.httpBackend)
 
       if !resp.code.isSuccess then Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
       else
@@ -346,7 +346,7 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
         Left(
           ToolError(
             if peers.isEmpty then
-              s"No peer devices discovered after scan. Check: (1) Tailscale is running on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are logged into the same Mesh account."
+              s"No peer devices discovered after scan. Check: (1) Tailscale is running on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are on the same tailnet."
             else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
           )
         )
@@ -358,11 +358,11 @@ object RemoteExecutor:
 
   @volatile private var instance: Option[RemoteExecutor] = None
 
-  /** Wire the RemoteExecutor with a MeshService and Dispatcher. Called on startup. */
-  def initialize(meshService: MeshService, dispatcher: Dispatcher[IO]): Unit =
-    instance = Some(new RemoteExecutor(meshService, dispatcher))
+  /** Wire the RemoteExecutor with a NeblinkService and Dispatcher. Called on startup. */
+  def initialize(neblinkService: NeblinkService, dispatcher: Dispatcher[IO]): Unit =
+    instance = Some(new RemoteExecutor(neblinkService, dispatcher))
 
-  /** Get the current instance, or None if mesh is not initialized. */
+  /** Get the current instance, or None if neblink is not initialized. */
   def current: Option[RemoteExecutor] = instance
 
   /**
