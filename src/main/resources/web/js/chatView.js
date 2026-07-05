@@ -46,6 +46,8 @@ export class ChatView {
       activeAgentId: null,
       activeSubAgents: {},
       scrollSnapped: true,
+      toolStreamText: '',
+      toolStreamToolName: '',
     };
 
     // ── Input state ──
@@ -97,6 +99,8 @@ export class ChatView {
       activeAgentId: null,
       activeSubAgents: {},
       scrollSnapped: true,
+      toolStreamText: '',
+      toolStreamToolName: '',
     };
   }
 

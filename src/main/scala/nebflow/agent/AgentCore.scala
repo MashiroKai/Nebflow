@@ -601,6 +601,14 @@ private[agent] trait AgentCore:
                 "label" -> nebflow.core.summarizeToolCall(tc).asJson
               )
           wsSend(json)
+        case StreamChunk.ToolArgDelta(toolName, delta) if delta.nonEmpty && !isCompactTurn && !isSubagent =>
+          val json = Json.obj(
+            "type" -> "toolArgDelta".asJson,
+            "sessionId" -> sessionId.asJson,
+            "toolName" -> toolName.asJson,
+            "delta" -> delta.asJson
+          )
+          wsSend(json)
         case _ => IO.unit
       }
 

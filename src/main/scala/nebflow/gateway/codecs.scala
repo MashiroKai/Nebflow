@@ -56,6 +56,12 @@ object GatewayCodecs:
         "type" -> "toolCallStart".asJson,
         "name" -> name.asJson
       )
+    case StreamChunk.ToolArgDelta(toolName, delta) =>
+      Json.obj(
+        "type" -> "toolArgDelta".asJson,
+        "toolName" -> toolName.asJson,
+        "delta" -> delta.asJson
+      )
     case StreamChunk.ToolCallChunk(toolCall) =>
       Json.obj(
         "type" -> "toolCall".asJson,
