@@ -5,9 +5,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.ActorRef
 import nebflow.agent.AgentCommand
-import nebflow.core.{AskItem, AskOption}
-
-import scala.concurrent.duration.*
+import nebflow.core.{AskItem, AskOption, QuestionDependency}
 
 object AskUserQuestionTool extends Tool:
   val name = "AskUserQuestion"
@@ -23,16 +21,20 @@ Use `AskUserQuestion` when you need to pause and get clarification from the user
 4. **Missing information** — you need the user to provide files, credentials, preferences, or other data to continue.
 
 Guidelines:
-- Ask all related questions in a single tool call rather than making multiple sequential calls.
 - For multiple-choice questions, provide clear label values and optional description for each option.
 - For open-ended questions, omit options so the user gets a free-text input.
 - Do not use this tool for trivial confirmations you can decide yourself.
 - The UI always provides an "Other..." option so the user can type freely even for multiple-choice.
-- Supports multiple questions in one call — ask everything you need at once.
+
+Conditional branching:
+- When a question's relevance depends on the answer to an earlier question, use `id` and `dependsOn` to express the dependency.
+- Give the upstream question an `id`, then set `dependsOn: {"ref": "<id>", "equals": "<answer>"}` on the dependent question.
+- The dependent question is only shown when the referenced answer matches `equals`.
+- Independent questions (no `dependsOn`) are always shown and can be answered together.
+- Example: ask "Which language?" with id "lang" and options "Python" / "Rust", then ask "Which framework?" with dependsOn {"ref": "lang", "equals": "Python"} and options "Django" / "FastAPI". The framework question only appears if the user chose Python.
 
 Behavior:
-- This tool blocks until the user responds. Your turn pauses and resumes automatically when the user answers.
-- If the user does not respond within the timeout period, you will receive a timeout message and should proceed with your best judgment."""
+- This tool blocks until the user responds. Your turn pauses and resumes automatically when the user answers."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -45,6 +47,23 @@ Behavior:
             "type" -> "object".asJson,
             "properties" -> io.circe.Json.obj(
               "question" -> io.circe.Json.obj("type" -> "string".asJson, "description" -> "The question to ask".asJson),
+              "id" -> io.circe.Json.obj(
+                "type" -> "string".asJson,
+                "description" -> "Unique identifier for this question. Required when other questions depend on this one.".asJson
+              ),
+              "dependsOn" -> io.circe.Json.obj(
+                "type" -> "object".asJson,
+                "description" -> "Only show this question when the referenced question's answer matches. Use for conditional branching.".asJson,
+                "properties" -> io.circe.Json.obj(
+                  "ref" -> io.circe.Json
+                    .obj("type" -> "string".asJson, "description" -> "The id of the question this depends on".asJson),
+                  "equals" -> io.circe.Json.obj(
+                    "type" -> "string".asJson,
+                    "description" -> "The answer value that must match for this question to appear".asJson
+                  )
+                ),
+                "required" -> io.circe.Json.arr("ref".asJson, "equals".asJson)
+              ),
               "options" -> io.circe.Json.obj(
                 "type" -> "array".asJson,
                 "description" -> "Predefined choices for this question".asJson,
@@ -87,13 +106,19 @@ Behavior:
     else
       val items = questionsJson.flatMap { q =>
         val question = q.hcursor.downField("question").as[String].getOrElse("")
+        val id = q.hcursor.downField("id").as[String].toOption
+        val dependsOn = for
+          dep <- q.hcursor.downField("dependsOn").focus
+          ref <- dep.hcursor.downField("ref").as[String].toOption
+          equals <- dep.hcursor.downField("equals").as[String].toOption
+        yield QuestionDependency(ref, equals)
         val options = q.hcursor.downField("options").as[List[io.circe.Json]].getOrElse(Nil)
         val opts = options.flatMap { o =>
           val label = o.hcursor.downField("label").as[String].getOrElse("")
           val desc = o.hcursor.downField("description").as[String].toOption
           Some(AskOption(label, desc))
         }
-        Some(AskItem(question, opts))
+        Some(AskItem(question, opts, id = id, dependsOn = dependsOn))
       }.toList
 
       if items.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))
@@ -102,12 +127,12 @@ Behavior:
           case Some(agentRef) =>
             val requestId = java.util.UUID.randomUUID().toString.take(8)
             agentRef
-              .?((replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, items, Some(replyTo)))
+              .?(
+                (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, items, Some(replyTo)),
+                timeout = None
+              )
               .map { answers =>
                 Right(formatAnswer(items, answers))
-              }
-              .recover { case _: java.util.concurrent.TimeoutException =>
-                Right("[Timeout] User did not respond within the timeout period. Proceed with your best judgment.")
               }
           case None =>
             IO.pure(Left(ToolError("AskUserQuestion requires agent actor")))
@@ -117,11 +142,12 @@ Behavior:
 
   /** Format user answers for display. */
   def formatAnswer(items: List[AskItem], answers: List[String]): String =
-    if items.size <= 1 then answers.headOption.getOrElse("")
+    if items.size <= 1 then answers.headOption.filter(_.nonEmpty).getOrElse("")
     else
       items.zipWithIndex
         .map { case (item, idx) =>
-          val answer = answers.lift(idx).getOrElse("(no answer)")
+          val raw = answers.lift(idx).getOrElse("")
+          val answer = if raw.isEmpty then "(skipped)" else raw
           s"${idx + 1}. ${item.question.take(60)}\n   → $answer"
         }
         .mkString("\n")

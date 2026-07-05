@@ -55,10 +55,8 @@ object MailTool extends Tool:
     val message = input("message").flatMap(_.asString).getOrElse("")
     val mode = input("mode").flatMap(_.asString).getOrElse("queue")
 
-    if address.isEmpty then
-      IO.pure(Left(ToolError("Missing required parameter: address")))
-    else if message.isEmpty then
-      IO.pure(Left(ToolError("Missing required parameter: message")))
+    if address.isEmpty then IO.pure(Left(ToolError("Missing required parameter: address")))
+    else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
     else
       ctx.actorSystem match
         case None =>
@@ -67,12 +65,12 @@ object MailTool extends Tool:
           system.resolve[AgentCommand](address).attempt.flatMap {
             case Right(ref) =>
               val sendIO =
-                if mode == "immediate" then
-                  (ref ! AgentCommand.Interrupt()) *> (ref ! AgentCommand.UserInput(message))
-                else
-                  ref ! AgentCommand.UserInput(message)
+                if mode == "immediate" then (ref ! AgentCommand.Interrupt()) *> (ref ! AgentCommand.UserInput(message))
+                else ref ! AgentCommand.UserInput(message)
               sendIO.as(Right(s"Message sent to $address ($mode mode). The agent will process it in its mailbox."))
             case Left(err) =>
               IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
           }
+    end if
+  end call
 end MailTool

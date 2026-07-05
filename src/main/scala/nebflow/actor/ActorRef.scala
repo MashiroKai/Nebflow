@@ -24,8 +24,12 @@ trait ActorRef[-Msg]:
    *
    * Creates a one-shot Deferred internally. The target actor must send a
    * message to the provided replyTo reference to complete the ask.
+   *
+   * @param timeout pass `None` to wait indefinitely (e.g. for human interaction)
    */
-  def ?[Reply](makeMsg: ActorRef[Reply] => Msg, timeout: FiniteDuration = 30.seconds): IO[Reply]
+  def ?[Reply](makeMsg: ActorRef[Reply] => Msg, timeout: Option[FiniteDuration] = Some(30.seconds)): IO[Reply]
+
+end ActorRef
 
 object ActorRef:
 
