@@ -328,10 +328,20 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const detailHtml = buildToolDetail(inputJson, label);
+  // For Delegate tools, show the prompt sent to the sub-agent
+  let delegatePromptHtml = '';
+  if (inputJson) {
+    try {
+      const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+      if (inp.prompt) {
+        delegatePromptHtml = '<div class="delegate-prompt"><span class="delegate-prompt-label">Prompt</span><pre class="tool-body-pre">' + escapeHtml(inp.prompt) + '</pre></div>';
+      }
+    } catch {}
+  }
   // Render full content in body with syntax highlighting (Read/Grep only).
   // Body is hidden by default, click to expand shows full content with scroll for long output.
   const highlightHtml = content ? renderHighlightedContent(content, label) : null;
-  const bodyHtml = (detailHtml + (highlightHtml || (content ? '<pre class="tool-body-pre">' + escapeHtml(content) + '</pre>' : ''))) || '';
+  const bodyHtml = (detailHtml + delegatePromptHtml + (highlightHtml || (content ? '<pre class="tool-body-pre">' + escapeHtml(content) + '</pre>' : ''))) || '';
   const hasBody = !!bodyHtml;
   const localLabel = localizeToolLabel(label);
   const localSummary = localizeToolSummary(summary, label);
