@@ -40,10 +40,13 @@ object RestartHelper:
     val jar = jarPath.get
     if isWindows then
       // Windows: cmd /c "timeout & java -jar ..."
-      val cmd = s"""cmd /c "timeout /t $delaySeconds /nobreak >NUL & \\"$javaBin\\" $addOpens -jar \\"$jar\\" start --no-browser" """
+      val cmd =
+        s"""cmd /c "timeout /t $delaySeconds /nobreak >NUL & \\"$javaBin\\" $addOpens -jar \\"$jar\\" start --no-browser" """
       logger.info(s"Spawning restart helper: $cmd")
       try
-        val pb = new ProcessBuilder("cmd", "/c",
+        val pb = new ProcessBuilder(
+          "cmd",
+          "/c",
           s"timeout /t $delaySeconds /nobreak >NUL & \"$javaBin\" $addOpens -jar \"$jar\" start --no-browser"
         )
         pb.directory(new File(sys.props("user.home")))

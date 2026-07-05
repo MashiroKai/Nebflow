@@ -1285,15 +1285,15 @@
 }
 
 
-/* ===== Mesh tool row ===== */
-.row.tool.mesh-row {
+/* ===== NebLink tool row ===== */
+.row.tool.neblink-row {
   position: relative;
 }
-.row.tool.mesh-row .tool-card {
+.row.tool.neblink-row .tool-card {
   border-left: 3px solid var(--color-primary);
 }
-.row.tool.mesh-row .tool-card .label::before {
-  content: 'MESH';
+.row.tool.neblink-row .tool-card .label::before {
+  content: 'NEBLINK';
   display: inline-block;
   font-size: 9px;
   font-weight: 700;
@@ -1306,10 +1306,10 @@
   vertical-align: middle;
   line-height: 1.4;
 }
-.row.tool.mesh-row .tool-card.tool-card--pending .label::before {
-  animation: mesh-pulse 1.5s ease-in-out infinite;
+.row.tool.neblink-row .tool-card.tool-card--pending .label::before {
+  animation: neblink-pulse 1.5s ease-in-out infinite;
 }
-@keyframes mesh-pulse {
+@keyframes neblink-pulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }

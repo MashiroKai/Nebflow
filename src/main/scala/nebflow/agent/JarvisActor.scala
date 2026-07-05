@@ -64,10 +64,20 @@ object JarvisActor extends AgentCore with AgentSession:
     folderId: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
-      logAgentEvent(agentDef, depth, sessionId, sessionName, "spawn",
-        s"Jarvis actor, parent=${parentRef.map(_.path.name).getOrElse("-")} msgs=${initialMessages.size}")(using ctx)
+      logAgentEvent(
+        agentDef,
+        depth,
+        sessionId,
+        sessionName,
+        "spawn",
+        s"Jarvis actor, parent=${parentRef.map(_.path.name).getOrElse("-")} msgs=${initialMessages.size}"
+      )(using ctx)
       IO.pure(
-        idle(agentDef, resources, depth, parentRef,
+        idle(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
           AgentState(
             messages = initialMessages,
             status = AgentStatus.Idle,
@@ -117,8 +127,7 @@ object JarvisActor extends AgentCore with AgentSession:
 
       case UserInput(text, replyTo, clientMessageId, blocks, chatWidth) =>
         val (isDuplicate, dedupedState) = checkDuplicate(clientMessageId, state)
-        if isDuplicate then
-          IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        if isDuplicate then IO.pure(idle(agentDef, resources, depth, parentRef, state))
         else
           val stateWithLang =
             if depth == 0 && parentRef.isEmpty && dedupedState.messages.isEmpty then
@@ -134,13 +143,21 @@ object JarvisActor extends AgentCore with AgentSession:
           val busyIO =
             if depth == 0 then
               stateWithWidth.sessionId.fold(IO.unit)(sid =>
-                ctx.forkTurn(emitSessionBusy(stateWithWidth.wsSend, sid, busy = true)))
+                ctx.forkTurn(emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
+              )
             else IO.unit
           for
             _ <- busyIO
-            result <- pipeLlmCall(agentDef, resources, depth, parentRef,
-              stateWithWidth.withMessages(newMessages).withEmptyResponseRetries(0), replyTo)
+            result <- pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              stateWithWidth.withMessages(newMessages).withEmptyResponseRetries(0),
+              replyTo
+            )
           yield result
+        end if
 
       case AskQuestion(question, _) =>
         val askReminder = AskService.buildAskReminder(question)
@@ -166,10 +183,20 @@ object JarvisActor extends AgentCore with AgentSession:
 
       case ExternalEvent(source, eventType, payload, _, correlationId) =>
         for
-          _ <- emitStream(state.wsSend, AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-            isSubagent = depth > 0, state.sessionId)
-          result <- pipeLlmCall(agentDef, resources, depth, parentRef,
-            state.withMessages(state.messages :+ Message(MessageRole.User, Left(payload))), None)
+          _ <- emitStream(
+            state.wsSend,
+            AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
+            isSubagent = depth > 0,
+            state.sessionId
+          )
+          result <- pipeLlmCall(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withMessages(state.messages :+ Message(MessageRole.User, Left(payload))),
+            None
+          )
         yield result
 
       case Interrupt() =>
@@ -186,7 +213,10 @@ object JarvisActor extends AgentCore with AgentSession:
         for _ <- ctx.cancelCurrentTurn()
         yield
           val resetState = state
-            .withMessages(Nil).withLatestUsage(None).withRecentMessageIds(Nil).withLifecycleCleared
+            .withMessages(Nil)
+            .withLatestUsage(None)
+            .withRecentMessageIds(Nil)
+            .withLifecycleCleared
           idle(agentDef, resources, depth, parentRef, resetState)
 
       case UpdateContextWindow(window) =>
@@ -236,8 +266,7 @@ object JarvisActor extends AgentCore with AgentSession:
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withGitBranch(branch), pending))
 
       case LlmComplete(result, replyTo, turnId) =>
-        if turnId != state.currentTurnId then
-          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        if turnId != state.currentTurnId then IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
           val updatedState = state
             .withLatestUsage(result.usage.orElse(state.latestUsage))
@@ -245,35 +274,58 @@ object JarvisActor extends AgentCore with AgentSession:
             .updateContextWindowIfNeeded(result.contextWindow)
           // Emit usage update for depth=0
           val usageIO = updatedState.latestUsage.fold(IO.unit)(usage =>
-            emitStream(state.wsSend, AgentStreamEvent.UsageUpdate(
-              usage.inputTokens, updatedState.contextWindow,
-              CompactConfig().compactionTriggerRatio(updatedState.contextWindow)),
-              isSubagent = false, state.sessionId))
-          usageIO *> handleLlmCompleteBranch(agentDef, resources, depth, parentRef, updatedState, replyTo, result, pending)
+            emitStream(
+              state.wsSend,
+              AgentStreamEvent.UsageUpdate(
+                usage.inputTokens,
+                updatedState.contextWindow,
+                CompactConfig().compactionTriggerRatio(updatedState.contextWindow)
+              ),
+              isSubagent = false,
+              state.sessionId
+            )
+          )
+          usageIO *> handleLlmCompleteBranch(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            updatedState,
+            replyTo,
+            result,
+            pending
+          )
 
       case LlmFailed(error, replyTo, turnId) =>
-        if turnId != state.currentTurnId then
-          IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        if turnId != state.currentTurnId then IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
           val cleanedState = state.withActiveStreamFiber(None)
           val errMsg = error match
             case e: FallbackExhaustedError =>
               e.attempts.map(a => s"${a.providerId}/${a.model}").mkString("; ")
             case _ =>
-              Option(error.getMessage).filter(_.nonEmpty)
+              Option(error.getMessage)
+                .filter(_.nonEmpty)
                 .map(m => s"LLM request failed: ${m.take(200)}")
                 .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
           for
             _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
             _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
               ctx.forkTurn(
-                cleanedState.wsSend(Json.obj(
-                  "type" -> "error".asJson, "sessionId" -> sid.asJson, "message" -> errMsg.asJson))
+                cleanedState
+                  .wsSend(Json.obj("type" -> "error".asJson, "sessionId" -> sid.asJson, "message" -> errMsg.asJson))
                   .handleErrorWith(_ => IO.unit) *>
-                emitSessionBusy(cleanedState.wsSend, sid, busy = false))
+                  emitSessionBusy(cleanedState.wsSend, sid, busy = false)
+              )
             }
-          yield idle(agentDef, resources, depth, parentRef,
-            cleanedState.withStatus(AgentStatus.Error(error.getMessage)))
+          yield idle(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            cleanedState.withStatus(AgentStatus.Error(error.getMessage))
+          )
+          end for
 
       case tc: ToolsComplete =>
         val toolCalls = tc.results.map((call, _) => call)
@@ -288,11 +340,12 @@ object JarvisActor extends AgentCore with AgentSession:
         val resultMsg = Message(MessageRole.User, Right(resultBlocks))
         val baseMessages = tc.compactedMessages.getOrElse(state.messages)
         val newMessages = baseMessages ++ List(assistantMsg, resultMsg)
-        val updatedState = state.copy(execution =
-          state.execution.copy(messages = newMessages, interaction = None))
+        val updatedState = state.copy(execution = state.execution.copy(messages = newMessages, interaction = None))
         for
-          _ <- ctx.forkTurn(persistIfSession(resources, updatedState)
-            .handleErrorWith(e => IO(logger.warn(s"Persist failed: ${e.getMessage}"))))
+          _ <- ctx.forkTurn(
+            persistIfSession(resources, updatedState)
+              .handleErrorWith(e => IO(logger.warn(s"Persist failed: ${e.getMessage}")))
+          )
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
         yield result
 
@@ -315,8 +368,12 @@ object JarvisActor extends AgentCore with AgentSession:
           _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
         yield
-          val resetState = state.withMessages(Nil).withLatestUsage(None)
-            .withRecentMessageIds(Nil).withLifecycleCleared.resetToIdle(Nil)
+          val resetState = state
+            .withMessages(Nil)
+            .withLatestUsage(None)
+            .withRecentMessageIds(Nil)
+            .withLifecycleCleared
+            .resetToIdle(Nil)
           idle(agentDef, resources, depth, parentRef, resetState)
 
       case n: BackgroundTaskNotification =>
@@ -325,9 +382,14 @@ object JarvisActor extends AgentCore with AgentSession:
       case ExternalEvent(source, eventType, payload, _, correlationId) =>
         val updatedExec = state.execution.copy(
           pendingEvents = state.execution.pendingEvents :+
-            AgentCommand.ExternalEvent(source, eventType, payload, JsonObject.empty, correlationId))
-        emitStream(state.wsSend, AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-          isSubagent = depth > 0, state.sessionId) *>
+            AgentCommand.ExternalEvent(source, eventType, payload, JsonObject.empty, correlationId)
+        )
+        emitStream(
+          state.wsSend,
+          AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
+          isSubagent = depth > 0,
+          state.sessionId
+        ) *>
           IO.pure(processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending))
 
       case AgentCommand.AskUser(_, items, replyToOpt) =>
@@ -346,8 +408,11 @@ object JarvisActor extends AgentCore with AgentSession:
             )
           })
         )
-        val updatedState = state.copy(execution = state.execution.copy(interaction = Some(
-          InteractionState(pendingPermission = state.pendingPermission, pendingAskUserReplyTo = replyToOpt))))
+        val updatedState = state.copy(execution =
+          state.execution.copy(interaction =
+            Some(InteractionState(pendingPermission = state.pendingPermission, pendingAskUserReplyTo = replyToOpt))
+          )
+        )
         ctx.forkTurn(state.wsSend(askJson).handleErrorWith { _ =>
           replyToOpt.foreach(r => ctx.forkTurn(r ! Nil)); IO.unit
         }) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
@@ -370,8 +435,16 @@ object JarvisActor extends AgentCore with AgentSession:
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
 
       case UpdateContextWindow(window) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef,
-          state.withContextWindow(window).withLifecycleCleared, pending))
+        IO.pure(
+          processing(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withContextWindow(window).withLifecycleCleared,
+            pending
+          )
+        )
 
       case msg: UserInput =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending :+ msg))
@@ -383,8 +456,16 @@ object JarvisActor extends AgentCore with AgentSession:
       // --- Session management (persistent sub-agents) ---
       case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
         val session = AgentSessionInfo(address, agentName, taskDescription, "running")
-        IO.pure(processing(agentDef, resources, depth, parentRef,
-          state.withAgentSessions(state.agentSessions :+ session), pending))
+        IO.pure(
+          processing(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withAgentSessions(state.agentSessions :+ session),
+            pending
+          )
+        )
 
       case AgentCommand.SessionUpdate(address, status) =>
         val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)
@@ -413,8 +494,9 @@ object JarvisActor extends AgentCore with AgentSession:
     Behaviors.receiveMessage:
 
       case StreamFiberStarted(fiber) =>
-        IO.pure(memoryConsolidating(agentDef, resources, depth, parentRef,
-          state.withActiveStreamFiber(Some(fiber)), pending))
+        IO.pure(
+          memoryConsolidating(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(Some(fiber)), pending)
+        )
 
       case LlmComplete(result, _, turnId) =>
         if turnId != state.currentTurnId then
@@ -422,8 +504,14 @@ object JarvisActor extends AgentCore with AgentSession:
         else
           for
             _ <- applyConsolidationResult(result, agentDef)
-            _ = logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-              "memory-consolidation-done", s"textLen=${result.text.length}")
+            _ = logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "memory-consolidation-done",
+              s"textLen=${result.text.length}"
+            )
           yield
             pending.headOption.foreach(msg => ctx.self ! msg)
             idle(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(None))
@@ -479,15 +567,22 @@ object JarvisActor extends AgentCore with AgentSession:
     if state.askMode.isDefined && result.toolCalls.isEmpty then
       finishAskMode(agentDef, resources, depth, parentRef, state, result.text, result.model)
     else if result.toolCalls.nonEmpty then
-      pipeToolExecutions(agentDef, resources, depth, parentRef,
-        state.withEmptyResponseRetries(0), result, replyTo)
+      pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
     else if result.text.nonEmpty || result.thinking.nonEmpty then
-      finishTurn(agentDef, resources, depth, parentRef,
-        state.withEmptyResponseRetries(0), replyTo,
-        result.text, result.thinking, result.thinkingSignature,
-        textAlreadyStreamed = true, result.model)
-    else
-      handleEmptyResponse(agentDef, resources, depth, parentRef, state, replyTo, result)
+      finishTurn(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state.withEmptyResponseRetries(0),
+        replyTo,
+        result.text,
+        result.thinking,
+        result.thinkingSignature,
+        textAlreadyStreamed = true,
+        result.model
+      )
+    else handleEmptyResponse(agentDef, resources, depth, parentRef, state, replyTo, result)
 
   // ============================================================
   // Finish turn — emit Done, persist, check delegation
@@ -524,27 +619,31 @@ object JarvisActor extends AgentCore with AgentSession:
           model.orElse(state.lastModel),
           contextWindow = Some(state.contextWindow),
           inputTokens = state.latestUsage.map(_.inputTokens),
-          compactThreshold = Some(CompactConfig().compactionTriggerRatio(state.contextWindow)))
+          compactThreshold = Some(CompactConfig().compactionTriggerRatio(state.contextWindow))
+        )
         ctx.forkTurn(
-          state.wsSend(doneEvent.toJson(ctx.self.path.name, false, state.sessionId))
+          state
+            .wsSend(doneEvent.toJson(ctx.self.path.name, false, state.sessionId))
             .handleErrorWith(_ => IO.unit) *>
-          emitSessionBusy(state.wsSend, sid, busy = false))
+            emitSessionBusy(state.wsSend, sid, busy = false)
+        )
       }
       _ <- state.sessionId.fold(IO.unit) { sid =>
         ctx.forkTurn(
           (resources.sessionStore.saveMessagesForSession(sid, newMessages) *>
             resources.sessionStore.flushIndex)
-            .handleErrorWith(e => IO(logger.warn(s"Save/flush session failed: ${e.getMessage}"))))
+            .handleErrorWith(e => IO(logger.warn(s"Save/flush session failed: ${e.getMessage}")))
+        )
       }
       targetState = state.copy(execution = ExecutionContext.idle(newMessages, state.execution.turnIdx))
       result <-
         if hasDelegation(newMessages) then
-          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName,
-            "memory-consolidation-start", "")
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "memory-consolidation-start", "")
           startMemoryConsolidation(agentDef, resources, depth, parentRef, targetState)
-        else
-          IO.pure(idle(agentDef, resources, depth, parentRef, targetState))
+        else IO.pure(idle(agentDef, resources, depth, parentRef, targetState))
     yield result
+    end for
+  end finishTurn
 
   // ============================================================
   // Memory consolidation
@@ -564,15 +663,17 @@ object JarvisActor extends AgentCore with AgentSession:
 
     val llmIo = for
       result <- resources.llm
-        .sendStream(LlmRequest(
-          messages = List(Message(MessageRole.User, Left(consolidationInput))),
-          sessionId = state.sessionId.getOrElse(ctx.self.path.name),
-          agentId = agentDef.name,
-          tools = None,
-          maxTokens = Some(resources.agentLibrary.globalMaxTokens),
-          thinking = None,
-          systemStable = Some(ConsolidationSystemPrompt)
-        ))
+        .sendStream(
+          LlmRequest(
+            messages = List(Message(MessageRole.User, Left(consolidationInput))),
+            sessionId = state.sessionId.getOrElse(ctx.self.path.name),
+            agentId = agentDef.name,
+            tools = None,
+            maxTokens = Some(resources.agentLibrary.globalMaxTokens),
+            thinking = None,
+            systemStable = Some(ConsolidationSystemPrompt)
+          )
+        )
         .compile
         .toList
         .map(aggregateChunks)
@@ -582,20 +683,20 @@ object JarvisActor extends AgentCore with AgentSession:
         case Left(e) => ctx.self ! LlmFailed(e, None, turnId)
     yield ()
 
-    for
-      _ <- ctx.forkTurn(llmIo.handleErrorWith { e =>
+    for _ <- ctx.forkTurn(llmIo.handleErrorWith { e =>
         IO(logger.warn(s"Consolidation LLM call failed: ${e.getMessage}")) *>
           (ctx.self ! LlmFailed(e, None, turnId))
       })
     yield memoryConsolidating(agentDef, resources, depth, parentRef, state.withCurrentTurnId(turnId))
+
+  end startMemoryConsolidation
 
   private def applyConsolidationResult(result: ConsumeResult, agentDef: AgentDef): IO[Unit] =
     val content = result.text.trim
     if content.nonEmpty then
       IO(logger.info(s"Consolidation: writing ${content.length} chars to ${agentDef.name} memory")) *>
         MemoryStore.saveAgentMemory(agentDef.name, content)
-    else
-      IO(logger.warn("Consolidation: empty response, skipping"))
+    else IO(logger.warn("Consolidation: empty response, skipping"))
 
   // ============================================================
   // Ask mode complete
@@ -612,20 +713,35 @@ object JarvisActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val question = state.askMode.getOrElse("")
     val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
-    for
-      _ <- ctx.forkTurn(
-        state.wsSend(Json.obj(
-          "type" -> "askDone".asJson, "sessionId" -> sessionId.asJson,
-          "durationMs" -> 0L.asJson, "model" -> model.getOrElse("").asJson))
+    for _ <- ctx.forkTurn(
+        state
+          .wsSend(
+            Json.obj(
+              "type" -> "askDone".asJson,
+              "sessionId" -> sessionId.asJson,
+              "durationMs" -> 0L.asJson,
+              "model" -> model.getOrElse("").asJson
+            )
+          )
           .handleErrorWith(_ => IO.unit) *>
-        emitSessionBusy(state.wsSend, sessionId, busy = false))
+          emitSessionBusy(state.wsSend, sessionId, busy = false)
+      )
     yield
       val originalMessages = state.messages.takeWhile(m => !isAskReminder(m))
       val restoredMessages =
         if originalMessages.size == state.messages.size then state.messages.dropRight(1)
         else originalMessages
-      idle(agentDef, resources, depth, parentRef,
-        state.withAskMode(None).withMessages(restoredMessages).resetToIdle(restoredMessages))
+      idle(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state.withAskMode(None).withMessages(restoredMessages).resetToIdle(restoredMessages)
+      )
+
+    end for
+
+  end finishAskMode
 
   private def isAskReminder(msg: Message): Boolean =
     msg.role == MessageRole.User && (msg.content match
@@ -648,12 +764,24 @@ object JarvisActor extends AgentCore with AgentSession:
     val retryCount = state.emptyResponseRetries
     if retryCount < MaxEmptyRetries then
       logger.info(s"Empty response, retrying (${retryCount + 1}/$MaxEmptyRetries)")
-      pipeLlmCall(agentDef, resources, depth, parentRef,
-        state.withEmptyResponseRetries(retryCount + 1), replyTo)
+      pipeLlmCall(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(retryCount + 1), replyTo)
     else
       logger.warn(s"Empty response after $MaxEmptyRetries retries")
-      finishTurn(agentDef, resources, depth, parentRef, state, replyTo,
-        s"[No response after $MaxEmptyRetries retries]", None, None, false, result.model)
+      finishTurn(
+        agentDef,
+        resources,
+        depth,
+        parentRef,
+        state,
+        replyTo,
+        s"[No response after $MaxEmptyRetries retries]",
+        None,
+        None,
+        false,
+        result.model
+      )
+    end if
+  end handleEmptyResponse
 
   // ============================================================
   // Helpers
@@ -661,31 +789,36 @@ object JarvisActor extends AgentCore with AgentSession:
 
   private def hasDelegation(messages: List[Message]): Boolean =
     messages.exists(_.content match
-      case Right(blocks) => blocks.exists {
-        case ContentBlock.ToolUse(_, "Delegate", _) => true
-        case _ => false
-      }
-      case _ => false
-    )
+      case Right(blocks) =>
+        blocks.exists {
+          case ContentBlock.ToolUse(_, "Delegate", _) => true
+          case _ => false
+        }
+      case _ => false)
 
   private def buildConversationSummary(messages: List[Message]): String =
-    val summary = messages.map { msg =>
-      val role = msg.role match
-        case MessageRole.User => "User"
-        case MessageRole.Assistant => "Jarvis"
-        case MessageRole.System => "System"
-      msg.content match
-        case Left(text) => s"$role: $text"
-        case Right(blocks) =>
-          val parts = blocks.flatMap {
-            case ContentBlock.Text(t) => Some(t)
-            case ContentBlock.ToolUse(name, _, _) => Some(s"[Called tool: $name]")
-            case ContentBlock.ToolResult(_, content, _) => Some(s"[Tool result: ${content.take(500)}]")
-            case _ => None
-          }
-          if parts.nonEmpty then s"$role: ${parts.mkString("\n")}" else ""
-    }.filter(_.nonEmpty).mkString("\n\n---\n\n")
+    val summary = messages
+      .map { msg =>
+        val role = msg.role match
+          case MessageRole.User => "User"
+          case MessageRole.Assistant => "Jarvis"
+          case MessageRole.System => "System"
+        msg.content match
+          case Left(text) => s"$role: $text"
+          case Right(blocks) =>
+            val parts = blocks.flatMap {
+              case ContentBlock.Text(t) => Some(t)
+              case ContentBlock.ToolUse(name, _, _) => Some(s"[Called tool: $name]")
+              case ContentBlock.ToolResult(_, content, _) => Some(s"[Tool result: ${content.take(500)}]")
+              case _ => None
+            }
+            if parts.nonEmpty then s"$role: ${parts.mkString("\n")}" else ""
+      }
+      .filter(_.nonEmpty)
+      .mkString("\n\n---\n\n")
     if summary.length > 20000 then summary.take(20000) + "\n\n[... truncated ...]" else summary
+
+  end buildConversationSummary
 
   private def buildConsolidationInput(agentName: String, existingMemory: String, conversation: String): String =
     s"""## Existing Agent Memory ($agentName)
@@ -742,8 +875,15 @@ object JarvisActor extends AgentCore with AgentSession:
     state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    super.pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo,
-      (ad, r, d, p, s) => processing(ad, r, d, p, s))
+    super.pipeLlmCall(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state,
+      replyTo,
+      (ad, r, d, p, s) => processing(ad, r, d, p, s)
+    )
 
   private def pipeToolExecutions(
     agentDef: AgentDef,
@@ -754,7 +894,15 @@ object JarvisActor extends AgentCore with AgentSession:
     result: ConsumeResult,
     replyTo: Option[ActorRef[AgentEvent]]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    super.pipeToolExecutions(agentDef, resources, depth, parentRef, state, result, replyTo,
-      (ad, r, d, p, s) => processing(ad, r, d, p, s))
+    super.pipeToolExecutions(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state,
+      result,
+      replyTo,
+      (ad, r, d, p, s) => processing(ad, r, d, p, s)
+    )
 
 end JarvisActor

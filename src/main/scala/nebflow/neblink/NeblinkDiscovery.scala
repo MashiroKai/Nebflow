@@ -1,4 +1,4 @@
-package nebflow.mesh
+package nebflow.neblink
 
 import cats.effect.IO
 import cats.syntax.all.*
@@ -13,7 +13,7 @@ import scala.concurrent.duration.*
  * Discovers Nebflow peers on the Tailscale network.
  *
  * Each cycle runs a full `tailscale status` scan to discover peers, then:
- *   1. syncPeers — establishes/maintains WebSocket presence connections via MeshPresenceService.
+ *   1. syncPeers — establishes/maintains WebSocket presence connections via NeblinkPresenceService.
  *   2. announce — pushes our device info to every discovered peer.
  *
  * Known-peer liveness is maintained entirely by WS connections (heartbeat + TCP RST).
@@ -21,12 +21,12 @@ import scala.concurrent.duration.*
  *
  * Tailscale is the trust boundary: only devices on the same tailnet can reach each other.
  */
-final class TailscaleDiscovery(
-  meshService: MeshService,
+final class NeblinkDiscovery(
+  neblinkService: NeblinkService,
   serverPort: Int,
-  presenceService: MeshPresenceService
+  presenceService: NeblinkPresenceService
 ):
-  private val logger = NebflowLogger.forName("nebflow.mesh.tailscale")
+  private val logger = NebflowLogger.forName("nebflow.neblink.tailscale")
 
   /** Discovery cycle — full tailnet scan + WS presence sync + announce. */
   def discoverCycle: IO[Unit] =
@@ -49,7 +49,7 @@ final class TailscaleDiscovery(
           case None => Json.obj("ip" -> entry.ip.asJson, "status" -> "no-response".asJson)
         }
       }
-      currentPeers <- meshService.peers
+      currentPeers <- neblinkService.peers
     yield Json.obj(
       "tailscaleBinary" -> binary.asJson,
       "tailnetPeerCount" -> tailnetPeers.length.asJson,
@@ -154,7 +154,7 @@ final class TailscaleDiscovery(
   private def probeNebflow(ip: String): IO[Option[DeviceDiscoveryInfo]] =
     IO.blocking {
       try
-        val url = java.net.URI(s"http://$ip:$serverPort/api/mesh/discover").toURL
+        val url = java.net.URI(s"http://$ip:$serverPort/api/neblink/discover").toURL
         val conn = url.openConnection(java.net.Proxy.NO_PROXY).asInstanceOf[java.net.HttpURLConnection]
         conn.setConnectTimeout(3000)
         conn.setReadTimeout(3000)
@@ -174,7 +174,7 @@ final class TailscaleDiscovery(
 
   /** Send our device info to a peer so they add us to their peer list immediately. Uses Proxy.NO_PROXY. */
   private def announceTo(peer: PeerInfo): IO[Unit] =
-    meshService.identity.flatMap { id =>
+    neblinkService.identity.flatMap { id =>
       IO.blocking {
         try
           val body = Json.obj(
@@ -185,7 +185,7 @@ final class TailscaleDiscovery(
             "userDescription" -> id.userDescription.asJson,
             "port" -> serverPort.asJson
           )
-          val url = java.net.URI(s"${peer.address}/api/mesh/announce").toURL
+          val url = java.net.URI(s"${peer.address}/api/neblink/announce").toURL
           val conn = url.openConnection(java.net.Proxy.NO_PROXY).asInstanceOf[java.net.HttpURLConnection]
           conn.setConnectTimeout(5000)
           conn.setReadTimeout(5000)
@@ -202,4 +202,4 @@ final class TailscaleDiscovery(
     }
 
   private case class TailscaleEntry(ip: String)
-end TailscaleDiscovery
+end NeblinkDiscovery

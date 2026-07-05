@@ -1,4 +1,4 @@
-package nebflow.mesh
+package nebflow.neblink
 
 import cats.effect.std.{Dispatcher, Queue}
 import cats.effect.{IO, Ref}
@@ -24,29 +24,29 @@ object SyncCommand:
   case object StopSync extends SyncCommand
 
   /** Periodic sync timer fired. */
-  private[mesh] case object SyncTick extends SyncCommand
+  private[neblink] case object SyncTick extends SyncCommand
 
   /** A peer was discovered — wake up the sync loop for an immediate cycle. */
   case object PeerDiscovered extends SyncCommand
 end SyncCommand
 
 /**
- * Core mesh service — Tailscale P2P device discovery and cross-device tool execution.
+ * Core neblink service — Tailscale P2P device discovery and cross-device tool execution.
  *
  * Event-driven design:
  *   - IO-based sync loop replaces the old Pekko actor.
  *   - Tailscale is the trust boundary — no account or cloud relay needed.
  *   - Sync runs continuously; discovery hook is set by GatewayMain at startup.
  */
-class MeshService private (
+class NeblinkService private (
   identityRef: Ref[IO, DeviceIdentity],
-  configRef: Ref[IO, MeshConfig],
+  configRef: Ref[IO, NeblinkConfig],
   peersRef: Ref[IO, Map[String, PeerInfo]],
   serverPort: Int,
   private val syncQueue: Queue[IO, SyncCommand],
   private val dispatcher: Dispatcher[IO]
 ):
-  private val logger = NebflowLogger.forName("nebflow.mesh")
+  private val logger = NebflowLogger.forName("nebflow.neblink")
 
   /** Callbacks fired when a peer goes online/offline. Wired to WsHub.broadcast by GatewayMain. */
   private val peerChangeCallbacks: Ref[IO, List[IO[Unit]]] =
@@ -107,14 +107,14 @@ class MeshService private (
 
   // ===== Config =====
 
-  def meshConfig: IO[MeshConfig] = configRef.get
+  def neblinkConfig: IO[NeblinkConfig] = configRef.get
 
-  def updateConfig(fn: MeshConfig => MeshConfig): IO[Unit] =
+  def updateConfig(fn: NeblinkConfig => NeblinkConfig): IO[Unit] =
     configRef
       .modify { cfg =>
         val u = fn(cfg); (u, u)
       }
-      .flatMap(MeshConfig.save)
+      .flatMap(NeblinkConfig.save)
 
   // ===== Peers =====
 
@@ -190,6 +190,61 @@ class MeshService private (
 
   private[nebflow] lazy val httpBackend = DefaultSyncBackend()
 
+  // ===== Data Channel =====
+
+  /** Handlers for incoming WS data messages from peers. */
+  private val dataHandlers: Ref[IO, List[Json => IO[Unit]]] =
+    Ref.unsafe[IO, List[Json => IO[Unit]]](Nil)
+
+  /** Register a handler for incoming data messages from peers. */
+  def addDataHandler(handler: Json => IO[Unit]): IO[Unit] =
+    dataHandlers.update(_ :+ handler)
+
+  /** Forward an incoming WS data message to all registered handlers. */
+  private[nebflow] def handleDataMessage(payload: Json): IO[Unit] =
+    dataHandlers.get.flatMap(
+      _.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}")))
+    )
+
+  // ===== File Transfer (P2P, Tailscale IP auth) =====
+
+  /**
+   * Validate that a relative path is safe — no traversal, no absolute paths.
+   * Returns the normalized os.RelPath, or an error message.
+   */
+  private def validateTransferPath(relPath: String): Either[String, os.RelPath] =
+    val normalized = java.nio.file.Paths.get(relPath).normalize
+    if normalized.startsWith("..") || normalized.isAbsolute then
+      Left(s"Invalid path: $relPath (must be relative, no .. traversal)")
+    else
+      try Right(os.RelPath(normalized.toString))
+      catch case _: Exception => Left(s"Invalid path: $relPath")
+
+  /** Receive a file pushed by a peer. Writes under project root. Returns bytes written. */
+  def receiveFile(relPath: String, content: Array[Byte], overwrite: Boolean): IO[Long] =
+    validateTransferPath(relPath) match
+      case Left(err) => IO.raiseError(new IllegalArgumentException(err))
+      case Right(rel) =>
+        val dest = os.pwd / rel
+        if !overwrite && os.exists(dest) then
+          IO.raiseError(new IllegalArgumentException(s"File already exists: $relPath (use overwrite=true to replace)"))
+        else
+          IO.blocking {
+            os.write(dest, content, createFolders = true)
+            content.length.toLong
+          }
+
+  /** Read a file for a peer that requested it. Returns None if file doesn't exist or path invalid. */
+  def sendFile(relPath: String): IO[Option[Array[Byte]]] =
+    validateTransferPath(relPath) match
+      case Left(_) => IO.pure(None)
+      case Right(rel) =>
+        IO.blocking {
+          val file = os.pwd / rel
+          if os.exists(file) && os.isFile(file) then Some(os.read.bytes(file))
+          else None
+        }
+
   // ============================================================
   // Sync loop — event-driven, no polling when idle
   // ============================================================
@@ -215,23 +270,23 @@ class MeshService private (
       case SyncCommand.PeerDiscovered => currentlyRunning // just wake up the loop
       case SyncCommand.SyncTick => currentlyRunning
 
-end MeshService
+end NeblinkService
 
-object MeshService:
-  private val logger = NebflowLogger.forName("nebflow.mesh")
+object NeblinkService:
+  private val logger = NebflowLogger.forName("nebflow.neblink")
 
   def create(
     serverPort: Int = 8080,
     dispatcher: Dispatcher[IO]
-  ): IO[MeshService] =
+  ): IO[NeblinkService] =
     for
       identity <- DeviceIdentity.loadOrCreate
-      config <- MeshConfig.load
+      config <- NeblinkConfig.load
       idRef <- Ref.of[IO, DeviceIdentity](identity)
-      cfgRef <- Ref.of[IO, MeshConfig](config)
+      cfgRef <- Ref.of[IO, NeblinkConfig](config)
       peersRef <- Ref.of[IO, Map[String, PeerInfo]](Map.empty)
       syncQueue <- Queue.unbounded[IO, SyncCommand]
-      service = new MeshService(idRef, cfgRef, peersRef, serverPort, syncQueue, dispatcher)
+      service = new NeblinkService(idRef, cfgRef, peersRef, serverPort, syncQueue, dispatcher)
       // Start sync loop — Tailscale is the trust boundary, no login needed.
       _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
       _ = dispatcher.unsafeRunAndForget(
@@ -239,4 +294,4 @@ object MeshService:
       )
     yield service
 
-end MeshService
+end NeblinkService
