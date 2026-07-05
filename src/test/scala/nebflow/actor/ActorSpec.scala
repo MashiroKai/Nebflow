@@ -49,7 +49,7 @@ class ActorSpec extends CatsEffectSuite:
       ref <- system.spawn(counter(0), "counter")
       _ <- ref ! Add(5)
       _ <- ref ! Add(3)
-      result <- ref ? (Get(_), 5.seconds)
+      result <- ref ? (Get(_), Some(5.seconds))
       _ <- system.stopAll
     yield assertEquals(result, 8)
   }
@@ -113,7 +113,7 @@ class ActorSpec extends CatsEffectSuite:
 
     for
       ref <- system.spawn(pong, "ping-pong")
-      result <- ref ? (Ping(_), 5.seconds)
+      result <- ref ? (Ping(_), Some(5.seconds))
       _ <- system.stopAll
     yield assertEquals(result, "pong")
   }

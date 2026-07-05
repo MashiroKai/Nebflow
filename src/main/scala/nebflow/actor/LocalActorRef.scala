@@ -19,16 +19,18 @@ final class LocalActorRef[Msg](
 
   def !(msg: Msg): IO[Unit] = queue.offer(msg)
 
-  def ?[Reply](makeMsg: ActorRef[Reply] => Msg, timeout: FiniteDuration): IO[Reply] =
+  def ?[Reply](makeMsg: ActorRef[Reply] => Msg, timeout: Option[FiniteDuration]): IO[Reply] =
     for
       deferred <- Deferred[IO, Reply]
       tempRef = new ActorRef[Reply]:
         val path = ActorPath("__temp", List(java.util.UUID.randomUUID().toString))
         def !(msg: Reply): IO[Unit] = deferred.complete(msg).void
-        def ?[R](m: ActorRef[R] => Reply, t: FiniteDuration): IO[R] =
+        def ?[R](m: ActorRef[R] => Reply, t: Option[FiniteDuration]): IO[R] =
           IO.raiseError(new UnsupportedOperationException("Nested ask not supported"))
       _ <- this ! makeMsg(tempRef)
-      reply <- deferred.get.timeout(timeout)
+      reply <- timeout match
+        case Some(d) => deferred.get.timeout(d)
+        case None => deferred.get
     yield reply
 
   /** Stop this actor — cancel the message loop fiber. */
