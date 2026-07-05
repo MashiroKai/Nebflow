@@ -1556,17 +1556,17 @@ class WebSocketRoutes(
               )
             )
           else
-            sharedResources.meshService match
+            sharedResources.neblinkService match
               case None =>
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "remoteUpdateResult".asJson,
                     "success" -> false.asJson,
-                    "error" -> "Mesh not enabled".asJson
+                    "error" -> "NebLink not enabled".asJson
                   )
                 )
-              case Some(meshService) =>
-                meshService.peers.flatMap { peers =>
+              case Some(neblinkService) =>
+                neblinkService.peers.flatMap { peers =>
                   peers.find(p =>
                     p.deviceName.equalsIgnoreCase(targetDevice) ||
                       p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
@@ -1596,12 +1596,12 @@ class WebSocketRoutes(
                             import sttp.client4.*
                             val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
                             val resp = basicRequest
-                              .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/update"))
+                              .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
                               .contentType("application/json")
                               .body(body)
                               .readTimeout(180.seconds)
                               .response(asStringAlways)
-                              .send(meshService.httpBackend)
+                              .send(neblinkService.httpBackend)
                             resp
                           }.flatMap { resp =>
                             if resp.code.isSuccess then

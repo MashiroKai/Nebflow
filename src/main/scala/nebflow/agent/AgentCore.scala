@@ -660,7 +660,7 @@ private[agent] trait AgentCore:
     val (lastUpdate, cached) = deviceReminderCache
     if now - lastUpdate < 30000 then cached
     else
-      val refreshed = RemoteExecutor.current.flatMap(_.meshServiceOpt).flatMap { ms =>
+      val refreshed = RemoteExecutor.current.flatMap(_.neblinkServiceOpt).flatMap { ms =>
         try
           import cats.effect.unsafe.implicits.global
           val id = ms.identity.unsafeRunSync()

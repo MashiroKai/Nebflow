@@ -1,4 +1,4 @@
-package nebflow.mesh
+package nebflow.neblink
 
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
@@ -7,15 +7,15 @@ import java.nio.file.{Files, Path}
 import scala.jdk.CollectionConverters.*
 
 /**
- * Security-focused tests for Mesh and Auth:
+ * Security-focused tests for NebLink and Auth:
  *   - Auth token generation and validation
  *   - Username/password validation rules
  *   - Path traversal prevention
  *   - Sync edge cases with security implications
  */
-class MeshSecuritySpec extends CatsEffectSuite:
+class NeblinkSecuritySpec extends CatsEffectSuite:
 
-  // ===== Username validation (replicated from MeshService) =====
+  // ===== Username validation (replicated from NeblinkService) =====
 
   test("username validation: rejects empty string") {
     val err = validateUsername("").swap.toOption
@@ -57,7 +57,7 @@ class MeshSecuritySpec extends CatsEffectSuite:
       Left(new RuntimeException("Username can only contain letters, numbers, _ and -"))
     else Right(())
 
-  // ===== Password validation (replicated from MeshService) =====
+  // ===== Password validation (replicated from NeblinkService) =====
 
   test("password validation: rejects empty string") {
     val err = validatePassword("").swap.toOption
@@ -142,6 +142,24 @@ class MeshSecuritySpec extends CatsEffectSuite:
     val n = java.nio.file.Paths.get(relPath).normalize
     if n.startsWith("..") || n.isAbsolute then None else Some(n.toString)
 
+  // ===== File transfer path validation =====
+
+  test("file transfer: rejects path traversal") {
+    val invalid = List("../../etc/passwd", "..", "../", "/etc/passwd", "foo/../../../etc/shadow")
+    invalid.foreach { p =>
+      val n = java.nio.file.Paths.get(p).normalize
+      assert(n.startsWith("..") || n.isAbsolute, s"Path '$p' should be rejected")
+    }
+  }
+
+  test("file transfer: accepts valid relative paths") {
+    val valid = List("output.txt", "src/main.scala", "data/results.json", "agents/Nebula/memory.md")
+    valid.foreach { p =>
+      val n = java.nio.file.Paths.get(p).normalize
+      assert(!n.startsWith("..") && !n.isAbsolute, s"Path '$p' should be accepted")
+    }
+  }
+
   // ===== Auth token =====
 
   test("Auth.generateToken produces unique tokens") {
@@ -188,4 +206,4 @@ class MeshSecuritySpec extends CatsEffectSuite:
 
   // ===== File size limit =====
 
-end MeshSecuritySpec
+end NeblinkSecuritySpec
