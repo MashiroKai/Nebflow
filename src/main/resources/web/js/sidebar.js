@@ -1216,6 +1216,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     saveInputDraft(prevActiveId);
     resetChatForActiveSession();
     restoreInputDraft(activeId);
+    clearMemoryCache();
   }
 
   // ── Performance: skip full DOM rebuild when nothing changed ──────────
