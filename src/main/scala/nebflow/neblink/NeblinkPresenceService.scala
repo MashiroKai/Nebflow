@@ -1,4 +1,4 @@
-package nebflow.mesh
+package nebflow.neblink
 
 import cats.effect.IO
 import cats.effect.std.Dispatcher
@@ -20,7 +20,7 @@ import scala.jdk.CollectionConverters.*
  * Manages outgoing WebSocket presence connections to Tailscale peers.
  *
  * When device A discovers device B via `tailscale status`, A opens a persistent
- * WebSocket to `ws://B:8080/api/mesh/presence`. As long as the WS is open, both
+ * WebSocket to `ws://B:8080/api/neblink/presence`. As long as the WS is open, both
  * devices consider each other online.
  *
  * Heartbeat: ping every 10s; if no pong for 20s the connection is forcibly closed.
@@ -33,11 +33,11 @@ import scala.jdk.CollectionConverters.*
  * (~5 min total) or when the peer is explicitly disconnected (left tailnet /
  * logout).
  */
-final class MeshPresenceService(
-  meshService: MeshService,
+final class NeblinkPresenceService(
+  neblinkService: NeblinkService,
   serverPort: Int
 )(dispatcher: Dispatcher[IO]):
-  private val logger = NebflowLogger.forName("nebflow.mesh.presence")
+  private val logger = NebflowLogger.forName("nebflow.neblink.presence")
 
   private case class PresenceConnection(
     ws: WebSocket,
@@ -60,7 +60,7 @@ final class MeshPresenceService(
   /**
    * Reconcile active WS connections with a freshly scanned peer list.
    *
-   * - Upserts discovered peers into the MeshService peer list.
+   * - Upserts discovered peers into the NeblinkService peer list.
    * - Connects to peers that are in the list but have no active WS (and aren't
    *   already being auto-reconnected).
    * - Disconnects from peers that have a WS but are no longer in the list.
@@ -73,10 +73,10 @@ final class MeshPresenceService(
     val staleReconnectIds =
       reconnecting.keySet().asScala.filterNot(peerIds.contains).toList
     for
-      _ <- peers.traverse_(peer => meshService.upsertPeer(peer))
+      _ <- peers.traverse_(peer => neblinkService.upsertPeer(peer))
       // Disconnect peers that left the tailnet
       _ <- IO.blocking(staleIds.foreach(id => disconnectPeer(id)))
-      _ <- staleIds.traverse_(id => meshService.removePeer(id))
+      _ <- staleIds.traverse_(id => neblinkService.removePeer(id))
       // Cancel reconnection for peers no longer in the tailnet
       _ <- IO.blocking(staleReconnectIds.foreach(id => cancelReconnect.put(id, true)))
       // Connect to peers without active connection, skip those already reconnecting
@@ -94,7 +94,7 @@ final class MeshPresenceService(
       extractHost(peer.address) match
         case None => IO.unit
         case Some(host) =>
-          meshService.identity
+          neblinkService.identity
             .flatMap { id =>
               IO.blocking {
                 val wsUri = buildWsUri(host, id)
@@ -136,7 +136,7 @@ final class MeshPresenceService(
                                 case _: Exception => ()
                             // Remove peer and trigger auto-reconnect
                             dispatcher.unsafeRunAndForget(
-                              meshService.removePeer(peer.deviceId) *>
+                              neblinkService.removePeer(peer.deviceId) *>
                                 logger.info(s"Heartbeat timeout: ${peer.deviceName}, auto-reconnecting...") *>
                                 startReconnect(peer)
                             )
@@ -186,7 +186,7 @@ final class MeshPresenceService(
    * If the close was unexpected (alive still true), removes the peer and
    * starts auto-reconnection immediately.
    */
-  private[mesh] def onClosed(deviceId: String, peer: PeerInfo): Unit =
+  private[neblink] def onClosed(deviceId: String, peer: PeerInfo): Unit =
     val conn = connections.remove(deviceId)
     if conn != null then
       try conn.heartbeat.shutdownNow()
@@ -194,16 +194,34 @@ final class MeshPresenceService(
       if conn.alive.get() then
         // Unexpected close — remove peer and auto-reconnect
         dispatcher.unsafeRunAndForget(
-          meshService.removePeer(deviceId) *>
+          neblinkService.removePeer(deviceId) *>
             logger.info(s"Presence disconnected: ${peer.deviceName}, auto-reconnecting...") *>
             startReconnect(peer)
         )
     // If conn is null, heartbeat-timeout or disconnectPeer already handled it.
 
   /** Called by the WS listener when a pong frame arrives — refreshes liveness. */
-  private[mesh] def updateLastPong(deviceId: String): Unit =
+  private[neblink] def updateLastPong(deviceId: String): Unit =
     val conn = connections.get(deviceId)
     if conn != null then conn.lastPong.set(System.currentTimeMillis())
+
+  /** Called by the WS listener when a data message arrives from a peer. */
+  private[neblink] def onDataReceived(payload: Json): Unit =
+    dispatcher.unsafeRunAndForget(neblinkService.handleDataMessage(payload))
+
+  /** Send a data message to a connected peer over the WS presence connection. */
+  def sendData(deviceId: String, channel: String, payload: Json): IO[Unit] =
+    IO.blocking {
+      val conn = connections.get(deviceId)
+      if conn != null then
+        val msg = Json.obj(
+          "type" -> "data".asJson,
+          "channel" -> channel.asJson,
+          "payload" -> payload
+        )
+        conn.ws.sendText(msg.noSpaces, true)
+      ()
+    }
 
   /**
    * Start an auto-reconnection loop for a peer. Idempotent: if the peer is
@@ -251,9 +269,9 @@ final class MeshPresenceService(
             connect(peer)
               .flatMap { _ =>
                 if connections.containsKey(peer.deviceId) then
-                  // Success — re-add peer to MeshService and clean up
+                  // Success — re-add peer to NeblinkService and clean up
                   reconnecting.remove(peer.deviceId)
-                  meshService.upsertPeer(peer) *>
+                  neblinkService.upsertPeer(peer) *>
                     logger.info(s"Reconnected to ${peer.deviceName} after ${attempt + 1} attempt(s)")
                 else reconnectLoop(peer, attempt + 1)
               }
@@ -296,23 +314,23 @@ final class MeshPresenceService(
       "port" -> serverPort.toString
     )
     val query = params.map((k, v) => s"$k=${enc(v)}").mkString("&")
-    s"ws://$host:$serverPort/api/mesh/presence?$query"
+    s"ws://$host:$serverPort/api/neblink/presence?$query"
 
   private def enc(s: String): String =
     try java.net.URLEncoder.encode(s, "UTF-8")
     catch case _: Exception => s
-end MeshPresenceService
+end NeblinkPresenceService
 
 /**
  * JDK WebSocket.Listener for outgoing presence connections.
- * Forwards events back to MeshPresenceService — stateless on its own.
+ * Forwards events back to NeblinkPresenceService — stateless on its own.
  * Uses *Sync logging because callbacks run on JDK WS threads (no IO context).
  */
 private final class PresenceWsListener(
-  service: MeshPresenceService,
+  service: NeblinkPresenceService,
   peer: PeerInfo
 ) extends WebSocket.Listener:
-  private val logger = NebflowLogger.forName("nebflow.mesh.presence")
+  private val logger = NebflowLogger.forName("nebflow.neblink.presence")
 
   override def onOpen(ws: WebSocket): Unit =
     ws.request(1)
@@ -328,9 +346,14 @@ private final class PresenceWsListener(
               // Respond to server-side heartbeat
               try ws.sendText("""{"type":"pong"}""", true)
               catch case _: Exception => ()
+            case "data" =>
+              // Forward data message to registered handlers
+              val payload = json.hcursor.downField("payload").focus.getOrElse(Json.Null)
+              service.onDataReceived(payload)
             case _ => ()
         case Left(_) => ()
     catch case _: Exception => ()
+    end try
     ws.request(1)
     null
 

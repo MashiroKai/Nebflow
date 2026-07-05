@@ -1,19 +1,19 @@
-/* Mesh — embedded in settings panel */
+/* NebLink — embedded in settings panel */
 
 /* Inline error/info messages */
-.mesh-error {
+.neblink-error {
   font-size: 12px;
   color: var(--color-error);
   margin-bottom: 8px;
   word-break: break-word;
 }
-.mesh-info {
+.neblink-info {
   font-size: 12px;
   color: var(--color-success);
   margin-bottom: 8px;
 }
 
-.mesh-section-label {
+.neblink-section-label {
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -23,7 +23,7 @@
 }
 
 /* Peers list */
-.mesh-peers-list {
+.neblink-peers-list {
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -31,7 +31,7 @@
   overflow-y: auto;
 }
 
-.mesh-peer {
+.neblink-peer {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -39,9 +39,9 @@
   border-radius: 4px;
   font-size: 13px;
 }
-.mesh-peer:hover { background: var(--color-bg); }
+.neblink-peer:hover { background: var(--color-bg); }
 
-.mesh-peer-dot {
+.neblink-peer-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -49,19 +49,19 @@
 }
 .dot-on { background: var(--color-success); }
 
-.mesh-peer-name {
+.neblink-peer-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mesh-peer-platform {
+.neblink-peer-platform {
   font-size: 11px;
   color: var(--color-text-muted);
 }
 
-.mesh-peer-status {
+.neblink-peer-status {
   font-size: 11px;
   color: var(--color-text-muted);
 }
@@ -71,7 +71,7 @@
   font-weight: 500;
 }
 
-.mesh-peer-caps {
+.neblink-peer-caps {
   font-size: 10px;
   color: var(--color-text-muted);
   background: var(--color-bg);
@@ -80,7 +80,7 @@
   flex-shrink: 0;
 }
 
-.mesh-peer-desc {
+.neblink-peer-desc {
   font-size: 11px;
   color: var(--color-text-muted);
   font-style: italic;
@@ -91,7 +91,7 @@
 }
 
 /* Peer update button */
-.mesh-peer-update-btn {
+.neblink-peer-update-btn {
   font-size: 11px;
   padding: 2px 8px;
   border: 1px solid var(--color-border);
@@ -102,19 +102,19 @@
   flex-shrink: 0;
   transition: all 0.15s;
 }
-.mesh-peer-update-btn:hover {
+.neblink-peer-update-btn:hover {
   color: var(--color-primary);
   border-color: var(--color-primary);
 }
 
 /* Inline channel selection */
-.mesh-update-inline {
+.neblink-update-inline {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
 }
-.mesh-ch-btn {
+.neblink-ch-btn {
   font-size: 11px;
   padding: 2px 8px;
   border: 1px solid var(--color-border);
@@ -124,15 +124,15 @@
   cursor: pointer;
   transition: all 0.15s;
 }
-.mesh-ch-btn:hover {
+.neblink-ch-btn:hover {
   border-color: var(--color-primary);
   color: var(--color-primary);
 }
-.mesh-ch-btn.mesh-ch-beta:hover {
+.neblink-ch-btn.neblink-ch-beta:hover {
   border-color: var(--color-warning);
   color: var(--color-warning);
 }
-.mesh-ch-cancel {
+.neblink-ch-cancel {
   font-size: 11px;
   padding: 2px 6px;
   border: none;
@@ -140,10 +140,10 @@
   color: var(--color-text-muted);
   cursor: pointer;
 }
-.mesh-ch-cancel:hover { color: var(--color-text); }
+.neblink-ch-cancel:hover { color: var(--color-text); }
 
 /* Update status indicators */
-.mesh-update-status {
+.neblink-update-status {
   font-size: 11px;
   flex-shrink: 0;
   white-space: nowrap;
@@ -151,11 +151,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.mesh-update-status.updating { color: var(--color-warning); }
-.mesh-update-status.done { color: var(--color-success); }
-.mesh-update-status.error { color: var(--color-error); }
+.neblink-update-status.updating { color: var(--color-warning); }
+.neblink-update-status.done { color: var(--color-success); }
+.neblink-update-status.error { color: var(--color-error); }
 
-.mesh-caps-display {
+.neblink-caps-display {
   font-size: 11px;
   color: var(--color-text-muted);
   margin-top: 8px;
@@ -165,28 +165,28 @@
 }
 
 /* Actions */
-.mesh-actions-row {
+.neblink-actions-row {
   display: flex;
   gap: 8px;
   margin-top: 10px;
 }
 
 /* Advanced (collapsible) */
-.mesh-advanced {
+.neblink-advanced {
   margin-top: 12px;
   font-size: 13px;
 }
-.mesh-advanced summary {
+.neblink-advanced summary {
   cursor: pointer;
   color: var(--color-text-muted);
   font-size: 12px;
 }
-.mesh-advanced summary:hover {
+.neblink-advanced summary:hover {
   color: var(--color-text);
 }
 
 /* Header button */
-#mesh-btn {
+#neblink-btn {
   background: none;
   border: none;
   color: var(--color-text-muted);
@@ -197,7 +197,7 @@
   align-items: center;
   transition: color 0.15s, background 0.15s;
 }
-#mesh-btn:hover { color: var(--color-text); background: var(--color-bg); }
-#mesh-btn.hidden { display: none; }
-#mesh-btn.mesh-on { color: var(--color-success); }
-#mesh-btn.mesh-off { color: var(--color-text-muted); }
+#neblink-btn:hover { color: var(--color-text); background: var(--color-bg); }
+#neblink-btn.hidden { display: none; }
+#neblink-btn.neblink-on { color: var(--color-success); }
+#neblink-btn.neblink-off { color: var(--color-text-muted); }

@@ -13,7 +13,7 @@ import nebflow.core.tools.FileLockManager
 import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
-import nebflow.mesh.MeshService
+import nebflow.neblink.NeblinkService
 import nebflow.shared.*
 
 /**
@@ -43,7 +43,7 @@ case class SharedResources(
   bridgeManager: Option[BridgeManager] = None,
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
   telemetry: Option[TelemetryReporter] = None,
-  meshService: Option[MeshService] = None,
+  neblinkService: Option[NeblinkService] = None,
   dreamSchedulerRef: Option[DreamScheduler] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None
 )
