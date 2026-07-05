@@ -857,6 +857,36 @@
   color: var(--color-text);
 }
 
+/* Streaming tool argument body — shown while LLM generates tool call input */
+.tool-stream-body {
+  margin-top: 4px;
+  max-height: 45vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: #f5f5f5;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.tool-stream-body pre.tool-body-pre {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre;
+  color: #555;
+}
+.tool-stream-body pre.tool-body-pre .cursor {
+  display: inline-block;
+  width: 5px;
+  height: 12px;
+  background: #888;
+  vertical-align: text-bottom;
+  animation: blink 1s steps(2) infinite;
+  margin-left: 1px;
+}
+.tool-stream-body::-webkit-scrollbar-track { background: transparent; }
+.tool-stream-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
+.tool-stream-body::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
+
 .error-card {
   background: #ffebee;
   color: #c62828;
@@ -929,6 +959,11 @@
   .tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
   .tool-card .body.open::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
   .tool-card .body .detail-cmd { border-bottom-color: #2a2d35; color: #7b7e88; }
+
+  .tool-stream-body { background: #171a21; }
+  .tool-stream-body pre.tool-body-pre { color: #c0c3ca; }
+  .tool-stream-body pre.tool-body-pre .cursor { background: #7b7e88; }
+  .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
 
   .history-loader { color: #656870; }
   .history-loader .history-spinner { border-color: #282b33; border-top-color: #7b7e88; }
