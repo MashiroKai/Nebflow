@@ -49,7 +49,7 @@ object UpdateCommand extends CliCommand:
     def run(ctx: CliContext): IO[CliResult] =
       ctx.args.get("device") match
         case Some(deviceName) if deviceName != "true" =>
-          // Remote update — call the target device's /api/mesh/update via mesh
+          // Remote update — call the target device's /api/neblink/update via neblink
           remoteUpdate(deviceName, ctx.args.get("beta").contains("true"))
         case _ =>
           // Local update (existing behavior)
@@ -68,15 +68,15 @@ object UpdateCommand extends CliCommand:
             else CliResult.Error("Update failed", exitCode)
           }
 
-    /** Trigger update on a remote device via mesh P2P. */
+    /** Trigger update on a remote device via neblink P2P. */
     private def remoteUpdate(deviceName: String, beta: Boolean): IO[CliResult] =
       GatewayClient.create.flatMap {
         case None =>
           IO.pure(
-            CliResult.Error("Gateway not running. Start with 'nebflow start' (local gateway needed for mesh status)")
+            CliResult.Error("Gateway not running. Start with 'nebflow start' (local gateway needed for neblink status)")
           )
         case Some(client) =>
-          client.get("/api/mesh/status").flatMap { statusJson =>
+          client.get("/api/neblink/status").flatMap { statusJson =>
             val peers = statusJson.hcursor.downField("peers").as[List[Json]].getOrElse(Nil)
             // Find the target device (fuzzy match like RemoteExecutor)
             val matchOpt = peers.find { p =>
@@ -98,12 +98,12 @@ object UpdateCommand extends CliCommand:
                 if address.isEmpty then IO.pure(CliResult.Error(s"Device '$deviceName' has no address"))
                 else
                   IO.blocking {
-                    // POST to remote device's /api/mesh/update (Tailscale IP auth — no token needed)
+                    // POST to remote device's /api/neblink/update (Tailscale IP auth — no token needed)
                     import sttp.client4.*
                     val backend = DefaultSyncBackend()
                     val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
                     val resp = basicRequest
-                      .post(sttp.model.Uri.unsafeParse(s"$address/api/mesh/update"))
+                      .post(sttp.model.Uri.unsafeParse(s"$address/api/neblink/update"))
                       .contentType("application/json")
                       .body(body)
                       .readTimeout(180.seconds)
