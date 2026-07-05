@@ -17,8 +17,8 @@ object PathUtil:
    * and a Windows JVM correctly recognizes `/foo`.
    */
   def isAbsolute(s: String): Boolean =
-    s.startsWith("/") ||                    // Unix absolute
-      s.startsWith("\\\\") ||              // UNC path (\\server\share)
+    s.startsWith("/") || // Unix absolute
+      s.startsWith("\\\\") || // UNC path (\\server\share)
       (s.length >= 2 && s.charAt(1) == ':') // Windows drive (C:\...)
 
   /** Construct an os.Path from a string, handling Windows cross-drive paths. */

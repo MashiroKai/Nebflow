@@ -72,7 +72,9 @@ object UpdateCommand extends CliCommand:
     private def remoteUpdate(deviceName: String, beta: Boolean): IO[CliResult] =
       GatewayClient.create.flatMap {
         case None =>
-          IO.pure(CliResult.Error("Gateway not running. Start with 'nebflow start' (local gateway needed for mesh status)"))
+          IO.pure(
+            CliResult.Error("Gateway not running. Start with 'nebflow start' (local gateway needed for mesh status)")
+          )
         case Some(client) =>
           client.get("/api/mesh/status").flatMap { statusJson =>
             val peers = statusJson.hcursor.downField("peers").as[List[Json]].getOrElse(Nil)
@@ -80,15 +82,17 @@ object UpdateCommand extends CliCommand:
             val matchOpt = peers.find { p =>
               val name = p.hcursor.downField("deviceName").as[String].getOrElse("")
               name.equalsIgnoreCase(deviceName) ||
-                name.toLowerCase.contains(deviceName.toLowerCase)
+              name.toLowerCase.contains(deviceName.toLowerCase)
             }
             matchOpt match
               case None =>
                 val available = peers.map(_.hcursor.downField("deviceName").as[String].getOrElse("?"))
-                IO.pure(CliResult.Error(
-                  if peers.isEmpty then s"No peer devices discovered. Ensure Tailscale is running on both machines."
-                  else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
-                ))
+                IO.pure(
+                  CliResult.Error(
+                    if peers.isEmpty then s"No peer devices discovered. Ensure Tailscale is running on both machines."
+                    else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
+                  )
+                )
               case Some(peer) =>
                 val address = peer.hcursor.downField("address").as[String].getOrElse("")
                 if address.isEmpty then IO.pure(CliResult.Error(s"Device '$deviceName' has no address"))
@@ -107,11 +111,12 @@ object UpdateCommand extends CliCommand:
                       .send(backend)
                     if resp.code.isSuccess then
                       CliResult.text(s"Remote update on $deviceName: update installed, device is restarting...")
-                    else
-                      CliResult.Error(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}")
+                    else CliResult.Error(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}")
                   }.handleErrorWith { e =>
                     IO.pure(CliResult.Error(s"Cannot reach $deviceName at $address: ${e.getMessage}"))
                   }
+                end if
+            end match
           }
       }
 

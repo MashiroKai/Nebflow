@@ -59,14 +59,14 @@ object AutoStartCommand extends CliCommand:
           if osName.contains("mac") then os.exists(launchAgentPlist)
           else if osName.contains("win") then checkWindowsTask()
           else os.exists(linuxAutostartFile)
-        if ctx.json then
-          CliResult.Json(io.circe.Json.obj("enabled" -> enabled.asJson))
+        if ctx.json then CliResult.Json(io.circe.Json.obj("enabled" -> enabled.asJson))
         else
           CliResult.text(
             if enabled then "Auto-start: enabled"
             else "Auto-start: disabled"
           )
       }
+  end AutoStartStatus
 
   // ===== macOS (LaunchAgent) =====
 
@@ -74,7 +74,8 @@ object AutoStartCommand extends CliCommand:
     val javaBin = RestartHelper.resolveJavaBin()
     val jarPath = RestartHelper.resolveJarPath()
     jarPath match
-      case None => CliResult.Error("Cannot determine JAR path — run 'nebflow autostart enable' from a running Nebflow instance")
+      case None =>
+        CliResult.Error("Cannot determine JAR path — run 'nebflow autostart enable' from a running Nebflow instance")
       case Some(jar) =>
         val logsDir = PathUtil.dataRoot / "logs"
         if !os.exists(logsDir) then os.makeDir.all(logsDir)
@@ -111,8 +112,10 @@ object AutoStartCommand extends CliCommand:
         if !os.exists(plistDir) then os.makeDir.all(plistDir)
         os.write.over(launchAgentPlist, plist)
         // Unload if already loaded, then load
-        try s"launchctl unload ${launchAgentPlist}".! catch case _: Exception => ()
-        try s"launchctl load ${launchAgentPlist}".! catch case _: Exception => ()
+        try s"launchctl unload ${launchAgentPlist}".!
+        catch case _: Exception => ()
+        try s"launchctl load ${launchAgentPlist}".!
+        catch case _: Exception => ()
         CliResult.text(
           "Auto-start enabled (macOS LaunchAgent)",
           s"  Plist: ${launchAgentPlist}",
@@ -120,13 +123,17 @@ object AutoStartCommand extends CliCommand:
           s"  Logs: $logPath"
         )
 
+    end match
+
+  end enableMacOS
+
   private def disableMacOS(): CliResult =
     if os.exists(launchAgentPlist) then
-      try s"launchctl unload ${launchAgentPlist}".! catch case _: Exception => ()
+      try s"launchctl unload ${launchAgentPlist}".!
+      catch case _: Exception => ()
       os.remove(launchAgentPlist)
       CliResult.text("Auto-start disabled (LaunchAgent removed)")
-    else
-      CliResult.text("Auto-start was not enabled")
+    else CliResult.text("Auto-start was not enabled")
 
   // ===== Windows (Scheduled Task) =====
 
@@ -141,11 +148,16 @@ object AutoStartCommand extends CliCommand:
         // Command for scheduled task
         val cmd = s""""$javaBin" --add-opens java.base/java.lang=ALL-UNNAMED -jar "$jar" start --no-browser"""
         val createCmd = Seq(
-          "schtasks", "/create",
-          "/tn", winTaskName,
-          "/tr", cmd,
-          "/sc", "onlogon",
-          "/rl", "highest",
+          "schtasks",
+          "/create",
+          "/tn",
+          winTaskName,
+          "/tr",
+          cmd,
+          "/sc",
+          "onlogon",
+          "/rl",
+          "highest",
           "/f"
         )
         val exitCode = createCmd.!
@@ -155,12 +167,17 @@ object AutoStartCommand extends CliCommand:
             s"  Task: $winTaskName",
             "  Nebflow will start automatically on login."
           )
-        else
-          CliResult.Error(s"Failed to create scheduled task (exit code: $exitCode)")
+        else CliResult.Error(s"Failed to create scheduled task (exit code: $exitCode)")
+
+    end match
+
+  end enableWindows
 
   private def disableWindows(): CliResult =
     val deleteCmd = Seq("schtasks", "/delete", "/tn", winTaskName, "/f")
-    val exitCode = try deleteCmd.! catch case _: Exception => 1
+    val exitCode =
+      try deleteCmd.!
+      catch case _: Exception => 1
     if exitCode == 0 then CliResult.text("Auto-start disabled (scheduled task removed)")
     else CliResult.text("Auto-start was not enabled")
 
@@ -198,11 +215,14 @@ X-GNOME-Autostart-enabled=true
           "  Nebflow will start automatically on login."
         )
 
+    end match
+
+  end enableLinux
+
   private def disableLinux(): CliResult =
     if os.exists(linuxAutostartFile) then
       os.remove(linuxAutostartFile)
       CliResult.text("Auto-start disabled (autostart entry removed)")
-    else
-      CliResult.text("Auto-start was not enabled")
+    else CliResult.text("Auto-start was not enabled")
 
 end AutoStartCommand
