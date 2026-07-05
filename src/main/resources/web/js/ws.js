@@ -127,6 +127,7 @@ export function connect() {
       const STREAM_MSG_TYPES = [
         'thinkingDelta', 'textDelta', 'textDone',
         'toolCallDetected', 'toolCallStart', 'toolCallChunk', 'toolStart', 'toolEnd',
+        'toolArgDelta',
         'roundComplete',
         'agentStart', 'agentTextDelta', 'agentToolCallDetected',
         'agentToolStart', 'agentToolEnd', 'agentEnd',
