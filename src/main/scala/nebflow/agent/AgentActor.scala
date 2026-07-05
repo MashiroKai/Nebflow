@@ -723,7 +723,7 @@ object AgentActor extends AgentCore with AgentSession:
           "type" -> "askUser".asJson,
           "sessionId" -> state.sessionId.asJson,
           "items" -> Json.fromValues(items.map { item =>
-            Json.obj(
+            val base = scala.collection.mutable.ListBuffer(
               "question" -> item.question.asJson,
               "options" -> Json.fromValues(item.options.map { opt =>
                 val fields = scala.collection.mutable.ListBuffer("label" -> opt.label.asJson)
@@ -732,6 +732,11 @@ object AgentActor extends AgentCore with AgentSession:
               }),
               "allowOther" -> item.allowOther.asJson
             )
+            item.id.foreach(id => base += "id" -> id.asJson)
+            item.dependsOn.foreach { dep =>
+              base += "dependsOn" -> Json.obj("ref" -> dep.ref.asJson, "equals" -> dep.equals.asJson)
+            }
+            Json.obj(base.toList*)
           })
         )
         val updatedInteraction = Some(
@@ -824,8 +829,16 @@ object AgentActor extends AgentCore with AgentSession:
       // --- Session management (persistent sub-agents) ---
       case AgentCommand.SessionStarted(address, agentName, taskDescription) =>
         val session = AgentSessionInfo(address, agentName, taskDescription, "running")
-        IO.pure(processing(agentDef, resources, depth, parentRef,
-          state.withAgentSessions(state.agentSessions :+ session), pending))
+        IO.pure(
+          processing(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withAgentSessions(state.agentSessions :+ session),
+            pending
+          )
+        )
 
       case AgentCommand.SessionUpdate(address, status) =>
         val updated = state.agentSessions.map(s => if s.address == address then s.copy(status = status) else s)

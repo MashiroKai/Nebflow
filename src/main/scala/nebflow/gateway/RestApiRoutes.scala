@@ -421,15 +421,19 @@ class RestApiRoutes(
                         IO.sleep(1.second) *> IO(System.exit(0))
                       )
                     } *>
-                    Ok(Json.obj(
-                      "ok" -> true.asJson,
-                      "message" -> "Update installed, restarting...".asJson
-                    ))
+                    Ok(
+                      Json.obj(
+                        "ok" -> true.asJson,
+                        "message" -> "Update installed, restarting...".asJson
+                      )
+                    )
                 else
-                  Ok(Json.obj(
-                    "ok" -> false.asJson,
-                    "error" -> s"Install script failed (exit code: $exitCode)".asJson
-                  ))
+                  Ok(
+                    Json.obj(
+                      "ok" -> false.asJson,
+                      "error" -> s"Install script failed (exit code: $exitCode)".asJson
+                    )
+                  )
               }
           }
       }
