@@ -126,6 +126,8 @@ object StreamChunk:
 
   /** Emitted as soon as the LLM starts streaming a tool_use block (name known, input still streaming). */
   case class ToolCallStart(name: String) extends StreamChunk
+  /** Emitted for each partial argument fragment while the LLM is still generating tool call input. */
+  case class ToolArgDelta(toolName: String, delta: String) extends StreamChunk
   case class ToolCallChunk(toolCall: ToolCall) extends StreamChunk
 
   case class Done(
