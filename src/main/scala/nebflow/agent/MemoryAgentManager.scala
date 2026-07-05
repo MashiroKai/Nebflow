@@ -140,7 +140,7 @@ class MemoryAgentManager(
           logger.warnSync(s"Daily backup failed: ${e.getMessage}")
 
     try
-      val allFiles = collectAllFiles()
+      val allFiles = collectAllFiles(entries)
       val userInputs =
         if isFullCycle then dispatcher.unsafeRunSync(collectRecentUserInputs)
         else ""
@@ -254,11 +254,14 @@ class MemoryAgentManager(
         val entryLines = entries.map { e =>
           val hash = e.detail.filter(_.trim.nonEmpty).map(_ => MemoryStore.contentHash(e.content))
           val detailNote = hash.map(h => s" (detail →$h)").getOrElse("")
+          val folderJson = e.folderId match
+            case Some(fid) => s""""$fid""""
+            case None => "null"
           s"""{"scope":"${e.scope}","content":"${e.content
               .replace("\"", "\\\"")
               .take(200)}","detail":${e.detail.isDefined},"hash":${hash.getOrElse(
               "null"
-            )},"source":"${e.source}","folder":${e.folderId.getOrElse("null")}}$detailNote"""
+            )},"source":"${e.source}","folder":$folderJson}$detailNote"""
         }
         s"""|
            |## New observations to process
@@ -304,12 +307,24 @@ class MemoryAgentManager(
   // File collection
   // ============================================================
 
-  private def collectAllFiles(): Seq[FileInfo] =
+  private def collectAllFiles(entries: List[DreamCommand.ProcessEntry]): Seq[FileInfo] =
     val agentName = currentAgentName
+    val existingFolderPaths = MemoryStore.allFolderMemoryPaths
+    val existingFolderIds = existingFolderPaths.map(_.last.stripSuffix(".memory.md")).toSet
+
+    // Include folder paths from entries whose files don't exist yet
+    val entryFolderPaths = entries
+      .filter(_.scope == "folder")
+      .flatMap(_.folderId)
+      .distinct
+      .filterNot(existingFolderIds.contains)
+      .map(MemoryStore.folderMemoryPath)
+
     val all = Seq(
       FileInfo(MemoryStore.userMemoryPath, "User", false),
       FileInfo(MemoryStore.agentMemoryPath(agentName), "Agent", false)
-    ) ++ MemoryStore.allFolderMemoryPaths.map(p => FileInfo(p, "Folder", false))
+    ) ++ existingFolderPaths.map(p => FileInfo(p, "Folder", false))
+      ++ entryFolderPaths.map(p => FileInfo(p, "Folder", false))
 
     all.map { f =>
       val changed = os.exists(f.path) && {
