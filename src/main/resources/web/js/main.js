@@ -11,7 +11,8 @@ import {
   showOptions, renderAskUser, renderPermissionPrompt,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
-  appendThinkingDelta, finishThinking
+  appendThinkingDelta, finishThinking,
+  appendToolStreamDelta
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -463,6 +464,9 @@ onMessage('toolCallDetected', (msg, view) => {
       saveMsg(prevData, msg.sessionId);
     }
     renderToolPending(msg.name, msg.sessionId);
+    // Reset tool argument streaming for the new tool call
+    activeView.stream.toolStreamText = '';
+    activeView.stream.toolStreamToolName = msg.name;
   }
 });
 
@@ -515,6 +519,13 @@ onMessage('toolEnd', (msg, view) => {
     if (data) saveMsg(data, msg.sessionId);
   } else {
     saveMsg({type: 'tool', label: msg.label, summary: msg.summary, content: msg.content, isError: msg.isError, input: msg.input}, msg.sessionId);
+  }
+});
+
+onMessage('toolArgDelta', (msg, view) => {
+  resetStreamTimeout(msg.sessionId);
+  if (view) {
+    appendToolStreamDelta(msg.toolName, msg.delta);
   }
 });
 
@@ -726,6 +737,9 @@ onMessage('done', (msg, view) => {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
     }
+    // Reset tool argument streaming state
+    activeView.stream.toolStreamText = '';
+    activeView.stream.toolStreamToolName = '';
     // Clean up pending segments accumulated at tool boundaries
     if (sid && state.sessionPendingAiMessages[sid]) delete state.sessionPendingAiMessages[sid];
     // Clean up pendingRestore (previous turn's data no longer needed)

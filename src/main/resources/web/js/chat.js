@@ -404,6 +404,137 @@ export function renderToolPending(label, sessionId) {
   state.sessionToolCards[sid] = row;
 }
 
+// ---------- Tool argument streaming ----------
+// While the LLM generates tool call arguments (e.g. Write content, Bash command),
+// toolArgDelta events stream partial JSON fragments. We accumulate them and try
+// to extract the primary content field for display, giving the user real-time
+// feedback instead of just a spinner.
+
+const TOOL_PRIMARY_FIELDS = {
+  'Write': 'content',
+  'Edit': 'new_string',
+  'Bash': 'command',
+  'Card': 'html',
+};
+
+/**
+ * Best-effort extraction of a JSON string field value from partial JSON.
+ * Returns { value, complete } or null if the field hasn't been started yet.
+ * Handles JSON string escapes (\n, \t, \", \\, \uXXXX).
+ */
+function extractFieldValueFromPartialJson(partialJson, fieldName) {
+  const marker = '"' + fieldName + '"';
+  const markerIdx = partialJson.indexOf(marker);
+  if (markerIdx === -1) return null;
+
+  let idx = markerIdx + marker.length;
+  // Skip whitespace and colon
+  while (idx < partialJson.length && /[\s:]/.test(partialJson[idx])) idx++;
+  if (idx >= partialJson.length || partialJson[idx] !== '"') return null;
+  idx++; // skip opening quote
+
+  let result = '';
+  while (idx < partialJson.length) {
+    const ch = partialJson[idx];
+    if (ch === '\\' && idx + 1 < partialJson.length) {
+      const next = partialJson[idx + 1];
+      switch (next) {
+        case 'n': result += '\n'; break;
+        case 't': result += '\t'; break;
+        case 'r': result += '\r'; break;
+        case '"': result += '"'; break;
+        case '\\': result += '\\'; break;
+        case '/': result += '/'; break;
+        case 'b': result += '\b'; break;
+        case 'f': result += '\f'; break;
+        case 'u':
+          if (idx + 5 < partialJson.length) {
+            const code = parseInt(partialJson.substr(idx + 2, 4), 16);
+            if (!isNaN(code)) result += String.fromCodePoint(code);
+            idx += 4;
+          }
+          break;
+        default: result += next;
+      }
+      idx += 2;
+    } else if (ch === '"') {
+      // Closing quote — field is complete
+      return { value: result, complete: true };
+    } else {
+      result += ch;
+      idx++;
+    }
+  }
+  // Stream still open — return what we have so far
+  return { value: result, complete: false };
+}
+
+// rAF-throttled rendering (same pattern as appendThinkingDelta)
+let _pendingToolStreamRAF = null;
+let _toolStreamRafTarget = null;
+
+export function appendToolStreamDelta(toolName, delta) {
+  activeView.stream.toolStreamText += delta;
+  activeView.stream.toolStreamToolName = toolName;
+
+  const sid = activeView.sessionId;
+  const pendingRow = state.sessionToolCards[sid];
+  if (!pendingRow || !pendingRow.isConnected) return;
+
+  _toolStreamRafTarget = {
+    row: pendingRow,
+    chat: activeView.dom.chat,
+    toolName: toolName,
+    rawText: activeView.stream.toolStreamText,
+  };
+
+  if (!_pendingToolStreamRAF) {
+    _pendingToolStreamRAF = requestAnimationFrame(() => {
+      _pendingToolStreamRAF = null;
+      const target = _toolStreamRafTarget;
+      _toolStreamRafTarget = null;
+      if (!target || !target.row || !target.row.isConnected) return;
+
+      // Extract displayable content from partial JSON
+      const fieldName = TOOL_PRIMARY_FIELDS[target.toolName];
+      let displayContent = null;
+      if (fieldName) {
+        const extracted = extractFieldValueFromPartialJson(target.rawText, fieldName);
+        if (extracted) displayContent = extracted.value;
+      }
+      if (displayContent === null) return; // primary field not started yet
+
+      // Find or create streaming body in the tool card
+      let bodyEl = target.row.querySelector('.tool-stream-body');
+      if (!bodyEl) {
+        bodyEl = document.createElement('div');
+        bodyEl.className = 'tool-stream-body';
+        const card = target.row.querySelector('.tool-card');
+        if (card) {
+          const contentDiv = card.querySelector('.content');
+          if (contentDiv) contentDiv.appendChild(bodyEl);
+          else card.appendChild(bodyEl);
+        }
+      }
+      bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
+
+      // Auto-scroll
+      const threshold = 60;
+      if (target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+        target.chat.scrollTop = target.chat.scrollHeight;
+      }
+    });
+  }
+}
+
+/** Cancel pending rAF — called on cleanup. */
+export function cancelToolStreamRAF() {
+  if (_pendingToolStreamRAF) {
+    cancelAnimationFrame(_pendingToolStreamRAF);
+    _pendingToolStreamRAF = null;
+  }
+}
+
 // ---------- Error ----------
 export function renderError(msg) {
   const chat = activeView.dom.chat;
