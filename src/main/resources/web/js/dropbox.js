@@ -56,7 +56,6 @@ function renderModal(device) {
   // Remove existing
   document.getElementById('dropbox-overlay')?.remove();
 
-  const isLocal = device.isLocal;
   const overlay = document.createElement('div');
   overlay.id = 'dropbox-overlay';
   overlay.className = 'cfg-modal-overlay';
@@ -73,20 +72,18 @@ function renderModal(device) {
       </div>
       <div class="dropbox-device-info">
         <span class="dropbox-info-badge">${platform}</span>
-        ${device.isLocal ? '' : '<span class="dropbox-info-badge dot">●</span>'}
+        <span class="dropbox-info-badge dot">●</span>
         ${desc ? `<span class="dropbox-info-desc">${desc}</span>` : ''}
       </div>
-      ${isLocal ? renderLocalDescEditor(desc) : `
-        <div class="dropbox-messages" id="dropbox-messages"></div>
-        <div class="dropbox-dropzone" id="dropbox-dropzone">
-          <span>拖拽文件到此处，或点击选择</span>
-          <input type="file" id="dropbox-file-input" style="display:none">
-        </div>
-        <div class="dropbox-input-bar">
-          <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="输入消息..." autocomplete="off">
-          <button id="dropbox-send-btn" class="cfg-btn">发送</button>
-        </div>
-      `}
+      <div class="dropbox-messages" id="dropbox-messages"></div>
+      <div class="dropbox-dropzone" id="dropbox-dropzone">
+        <span>拖拽文件到此处，或点击选择</span>
+        <input type="file" id="dropbox-file-input" style="display:none">
+      </div>
+      <div class="dropbox-input-bar">
+        <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="输入消息..." autocomplete="off">
+        <button id="dropbox-send-btn" class="cfg-btn">发送</button>
+      </div>
     </div>`;
 
   document.body.appendChild(overlay);
@@ -97,48 +94,8 @@ function renderModal(device) {
     if (e.target === overlay) closeDropbox();
   });
 
-  if (isLocal) {
-    bindLocalDescEditor();
-  } else {
-    bindChatEvents(device);
-    renderMessages(device.deviceId);
-  }
-}
-
-function renderLocalDescEditor(desc) {
-  return `
-    <div class="dropbox-local-section">
-      <label class="cfg-label">设备描述</label>
-      <input type="text" id="dropbox-local-desc" class="cfg-input" value="${desc}" placeholder="给这台设备起个名字...">
-      <button id="dropbox-save-desc-btn" class="cfg-btn" style="width:100%;margin-top:8px">保存描述</button>
-    </div>`;
-}
-
-function bindLocalDescEditor() {
-  const btn = document.getElementById('dropbox-save-desc-btn');
-  const input = document.getElementById('dropbox-local-desc');
-  if (!btn || !input) return;
-
-  btn.onclick = async () => {
-    const val = input.value.trim();
-    try {
-      const token = getAuthToken();
-      await fetch('/api/neblink/device-info', {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userDescription: val })
-      });
-      btn.textContent = '已保存';
-      setTimeout(() => { btn.textContent = '保存描述'; }, 1500);
-    } catch (e) {
-      btn.textContent = '保存失败';
-      setTimeout(() => { btn.textContent = '保存描述'; }, 1500);
-    }
-  };
-
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') btn.click();
-  });
+  bindChatEvents(device);
+  renderMessages(device.deviceId);
 }
 
 // ===== Chat events =====
