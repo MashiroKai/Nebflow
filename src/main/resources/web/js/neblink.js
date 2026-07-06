@@ -6,6 +6,7 @@ import state from './state.js';
 import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
+import { openDropbox } from './dropbox.js';
 
 let neblinkState = {
   device: null,
@@ -85,7 +86,7 @@ export function neblinkSettingsHTML() {
     return `
       <div class="neblink-peer">
         <span class="neblink-peer-dot dot-on"></span>
-        <span class="neblink-peer-name">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
+        <span class="neblink-peer-name dropbox-clickable" data-device-id="${escapeHtml(d.deviceId || '')}" data-device-name="${escapeHtml(d.deviceName || '')}" data-platform="${escapeHtml(d.platform || '')}" data-desc="${escapeHtml(d.userDescription || '')}" data-is-local="${d.isLocal ? '1' : '0'}">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
         ${d.isLocal
           ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
           : '<span class="neblink-peer-status">' + t('neblink.connected') + '</span>'}
@@ -155,6 +156,19 @@ export function bindNeblinkEvents(rerender) {
       const device = btn.dataset.device;
       delete deviceUpdateState[device];
       rerender();
+    });
+  });
+
+  // Device name click → open Dropbox modal
+  document.querySelectorAll('.dropbox-clickable').forEach(el => {
+    el.addEventListener('click', () => {
+      openDropbox({
+        deviceId: el.dataset.deviceId,
+        deviceName: el.dataset.deviceName,
+        platform: el.dataset.platform,
+        userDescription: el.dataset.desc,
+        isLocal: el.dataset.isLocal === '1'
+      });
     });
   });
 }
