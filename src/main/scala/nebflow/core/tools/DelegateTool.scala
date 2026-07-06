@@ -161,52 +161,61 @@ $prompt"""
             case None =>
               IO.pure(Left(ToolError(s"Agent '$agentName' not found in agent library")))
             case Some(agentDef) =>
-              if lifecycle == "persistent" then
-                spawnPersistent(
-                  agentDef = agentDef,
-                  prompt = adjustedPrompt,
-                  description = description,
-                  taskDescription = taskDescription,
-                  agentName = agentName,
-                  initialMessages = if fork then ctx.messages else Nil,
-                  system = system,
-                  resources = resources,
-                  parentDepth = ctx.depth,
-                  parentRef = ctx.agentActorRef,
-                  wsSend = ctx.wsSend,
-                  projectRoot = ctx.projectRoot,
-                  parentSessionId = ctx.sessionId
-                )
-              else if runInBackground then
-                spawnBackground(
-                  agentDef = agentDef,
-                  prompt = adjustedPrompt,
-                  description = description,
-                  agentName = agentName,
-                  initialMessages = if fork then ctx.messages else Nil,
-                  system = system,
-                  resources = resources,
-                  parentDepth = ctx.depth,
-                  parentRef = ctx.agentActorRef,
-                  wsSend = ctx.wsSend,
-                  projectRoot = ctx.projectRoot,
-                  parentSessionId = ctx.sessionId
-                )
-              else
-                spawnSync(
-                  agentDef = agentDef,
-                  prompt = adjustedPrompt,
-                  description = description,
-                  agentName = agentName,
-                  initialMessages = if fork then ctx.messages else Nil,
-                  system = system,
-                  resources = resources,
-                  parentDepth = ctx.depth,
-                  parentRef = ctx.agentActorRef,
-                  wsSend = ctx.wsSend,
-                  projectRoot = ctx.projectRoot,
-                  parentSessionId = ctx.sessionId
-                )
+              // Query parent session's bypass status so sub-agent inherits it
+              val bypassIO = (ctx.sessionStore, ctx.sessionId) match
+                case (Some(store), Some(sid)) => store.getBypass(sid)
+                case _ => IO.pure(false)
+              bypassIO.flatMap { bypass =>
+                if lifecycle == "persistent" then
+                  spawnPersistent(
+                    agentDef = agentDef,
+                    prompt = adjustedPrompt,
+                    description = description,
+                    taskDescription = taskDescription,
+                    agentName = agentName,
+                    initialMessages = if fork then ctx.messages else Nil,
+                    system = system,
+                    resources = resources,
+                    parentDepth = ctx.depth,
+                    parentRef = ctx.agentActorRef,
+                    wsSend = ctx.wsSend,
+                    projectRoot = ctx.projectRoot,
+                    parentSessionId = ctx.sessionId,
+                    bypass = bypass
+                  )
+                else if runInBackground then
+                  spawnBackground(
+                    agentDef = agentDef,
+                    prompt = adjustedPrompt,
+                    description = description,
+                    agentName = agentName,
+                    initialMessages = if fork then ctx.messages else Nil,
+                    system = system,
+                    resources = resources,
+                    parentDepth = ctx.depth,
+                    parentRef = ctx.agentActorRef,
+                    wsSend = ctx.wsSend,
+                    projectRoot = ctx.projectRoot,
+                    parentSessionId = ctx.sessionId,
+                    bypass = bypass
+                  )
+                else
+                  spawnSync(
+                    agentDef = agentDef,
+                    prompt = adjustedPrompt,
+                    description = description,
+                    agentName = agentName,
+                    initialMessages = if fork then ctx.messages else Nil,
+                    system = system,
+                    resources = resources,
+                    parentDepth = ctx.depth,
+                    parentRef = ctx.agentActorRef,
+                    wsSend = ctx.wsSend,
+                    projectRoot = ctx.projectRoot,
+                    parentSessionId = ctx.sessionId,
+                    bypass = bypass
+                  )
+              }
           }
         case _ =>
           IO.pure(Left(ToolError("Delegate requires ActorSystem, SharedResources, and agent library")))
@@ -229,7 +238,8 @@ $prompt"""
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
-    parentSessionId: Option[String] = None
+    parentSessionId: Option[String] = None,
+    bypass: Boolean = false
   ): IO[Either[ToolError, String]] =
     for
       resultDeferred <- Deferred[IO, Either[ToolError, String]]
@@ -245,13 +255,14 @@ $prompt"""
           wsSend = childWsSend,
           depth = childDepth,
           parentRef = parentRef,
-          sessionId = None,
+          sessionId = parentSessionId,
           sessionName = Some(description),
           initialMessages = initialMessages,
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
-          projectRoot = Some(projectRoot)
+          projectRoot = Some(projectRoot),
+          bypass = bypass
         ),
         subagentId
       )
@@ -301,7 +312,8 @@ $prompt"""
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
-    parentSessionId: Option[String] = None
+    parentSessionId: Option[String] = None,
+    bypass: Boolean = false
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
@@ -316,13 +328,14 @@ $prompt"""
           wsSend = childWsSend,
           depth = childDepth,
           parentRef = parentRef,
-          sessionId = None,
+          sessionId = parentSessionId,
           sessionName = Some(description),
           initialMessages = initialMessages,
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
-          projectRoot = Some(projectRoot)
+          projectRoot = Some(projectRoot),
+          bypass = bypass
         ),
         subagentId
       )
@@ -390,7 +403,8 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
-    parentSessionId: Option[String] = None
+    parentSessionId: Option[String] = None,
+    bypass: Boolean = false
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
@@ -405,13 +419,14 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           wsSend = childWsSend,
           depth = childDepth,
           parentRef = parentRef,
-          sessionId = None,
+          sessionId = parentSessionId,
           sessionName = Some(description),
           initialMessages = initialMessages,
           readTracker = Some(readTracker),
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
-          projectRoot = Some(projectRoot)
+          projectRoot = Some(projectRoot),
+          bypass = bypass
         ),
         subagentId
       )

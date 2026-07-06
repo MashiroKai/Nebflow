@@ -35,7 +35,8 @@ object AgentActor extends AgentCore with AgentSession:
     contextWindow: Int = Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
-    folderId: Option[String] = None
+    folderId: Option[String] = None,
+    bypass: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       logAgentEvent(
@@ -69,7 +70,8 @@ object AgentActor extends AgentCore with AgentSession:
             contextWindow = contextWindow,
             projectRoot = projectRoot,
             rulesMd = rulesMd,
-            folderId = folderId
+            folderId = folderId,
+            bypass = bypass
           )
         )(using ctx)
       )
@@ -304,6 +306,18 @@ object AgentActor extends AgentCore with AgentSession:
             ctx.forkTurn(deferred.complete(approved).void.handleErrorWith(_ => IO.unit)) *>
               IO.pure(idle(agentDef, resources, depth, parentRef, state))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
+
+      case AgentCommand.ForwardPermission(deferred, permJson) =>
+        // Sub-agent forwarded a permission request — store deferred and ask frontend
+        if state.pendingPermission.isDefined then
+          ctx.forkTurn(deferred.complete(false).void.handleErrorWith(_ => IO.unit)) *>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        else
+          ctx.forkTurn(state.wsSend(permJson).handleErrorWith(_ => IO.unit)) *>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
+
+      case AgentCommand.SetBypass(bypass) =>
+        IO.pure(idle(agentDef, resources, depth, parentRef, state.withBypass(bypass)))
 
       case _: AgentCommand.StreamFiberStarted | _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed |
           _: AgentCommand.ToolsComplete | _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
@@ -791,6 +805,21 @@ object AgentActor extends AgentCore with AgentSession:
       // --- Set permission deferred while processing ---
       case AgentCommand.SetPermissionDeferred(deferred) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
+
+      // --- Sub-agent forwarded a permission request while processing ---
+      case AgentCommand.ForwardPermission(deferred, permJson) =>
+        if state.pendingPermission.isDefined then
+          ctx.forkTurn(deferred.complete(false).void.handleErrorWith(_ => IO.unit)) *>
+            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        else
+          ctx.forkTurn(state.wsSend(permJson).handleErrorWith(_ => IO.unit)) *>
+            IO.pure(
+              processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
+            )
+
+      // --- Bypass toggled while processing ---
+      case AgentCommand.SetBypass(bypass) =>
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.withBypass(bypass), pending))
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>
