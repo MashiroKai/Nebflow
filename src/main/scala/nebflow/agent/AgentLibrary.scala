@@ -244,6 +244,8 @@ You analyze requirements, study the codebase, and produce implementation plans.
     )
   )
 
+end AgentLibrary
+
 object AgentLibrary:
   def defaultDir: os.Path = PathUtil.dataRoot / "agents"
 end AgentLibrary

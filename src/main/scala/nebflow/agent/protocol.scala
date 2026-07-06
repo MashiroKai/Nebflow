@@ -91,8 +91,10 @@ object AgentCommand:
   case class UserAnswered(answers: List[String]) extends AgentCommand
   case class PermissionAnswered(approved: Boolean) extends AgentCommand
 
-  /** Sub-agent → parent: forward a permission request so the parent can track
-    * the Deferred and route the frontend answer back to the sub-agent. */
+  /**
+   * Sub-agent → parent: forward a permission request so the parent can track
+   * the Deferred and route the frontend answer back to the sub-agent.
+   */
   case class ForwardPermission(deferred: cats.effect.Deferred[IO, Boolean], permJson: Json) extends AgentCommand
 
   /** Frontend → agent: update bypass (auto-approve) status for this session. */

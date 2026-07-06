@@ -22,11 +22,17 @@ object TtsService:
           val hc = json.hcursor
           val apiKeyOpt = hc.downField("apiKey").as[String].toOption.filter(_.nonEmpty)
           apiKeyOpt.flatMap { apiKey =>
-            val model = hc.downField("model").as[String]
+            val model = hc
+              .downField("model")
+              .as[String]
               .getOrElse("mimo-v2.5-tts-voiceclone")
-            val endpoint = hc.downField("endpoint").as[String]
+            val endpoint = hc
+              .downField("endpoint")
+              .as[String]
               .getOrElse("https://api.xiaomimimo.com/v1/chat/completions")
-            val voiceSamplePath = hc.downField("voiceSample").as[String]
+            val voiceSamplePath = hc
+              .downField("voiceSample")
+              .as[String]
               .getOrElse("voice-sample.wav")
             val sampleFile = PathUtil.resolvePath(voiceSamplePath, PathUtil.dataRoot)
             if !os.exists(sampleFile) then None
@@ -38,7 +44,7 @@ object TtsService:
         }
     }.flatMap {
       case Some(svc) => logger.info("TTS service initialized").as(Some(svc))
-      case None      => IO.pure(None)
+      case None => IO.pure(None)
     }
   end create
 end TtsService
@@ -52,15 +58,16 @@ end TtsService
  * @param voiceSampleB64 声音样本的 base64 编码（创建时缓存，不重复读文件）
  */
 class TtsService private[gateway] (
-    apiKey: String,
-    model: String,
-    endpoint: String,
-    voiceSampleB64: String
+  apiKey: String,
+  model: String,
+  endpoint: String,
+  voiceSampleB64: String
 ):
   private val logger = NebflowLogger.forName("nebflow.tts")
 
   // JDK 内置 HttpClient，不引入新依赖
-  private val client = HttpClient.newBuilder()
+  private val client = HttpClient
+    .newBuilder()
     .connectTimeout(java.time.Duration.ofSeconds(10))
     .build()
 
@@ -68,19 +75,22 @@ class TtsService private[gateway] (
   def synthesize(text: String): IO[Option[Array[Byte]]] =
     if text.isEmpty then IO.pure(None)
     else
-      val requestBody = Json.obj(
-        "model" -> Json.fromString(model),
-        "messages" -> Json.arr(
-          Json.obj("role" -> Json.fromString("user"), "content" -> Json.fromString("")),
-          Json.obj("role" -> Json.fromString("assistant"), "content" -> Json.fromString(text))
-        ),
-        "audio" -> Json.obj(
-          "format" -> Json.fromString("wav"),
-          "voice" -> Json.fromString(s"data:audio/wav;base64,$voiceSampleB64")
+      val requestBody = Json
+        .obj(
+          "model" -> Json.fromString(model),
+          "messages" -> Json.arr(
+            Json.obj("role" -> Json.fromString("user"), "content" -> Json.fromString("")),
+            Json.obj("role" -> Json.fromString("assistant"), "content" -> Json.fromString(text))
+          ),
+          "audio" -> Json.obj(
+            "format" -> Json.fromString("wav"),
+            "voice" -> Json.fromString(s"data:audio/wav;base64,$voiceSampleB64")
+          )
         )
-      ).noSpaces
+        .noSpaces
 
-      val request = HttpRequest.newBuilder()
+      val request = HttpRequest
+        .newBuilder()
         .uri(URI.create(endpoint))
         .header("api-key", apiKey)
         .header("Content-Type", "application/json")
@@ -97,11 +107,16 @@ class TtsService private[gateway] (
           // 从响应中提取 choices[0].message.audio.data（base64），解码为 WAV 字节
           parse(response.body()).toOption.flatMap { json =>
             json.hcursor
-              .downField("choices").downArray
-              .downField("message").downField("audio").downField("data")
-              .as[String].toOption
+              .downField("choices")
+              .downArray
+              .downField("message")
+              .downField("audio")
+              .downField("data")
+              .as[String]
+              .toOption
               .map(data => Base64.getDecoder.decode(data))
           }
+        end if
       }.handleErrorWith { e =>
         logger.warn(s"TTS synthesis failed: ${e.getMessage}").as(None)
       }
