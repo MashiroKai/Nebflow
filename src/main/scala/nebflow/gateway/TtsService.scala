@@ -22,7 +22,9 @@ object TtsService:
           val apiKeyOpt = hc.downField("apiKey").as[String].toOption.filter(_.nonEmpty)
           apiKeyOpt.flatMap { apiKey =>
             val model = hc.downField("model").as[String].getOrElse("mimo-v2.5-tts")
-            val endpoint = hc.downField("endpoint").as[String]
+            val endpoint = hc
+              .downField("endpoint")
+              .as[String]
               .getOrElse("https://api.xiaomimimo.com/v1/chat/completions")
             // 读取中英文音色配置
             val voices = hc.downField("voices").as[Map[String, String]].getOrElse(Map.empty)
@@ -33,7 +35,7 @@ object TtsService:
         }
     }.flatMap {
       case Some(svc) => logger.info("TTS service initialized").as(Some(svc))
-      case None      => IO.pure(None)
+      case None => IO.pure(None)
     }
   end create
 end TtsService
@@ -48,11 +50,11 @@ end TtsService
  * @param enVoice  英文音色名称
  */
 class TtsService private[gateway] (
-    apiKey: String,
-    model: String,
-    endpoint: String,
-    zhVoice: String,
-    enVoice: String
+  apiKey: String,
+  model: String,
+  endpoint: String,
+  zhVoice: String,
+  enVoice: String
 ):
   private val logger = NebflowLogger.forName("nebflow.tts")
 
@@ -102,9 +104,13 @@ class TtsService private[gateway] (
         else
           parse(response.body()).toOption.flatMap { json =>
             json.hcursor
-              .downField("choices").downArray
-              .downField("message").downField("audio").downField("data")
-              .as[String].toOption
+              .downField("choices")
+              .downArray
+              .downField("message")
+              .downField("audio")
+              .downField("data")
+              .as[String]
+              .toOption
               .map(data => Base64.getDecoder.decode(data))
           }
         end if
