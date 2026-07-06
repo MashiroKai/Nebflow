@@ -463,6 +463,8 @@ onMessage('toolCallDetected', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
+    // In ask mode, finalize the current ask bubble so the tool card renders below it
+    if (activeView.stream.currentAskBubble) finishAskAnswer();
     renderToolPending(msg.name, msg.sessionId);
     // Reset tool argument streaming for the new tool call
     activeView.stream.toolStreamText = '';
@@ -505,6 +507,8 @@ onMessage('toolStart', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
+    // In ask mode, finalize the current ask bubble so the tool card renders below it
+    if (activeView.stream.currentAskBubble) finishAskAnswer();
     renderToolPending(msg.label, msg.sessionId);
   }
 });
@@ -1886,7 +1890,9 @@ onMessage('askDone', (msg, view) => {
   const durationMs = consumeTurnDuration(sid) || msg.durationMs;
   const buf = sid ? state.sessionAskBuffers[sid] : null;
   if (view) {
-    const answer = activeView.stream.askAnswerText || (buf ? buf.answer : '') || '';
+    // Prefer buf.answer (complete accumulated text across tool boundaries)
+    // over askAnswerText (only the last bubble segment)
+    const answer = (buf ? buf.answer : '') || activeView.stream.askAnswerText || '';
     const question = buf ? buf.question : '';
     finishAskAnswer(durationMs, msg.model);
     if (question || answer) {
