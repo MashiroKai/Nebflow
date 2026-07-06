@@ -16,6 +16,37 @@ const VoicePlayer = {
   processing: false,
   muted: localStorage.getItem('voiceMuted') === 'true',
   _current: null, // { audio, url, element, resolve }
+  _cache: new Map(), // text → Promise<blobUrl>（流式预取 + 缓存）
+
+  /** 流式预取：检测到完整 voice 块时立即发起 TTS 请求（并行，不等结果）。 */
+  prefetch(text) {
+    if (!text || this._cache.has(text)) return;
+    this._cache.set(text, this._fetchTts(text));
+  },
+
+  /** 调用后端 TTS API，返回 blobUrl 的 Promise。 */
+  async _fetchTts(text) {
+    try {
+      const resp = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      return null;
+    }
+  },
+
+  /** 获取音频 URL：有缓存用缓存（可能还在 in-flight），没有就发请求。 */
+  async _getAudioUrl(text) {
+    if (this._cache.has(text)) return await this._cache.get(text);
+    const p = this._fetchTts(text);
+    this._cache.set(text, p);
+    return await p;
+  },
 
   /** Add a voice block to the playback queue. */
   enqueue(text, element) {
@@ -23,7 +54,7 @@ const VoicePlayer = {
     if (!this.processing) this._processQueue();
   },
 
-  /** Process queue items sequentially. Each item: fetch TTS → play → wait for ended. */
+  /** Process queue items sequentially. Playback is ordered, but fetches are parallel. */
   async _processQueue() {
     this.processing = true;
     let cancelled = false;
@@ -33,23 +64,15 @@ const VoicePlayer = {
       if (result === 'cancelled') cancelled = true;
     }
     this.processing = false;
-    // Items may have been enqueued during cancellation (e.g. replay)
     if (this.queue.length > 0) this._processQueue();
   },
 
-  /** Play a single voice block. Returns 'done' or 'cancelled'. */
+  /** Play a single voice block. */
   async _playItem({ text, element }) {
     if (this.muted) return 'done';
-    let url = null;
     try {
-      const resp = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      if (!resp.ok) return 'done';
-      const blob = await resp.blob();
-      url = URL.createObjectURL(blob);
+      const url = await this._getAudioUrl(text);
+      if (!url) return 'done';
       const result = await new Promise(resolve => {
         const audio = new Audio(url);
         this._current = { audio, url, element, resolve };
@@ -63,7 +86,6 @@ const VoicePlayer = {
       return 'done';
     } finally {
       if (element) element.classList.remove('playing');
-      if (url) URL.revokeObjectURL(url);
       this._current = null;
     }
   },
@@ -77,13 +99,13 @@ const VoicePlayer = {
     }
   },
 
-  /** Click-to-replay: stop everything, then play this block immediately. */
+  /** Click-to-replay. */
   replay(element) {
     this._cancel();
     this.enqueue(element.textContent, element);
   },
 
-  /** Toggle mute on/off. When muting, stops all playback. Returns new muted state. */
+  /** Toggle mute. */
   toggleMute() {
     this.muted = !this.muted;
     localStorage.setItem('voiceMuted', String(this.muted));
@@ -108,6 +130,17 @@ document.querySelectorAll('.voice-toggle').forEach(btn => {
     btn.innerHTML = muted ? VOICE_SVG_OFF : VOICE_SVG_ON;
   });
 });
+
+// Unlock audio on first user interaction (browsers block autoplay without gesture)
+let _audioUnlocked = false;
+function _unlockAudio() {
+  if (_audioUnlocked) return;
+  _audioUnlocked = true;
+  const s = new Audio();
+  s.play().then(() => s.pause()).catch(() => {});
+}
+document.addEventListener('click', _unlockAudio, { once: true });
+document.addEventListener('keydown', _unlockAudio, { once: true });
 
 // ---------- Agent color assignment ----------
 export function getAgentColor(agentId) {
@@ -213,6 +246,14 @@ export function renderUserBubble(text, attachments) {
 export function appendAiText(text) {
   const chat = activeView.dom.chat;
   activeView.stream.aiText += text;
+  // 流式检测：发现完整的 <voice>...</voice> 块立即并行预取 TTS
+  const voiceMatches = activeView.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
+  if (voiceMatches) {
+    voiceMatches.forEach(m => {
+      const content = m.replace(/<\/?voice>/g, '').trim();
+      VoicePlayer.prefetch(content);
+    });
+  }
   if (activeView.stream.currentAiBubble && activeView.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
     activeView.stream.currentAiBubble.classList.remove('thinking-placeholder');
@@ -1300,7 +1341,7 @@ export function finishThinking() {
   if (activeView.stream.currentThinkingBubble) {
     const contentEl = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {
-      contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText || '');
+      contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText || '', false);
     }
     // Collapse: hide content, make label clickable
     activeView.stream.currentThinkingBubble.classList.add('thinking-done');
