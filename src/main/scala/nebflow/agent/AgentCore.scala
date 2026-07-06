@@ -667,11 +667,12 @@ private[agent] trait AgentCore:
           import cats.effect.unsafe.implicits.global
           val id = ms.identity.unsafeRunSync()
           val peersList = ms.peers.unsafeRunSync()
-          val parts = List.newBuilder[String]
-          parts += s"local (${id.deviceName})"
+          val localParts = List.newBuilder[String]
+          localParts += s"local (${id.deviceName})"
           val localCaps = id.capabilities.keys.toList.sorted
-          if localCaps.nonEmpty then parts += s"[${localCaps.mkString(", ")}]"
-          val localStr = parts.result.mkString(" ")
+          if localCaps.nonEmpty then localParts += s"[${localCaps.mkString(", ")}]"
+          if id.userDescription.nonEmpty then localParts += s"-${id.userDescription}"
+          val localStr = localParts.result.mkString(" ")
           val peerStrs =
             peersList
               .map { p =>
