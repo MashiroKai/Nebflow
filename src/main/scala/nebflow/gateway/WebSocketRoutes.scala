@@ -1087,23 +1087,19 @@ class WebSocketRoutes(
 
         case "listAgents" =>
           agentService.listAgents.flatMap { agents =>
-            // All builtin tools are configurable — MCP tools controlled via mcpServers
-            val configurableTools = ToolRegistry.builtinToolNames
             val agentsJson = agents.map { a =>
               io.circe.Json.obj(
                 "name" -> a.name.asJson,
                 "description" -> a.description.asJson,
                 "displayName" -> a.displayName.getOrElse(a.name).asJson,
                 "avatar" -> a.avatar.asJson,
-                "tools" -> a.tools.asJson,
-                "mcpServers" -> a.mcpServers.asJson
+                "tools" -> a.tools.asJson
               )
             }
             wsSend(
               io.circe.Json.obj(
                 "type" -> "agentList".asJson,
-                "agents" -> agentsJson.asJson,
-                "availableTools" -> configurableTools.asJson
+                "agents" -> agentsJson.asJson
               )
             )
           }
@@ -1324,49 +1320,27 @@ class WebSocketRoutes(
             )
           else IO.unit
 
-        case "getAgentConfig" =>
+        case "getAgentSystemPrompt" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            agentService.getAgentConfig(agentName).flatMap {
-              case Some(cfg) =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "agentConfig".asJson,
-                    "name" -> cfg.name.asJson,
-                    "configJson" -> cfg.configJson.asJson,
-                    "systemMd" -> cfg.systemMd.asJson
-                  )
+            agentService.getSystemPrompt(agentName).flatMap { mdOpt =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "agentSystemPrompt".asJson,
+                  "name" -> agentName.asJson,
+                  "systemMd" -> mdOpt.getOrElse("").asJson
                 )
-              case None => IO.unit
+              )
             }
           else IO.unit
 
-        case "createAgent" =>
+        case "updateAgentSystemPrompt" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-          val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
           val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
           if agentName.nonEmpty then
-            agentService.createAgent(agentName, configJson, systemMd).flatMap {
-              case Left(err) =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-              case Right(_) =>
-                wsSend(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> agentName.asJson))
-            }
-          else IO.unit
-
-        case "updateAgent" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-          val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
-          val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
-          if agentName.nonEmpty then
-            agentService.updateAgent(agentName, configJson, systemMd).flatMap {
-              case Left(err) =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-              case Right(_) =>
-                wsSend(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> agentName.asJson))
-            }
+            agentService.updateSystemPrompt(agentName, systemMd) *>
+              wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
           else IO.unit
 
         case "createAgentSession" =>

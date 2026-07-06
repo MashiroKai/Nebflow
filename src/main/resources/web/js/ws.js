@@ -109,7 +109,7 @@ export function connect() {
       // ── Message filtering ────────────────────────────────────────────
       const GLOBAL_MSG_TYPES = [
         'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
-        'agentConfig', 'agentCreated', 'agentUpdated',
+        'agentSystemPrompt', 'agentSystemPromptSaved',
         'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
         'memoryData', 'memorySaved', 'memoryStatus',
         'cardDesignData', 'cardDesignSaved',

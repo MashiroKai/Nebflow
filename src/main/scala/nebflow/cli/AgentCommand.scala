@@ -8,7 +8,7 @@ import nebflow.core.PathUtil
 object AgentCommand extends CliCommand:
   def name = "agent"
   def description = "Manage agents"
-  def subcommands = List(AgentList, AgentShow, AgentCreate, AgentEdit)
+  def subcommands = List(AgentList, AgentShow, AgentEdit)
 
   def examples = List(
     "nebflow agent list",
@@ -41,7 +41,7 @@ object AgentCommand extends CliCommand:
 
   private object AgentShow extends CliSubcommand:
     def name = "show"
-    def description = "Show agent configuration"
+    def description = "Show agent system prompt"
     def params = List(CliParam("name", None, "Agent name", required = true))
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -51,68 +51,32 @@ object AgentCommand extends CliCommand:
           val name = ctx.positionalArgs.headOption.getOrElse("")
           if name.isEmpty then IO.pure(CliResult.Error("Agent name required"))
           else
-            client.command(Json.obj("type" -> "getAgentConfig".asJson, "name" -> name.asJson)).map { resp =>
-              val configJson = resp.hcursor.downField("configJson").as[String].getOrElse("{}")
+            client.command(Json.obj("type" -> "getAgentSystemPrompt".asJson, "name" -> name.asJson)).map { resp =>
               val systemMd = resp.hcursor.downField("systemMd").as[String].getOrElse("")
               if ctx.json then CliResult.Json(resp)
               else
-                val lines = List(s"Agent: $name", "", "Config:", configJson)
-                if systemMd.nonEmpty then CliResult.Text(lines ++ List("", "System Prompt:", systemMd))
-                else CliResult.Text(lines)
+                if systemMd.nonEmpty then CliResult.Text(List(s"Agent: $name", "", systemMd))
+                else CliResult.Text(List(s"Agent: $name", "", "(no system prompt)"))
             }
 
   end AgentShow
 
-  private object AgentCreate extends CliSubcommand:
-    def name = "create"
-    def description = "Create a new agent"
-
-    def params = List(
-      CliParam("name", None, "Agent name", required = true),
-      CliParam("config", Some('c'), "Config JSON", required = false),
-      CliParam("system", Some('s'), "System prompt", required = false)
-    )
-
-    def run(ctx: CliContext): IO[CliResult] =
-      ctx.client match
-        case None => IO.pure(CliResult.Error("Gateway not running"))
-        case Some(client) =>
-          val name = ctx.positionalArgs.headOption.getOrElse("")
-          if name.isEmpty then IO.pure(CliResult.Error("Agent name required"))
-          else
-            val configJson = ctx.args.getOrElse("config", "{}")
-            val systemMd = ctx.args.getOrElse("system", "")
-            client
-              .command(
-                Json.obj(
-                  "type" -> "createAgent".asJson,
-                  "name" -> name.asJson,
-                  "configJson" -> configJson.asJson,
-                  "systemMd" -> systemMd.asJson
-                )
-              )
-              .as(CliResult.text(s"Agent '$name' created"))
-
-  end AgentCreate
-
   private object AgentEdit extends CliSubcommand:
     def name = "edit"
-    def description = "Edit agent configuration"
+    def description = "Edit agent system prompt in $EDITOR"
 
     def params = List(
-      CliParam("name", None, "Agent name", required = true),
-      CliParam("config", Some('c'), "Config JSON", required = false),
-      CliParam("system", Some('s'), "System prompt", required = false)
+      CliParam("name", None, "Agent name", required = true)
     )
 
     def run(ctx: CliContext): IO[CliResult] =
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
-        case Some(client) =>
+        case Some(_) =>
           val name = ctx.positionalArgs.headOption.getOrElse("")
           if name.isEmpty then IO.pure(CliResult.Error("Agent name required"))
           else
-            // Open agent directory in $EDITOR
+            // Open system.md in $EDITOR
             val agentDir = PathUtil.dataRoot / "agents" / name
             if !os.exists(agentDir) then IO.pure(CliResult.Error(s"Agent directory not found: $agentDir"))
             else

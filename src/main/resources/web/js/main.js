@@ -144,9 +144,6 @@ state.dom = {
   agentOverlay: document.getElementById('agent-overlay'),
   agentModal: document.getElementById('agent-modal'),
   newSessionBtn: document.getElementById('new-session-btn'),
-  newAgentBtn: document.getElementById('new-agent-btn'),
-  agentNameInput: document.getElementById('agent-name-input'),
-  agentYamlInput: document.getElementById('agent-yaml-input'),
   agentSystemInput: document.getElementById('agent-system-input'),
   agentModalCancel: document.getElementById('agent-modal-cancel'),
   agentModalSave: document.getElementById('agent-modal-save'),
@@ -1459,7 +1456,6 @@ onMessage('compactFailed', (msg, view) => {
 // --- Agent panel events (global) ---
 onMessage('agentList', (msg, view) => {
   state.agentsData = msg.agents || [];
-  if (msg.availableTools) state.agentAvailableTools = msg.availableTools;
   renderAgentList();
   // Auto-select first agent if none selected
   if (!state.selectedAgent && state.agentsData.length > 0) {
@@ -1514,9 +1510,8 @@ onMessage('agentSessionList', (msg, view) => {
   initHeaderModelInfo();
 });
 
-onMessage('agentConfig', (msg, view) => showAgentModal(msg.name, msg.configJson || '', msg.systemMd || ''));
-onMessage('agentCreated', () => sendWs({ type: 'listAgents' }));
-onMessage('agentUpdated', () => sendWs({ type: 'listAgents' }));
+onMessage('agentSystemPrompt', (msg, view) => showAgentModal(msg.name, msg.systemMd || ''));
+onMessage('agentSystemPromptSaved', () => sendWs({ type: 'listAgents' }));
 
 // --- Server config ---
 onMessage('serverConfig', (msg, view) => {
