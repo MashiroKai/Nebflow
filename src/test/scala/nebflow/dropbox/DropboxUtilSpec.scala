@@ -39,8 +39,11 @@ class DropboxUtilSpec extends CatsEffectSuite:
   }
 
   test("streamToFileWithHash: empty stream produces SHA-256 of empty string") {
-    val expected = MessageDigest.getInstance("SHA-256").digest(Array.emptyByteArray)
-      .map(b => f"$b%02x").mkString
+    val expected = MessageDigest
+      .getInstance("SHA-256")
+      .digest(Array.emptyByteArray)
+      .map(b => f"$b%02x")
+      .mkString
 
     val tempFile = os.pwd / "target" / "dropbox-test" / "empty-test.bin"
     os.makeDir.all(tempFile / os.up)
@@ -125,7 +128,10 @@ class DropboxUtilSpec extends CatsEffectSuite:
 
     val result = DropboxUtil.resolveFinalPath(dir, "README")
     val resultName = result.last
-    assert(resultName.startsWith("README_"), s"Conflicted name without ext should start with 'README_', got: $resultName")
+    assert(
+      resultName.startsWith("README_"),
+      s"Conflicted name without ext should start with 'README_', got: $resultName"
+    )
     assert(!resultName.contains('.'), s"Should have no extension, got: $resultName")
 
     os.remove(dir / "README")
