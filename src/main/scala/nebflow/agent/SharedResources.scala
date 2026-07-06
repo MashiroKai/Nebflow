@@ -13,6 +13,7 @@ import nebflow.core.tools.FileLockManager
 import nebflow.core.{FileChangeTracker, PathUtil}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
+import nebflow.dropbox.DropboxService
 import nebflow.neblink.NeblinkService
 import nebflow.shared.*
 
@@ -44,6 +45,7 @@ case class SharedResources(
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
   telemetry: Option[TelemetryReporter] = None,
   neblinkService: Option[NeblinkService] = None,
+  dropboxService: Option[DropboxService] = None,
   dreamSchedulerRef: Option[DreamScheduler] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None
 )
