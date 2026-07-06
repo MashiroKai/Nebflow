@@ -7,8 +7,7 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.gateway.WsHub
 import nebflow.neblink.NeblinkService
 
@@ -55,12 +54,11 @@ final class DropboxService private (
 
   private def loadMessages: IO[Unit] =
     IO.blocking {
-      if os.exists(messagesPath) then
-        decode[Map[String, List[DropboxMessage]]](os.read(messagesPath)).toOption
+      if os.exists(messagesPath) then decode[Map[String, List[DropboxMessage]]](os.read(messagesPath)).toOption
       else None
     }.flatMap {
       case Some(m) => messagesRef.set(m)
-      case None    => IO.unit
+      case None => IO.unit
     }
 
   private def persistMessages: IO[Unit] =
@@ -198,7 +196,8 @@ final class DropboxService private (
               val matchResult = senderHash == receiverHash
               for
                 _ <- neblinkService.sendData(
-                  t.peerDeviceId, "dropbox",
+                  t.peerDeviceId,
+                  "dropbox",
                   Json.obj(
                     "kind" -> "file-complete".asJson,
                     "transferId" -> transferId.asJson,
@@ -209,18 +208,31 @@ final class DropboxService private (
                 )
                 _ <- updateTransferStatus(transferId, if matchResult then "completed" else "failed")
                 _ <- updateMessageStatus(t.peerDeviceId, t.msgId, if matchResult then "completed" else "failed")
-                _ <- notifyFrontend("dropbox-file-complete", t.peerDeviceId,
-                  Json.obj("transferId" -> transferId.asJson, "msgId" -> t.msgId.asJson, "success" -> matchResult.asJson))
+                _ <- notifyFrontend(
+                  "dropbox-file-complete",
+                  t.peerDeviceId,
+                  Json
+                    .obj("transferId" -> transferId.asJson, "msgId" -> t.msgId.asJson, "success" -> matchResult.asJson)
+                )
               yield ()
+              end for
             case Left(err) =>
               for
                 _ <- updateTransferStatus(transferId, "failed")
                 _ <- updateMessageStatus(t.peerDeviceId, t.msgId, "failed")
-                _ <- notifyFrontend("dropbox-file-complete", t.peerDeviceId,
-                  Json.obj("transferId" -> transferId.asJson, "msgId" -> t.msgId.asJson, "success" -> false.asJson,
-                    "error" -> err.asJson))
+                _ <- notifyFrontend(
+                  "dropbox-file-complete",
+                  t.peerDeviceId,
+                  Json.obj(
+                    "transferId" -> transferId.asJson,
+                    "msgId" -> t.msgId.asJson,
+                    "success" -> false.asJson,
+                    "error" -> err.asJson
+                  )
+                )
               yield ()
         yield Right(())
+        end for
     }
 
   /**
@@ -247,11 +259,11 @@ final class DropboxService private (
 
   private def handleDataMessage(payload: Json): IO[Unit] =
     payload.hcursor.downField("kind").as[String].getOrElse("") match
-      case "text"         => handleIncomingText(payload)
-      case "file-offer"   => handleIncomingOffer(payload)
+      case "text" => handleIncomingText(payload)
+      case "file-offer" => handleIncomingOffer(payload)
       case "file-response" => handleFileResponse(payload)
       case "file-complete" => handleFileComplete(payload)
-      case _              => IO.unit
+      case _ => IO.unit
 
   // --- Incoming text ---
   private def handleIncomingText(payload: Json): IO[Unit] =
@@ -279,20 +291,34 @@ final class DropboxService private (
     val fileSize = hc.downField("fileSize").as[Long].getOrElse(0L)
     val mimeType = hc.downField("mimeType").as[String].getOrElse("")
     val msg = DropboxMessage(
-      msgId = msgId, direction = "in", kind = "file", ts = DropboxModels.now,
-      transferId = transferId, fileName = fileName, fileSize = fileSize,
-      mimeType = mimeType, status = "pending"
+      msgId = msgId,
+      direction = "in",
+      kind = "file",
+      ts = DropboxModels.now,
+      transferId = transferId,
+      fileName = fileName,
+      fileSize = fileSize,
+      mimeType = mimeType,
+      status = "pending"
     )
     val transfer = FileTransfer(
-      transferId = transferId, direction = "in", peerDeviceId = senderId,
-      peerAddress = "", fileName = fileName, fileSize = fileSize,
-      mimeType = mimeType, msgId = msgId, status = "pending"
+      transferId = transferId,
+      direction = "in",
+      peerDeviceId = senderId,
+      peerAddress = "",
+      fileName = fileName,
+      fileSize = fileSize,
+      mimeType = mimeType,
+      msgId = msgId,
+      status = "pending"
     )
     for
       _ <- transfersRef.update(_ + (transferId -> transfer))
       _ <- addMessage(senderId, msg)
       _ <- notifyFrontend("dropbox-message", senderId, msg.asJson)
     yield ()
+
+  end handleIncomingOffer
 
   // --- File response (receiver accepted/rejected our offer) ---
   private def handleFileResponse(payload: Json): IO[Unit] =
@@ -307,11 +333,18 @@ final class DropboxService private (
           for
             _ <- transfersRef.update(_ + (transferId -> t.copy(status = newStatus)))
             _ <- updateMessageStatus(t.peerDeviceId, t.msgId, newStatus)
-            _ <- notifyFrontend("dropbox-file-response", t.peerDeviceId,
-              Json.obj("transferId" -> transferId.asJson, "accepted" -> accepted.asJson))
+            _ <- notifyFrontend(
+              "dropbox-file-response",
+              t.peerDeviceId,
+              Json.obj("transferId" -> transferId.asJson, "accepted" -> accepted.asJson)
+            )
           yield ()
         case None => IO.unit
     yield ()
+
+    end for
+
+  end handleFileResponse
 
   // --- File complete (sender tells us transfer result) ---
   private def handleFileComplete(payload: Json): IO[Unit] =
@@ -323,19 +356,29 @@ final class DropboxService private (
       _ <- transfer match
         case Some(t) =>
           for
-            _ <- if success then commitTempFile(t)
-                 else deleteTempFile(t)
-            savedPath <- if success then IO.pure(DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, t.fileName).toString)
-                         else IO.pure("")
+            _ <-
+              if success then commitTempFile(t)
+              else deleteTempFile(t)
+            savedPath <-
+              if success then IO.pure(DropboxUtil.resolveFinalPath(DropboxUtil.downloadsDir, t.fileName).toString)
+              else IO.pure("")
             _ <- updateTransferStatus(transferId, if success then "completed" else "failed")
-            _ <- updateMessageStatus(t.peerDeviceId, t.msgId,
-                  if success then "completed" else "failed", savedPath)
-            _ <- notifyFrontend("dropbox-file-complete", t.peerDeviceId,
-                  Json.obj("transferId" -> transferId.asJson, "msgId" -> t.msgId.asJson,
-                    "success" -> success.asJson, "savedPath" -> savedPath.asJson))
+            _ <- updateMessageStatus(t.peerDeviceId, t.msgId, if success then "completed" else "failed", savedPath)
+            _ <- notifyFrontend(
+              "dropbox-file-complete",
+              t.peerDeviceId,
+              Json.obj(
+                "transferId" -> transferId.asJson,
+                "msgId" -> t.msgId.asJson,
+                "success" -> success.asJson,
+                "savedPath" -> savedPath.asJson
+              )
+            )
           yield ()
         case None => IO.unit
     yield ()
+    end for
+  end handleFileComplete
 
   // ===== Helpers =====
 
@@ -345,20 +388,25 @@ final class DropboxService private (
 
   private def updateMessageStatus(deviceId: String, msgId: String, status: String, savedPath: String = ""): IO[Unit] =
     messagesRef.update { m =>
-      m.updated(deviceId, m.getOrElse(deviceId, Nil).map { msg =>
-        if msg.msgId == msgId then msg.copy(status = status, savedPath = savedPath) else msg
-      })
+      m.updated(
+        deviceId,
+        m.getOrElse(deviceId, Nil).map { msg =>
+          if msg.msgId == msgId then msg.copy(status = status, savedPath = savedPath) else msg
+        }
+      )
     } *> persistMessages
 
   private def updateTransferStatus(transferId: String, status: String): IO[Unit] =
     transfersRef.update(m => m.get(transferId).map(t => m + (transferId -> t.copy(status = status))).getOrElse(m))
 
   private def notifyFrontend(msgType: String, deviceId: String, msgJson: Json): IO[Unit] =
-    wsHub.broadcast(Json.obj(
-      "type" -> msgType.asJson,
-      "deviceId" -> deviceId.asJson,
-      "msg" -> msgJson
-    ))
+    wsHub.broadcast(
+      Json.obj(
+        "type" -> msgType.asJson,
+        "deviceId" -> deviceId.asJson,
+        "msg" -> msgJson
+      )
+    )
 
   /** Stream bytes to a file while computing SHA-256. Returns the hex hash. */
   private def streamToFileWithHash(stream: Stream[IO, Byte], path: os.Path): IO[String] =
@@ -367,10 +415,12 @@ final class DropboxService private (
   /** Send a temp file to the peer's HTTP endpoint. Returns the peer's SHA-256 or an error. */
   private def sendTempToPeer(peerAddress: String, transferId: String, tempPath: os.Path): IO[Either[String, String]] =
     IO.blocking {
-      val client = HttpClient.newBuilder()
+      val client = HttpClient
+        .newBuilder()
         .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for Tailscale
         .build()
-      val request = HttpRequest.newBuilder()
+      val request = HttpRequest
+        .newBuilder()
         .uri(URI.create(s"$peerAddress/api/neblink/dropbox/transfer/$transferId"))
         .header("Content-Type", "application/octet-stream")
         .timeout(java.time.Duration.ofMinutes(30))
@@ -380,12 +430,13 @@ final class DropboxService private (
       val body = response.body()
       val status = response.statusCode()
       if status == 200 then
-        io.circe.parser.parse(body).toOption
+        io.circe.parser
+          .parse(body)
+          .toOption
           .flatMap(_.hcursor.downField("sha256").as[String].toOption)
           .map(Right(_))
           .getOrElse(Left(s"Peer returned 200 but no sha256 in body: $body"))
-      else
-        Left(s"Peer returned HTTP $status: $body")
+      else Left(s"Peer returned HTTP $status: $body")
     }.handleErrorWith(e => IO.pure(Left(s"Transfer failed: ${e.getMessage}")))
 
   /** Rename temp file to final name in Downloads, handling name conflicts. */
@@ -410,6 +461,7 @@ final class DropboxService private (
 end DropboxService
 
 object DropboxService:
+
   def create(neblinkService: NeblinkService, wsHub: WsHub): IO[DropboxService] =
     val svc = new DropboxService(neblinkService, wsHub)
     svc.init.as(svc)

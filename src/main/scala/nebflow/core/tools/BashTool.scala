@@ -531,7 +531,10 @@ Git safety:
       // independently — each has its own error recovery so one failure
       // doesn't prevent the other.
       BgTaskRegistry.unregister(jobId) *>
-        logger.info(s"Background job $jobId callback: $eventType$exitInfo", "sessionId" -> ctx.sessionId.getOrElse("")) *>
+        logger.info(
+          s"Background job $jobId callback: $eventType$exitInfo",
+          "sessionId" -> ctx.sessionId.getOrElse("")
+        ) *>
         notifyFrontend.void *> notifyAgent
     }
 

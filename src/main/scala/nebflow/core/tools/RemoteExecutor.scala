@@ -190,10 +190,12 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     doneRef: Ref[IO, Boolean]
   ): Unit =
     val completionIO =
-      p2pExecute(peer, toolName, params, BgTimeout).flatMap {
-        case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
-        case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
-      }.flatMap(_ => doneRef.set(true))
+      p2pExecute(peer, toolName, params, BgTimeout)
+        .flatMap {
+          case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
+          case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
+        }
+        .flatMap(_ => doneRef.set(true))
 
     dispatcher.unsafeRunAndForget(
       completionIO.handleErrorWith(e =>
