@@ -303,7 +303,10 @@ function consumeTurnDuration(sid) {
   return Date.now() - startTime;
 }
 
-// Helper: clear busy for a specific session
+// Helper: clear busy for a specific session, then drain any queued messages.
+// Called by ALL terminal events (done, error, interrupted, timeout, maxTokens,
+// compactFailed) — not just 'done' — so the queue drains regardless of how the
+// turn ended.
 function clearBusyFor(msg) {
   const sid = msg.sessionId || state.activeSessionId;
   if (state.busySessionIds.has(sid)) {
@@ -312,6 +315,10 @@ function clearBusyFor(msg) {
   if (state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
+  }
+  // Drain queued messages after a short delay to let the UI finalize first
+  if (sid) {
+    setTimeout(() => drainMessageQueue(sid), 50);
   }
   // Release the send lock for the view displaying this session
   const view = findViewBySessionId(sid);
@@ -774,10 +781,7 @@ onMessage('done', (msg, view) => {
   } else {
     markSessionUnread(msg.sessionId);
   }
-  // Drain queued messages: send the first one as a normal UserInput
-  if (sid) {
-    setTimeout(() => drainMessageQueue(sid), 50);
-  }
+  // Queue drainage handled by clearBusyFor above — no duplicate call here.
 });
 
 // roundComplete: backend signals the current round's text is finalized but a new
