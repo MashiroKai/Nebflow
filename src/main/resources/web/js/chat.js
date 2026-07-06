@@ -3,7 +3,7 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { activeView, setActiveView } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 
@@ -306,8 +306,8 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
   const row = document.createElement('div');
   row.className = 'row tool';
-  // Mesh tool marker
-  if (label && label.startsWith('[Mesh]')) row.classList.add('mesh-row');
+  // NebLink tool marker
+  if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
   card.className = 'tool-card';
 
@@ -328,10 +328,11 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const detailHtml = buildToolDetail(inputJson, label);
+  const delegatePromptHtml = buildDelegatePromptHtml(inputJson);
   // Render full content in body with syntax highlighting (Read/Grep only).
   // Body is hidden by default, click to expand shows full content with scroll for long output.
   const highlightHtml = content ? renderHighlightedContent(content, label) : null;
-  const bodyHtml = (detailHtml + (highlightHtml || (content ? '<pre class="tool-body-pre">' + escapeHtml(content) + '</pre>' : ''))) || '';
+  const bodyHtml = (detailHtml + delegatePromptHtml + (highlightHtml || (content ? '<pre class="tool-body-pre">' + escapeHtml(content) + '</pre>' : ''))) || '';
   const hasBody = !!bodyHtml;
   const localLabel = localizeToolLabel(label);
   const localSummary = localizeToolSummary(summary, label);
@@ -388,7 +389,7 @@ export function renderToolPending(label, sessionId) {
 
   const row = document.createElement('div');
   row.className = 'row tool';
-  if (label && label.startsWith('[Mesh]')) row.classList.add('mesh-row');
+  if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
   card.className = 'tool-card tool-card--pending';
   const localLabel = localizeToolLabel(label);
@@ -401,6 +402,137 @@ export function renderToolPending(label, sessionId) {
   chat.appendChild(row);
   smartScroll();
   state.sessionToolCards[sid] = row;
+}
+
+// ---------- Tool argument streaming ----------
+// While the LLM generates tool call arguments (e.g. Write content, Bash command),
+// toolArgDelta events stream partial JSON fragments. We accumulate them and try
+// to extract the primary content field for display, giving the user real-time
+// feedback instead of just a spinner.
+
+const TOOL_PRIMARY_FIELDS = {
+  'Write': 'content',
+  'Edit': 'new_string',
+  'Bash': 'command',
+  'Card': 'html',
+};
+
+/**
+ * Best-effort extraction of a JSON string field value from partial JSON.
+ * Returns { value, complete } or null if the field hasn't been started yet.
+ * Handles JSON string escapes (\n, \t, \", \\, \uXXXX).
+ */
+function extractFieldValueFromPartialJson(partialJson, fieldName) {
+  const marker = '"' + fieldName + '"';
+  const markerIdx = partialJson.indexOf(marker);
+  if (markerIdx === -1) return null;
+
+  let idx = markerIdx + marker.length;
+  // Skip whitespace and colon
+  while (idx < partialJson.length && /[\s:]/.test(partialJson[idx])) idx++;
+  if (idx >= partialJson.length || partialJson[idx] !== '"') return null;
+  idx++; // skip opening quote
+
+  let result = '';
+  while (idx < partialJson.length) {
+    const ch = partialJson[idx];
+    if (ch === '\\' && idx + 1 < partialJson.length) {
+      const next = partialJson[idx + 1];
+      switch (next) {
+        case 'n': result += '\n'; break;
+        case 't': result += '\t'; break;
+        case 'r': result += '\r'; break;
+        case '"': result += '"'; break;
+        case '\\': result += '\\'; break;
+        case '/': result += '/'; break;
+        case 'b': result += '\b'; break;
+        case 'f': result += '\f'; break;
+        case 'u':
+          if (idx + 5 < partialJson.length) {
+            const code = parseInt(partialJson.substr(idx + 2, 4), 16);
+            if (!isNaN(code)) result += String.fromCodePoint(code);
+            idx += 4;
+          }
+          break;
+        default: result += next;
+      }
+      idx += 2;
+    } else if (ch === '"') {
+      // Closing quote — field is complete
+      return { value: result, complete: true };
+    } else {
+      result += ch;
+      idx++;
+    }
+  }
+  // Stream still open — return what we have so far
+  return { value: result, complete: false };
+}
+
+// rAF-throttled rendering (same pattern as appendThinkingDelta)
+let _pendingToolStreamRAF = null;
+let _toolStreamRafTarget = null;
+
+export function appendToolStreamDelta(toolName, delta) {
+  activeView.stream.toolStreamText += delta;
+  activeView.stream.toolStreamToolName = toolName;
+
+  const sid = activeView.sessionId;
+  const pendingRow = state.sessionToolCards[sid];
+  if (!pendingRow || !pendingRow.isConnected) return;
+
+  _toolStreamRafTarget = {
+    row: pendingRow,
+    chat: activeView.dom.chat,
+    toolName: toolName,
+    rawText: activeView.stream.toolStreamText,
+  };
+
+  if (!_pendingToolStreamRAF) {
+    _pendingToolStreamRAF = requestAnimationFrame(() => {
+      _pendingToolStreamRAF = null;
+      const target = _toolStreamRafTarget;
+      _toolStreamRafTarget = null;
+      if (!target || !target.row || !target.row.isConnected) return;
+
+      // Extract displayable content from partial JSON
+      const fieldName = TOOL_PRIMARY_FIELDS[target.toolName];
+      let displayContent = null;
+      if (fieldName) {
+        const extracted = extractFieldValueFromPartialJson(target.rawText, fieldName);
+        if (extracted) displayContent = extracted.value;
+      }
+      if (displayContent === null) return; // primary field not started yet
+
+      // Find or create streaming body in the tool card
+      let bodyEl = target.row.querySelector('.tool-stream-body');
+      if (!bodyEl) {
+        bodyEl = document.createElement('div');
+        bodyEl.className = 'tool-stream-body';
+        const card = target.row.querySelector('.tool-card');
+        if (card) {
+          const contentDiv = card.querySelector('.content');
+          if (contentDiv) contentDiv.appendChild(bodyEl);
+          else card.appendChild(bodyEl);
+        }
+      }
+      bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
+
+      // Auto-scroll
+      const threshold = 60;
+      if (target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+        target.chat.scrollTop = target.chat.scrollHeight;
+      }
+    });
+  }
+}
+
+/** Cancel pending rAF — called on cleanup. */
+export function cancelToolStreamRAF() {
+  if (_pendingToolStreamRAF) {
+    cancelAnimationFrame(_pendingToolStreamRAF);
+    _pendingToolStreamRAF = null;
+  }
 }
 
 // ---------- Error ----------
@@ -499,15 +631,42 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   box.className = 'option-box';
   const answers = new Array(questions.length).fill(null);
   const confirmLabel = doneLabel || t('chat.confirm');
-
-  // Restore saved drafts for this session
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
+  const questionWrappers = [];
 
+  // --- Conditional branching helpers ---
+  function shouldShow(qi) {
+    const item = questions[qi];
+    if (!item.dependsOn) return true;
+    const dep = item.dependsOn;
+    const refIdx = questions.findIndex(q => q.id === dep.ref);
+    if (refIdx === -1) return true;
+    return answers[refIdx] === dep.equals;
+  }
+
+  function updateVisibility() {
+    questionWrappers.forEach((wrapper, qi) => {
+      const visible = shouldShow(qi);
+      wrapper.style.display = visible ? '' : 'none';
+      if (!visible && answers[qi] !== null) {
+        answers[qi] = null;
+        wrapper.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
+        const input = wrapper.querySelector('.option-custom-input');
+        if (input) input.value = '';
+      }
+    });
+  }
+
+  // --- Build question DOM ---
   questions.forEach((item, qi) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'option-q-wrapper';
+    questionWrappers.push(wrapper);
+
     const q = document.createElement('div');
     q.className = 'option-q';
     q.innerHTML = item.question;
-    box.appendChild(q);
+    wrapper.appendChild(q);
 
     const optsDiv = document.createElement('div');
     optsDiv.className = 'option-opts';
@@ -526,37 +685,37 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           optsDiv.querySelectorAll('.option-btn').forEach((el, i) => {
             el.classList.toggle('picked', i === oi);
           });
-          customInput && (customInput.style.display = 'none');
-          customInput.value = '';
+          if (customInput) {
+            customInput.style.display = 'none';
+            customInput.value = '';
+          }
           if (askSessionId) saveAskDraft(askSessionId, qi, '');
+          updateVisibility();
           checkAllAnswered();
         };
         optsDiv.appendChild(btn);
       });
     }
 
-    // "Other" option for custom input (shown when allowOther is true)
-    const allowOther = item.allowOther !== false; // default true
+    const allowOther = item.allowOther !== false;
     const customInput = document.createElement('textarea');
     customInput.className = 'option-custom-input';
     customInput.placeholder = t('chat.typeAnswer');
     customInput.rows = 2;
 
-    // Restore saved draft text for this question
     const savedVal = saved[qi];
     if (savedVal) {
       customInput.value = savedVal;
       answers[qi] = savedVal;
     }
 
-    if (!hasOptions) customInput.style.display = ''; // visible by default for open-ended
+    if (!hasOptions) customInput.style.display = '';
 
     let otherBtn = null;
     if (hasOptions && allowOther) {
       otherBtn = document.createElement('button');
       otherBtn.className = 'option-btn';
       otherBtn.textContent = t('chat.other');
-      // If a custom draft exists, auto-select "Other" for this option set
       if (savedVal && !item.options.some(o => (typeof o === 'string' ? o : o.label) === savedVal)) {
         otherBtn.classList.add('picked');
         customInput.style.display = '';
@@ -571,15 +730,14 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (customInput.value.trim()) {
           answers[qi] = customInput.value.trim();
         }
+        updateVisibility();
         checkAllAnswered();
       };
       optsDiv.appendChild(otherBtn);
     } else if (hasOptions) {
-      // No "Other" — hide custom input
       customInput.style.display = 'none';
     } else {
-      // Open-ended: auto-focus and show input immediately
-      answers[qi] = null; // needs to be filled
+      answers[qi] = null;
     }
 
     customInput.oninput = () => {
@@ -596,11 +754,16 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         answers[qi] = null;
       }
       if (askSessionId) saveAskDraft(askSessionId, qi, val);
+      updateVisibility();
       checkAllAnswered();
     };
     optsDiv.appendChild(customInput);
-    box.appendChild(optsDiv);
+    wrapper.appendChild(optsDiv);
+    box.appendChild(wrapper);
   });
+
+  // Apply initial visibility after all questions are in DOM
+  updateVisibility();
 
   const btnRow = document.createElement('div');
   btnRow.className = 'option-btn-row';
@@ -619,7 +782,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   const confirmBtn = document.createElement('button');
   confirmBtn.className = 'option-confirm';
   confirmBtn.innerHTML = '<i data-lucide="check"></i><span>' + escapeHtml(confirmLabel) + '</span>';
-  confirmBtn.disabled = !answers.every(a => a !== null);
+  confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
   confirmBtn.onclick = () => {
     box.querySelectorAll('.option-btn').forEach(el => { el.disabled = true; });
     cancelBtn.disabled = true;
@@ -629,11 +792,12 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
 
     const ansDiv = document.createElement('div');
     ansDiv.className = 'option-answer';
-    ansDiv.textContent = '-> ' + answers.join(', ');
+    ansDiv.textContent = '-> ' + answers.filter(a => a).join(', ');
     box.appendChild(ansDiv);
 
     if (askSessionId) clearAskDrafts(askSessionId);
-    if (onConfirm) onConfirm(answers);
+    const finalAnswers = answers.map(a => a !== null ? a : '');
+    if (onConfirm) onConfirm(finalAnswers);
   };
   btnRow.appendChild(cancelBtn);
   btnRow.appendChild(confirmBtn);
@@ -643,7 +807,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   smartScroll();
 
   function checkAllAnswered() {
-    confirmBtn.disabled = !answers.every(a => a !== null);
+    confirmBtn.disabled = !questions.every((_, qi) => !shouldShow(qi) || answers[qi] !== null);
   }
 }
 

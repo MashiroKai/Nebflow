@@ -4,11 +4,16 @@ import cats.effect.IO
 
 import java.util.concurrent.atomic.AtomicReference
 
+/** 条件依赖：仅当 ref 问题的答案等于 equals 时才显示此问题 */
+case class QuestionDependency(ref: String, equals: String)
+
 /** 提问项 */
 case class AskItem(
   question: String,
   options: List[AskOption],
-  allowOther: Boolean = true
+  allowOther: Boolean = true,
+  id: Option[String] = None,
+  dependsOn: Option[QuestionDependency] = None
 )
 
 case class AskOption(

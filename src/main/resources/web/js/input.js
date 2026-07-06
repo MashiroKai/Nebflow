@@ -395,6 +395,7 @@ export function send() {
     renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
     input.value = '';
+    input.style.height = 'auto';
     saveInputDraft(v.sessionId);
     setTimeout(() => { v.isSending = false; }, 300);
     return;
@@ -412,6 +413,7 @@ export function send() {
     state.sessionAskBuffers[v.sessionId] = { question: text, answer: '' };
     renderAskBubble(text);
     input.value = '';
+    input.style.height = 'auto';
     saveInputDraft(v.sessionId);
     setTimeout(() => { v.isSending = false; }, 300);
     return;

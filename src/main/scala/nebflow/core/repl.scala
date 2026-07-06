@@ -95,12 +95,12 @@ object Repl:
    * Static environment info — injected once into system prompt, never updated per-turn.
    * Git state is intentionally omitted; agents should use Bash to run git commands on demand.
    */
-  def buildEnvInfo(projectRoot: String, chatWidth: Int = 0): String =
+  def buildEnvInfo(chatWidth: Int = 0): String =
     val sb = new StringBuilder
     sb.append("## Environment\n\n")
     sb.append("| Property | Value |\n")
     sb.append("|----------|-------|\n")
-    sb.append(s"| Project root | local: `$projectRoot` |\n")
+    sb.append(s"| Working directory | `${System.getProperty("user.dir")}` |\n")
     sb.append(s"| Platform | ${sys.props.getOrElse("os.name", "unknown").toLowerCase} |\n")
     sb.append(s"| Shell | ${sys.env.getOrElse("SHELL", "unknown")} |\n")
     sb.append(s"| OS Version | ${sys.props.getOrElse("os.name", "")} ${sys.props.getOrElse("os.version", "")} |\n")
