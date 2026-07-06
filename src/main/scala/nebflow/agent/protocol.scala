@@ -317,8 +317,7 @@ case class AgentInfo(
   description: String,
   tools: List[String],
   displayName: Option[String] = None,
-  avatar: Option[String] = None,
-  mcpServers: List[String] = Nil
+  avatar: Option[String] = None
 )
 
 enum AgentErrorType:
