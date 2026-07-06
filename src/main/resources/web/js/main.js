@@ -39,6 +39,7 @@ import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initChatViews, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { initNeblink } from './neblink.js';
+import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 
 // Randomized cosmic thinking bubble text
@@ -1995,6 +1996,7 @@ initInput(chatViews.secondary);
 initMemory();
 initScheduledTask();
 initNeblink();
+initDropbox();
 
 // ---------- Bypass toggle (per-session auto-approve) ----------
 (function initBypassToggle() {

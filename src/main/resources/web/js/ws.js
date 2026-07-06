@@ -116,7 +116,8 @@ export function connect() {
         'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
         'browseResult',
         'updateCheckResult', 'updateStarted', 'updateCompleted',
-        'remoteUpdateResult', 'peerListChanged'
+        'remoteUpdateResult', 'peerListChanged',
+        'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError'
       ];
       const TERMINAL_MSG_TYPES = [
         'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',

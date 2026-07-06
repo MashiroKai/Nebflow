@@ -206,6 +206,22 @@ class NeblinkService private (
       _.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}")))
     )
 
+  /**
+   * Send function for outgoing WS data messages. Set by GatewayMain after
+   * NeblinkPresenceService is created. Default is a no-op so callers are safe
+   * before wiring is complete.
+   */
+  private val sendDataFnRef: Ref[IO, (String, String, Json) => IO[Unit]] =
+    Ref.unsafe[IO, (String, String, Json) => IO[Unit]]((_, _, _) => IO.unit)
+
+  /** Wire the send function (called once at startup by GatewayMain). */
+  def setSendDataFn(fn: (String, String, Json) => IO[Unit]): IO[Unit] =
+    sendDataFnRef.set(fn)
+
+  /** Send a data message to a peer over the WS presence connection. */
+  def sendData(deviceId: String, channel: String, payload: Json): IO[Unit] =
+    sendDataFnRef.get.flatMap(_(deviceId, channel, payload))
+
   // ===== File Transfer (P2P, Tailscale IP auth) =====
 
   /**

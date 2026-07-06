@@ -324,15 +324,23 @@ object GatewayMain extends IOApp.Simple:
                                         neblinkService.addPeerChangeCallback(
                                           wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
                                         ) *>
+                                        // Wire the WS data channel send function so other services
+                                        // (e.g. DropboxService) can send P2P messages via presenceService.
+                                        neblinkService.setSendDataFn((deviceId, channel, payload) =>
+                                          presenceService.sendData(deviceId, channel, payload)
+                                        ) *>
                                         // Trigger an immediate discovery cycle now that the Tailscale hook is wired.
                                         // Without this, the sync loop's first meaningful cycle is delayed by
                                         // syncIntervalSec (default 300s) because the very first cycle runs before
                                         // the hook is set (race with NeblinkService.create's unsafeRunAndForget).
-                                        neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *> {
+                                        neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+                                        // Create Dropbox service (cross-device messaging & file transfer)
+                                        nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap { dropboxService =>
                                           val sharedResourcesWithBridge =
                                             sharedResourcesWithDream.copy(
                                               bridgeManager = Some(bridgeManager),
-                                              neblinkService = Some(neblinkService)
+                                              neblinkService = Some(neblinkService),
+                                              dropboxService = Some(dropboxService)
                                             )
 
                                           // --- Create Scheduled Task Service before wsRoutes ---
