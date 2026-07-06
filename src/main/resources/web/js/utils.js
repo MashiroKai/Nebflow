@@ -59,9 +59,15 @@ export function initMarkdown() {
 export function renderMarkdownWithMath(text) {
   if (!text) return '';
   if (typeof marked === 'undefined') return escapeHtml(text);
+  // Extract <voice>...</voice> blocks before any markdown processing
+  const voiceBlocks = [];
+  let protected_ = text.replace(/<voice>([\s\S]+?)<\/voice>/g, (m, content) => {
+    voiceBlocks.push(content.trim());
+    return `VOICEBLOCK${voiceBlocks.length - 1}END`;
+  });
   const mathBlocks = [];
   // Protect display math ($$...$$)
-  let protected_ = text.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => {
+  protected_ = protected_.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => {
     mathBlocks.push({ display: true, math: math.trim() });
     return `MATHBLOCK${mathBlocks.length - 1}END`;
   });
@@ -93,6 +99,12 @@ export function renderMarkdownWithMath(text) {
     } else {
       html = html.replace(token, block.display ? `$$${block.math}$$` : `$${block.math}$`);
     }
+  });
+  // Restore voice blocks as clickable green spans
+  html = html.replace(/VOICEBLOCK(\d+)END/g, (m, idx) => {
+    const i = parseInt(idx);
+    const vtext = voiceBlocks[i] || '';
+    return '<span class="voice-block" data-voice-index="' + i + '">' + escapeHtml(vtext) + '</span>';
   });
   return html;
 }

@@ -13,7 +13,7 @@ import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
-import org.http4s.headers.Authorization
+import org.http4s.headers.{Authorization, `Content-Type`}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIStringSyntax
@@ -30,7 +30,8 @@ class RestApiRoutes(
   sharedResources: SharedResources,
   sessionStore: SessionStore,
   wsRoutes: WebSocketRoutes,
-  neblinkService: Option[NeblinkService] = None
+  neblinkService: Option[NeblinkService] = None,
+  ttsService: Option[TtsService] = None
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
@@ -38,6 +39,26 @@ class RestApiRoutes(
     // Health check
     case GET -> Root / "health" =>
       Ok(Json.obj("status" -> "ok".asJson, "version" -> nebflow.Version.string.asJson))
+
+    // TTS 语音合成（无需 auth，内部调用）
+    case req @ POST -> Root / "tts" =>
+      ttsService match
+        case None => NotFound(Json.obj("error" -> "TTS not configured".asJson))
+        case Some(svc) =>
+          req.as[Json].flatMap { body =>
+            val text = body.hcursor.downField("text").as[String].getOrElse("")
+            svc.synthesize(text).flatMap {
+              case Some(bytes) =>
+                IO.pure(
+                  Response[IO](
+                    status = Status.Ok,
+                    headers = Headers(`Content-Type`(MediaType.audio.wav)),
+                    body = Stream.emits(bytes).covary[IO]
+                  )
+                )
+              case None => NotFound(Json.obj("error" -> "TTS synthesis failed".asJson))
+            }
+          }
 
     // Generic command endpoint — mirrors WS messages
     case req @ POST -> Root / "command" =>
