@@ -381,7 +381,7 @@ class RestApiRoutes(
           val desc = body.hcursor.downField("userDescription").as[String].toOption.getOrElse("")
           deviceId match
             case Some(did) => ms.updatePeerDescription(did, desc) *> Ok(Json.obj("ok" -> true.asJson))
-            case None      => BadRequest(Json.obj("error" -> "missing deviceId".asJson))
+            case None => BadRequest(Json.obj("error" -> "missing deviceId".asJson))
         }
       }
 

@@ -54,9 +54,8 @@ object AgentCommand extends CliCommand:
             client.command(Json.obj("type" -> "getAgentSystemPrompt".asJson, "name" -> name.asJson)).map { resp =>
               val systemMd = resp.hcursor.downField("systemMd").as[String].getOrElse("")
               if ctx.json then CliResult.Json(resp)
-              else
-                if systemMd.nonEmpty then CliResult.Text(List(s"Agent: $name", "", systemMd))
-                else CliResult.Text(List(s"Agent: $name", "", "(no system prompt)"))
+              else if systemMd.nonEmpty then CliResult.Text(List(s"Agent: $name", "", systemMd))
+              else CliResult.Text(List(s"Agent: $name", "", "(no system prompt)"))
             }
 
   end AgentShow
