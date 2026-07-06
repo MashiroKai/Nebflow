@@ -1255,19 +1255,17 @@ onMessage('historyPage', (msg, view) => {
 // Click the indicator to see a dropdown with per-agent status.
 
 function updateDelegateIndicator() {
+  if (!activeView) return;
   const el = activeView.dom.delegateIndicatorEl;
   if (!el) return;
-  // Only count sub-agents belonging to the currently displayed session
   const sid = activeView?.sessionId;
-  const count = Object.values(activeView.stream.activeSubAgents || {})
-    .filter(info => !info.sessionId || info.sessionId === sid)
-    .length;
+  const delegates = (sid && state.sessionDelegates[sid]) || {};
+  const count = Object.keys(delegates).length;
   if (count > 0) {
     el.classList.remove('hidden');
     el.querySelector('.delegate-count').textContent = count;
   } else {
     el.classList.add('hidden');
-    // Also hide dropdown
     const dropdown = activeView.dom.delegateDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
@@ -1276,13 +1274,12 @@ function updateDelegateIndicator() {
 state.updateDelegateIndicator = updateDelegateIndicator;
 
 function renderDelegateDropdown() {
+  if (!activeView) return;
   const listEl = activeView.dom.delegateDropdownListEl;
   if (!listEl) return;
-  const agents = activeView.stream.activeSubAgents || {};
-  // Only show sub-agents belonging to the currently displayed session
   const sid = activeView?.sessionId;
-  const entries = Object.entries(agents)
-    .filter(([id, info]) => !info.sessionId || info.sessionId === sid);
+  const delegates = (sid && state.sessionDelegates[sid]) || {};
+  const entries = Object.entries(delegates);
   if (entries.length === 0) {
     listEl.innerHTML = '';
     return;
@@ -1332,18 +1329,18 @@ document.addEventListener('click', (e) => {
 
 onMessage('agentStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (!view) return;
+  const sid = msg.sessionId || state.activeSessionId;
+  if (!sid) return;
   const aid = msg.agentId || msg.name;
-  activeView.stream.activeAgentId = aid;
-  if (!activeView.stream.activeSubAgents) activeView.stream.activeSubAgents = {};
-  activeView.stream.activeSubAgents[aid] = {
+  if (view) view.stream.activeAgentId = aid;
+  if (!state.sessionDelegates[sid]) state.sessionDelegates[sid] = {};
+  state.sessionDelegates[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
     currentTool: null,
     done: false,
-    sessionId: msg.sessionId || state.activeSessionId
   };
-  updateDelegateIndicator();
+  if (view) updateDelegateIndicator();
 });
 
 onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
@@ -1351,11 +1348,12 @@ onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessi
 
 onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (!view) return;
-  const aid = msg.agentId || activeView.stream.activeAgentId;
-  if (aid && activeView.stream.activeSubAgents && activeView.stream.activeSubAgents[aid]) {
-    activeView.stream.activeSubAgents[aid].currentTool = msg.label;
-    renderDelegateDropdown();
+  const sid = msg.sessionId || state.activeSessionId;
+  if (!sid) return;
+  const aid = msg.agentId || (view && view.stream.activeAgentId);
+  if (aid && state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
+    state.sessionDelegates[sid][aid].currentTool = msg.label;
+    if (view) renderDelegateDropdown();
   }
 });
 
@@ -1367,23 +1365,32 @@ onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId)
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (!view) return;
-  const aid = msg.agentId || activeView.stream.activeAgentId;
-  if (aid && activeView.stream.activeSubAgents) {
-    if (activeView.stream.activeSubAgents[aid]) activeView.stream.activeSubAgents[aid].done = true;
-    renderDelegateDropdown();
-    const v = activeView; // capture before setTimeout
+  const sid = msg.sessionId || state.activeSessionId;
+  if (!sid) return;
+  const aid = msg.agentId || (view && view.stream.activeAgentId);
+  if (aid && state.sessionDelegates[sid]) {
+    if (state.sessionDelegates[sid][aid]) state.sessionDelegates[sid][aid].done = true;
+    if (view) renderDelegateDropdown();
+    // Remove after 2s — always runs, even if the parent session isn't displayed
     setTimeout(() => {
-      if (v.stream.activeSubAgents && v.stream.activeSubAgents[aid]) {
-        delete v.stream.activeSubAgents[aid];
-        const saved = activeView;
-        setActiveView(v);
-        updateDelegateIndicator();
-        setActiveView(saved);
+      if (state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
+        delete state.sessionDelegates[sid][aid];
+        // Clean up empty session entries
+        if (Object.keys(state.sessionDelegates[sid]).length === 0) {
+          delete state.sessionDelegates[sid];
+        }
+        // Update indicator if the affected view is currently displayed
+        const targetView = findViewBySessionId(sid);
+        if (targetView) {
+          const saved = activeView;
+          setActiveView(targetView);
+          updateDelegateIndicator();
+          setActiveView(saved);
+        }
       }
     }, 2000);
   }
-  activeView.stream.activeAgentId = null;
+  if (view) view.stream.activeAgentId = null;
 });
 
 // --- Compaction events (per-session) ---
@@ -2086,12 +2093,45 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 // session's history so the user sees the latest state.
 onReconnect(() => {
   const sid = state.activeSessionId;
-  if (!sid) return;
-  const view = findViewBySessionId(sid);
-  if (view) {
-    view.pagination.pendingInitialLoad = true;
-    sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
+  if (sid) {
+    const view = findViewBySessionId(sid);
+    if (view) {
+      view.pagination.pendingInitialLoad = true;
+      sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
+    }
   }
+  // Sync background task state — completion events may have been missed
+  sendWs({ type: 'getActiveBgTasks' });
+});
+
+// ---------- Reconnect: sync background tasks ----------
+// Backend responds with active tasks grouped by sessionId.
+// We remove any locally-tracked tasks that are no longer active on the backend
+// (they completed during the disconnect), and keep tasks the backend confirms.
+onMessage('activeBgTasks', (msg) => {
+  const backendTasks = msg.tasks || {};
+  // Remove locally-tracked tasks that the backend no longer knows about
+  for (const sid of Object.keys(state.sessionBgTasks)) {
+    const backendSessionTasks = backendTasks[sid] || [];
+    const backendIds = new Set(backendSessionTasks.map(t => t.taskId));
+    const before = state.sessionBgTasks[sid].length;
+    state.sessionBgTasks[sid] = state.sessionBgTasks[sid].filter(t => backendIds.has(t.taskId));
+    // If we removed tasks, also clean up finishedAt entries
+    if (state.sessionBgTasks[sid].length < before) {
+      const removed = before - state.sessionBgTasks[sid].length;
+      // Silently clean — no UI update needed since these were already "running"
+      // indicators that will disappear on next render
+    }
+    if (state.sessionBgTasks[sid].length === 0) {
+      delete state.sessionBgTasks[sid];
+    }
+  }
+  // Also clean stale delegate indicators — any session that has delegates
+  // tracked locally but no longer has an active agent on the backend
+  // can't be reliably detected here (delegates use actor system, not BgTaskRegistry).
+  // The agentDone fix (global sessionDelegates) already handles missed events.
+  // Refresh the UI for the active view
+  if (activeView) updateBgTasksUI();
 });
 
 // Scroll listener (primary window)

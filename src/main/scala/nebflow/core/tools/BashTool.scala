@@ -530,26 +530,28 @@ Git safety:
       // Log first so we know the callback fired, then send both notifications
       // independently — each has its own error recovery so one failure
       // doesn't prevent the other.
-      logger.info(s"Background job $jobId callback: $eventType$exitInfo", "sessionId" -> ctx.sessionId.getOrElse("")) *>
+      BgTaskRegistry.unregister(jobId) *>
+        logger.info(s"Background job $jobId callback: $eventType$exitInfo", "sessionId" -> ctx.sessionId.getOrElse("")) *>
         notifyFrontend.void *> notifyAgent
     }
 
   /** Emit a WS event so the frontend shows the background task indicator. */
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
-    ctx.wsSend.fold(
-      logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")
-    ) { send =>
-      val json = io.circe.Json.obj(
-        "type" -> "backgroundTaskUpdate".asJson,
-        "sessionId" -> ctx.sessionId.asJson,
-        "taskId" -> jobId.asJson,
-        "description" -> description.asJson,
-        "status" -> "running".asJson,
-        "startedAt" -> System.currentTimeMillis().asJson
-      )
-      logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>
-        send(json).handleErrorWith(e => logger.warn(s"WS send failed for job $jobId: ${e.getMessage}"))
-    }
+    BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "local") *>
+      (ctx.wsSend.fold(
+        logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")
+      ) { send =>
+        val json = io.circe.Json.obj(
+          "type" -> "backgroundTaskUpdate".asJson,
+          "sessionId" -> ctx.sessionId.asJson,
+          "taskId" -> jobId.asJson,
+          "description" -> description.asJson,
+          "status" -> "running".asJson,
+          "startedAt" -> System.currentTimeMillis().asJson
+        )
+        logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>
+          send(json).handleErrorWith(e => logger.warn(s"WS send failed for job $jobId: ${e.getMessage}"))
+      })
 
   /** Build a heartbeat callback that sends WS updates to frontend. */
   private def makeHeartbeatCallback(
