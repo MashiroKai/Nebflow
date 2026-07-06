@@ -7,6 +7,108 @@ import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromp
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 
+// ---------- Voice TTS player ----------
+// Module-level singleton. Manages sequential playback of <voice> blocks:
+// fetches WAV from /api/tts, plays them in order, supports click-to-replay
+// and a mute toggle (persisted in localStorage).
+const VoicePlayer = {
+  queue: [],
+  processing: false,
+  muted: localStorage.getItem('voiceMuted') === 'true',
+  _current: null, // { audio, url, element, resolve }
+
+  /** Add a voice block to the playback queue. */
+  enqueue(text, element) {
+    this.queue.push({ text, element });
+    if (!this.processing) this._processQueue();
+  },
+
+  /** Process queue items sequentially. Each item: fetch TTS → play → wait for ended. */
+  async _processQueue() {
+    this.processing = true;
+    let cancelled = false;
+    while (this.queue.length > 0 && !cancelled) {
+      const item = this.queue.shift();
+      const result = await this._playItem(item);
+      if (result === 'cancelled') cancelled = true;
+    }
+    this.processing = false;
+    // Items may have been enqueued during cancellation (e.g. replay)
+    if (this.queue.length > 0) this._processQueue();
+  },
+
+  /** Play a single voice block. Returns 'done' or 'cancelled'. */
+  async _playItem({ text, element }) {
+    if (this.muted) return 'done';
+    let url = null;
+    try {
+      const resp = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) return 'done';
+      const blob = await resp.blob();
+      url = URL.createObjectURL(blob);
+      const result = await new Promise(resolve => {
+        const audio = new Audio(url);
+        this._current = { audio, url, element, resolve };
+        if (element) element.classList.add('playing');
+        audio.onended = () => resolve('done');
+        audio.onerror = () => resolve('done');
+        audio.play().catch(() => resolve('done'));
+      });
+      return result;
+    } catch (e) {
+      return 'done';
+    } finally {
+      if (element) element.classList.remove('playing');
+      if (url) URL.revokeObjectURL(url);
+      this._current = null;
+    }
+  },
+
+  /** Cancel current playback and clear the queue. */
+  _cancel() {
+    this.queue = [];
+    if (this._current) {
+      this._current.audio.pause();
+      this._current.resolve('cancelled');
+    }
+  },
+
+  /** Click-to-replay: stop everything, then play this block immediately. */
+  replay(element) {
+    this._cancel();
+    this.enqueue(element.textContent, element);
+  },
+
+  /** Toggle mute on/off. When muting, stops all playback. Returns new muted state. */
+  toggleMute() {
+    this.muted = !this.muted;
+    localStorage.setItem('voiceMuted', String(this.muted));
+    if (this.muted) this._cancel();
+    return this.muted;
+  },
+};
+
+// SVG icons for the voice toggle button
+const VOICE_SVG_ON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
+const VOICE_SVG_OFF = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>';
+
+// Initialize voice toggle buttons (runs after DOM is ready — module scripts are deferred)
+document.querySelectorAll('.voice-toggle').forEach(btn => {
+  if (VoicePlayer.muted) {
+    btn.classList.add('muted');
+    btn.innerHTML = VOICE_SVG_OFF;
+  }
+  btn.addEventListener('click', () => {
+    const muted = VoicePlayer.toggleMute();
+    btn.classList.toggle('muted', muted);
+    btn.innerHTML = muted ? VOICE_SVG_OFF : VOICE_SVG_ON;
+  });
+});
+
 // ---------- Agent color assignment ----------
 export function getAgentColor(agentId) {
   if (!state.agentColors[agentId]) {
@@ -150,12 +252,19 @@ export function finishAi(durationMs, model) {
     }
     const askBox = activeView.stream.currentAiBubble.querySelector('.option-box');
     if (askBox) askBox.remove();
-    activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
-    if (askBox) activeView.stream.currentAiBubble.appendChild(askBox);
+    const bubble = activeView.stream.currentAiBubble;
+    bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
+    if (askBox) bubble.appendChild(askBox);
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(activeView.stream.currentAiBubble, durationMs, model, seed);
+      renderDurationBadge(bubble, durationMs, model, seed);
     }
+    // Trigger voice TTS: enqueue all <voice> blocks for sequential playback,
+    // and attach click-to-replay handlers on the green text.
+    bubble.querySelectorAll('.voice-block').forEach(el => {
+      el.addEventListener('click', () => VoicePlayer.replay(el));
+      VoicePlayer.enqueue(el.textContent, el);
+    });
     const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model };
     activeView.stream.currentAiBubble = null;
     activeView.stream.aiText = '';
