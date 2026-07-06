@@ -19,8 +19,10 @@ private[agent] trait AgentCore:
 
   protected val MaxDepth = 5
 
-  /** Tools removed from sub-agents (depth > 0): user-interaction tools that
-    * don't make sense in an autonomous sub-agent context. */
+  /**
+   * Tools removed from sub-agents (depth > 0): user-interaction tools that
+   * don't make sense in an autonomous sub-agent context.
+   */
   private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
@@ -416,8 +418,7 @@ private[agent] trait AgentCore:
             val sendPermission =
               if state.depth > 0 && toolCtx.parentRef.isDefined then
                 toolCtx.parentRef.get ! AgentCommand.ForwardPermission(deferred, permJson)
-              else
-                (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *> state.wsSend(permJson)
+              else (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *> state.wsSend(permJson)
             for
               _ <- sendPermission
               approved <- deferred.get

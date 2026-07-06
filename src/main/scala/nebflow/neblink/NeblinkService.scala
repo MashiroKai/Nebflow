@@ -96,7 +96,7 @@ class NeblinkService private (
     peersRef.update { peers =>
       peers.get(deviceId) match
         case Some(p) => peers + (deviceId -> p.copy(userDescription = description))
-        case None    => peers
+        case None => peers
     }
 
   /** Run capability self-check and update device identity. Called on startup. */
@@ -161,7 +161,7 @@ class NeblinkService private (
           val existingDesc = peers.get(info.deviceId).flatMap(p => Option(p.userDescription).filter(_.nonEmpty))
           val finalPeer = existingDesc match
             case Some(d) => peer.copy(userDescription = d)
-            case None    => peer
+            case None => peer
           peers + (info.deviceId -> finalPeer)
         } *>
           logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
