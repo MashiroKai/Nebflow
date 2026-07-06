@@ -514,6 +514,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
+  def getBypass(id: String): IO[Boolean] =
+    indexRef.get.map { case (_, sessions, _) =>
+      sessions.find(_.id == id).exists(_.bypass)
+    }
+
   // ===== Folder Management =====
 
   def createFolder(name: String, parentId: Option[String] = None, agentName: String = ""): IO[Folder] =
