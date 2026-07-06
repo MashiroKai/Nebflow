@@ -1580,7 +1580,7 @@ onMessage('modelOptions', (msg, view) => {
   }
   const options = models.map(m => {
     const isCurrent = current && m.ref === current;
-    return {label: m.label + (isCurrent ? ' ✓' : ''), desc: m.ref, ref: m.ref};
+    return {label: m.label + (isCurrent ? ' ✓' : ''), desc: m.description || '', ref: m.ref};
   });
   // Add "Default" option to reset
   const defaultLabel = t('chat.modelDefault');
