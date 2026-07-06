@@ -333,6 +333,7 @@ class MemoryAgentManager(
       }
       f.copy(changed = changed)
     }
+  end collectAllFiles
 
   // ============================================================
   // User input collection for Dream (full cycle only)
