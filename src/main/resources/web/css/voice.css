@@ -1,27 +1,22 @@
 /* ── Voice TTS blocks (<voice> tags rendered as clickable green text) ──── */
 
 .voice-block {
-  color: #4ade80;
+  color: var(--color-text);
+  opacity: 0.75;
   cursor: pointer;
-  border-radius: 4px;
-  padding: 0 2px;
-  transition: background 0.15s, opacity 0.15s;
+  border-bottom: 1px dashed rgba(127, 156, 245, 0.4);
+  transition: opacity 0.15s, border-color 0.15s;
 }
 
 .voice-block:hover {
-  background: rgba(74, 222, 128, 0.12);
+  opacity: 1;
+  border-bottom-color: rgba(127, 156, 245, 0.8);
 }
 
 .voice-block.playing {
-  text-decoration: underline;
-  text-decoration-color: #4ade80;
-  text-underline-offset: 3px;
-  animation: voice-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes voice-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.55; }
+  opacity: 1;
+  border-bottom-style: solid;
+  border-bottom-color: rgba(127, 156, 245, 0.8);
 }
 
 /* ── Voice toggle button (speaker icon in input bar) ──────────────────── */

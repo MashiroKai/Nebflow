@@ -84,6 +84,9 @@
         <button id="bypass-toggle" class="bypass-toggle" title="Toggle auto-approve">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         </button>
+        <button class="voice-toggle" id="voice-toggle-btn" title="Voice output">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        </button>
         <div id="bg-indicator" class="hidden">
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
@@ -126,7 +129,6 @@
       <div id="queue-bar"></div>
       <div id="input-bar">
         <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
-        <button class="voice-toggle" id="voice-toggle-btn" title="Voice output"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></button>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
         <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
@@ -194,7 +196,6 @@
       <div id="secondary-queue-bar"></div>
       <div class="secondary-input-bar">
         <button class="icon-btn" id="secondary-voice-btn" title="Voice"><i data-lucide="mic"></i></button>
-        <button class="voice-toggle" id="secondary-voice-toggle-btn" title="Voice output"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></button>
         <div id="secondary-input-wrap" style="position:relative;">
           <div id="secondary-attachment-preview"></div>
           <div id="secondary-ask-indicator"><span id="secondary-ask-indicator-label">ASK</span><span id="secondary-ask-indicator-cancel">&times;</span></div>
