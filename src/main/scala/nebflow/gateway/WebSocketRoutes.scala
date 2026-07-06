@@ -965,6 +965,16 @@ class WebSocketRoutes(
 
         case "ping" => IO.unit
 
+        case "getActiveBgTasks" =>
+          nebflow.core.tools.BgTaskRegistry.activeTasksJson.flatMap { tasksJson =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "activeBgTasks".asJson,
+                "tasks" -> tasksJson
+              )
+            )
+          }
+
         case "cancelBackgroundJob" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")

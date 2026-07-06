@@ -129,6 +129,11 @@ export default {
   // Per-session background tasks: sessionId -> [{ taskId, description, status }]
   sessionBgTasks: {},
 
+  // Per-session delegate agents: sessionId -> { [agentId]: { name, task, currentTool, done } }
+  // Global (not per-view) so agentDone events are processed even when the
+  // parent session isn't currently displayed, preventing stale indicators.
+  sessionDelegates: {},
+
   // Per-agent aggregate state: agentName -> 'working' | 'waiting' | 'compressing' | 'complete' | 'idle'
   agentStates: {},
   // Debounce timer for complete state
