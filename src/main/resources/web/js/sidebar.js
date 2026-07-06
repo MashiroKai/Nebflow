@@ -267,7 +267,7 @@ export function renderAgentList() {
     el.addEventListener('click', () => selectAgent(a.name));
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      sendWs({type: 'getAgentConfig', name: a.name});
+      sendWs({type: 'getAgentSystemPrompt', name: a.name});
     });
     list.appendChild(el);
   });
