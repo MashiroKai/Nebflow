@@ -3,7 +3,7 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { activeView, setActiveView } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 
@@ -299,17 +299,27 @@ export function finishAgent(agentId) {
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
   const chat = activeView.dom.chat;
+
+  // Reuse the pending card's DOM node for a smooth transition from streaming
+  // state to final state — no visual jump from remove+recreate.
   const pending = state.sessionToolCards[sid];
-  if (pending) {
-    pending.remove();
-    delete state.sessionToolCards[sid];
+  delete state.sessionToolCards[sid];
+  let row, card;
+  if (pending && pending.isConnected) {
+    row = pending;
+    card = row.querySelector('.tool-card');
+    card.classList.remove('tool-card--pending');
+    card.innerHTML = '';
+  } else {
+    row = document.createElement('div');
+    row.className = 'row tool';
+    card = document.createElement('div');
+    card.className = 'tool-card';
+    row.appendChild(card);
+    chat.appendChild(row);
   }
-  const row = document.createElement('div');
-  row.className = 'row tool';
   // NebLink tool marker
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
-  const card = document.createElement('div');
-  card.className = 'tool-card';
 
   // Try HTML card renderer first
   // Always prefer `content` (server-processed, includes ___CARD_HTML___ marker with
@@ -318,8 +328,6 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const cardData = content || '';
   if (renderWithRegistry(card, cardData, label)) {
     card.classList.add('tool-card--html');
-    row.appendChild(card);
-    chat.appendChild(row);
     smartScroll();
     return { type: 'tool', label, summary, content, isError, input: inputJson };
   }
@@ -351,8 +359,6 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div>' +
     (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
-  row.appendChild(card);
-  chat.appendChild(row);
   smartScroll();
 
   if (hasBody) attachToolClick(card);
@@ -415,6 +421,20 @@ const TOOL_PRIMARY_FIELDS = {
   'Edit': 'new_string',
   'Bash': 'command',
   'Card': 'html',
+  'Delegate': 'prompt',
+  'Read': 'file_path',
+  'Grep': 'pattern',
+  'Glob': 'pattern',
+  'Curl': 'body',
+  'WebSearch': 'query',
+  'WebFetch': 'url',
+  'WriteMemory': 'content',
+  'TaskCreate': 'description',
+  'TaskUpdate': 'description',
+  'RemoveUnnecessary': 'summary',
+  'Mail': 'message',
+  'TransferFile': 'sourcePath',
+  'MailAgent': 'message',
 };
 
 /**
@@ -516,7 +536,17 @@ export function appendToolStreamDelta(toolName, delta) {
           else card.appendChild(bodyEl);
         }
       }
-      bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
+      // Try syntax highlighting for code content (Write/Edit/Bash tools generate code).
+      // Falls back to plain text if hljs unavailable or content too large.
+      // Extract file_path from partial JSON for language detection (e.g. Write/Main.scala → Scala).
+      const fpResult = extractFieldValueFromPartialJson(target.rawText, 'file_path');
+      const highlightLabel = fpResult ? fpResult.value : target.toolName;
+      const highlighted = (displayContent.length < 20000) ? highlightCode(displayContent, highlightLabel) : null;
+      if (highlighted) {
+        bodyEl.innerHTML = highlighted.replace(/<\/code><\/pre>$/, '<span class="cursor"></span></code></pre>');
+      } else {
+        bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
+      }
 
       // Auto-scroll
       const threshold = 60;
