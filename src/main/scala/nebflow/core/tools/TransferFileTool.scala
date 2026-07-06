@@ -76,7 +76,10 @@ object TransferFileTool extends Tool:
     else if targetPath.isEmpty then IO.pure(Left(ToolError("targetPath cannot be empty after resolving defaults")))
     else
       ctx.sharedResources.flatMap(_.neblinkService) match
-        case None => IO.pure(Left(ToolError("NebLink not available — start nebflow on both devices and ensure they are connected")))
+        case None =>
+          IO.pure(
+            Left(ToolError("NebLink not available — start nebflow on both devices and ensure they are connected"))
+          )
         case Some(ns) =>
           ns.peers.flatMap { peers =>
             val isLocal = (s: String) => s.equalsIgnoreCase("local")
@@ -107,13 +110,20 @@ object TransferFileTool extends Tool:
                   case (_, Left(err)) => IO.pure(Left(err))
                   case (Right(srcPeer), Right(tgtPeer)) =>
                     transferRemoteToRemote(sourcePath, targetPath, overwrite, srcPeer, tgtPeer, ns)
+            end match
           }
+    end if
 
   end call
 
   // ===== Transfer modes =====
 
-  private def transferLocalToLocal(srcPath: String, tgtPath: String, overwrite: Boolean, ns: nebflow.neblink.NeblinkService): IO[Either[ToolError, String]] =
+  private def transferLocalToLocal(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    ns: nebflow.neblink.NeblinkService
+  ): IO[Either[ToolError, String]] =
     IO.blocking {
       if srcPath == tgtPath then
         // Same path — this is a no-op (can't copy a file to itself unless overwrite is explicitly different)
@@ -133,7 +143,13 @@ object TransferFileTool extends Tool:
       IO.pure(Left(ToolError(s"Local copy failed: ${e.getMessage}")))
     }
 
-  private def transferLocalToRemote(srcPath: String, tgtPath: String, overwrite: Boolean, peer: PeerInfo, ns: nebflow.neblink.NeblinkService): IO[Either[ToolError, String]] =
+  private def transferLocalToRemote(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    peer: PeerInfo,
+    ns: nebflow.neblink.NeblinkService
+  ): IO[Either[ToolError, String]] =
     IO.blocking {
       val src = os.pwd / os.RelPath(srcPath)
       if !os.exists(src) then Left(ToolError(s"Source file not found on local device: $srcPath"))
@@ -171,11 +187,18 @@ object TransferFileTool extends Tool:
                 Left(ToolError(s"Remote transfer failed: $err"))
             case Left(err) =>
               Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
+      end if
     }.handleErrorWith { e =>
       IO.pure(Left(ToolError(s"Cannot transfer to ${peer.deviceName}: ${e.getMessage}")))
     }
 
-  private def transferRemoteToLocal(srcPath: String, tgtPath: String, overwrite: Boolean, peer: PeerInfo, ns: nebflow.neblink.NeblinkService): IO[Either[ToolError, String]] =
+  private def transferRemoteToLocal(
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    peer: PeerInfo,
+    ns: nebflow.neblink.NeblinkService
+  ): IO[Either[ToolError, String]] =
     IO.blocking {
       val encodedPath = java.net.URLEncoder.encode(srcPath, "UTF-8")
       val resp = basicRequest
@@ -200,17 +223,19 @@ object TransferFileTool extends Tool:
                 Right(s"Transferred ${peer.deviceName}:$srcPath ($size bytes) → $tgtPath")
           case Left(err) =>
             Left(ToolError(s"Invalid response from ${peer.deviceName}: ${err.getMessage}"))
-      else if resp.code.code == 404 then
-        Left(ToolError(s"File not found on ${peer.deviceName}: $srcPath"))
-      else
-        Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
+      else if resp.code.code == 404 then Left(ToolError(s"File not found on ${peer.deviceName}: $srcPath"))
+      else Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
+      end if
     }.handleErrorWith { e =>
       IO.pure(Left(ToolError(s"Cannot fetch from ${peer.deviceName}: ${e.getMessage}")))
     }
 
   private def transferRemoteToRemote(
-    srcPath: String, tgtPath: String, overwrite: Boolean,
-    srcPeer: PeerInfo, tgtPeer: PeerInfo,
+    srcPath: String,
+    tgtPath: String,
+    overwrite: Boolean,
+    srcPeer: PeerInfo,
+    tgtPeer: PeerInfo,
     ns: nebflow.neblink.NeblinkService
   ): IO[Either[ToolError, String]] =
     IO.blocking {
@@ -227,8 +252,7 @@ object TransferFileTool extends Tool:
       else
         val json = io.circe.parser.parse(getResp.body).toOption.getOrElse(Json.Null)
         val contentB64 = json.hcursor.downField("content").as[String].getOrElse("")
-        if contentB64.isEmpty then
-          Left(ToolError(s"Empty response from source ${srcPeer.deviceName}"))
+        if contentB64.isEmpty then Left(ToolError(s"Empty response from source ${srcPeer.deviceName}"))
         else
           // 2. Push to target
           val pushBody = Json.obj(
@@ -256,6 +280,8 @@ object TransferFileTool extends Tool:
             else
               val err = pushJson.hcursor.downField("error").as[String].getOrElse("unknown error")
               Left(ToolError(s"Target transfer failed: $err"))
+        end if
+      end if
     }.handleErrorWith { e =>
       IO.pure(Left(ToolError(s"Remote-to-remote transfer failed: ${e.getMessage}")))
     }
