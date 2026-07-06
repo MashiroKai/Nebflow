@@ -56,15 +56,22 @@ export function initMarkdown() {
 }
 
 // === KaTeX math rendering — protect math blocks from Markdown processing ===
-export function renderMarkdownWithMath(text) {
+export function renderMarkdownWithMath(text, parseVoice = true) {
   if (!text) return '';
   if (typeof marked === 'undefined') return escapeHtml(text);
-  // Extract <voice>...</voice> blocks before any markdown processing
+  // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
   const voiceBlocks = [];
-  let protected_ = text.replace(/<voice>([\s\S]+?)<\/voice>/g, (m, content) => {
-    voiceBlocks.push(content.trim());
-    return `VOICEBLOCK${voiceBlocks.length - 1}END`;
-  });
+  if (parseVoice) {
+    let vp = text.replace(/<voice>([\s\S]+?)<\/voice>/g, (m, content) => {
+      voiceBlocks.push(content.trim());
+      return `VOICEBLOCK${voiceBlocks.length - 1}END`;
+    });
+    return _renderMarkdownInternal(vp, voiceBlocks);
+  }
+  return _renderMarkdownInternal(text, voiceBlocks);
+}
+
+function _renderMarkdownInternal(protected_, voiceBlocks) {
   const mathBlocks = [];
   // Protect display math ($$...$$)
   protected_ = protected_.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => {
