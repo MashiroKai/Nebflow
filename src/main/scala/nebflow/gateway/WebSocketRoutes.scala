@@ -1682,9 +1682,14 @@ class WebSocketRoutes(
           val msgText = hc.downField("text").as[String].getOrElse("")
           if deviceId.nonEmpty && msgText.nonEmpty then
             sharedResources.dropboxService match
-              case None => wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
-              case Some(svc) => svc.sendText(deviceId, msgText).handleErrorWith(e =>
-                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson)))
+              case None =>
+                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
+              case Some(svc) =>
+                svc
+                  .sendText(deviceId, msgText)
+                  .handleErrorWith(e =>
+                    wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
+                  )
           else IO.unit
 
         case "dropbox-file-offer" =>
@@ -1695,9 +1700,14 @@ class WebSocketRoutes(
           val mimeType = hc.downField("mimeType").as[String].getOrElse("")
           if deviceId.nonEmpty && fileName.nonEmpty then
             sharedResources.dropboxService match
-              case None => wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
-              case Some(svc) => svc.offerFile(deviceId, fileName, fileSize, mimeType).handleErrorWith(e =>
-                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson)))
+              case None =>
+                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
+              case Some(svc) =>
+                svc
+                  .offerFile(deviceId, fileName, fileSize, mimeType)
+                  .handleErrorWith(e =>
+                    wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
+                  )
           else IO.unit
 
         case "dropbox-file-respond" =>
@@ -1717,9 +1727,13 @@ class WebSocketRoutes(
           if deviceId.nonEmpty then
             sharedResources.dropboxService match
               case None => IO.unit
-              case Some(svc) => svc.getHistory(deviceId).flatMap { msgs =>
-                wsSend(io.circe.Json.obj("type" -> "dropbox-history".asJson, "deviceId" -> deviceId.asJson, "messages" -> msgs.asJson))
-              }
+              case Some(svc) =>
+                svc.getHistory(deviceId).flatMap { msgs =>
+                  wsSend(
+                    io.circe.Json
+                      .obj("type" -> "dropbox-history".asJson, "deviceId" -> deviceId.asJson, "messages" -> msgs.asJson)
+                  )
+                }
           else IO.unit
 
         case _ =>

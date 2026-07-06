@@ -506,8 +506,10 @@ class RestApiRoutes(
               svc.receiveFromPeer(transferId, req.body).flatMap {
                 case Right(hash) => Ok(Json.obj("sha256" -> hash.asJson))
                 case Left(err) =>
-                  val status = if err.contains("not accepted") || err.contains("not found")
-                               then Status.NotFound else Status.InternalServerError
+                  val status =
+                    if err.contains("not accepted") || err.contains("not found")
+                    then Status.NotFound
+                    else Status.InternalServerError
                   Response[IO](status).withEntity(Json.obj("error" -> err.asJson)).pure[IO]
               }
       }

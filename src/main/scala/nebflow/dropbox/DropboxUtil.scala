@@ -5,8 +5,8 @@ import fs2.Stream
 import nebflow.core.NebflowLogger
 
 import java.security.MessageDigest
-import java.time.format.DateTimeFormatter
 import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 /** Pure utility functions for Dropbox file handling. Extracted for testability. */
 object DropboxUtil:
@@ -19,13 +19,16 @@ object DropboxUtil:
       ()
     } *> {
       val digest = MessageDigest.getInstance("SHA-256")
-      stream.chunks.evalTap { chunk =>
-        IO.blocking {
-          val bytes = chunk.toArray
-          digest.update(bytes)
-          os.write.append(path, bytes)
+      stream.chunks
+        .evalTap { chunk =>
+          IO.blocking {
+            val bytes = chunk.toArray
+            digest.update(bytes)
+            os.write.append(path, bytes)
+          }
         }
-      }.compile.drain *> IO {
+        .compile
+        .drain *> IO {
         digest.digest().map(b => f"$b%02x").mkString
       }
     }
@@ -62,6 +65,6 @@ object DropboxUtil:
       case _ =>
         Option(System.getenv("XDG_DOWNLOAD_DIR")) match
           case Some(p) => os.Path(p, os.pwd)
-          case None    => home / "Downloads"
+          case None => home / "Downloads"
 
 end DropboxUtil

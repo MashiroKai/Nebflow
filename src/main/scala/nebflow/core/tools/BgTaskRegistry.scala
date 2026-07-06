@@ -32,15 +32,21 @@ object BgTaskRegistry:
 
   /** Returns active tasks grouped by sessionId, as JSON for the frontend. */
   def activeTasksJson: IO[io.circe.Json] =
-    tasks.get.map { m =>
-      m.values.groupBy(_.sessionId).map { case (sid, taskSet) =>
-        sid -> taskSet.map { t =>
-          io.circe.Json.obj(
-            "taskId" -> t.jobId.asJson,
-            "description" -> t.description.asJson,
-            "status" -> "running".asJson,
-            "startedAt" -> t.startedAtMs.asJson
-          )
-        }.toList
-      }.toMap
-    }.map(_.asJson)
+    tasks.get
+      .map { m =>
+        m.values
+          .groupBy(_.sessionId)
+          .map { case (sid, taskSet) =>
+            sid -> taskSet.map { t =>
+              io.circe.Json.obj(
+                "taskId" -> t.jobId.asJson,
+                "description" -> t.description.asJson,
+                "status" -> "running".asJson,
+                "startedAt" -> t.startedAtMs.asJson
+              )
+            }.toList
+          }
+          .toMap
+      }
+      .map(_.asJson)
+end BgTaskRegistry
