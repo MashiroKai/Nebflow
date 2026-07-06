@@ -508,6 +508,12 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
+  def setBypass(id: String, bypass: Boolean): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      val updated = sessions.map(s => if s.id == id then s.copy(bypass = bypass) else s)
+      (activeId, updated, folders)
+    } *> saveIndex
+
   // ===== Folder Management =====
 
   def createFolder(name: String, parentId: Option[String] = None, agentName: String = ""): IO[Folder] =
