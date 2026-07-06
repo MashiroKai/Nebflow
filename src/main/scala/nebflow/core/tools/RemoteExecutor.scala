@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.std.Dispatcher
-import cats.effect.{Deferred, IO}
+import cats.effect.{Deferred, IO, Ref}
 import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
@@ -89,10 +89,14 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     for
       jobId <- IO.randomUUID.map(_.toString.take(8))
       _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
-      // 1. Emit "running" to frontend
+      // 1. Emit "running" to frontend + register in global registry
       _ <- emitBgTaskStarted(ctx, jobId, description)
-      // 2. Start detached fiber — synchronous HTTP to KAI, then notify on completion
-      _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description))
+      _ <- BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "remote")
+      // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
+      doneRef <- IO.ref(false)
+      _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
+      // 3. Start detached fiber — synchronous HTTP to KAI, then notify on completion
+      _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description, doneRef))
     yield Right(
       s"[Background job started] Job ID: $jobId\nThe command is running in the background on ${peer.deviceName}. You will be automatically notified when it finishes — continue with other work or finish your turn."
     )
@@ -148,7 +152,10 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
             s"Remote command on ${peer.deviceName} exceeded ${AutoBgThreshold.toSeconds}s, moving to background (job $jobId)"
           ) *>
             emitBgTaskStarted(ctx, jobId, description) *>
+            BgTaskRegistry.register(jobId, ctx.sessionId.getOrElse(""), description, "remote") *>
             (for
+              doneRef <- IO.ref(false)
+              _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
               _ <- commandFiber.joinWithNever
               r <- resultRef.get
               _ <- r match
@@ -157,6 +164,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
                 case Some(Left(err)) =>
                   notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
                 case None => IO.unit
+              _ <- doneRef.set(true)
             yield ()).start.void
         else thresholdFiber.cancel
     yield
@@ -178,23 +186,65 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     params: JsonObject,
     ctx: ToolContext,
     jobId: String,
-    description: String
+    description: String,
+    doneRef: Ref[IO, Boolean]
   ): Unit =
     val completionIO =
       p2pExecute(peer, toolName, params, BgTimeout).flatMap {
         case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
         case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
-      }
+      }.flatMap(_ => doneRef.set(true))
 
     dispatcher.unsafeRunAndForget(
       completionIO.handleErrorWith(e =>
         logger.warn(s"Remote background fiber $jobId crashed: ${e.getMessage}") *>
-          emitBgTaskFinished(ctx, jobId, description, "failed")
+          emitBgTaskFinished(ctx, jobId, description, "failed") *>
+          doneRef.set(true)
       )
     )
   end startRemoteBgFiber
 
   // ---- WS helpers (match BashTool's backgroundTaskUpdate format) ----
+
+  /**
+   * Periodic heartbeat for remote background tasks. Unlike local Bash tasks
+   * which have process-level health (alive, output lines), remote tasks only
+   * know the HTTP call is still pending. We send runningMs so the frontend
+   * duration timer and status dot work correctly.
+   */
+  private def startRemoteHeartbeat(
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    doneRef: Ref[IO, Boolean]
+  ): IO[Unit] =
+    val baseSec = nebflow.shared.Defaults.BgHeartbeatIntervalSec
+    val startedAtMs = System.currentTimeMillis()
+    def loop: IO[Unit] =
+      doneRef.get.flatMap {
+        case true => IO.unit
+        case false =>
+          val now = System.currentTimeMillis()
+          val runningMs = now - startedAtMs
+          ctx.wsSend.fold(IO.unit) { send =>
+            send(
+              io.circe.Json.obj(
+                "type" -> "backgroundTaskUpdate".asJson,
+                "sessionId" -> ctx.sessionId.asJson,
+                "taskId" -> jobId.asJson,
+                "status" -> "running".asJson,
+                "heartbeat" -> io.circe.Json.obj(
+                  "alive" -> true.asJson,
+                  "outputLines" -> 0.asJson,
+                  "idleMs" -> runningMs.asJson,
+                  "runningMs" -> runningMs.asJson
+                )
+              )
+            ).handleErrorWith(_ => IO.unit)
+          } *> IO.sleep(baseSec.seconds) *> loop
+      }
+    loop.start.void
+  end startRemoteHeartbeat
 
   private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
     ctx.wsSend.fold(
@@ -237,29 +287,30 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     description: String,
     result: Either[String, String]
   ): IO[Unit] =
-    result match
-      case Right(output) =>
-        ctx.agentActorRef.fold(IO.unit)(ref =>
-          ref ! AgentCommand.ExternalEvent(
-            source = "background-task",
-            eventType = "completed",
-            payload = s"[Background task completed] \"$description\":\n$output",
-            metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
-          )
-        ) *>
-          emitBgTaskFinished(ctx, jobId, description, "completed") *>
-          logger.info(s"Remote background task $jobId completed")
-      case Left(errMsg) =>
-        ctx.agentActorRef.fold(IO.unit)(ref =>
-          ref ! AgentCommand.ExternalEvent(
-            source = "background-task",
-            eventType = "failed",
-            payload = s"[Background task failed] \"$description\":\n$errMsg",
-            metadata = JsonObject("description" -> description.asJson)
-          )
-        ) *>
-          emitBgTaskFinished(ctx, jobId, description, "failed") *>
-          logger.warn(s"Remote background task $jobId failed: $errMsg")
+    BgTaskRegistry.unregister(jobId) *>
+      (result match
+        case Right(output) =>
+          ctx.agentActorRef.fold(IO.unit)(ref =>
+            ref ! AgentCommand.ExternalEvent(
+              source = "background-task",
+              eventType = "completed",
+              payload = s"[Background task completed] \"$description\":\n$output",
+              metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
+            )
+          ) *>
+            emitBgTaskFinished(ctx, jobId, description, "completed") *>
+            logger.info(s"Remote background task $jobId completed")
+        case Left(errMsg) =>
+          ctx.agentActorRef.fold(IO.unit)(ref =>
+            ref ! AgentCommand.ExternalEvent(
+              source = "background-task",
+              eventType = "failed",
+              payload = s"[Background task failed] \"$description\":\n$errMsg",
+              metadata = JsonObject("description" -> description.asJson)
+            )
+          ) *>
+            emitBgTaskFinished(ctx, jobId, description, "failed") *>
+            logger.warn(s"Remote background task $jobId failed: $errMsg"))
 
   // ---- P2P Direct ----
 
