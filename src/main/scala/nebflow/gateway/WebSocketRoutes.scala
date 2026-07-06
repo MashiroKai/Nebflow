@@ -834,7 +834,8 @@ class WebSocketRoutes(
             sessionStore
               .setBypass(sid, bypass)
               .flatMap { _ =>
-                sendAgentSessionList(wsSend, sid)
+                routeToAgent(sid)(ref => ref ! AgentCommand.SetBypass(bypass)) *>
+                  sendAgentSessionList(wsSend, sid)
               }
               .handleErrorWith { e =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
