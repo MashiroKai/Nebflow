@@ -405,17 +405,14 @@ export function highlightCode(code, label) {
 /**
  * Render tool content with appropriate highlighting.
  * Returns HTML string for the body, or null if no special rendering applies.
- * Priority: diff > syntax highlight (Read/Grep only) > null (plain text)
+ * Priority: diff > syntax highlight (any tool) > null (plain text)
  */
 export function renderHighlightedContent(content, label) {
   if (!content) return null;
   const diffHtml = formatDiff(content);
   if (diffHtml) return diffHtml;
-  const toolName = label ? label.replace(/\(.*$/, '').trim() : '';
-  if (toolName === 'Read' || toolName === 'Grep') {
-    const hlHtml = highlightCode(content, label);
-    if (hlHtml) return hlHtml;
-  }
+  const hlHtml = highlightCode(content, label);
+  if (hlHtml) return hlHtml;
   return null;
 }
 
