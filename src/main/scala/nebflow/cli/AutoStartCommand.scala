@@ -2,10 +2,10 @@ package nebflow.cli
 
 import cats.effect.IO
 import io.circe.syntax.given
-import nebflow.core.PathUtil
-import nebflow.core.RestartHelper
+import nebflow.core.{PathUtil, RestartHelper}
 
 import java.io.File
+
 import scala.sys.process.*
 
 object AutoStartCommand extends CliCommand:

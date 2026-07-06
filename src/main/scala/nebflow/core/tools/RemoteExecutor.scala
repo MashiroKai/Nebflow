@@ -1,7 +1,7 @@
 package nebflow.core.tools
 
-import cats.effect.{Deferred, IO}
 import cats.effect.std.Dispatcher
+import cats.effect.{Deferred, IO}
 import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
@@ -26,8 +26,10 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
 
   /** Foreground remote calls that exceed this are automatically moved to background. */
   private val AutoBgThreshold = 120.seconds
+
   /** Timeout for synchronous remote calls without ToolContext (fallback path). */
   private val SyncTimeout = 120.seconds
+
   /** Timeout for background remote calls — the HTTP call waits up to this long. */
   private val BgTimeout = 3600.seconds
 
@@ -142,7 +144,9 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
       _ <-
         if didWin then
           // Command still running — convert to background
-          logger.info(s"Remote command on ${peer.deviceName} exceeded ${AutoBgThreshold.toSeconds}s, moving to background (job $jobId)") *>
+          logger.info(
+            s"Remote command on ${peer.deviceName} exceeded ${AutoBgThreshold.toSeconds}s, moving to background (job $jobId)"
+          ) *>
             emitBgTaskStarted(ctx, jobId, description) *>
             (for
               _ <- commandFiber.joinWithNever
@@ -154,17 +158,15 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
                   notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
                 case None => IO.unit
             yield ()).start.void
-        else
-          thresholdFiber.cancel
+        else thresholdFiber.cancel
     yield
-      if !didWin then
-        resultOpt.getOrElse(Left(ToolError("[Unexpected: no result from remote command]")))
+      if !didWin then resultOpt.getOrElse(Left(ToolError("[Unexpected: no result from remote command]")))
       else
         Right(
           s"[Remote command moved to background] Job ID: $jobId\n" +
-          s"The command has been running on ${peer.deviceName} for over ${AutoBgThreshold.toSeconds}s " +
-          "and will continue in the background. You will be automatically notified when it finishes — " +
-          "continue with other work or finish your turn."
+            s"The command has been running on ${peer.deviceName} for over ${AutoBgThreshold.toSeconds}s " +
+            "and will continue in the background. You will be automatically notified when it finishes — " +
+            "continue with other work or finish your turn."
         )
     end for
   end executeForegroundWithAutoBackground
@@ -181,7 +183,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     val completionIO =
       p2pExecute(peer, toolName, params, BgTimeout).flatMap {
         case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
-        case Left(err)     => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
+        case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
       }
 
     dispatcher.unsafeRunAndForget(
@@ -295,8 +297,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
       val lower = msg.toLowerCase
       if lower.contains("timeout") || lower.contains("timed out") then
         IO.pure(Left(ToolError(s"Command timed out on ${peer.deviceName} after ${timeout.toSeconds}s: $msg")))
-      else
-        IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: $msg")))
+      else IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: $msg")))
     }
   end p2pExecute
 
@@ -326,8 +327,10 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
 
   end p2pExecuteWithRetry
 
-  /** Connection-level failures worth retrying (connection refused, DNS failure).
-   * Does NOT match timeout errors — those mean the command is running but slow. */
+  /**
+   * Connection-level failures worth retrying (connection refused, DNS failure).
+   * Does NOT match timeout errors — those mean the command is running but slow.
+   */
   private def isTransientError(err: ToolError): Boolean =
     val msg = err.message.toLowerCase
     msg.startsWith("cannot reach")
