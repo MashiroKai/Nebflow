@@ -36,8 +36,12 @@ object ToolRegistry:
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Sub-agent delegation
       "Delegate" -> DelegateTool,
+      // Inter-agent messaging
+      "Mail" -> MailTool,
       // Memory
-      "WriteMemory" -> WriteMemoryTool
+      "WriteMemory" -> WriteMemoryTool,
+      // Cross-device file transfer
+      "TransferFile" -> TransferFileTool
     )
     tools.putAll(builtins.asJava)
   }

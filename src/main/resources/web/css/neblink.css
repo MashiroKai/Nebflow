@@ -1,0 +1,203 @@
+/* NebLink — embedded in settings panel */
+
+/* Inline error/info messages */
+.neblink-error {
+  font-size: 12px;
+  color: var(--color-error);
+  margin-bottom: 8px;
+  word-break: break-word;
+}
+.neblink-info {
+  font-size: 12px;
+  color: var(--color-success);
+  margin-bottom: 8px;
+}
+
+.neblink-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+}
+
+/* Peers list */
+.neblink-peers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.neblink-peer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.neblink-peer:hover { background: var(--color-bg); }
+
+.neblink-peer-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dot-on { background: var(--color-success); }
+
+.neblink-peer-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.neblink-peer-platform {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.neblink-peer-status {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.local-tag {
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+.neblink-peer-caps {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.neblink-peer-desc {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+/* Peer update button */
+.neblink-peer-update-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.neblink-peer-update-btn:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* Inline channel selection */
+.neblink-update-inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.neblink-ch-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: none;
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.neblink-ch-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+.neblink-ch-btn.neblink-ch-beta:hover {
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+.neblink-ch-cancel {
+  font-size: 11px;
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.neblink-ch-cancel:hover { color: var(--color-text); }
+
+/* Update status indicators */
+.neblink-update-status {
+  font-size: 11px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.neblink-update-status.updating { color: var(--color-warning); }
+.neblink-update-status.done { color: var(--color-success); }
+.neblink-update-status.error { color: var(--color-error); }
+
+.neblink-caps-display {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 8px;
+  padding: 4px 6px;
+  background: var(--color-bg);
+  border-radius: 4px;
+}
+
+/* Actions */
+.neblink-actions-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* Advanced (collapsible) */
+.neblink-advanced {
+  margin-top: 12px;
+  font-size: 13px;
+}
+.neblink-advanced summary {
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.neblink-advanced summary:hover {
+  color: var(--color-text);
+}
+
+/* Header button */
+#neblink-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  transition: color 0.15s, background 0.15s;
+}
+#neblink-btn:hover { color: var(--color-text); background: var(--color-bg); }
+#neblink-btn.hidden { display: none; }
+#neblink-btn.neblink-on { color: var(--color-success); }
+#neblink-btn.neblink-off { color: var(--color-text-muted); }

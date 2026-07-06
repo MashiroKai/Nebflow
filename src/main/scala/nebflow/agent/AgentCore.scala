@@ -213,7 +213,7 @@ private[agent] trait AgentCore:
               .map(l =>
                 s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
               )
-              .getOrElse("")
+              .getOrElse("") + formatAgentSessions(stateForLlm.agentSessions)
           request = LlmRequest(
             messages = stateForLlm.messages ++ dynamicMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -601,6 +601,14 @@ private[agent] trait AgentCore:
                 "label" -> nebflow.core.summarizeToolCall(tc).asJson
               )
           wsSend(json)
+        case StreamChunk.ToolArgDelta(toolName, delta) if delta.nonEmpty && !isCompactTurn && !isSubagent =>
+          val json = Json.obj(
+            "type" -> "toolArgDelta".asJson,
+            "sessionId" -> sessionId.asJson,
+            "toolName" -> toolName.asJson,
+            "delta" -> delta.asJson
+          )
+          wsSend(json)
         case _ => IO.unit
       }
 
@@ -640,10 +648,18 @@ private[agent] trait AgentCore:
     chatWidth: Int = 0
   ): String =
     val agentPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
-    val effectiveRoot = sessionProjectRoot.getOrElse(resources.projectRoot.toString)
-    val envInfo = Repl.buildEnvInfo(effectiveRoot, chatWidth)
+    val envInfo = Repl.buildEnvInfo(chatWidth)
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
+
+  /** Format active persistent sub-agent sessions for system prompt injection. */
+  protected def formatAgentSessions(sessions: List[AgentSessionInfo]): String =
+    if sessions.isEmpty then ""
+    else
+      val lines = sessions.map: s =>
+        s"${s.address} — ${s.agentName}: ${s.taskDescription} (${s.status})"
+      "\n\n# Active Sessions\n\n" + lines.mkString("\n") +
+        "\n\nUse Mail to send follow-up instructions to any session above."
 
   @volatile private var deviceReminderCache: (Long, Option[SystemReminder]) = (0L, None)
 
@@ -652,7 +668,7 @@ private[agent] trait AgentCore:
     val (lastUpdate, cached) = deviceReminderCache
     if now - lastUpdate < 30000 then cached
     else
-      val refreshed = RemoteExecutor.current.flatMap(_.meshServiceOpt).flatMap { ms =>
+      val refreshed = RemoteExecutor.current.flatMap(_.neblinkServiceOpt).flatMap { ms =>
         try
           import cats.effect.unsafe.implicits.global
           val id = ms.identity.unsafeRunSync()
