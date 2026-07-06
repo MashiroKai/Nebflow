@@ -366,7 +366,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                             .update(_ + (index -> (toolId, toolName, new StringBuilder(args.getOrElse("")))))
                             .as {
                               val start = StreamChunk.ToolCallStart(toolName)
-                              val argChunks = args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(toolName, a)).toList
+                              val argChunks =
+                                args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(toolName, a)).toList
                               acc ++ (start :: argChunks)
                             }
                         case _ =>
@@ -375,7 +376,8 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                               m.get(index) match
                                 case Some((tid, tname, sb)) =>
                                   args.foreach(sb.append)
-                                  val chunks = args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(tname, a)).toList
+                                  val chunks =
+                                    args.filter(_.nonEmpty).map(a => StreamChunk.ToolArgDelta(tname, a)).toList
                                   (m.updated(index, (tid, tname, sb)), chunks)
                                 case None => (m, Nil)
                             }

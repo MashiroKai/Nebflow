@@ -33,43 +33,42 @@ object RestartHelper:
     val jarPath = resolveJarPath()
     val addOpens = "--add-opens java.base/java.lang=ALL-UNNAMED"
 
-    if jarPath.isEmpty then
-      logger.warn("Cannot restart: JAR path not found")
-      return
-
-    val jar = jarPath.get
-    if isWindows then
-      // Windows: cmd /c "timeout & java -jar ..."
-      val cmd =
-        s"""cmd /c "timeout /t $delaySeconds /nobreak >NUL & \\"$javaBin\\" $addOpens -jar \\"$jar\\" start --no-browser" """
-      logger.info(s"Spawning restart helper: $cmd")
-      try
-        val pb = new ProcessBuilder(
-          "cmd",
-          "/c",
-          s"timeout /t $delaySeconds /nobreak >NUL & \"$javaBin\" $addOpens -jar \"$jar\" start --no-browser"
-        )
-        pb.directory(new File(sys.props("user.home")))
-        ensureLogsDir()
-        val logFile = new File(new File(PathUtil.dataRoot.toString, "logs"), "restart.log")
-        pb.redirectOutput(logFile)
-        pb.redirectError(logFile)
-        pb.start()
-      catch case e: Exception => logger.warn(s"Failed to spawn restart helper: ${e.getMessage}")
-    else
-      // Unix: bash -c "sleep N && exec java -jar ..."
-      val script = s"sleep $delaySeconds && exec '$javaBin' $addOpens -jar '$jar' start --no-browser"
-      logger.info(s"Spawning restart helper: bash -c '$script'")
-      try
-        val pb = new ProcessBuilder("bash", "-c", script)
-        pb.directory(new File(sys.props("user.home")))
-        ensureLogsDir()
-        val logFile = new File(new File(PathUtil.dataRoot.toString, "logs"), "restart.log")
-        pb.redirectOutput(logFile)
-        pb.redirectError(logFile)
-        pb.start()
-      catch case e: Exception => logger.warn(s"Failed to spawn restart helper: ${e.getMessage}")
-    end if
+    jarPath match
+      case None => logger.warn("Cannot restart: JAR path not found")
+      case Some(jar) =>
+        if isWindows then
+          // Windows: cmd /c "timeout & java -jar ..."
+          val cmd =
+            s"""cmd /c "timeout /t $delaySeconds /nobreak >NUL & \\"$javaBin\\" $addOpens -jar \\"$jar\\" start --no-browser" """
+          logger.info(s"Spawning restart helper: $cmd")
+          try
+            val pb = new ProcessBuilder(
+              "cmd",
+              "/c",
+              s"timeout /t $delaySeconds /nobreak >NUL & \"$javaBin\" $addOpens -jar \"$jar\" start --no-browser"
+            )
+            pb.directory(new File(sys.props("user.home")))
+            ensureLogsDir()
+            val logFile = new File(new File(PathUtil.dataRoot.toString, "logs"), "restart.log")
+            pb.redirectOutput(logFile)
+            pb.redirectError(logFile)
+            pb.start()
+          catch case e: Exception => logger.warn(s"Failed to spawn restart helper: ${e.getMessage}")
+        else
+          // Unix: bash -c "sleep N && exec java -jar ..."
+          val script = s"sleep $delaySeconds && exec '$javaBin' $addOpens -jar '$jar' start --no-browser"
+          logger.info(s"Spawning restart helper: bash -c '$script'")
+          try
+            val pb = new ProcessBuilder("bash", "-c", script)
+            pb.directory(new File(sys.props("user.home")))
+            ensureLogsDir()
+            val logFile = new File(new File(PathUtil.dataRoot.toString, "logs"), "restart.log")
+            pb.redirectOutput(logFile)
+            pb.redirectError(logFile)
+            pb.start()
+          catch case e: Exception => logger.warn(s"Failed to spawn restart helper: ${e.getMessage}")
+        end if
+    end match
   end spawnRestart
 
   /** Resolve the absolute path to the java executable. */
