@@ -480,6 +480,37 @@ class RestApiRoutes(
               case None => NotFound(Json.obj("error" -> s"File not found: $path".asJson))
             }
       }
+
+    // ===== Dropbox: cross-device file transfer =====
+
+    // Frontend uploads a file to send to a peer (gateway token auth)
+    case req @ POST -> Root / "neblink" / "dropbox" / "upload" / transferId =>
+      withAuth(req) {
+        sharedResources.dropboxService match
+          case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
+          case Some(svc) =>
+            svc.uploadAndRelay(transferId, req.body).flatMap {
+              case Right(_) => Ok(Json.obj("ok" -> true.asJson))
+              case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+            }
+      }
+
+    // Peer pushes a file via HTTP (Tailscale IP auth)
+    case req @ POST -> Root / "neblink" / "dropbox" / "transfer" / transferId =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(_) =>
+          sharedResources.dropboxService match
+            case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
+            case Some(svc) =>
+              svc.receiveFromPeer(transferId, req.body).flatMap {
+                case Right(hash) => Ok(Json.obj("sha256" -> hash.asJson))
+                case Left(err) =>
+                  val status = if err.contains("not accepted") || err.contains("not found")
+                               then Status.NotFound else Status.InternalServerError
+                  Response[IO](status).withEntity(Json.obj("error" -> err.asJson)).pure[IO]
+              }
+      }
   }
 
   // ===== WebSocket Presence Server Endpoint =====
