@@ -826,6 +826,21 @@ class WebSocketRoutes(
               }
           else IO.unit
 
+        case "setBypass" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
+          if sid.nonEmpty then
+            sessionStore
+              .setBypass(sid, bypass)
+              .flatMap { _ =>
+                sendAgentSessionList(wsSend, sid)
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
         case "ask" =>
           val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val question = askJson.hcursor.downField("question").as[String].getOrElse("")
