@@ -352,6 +352,18 @@ class RestApiRoutes(
         }
       }
 
+    // Update a peer device's description (local override)
+    case req @ PUT -> Root / "neblink" / "peer-description" =>
+      withNeblink(req) { ms =>
+        req.as[Json].flatMap { body =>
+          val deviceId = body.hcursor.downField("deviceId").as[String].toOption
+          val desc = body.hcursor.downField("userDescription").as[String].toOption.getOrElse("")
+          deviceId match
+            case Some(did) => ms.updatePeerDescription(did, desc) *> Ok(Json.obj("ok" -> true.asJson))
+            case None      => BadRequest(Json.obj("error" -> "missing deviceId".asJson))
+        }
+      }
+
     // File sync endpoints (fingerprints, file GET/PUT) — removed
 
     // Peer notification — lightweight ping to trigger immediate sync

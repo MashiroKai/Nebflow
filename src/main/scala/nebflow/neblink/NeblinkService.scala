@@ -91,6 +91,14 @@ class NeblinkService private (
       _ <- DeviceIdentity.save(updated)
     yield ()
 
+  /** Update a peer's description locally. Not persisted — cleared on restart. */
+  def updatePeerDescription(deviceId: String, description: String): IO[Unit] =
+    peersRef.update { peers =>
+      peers.get(deviceId) match
+        case Some(p) => peers + (deviceId -> p.copy(userDescription = description))
+        case None    => peers
+    }
+
   /** Run capability self-check and update device identity. Called on startup. */
   def selfCheckCapabilities: IO[Unit] =
     for
@@ -148,7 +156,14 @@ class NeblinkService private (
           capabilities = info.capabilities,
           userDescription = info.userDescription
         )
-        peersRef.update(_ + (info.deviceId -> peer)) *>
+        // Preserve locally-set description: if we already have one, don't overwrite with peer's own
+        peersRef.update { peers =>
+          val existingDesc = peers.get(info.deviceId).flatMap(p => Option(p.userDescription).filter(_.nonEmpty))
+          val finalPeer = existingDesc match
+            case Some(d) => peer.copy(userDescription = d)
+            case None    => peer
+          peers + (info.deviceId -> finalPeer)
+        } *>
           logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
     }
 
