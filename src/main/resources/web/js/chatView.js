@@ -44,7 +44,8 @@ export class ChatView {
       askMode: false,
       agentBubbles: {},
       activeAgentId: null,
-      activeSubAgents: {},
+      // activeSubAgents moved to state.sessionDelegates (global, keyed by sessionId)
+      // so agentDone events are processed even when the session isn't displayed.
       scrollSnapped: true,
       toolStreamText: '',
       toolStreamToolName: '',
@@ -97,7 +98,6 @@ export class ChatView {
       askMode: false,
       agentBubbles: {},
       activeAgentId: null,
-      activeSubAgents: {},
       scrollSnapped: true,
       toolStreamText: '',
       toolStreamToolName: '',
