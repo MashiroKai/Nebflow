@@ -12,7 +12,8 @@ case class SessionMeta(
   agentName: Option[String] = None,
   modelRef: Option[String] = None,
   bridges: Map[String, Json] = Map.empty,
-  folderId: Option[String] = None
+  folderId: Option[String] = None,
+  bypass: Boolean = false
 )
 
 object SessionMeta:
@@ -28,7 +29,8 @@ object SessionMeta:
     val withAgent = m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
     val withModel = m.modelRef.fold(withAgent)(r => withAgent.deepMerge(Json.obj("modelRef" -> r.asJson)))
     val withFolder = m.folderId.fold(withModel)(f => withModel.deepMerge(Json.obj("folderId" -> f.asJson)))
-    if m.bridges.nonEmpty then withFolder.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withFolder
+    val withBypass = if m.bypass then withFolder.deepMerge(Json.obj("bypass" -> true.asJson)) else withFolder
+    if m.bridges.nonEmpty then withBypass.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withBypass
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -49,7 +51,8 @@ object SessionMeta:
       modelRef <- c.downField("modelRef").as[Option[String]]
       folderId <- c.downField("folderId").as[Option[String]]
       bridges <- c.downField("bridges").as[Option[Map[String, Json]]].map(_.getOrElse(Map.empty))
-    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId)
+      bypass <- c.downField("bypass").as[Option[Boolean]].map(_.getOrElse(false))
+    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId, bypass)
   }
 
 end SessionMeta

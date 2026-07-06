@@ -968,6 +968,9 @@ onMessage('sessionList', (msg, view) => {
   const allFolders = msg.folders || [];
   allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
 
+  // Restore bypass state from persisted session metadata
+  state.bypassSessions = new Set(allSessions.filter(s => s.bypass).map(s => s.id));
+
   // Dedup safety net for singleton agents only (same as agentSessionList).
   const SINGLETON_AGENTS = new Set(['Jarvis']);
   const sessionsToShow = allSessions.filter(s => {
@@ -1491,6 +1494,9 @@ onMessage('agentSessionList', (msg, view) => {
 
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
+
+  // Restore bypass state from persisted session metadata
+  state.bypassSessions = new Set(sessions.filter(s => s.bypass).map(s => s.id));
 
   // ── Main window is locked to Jarvis ──────────────────────────────────
   // The primary ChatView always shows the Jarvis session; agent tab switches
@@ -2035,12 +2041,14 @@ initDropbox();
     btn.addEventListener('click', () => {
       setActiveView(v);
       if (!v.sessionId) return;
-      if (state.bypassSessions.has(v.sessionId)) {
-        state.bypassSessions.delete(v.sessionId);
-      } else {
+      const enabled = !state.bypassSessions.has(v.sessionId);
+      if (enabled) {
         state.bypassSessions.add(v.sessionId);
+      } else {
+        state.bypassSessions.delete(v.sessionId);
       }
       state.updateBypassToggle(v);
+      sendWs({ type: 'setBypass', sessionId: v.sessionId, bypass: enabled });
     });
   }
 })();
