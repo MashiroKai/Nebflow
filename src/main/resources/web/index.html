@@ -18,6 +18,7 @@
   <link rel="stylesheet" href="css/dropbox.css">
   <link rel="stylesheet" href="css/sapphire.css">
   <link rel="stylesheet" href="css/split.css">
+  <link rel="stylesheet" href="css/voice.css">
 </head>
 <body>
   <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
@@ -125,6 +126,7 @@
       <div id="queue-bar"></div>
       <div id="input-bar">
         <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
+        <button class="voice-toggle" id="voice-toggle-btn" title="Voice output"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></button>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
         <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
@@ -192,6 +194,7 @@
       <div id="secondary-queue-bar"></div>
       <div class="secondary-input-bar">
         <button class="icon-btn" id="secondary-voice-btn" title="Voice"><i data-lucide="mic"></i></button>
+        <button class="voice-toggle" id="secondary-voice-toggle-btn" title="Voice output"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg></button>
         <div id="secondary-input-wrap" style="position:relative;">
           <div id="secondary-attachment-preview"></div>
           <div id="secondary-ask-indicator"><span id="secondary-ask-indicator-label">ASK</span><span id="secondary-ask-indicator-cancel">&times;</span></div>

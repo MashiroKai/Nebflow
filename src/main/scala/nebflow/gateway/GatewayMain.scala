@@ -360,6 +360,7 @@ object GatewayMain extends IOApp.Simple:
                                               scheduledTaskService = Some(scheduledTaskService)
                                             )
 
+                                            TtsService.create().flatMap { ttsService =>
                                             EmberServerBuilder
                                               .default[IO]
                                               .withHost(cfg.host)
@@ -390,7 +391,8 @@ object GatewayMain extends IOApp.Simple:
                                                   sharedResourcesFinal,
                                                   sessionStore,
                                                   wsRoutes,
-                                                  neblinkService = Some(neblinkService)
+                                                  neblinkService = Some(neblinkService),
+                                                  ttsService = ttsService
                                                 )
 
                                                 Router(
@@ -466,6 +468,7 @@ object GatewayMain extends IOApp.Simple:
                                                   mcpManager.stopAll() *>
                                                   releaseBackend
                                               )
+                                            } // end ttsService
                                         } // end neblinkService setup block
                                     } // end neblinkService
                                   } // end bridgeManager
