@@ -1664,6 +1664,54 @@ class WebSocketRoutes(
             }
           else IO.unit
 
+        // ===== Dropbox: cross-device messaging & file transfer =====
+
+        case "dropbox-send-text" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+          val msgText = hc.downField("text").as[String].getOrElse("")
+          if deviceId.nonEmpty && msgText.nonEmpty then
+            sharedResources.dropboxService match
+              case None => wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
+              case Some(svc) => svc.sendText(deviceId, msgText).handleErrorWith(e =>
+                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson)))
+          else IO.unit
+
+        case "dropbox-file-offer" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+          val fileName = hc.downField("fileName").as[String].getOrElse("")
+          val fileSize = hc.downField("fileSize").as[Long].getOrElse(0L)
+          val mimeType = hc.downField("mimeType").as[String].getOrElse("")
+          if deviceId.nonEmpty && fileName.nonEmpty then
+            sharedResources.dropboxService match
+              case None => wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
+              case Some(svc) => svc.offerFile(deviceId, fileName, fileSize, mimeType).handleErrorWith(e =>
+                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson)))
+          else IO.unit
+
+        case "dropbox-file-respond" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+          val transferId = hc.downField("transferId").as[String].getOrElse("")
+          val accepted = hc.downField("accepted").as[Boolean].getOrElse(false)
+          if deviceId.nonEmpty && transferId.nonEmpty then
+            sharedResources.dropboxService match
+              case None => IO.unit
+              case Some(svc) => svc.respondToOffer(deviceId, transferId, accepted).handleErrorWith(_ => IO.unit)
+          else IO.unit
+
+        case "dropbox-get-history" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+          if deviceId.nonEmpty then
+            sharedResources.dropboxService match
+              case None => IO.unit
+              case Some(svc) => svc.getHistory(deviceId).flatMap { msgs =>
+                wsSend(io.circe.Json.obj("type" -> "dropbox-history".asJson, "deviceId" -> deviceId.asJson, "messages" -> msgs.asJson))
+              }
+          else IO.unit
+
         case _ =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val content = json.hcursor.downField("content").as[String].getOrElse("")
