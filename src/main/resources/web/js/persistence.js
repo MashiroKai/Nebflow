@@ -5,7 +5,7 @@
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { createDurationBadgeElement } from './chat.js';
 
@@ -177,8 +177,9 @@ export function restoreFromStorage() {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
+        const _delegatePrompt = buildDelegatePromptHtml(m.input);
         const highlightHtml = renderHighlightedContent(m.content, m.label);
-        const bodyHtml = (detailHtml + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
+        const bodyHtml = (detailHtml + _delegatePrompt + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
@@ -471,8 +472,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                              : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
+        const _delegatePrompt2 = buildDelegatePromptHtml(m.input);
         const highlightHtml = renderHighlightedContent(m.content, m.label);
-        const bodyHtml = (detailHtml + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
+        const bodyHtml = (detailHtml + _delegatePrompt2 + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
         const hasBody = !!bodyHtml;
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);

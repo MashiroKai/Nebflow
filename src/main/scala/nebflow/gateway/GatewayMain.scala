@@ -16,7 +16,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.{RemoteExecutor, ToolRegistry}
 import nebflow.llm.*
-import nebflow.mesh.*
+import nebflow.neblink.*
 import nebflow.service.{ConfigSnapshot, *}
 import nebflow.shared.*
 import org.http4s.ember.server.EmberServerBuilder
@@ -296,41 +296,43 @@ object GatewayMain extends IOApp.Simple:
                                   val bridgeSetup: IO[BridgeManager] =
                                     BridgeManager.create(bridgeCtx)
 
-                                  // Create mesh service (device discovery only, no file sync)
-                                  val meshServiceF: IO[MeshService] =
-                                    MeshService.create(cfg.port.value, dispatcher)
+                                  // Create neblink service (device discovery only, no file sync)
+                                  val neblinkServiceF: IO[NeblinkService] =
+                                    NeblinkService.create(cfg.port.value, dispatcher)
 
                                   bridgeSetup.flatMap { bridgeManager =>
-                                    meshServiceF.flatMap { meshService =>
+                                    neblinkServiceF.flatMap { neblinkService =>
                                       // Register remote executor for cross-device tool dispatch (P2P only)
-                                      RemoteExecutor.initialize(meshService, dispatcher)
+                                      RemoteExecutor.initialize(neblinkService, dispatcher)
                                       // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
                                       val presenceService =
-                                        new nebflow.mesh.MeshPresenceService(meshService, cfg.port.value)(dispatcher)
+                                        new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
+                                          dispatcher
+                                        )
                                       // Wire Tailscale discovery — replaces cloud relay entirely.
                                       // Sync actor calls discoverCycle periodically; WS presence connections maintain liveness.
-                                      val tsDiscovery = new nebflow.mesh.TailscaleDiscovery(
-                                        meshService,
+                                      val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
+                                        neblinkService,
                                         cfg.port.value,
                                         presenceService
                                       )
-                                      meshService.setDiscoveryHook(
+                                      neblinkService.setDiscoveryHook(
                                         tsDiscovery.discoverCycle.handleErrorWith(e =>
                                           logger.debug(s"Tailscale discovery: ${e.getMessage}").void
                                         )
-                                      ) *> meshService.setDiagnostic(tsDiscovery.diagnosticScan) *>
-                                        meshService.addPeerChangeCallback(
+                                      ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
+                                        neblinkService.addPeerChangeCallback(
                                           wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
                                         ) *>
                                         // Trigger an immediate discovery cycle now that the Tailscale hook is wired.
                                         // Without this, the sync loop's first meaningful cycle is delayed by
                                         // syncIntervalSec (default 300s) because the very first cycle runs before
-                                        // the hook is set (race with MeshService.create's unsafeRunAndForget).
-                                        meshService.sendSync(nebflow.mesh.SyncCommand.PeerDiscovered) *> {
+                                        // the hook is set (race with NeblinkService.create's unsafeRunAndForget).
+                                        neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *> {
                                           val sharedResourcesWithBridge =
                                             sharedResourcesWithDream.copy(
                                               bridgeManager = Some(bridgeManager),
-                                              meshService = Some(meshService)
+                                              neblinkService = Some(neblinkService)
                                             )
 
                                           // --- Create Scheduled Task Service before wsRoutes ---
@@ -379,7 +381,7 @@ object GatewayMain extends IOApp.Simple:
                                                 sharedResourcesFinal,
                                                 sessionStore,
                                                 wsRoutes,
-                                                meshService = Some(meshService)
+                                                neblinkService = Some(neblinkService)
                                               )
 
                                               Router(
@@ -413,7 +415,7 @@ object GatewayMain extends IOApp.Simple:
                                                 _ <- bridgeManager.startAll.start // start in background
                                                 // --- Background: LLM provider health monitoring ---
                                                 _ <- healthMonitor.start().void.start
-                                                _ <- openBrowser(url)
+                                                _ <- if GatewayConfig.noBrowser then IO.unit else openBrowser(url)
                                                 // --- Background init: skills dir, MCP servers ---
                                                 _ <- SkillService
                                                   .ensureDefaults()
@@ -443,7 +445,7 @@ object GatewayMain extends IOApp.Simple:
                                                     logger.warn(s"Background init failed: ${e.getMessage}")
                                                   }
                                                   .start
-                                                // --- Mesh: sync is event-driven (actor), no background loops needed ---
+                                                // --- NebLink: sync is event-driven (actor), no background loops needed ---
                                                 _ <- logger.info(
                                                   "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
                                                 ) *> waitForQuit
@@ -455,8 +457,8 @@ object GatewayMain extends IOApp.Simple:
                                                 mcpManager.stopAll() *>
                                                 releaseBackend
                                             )
-                                        } // end meshService setup block
-                                    } // end meshService
+                                        } // end neblinkService setup block
+                                    } // end neblinkService
                                   } // end bridgeManager
                                 } // end telemetry.flatMap
                               } // end fileLockMgr

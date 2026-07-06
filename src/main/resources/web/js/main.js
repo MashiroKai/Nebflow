@@ -11,13 +11,14 @@ import {
   showOptions, renderAskUser, renderPermissionPrompt,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
-  appendThinkingDelta, finishThinking
+  appendThinkingDelta, finishThinking,
+  appendToolStreamDelta
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
   initHeaderModelInfo,
-  persistUnread, createNewFolder,
+  persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession
 } from './sidebar.js';
 import {
@@ -37,7 +38,7 @@ import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initChatViews, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
-import { initMesh } from './mesh.js';
+import { initNeblink } from './neblink.js';
 import { formatLiveDuration } from './chat.js';
 
 // Randomized cosmic thinking bubble text
@@ -463,6 +464,9 @@ onMessage('toolCallDetected', (msg, view) => {
       saveMsg(prevData, msg.sessionId);
     }
     renderToolPending(msg.name, msg.sessionId);
+    // Reset tool argument streaming for the new tool call
+    activeView.stream.toolStreamText = '';
+    activeView.stream.toolStreamToolName = msg.name;
   }
 });
 
@@ -515,6 +519,13 @@ onMessage('toolEnd', (msg, view) => {
     if (data) saveMsg(data, msg.sessionId);
   } else {
     saveMsg({type: 'tool', label: msg.label, summary: msg.summary, content: msg.content, isError: msg.isError, input: msg.input}, msg.sessionId);
+  }
+});
+
+onMessage('toolArgDelta', (msg, view) => {
+  resetStreamTimeout(msg.sessionId);
+  if (view) {
+    appendToolStreamDelta(msg.toolName, msg.delta);
   }
 });
 
@@ -726,6 +737,9 @@ onMessage('done', (msg, view) => {
       state.sessionToolCards[sid].remove();
       delete state.sessionToolCards[sid];
     }
+    // Reset tool argument streaming state
+    activeView.stream.toolStreamText = '';
+    activeView.stream.toolStreamToolName = '';
     // Clean up pending segments accumulated at tool boundaries
     if (sid && state.sessionPendingAiMessages[sid]) delete state.sessionPendingAiMessages[sid];
     // Clean up pendingRestore (previous turn's data no longer needed)
@@ -900,6 +914,24 @@ onMessage('askUser', (msg, view) => {
 
 onMessage('askPermission', (msg, view) => {
   const sid = msg.sessionId;
+  // Bypass mode: auto-approve immediately without showing attention indicator.
+  // This must run for BOTH active and non-active sessions — previously only
+  // active sessions got bypass treatment (inside renderPermissionPrompt),
+  // leaving non-active sessions stuck with a yellow indicator that never clears.
+  if (sid && state.bypassSessions.has(sid)) {
+    if (view) {
+      // Active session: renderPermissionPrompt detects bypass, sends approval,
+      // and shows the "auto-approved" badge. Let it handle everything.
+      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel);
+    } else {
+      // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true }));
+      }
+      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true }, sid);
+    }
+    return;
+  }
   if (sid) setSessionAttention(sid, true);
   // Permission prompt waits for human response — suppress stream timeout indefinitely
   if (sid && state.sessionBusyTimeouts[sid]) {
@@ -1962,7 +1994,7 @@ initInput(chatViews.primary);
 initInput(chatViews.secondary);
 initMemory();
 initScheduledTask();
-initMesh();
+initNeblink();
 
 // ---------- Bypass toggle (per-session auto-approve) ----------
 (function initBypassToggle() {
@@ -2045,7 +2077,7 @@ window.addEventListener('locale-changed', () => {
   }
 });
 // New Folder button
-document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(state.activeFolderId));
+document.getElementById('new-folder-btn')?.addEventListener('click', () => createNewFolder(getCurrentFolderId()));
 
 
 // ---------- Reconnect: refresh active session history ----------

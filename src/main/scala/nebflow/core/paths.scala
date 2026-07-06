@@ -10,6 +10,17 @@ import os.Path
  */
 object PathUtil:
 
+  /**
+   * Cross-platform absolute path check.
+   * Unlike `java.nio.file.Paths.get(s).isAbsolute`, this works regardless of
+   * which OS the JVM runs on — so a Mac JVM correctly recognizes `C:\foo`
+   * and a Windows JVM correctly recognizes `/foo`.
+   */
+  def isAbsolute(s: String): Boolean =
+    s.startsWith("/") || // Unix absolute
+      s.startsWith("\\\\") || // UNC path (\\server\share)
+      (s.length >= 2 && s.charAt(1) == ':') // Windows drive (C:\...)
+
   /** Construct an os.Path from a string, handling Windows cross-drive paths. */
   def resolvePath(s: String): Path =
     try os.Path(s, os.pwd)

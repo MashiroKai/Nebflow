@@ -48,10 +48,11 @@ object Main extends IOApp:
 
   end run
 
-  /** Parse --home and --port from args, returning (homeOpt, portOpt, remainingArgs). */
+  /** Parse --home, --port, --no-browser from args, returning (homeOpt, portOpt, remainingArgs). */
   private def parseGlobalFlags(args: List[String]): (Option[String], Option[Int], List[String]) =
     var home: Option[String] = None
     var port: Option[Int] = None
+    var noBrowser: Boolean = false
     val remaining = List.newBuilder[String]
     var i = 0
     while i < args.length do
@@ -62,9 +63,13 @@ object Main extends IOApp:
         case "--port" if i + 1 < args.length =>
           port = Try(args(i + 1).toInt).toOption
           i += 2
+        case "--no-browser" =>
+          noBrowser = true
+          i += 1
         case other =>
           remaining += other
           i += 1
+    if noBrowser then GatewayConfig.setNoBrowser(true)
     (home, port, remaining.result())
 
   end parseGlobalFlags

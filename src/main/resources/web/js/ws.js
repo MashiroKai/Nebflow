@@ -114,7 +114,9 @@ export function connect() {
         'memoryData', 'memorySaved', 'memoryStatus',
         'cardDesignData', 'cardDesignSaved',
         'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
-        'browseResult'
+        'browseResult',
+        'updateCheckResult', 'updateStarted', 'updateCompleted',
+        'remoteUpdateResult', 'peerListChanged'
       ];
       const TERMINAL_MSG_TYPES = [
         'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
@@ -125,6 +127,7 @@ export function connect() {
       const STREAM_MSG_TYPES = [
         'thinkingDelta', 'textDelta', 'textDone',
         'toolCallDetected', 'toolCallStart', 'toolCallChunk', 'toolStart', 'toolEnd',
+        'toolArgDelta',
         'roundComplete',
         'agentStart', 'agentTextDelta', 'agentToolCallDetected',
         'agentToolStart', 'agentToolEnd', 'agentEnd',

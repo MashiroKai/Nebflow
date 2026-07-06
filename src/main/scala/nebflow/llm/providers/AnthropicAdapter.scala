@@ -338,14 +338,14 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
                 case Some("input_json_delta") =>
                   val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
                   val partial = json.hcursor.downField("delta").downField("partial_json").as[String].getOrElse("")
-                  toolCallState
-                    .modify { m =>
-                      val updated = m.get(idx) match
-                        case Some((id, name, sb)) => m.updated(idx, (id, name, sb.append(partial)))
-                        case None => m
-                      (updated, ())
-                    }
-                    .as(Nil)
+                  toolCallState.modify { m =>
+                    m.get(idx) match
+                      case Some((id, name, sb)) =>
+                        val updated = m.updated(idx, (id, name, sb.append(partial)))
+                        val chunks = if partial.nonEmpty then List(StreamChunk.ToolArgDelta(name, partial)) else Nil
+                        (updated, chunks)
+                      case None => (m, Nil)
+                  }
                 case Some("signature_delta") =>
                   val sig = json.hcursor.downField("delta").downField("signature").as[String].getOrElse("")
                   IO.pure(if sig.nonEmpty then List(StreamChunk.ThinkingSignature(sig)) else Nil)

@@ -367,12 +367,18 @@ export default {
   'task.tomorrow': 'Tomorrow',
   'task.yesterday': 'Yesterday',
 
-  // Mesh
-  'mesh.devices': 'Devices',
-  'mesh.thisDevice': 'This device',
-  'mesh.connected': 'Connected',
-  'mesh.detectedTools': 'Detected tools',
-  'mesh.deviceDescription': 'Device description',
-  'mesh.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
-  'mesh.save': 'Save',
+  // NebLink
+  'neblink.devices': 'Devices',
+  'neblink.thisDevice': 'This device',
+  'neblink.connected': 'Connected',
+  'neblink.detectedTools': 'Detected tools',
+  'neblink.deviceDescription': 'Device description',
+  'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
+  'neblink.save': 'Save',
+  'neblink.update': 'Update',
+  'neblink.stable': 'Stable',
+  'neblink.beta': 'Beta',
+  'neblink.cancel': 'Cancel',
+  'neblink.updating': 'Updating...',
+  'neblink.restarting': 'Restarting...',
 };

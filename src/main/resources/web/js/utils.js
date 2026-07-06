@@ -268,6 +268,18 @@ export function localizeToolSummary(summary, toolLabel) {
   return summary;
 }
 
+// === Delegate prompt builder ===
+export function buildDelegatePromptHtml(inputJson) {
+  if (!inputJson) return '';
+  try {
+    const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+    if (inp.prompt) {
+      return '<div class="delegate-prompt"><span class="delegate-prompt-label">Prompt</span><pre class="tool-body-pre">' + esc(inp.prompt) + '</pre></div>';
+    }
+  } catch (e) { /* not a delegate tool */ }
+  return '';
+}
+
 // === Tool detail builder ===
 export function buildToolDetail(inputJson, label) {
   if (!inputJson) return '';

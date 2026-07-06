@@ -1,13 +1,13 @@
 package nebflow.core.tools
 
-import cats.effect.IO
 import cats.effect.std.Dispatcher
+import cats.effect.{Deferred, IO}
 import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.agent.AgentCommand
 import nebflow.core.NebflowLogger
-import nebflow.mesh.{MeshService, PeerInfo}
+import nebflow.neblink.{NeblinkService, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
@@ -16,16 +16,25 @@ import scala.concurrent.duration.*
  * Executes tool calls on remote devices via direct P2P over Tailscale.
  *
  * When a tool call specifies device="desktop-v7eucht", this executor routes
- * the call to that device's gateway via HTTP (POST /api/mesh/remote-exec).
+ * the call to that device's gateway via HTTP (POST /api/neblink/remote-exec).
  *
  * Tailscale provides the connectivity layer — no relay server needed.
  */
-class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
+class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO]):
 
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
-  /** Expose MeshService for system prompt generation (device list). */
-  def meshServiceOpt: Option[MeshService] = Some(meshService)
+  /** Foreground remote calls that exceed this are automatically moved to background. */
+  private val AutoBgThreshold = 120.seconds
+
+  /** Timeout for synchronous remote calls without ToolContext (fallback path). */
+  private val SyncTimeout = 120.seconds
+
+  /** Timeout for background remote calls — the HTTP call waits up to this long. */
+  private val BgTimeout = 3600.seconds
+
+  /** Expose NeblinkService for system prompt generation (device list). */
+  def neblinkServiceOpt: Option[NeblinkService] = Some(neblinkService)
 
   def execute(
     deviceName: String,
@@ -38,16 +47,17 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
     def runOnPeer(peer: PeerInfo): IO[Either[ToolError, String]] =
       if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
       else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
-      else p2pExecuteWithRetry(peer, toolName, params, 60.seconds)
+      else if ctxOpt.isDefined then executeForegroundWithAutoBackground(peer, toolName, params, ctxOpt.get)
+      else p2pExecuteWithRetry(peer, toolName, params, SyncTimeout)
 
-    meshService.peers.flatMap { peers =>
+    neblinkService.peers.flatMap { peers =>
       resolvePeer(deviceName, peers) match
         case Right(peer) => runOnPeer(peer)
         case Left(_) =>
           // Device not in peer list — the list might be stale. Trigger one immediate
           // discovery scan before giving up, so transient gaps don't cause false errors.
           logger.info(s"Device '$deviceName' not found in ${peers.size} peer(s), triggering discovery scan") *>
-            meshService.scanNow.flatMap { refreshedPeers =>
+            neblinkService.scanNow.flatMap { refreshedPeers =>
               resolvePeer(deviceName, refreshedPeers) match
                 case Right(peer) => runOnPeer(peer)
                 case Left(err) => IO.pure(Left(err))
@@ -89,6 +99,78 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
 
   end executeRemoteBackground
 
+  /**
+   * Execute a remote command in the foreground with an auto-background threshold.
+   * Mirrors BashTool's executeForegroundWithAutoBackground: if the HTTP call
+   * completes within the threshold, return the result directly; otherwise,
+   * the HTTP call continues running and the agent is notified on completion.
+   */
+  private def executeForegroundWithAutoBackground(
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    val remoteParams = params.remove("run_in_background")
+    val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
+    val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
+    val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
+
+    for
+      resultRef <- IO.ref[Option[Either[ToolError, String]]](None)
+      signal <- Deferred[IO, Unit]
+      thresholdWon <- IO.ref(false)
+      jobId <- IO.randomUUID.map(_.toString.take(8))
+
+      // HTTP call — never cancelled, runs to completion on the remote device
+      commandFiber <- (for
+        r <- p2pExecuteWithRetry(peer, toolName, remoteParams, BgTimeout)
+        _ <- resultRef.set(Some(r))
+        _ <- signal.complete(()).void
+      yield ()).start
+
+      // Threshold timer
+      thresholdFiber <- (for
+        _ <- IO.sleep(AutoBgThreshold)
+        _ <- thresholdWon.set(true)
+        _ <- signal.complete(()).void
+      yield ()).start
+
+      // Wait for whichever finishes first
+      _ <- signal.get
+      didWin <- thresholdWon.get
+      resultOpt <- resultRef.get
+
+      _ <-
+        if didWin then
+          // Command still running — convert to background
+          logger.info(
+            s"Remote command on ${peer.deviceName} exceeded ${AutoBgThreshold.toSeconds}s, moving to background (job $jobId)"
+          ) *>
+            emitBgTaskStarted(ctx, jobId, description) *>
+            (for
+              _ <- commandFiber.joinWithNever
+              r <- resultRef.get
+              _ <- r match
+                case Some(Right(output)) =>
+                  notifyRemoteBgResult(ctx, jobId, description, Right(output))
+                case Some(Left(err)) =>
+                  notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
+                case None => IO.unit
+            yield ()).start.void
+        else thresholdFiber.cancel
+    yield
+      if !didWin then resultOpt.getOrElse(Left(ToolError("[Unexpected: no result from remote command]")))
+      else
+        Right(
+          s"[Remote command moved to background] Job ID: $jobId\n" +
+            s"The command has been running on ${peer.deviceName} for over ${AutoBgThreshold.toSeconds}s " +
+            "and will continue in the background. You will be automatically notified when it finishes — " +
+            "continue with other work or finish your turn."
+        )
+    end for
+  end executeForegroundWithAutoBackground
+
   /** Launch the HTTP call in a detached fiber; notify agent + frontend when done. */
   private def startRemoteBgFiber(
     peer: PeerInfo,
@@ -99,37 +181,10 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
     description: String
   ): Unit =
     val completionIO =
-      for
-        result <- p2pExecute(peer, toolName, params, 3600.seconds)
-        _ <- result match
-          case Right(output) =>
-            // Notify agent so the result is injected into conversation
-            ctx.agentActorRef.fold(IO.unit)(ref =>
-              ref ! AgentCommand.ExternalEvent(
-                source = "background-task",
-                eventType = "completed",
-                payload = s"[Background task completed] \"$description\":\n$output",
-                metadata = JsonObject(
-                  "description" -> description.asJson,
-                  "output" -> output.asJson
-                )
-              )
-            ) *>
-              // Notify frontend to dismiss the indicator
-              emitBgTaskFinished(ctx, jobId, description, "completed") *>
-              logger.info(s"Remote background task $jobId completed on ${peer.deviceName}")
-          case Left(err) =>
-            ctx.agentActorRef.fold(IO.unit)(ref =>
-              ref ! AgentCommand.ExternalEvent(
-                source = "background-task",
-                eventType = "failed",
-                payload = s"[Background task failed] \"$description\":\n${err.message}",
-                metadata = JsonObject("description" -> description.asJson)
-              )
-            ) *>
-              emitBgTaskFinished(ctx, jobId, description, "failed") *>
-              logger.warn(s"Remote background task $jobId failed on ${peer.deviceName}: ${err.message}")
-      yield ()
+      p2pExecute(peer, toolName, params, BgTimeout).flatMap {
+        case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
+        case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
+      }
 
     dispatcher.unsafeRunAndForget(
       completionIO.handleErrorWith(e =>
@@ -175,6 +230,37 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
       ).handleErrorWith(_ => IO.unit)
     )
 
+  /** Notify agent (ExternalEvent) + frontend (WS) of a background task result. */
+  private def notifyRemoteBgResult(
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    result: Either[String, String]
+  ): IO[Unit] =
+    result match
+      case Right(output) =>
+        ctx.agentActorRef.fold(IO.unit)(ref =>
+          ref ! AgentCommand.ExternalEvent(
+            source = "background-task",
+            eventType = "completed",
+            payload = s"[Background task completed] \"$description\":\n$output",
+            metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
+          )
+        ) *>
+          emitBgTaskFinished(ctx, jobId, description, "completed") *>
+          logger.info(s"Remote background task $jobId completed")
+      case Left(errMsg) =>
+        ctx.agentActorRef.fold(IO.unit)(ref =>
+          ref ! AgentCommand.ExternalEvent(
+            source = "background-task",
+            eventType = "failed",
+            payload = s"[Background task failed] \"$description\":\n$errMsg",
+            metadata = JsonObject("description" -> description.asJson)
+          )
+        ) *>
+          emitBgTaskFinished(ctx, jobId, description, "failed") *>
+          logger.warn(s"Remote background task $jobId failed: $errMsg")
+
   // ---- P2P Direct ----
 
   private def p2pExecute(
@@ -189,12 +275,12 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
         "params" -> params.asJson
       )
       val resp = basicRequest
-        .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/mesh/remote-exec"))
+        .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/remote-exec"))
         .contentType("application/json")
         .body(body.noSpaces)
         .readTimeout(timeout)
         .response(asStringAlways)
-        .send(meshService.httpBackend)
+        .send(neblinkService.httpBackend)
 
       if !resp.code.isSuccess then Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
       else
@@ -207,7 +293,11 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
           case Left(err) =>
             Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
     }.handleErrorWith { e =>
-      IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: ${e.getMessage}")))
+      val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+      val lower = msg.toLowerCase
+      if lower.contains("timeout") || lower.contains("timed out") then
+        IO.pure(Left(ToolError(s"Command timed out on ${peer.deviceName} after ${timeout.toSeconds}s: $msg")))
+      else IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: $msg")))
     }
   end p2pExecute
 
@@ -237,10 +327,13 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
 
   end p2pExecuteWithRetry
 
-  /** Connection-level failures worth retrying. Excludes HTTP/tool errors. */
+  /**
+   * Connection-level failures worth retrying (connection refused, DNS failure).
+   * Does NOT match timeout errors — those mean the command is running but slow.
+   */
   private def isTransientError(err: ToolError): Boolean =
     val msg = err.message.toLowerCase
-    msg.startsWith("cannot reach") // connection refused, timeout, DNS failure
+    msg.startsWith("cannot reach")
 
   // ---- Helpers ----
 
@@ -256,7 +349,7 @@ class RemoteExecutor(meshService: MeshService, dispatcher: Dispatcher[IO]):
         Left(
           ToolError(
             if peers.isEmpty then
-              s"No peer devices discovered after scan. Check: (1) Tailscale is running on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are logged into the same Mesh account."
+              s"No peer devices discovered after scan. Check: (1) Tailscale is running on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are on the same tailnet."
             else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
           )
         )
@@ -268,11 +361,11 @@ object RemoteExecutor:
 
   @volatile private var instance: Option[RemoteExecutor] = None
 
-  /** Wire the RemoteExecutor with a MeshService and Dispatcher. Called on startup. */
-  def initialize(meshService: MeshService, dispatcher: Dispatcher[IO]): Unit =
-    instance = Some(new RemoteExecutor(meshService, dispatcher))
+  /** Wire the RemoteExecutor with a NeblinkService and Dispatcher. Called on startup. */
+  def initialize(neblinkService: NeblinkService, dispatcher: Dispatcher[IO]): Unit =
+    instance = Some(new RemoteExecutor(neblinkService, dispatcher))
 
-  /** Get the current instance, or None if mesh is not initialized. */
+  /** Get the current instance, or None if neblink is not initialized. */
   def current: Option[RemoteExecutor] = instance
 
   /**

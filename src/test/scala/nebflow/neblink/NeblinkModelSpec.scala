@@ -1,10 +1,10 @@
-package nebflow.mesh
+package nebflow.neblink
 
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 
-class MeshModelSpec extends CatsEffectSuite:
+class NeblinkModelSpec extends CatsEffectSuite:
 
   // ===== DeviceIdentity =====
 
@@ -73,22 +73,22 @@ class MeshModelSpec extends CatsEffectSuite:
     assertEquals(peer.deviceSecret, "", "Default deviceSecret should be empty")
   }
 
-  // ===== MeshConfig =====
+  // ===== NeblinkConfig =====
 
-  test("MeshConfig default values") {
-    val cfg = MeshConfig()
+  test("NeblinkConfig default values") {
+    val cfg = NeblinkConfig()
     assertEquals(cfg.enabled, false, "Default enabled should be false")
     assertEquals(cfg.syncIntervalSec, 300, "Default sync interval should be 300 seconds")
   }
 
-  test("MeshConfig serialization roundtrip") {
-    val cfg = MeshConfig(
+  test("NeblinkConfig serialization roundtrip") {
+    val cfg = NeblinkConfig(
       enabled = true,
       syncIntervalSec = 600
     )
     val json = cfg.asJson.noSpaces
-    val decoded = decode[MeshConfig](json)
+    val decoded = decode[NeblinkConfig](json)
     assertEquals(decoded, Right(cfg), "Roundtrip should preserve all fields")
   }
 
-end MeshModelSpec
+end NeblinkModelSpec

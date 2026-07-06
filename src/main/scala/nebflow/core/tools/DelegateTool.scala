@@ -103,6 +103,16 @@ Do NOT use Delegate for:
           "type" -> "boolean".asJson,
           "description" -> "If true, return immediately and be notified when the sub-agent completes. Do NOT duplicate the sub-agent's work while waiting. Default: false.".asJson,
           "default" -> false.asJson
+        ),
+        "lifecycle" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "enum" -> io.circe.Json.arr("ephemeral".asJson, "persistent".asJson),
+          "description" -> "ephemeral (default): sub-agent completes and exits. persistent: sub-agent stays alive after task completion, its address is added to your Active Sessions, and you can send follow-up messages via MailAgent.".asJson,
+          "default" -> "ephemeral".asJson
+        ),
+        "taskDescription" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "For persistent mode: describes the ongoing task for the session list. Required when lifecycle=persistent.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -127,6 +137,8 @@ Do NOT use Delegate for:
     val agentName = input("agentName").flatMap(_.asString).getOrElse("Nebula")
     val fork = input("fork").flatMap(_.asBoolean).getOrElse(false)
     val runInBackground = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
+    val lifecycle = input("lifecycle").flatMap(_.asString).getOrElse("ephemeral")
+    val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
@@ -149,7 +161,23 @@ $prompt"""
             case None =>
               IO.pure(Left(ToolError(s"Agent '$agentName' not found in agent library")))
             case Some(agentDef) =>
-              if runInBackground then
+              if lifecycle == "persistent" then
+                spawnPersistent(
+                  agentDef = agentDef,
+                  prompt = adjustedPrompt,
+                  description = description,
+                  taskDescription = taskDescription,
+                  agentName = agentName,
+                  initialMessages = if fork then ctx.messages else Nil,
+                  system = system,
+                  resources = resources,
+                  parentDepth = ctx.depth,
+                  parentRef = ctx.agentActorRef,
+                  wsSend = ctx.wsSend,
+                  projectRoot = ctx.projectRoot,
+                  parentSessionId = ctx.sessionId
+                )
+              else if runInBackground then
                 spawnBackground(
                   agentDef = agentDef,
                   prompt = adjustedPrompt,
@@ -342,6 +370,100 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
       (notifyParent *>
         (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
         IO.pure(Behaviors.stopped))
+        .handleErrorWith(_ => IO.pure(Behaviors.stopped))
+    }
+
+  // ============================================================
+  // Persistent: sub-agent stays alive, address returned to caller
+  // ============================================================
+
+  private def spawnPersistent(
+    agentDef: AgentDef,
+    prompt: String,
+    description: String,
+    taskDescription: String,
+    agentName: String,
+    initialMessages: List[Message],
+    system: ActorSystem,
+    resources: SharedResources,
+    parentDepth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    wsSend: Option[io.circe.Json => IO[Unit]],
+    projectRoot: String,
+    parentSessionId: Option[String] = None
+  ): IO[Either[ToolError, String]] =
+    for
+      readTracker <- ReadTracker.create
+      fileHistory <- FileHistory.create()
+      childDepth = parentDepth + 1
+      subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
+      childWsSend = routeWsSend(wsSend, parentSessionId)
+      subagentRef <- system.spawn(
+        AgentActor(
+          agentDef = agentDef,
+          resources = resources,
+          wsSend = childWsSend,
+          depth = childDepth,
+          parentRef = parentRef,
+          sessionId = None,
+          sessionName = Some(description),
+          initialMessages = initialMessages,
+          readTracker = Some(readTracker),
+          fileHistory = Some(fileHistory),
+          contextWindow = resources.contextWindow,
+          projectRoot = Some(projectRoot)
+        ),
+        subagentId
+      )
+      address = subagentRef.path.toString
+      adapterRef <- system.spawn(
+        persistentAdapter(subagentRef, parentRef, description, agentName, subagentId, address),
+        s"$subagentId-adapter"
+      )
+      _ = logger.info(s"Spawned persistent sub-agent: $subagentId (depth=$childDepth, agent=$agentName, addr=$address)")
+      _ <- parentRef.fold(IO.unit)(ref => ref ! AgentCommand.SessionStarted(address, agentName, taskDescription))
+      _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
+    yield Right(
+      s"""Persistent session started: $agentName for: $taskDescription
+Session address: $address
+The sub-agent will stay alive after completing this task. You can send follow-up messages via Mail(address=$address, message=...).
+You will be notified when the initial task completes."""
+    )
+
+  /** Persistent adapter: forwards completion to parent but does NOT stop the sub-agent. */
+  private def persistentAdapter(
+    subagentRef: ActorRef[AgentCommand],
+    parentRef: Option[ActorRef[AgentCommand]],
+    description: String,
+    agentName: String,
+    subagentId: String,
+    address: String
+  ): Behavior[AgentEvent] =
+    Behaviors.receiveMessage { (event: AgentEvent) =>
+      val (eventType, payload) = event match
+        case AgentEvent.Completed(_, messages) =>
+          val text = extractLastAssistantText(messages)
+          if text.nonEmpty then ("completed", s"[Session update] \"$description\":\n$text")
+          else ("completed", s"[Session update] \"$description\" (task complete, awaiting instructions)")
+        case AgentEvent.Failed(_, error) =>
+          ("failed", s"[Session error] \"$description\": ${error.message}")
+
+      val actions = parentRef match
+        case Some(ref) =>
+          (ref ! AgentCommand.ExternalEvent(
+            source = address,
+            eventType = eventType,
+            payload = payload,
+            metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
+            correlationId = Some(subagentId)
+          )) *> (ref ! AgentCommand.SessionUpdate(
+            address,
+            if eventType == "completed" then "idle (awaiting instructions)" else "failed"
+          ))
+        case None => IO.unit
+
+      // Adapter stops itself; sub-agent stays alive for future MailAgent messages
+      (actions *> IO.pure(Behaviors.stopped))
         .handleErrorWith(_ => IO.pure(Behaviors.stopped))
     }
 

@@ -834,6 +834,58 @@
   padding-bottom: 4px;
   margin-bottom: 4px;
 }
+.tool-card .body .delegate-prompt {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+}
+.tool-card .body .delegate-prompt-label {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 3px;
+}
+.tool-card .body .delegate-prompt > pre {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text);
+}
+
+/* Streaming tool argument body — shown while LLM generates tool call input */
+.tool-stream-body {
+  margin-top: 4px;
+  max-height: 45vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: #f5f5f5;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.tool-stream-body pre.tool-body-pre {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre;
+  color: #555;
+}
+.tool-stream-body pre.tool-body-pre .cursor {
+  display: inline-block;
+  width: 5px;
+  height: 12px;
+  background: #888;
+  vertical-align: text-bottom;
+  animation: blink 1s steps(2) infinite;
+  margin-left: 1px;
+}
+.tool-stream-body::-webkit-scrollbar-track { background: transparent; }
+.tool-stream-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
+.tool-stream-body::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.25); }
 
 .error-card {
   background: #ffebee;
@@ -907,6 +959,11 @@
   .tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
   .tool-card .body.open::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
   .tool-card .body .detail-cmd { border-bottom-color: #2a2d35; color: #7b7e88; }
+
+  .tool-stream-body { background: #171a21; }
+  .tool-stream-body pre.tool-body-pre { color: #c0c3ca; }
+  .tool-stream-body pre.tool-body-pre .cursor { background: #7b7e88; }
+  .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
 
   .history-loader { color: #656870; }
   .history-loader .history-spinner { border-color: #282b33; border-top-color: #7b7e88; }
@@ -1285,15 +1342,15 @@
 }
 
 
-/* ===== Mesh tool row ===== */
-.row.tool.mesh-row {
+/* ===== NebLink tool row ===== */
+.row.tool.neblink-row {
   position: relative;
 }
-.row.tool.mesh-row .tool-card {
+.row.tool.neblink-row .tool-card {
   border-left: 3px solid var(--color-primary);
 }
-.row.tool.mesh-row .tool-card .label::before {
-  content: 'MESH';
+.row.tool.neblink-row .tool-card .label::before {
+  content: 'NEBLINK';
   display: inline-block;
   font-size: 9px;
   font-weight: 700;
@@ -1306,10 +1363,10 @@
   vertical-align: middle;
   line-height: 1.4;
 }
-.row.tool.mesh-row .tool-card.tool-card--pending .label::before {
-  animation: mesh-pulse 1.5s ease-in-out infinite;
+.row.tool.neblink-row .tool-card.tool-card--pending .label::before {
+  animation: neblink-pulse 1.5s ease-in-out infinite;
 }
-@keyframes mesh-pulse {
+@keyframes neblink-pulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
 }
