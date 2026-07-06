@@ -66,11 +66,9 @@ Usage:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
     val content = input("content").flatMap(_.asString).getOrElse("")
-    val filePath =
-      if nebflow.core.PathUtil.isAbsolute(filePathStr) then Paths.get(filePathStr)
-      else return IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
-
-    doWrite(filePath, content, ctx)
+    if !nebflow.core.PathUtil.isAbsolute(filePathStr) then
+      IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
+    else doWrite(Paths.get(filePathStr), content, ctx)
 
   private def doWrite(
     filePath: Path,

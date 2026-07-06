@@ -1,8 +1,8 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.syntax.*
 import io.circe.JsonObject
+import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.AgentCommand
 import nebflow.core.tools.{Tool, ToolContext, ToolError}

@@ -69,72 +69,74 @@ Usage:
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val filePathStr = input("file_path").flatMap(_.asString).getOrElse("")
-    val filePath =
-      if nebflow.core.PathUtil.isAbsolute(filePathStr) then Paths.get(filePathStr)
-      else return IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
+    if !nebflow.core.PathUtil.isAbsolute(filePathStr) then
+      IO.pure(Left(ToolError(s"Path must be absolute, got: $filePathStr")))
+    else
+      val filePath = Paths.get(filePathStr)
 
-    IO.blocking {
-      if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
-      else if Files.isDirectory(filePath) then
-        Left(ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents."))
-      else if Files.size(filePath) > MAX_FILE_BYTES then
-        val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
-        val shortName = filePath.getFileName.toString
-        Left(
-          ToolError(
-            s"File too large to read safely: $shortName (${f"$sizeMb%.1f"}MB, limit ${MAX_FILE_BYTES / 1024 / 1024}MB). " +
-              s"Use offset/limit to read specific sections, or Bash with head/tail."
+      IO.blocking {
+        if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))
+        else if Files.isDirectory(filePath) then
+          Left(ToolError(s"Path is a directory, not a file: $filePath. Use Bash with ls to list directory contents."))
+        else if Files.size(filePath) > MAX_FILE_BYTES then
+          val sizeMb = Files.size(filePath).toDouble / 1024 / 1024
+          val shortName = filePath.getFileName.toString
+          Left(
+            ToolError(
+              s"File too large to read safely: $shortName (${f"$sizeMb%.1f"}MB, limit ${MAX_FILE_BYTES / 1024 / 1024}MB). " +
+                s"Use offset/limit to read specific sections, or Bash with head/tail."
+            )
           )
-        )
-      else
-        try
-          val content = new String(Files.readAllBytes(filePath), java.nio.charset.StandardCharsets.UTF_8)
-          val allLines = content.split("\\r?\\n").toList
-          val filterOpt = input("filter").flatMap(_.asString).filter(_.nonEmpty)
+        else
+          try
+            val content = new String(Files.readAllBytes(filePath), java.nio.charset.StandardCharsets.UTF_8)
+            val allLines = content.split("\\r?\\n").toList
+            val filterOpt = input("filter").flatMap(_.asString).filter(_.nonEmpty)
 
-          // If filter is provided, narrow to matching lines (preserving original line numbers)
-          val (workingLines, workingIndices, filterInfo) = filterOpt match
-            case Some(pattern) =>
-              val regex = java.util.regex.Pattern.compile(pattern)
-              val matched = allLines.zipWithIndex.filter { case (line, _) => regex.matcher(line).find() }
-              (
-                matched.map(_._1),
-                matched.map(_._2),
-                s", filter: \"$pattern\" — ${matched.length} match(es) in ${allLines.length} lines"
-              )
-            case None =>
-              (allLines, allLines.indices.toList, "")
+            // If filter is provided, narrow to matching lines (preserving original line numbers)
+            val (workingLines, workingIndices, filterInfo) = filterOpt match
+              case Some(pattern) =>
+                val regex = java.util.regex.Pattern.compile(pattern)
+                val matched = allLines.zipWithIndex.filter { case (line, _) => regex.matcher(line).find() }
+                (
+                  matched.map(_._1),
+                  matched.map(_._2),
+                  s", filter: \"$pattern\" — ${matched.length} match(es) in ${allLines.length} lines"
+                )
+              case None =>
+                (allLines, allLines.indices.toList, "")
 
-          val start = input("offset").flatMap(_.asNumber).flatMap(_.toInt).map(_ - 1).getOrElse(0)
-          val end = input("limit").flatMap(_.asNumber).flatMap(_.toInt) match
-            case Some(limit) => start + limit
-            case None => Math.min(workingLines.length, start + MAX_LINE_COUNT)
-          val selected = workingLines.slice(start, end)
-          val selectedIndices = workingIndices.slice(start, end)
+            val start = input("offset").flatMap(_.asNumber).flatMap(_.toInt).map(_ - 1).getOrElse(0)
+            val end = input("limit").flatMap(_.asNumber).flatMap(_.toInt) match
+              case Some(limit) => start + limit
+              case None => Math.min(workingLines.length, start + MAX_LINE_COUNT)
+            val selected = workingLines.slice(start, end)
+            val selectedIndices = workingIndices.slice(start, end)
 
-          val result = selected
-            .zip(selectedIndices)
-            .map { case (line, originalIdx) =>
-              s"${originalIdx + 1}\t$line"
-            }
-            .mkString("\n")
+            val result = selected
+              .zip(selectedIndices)
+              .map { case (line, originalIdx) =>
+                s"${originalIdx + 1}\t$line"
+              }
+              .mkString("\n")
 
-          val totalLines = workingLines.length
-          val showedLines = selected.length
-          val isPartialView =
-            start > 0 || (filterOpt.isEmpty && showedLines < allLines.length) || (filterOpt.isDefined && showedLines < workingLines.length)
-          val suffix =
-            if filterOpt.isDefined && showedLines < workingLines.length then
-              s"\n\n(showing $showedLines of $totalLines matched lines$filterInfo)"
-            else if filterOpt.isDefined then s"\n\n($totalLines matched lines$filterInfo)"
-            else if showedLines < allLines.length then s"\n\n(showing $showedLines of ${allLines.length} lines)"
-            else ""
-          Right((result + suffix, isPartialView))
-        catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
-    }.flatMap {
-      case Right((output, isPartialView)) =>
-        ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView)).as(Right(output))
-      case Left(err) => IO.pure(Left(err))
-    }
+            val totalLines = workingLines.length
+            val showedLines = selected.length
+            val isPartialView =
+              start > 0 || (filterOpt.isEmpty && showedLines < allLines.length) || (filterOpt.isDefined && showedLines < workingLines.length)
+            val suffix =
+              if filterOpt.isDefined && showedLines < workingLines.length then
+                s"\n\n(showing $showedLines of $totalLines matched lines$filterInfo)"
+              else if filterOpt.isDefined then s"\n\n($totalLines matched lines$filterInfo)"
+              else if showedLines < allLines.length then s"\n\n(showing $showedLines of ${allLines.length} lines)"
+              else ""
+            Right((result + suffix, isPartialView))
+          catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
+      }.flatMap {
+        case Right((output, isPartialView)) =>
+          ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView)).as(Right(output))
+        case Left(err) => IO.pure(Left(err))
+      }
+    end if
   end call
 end ReadTool
