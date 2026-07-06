@@ -52,9 +52,6 @@ export function neblinkSettingsHTML() {
     const capStr = caps.length > 0
       ? `<span class="neblink-peer-caps">${caps.join(', ')}</span>`
       : '';
-    const descStr = d.userDescription
-      ? `<span class="neblink-peer-desc">${escapeHtml(d.userDescription)}</span>`
-      : '';
 
     // Build update UI for peer devices
     let updateUI = '';
@@ -83,20 +80,27 @@ export function neblinkSettingsHTML() {
       }
     }
 
+    const did = escapeHtml(d.deviceId || '');
+    const descVal = escapeHtml(d.userDescription || '');
+    const nameCls = d.isLocal ? 'neblink-peer-name' : 'neblink-peer-name dropbox-clickable';
+    const nameData = d.isLocal ? '' : `data-device-id="${did}" data-device-name="${escapeHtml(d.deviceName || '')}" data-platform="${escapeHtml(d.platform || '')}" data-desc="${descVal}"`;
+
     return `
       <div class="neblink-peer">
         <span class="neblink-peer-dot dot-on"></span>
-        <span class="neblink-peer-name dropbox-clickable" data-device-id="${escapeHtml(d.deviceId || '')}" data-device-name="${escapeHtml(d.deviceName || '')}" data-platform="${escapeHtml(d.platform || '')}" data-desc="${escapeHtml(d.userDescription || '')}" data-is-local="${d.isLocal ? '1' : '0'}">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
+        <span class="${nameCls}" ${nameData}>${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
         ${d.isLocal
           ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
           : '<span class="neblink-peer-status">' + t('neblink.connected') + '</span>'}
         ${capStr}
-        ${descStr}
         ${updateUI}
+      </div>
+      <div class="neblink-desc-row">
+        <input type="text" class="cfg-input neblink-desc-input" data-device-id="${did}" data-is-local="${d.isLocal ? '1' : '0'}" value="${descVal}" placeholder="${t('neblink.deviceDescHint')}" style="font-size:12px;padding:3px 8px">
+        <button class="cfg-btn neblink-desc-save" data-device-id="${did}" data-is-local="${d.isLocal ? '1' : '0'}" style="font-size:12px;padding:3px 10px">${t('neblink.save')}</button>
       </div>`;
   }).join('');
 
-  const localDesc = local.userDescription || '';
   const localCaps = local.capabilities ? Object.keys(local.capabilities) : [];
   const capsDisplay = localCaps.length > 0
     ? `<div class="neblink-caps-display">${t('neblink.detectedTools')}: ${localCaps.join(', ')}</div>`
@@ -112,12 +116,6 @@ export function neblinkSettingsHTML() {
       <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
       ${capsDisplay}
-      <div class="neblink-section-label" style="margin-top:10px">${t('neblink.deviceDescription')}</div>
-      <input type="text" id="neblink-device-desc" class="cfg-input"
-             placeholder="${t('neblink.deviceDescHint')}"
-             value="${escapeHtml(localDesc)}"
-             style="margin-bottom:6px">
-      <button class="cfg-btn" id="neblink-save-desc" style="width:100%">${t('neblink.save')}</button>
     </div>`;
 }
 
@@ -125,9 +123,17 @@ export function neblinkSettingsHTML() {
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
 
-  document.getElementById('neblink-save-desc')?.addEventListener('click', () => doSaveDescription(rerender));
-  document.getElementById('neblink-device-desc')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') doSaveDescription(rerender);
+  // Per-device description save buttons
+  document.querySelectorAll('.neblink-desc-save').forEach(btn => {
+    btn.addEventListener('click', () => doSaveDeviceDesc(btn, rerender));
+  });
+  document.querySelectorAll('.neblink-desc-input').forEach(input => {
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') {
+        const btn = input.closest('.neblink-desc-row')?.querySelector('.neblink-desc-save');
+        btn?.click();
+      }
+    });
   });
 
   // Peer update buttons
@@ -159,7 +165,7 @@ export function bindNeblinkEvents(rerender) {
     });
   });
 
-  // Device name click → open Dropbox modal
+  // Peer device name click → open Dropbox modal
   document.querySelectorAll('.dropbox-clickable').forEach(el => {
     el.addEventListener('click', () => {
       openDropbox({
@@ -167,27 +173,44 @@ export function bindNeblinkEvents(rerender) {
         deviceName: el.dataset.deviceName,
         platform: el.dataset.platform,
         userDescription: el.dataset.desc,
-        isLocal: el.dataset.isLocal === '1'
+        isLocal: false
       });
     });
   });
 }
 
 // ---- Actions ----
-async function doSaveDescription(rerender) {
-  const desc = document.getElementById('neblink-device-desc')?.value?.trim() || '';
+async function doSaveDeviceDesc(btn, rerender) {
+  const deviceId = btn.dataset.deviceId;
+  const isLocal = btn.dataset.isLocal === '1';
+  const input = document.querySelector(`.neblink-desc-input[data-device-id="${CSS.escape(deviceId)}"]`);
+  const desc = input?.value?.trim() ?? '';
+
+  const token = getAuthToken();
+  const url = isLocal ? '/api/neblink/device-info' : '/api/neblink/peer-description';
+  const body = isLocal
+    ? { userDescription: desc }
+    : { deviceId, userDescription: desc };
+
+  const originalText = btn.textContent;
   try {
-    const token = getAuthToken();
-    await fetch('/api/neblink/device-info', {
+    await fetch(url, {
       method: 'PUT',
       headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userDescription: desc })
+      body: JSON.stringify(body)
     });
-    if (neblinkState.device) neblinkState.device.userDescription = desc;
-    rerender();
+    // Update local state
+    if (isLocal) {
+      if (neblinkState.device) neblinkState.device.userDescription = desc;
+    } else {
+      const peer = neblinkState.peers.find(p => p.deviceId === deviceId);
+      if (peer) peer.userDescription = desc;
+    }
+    btn.textContent = '✓';
   } catch (e) {
-    // ignore
+    btn.textContent = '!';
   }
+  setTimeout(() => { btn.textContent = originalText; }, 1200);
 }
 
 // ---- Init (called once from main.js) ----
