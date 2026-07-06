@@ -578,6 +578,12 @@ function sendImmediate(sessionId, item) {
     renderUserBubble(item.text, item.attachments);
   }
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
+  // Save to input history (same as normal send and drainMessageQueue)
+  if (item.text) {
+    state.inputHistory.push(item.text);
+    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
+    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
+  }
   // Remove from queue and refresh bar
   const q = state.messageQueue[sessionId];
   if (q) {
