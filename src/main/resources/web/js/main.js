@@ -2161,7 +2161,7 @@ _primChat.addEventListener('scroll', () => {
     showHistoryLoader();
     sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
-});
+}, { passive: true });
 
 // Scroll listener (secondary window)
 const _secChat = chatViews.secondary?.dom?.chat;
@@ -2176,7 +2176,7 @@ if (_secChat) {
       showHistoryLoader();
       sendWs({ type: 'getHistory', sessionId: sv.sessionId, limit: 50, beforeIndex: sv.pagination.offset });
     }
-  });
+  }, { passive: true });
 }
 
 // ---------- 6. Expose global Nebflow API for plugins ----------
