@@ -99,7 +99,7 @@ Usage:
 
           if isNew then
             DiffUtil.writeFile(filePath, content, "\n")
-            Right(DiffUtil.renderCreatedResult(filePath))
+            Right(DiffUtil.renderCreatedResult(filePath, content))
           else
             val original = DiffUtil.readFile(filePath)
             val lineSep = DiffUtil.detectLineSep(original)
