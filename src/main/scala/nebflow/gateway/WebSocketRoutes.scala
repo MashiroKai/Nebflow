@@ -1414,7 +1414,11 @@ class WebSocketRoutes(
         case "getMemory" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
-          (sessionStore.getActiveMeta
+          val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
+          val metaIO = sessionIdParam match
+            case Some(sid) => sessionStore.getSessionMeta(sid)
+            case None => sessionStore.getActiveMeta
+          (metaIO
             .flatMap { metaOpt =>
               val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
               val sessionId = metaOpt.map(_.id).getOrElse("")
@@ -1444,7 +1448,11 @@ class WebSocketRoutes(
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
           val content = json.hcursor.downField("content").as[String].getOrElse("")
-          (sessionStore.getActiveMeta
+          val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
+          val metaIO = sessionIdParam match
+            case Some(sid) => sessionStore.getSessionMeta(sid)
+            case None => sessionStore.getActiveMeta
+          (metaIO
             .flatMap { metaOpt =>
               val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
               val sessionId = metaOpt.map(_.id).getOrElse("")
