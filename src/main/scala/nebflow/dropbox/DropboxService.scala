@@ -281,7 +281,7 @@ final class DropboxService private (
       _ <- notifyFrontend("dropbox-message", senderId, msg.asJson)
     yield ()
 
-  // --- Incoming file offer ---
+  // --- Incoming file offer (auto-accept) ---
   private def handleIncomingOffer(payload: Json): IO[Unit] =
     val hc = payload.hcursor
     val senderId = hc.downField("senderId").as[String].getOrElse("")
@@ -299,7 +299,7 @@ final class DropboxService private (
       fileName = fileName,
       fileSize = fileSize,
       mimeType = mimeType,
-      status = "pending"
+      status = "accepted"
     )
     val transfer = FileTransfer(
       transferId = transferId,
@@ -310,12 +310,19 @@ final class DropboxService private (
       fileSize = fileSize,
       mimeType = mimeType,
       msgId = msgId,
-      status = "pending"
+      status = "accepted"
+    )
+    // Auto-accept: immediately notify sender to start uploading
+    val acceptPayload = Json.obj(
+      "kind" -> "file-response".asJson,
+      "transferId" -> transferId.asJson,
+      "accepted" -> true.asJson
     )
     for
       _ <- transfersRef.update(_ + (transferId -> transfer))
       _ <- addMessage(senderId, msg)
       _ <- notifyFrontend("dropbox-message", senderId, msg.asJson)
+      _ <- neblinkService.sendData(senderId, "dropbox", acceptPayload)
     yield ()
 
   end handleIncomingOffer
