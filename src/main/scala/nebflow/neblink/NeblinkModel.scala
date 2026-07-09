@@ -122,13 +122,16 @@ end DeviceIdentity
 
 // ===== Device Discovery Info =====
 
-/** Device info exchanged during Tailscale discovery (returned by GET /api/neblink/discover). */
+/** Device info exchanged during Tailscale discovery (returned by GET /api/neblink/discover).
+ *
+ *  Note: userDescription is intentionally NOT included — descriptions are purely local,
+ *  never exchanged between devices. See NeblinkService.handleAnnounce.
+ */
 case class DeviceDiscoveryInfo(
   deviceId: String,
   deviceName: String,
   platform: String,
-  capabilities: Map[String, String] = Map.empty,
-  userDescription: String = ""
+  capabilities: Map[String, String] = Map.empty
 )
 
 object DeviceDiscoveryInfo:
