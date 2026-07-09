@@ -48,9 +48,10 @@ export function renderQueueBar(sessionId, handlers = {}) {
     const textEl = document.createElement('span');
     textEl.className = 'queue-item-text';
     const previewLen = 80;
-    textEl.textContent = item.text.length > previewLen
-      ? item.text.slice(0, previewLen) + '…'
-      : item.text;
+    const fullText = item.skillName ? `/${item.skillName} ${item.text}` : item.text;
+    textEl.textContent = fullText.length > previewLen
+      ? fullText.slice(0, previewLen) + '…'
+      : fullText;
     row.appendChild(textEl);
 
     const actions = document.createElement('div');
