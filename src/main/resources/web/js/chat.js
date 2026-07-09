@@ -457,6 +457,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // state to final state — no visual jump from remove+recreate.
   const pending = state.sessionToolCards[sid];
   delete state.sessionToolCards[sid];
+  // Cancel any pending streaming rAF — if toolArgDelta and toolEnd arrive in
+  // the same frame, the rAF would fire after we've already rebuilt the card
+  // and re-create a stale .tool-stream-body on the finalized card.
+  cancelToolStreamRAF();
   let row, card;
   if (pending && pending.isConnected) {
     row = pending;
@@ -723,12 +727,13 @@ export function appendToolStreamDelta(toolName, delta) {
   }
 }
 
-/** Cancel pending rAF — called on cleanup. */
+/** Cancel pending rAF and clear target — called when tool finalizes or on cleanup. */
 export function cancelToolStreamRAF() {
   if (_pendingToolStreamRAF) {
     cancelAnimationFrame(_pendingToolStreamRAF);
     _pendingToolStreamRAF = null;
   }
+  _toolStreamRafTarget = null;
 }
 
 // ---------- Error ----------
