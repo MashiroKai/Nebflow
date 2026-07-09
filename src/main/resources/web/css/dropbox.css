@@ -31,8 +31,35 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--color-frame-border-light, rgba(128, 128, 128, 0.12));
   font-size: 12px;
+}
+
+/* Description editor section */
+.dropbox-desc-section {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--color-frame-border-light, rgba(128, 128, 128, 0.12));
+}
+.dropbox-desc-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-frame-text-muted, var(--color-text-muted));
+}
+.dropbox-desc-editor {
+  display: flex;
+  gap: 6px;
+}
+.dropbox-desc-editor .cfg-input {
+  flex: 1;
+  font-size: 13px;
+}
+.dropbox-desc-editor .cfg-btn {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 4px 14px;
 }
 
 .dropbox-info-badge {

@@ -219,8 +219,7 @@ class RestApiRoutes(
                 "deviceId" -> id.deviceId.asJson,
                 "deviceName" -> id.deviceName.asJson,
                 "platform" -> id.platform.asJson,
-                "capabilities" -> id.capabilities.asJson,
-                "userDescription" -> id.userDescription.asJson
+                "capabilities" -> id.capabilities.asJson
               )
             )
           }
@@ -278,7 +277,9 @@ class RestApiRoutes(
                 "device" -> Json.obj(
                   "id" -> id.deviceId.asJson,
                   "name" -> id.deviceName.asJson,
-                  "platform" -> id.platform.asJson
+                  "platform" -> id.platform.asJson,
+                  "capabilities" -> id.capabilities.asJson,
+                  "userDescription" -> id.userDescription.asJson
                 ),
                 "peers" -> peersList
                   .map(p =>
@@ -287,6 +288,8 @@ class RestApiRoutes(
                       "deviceName" -> p.deviceName.asJson,
                       "platform" -> p.platform.asJson,
                       "address" -> p.address.asJson,
+                      "capabilities" -> p.capabilities.asJson,
+                      "userDescription" -> p.userDescription.asJson,
                       "lastSeen" -> p.lastSeen.asJson
                     )
                   )
@@ -578,13 +581,11 @@ class RestApiRoutes(
               val peerPort = req.params.getOrElse("port", "8080").toIntOption.getOrElse(8080)
               val capsStr = req.params.getOrElse("capabilities", "{}")
               val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
-              val userDesc = req.params.getOrElse("userDescription", "")
               val info = nebflow.neblink.DeviceDiscoveryInfo(
                 peerDeviceId,
                 peerDeviceName,
                 peerPlatform,
-                capabilities,
-                userDesc
+                capabilities
               )
               // Silent upsert — the HTTP /neblink/announce endpoint already handles logging.
               // Calling handleAnnounce here too produces duplicate "Peer announced" logs.
@@ -593,8 +594,7 @@ class RestApiRoutes(
                 peerDeviceName,
                 peerPlatform,
                 s"http://$remoteIp:$peerPort",
-                capabilities = capabilities,
-                userDescription = userDesc
+                capabilities = capabilities
               )
               ms.upsertPeer(peer).flatMap { _ =>
                 Queue.unbounded[IO, WebSocketFrame].flatMap { sendQueue =>

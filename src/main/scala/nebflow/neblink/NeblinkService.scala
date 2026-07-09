@@ -143,7 +143,11 @@ class NeblinkService private (
       else IO.unit
     }
 
-  /** Add or update a single peer from an announce push. */
+  /** Add or update a single peer from an announce push.
+   *
+   *  Device descriptions are never exchanged between devices — they are purely local
+   *  annotations. We only preserve any description the local user may have set.
+   */
   def handleAnnounce(info: DeviceDiscoveryInfo, remoteIp: String, port: Int): IO[Unit] =
     identityRef.get.flatMap { id =>
       if info.deviceId == id.deviceId then IO.unit // ignore self-announce
@@ -153,10 +157,8 @@ class NeblinkService private (
           deviceName = info.deviceName,
           platform = info.platform,
           address = s"http://$remoteIp:$port",
-          capabilities = info.capabilities,
-          userDescription = info.userDescription
+          capabilities = info.capabilities
         )
-        // Preserve locally-set description: if we already have one, don't overwrite with peer's own
         peersRef.update { peers =>
           val existingDesc = peers.get(info.deviceId).flatMap(p => Option(p.userDescription).filter(_.nonEmpty))
           val finalPeer = existingDesc match
