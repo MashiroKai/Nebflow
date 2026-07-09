@@ -165,13 +165,26 @@ export function restoreFromStorage() {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
-      // Card tool: use m.content (server-processed HTML with /api/nf-file URLs via ___CARD_HTML___ marker)
-      // instead of m.input (raw LLM input with unprocessed local paths).
-      const cardData = m.content || { label: m.label, summary: m.summary, content: m.content || '', isError: m.isError, input: m.input, sessionId: state.activeSessionId };
-      if (renderWithRegistry(card, cardData)) {
-        card.classList.add('tool-card--html');
+      // Card tool: render standard tool card + separate card iframe below
+      if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        const localLabel = localizeToolLabel(m.label);
+        const localSummary = localizeToolSummary(m.summary, m.label);
+        const lParts = localLabel.split('\n', 2);
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
+          + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
+        card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
         row.appendChild(card);
         chat.appendChild(row);
+        const cardRow = document.createElement('div');
+        cardRow.className = 'row card-content';
+        const cardContainer = document.createElement('div');
+        cardRow.appendChild(cardContainer);
+        chat.appendChild(cardRow);
+        renderWithRegistry(cardContainer, m.content);
       } else {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
@@ -460,13 +473,26 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       row.className = 'row tool';
       const card = document.createElement('div');
       card.className = 'tool-card';
-      // Card tool: use m.content (server-processed HTML with /api/nf-file URLs via ___CARD_HTML___ marker)
-      // instead of m.input (raw LLM input with unprocessed local paths).
-      const cardData2 = m.content || { label: m.label, summary: m.summary, content: m.content || '', isError: m.isError, input: m.input, sessionId: state.activeSessionId };
-      if (renderWithRegistry(card, cardData2)) {
-        card.classList.add('tool-card--html');
+      // Card tool: render standard tool card + separate card iframe below
+      if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        const localLabel = localizeToolLabel(m.label);
+        const localSummary = localizeToolSummary(m.summary, m.label);
+        const lParts = localLabel.split('\n', 2);
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
+          + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
+        card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
         row.appendChild(card);
         fragment.appendChild(row);
+        const cardRow = document.createElement('div');
+        cardRow.className = 'row card-content';
+        const cardContainer = document.createElement('div');
+        cardRow.appendChild(cardContainer);
+        fragment.appendChild(cardRow);
+        renderWithRegistry(cardContainer, m.content);
       } else {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
