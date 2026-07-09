@@ -80,27 +80,6 @@
   flex-shrink: 0;
 }
 
-.neblink-peer-desc {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 120px;
-}
-
-/* Per-device description editor row */
-.neblink-desc-row {
-  display: flex;
-  gap: 6px;
-  padding: 2px 6px 6px 20px;
-}
-.neblink-desc-row .neblink-desc-input {
-  flex: 1;
-  min-width: 0;
-}
-
 /* Peer update button */
 .neblink-peer-update-btn {
   font-size: 11px;
