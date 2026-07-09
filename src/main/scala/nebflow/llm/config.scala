@@ -79,8 +79,7 @@ case class McpServerConfig(
 object McpServerConfig:
   given Decoder[McpServerConfig] = deriveDecoder[McpServerConfig]
 
-  extension (cfg: McpServerConfig)
-    def isEnabled: Boolean = cfg.enabled.getOrElse(true)
+  extension (cfg: McpServerConfig) def isEnabled: Boolean = cfg.enabled.getOrElse(true)
 
 case class SearchConfig(
   provider: String,

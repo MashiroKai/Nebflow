@@ -4,9 +4,11 @@ import cats.effect.IO
 import io.circe.*
 import io.circe.syntax.*
 import nebflow.shared.*
-import java.nio.file.{Files, Path, Paths, StandardCopyOption, StandardOpenOption}
+
+import java.nio.file.*
 import java.security.MessageDigest
 import java.time.Instant
+
 import scala.jdk.CollectionConverters.*
 
 /**
@@ -63,126 +65,138 @@ object LlmLogWriter:
     isCompaction: Boolean
   ): IO[Unit] =
     if !enabled.get() then IO.unit
-    else IO.blocking {
-      val requestId = java.util.UUID.randomUUID().toString
-      val model = resultModel.getOrElse("unknown")
-      val agent = request.agentId
-      val session = request.sessionId
-      val messages = request.messages
-      val tools = request.tools.getOrElse(Nil)
-      val systemText = request.systemStable.getOrElse("") +
-        request.systemDynamic.map(d => s"\n\n$d").getOrElse("")
+    else
+      IO.blocking {
+        val requestId = java.util.UUID.randomUUID().toString
+        val model = resultModel.getOrElse("unknown")
+        val agent = request.agentId
+        val session = request.sessionId
+        val messages = request.messages
+        val tools = request.tools.getOrElse(Nil)
+        val systemText = request.systemStable.getOrElse("") +
+          request.systemDynamic.map(d => s"\n\n$d").getOrElse("")
 
-      // ── Build and store objects ──
+        // ── Build and store objects ──
 
-      val systemRef: String =
-        if systemText.nonEmpty then storeObject(Json.fromString(systemText)) else null
+        val systemRef: String =
+          if systemText.nonEmpty then storeObject(Json.fromString(systemText)) else null
 
-      val toolsRef: String =
-        if tools.nonEmpty then storeObject(toolsToJson(tools)) else null
+        val toolsRef: String =
+          if tools.nonEmpty then storeObject(toolsToJson(tools)) else null
 
-      val messageRefs: List[String] =
-        messages.map(m => storeObject(messageToJson(m)))
+        val messageRefs: List[String] =
+          messages.map(m => storeObject(messageToJson(m)))
 
-      // ── Request summary ──
+        // ── Request summary ──
 
-      val ts = Instant.now().toString
+        val ts = Instant.now().toString
 
-      val toolCallsCount = messages.reverse
-        .find(_.role == MessageRole.Assistant)
-        .map(_.content.toOption.toList.flatMap(_.collect { case t: ContentBlock.ToolUse => t }).size)
-        .getOrElse(0)
+        val toolCallsCount = messages.reverse
+          .find(_.role == MessageRole.Assistant)
+          .map(_.content.toOption.toList.flatMap(_.collect { case t: ContentBlock.ToolUse => t }).size)
+          .getOrElse(0)
 
-      val toolResultsCount = messages.reverse
-        .find(_.role == MessageRole.User)
-        .map(_.content.toOption.toList.flatMap(_.collect { case t: ContentBlock.ToolResult => t }).size)
-        .getOrElse(0)
+        val toolResultsCount = messages.reverse
+          .find(_.role == MessageRole.User)
+          .map(_.content.toOption.toList.flatMap(_.collect { case t: ContentBlock.ToolResult => t }).size)
+          .getOrElse(0)
 
-      val summary = Json.obj(
-        "timestamp" -> ts.asJson,
-        "type" -> "request".asJson,
-        "request_id" -> requestId.asJson,
-        "url" -> "".asJson,
-        "api_type" -> "anthropic_messages".asJson,
-        "model" -> model.asJson,
-        "agent" -> agent.asJson,
-        "channel" -> "web".asJson,
-        "session_id" -> session.asJson,
-        "metadata_agent_id" -> agent.asJson,
-        "messages_count" -> messages.size.asJson,
-        "system_length" -> systemText.length.asJson,
-        "tools_count" -> tools.size.asJson,
-        "tool_calls_count" -> toolCallsCount.asJson,
-        "tool_results_count" -> toolResultsCount.asJson,
-        "max_tokens" -> request.maxTokens.asJson,
-        "stream" -> true.asJson,
-        "thinking_enabled" -> request.thinking.isDefined.asJson,
-        "is_compaction" -> isCompaction.asJson,
-        "is_subagent" -> isSubagent.asJson
-      )
-
-      val fullEntry = summary.deepMerge(Json.obj(
-        "system_ref" -> Option(systemRef).asJson,
-        "tools_ref" -> Option(toolsRef).asJson,
-        "message_refs" -> messageRefs.asJson,
-        "max_tokens" -> request.maxTokens.asJson,
-        "stream" -> true.asJson,
-        "thinking" -> request.thinking.asJson
-      ))
-
-      appendJsonl("summary", summary)
-      appendJsonl("full", fullEntry)
-
-      // ── SSE events ──
-
-      val sseEvents = chunksToSseEvents(chunks, requestId, agent, model)
-      sseEvents.foreach(appendJsonl("sse", _))
-
-      // ── Response entry ──
-
-      val usageJson = resultUsage.map { u =>
-        val base = Json.obj(
-          "input_tokens" -> u.inputTokens.asJson,
-          "output_tokens" -> u.outputTokens.asJson
+        val summary = Json.obj(
+          "timestamp" -> ts.asJson,
+          "type" -> "request".asJson,
+          "request_id" -> requestId.asJson,
+          "url" -> "".asJson,
+          "api_type" -> "anthropic_messages".asJson,
+          "model" -> model.asJson,
+          "agent" -> agent.asJson,
+          "channel" -> "web".asJson,
+          "session_id" -> session.asJson,
+          "metadata_agent_id" -> agent.asJson,
+          "messages_count" -> messages.size.asJson,
+          "system_length" -> systemText.length.asJson,
+          "tools_count" -> tools.size.asJson,
+          "tool_calls_count" -> toolCallsCount.asJson,
+          "tool_results_count" -> toolResultsCount.asJson,
+          "max_tokens" -> request.maxTokens.asJson,
+          "stream" -> true.asJson,
+          "thinking_enabled" -> request.thinking.isDefined.asJson,
+          "is_compaction" -> isCompaction.asJson,
+          "is_subagent" -> isSubagent.asJson
         )
-        val withCr = u.cacheReadTokens
-          .map(cr => base.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
-          .getOrElse(base)
-        u.cacheWriteTokens
-          .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
-          .getOrElse(withCr)
-      }
 
-      val responseSummary = Json.obj(
-        "timestamp" -> Instant.now().toString.asJson,
-        "type" -> "response".asJson,
-        "request_model" -> model.asJson,
-        "resolved_model" -> model.asJson,
-        "agent" -> agent.asJson,
-        "response_length" -> resultText.length.asJson,
-        "is_streaming" -> true.asJson,
-        "status_code" -> 200.asJson,
-        "content_type" -> "text/event-stream".asJson
-      ).deepMerge(usageJson.map(u => Json.obj("usage" -> u)).getOrElse(Json.obj()))
+        val fullEntry = summary.deepMerge(
+          Json.obj(
+            "system_ref" -> Option(systemRef).asJson,
+            "tools_ref" -> Option(toolsRef).asJson,
+            "message_refs" -> messageRefs.asJson,
+            "max_tokens" -> request.maxTokens.asJson,
+            "stream" -> true.asJson,
+            "thinking" -> request.thinking.asJson
+          )
+        )
 
-      val responseFull = responseSummary.deepMerge(Json.obj(
-        "full" -> buildResponseJson(
-          model, resultText, resultThinking, resultToolCalls,
-          resultStopReason, usageJson
-        ).noSpaces.asJson
-      ))
+        appendJsonl("summary", summary)
+        appendJsonl("full", fullEntry)
 
-      appendJsonl("summary", responseSummary)
-      appendJsonl("full", responseFull)
+        // ── SSE events ──
 
-      // ── Daily prune ──
-      maybePrune()
-    }.handleErrorWith(e => logger.warn(s"LlmLogWriter: ${e.getMessage}"))
+        val sseEvents = chunksToSseEvents(chunks, requestId, agent, model)
+        sseEvents.foreach(appendJsonl("sse", _))
+
+        // ── Response entry ──
+
+        val usageJson = resultUsage.map { u =>
+          val base = Json.obj(
+            "input_tokens" -> u.inputTokens.asJson,
+            "output_tokens" -> u.outputTokens.asJson
+          )
+          val withCr = u.cacheReadTokens
+            .map(cr => base.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
+            .getOrElse(base)
+          u.cacheWriteTokens
+            .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
+            .getOrElse(withCr)
+        }
+
+        val responseSummary = Json
+          .obj(
+            "timestamp" -> Instant.now().toString.asJson,
+            "type" -> "response".asJson,
+            "request_model" -> model.asJson,
+            "resolved_model" -> model.asJson,
+            "agent" -> agent.asJson,
+            "response_length" -> resultText.length.asJson,
+            "is_streaming" -> true.asJson,
+            "status_code" -> 200.asJson,
+            "content_type" -> "text/event-stream".asJson
+          )
+          .deepMerge(usageJson.map(u => Json.obj("usage" -> u)).getOrElse(Json.obj()))
+
+        val responseFull = responseSummary.deepMerge(
+          Json.obj(
+            "full" -> buildResponseJson(
+              model,
+              resultText,
+              resultThinking,
+              resultToolCalls,
+              resultStopReason,
+              usageJson
+            ).noSpaces.asJson
+          )
+        )
+
+        appendJsonl("summary", responseSummary)
+        appendJsonl("full", responseFull)
+
+        // ── Daily prune ──
+        maybePrune()
+      }.handleErrorWith(e => logger.warn(s"LlmLogWriter: ${e.getMessage}"))
 
   // ── Content-Addressed Object Store ──────────────────────────────────
 
   private def hashContent(json: Json): String =
-    val bytes = MessageDigest.getInstance("SHA-256")
+    val bytes = MessageDigest
+      .getInstance("SHA-256")
       .digest(json.noSpaces.getBytes("UTF-8"))
     bytes.map("%02x".format(_)).mkString.take(16)
 
@@ -210,7 +224,8 @@ object LlmLogWriter:
     Files.write(
       path,
       (json.noSpaces + "\n").getBytes("UTF-8"),
-      StandardOpenOption.CREATE, StandardOpenOption.APPEND
+      StandardOpenOption.CREATE,
+      StandardOpenOption.APPEND
     )
   }
 
@@ -262,8 +277,11 @@ object LlmLogWriter:
     })
 
   private def buildResponseJson(
-    model: String, text: String, thinking: Option[String],
-    toolCalls: List[ToolCall], stopReason: Option[String],
+    model: String,
+    text: String,
+    thinking: Option[String],
+    toolCalls: List[ToolCall],
+    stopReason: Option[String],
     usage: Option[Json]
   ): Json =
     val parts = List.newBuilder[Json]
@@ -285,6 +303,7 @@ object LlmLogWriter:
       "stop_reason" -> stopReason.getOrElse("end_turn").asJson,
       "usage" -> usage.getOrElse(Json.obj())
     )
+  end buildResponseJson
 
   // ── SSE Event Generation ────────────────────────────────────────────
 
@@ -317,70 +336,84 @@ object LlmLogWriter:
         "sse_event_type" -> eventType.asJson
       )
 
-    for chunk <- chunks do chunk match
-      case StreamChunk.ThinkingDelta(delta) =>
-        if thinkingIdx < 0 then
-          thinkingIdx = nextBlockIdx
-          nextBlockIdx += 1
-        entries += baseSse("content_block_delta")
-          .deepMerge(Json.obj(
-            "sse_content_block_index" -> thinkingIdx.asJson,
-            "delta_reasoning" -> delta.asJson,
-            "delta_reasoning_length" -> delta.length.asJson
-          ))
-
-      case StreamChunk.TextDelta(delta) =>
-        if textIdx < 0 then
-          textIdx = nextBlockIdx
-          nextBlockIdx += 1
-        entries += baseSse("content_block_delta")
-          .deepMerge(Json.obj(
-            "sse_content_block_index" -> textIdx.asJson,
-            "delta_content" -> delta.asJson,
-            "delta_content_length" -> delta.length.asJson
-          ))
-
-      case StreamChunk.ToolCallChunk(tc) =>
-        val idx = nextBlockIdx
-        nextBlockIdx += 1
-        // content_block_start: tool metadata
-        entries += baseSse("content_block_start")
-          .deepMerge(Json.obj(
-            "sse_content_block_index" -> idx.asJson,
-            "sse_content_block" -> Json.obj(
-              "type" -> "tool_use".asJson,
-              "id" -> tc.id.asJson,
-              "name" -> tc.name.asJson
+    for chunk <- chunks do
+      chunk match
+        case StreamChunk.ThinkingDelta(delta) =>
+          if thinkingIdx < 0 then
+            thinkingIdx = nextBlockIdx
+            nextBlockIdx += 1
+          entries += baseSse("content_block_delta")
+            .deepMerge(
+              Json.obj(
+                "sse_content_block_index" -> thinkingIdx.asJson,
+                "delta_reasoning" -> delta.asJson,
+                "delta_reasoning_length" -> delta.length.asJson
+              )
             )
-          ))
-        // content_block_delta: complete tool input JSON in one shot
-        entries += baseSse("content_block_delta")
-          .deepMerge(Json.obj(
-            "sse_content_block_index" -> idx.asJson,
-            "delta_tool_json" -> Json.fromJsonObject(tc.input).noSpaces.asJson
-          ))
 
-      case StreamChunk.Done(stopReason, usage, _, _) =>
-        val entry = baseSse("message_delta")
-          .deepMerge(Json.obj(
-            "stop_reason" -> stopReason.getOrElse("end_turn").asJson
-          ))
-        val withUsage = usage.map { u =>
-          val baseU = Json.obj(
-            "input_tokens" -> u.inputTokens.asJson,
-            "output_tokens" -> u.outputTokens.asJson
-          )
-          val withCr = u.cacheReadTokens
-            .map(cr => baseU.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
-            .getOrElse(baseU)
-          val withCw = u.cacheWriteTokens
-            .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
-            .getOrElse(withCr)
-          entry.deepMerge(Json.obj("usage" -> withCw))
-        }.getOrElse(entry)
-        entries += withUsage
+        case StreamChunk.TextDelta(delta) =>
+          if textIdx < 0 then
+            textIdx = nextBlockIdx
+            nextBlockIdx += 1
+          entries += baseSse("content_block_delta")
+            .deepMerge(
+              Json.obj(
+                "sse_content_block_index" -> textIdx.asJson,
+                "delta_content" -> delta.asJson,
+                "delta_content_length" -> delta.length.asJson
+              )
+            )
 
-      case _ => () // ToolCallStart, ToolArgDelta, ThinkingSignature: covered by ToolCallChunk / Done
+        case StreamChunk.ToolCallChunk(tc) =>
+          val idx = nextBlockIdx
+          nextBlockIdx += 1
+          // content_block_start: tool metadata
+          entries += baseSse("content_block_start")
+            .deepMerge(
+              Json.obj(
+                "sse_content_block_index" -> idx.asJson,
+                "sse_content_block" -> Json.obj(
+                  "type" -> "tool_use".asJson,
+                  "id" -> tc.id.asJson,
+                  "name" -> tc.name.asJson
+                )
+              )
+            )
+          // content_block_delta: complete tool input JSON in one shot
+          entries += baseSse("content_block_delta")
+            .deepMerge(
+              Json.obj(
+                "sse_content_block_index" -> idx.asJson,
+                "delta_tool_json" -> Json.fromJsonObject(tc.input).noSpaces.asJson
+              )
+            )
+
+        case StreamChunk.Done(stopReason, usage, _, _) =>
+          val entry = baseSse("message_delta")
+            .deepMerge(
+              Json.obj(
+                "stop_reason" -> stopReason.getOrElse("end_turn").asJson
+              )
+            )
+          val withUsage = usage
+            .map { u =>
+              val baseU = Json.obj(
+                "input_tokens" -> u.inputTokens.asJson,
+                "output_tokens" -> u.outputTokens.asJson
+              )
+              val withCr = u.cacheReadTokens
+                .map(cr => baseU.deepMerge(Json.obj("cache_read_input_tokens" -> cr.asJson)))
+                .getOrElse(baseU)
+              val withCw = u.cacheWriteTokens
+                .map(cw => withCr.deepMerge(Json.obj("cache_creation_input_tokens" -> cw.asJson)))
+                .getOrElse(withCr)
+              entry.deepMerge(Json.obj("usage" -> withCw))
+            }
+            .getOrElse(entry)
+          entries += withUsage
+
+        case _ => () // ToolCallStart, ToolArgDelta, ThinkingSignature: covered by ToolCallChunk / Done
+    end for
 
     entries.result()
   end chunksToSseEvents
@@ -398,20 +431,23 @@ object LlmLogWriter:
 
   private def pruneOldLogs(): Unit =
     try
-      val cutoff = Instant.now()
+      val cutoff = Instant
+        .now()
         .minusSeconds(retentionDays * 86400L)
-        .toString.take(10)
+        .toString
+        .take(10)
 
       // 1. Delete old JSONL files and collect remaining hashes
       val usedHashes = scala.collection.mutable.Set.empty[String]
 
       if Files.exists(logDir) then
-        for file <- Files.list(logDir).iterator().asScala.toList
-            if file.getFileName.toString.endsWith(".jsonl") do
+        for
+          file <- Files.list(logDir).iterator().asScala.toList
+          if file.getFileName.toString.endsWith(".jsonl")
+        do
           val fname = file.getFileName.toString
           val dateStr = fname.take(10)
-          if dateStr < cutoff then
-            Files.deleteIfExists(file)
+          if dateStr < cutoff then Files.deleteIfExists(file)
           else
             // Collect referenced hashes from remaining files
             for line <- Files.readAllLines(file).asScala if line.nonEmpty do
@@ -419,20 +455,23 @@ object LlmLogWriter:
                 case Some(obj) =>
                   obj("system_ref").flatMap(_.asString).foreach(usedHashes += _)
                   obj("tools_ref").flatMap(_.asString).foreach(usedHashes += _)
-                  obj("message_refs").flatMap(_.asArray).foreach:
-                    _.foreach(_.asString.foreach(usedHashes += _))
+                  obj("message_refs")
+                    .flatMap(_.asArray)
+                    .foreach:
+                      _.foreach(_.asString.foreach(usedHashes += _))
                 case None => ()
+      end if
 
       // 2. Delete orphaned objects
       if Files.exists(objectsDir) then
-        for file <- Files.list(objectsDir).iterator().asScala.toList
-            if file.getFileName.toString.endsWith(".json") do
+        for
+          file <- Files.list(objectsDir).iterator().asScala.toList
+          if file.getFileName.toString.endsWith(".json")
+        do
           val hash = file.getFileName.toString.dropRight(5)
-          if !usedHashes.contains(hash) then
-            Files.deleteIfExists(file)
+          if !usedHashes.contains(hash) then Files.deleteIfExists(file)
 
       logger.infoSync(s"Log retention: pruned files older than $cutoff")
-    catch
-      case e: Exception => logger.warnSync(s"Log retention error: ${e.getMessage}")
+    catch case e: Exception => logger.warnSync(s"Log retention error: ${e.getMessage}")
 
 end LlmLogWriter

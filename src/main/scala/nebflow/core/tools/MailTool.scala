@@ -79,8 +79,7 @@ object MailTool extends Tool:
                 _ <-
                   if mode == "immediate" then
                     (ref ! AgentCommand.Interrupt()) *> (ref ! AgentCommand.UserInput(message, Some(adapterRef)))
-                  else
-                    ref ! AgentCommand.UserInput(message, Some(adapterRef))
+                  else ref ! AgentCommand.UserInput(message, Some(adapterRef))
               yield Right(s"Message sent to $address ($mode mode). The agent will process it in its mailbox.")
             case Left(err) =>
               IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))

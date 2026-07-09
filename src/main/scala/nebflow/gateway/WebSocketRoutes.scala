@@ -14,7 +14,7 @@ import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.core.{PathUtil, *}
-import nebflow.llm.{Config, McpServerConfig, NebflowServiceConfig, ThinkingConfig}
+import nebflow.llm.*
 import nebflow.service.*
 import nebflow.shared.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -372,7 +372,8 @@ class WebSocketRoutes(
       // no-cache: revalidate (Last-Modified) every time so the browser picks up
       // the rebuilt classpath resource during development instead of serving a
       // stale heuristic-cached copy.
-      StaticFile.fromResource(s"web/js/$file", Some(req))
+      StaticFile
+        .fromResource(s"web/js/$file", Some(req))
         .map(_.putHeaders("Cache-Control" -> "no-cache"))
         .getOrElseF(NotFound())
 
@@ -1721,7 +1722,8 @@ class WebSocketRoutes(
             configRef.get.flatMap { cfg =>
               cfg.mcpServers.getOrElse(Map.empty).get(serverId) match
                 case Some(mcpCfg) =>
-                  val action = if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
+                  val action =
+                    if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
                   action *> persistMcpServerEnabled(serverId, enabled) *>
                     broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
                 case None =>
