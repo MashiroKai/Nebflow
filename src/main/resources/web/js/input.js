@@ -386,7 +386,14 @@ export function send() {
   if (v.skillMode) {
     const skillName = v.skillModeName;
     cancelSkillMode();
-    if (!text || isBusy || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+    if (!text) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    if (isBusy) {
+      queueMessage(v, text, [], skillName);
+      input.value = '';
+      input.style.height = 'auto';
+      saveInputDraft(v.sessionId);
+      setTimeout(() => { v.isSending = false; }, 300);
       return;
     }
     v.isSending = true;
@@ -558,12 +565,13 @@ window.addEventListener('queuebar-refresh', (e) => {
   refreshQueue(e.detail.sessionId);
 });
 
-function queueMessage(view, text, attachments) {
+function queueMessage(view, text, attachments, skillName) {
   const sid = view.sessionId;
   const item = {
     id: ++queueCounter,
     text,
-    attachments: attachments.map(a => ({ ...a }))
+    attachments: attachments.map(a => ({ ...a })),
+    skillName
   };
   if (!state.messageQueue[sid]) state.messageQueue[sid] = [];
   state.messageQueue[sid].push(item);
@@ -572,10 +580,18 @@ function queueMessage(view, text, attachments) {
 
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-  sendWs({ type: 'immediateInput', content: item.text, sessionId });
-  // Render as normal user bubble in chat
+  if (item.skillName) {
+    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
+  } else {
+    sendWs({ type: 'immediateInput', content: item.text, sessionId });
+  }
+  // Render in chat
   if (activeView && activeView.sessionId === sessionId) {
-    renderUserBubble(item.text, item.attachments);
+    if (item.skillName) {
+      renderSkillBubble(item.skillName, item.text);
+    } else {
+      renderUserBubble(item.text, item.attachments);
+    }
   }
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
   // Save to input history (same as normal send and drainMessageQueue)
@@ -613,9 +629,13 @@ export function drainMessageQueue(sessionId) {
   q.shift();
   refreshQueue(sessionId);
 
-  // Render as normal user bubble in chat (only if this is the active view)
+  // Render in chat (only if this is the active view)
   if (activeView && activeView.sessionId === sessionId) {
-    renderUserBubble(item.text, item.attachments);
+    if (item.skillName) {
+      renderSkillBubble(item.skillName, item.text);
+    } else {
+      renderUserBubble(item.text, item.attachments);
+    }
   }
 
   // Save to history
@@ -632,16 +652,20 @@ export function drainMessageQueue(sessionId) {
   view.historyIndex = -1;
   view.historyDraft = '';
 
-  const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  sendWs({
-    content: item.text,
-    attachments: (item.attachments || []).map(a => ({
-      mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
-    })),
-    clientMessageId,
-    sessionId,
-    chatWidth: view.dom.chat?.clientWidth || 0
-  });
+  if (item.skillName) {
+    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
+  } else {
+    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    sendWs({
+      content: item.text,
+      attachments: (item.attachments || []).map(a => ({
+        mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+      })),
+      clientMessageId,
+      sessionId,
+      chatWidth: view.dom.chat?.clientWidth || 0
+    });
+  }
 
   setBusy(sessionId);
   state.turnStartTimes[sessionId] = Date.now();
