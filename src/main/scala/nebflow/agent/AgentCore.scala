@@ -238,10 +238,16 @@ private[agent] trait AgentCore:
             .flatMap { chunks =>
               val cr = aggregateChunks(chunks)
               LlmLogWriter.log(
-                request, chunks,
-                cr.text, cr.toolCalls, cr.thinking, cr.stopReason,
-                cr.usage, cr.model,
-                isSubagent, isCompactTurn
+                request,
+                chunks,
+                cr.text,
+                cr.toolCalls,
+                cr.thinking,
+                cr.stopReason,
+                cr.usage,
+                cr.model,
+                isSubagent,
+                isCompactTurn
               ) *> IO.pure(cr)
             }
             .attempt

@@ -122,7 +122,8 @@ end DeviceIdentity
 
 // ===== Device Discovery Info =====
 
-/** Device info exchanged during Tailscale discovery (returned by GET /api/neblink/discover).
+/**
+ * Device info exchanged during Tailscale discovery (returned by GET /api/neblink/discover).
  *
  *  Note: userDescription is intentionally NOT included — descriptions are purely local,
  *  never exchanged between devices. See NeblinkService.handleAnnounce.
