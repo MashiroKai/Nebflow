@@ -163,28 +163,30 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     IO.blocking {
       os.list(sessionsDir).filter(p => p.last.endsWith(".ui.json")).toList
     }.flatMap { files =>
-      files.flatTraverse { f =>
-        IO.blocking(os.size(f)).flatMap { size =>
-          if size > SessionStore.ShrinkThresholdBytes then
-            val id = f.last.stripSuffix(".ui.json")
-            loadUiMessages(id)
-              .flatMap(msgs =>
-                val reduced = trimUiMessages(sanitizeForStorage(msgs))
-                saveUiMessages(id, reduced) *>
-                  IO.blocking(os.size(f)).map(newSize => List((f.last, size, newSize, msgs.length, reduced.length)))
-              )
-              .handleErrorWith(e => IO(logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}")).as(Nil))
-          else IO.pure(Nil)
+      files
+        .flatTraverse { f =>
+          IO.blocking(os.size(f)).flatMap { size =>
+            if size > SessionStore.ShrinkThresholdBytes then
+              val id = f.last.stripSuffix(".ui.json")
+              loadUiMessages(id)
+                .flatMap(msgs =>
+                  val reduced = trimUiMessages(sanitizeForStorage(msgs))
+                  saveUiMessages(id, reduced) *>
+                    IO.blocking(os.size(f)).map(newSize => List((f.last, size, newSize, msgs.length, reduced.length)))
+                )
+                .handleErrorWith(e => IO(logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}")).as(Nil))
+            else IO.pure(Nil)
+          }
         }
-      }.flatMap { results =>
-        val saved = results.filter { case (_, oldSz, newSz, _, _) => newSz < oldSz }
-        val bytesSaved = results.foldLeft(0L)((acc, r) => acc + math.max(0, r._2 - r._3))
-        if saved.nonEmpty then
-          logger.info(
-            s"Shrunk ${saved.size} oversized UI file(s), saved ${bytesSaved / 1024}KB total"
-          )
-        else IO.unit
-      }
+        .flatMap { results =>
+          val saved = results.filter { case (_, oldSz, newSz, _, _) => newSz < oldSz }
+          val bytesSaved = results.foldLeft(0L)((acc, r) => acc + math.max(0, r._2 - r._3))
+          if saved.nonEmpty then
+            logger.info(
+              s"Shrunk ${saved.size} oversized UI file(s), saved ${bytesSaved / 1024}KB total"
+            )
+          else IO.unit
+        }
     }
 
   private def loadFromIndex: IO[Unit] =

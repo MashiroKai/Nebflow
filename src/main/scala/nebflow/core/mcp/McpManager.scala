@@ -28,8 +28,7 @@ class McpManager private (
               .handleErrorWith { e =>
                 logger.error(s"MCP server '$id' failed to start: ${e.getMessage}") *> IO.unit
               }
-          else
-            logger.info(s"MCP server '$id' is disabled, skipping")
+          else logger.info(s"MCP server '$id' is disabled, skipping")
         }.void
 
   /** Gracefully close all MCP connections with per-server timeout. */

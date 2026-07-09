@@ -143,7 +143,8 @@ class NeblinkService private (
       else IO.unit
     }
 
-  /** Add or update a single peer from an announce push.
+  /**
+   * Add or update a single peer from an announce push.
    *
    *  Device descriptions are never exchanged between devices — they are purely local
    *  annotations. We only preserve any description the local user may have set.
