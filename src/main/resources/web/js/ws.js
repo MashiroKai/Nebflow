@@ -4,6 +4,42 @@ import { findViewBySessionId, setActiveView, chatViews } from './chatView.js';
 // ---------- Handler registry (supports multiple handlers per type) ----------
 const handlers = {};
 
+// ── Message-type filter sets (module-level for O(1) lookup) ─────────────
+// Hoisted out of onmessage so we don't allocate three ~20-entry arrays and run
+// three O(n) Array.includes() calls on every single inbound WS frame. During
+// agent streaming (text/tool deltas can fire dozens of times per second) this
+// per-message allocation + linear scan was measurable main-thread overhead
+// and contributed to CSS-spinner jank (the compositor can't paint frames while
+// the main thread is busy).
+const GLOBAL_MSG_TYPES = new Set([
+  'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
+  'agentSystemPrompt', 'agentSystemPromptSaved',
+  'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
+  'memoryData', 'memorySaved', 'memoryStatus',
+  'cardDesignData', 'cardDesignSaved',
+  'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
+  'browseResult',
+  'updateCheckResult', 'updateStarted', 'updateCompleted',
+  'remoteUpdateResult', 'peerListChanged',
+  'activeBgTasks',
+  'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError'
+]);
+const TERMINAL_MSG_TYPES = new Set([
+  'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
+  'compactStart', 'compactComplete', 'compactFailed',
+  'backgroundTaskUpdate', 'taskListUpdate',
+  'askUser', 'askPermission'
+]);
+const STREAM_MSG_TYPES = new Set([
+  'thinkingDelta', 'textDelta', 'textDone',
+  'toolCallDetected', 'toolCallStart', 'toolCallChunk', 'toolStart', 'toolEnd',
+  'toolArgDelta',
+  'roundComplete',
+  'agentStart', 'agentTextDelta', 'agentToolCallDetected',
+  'agentToolStart', 'agentToolEnd', 'agentEnd',
+  'agentThinking', 'agentRetryStatus', 'agentDone'
+]);
+
 export function onMessage(type, handler) {
   if (!handlers[type]) handlers[type] = [];
   handlers[type].push(handler);
@@ -77,6 +113,7 @@ export function connect() {
     }
     sendWs({type: 'getSkills'});
     sendWs({type: 'memoryStatus'});
+    sendWs({type: 'getLlmLog'});
     state.heartbeat = setInterval(() => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
         sendWs({type: 'ping'});
@@ -107,38 +144,12 @@ export function connect() {
       const msg = JSON.parse(e.data);
 
       // ── Message filtering ────────────────────────────────────────────
-      const GLOBAL_MSG_TYPES = [
-        'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
-        'agentSystemPrompt', 'agentSystemPromptSaved',
-        'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
-        'memoryData', 'memorySaved', 'memoryStatus',
-        'cardDesignData', 'cardDesignSaved',
-        'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
-        'browseResult',
-        'updateCheckResult', 'updateStarted', 'updateCompleted',
-        'remoteUpdateResult', 'peerListChanged',
-        'activeBgTasks',
-        'dropbox-message', 'dropbox-file-response', 'dropbox-file-complete', 'dropbox-history', 'dropboxError'
-      ];
-      const TERMINAL_MSG_TYPES = [
-        'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
-        'compactStart', 'compactComplete', 'compactFailed',
-        'backgroundTaskUpdate', 'taskListUpdate',
-        'askUser', 'askPermission'
-      ];
-      const STREAM_MSG_TYPES = [
-        'thinkingDelta', 'textDelta', 'textDone',
-        'toolCallDetected', 'toolCallStart', 'toolCallChunk', 'toolStart', 'toolEnd',
-        'toolArgDelta',
-        'roundComplete',
-        'agentStart', 'agentTextDelta', 'agentToolCallDetected',
-        'agentToolStart', 'agentToolEnd', 'agentEnd',
-        'agentThinking', 'agentRetryStatus', 'agentDone'
-      ];
+      // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
+      // lookup and to avoid per-message allocation.
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
           msg.sessionId !== state.secondarySessionId &&
-          !GLOBAL_MSG_TYPES.includes(msg.type) && !TERMINAL_MSG_TYPES.includes(msg.type) &&
-          !STREAM_MSG_TYPES.includes(msg.type)) {
+          !GLOBAL_MSG_TYPES.has(msg.type) && !TERMINAL_MSG_TYPES.has(msg.type) &&
+          !STREAM_MSG_TYPES.has(msg.type)) {
         return;
       }
 
@@ -149,7 +160,7 @@ export function connect() {
       let view = findViewBySessionId(msg.sessionId);
       // Messages without sessionId default to primary view (e.g. 'thinking'
       // events that use msg.sessionId || activeSessionId internally).
-      if (!view && !msg.sessionId && !GLOBAL_MSG_TYPES.includes(msg.type)) {
+      if (!view && !msg.sessionId && !GLOBAL_MSG_TYPES.has(msg.type)) {
         view = chatViews.primary || null;
       }
       setActiveView(view || null);
@@ -163,6 +174,13 @@ export function connect() {
     }
   };
 }
+
+// ---------- LLM Log toggle sync ----------
+onMessage('llmLogState', (msg) => {
+  state.llmLogEnabled = msg.enabled;
+  const toggle = document.getElementById('toggle-llm-log');
+  if (toggle) toggle.classList.toggle('on', msg.enabled);
+});
 
 // ---------- Wake-up / network recovery ----------
 // When the OS sleeps, the browser suspends timers and the WebSocket dies at the

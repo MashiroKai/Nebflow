@@ -122,6 +122,18 @@ export class ChatView {
     this.skillModeDesc = '';
     this.skillModeArgHint = '';
     this.stream.askMode = false;
+    // Reset DOM state — paddingLeft and indicator visibility from a previous
+    // session's ask/skill mode must not persist into the new session.
+    // Without this, a large paddingLeft (from a long skill name) can make the
+    // textarea content area nearly zero-width, truncating the placeholder.
+    if (this.dom.input) {
+      this.dom.input.style.paddingLeft = '';
+    }
+    const prefix = this.id === 'secondary' ? 'secondary-' : '';
+    const askEl = document.getElementById(prefix + 'ask-indicator');
+    const skillEl = document.getElementById(prefix + 'skill-indicator');
+    if (askEl) askEl.classList.remove('show');
+    if (skillEl) skillEl.classList.remove('show');
   }
 
   /** Reset all view state for a fresh session load. */

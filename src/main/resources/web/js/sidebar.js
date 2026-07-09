@@ -456,6 +456,10 @@ export function renderSettings() {
         <div class="cfg-hint">${t('settings.thinkingBudgetHint')}</div>
       </div>
       <div class="settings-row">
+        <span class="settings-label">${t('settings.llmLog')}</span>
+        <div class="toggle ${state.llmLogEnabled !== false ? 'on' : ''}" id="toggle-llm-log"></div>
+      </div>
+      <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
       </div>
@@ -608,6 +612,14 @@ function bindSettingsEvents(content, cfg, allModels) {
       state.thinkingMode = {enabled: true, budgetTokens: val};
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
+  });
+
+  // LLM Log toggle
+  document.getElementById('toggle-llm-log')?.addEventListener('click', function() {
+    this.classList.toggle('on');
+    const enabled = this.classList.contains('on');
+    state.llmLogEnabled = enabled;
+    sendWs({type: 'setLlmLog', enabled});
   });
 
   // Language selector
@@ -1155,9 +1167,14 @@ export function renderSessionSidebar(sessionData, activeId) {
   // sessionList and agentSessionList often carry identical data (especially during
   // initial load where both fire in sequence). Detect this and avoid the expensive
   // innerHTML='' + rebuild cycle. We compare a lightweight fingerprint: the set of
-  // session ids + their updatedAt timestamps + the active id + expanded folders
-  // (folder expand/collapse changes the DOM but not the session data).
-  const fingerprint = (activeId || '') + '|' +
+  // session ids + their updatedAt timestamps + expanded folders (folder
+  // expand/collapse changes the DOM but not the session data).
+  //
+  // NOTE: activeId is deliberately NOT in the fingerprint. Switching the active
+  // session only changes which item is highlighted — the in-place fast path below
+  // toggles the `.active` class and refreshes the header without rebuilding 100+
+  // DOM nodes. (Fix 4: session-switch sidebar performance.)
+  const fingerprint =
     (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',') +
     '|folders:' + (state.folders || []).map(f => f.id + ':' + (f.parentId || '')).sort().join(';') +
     '|expanded:' + [...(state.expandedFolders || [])].sort().join(',') +

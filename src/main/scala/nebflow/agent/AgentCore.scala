@@ -235,7 +235,15 @@ private[agent] trait AgentCore:
             .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
             .compile
             .toList
-            .map(aggregateChunks)
+            .flatMap { chunks =>
+              val cr = aggregateChunks(chunks)
+              LlmLogWriter.log(
+                request, chunks,
+                cr.text, cr.toolCalls, cr.thinking, cr.stopReason,
+                cr.usage, cr.model,
+                isSubagent, isCompactTurn
+              ) *> IO.pure(cr)
+            }
             .attempt
           _ <- result match
             case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)

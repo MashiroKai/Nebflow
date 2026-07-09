@@ -455,12 +455,31 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 
   // Reuse the pending card's DOM node for a smooth transition from streaming
   // state to final state — no visual jump from remove+recreate.
-  const pending = state.sessionToolCards[sid];
-  delete state.sessionToolCards[sid];
-  // Cancel any pending streaming rAF — if toolArgDelta and toolEnd arrive in
-  // the same frame, the rAF would fire after we've already rebuilt the card
-  // and re-create a stale .tool-stream-body on the finalized card.
+  // When multiple tools are called in one LLM response, sessionToolCards[sid]
+  // (a single slot) may point to a different tool's card. Search by
+  // data-tool-label to find the correct one.
   cancelToolStreamRAF();
+  let pending = state.sessionToolCards[sid];
+  if (pending) {
+    const cardEl = pending.querySelector('.tool-card');
+    const existingLabel = cardEl?.dataset.toolLabel;
+    if (existingLabel && label && existingLabel !== label) {
+      // Slot points to a different tool's card — search DOM for the right one
+      pending = null;
+      const cards = chat.querySelectorAll('.row.tool .tool-card--pending');
+      for (const c of cards) {
+        if (c.dataset.toolLabel === label) { pending = c.closest('.row'); break; }
+      }
+    }
+  } else {
+    // No card in slot — search DOM by label
+    const cards = chat.querySelectorAll('.row.tool .tool-card--pending');
+    for (const c of cards) {
+      if (c.dataset.toolLabel === label || !c.dataset.toolLabel) { pending = c.closest('.row'); break; }
+    }
+  }
+  // Only clear the slot if we're consuming the card it points to
+  if (pending === state.sessionToolCards[sid]) delete state.sessionToolCards[sid];
   let row, card;
   if (pending && pending.isConnected) {
     row = pending;
@@ -546,6 +565,17 @@ export function renderToolPending(label, sessionId) {
     activeView.stream.aiText = '';
   }
 
+  // Helper: update the label text on a pending card row.
+  function updateLabel(rowEl) {
+    const labelEl = rowEl.querySelector('.label');
+    if (labelEl) {
+      const localLabel = localizeToolLabel(label);
+      const labelParts = localLabel.split('\n', 2);
+      labelEl.innerHTML = escapeHtml(labelParts[0])
+        + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
+    }
+  }
+
   // If a pending card already exists for this session, update it in-place
   // to avoid spinner flicker between toolCallDetected → toolStart events.
   // Defense: if the DOM node was removed (e.g. historyPage cleared innerHTML
@@ -553,14 +583,39 @@ export function renderToolPending(label, sessionId) {
   // card is created.
   const existing = state.sessionToolCards[sid];
   if (existing && existing.isConnected) {
-    const labelEl = existing.querySelector('.label');
-    if (labelEl) {
-      const localLabel = localizeToolLabel(label);
-      const labelParts = localLabel.split('\n', 2);
-      labelEl.innerHTML = escapeHtml(labelParts[0])
-        + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
+    const cardEl = existing.querySelector('.tool-card');
+    const existingLabel = cardEl?.dataset.toolLabel;
+    // Reuse if no toolStart has claimed this card yet (toolCallDetected → toolStart
+    // for the same tool), or if the label matches (toolStart from execution phase
+    // for the same tool).
+    if (!existingLabel || existingLabel === label) {
+      updateLabel(existing);
+      return;
     }
-    return;
+    // Label mismatch — the slot holds a different tool's card.
+    // Search for a pending card with matching label in the DOM.
+    const cards = chat.querySelectorAll('.row.tool .tool-card--pending');
+    for (const c of cards) {
+      if (c.dataset.toolLabel === label) {
+        const matchedRow = c.closest('.row');
+        state.sessionToolCards[sid] = matchedRow;
+        updateLabel(matchedRow);
+        return;
+      }
+    }
+    // No match found — fall through to create a new card.
+  } else {
+    // No card in slot — try to find a pending card by label (orphaned card
+    // from a previous tool whose slot was overwritten).
+    const cards = chat.querySelectorAll('.row.tool .tool-card--pending');
+    for (const c of cards) {
+      if (c.dataset.toolLabel === label || !c.dataset.toolLabel) {
+        const matchedRow = c.closest('.row');
+        state.sessionToolCards[sid] = matchedRow;
+        updateLabel(matchedRow);
+        return;
+      }
+    }
   }
 
   const row = document.createElement('div');
