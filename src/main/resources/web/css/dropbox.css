@@ -1,7 +1,7 @@
 /* ---------- Dropbox modal ---------- */
 
 .dropbox-modal {
-  width: 480px;
+  width: 520px;
   max-width: 92vw;
   max-height: 80vh;
   display: flex;
@@ -34,32 +34,69 @@
   font-size: 12px;
 }
 
-/* Description editor section */
-.dropbox-desc-section {
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--color-frame-border-light, rgba(128, 128, 128, 0.12));
-}
-.dropbox-desc-label {
-  display: block;
-  margin-bottom: 5px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--color-frame-text-muted, var(--color-text-muted));
-}
-.dropbox-desc-editor {
+/* Tabs */
+.dropbox-tabs {
   display: flex;
-  gap: 6px;
+  gap: 2px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--glass-border, var(--color-border));
 }
-.dropbox-desc-editor .cfg-input {
-  flex: 1;
-  font-size: 13px;
-}
-.dropbox-desc-editor .cfg-btn {
-  flex-shrink: 0;
+.dropbox-tab {
+  padding: 6px 14px;
   font-size: 12px;
-  padding: 4px 14px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  font-family: inherit;
+  margin-bottom: -1px;
+}
+.dropbox-tab:hover { color: var(--color-text); }
+.dropbox-tab.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+/* Tab content panels */
+.dropbox-tab-content { display: none; }
+.dropbox-tab-content.active {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Description editor (large textarea) */
+.dropbox-desc-editor-large {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+}
+.dropbox-desc-textarea {
+  flex: 1;
+  min-height: 240px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: inherit;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  outline: none;
+  transition: border-color 0.2s;
+}
+.dropbox-desc-textarea:focus {
+  border-color: var(--color-primary);
+}
+.dropbox-desc-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .dropbox-info-badge {
@@ -222,22 +259,12 @@
   flex-shrink: 0;
 }
 
-/* Local device description editor */
-.dropbox-local-section {
-  padding: 12px 16px;
-}
-.dropbox-local-section .cfg-label {
-  display: block;
-  margin-bottom: 5px;
-  font-size: 12px;
-  color: var(--color-frame-text-muted, #888);
-}
-
 /* Clickable device name in settings */
 .neblink-peer-name.dropbox-clickable {
   cursor: pointer;
+  color: var(--color-primary);
   transition: color 0.15s;
 }
 .neblink-peer-name.dropbox-clickable:hover {
-  color: rgba(91, 127, 191, 0.8);
+  text-decoration: underline;
 }
