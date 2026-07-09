@@ -1474,6 +1474,13 @@
 }
 
 /* ===== HTML Card styles ===== */
+.row.card-content {
+  margin-top: 0;  /* sits right below the tool card */
+}
+.row.card-content > div {
+  max-width: 100%;
+  width: 100%;
+}
 .tool-card.tool-card--html {
   max-width: 100%;
   width: 100%;

@@ -450,6 +450,9 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const sid = sessionId || activeView.sessionId;
   const chat = activeView.dom.chat;
 
+  // Cancel any pending streaming rAF so it doesn't overwrite the final render
+  cancelToolStreamRAF();
+
   // Reuse the pending card's DOM node for a smooth transition from streaming
   // state to final state — no visual jump from remove+recreate.
   const pending = state.sessionToolCards[sid];
@@ -471,18 +474,31 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // NebLink tool marker
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
 
-  // Try HTML card renderer first
-  // Always prefer `content` (server-processed, includes ___CARD_HTML___ marker with
-  // embedLocalFiles-processed /api/nf-file URLs). Previously inputJson.html was used
-  // for Card tools, but that's the raw LLM input before server-side file embedding.
-  const cardData = content || '';
-  if (renderWithRegistry(card, cardData, label)) {
-    card.classList.add('tool-card--html');
+  // Card tool: render standard tool card (icon + label) then card iframe below.
+  // This unifies Card display with other tools — spinner → checkmark transition,
+  // consistent tool card header — while the rendered HTML card appears separately.
+  if (content && typeof content === 'string' && /^___\w+_HTML___/.test(content)) {
+    const cIcon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+    const cLocalLabel = localizeToolLabel(label);
+    const cLocalSummary = localizeToolSummary(summary, label);
+    const cLabelParts = cLocalLabel.split('\n', 2);
+    const cLabelHtml = escapeHtml(cLabelParts[0]) + ' &mdash; ' + escapeHtml(cLocalSummary)
+      + (cLabelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(cLabelParts[1]) + '</span>' : '');
+    card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + cIcon + '</span>' +
+      '<div class="content"><div class="label">' + cLabelHtml + '</div></div>';
+    // Card iframe in a separate row below the tool card
+    const cardRow = document.createElement('div');
+    cardRow.className = 'row card-content';
+    const cardContainer = document.createElement('div');
+    cardRow.appendChild(cardContainer);
+    row.after(cardRow);
+    renderWithRegistry(cardContainer, content, label);
     smartScroll();
     return { type: 'tool', label, summary, content, isError, input: inputJson };
   }
 
-  // Fallback to default rendering
+  // Default rendering for all other tools
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const detailHtml = buildToolDetail(inputJson, label);
