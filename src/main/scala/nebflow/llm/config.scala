@@ -72,11 +72,15 @@ case class McpServerConfig(
   args: Option[List[String]] = None,
   env: Option[Map[String, String]] = None,
   url: Option[String] = None,
-  headers: Option[Map[String, String]] = None
+  headers: Option[Map[String, String]] = None,
+  enabled: Option[Boolean] = None
 )
 
 object McpServerConfig:
   given Decoder[McpServerConfig] = deriveDecoder[McpServerConfig]
+
+  extension (cfg: McpServerConfig)
+    def isEnabled: Boolean = cfg.enabled.getOrElse(true)
 
 case class SearchConfig(
   provider: String,
