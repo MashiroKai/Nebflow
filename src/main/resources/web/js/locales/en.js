@@ -386,4 +386,12 @@ export default {
   // Dropbox
   'dropbox.tabChat': 'Chat',
   'dropbox.tabDesc': 'Description',
+  'dropbox.dropHint': 'Drop a file here, or click to select',
+  'dropbox.inputPlaceholder': 'Type a message…',
+  'dropbox.send': 'Send',
+  'dropbox.transferring': 'Transferring…',
+  'dropbox.delivered': 'Delivered',
+  'dropbox.saved': 'Saved',
+  'dropbox.completed': 'Completed',
+  'dropbox.failed': 'Transfer failed',
 };
