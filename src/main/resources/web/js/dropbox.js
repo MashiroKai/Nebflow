@@ -1,10 +1,12 @@
 /**
  * Dropbox — cross-device messaging & file transfer.
- * Modal UI for sending text messages and files to neblink peers.
+ * Also serves as the device info / description editor modal for ALL devices (including local).
  */
 import state from './state.js';
 import { escapeHtml } from './utils.js';
+import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
+import { refreshNeblink } from './neblink.js';
 
 // Per-device message cache: deviceId -> DropboxMessage[]
 let dropboxMessages = {};
@@ -43,8 +45,10 @@ function formatTime(ts) {
 export function openDropbox(device) {
   openDeviceId = device.deviceId;
   renderModal(device);
-  // Request message history
-  sendWs({ type: 'dropbox-get-history', deviceId: device.deviceId });
+  // Request message history (only for remote devices)
+  if (!device.isLocal) {
+    sendWs({ type: 'dropbox-get-history', deviceId: device.deviceId });
+  }
 }
 
 export function closeDropbox() {
@@ -63,27 +67,39 @@ function renderModal(device) {
   const deviceName = escapeHtml(device.deviceName || 'Unknown');
   const platform = escapeHtml(device.platform || '');
   const desc = escapeHtml(device.userDescription || '');
+  const isLocal = device.isLocal;
+
+  // Build messaging sections (remote only)
+  const messagingHtml = isLocal ? '' : `
+    <div class="dropbox-messages" id="dropbox-messages"></div>
+    <div class="dropbox-dropzone" id="dropbox-dropzone">
+      <span>${t('dropbox.dropHint') || '拖拽文件到此处，或点击选择'}</span>
+      <input type="file" id="dropbox-file-input" style="display:none">
+    </div>
+    <div class="dropbox-input-bar">
+      <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="${t('dropbox.inputPlaceholder') || '输入消息...'}" autocomplete="off">
+      <button id="dropbox-send-btn" class="cfg-btn">${t('dropbox.send') || '发送'}</button>
+    </div>`;
 
   overlay.innerHTML = `
     <div class="cfg-modal dropbox-modal">
       <div class="cfg-modal-title">
-        <span>Dropbox — ${deviceName}</span>
+        <span>${deviceName}</span>
         <span class="dropbox-close" id="dropbox-close-btn">×</span>
       </div>
       <div class="dropbox-device-info">
         <span class="dropbox-info-badge">${platform}</span>
         <span class="dropbox-info-badge dot">●</span>
-        ${desc ? `<span class="dropbox-info-desc">${desc}</span>` : ''}
+        ${isLocal ? `<span class="dropbox-info-desc">${t('neblink.thisDevice') || '本机'}</span>` : ''}
       </div>
-      <div class="dropbox-messages" id="dropbox-messages"></div>
-      <div class="dropbox-dropzone" id="dropbox-dropzone">
-        <span>拖拽文件到此处，或点击选择</span>
-        <input type="file" id="dropbox-file-input" style="display:none">
+      <div class="dropbox-desc-section">
+        <label class="dropbox-desc-label">${t('neblink.deviceDescription') || '设备描述'}</label>
+        <div class="dropbox-desc-editor">
+          <input type="text" id="dropbox-desc-input" class="cfg-input" value="${desc}" placeholder="${t('neblink.deviceDescHint') || ''}">
+          <button id="dropbox-desc-save" class="cfg-btn">${t('neblink.save') || '保存'}</button>
+        </div>
       </div>
-      <div class="dropbox-input-bar">
-        <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="输入消息..." autocomplete="off">
-        <button id="dropbox-send-btn" class="cfg-btn">发送</button>
-      </div>
+      ${messagingHtml}
     </div>`;
 
   document.body.appendChild(overlay);
@@ -94,8 +110,54 @@ function renderModal(device) {
     if (e.target === overlay) closeDropbox();
   });
 
-  bindChatEvents(device);
-  renderMessages(device.deviceId);
+  // Bind description editor (all devices)
+  bindDescEditor(device);
+
+  // Bind messaging events (remote only)
+  if (!isLocal) {
+    bindChatEvents(device);
+    renderMessages(device.deviceId);
+  }
+}
+
+// ===== Description editor =====
+
+function bindDescEditor(device) {
+  const saveBtn = document.getElementById('dropbox-desc-save');
+  const input = document.getElementById('dropbox-desc-input');
+
+  const doSave = async () => {
+    const desc = input.value.trim();
+    const token = getAuthToken();
+    const isLocal = device.isLocal;
+    const url = isLocal ? '/api/neblink/device-info' : '/api/neblink/peer-description';
+    const body = isLocal
+      ? { userDescription: desc }
+      : { deviceId: device.deviceId, userDescription: desc };
+
+    const originalText = saveBtn.textContent;
+    try {
+      await fetch(url, {
+        method: 'PUT',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      saveBtn.textContent = '✓';
+      // Refresh neblink state so settings panel updates
+      refreshNeblink();
+    } catch (e) {
+      saveBtn.textContent = '!';
+    }
+    setTimeout(() => { saveBtn.textContent = originalText; }, 1200);
+  };
+
+  saveBtn.onclick = doSave;
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      doSave();
+    }
+  });
 }
 
 // ===== Chat events =====
@@ -226,16 +288,16 @@ function renderMessage(m) {
       // Incoming file offer — show accept/reject
       actionHtml = `
         <div class="dropbox-file-actions">
-          <button class="dropbox-file-accept" data-transfer-id="${escapeHtml(m.transferId)}" data-device-id="${escapeHtml(openDeviceId || '')}">接受</button>
-          <button class="dropbox-file-reject" data-transfer-id="${escapeHtml(m.transferId)}" data-device-id="${escapeHtml(openDeviceId || '')}">拒绝</button>
+          <button class="dropbox-file-accept" data-transfer-id="${escapeHtml(m.transferId)}" data-device-id="${escapeHtml(openDeviceId || '')}">${t('dropbox.accept') || '接受'}</button>
+          <button class="dropbox-file-reject" data-transfer-id="${escapeHtml(m.transferId)}" data-device-id="${escapeHtml(openDeviceId || '')}">${t('dropbox.reject') || '拒绝'}</button>
         </div>`;
     } else {
       const statusMap = {
-        'pending':   { text: '等待确认', cls: 'waiting' },
-        'accepted':  { text: '传输中...', cls: 'transferring' },
-        'rejected':  { text: '已拒绝', cls: 'rejected' },
-        'completed': { text: isOut ? '已送达' : `已保存到 ${escapeHtml(m.savedPath || 'Downloads')}`, cls: 'completed' },
-        'failed':    { text: '传输失败', cls: 'failed' },
+        'pending':   { text: t('dropbox.statusWaiting') || '等待确认', cls: 'waiting' },
+        'accepted':  { text: t('dropbox.statusTransferring') || '传输中...', cls: 'transferring' },
+        'rejected':  { text: t('dropbox.statusRejected') || '已拒绝', cls: 'rejected' },
+        'completed': { text: isOut ? (t('dropbox.statusDelivered') || '已送达') : `${t('dropbox.statusSaved') || '已保存到'} ${escapeHtml(m.savedPath || 'Downloads')}`, cls: 'completed' },
+        'failed':    { text: t('dropbox.statusFailed') || '传输失败', cls: 'failed' },
       };
       const st = statusMap[m.status] || { text: m.status, cls: '' };
       statusHtml = `<span class="dropbox-file-status ${st.cls}">${st.text}</span>`;
