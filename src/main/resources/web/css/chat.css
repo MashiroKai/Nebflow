@@ -464,11 +464,6 @@
   display: flex;
   margin: 6px 0;
   animation: fadeIn 0.2s ease;
-  /* Skip layout/paint for off-screen messages — critical for scroll performance
-     with long chat histories. Browser uses contain-intrinsic-size as placeholder
-     height, then remembers actual size after first render (auto keyword). */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 120px;
 }
 .row.prepend-skip-anim { animation: none; }
 .row.user { justify-content: flex-end; flex-direction: column; align-items: flex-end; }
