@@ -14,7 +14,7 @@ import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.core.{PathUtil, *}
-import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
+import nebflow.llm.{Config, McpServerConfig, NebflowServiceConfig, ThinkingConfig}
 import nebflow.service.*
 import nebflow.shared.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -489,6 +489,39 @@ class WebSocketRoutes(
       }
     }.handleErrorWith { e =>
       logger.warn(s"Failed to persist thinking config: ${e.getMessage}")
+    }
+
+  /** Persist MCP server enabled state to nebflow.json — targeted field update. */
+  private def persistMcpServerEnabled(serverId: String, enabled: Boolean): IO[Unit] =
+    IO.blocking {
+      val path = nebflow.llm.Config.DefaultConfigPath
+      val existing = if os.exists(path) then os.read(path) else "{}"
+      parse(existing).foreach { json =>
+        val updated = json.mapObject { obj =>
+          val mcpObj = obj("mcpServers").flatMap(_.asObject).getOrElse(JsonObject.empty)
+          val serverObj = mcpObj(serverId).flatMap(_.asObject).getOrElse(JsonObject.empty)
+          val updatedServer = Json.fromJsonObject(serverObj.add("enabled", enabled.asJson))
+          val updatedMcp = Json.fromJsonObject(mcpObj.add(serverId, updatedServer))
+          obj.add("mcpServers", updatedMcp)
+        }
+        os.write.over(path, updated.spaces2, createFolders = true)
+      }
+    }.handleErrorWith { e =>
+      logger.warn(s"Failed to persist MCP server enabled state: ${e.getMessage}")
+    }
+
+  /** Broadcast current MCP server list to all connected clients. */
+  private def broadcastMcpServersUpdate: IO[Unit] =
+    mcpManager.listServers.flatMap { servers =>
+      val mcpJson = servers.map { case (id, enabled) =>
+        io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+      }
+      wsHub.broadcast(
+        io.circe.Json.obj(
+          "type" -> "mcpServersUpdate".asJson,
+          "mcpServers" -> mcpJson.asJson
+        )
+      )
     }
 
   /** Send unified session list by looking up the session's agent name (for agentName field only). */
@@ -1661,6 +1694,22 @@ class WebSocketRoutes(
                   case Left(e) =>
                     logger.warn(s"Config hot-reload failed: ${e.getMessage}")
                 } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+            }
+          else IO.unit
+
+        case "toggleMcpServer" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val serverId = hc.downField("serverId").as[String].getOrElse("")
+          val enabled = hc.downField("enabled").as[Boolean].getOrElse(false)
+          if serverId.nonEmpty then
+            configRef.get.flatMap { cfg =>
+              cfg.mcpServers.getOrElse(Map.empty).get(serverId) match
+                case Some(mcpCfg) =>
+                  val action = if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
+                  action *> persistMcpServerEnabled(serverId, enabled) *>
+                    broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
+                case None =>
+                  logger.warn(s"toggleMcpServer: server '$serverId' not found in config") *> IO.unit
             }
           else IO.unit
 

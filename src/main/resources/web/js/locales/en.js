@@ -72,7 +72,7 @@ export default {
   'settings.addFallback': '+ Add fallback',
   'settings.mcpServers': 'MCP Servers',
   'settings.noMcp': 'No MCP servers configured',
-  'settings.addMcp': '+ Add MCP Server',
+  'settings.toggleMcp': 'Enable / Disable',
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
