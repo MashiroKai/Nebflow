@@ -72,7 +72,7 @@ export default {
   'settings.addFallback': '+ 添加回退',
   'settings.mcpServers': 'MCP 服务器',
   'settings.noMcp': '未配置 MCP 服务器',
-  'settings.addMcp': '+ 添加 MCP 服务器',
+  'settings.toggleMcp': '启用 / 禁用',
   'settings.advanced': '高级',
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
