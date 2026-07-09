@@ -387,4 +387,12 @@ export default {
   // Dropbox
   'dropbox.tabChat': '对话',
   'dropbox.tabDesc': '描述',
+  'dropbox.dropHint': '拖拽文件到此处，或点击选择',
+  'dropbox.inputPlaceholder': '输入消息…',
+  'dropbox.send': '发送',
+  'dropbox.transferring': '传输中…',
+  'dropbox.delivered': '已送达',
+  'dropbox.saved': '已保存',
+  'dropbox.completed': '已完成',
+  'dropbox.failed': '传输失败',
 };

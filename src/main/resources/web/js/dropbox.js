@@ -73,8 +73,8 @@ function renderModal(device) {
   // Tab bar (only when both tabs exist)
   const tabsHtml = hasChat ? `
     <div class="dropbox-tabs">
-      <button class="dropbox-tab active" data-tab="chat">${t('dropbox.tabChat') || '对话'}</button>
-      <button class="dropbox-tab" data-tab="desc">${t('dropbox.tabDesc') || '描述'}</button>
+      <button class="dropbox-tab active" data-tab="chat">${t('dropbox.tabChat')}</button>
+      <button class="dropbox-tab" data-tab="desc">${t('dropbox.tabDesc')}</button>
     </div>` : '';
 
   // Chat tab content
@@ -82,12 +82,12 @@ function renderModal(device) {
     <div class="dropbox-tab-content active" id="dropbox-tab-chat">
       <div class="dropbox-messages" id="dropbox-messages"></div>
       <div class="dropbox-dropzone" id="dropbox-dropzone">
-        <span>${t('dropbox.dropHint') || '拖拽文件到此处，或点击选择'}</span>
+        <span>${t('dropbox.dropHint')}</span>
         <input type="file" id="dropbox-file-input" style="display:none">
       </div>
       <div class="dropbox-input-bar">
-        <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="${t('dropbox.inputPlaceholder') || '输入消息...'}" autocomplete="off">
-        <button id="dropbox-send-btn" class="cfg-btn">${t('dropbox.send') || '发送'}</button>
+        <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="${t('dropbox.inputPlaceholder')}" autocomplete="off">
+        <button id="dropbox-send-btn" class="cfg-btn">${t('dropbox.send')}</button>
       </div>
     </div>` : '';
 
@@ -95,9 +95,9 @@ function renderModal(device) {
   const descHtml = `
     <div class="dropbox-tab-content${hasChat ? '' : ' active'}" id="dropbox-tab-desc">
       <div class="dropbox-desc-editor-large">
-        <textarea id="dropbox-desc-input" class="dropbox-desc-textarea" placeholder="${t('neblink.deviceDescHint') || ''}">${desc}</textarea>
+        <textarea id="dropbox-desc-input" class="dropbox-desc-textarea" placeholder="${t('neblink.deviceDescHint')}">${desc}</textarea>
         <div class="dropbox-desc-actions">
-          <button id="dropbox-desc-save" class="cfg-btn">${t('neblink.save') || '保存'}</button>
+          <button id="dropbox-desc-save" class="cfg-btn">${t('neblink.save')}</button>
         </div>
       </div>
     </div>`;
@@ -111,7 +111,7 @@ function renderModal(device) {
       <div class="dropbox-device-info">
         <span class="dropbox-info-badge">${platform}</span>
         <span class="dropbox-info-badge dot">●</span>
-        ${isLocal ? `<span class="dropbox-info-desc">${t('neblink.thisDevice') || '本机'}</span>` : ''}
+        ${isLocal ? `<span class="dropbox-info-desc">${t('neblink.thisDevice')}</span>` : ''}
       </div>
       ${tabsHtml}
       ${chatHtml}
@@ -278,24 +278,6 @@ function renderMessages(deviceId) {
   container.innerHTML = msgs.map(m => renderMessage(m)).join('');
   // Auto-scroll to bottom
   container.scrollTop = container.scrollHeight;
-
-  // Bind accept/reject buttons for incoming file offers
-  container.querySelectorAll('.dropbox-file-accept').forEach(btn => {
-    btn.onclick = () => {
-      const transferId = btn.dataset.transferId;
-      const senderId = btn.dataset.deviceId;
-      updateFileMessageStatus(senderId, transferId, 'accepted');
-      sendWs({ type: 'dropbox-file-respond', deviceId: senderId, transferId, accepted: true });
-    };
-  });
-  container.querySelectorAll('.dropbox-file-reject').forEach(btn => {
-    btn.onclick = () => {
-      const transferId = btn.dataset.transferId;
-      const senderId = btn.dataset.deviceId;
-      updateFileMessageStatus(senderId, transferId, 'rejected');
-      sendWs({ type: 'dropbox-file-respond', deviceId: senderId, transferId, accepted: false });
-    };
-  });
 }
 
 function renderMessage(m) {
@@ -312,38 +294,29 @@ function renderMessage(m) {
 
   if (m.kind === 'file') {
     const sizeStr = formatSize(m.fileSize);
-    let statusHtml = '';
-    let actionHtml = '';
-
-    if (!isOut && m.status === 'pending') {
-      // Incoming file offer — show accept/reject
-      actionHtml = `
-        <div class="dropbox-file-actions">
-          <button class="dropbox-file-accept" data-transfer-id="${escapeHtml(m.transferId)}" data-device-id="${escapeHtml(openDeviceId || '')}">${t('dropbox.accept') || '接受'}</button>
-          <button class="dropbox-file-reject" data-transfer-id="${escapeHtml(m.transferId)}" data-device-id="${escapeHtml(openDeviceId || '')}">${t('dropbox.reject') || '拒绝'}</button>
-        </div>`;
-    } else {
-      const statusMap = {
-        'pending':   { text: t('dropbox.statusWaiting') || '等待确认', cls: 'waiting' },
-        'accepted':  { text: t('dropbox.statusTransferring') || '传输中...', cls: 'transferring' },
-        'rejected':  { text: t('dropbox.statusRejected') || '已拒绝', cls: 'rejected' },
-        'completed': { text: isOut ? (t('dropbox.statusDelivered') || '已送达') : `${t('dropbox.statusSaved') || '已保存到'} ${escapeHtml(m.savedPath || 'Downloads')}`, cls: 'completed' },
-        'failed':    { text: t('dropbox.statusFailed') || '传输失败', cls: 'failed' },
-      };
-      const st = statusMap[m.status] || { text: m.status, cls: '' };
-      statusHtml = `<span class="dropbox-file-status ${st.cls}">${st.text}</span>`;
-    }
+    const statusMap = {
+      'pending':   { icon: '...', cls: 'transferring' },
+      'accepted':  { icon: '...', cls: 'transferring' },
+      'completed': { icon: isOut ? '\u2713' : '\u2713', cls: 'completed' },
+      'failed':    { icon: '\u2717', cls: 'failed' },
+    };
+    const st = statusMap[m.status] || { icon: '', cls: '' };
+    const statusText = m.status === 'completed'
+      ? (isOut ? t('dropbox.delivered') : (m.savedPath ? t('dropbox.saved') : t('dropbox.completed')))
+      : (m.status === 'failed' ? t('dropbox.failed') : t('dropbox.transferring'));
 
     return `
       <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
         <div class="dropbox-file-card">
-          <div class="dropbox-file-info">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="opacity:0.6;flex-shrink:0"><path d="M4 1h6l4 4v10H4V1z" stroke="currentColor" stroke-width="1.2"/><path d="M10 1v4h4" stroke="currentColor" stroke-width="1.2"/></svg>
-            <span class="dropbox-file-name">${escapeHtml(m.fileName)}</span>
-            <span class="dropbox-file-size">${sizeStr}</span>
+          <div class="dropbox-file-row">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none" style="opacity:0.5;flex-shrink:0"><path d="M4 1h6l4 4v10H4V1z" stroke="currentColor" stroke-width="1.2"/><path d="M10 1v4h4" stroke="currentColor" stroke-width="1.2"/></svg>
+            <div class="dropbox-file-meta">
+              <span class="dropbox-file-name">${escapeHtml(m.fileName)}</span>
+              <span class="dropbox-file-info-line">${sizeStr}${m.savedPath ? ` \u00b7 ${escapeHtml(m.savedPath)}` : ''}</span>
+            </div>
+            <span class="dropbox-file-badge ${st.cls}">${st.icon}</span>
           </div>
-          ${statusHtml}
-          ${actionHtml}
+          <div class="dropbox-file-status-text ${st.cls}">${statusText}</div>
         </div>
         <div class="dropbox-msg-time">${time}</div>
       </div>`;
