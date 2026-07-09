@@ -382,4 +382,8 @@ export default {
   'neblink.cancel': 'Cancel',
   'neblink.updating': 'Updating...',
   'neblink.restarting': 'Restarting...',
+
+  // Dropbox
+  'dropbox.tabChat': 'Chat',
+  'dropbox.tabDesc': 'Description',
 };

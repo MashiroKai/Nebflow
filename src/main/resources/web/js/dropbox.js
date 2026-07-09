@@ -68,17 +68,38 @@ function renderModal(device) {
   const platform = escapeHtml(device.platform || '');
   const desc = escapeHtml(device.userDescription || '');
   const isLocal = device.isLocal;
+  const hasChat = !isLocal;
 
-  // Build messaging sections (remote only)
-  const messagingHtml = isLocal ? '' : `
-    <div class="dropbox-messages" id="dropbox-messages"></div>
-    <div class="dropbox-dropzone" id="dropbox-dropzone">
-      <span>${t('dropbox.dropHint') || '拖拽文件到此处，或点击选择'}</span>
-      <input type="file" id="dropbox-file-input" style="display:none">
-    </div>
-    <div class="dropbox-input-bar">
-      <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="${t('dropbox.inputPlaceholder') || '输入消息...'}" autocomplete="off">
-      <button id="dropbox-send-btn" class="cfg-btn">${t('dropbox.send') || '发送'}</button>
+  // Tab bar (only when both tabs exist)
+  const tabsHtml = hasChat ? `
+    <div class="dropbox-tabs">
+      <button class="dropbox-tab active" data-tab="chat">${t('dropbox.tabChat') || '对话'}</button>
+      <button class="dropbox-tab" data-tab="desc">${t('dropbox.tabDesc') || '描述'}</button>
+    </div>` : '';
+
+  // Chat tab content
+  const chatHtml = hasChat ? `
+    <div class="dropbox-tab-content active" id="dropbox-tab-chat">
+      <div class="dropbox-messages" id="dropbox-messages"></div>
+      <div class="dropbox-dropzone" id="dropbox-dropzone">
+        <span>${t('dropbox.dropHint') || '拖拽文件到此处，或点击选择'}</span>
+        <input type="file" id="dropbox-file-input" style="display:none">
+      </div>
+      <div class="dropbox-input-bar">
+        <input type="text" id="dropbox-text-input" class="cfg-input" placeholder="${t('dropbox.inputPlaceholder') || '输入消息...'}" autocomplete="off">
+        <button id="dropbox-send-btn" class="cfg-btn">${t('dropbox.send') || '发送'}</button>
+      </div>
+    </div>` : '';
+
+  // Description tab content (always present)
+  const descHtml = `
+    <div class="dropbox-tab-content${hasChat ? '' : ' active'}" id="dropbox-tab-desc">
+      <div class="dropbox-desc-editor-large">
+        <textarea id="dropbox-desc-input" class="dropbox-desc-textarea" placeholder="${t('neblink.deviceDescHint') || ''}">${desc}</textarea>
+        <div class="dropbox-desc-actions">
+          <button id="dropbox-desc-save" class="cfg-btn">${t('neblink.save') || '保存'}</button>
+        </div>
+      </div>
     </div>`;
 
   overlay.innerHTML = `
@@ -92,14 +113,9 @@ function renderModal(device) {
         <span class="dropbox-info-badge dot">●</span>
         ${isLocal ? `<span class="dropbox-info-desc">${t('neblink.thisDevice') || '本机'}</span>` : ''}
       </div>
-      <div class="dropbox-desc-section">
-        <label class="dropbox-desc-label">${t('neblink.deviceDescription') || '设备描述'}</label>
-        <div class="dropbox-desc-editor">
-          <input type="text" id="dropbox-desc-input" class="cfg-input" value="${desc}" placeholder="${t('neblink.deviceDescHint') || ''}">
-          <button id="dropbox-desc-save" class="cfg-btn">${t('neblink.save') || '保存'}</button>
-        </div>
-      </div>
-      ${messagingHtml}
+      ${tabsHtml}
+      ${chatHtml}
+      ${descHtml}
     </div>`;
 
   document.body.appendChild(overlay);
@@ -110,14 +126,29 @@ function renderModal(device) {
     if (e.target === overlay) closeDropbox();
   });
 
+  // Bind tab switching
+  if (hasChat) bindTabs();
+
   // Bind description editor (all devices)
   bindDescEditor(device);
 
   // Bind messaging events (remote only)
-  if (!isLocal) {
+  if (hasChat) {
     bindChatEvents(device);
     renderMessages(device.deviceId);
   }
+}
+
+function bindTabs() {
+  document.querySelectorAll('.dropbox-tab').forEach(tab => {
+    tab.onclick = () => {
+      const target = tab.dataset.tab;
+      document.querySelectorAll('.dropbox-tab').forEach(t => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('.dropbox-tab-content').forEach(c => {
+        c.classList.toggle('active', c.id === `dropbox-tab-${target}`);
+      });
+    };
+  });
 }
 
 // ===== Description editor =====
