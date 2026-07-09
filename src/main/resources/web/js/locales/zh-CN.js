@@ -383,4 +383,8 @@ export default {
   'neblink.cancel': '取消',
   'neblink.updating': '更新中…',
   'neblink.restarting': '重启中…',
+
+  // Dropbox
+  'dropbox.tabChat': '对话',
+  'dropbox.tabDesc': '描述',
 };
