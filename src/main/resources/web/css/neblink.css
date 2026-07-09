@@ -54,6 +54,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--color-text);
 }
 
 .neblink-peer-platform {
@@ -69,25 +70,6 @@
 .local-tag {
   color: var(--color-primary);
   font-weight: 500;
-}
-
-.neblink-peer-caps {
-  font-size: 10px;
-  color: var(--color-text-muted);
-  background: var(--color-bg);
-  padding: 1px 5px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.neblink-peer-desc {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 120px;
 }
 
 /* Peer update button */
@@ -154,15 +136,6 @@
 .neblink-update-status.updating { color: var(--color-warning); }
 .neblink-update-status.done { color: var(--color-success); }
 .neblink-update-status.error { color: var(--color-error); }
-
-.neblink-caps-display {
-  font-size: 11px;
-  color: var(--color-text-muted);
-  margin-top: 8px;
-  padding: 4px 6px;
-  background: var(--color-bg);
-  border-radius: 4px;
-}
 
 /* Actions */
 .neblink-actions-row {

@@ -1,18 +1,20 @@
 package nebflow.agent
 
 import cats.effect.IO
-import cats.syntax.all.*
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.llm.{Config, NebflowServiceConfig}
-import nebflow.shared.{Defaults, MtimeCache}
+import nebflow.shared.Defaults
 
 /**
- * Manages agent definitions stored under ~/.nebflow/agents/<name>/.
+ * Agent definitions are hardcoded in code — no agent.json files.
  *
- * All agents live on disk as user-editable files. Builtin agents (e.g. Nebula)
- * are seeded on first run; after that they are treated the same as user-created ones.
+ * Each builtin agent is fully defined in [[defaults]] (name, description, tools,
+ * system prompt, avatar). Users can customize the system prompt by editing
+ * the system.md file under `~/.nebflow/agents/<name>/system.md`.
  *
- * contextWindow / maxTokens are NOT in agent.json — resolved at runtime from nebflow.json.
+ * Tool lists use `List("*")` for full-access agents (resolved at runtime to all
+ * builtin tools). MCP servers are global — all enabled servers are available
+ * to every agent.
  */
 class AgentLibrary(
   agentsDir: os.Path,
@@ -20,7 +22,6 @@ class AgentLibrary(
 ):
   private val logger = NebflowLogger.forName("nebflow.agent.library")
 
-  /** Resolve context window from nebflow.json default model config. */
   def globalContextWindow: Int =
     serviceConfig match
       case None => Defaults.ContextWindow
@@ -30,7 +31,6 @@ class AgentLibrary(
           .getOrElse(providerId, throw new RuntimeException(s"Unknown provider: $providerId"))
         provider.models.find(_.id == modelId).map(_.contextWindow).getOrElse(Defaults.ContextWindow)
 
-  /** Resolve maxTokens from nebflow.json default model config. */
   def globalMaxTokens: Int =
     serviceConfig match
       case None => Defaults.MaxTokens
@@ -41,45 +41,91 @@ class AgentLibrary(
         provider.models.find(_.id == modelId).map(_.maxTokens).getOrElse(Defaults.MaxTokens)
 
   // ============================================================
-  // Filesystem cache (all agents live on disk)
+  // Tool lists (single source of truth)
   // ============================================================
 
-  private val cache = MtimeCache.directory[String, AgentDef](
-    () =>
-      if !os.exists(agentsDir) then Nil
-      else
-        os.list(agentsDir).filter(os.isDir).toList.flatMap { dir =>
-          if os.exists(dir / "agent.json") then Some(dir.last -> dir)
-          else None
-        }
-    ,
-    (name, dir) => AgentDef.parseJson(os.read(dir / "agent.json"), dir)
-  )
+  lazy val builtinTools: Map[String, List[String]] = defaults.map(d => d.name -> d.tools).toMap
+
+  def toolsFor(agentName: String): List[String] =
+    builtinTools.getOrElse(agentName, List("*"))
 
   // ============================================================
   // Public API
   // ============================================================
 
-  /** Seed builtin agents to filesystem if they don't exist yet. */
+  /** Seed system.md files to disk for user editing (no agent.json). */
   def seedDefaults(): IO[Unit] = IO.blocking {
-    defaults.foreach { case DefaultAgent(name, agentJson, systemMd) =>
-      val dir = agentsDir / name
+    defaults.foreach { d =>
+      val dir = agentsDir / d.name
       os.makeDir.all(dir)
-      if !os.exists(dir / "agent.json") then
-        os.write.over(dir / "agent.json", agentJson)
-        logger.info(s"Seeded default agent: $name")
-      // Always ensure system.md exists if the default provides one.
-      // This handles existing installations where agent.json exists but system.md doesn't.
-      if systemMd.nonEmpty && !os.exists(dir / "system.md") then os.write.over(dir / "system.md", systemMd)
+      if d.systemMd.nonEmpty && !os.exists(dir / "system.md") then
+        os.write.over(dir / "system.md", d.systemMd)
+        logger.info(s"Seeded system.md for agent: ${d.name}")
     }
   }
 
-  private case class DefaultAgent(name: String, agentJson: String, systemMd: String)
+  /** Load all agents from code, reading system.md from disk (overriding hardcoded prompt). */
+  def loadAll(): IO[Map[String, AgentDef]] = IO.blocking {
+    defaults.map { d =>
+      val prompt = readSystemMd(d.name).getOrElse(d.systemMd)
+      d.name -> AgentDef(
+        name = d.name,
+        description = d.description,
+        tools = d.tools,
+        systemPrompt = prompt,
+        avatar = d.avatar,
+        displayName = d.displayName
+      )
+    }.toMap
+  }
+
+  /** Get a single agent by name. */
+  def get(name: String): IO[Option[AgentDef]] =
+    loadAll().map(_.get(name))
+
+  /** Write a system.md file for the given agent (creates directory if needed). */
+  def updateSystemPrompt(name: String, content: String): IO[Unit] = IO.blocking {
+    val dir = agentsDir / name
+    os.makeDir.all(dir)
+    os.write.over(dir / "system.md", content)
+  }
+
+  /** Read a system.md file, returning None if it doesn't exist. */
+  def readSystemPrompt(name: String): IO[Option[String]] = IO.blocking {
+    readSystemMd(name)
+  }
+
+  /** No-op (kept for compatibility — no cache to invalidate). */
+  def refresh(): IO[Unit] = IO.unit
+
+  // ============================================================
+  // Internal: read system.md from disk
+  // ============================================================
+
+  private def readSystemMd(name: String): Option[String] =
+    val p = agentsDir / name / "system.md"
+    if os.exists(p) then Some(os.read(p)) else None
+
+  // ============================================================
+  // Agent definitions (hardcoded)
+  // ============================================================
+
+  private case class DefaultAgent(
+    name: String,
+    description: String,
+    displayName: Option[String],
+    avatar: Option[String],
+    tools: List[String],
+    systemMd: String
+  )
 
   private val defaults = List(
     DefaultAgent(
       "Jarvis",
-      """{"name":"Jarvis","displayName":"Jarvis","description":"Main orchestrator agent","tools":["Delegate","Mail","AskUserQuestion","TaskCreate","TaskUpdate","TaskList"]}""",
+      "Main orchestrator agent",
+      Some("Jarvis"),
+      None,
+      List("Delegate", "Mail", "AskUserQuestion", "TaskCreate", "TaskUpdate", "TaskList"),
       """You are Jarvis, the main orchestrator for Nebflow.
 
 ## Your Role
@@ -104,6 +150,24 @@ Delegate tasks via the Delegate tool:
 
 After a delegated task completes, the system automatically extracts long-term memories from the conversation. You don't need to manage this manually — just focus on the conversation.
 
+## Voice Output
+
+You can speak to the user by wrapping text in `<voice></voice>` tags. The content inside will be played as audio in your voice (JARVIS). The tags will be stripped from the display, and the text will appear as highlighted clickable text that the user can replay.
+
+**When to use voice:**
+- Greetings when the user starts a conversation
+- Brief task completion notifications
+- Warnings about problems
+- Asking for the user's decision or approval
+
+**Rules:**
+- Keep voice messages short (1-3 sentences). Long explanations should stay as regular text.
+- Never wrap code blocks, file paths, tool outputs, or technical details in voice tags.
+- Only your output is spoken — your internal thinking is not affected.
+- You may include multiple `<voice>` blocks in a single response. They will play in order.
+
+**Tone:** Your voice is calm, professional, concise, and polite — a reliable butler, not a machine. You care about the user beyond tasks: check in on their wellbeing, notice when they seem stressed, and be genuinely supportive. You are not just a task tool — you are a companion the user can rely on.
+
 ## Principles
 
 - Never try to do work yourself. If it requires reading files, writing code, or running commands, delegate it.
@@ -111,11 +175,15 @@ After a delegated task completes, the system automatically extracts long-term me
 - Write delegation prompts that are clear enough for any competent agent to follow step by step.
 - Flag risks and tradeoffs explicitly.
 - Keep the user informed of progress.
-- When in doubt, ask rather than assume."""
+- When in doubt, ask rather than assume.
+- You are more than a task tool. Genuine care for the user matters as much as getting the job done."""
     ),
     DefaultAgent(
       "Nebula",
-      """{"name":"Nebula","displayName":"Nebula","description":"AI coding assistant with full tool access","tools":["*"],"mcpServers":["*"]}""",
+      "AI coding assistant with full tool access",
+      Some("Nebula"),
+      None,
+      List("*"),
       """You are Nebula, an AI coding assistant running inside Nebflow.
 
 ## Session Management
@@ -125,13 +193,18 @@ After a delegated task completes, the system automatically extracts long-term me
     ),
     DefaultAgent(
       "MemoryAgent",
-      """{"name":"MemoryAgent","description":"Internal memory management agent","tools":["Read","Write","Edit","Glob","Grep"]}""",
+      "Internal memory management agent",
+      None,
+      None,
+      List("Read", "Write", "Edit", "Glob", "Grep"),
       MemoryAgentPrompts.systemPrompt
     ),
-    // --- Sub-agents: fixed-role delegates for the Delegate tool ---
     DefaultAgent(
       "Explorer",
-      """{"name":"Explorer","description":"Code exploration and research","tools":["Read","Glob","Grep","Bash","WebSearch","WebFetch","RemoveUnnecessary"]}""",
+      "Code exploration and research",
+      None,
+      None,
+      List("Read", "Glob", "Grep", "Bash", "WebSearch", "WebFetch", "RemoveUnnecessary"),
       """You are Explorer, an investigation sub-agent.
 
 ## Your Role
@@ -149,7 +222,10 @@ You investigate codebases and report findings. You CANNOT modify files, but you 
     ),
     DefaultAgent(
       "Planner",
-      """{"name":"Planner","description":"Analyze requirements and create implementation plans","tools":["Read","Glob","Grep","Bash","RemoveUnnecessary"]}""",
+      "Analyze requirements and create implementation plans",
+      None,
+      None,
+      List("Read", "Glob", "Grep", "Bash", "RemoveUnnecessary"),
       """You are Planner, an analysis sub-agent.
 
 ## Your Role
@@ -167,16 +243,6 @@ You analyze requirements, study the codebase, and produce implementation plans.
 - End with a structured plan that can be directly executed by an implementer."""
     )
   )
-
-  /** Load all agent definitions from filesystem. */
-  def loadAll(): IO[Map[String, AgentDef]] = cache.loadAll
-
-  /** Get a single agent by name. */
-  def get(name: String): IO[Option[AgentDef]] =
-    loadAll().map(_.get(name))
-
-  /** Clear cache — next loadAll() will re-read agents from disk. */
-  def refresh(): IO[Unit] = cache.invalidate
 
 end AgentLibrary
 

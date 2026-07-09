@@ -3,9 +3,144 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { activeView, setActiveView } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
+
+// ---------- Voice TTS player ----------
+// Module-level singleton. Manages sequential playback of <voice> blocks:
+// fetches WAV from /api/tts, plays them in order, supports click-to-replay
+// and a mute toggle (persisted in localStorage).
+const VoicePlayer = {
+  queue: [],
+  processing: false,
+  muted: localStorage.getItem('voiceMuted') === 'true',
+  _current: null, // { audio, url, element, resolve }
+  _cache: new Map(), // text → Promise<blobUrl>（流式预取 + 缓存）
+
+  /** 流式预取：检测到完整 voice 块时立即发起 TTS 请求（并行，不等结果）。 */
+  prefetch(text) {
+    if (!text || this._cache.has(text)) return;
+    this._cache.set(text, this._fetchTts(text));
+  },
+
+  /** 调用后端 TTS API，返回 blobUrl 的 Promise。 */
+  async _fetchTts(text) {
+    try {
+      const resp = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!resp.ok) return null;
+      const blob = await resp.blob();
+      return URL.createObjectURL(blob);
+    } catch (e) {
+      return null;
+    }
+  },
+
+  /** 获取音频 URL：有缓存用缓存（可能还在 in-flight），没有就发请求。 */
+  async _getAudioUrl(text) {
+    if (this._cache.has(text)) return await this._cache.get(text);
+    const p = this._fetchTts(text);
+    this._cache.set(text, p);
+    return await p;
+  },
+
+  /** Add a voice block to the playback queue. */
+  enqueue(text, element) {
+    this.queue.push({ text, element });
+    if (!this.processing) this._processQueue();
+  },
+
+  /** Process queue items sequentially. Playback is ordered, but fetches are parallel. */
+  async _processQueue() {
+    this.processing = true;
+    let cancelled = false;
+    while (this.queue.length > 0 && !cancelled) {
+      const item = this.queue.shift();
+      const result = await this._playItem(item);
+      if (result === 'cancelled') cancelled = true;
+    }
+    this.processing = false;
+    if (this.queue.length > 0) this._processQueue();
+  },
+
+  /** Play a single voice block. */
+  async _playItem({ text, element }) {
+    if (this.muted) return 'done';
+    try {
+      const url = await this._getAudioUrl(text);
+      if (!url) return 'done';
+      const result = await new Promise(resolve => {
+        const audio = new Audio(url);
+        this._current = { audio, url, element, resolve };
+        if (element) element.classList.add('playing');
+        audio.onended = () => resolve('done');
+        audio.onerror = () => resolve('done');
+        audio.play().catch(() => resolve('done'));
+      });
+      return result;
+    } catch (e) {
+      return 'done';
+    } finally {
+      if (element) element.classList.remove('playing');
+      this._current = null;
+    }
+  },
+
+  /** Cancel current playback and clear the queue. */
+  _cancel() {
+    this.queue = [];
+    if (this._current) {
+      this._current.audio.pause();
+      this._current.resolve('cancelled');
+    }
+  },
+
+  /** Click-to-replay. */
+  replay(element) {
+    this._cancel();
+    this.enqueue(element.textContent, element);
+  },
+
+  /** Toggle mute. */
+  toggleMute() {
+    this.muted = !this.muted;
+    localStorage.setItem('voiceMuted', String(this.muted));
+    if (this.muted) this._cancel();
+    return this.muted;
+  },
+};
+
+// SVG icons for the voice toggle button
+const VOICE_SVG_ON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
+const VOICE_SVG_OFF = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>';
+
+// Initialize voice toggle buttons (runs after DOM is ready — module scripts are deferred)
+document.querySelectorAll('.voice-toggle').forEach(btn => {
+  if (VoicePlayer.muted) {
+    btn.classList.add('muted');
+    btn.innerHTML = VOICE_SVG_OFF;
+  }
+  btn.addEventListener('click', () => {
+    const muted = VoicePlayer.toggleMute();
+    btn.classList.toggle('muted', muted);
+    btn.innerHTML = muted ? VOICE_SVG_OFF : VOICE_SVG_ON;
+  });
+});
+
+// Unlock audio on first user interaction (browsers block autoplay without gesture)
+let _audioUnlocked = false;
+function _unlockAudio() {
+  if (_audioUnlocked) return;
+  _audioUnlocked = true;
+  const s = new Audio();
+  s.play().then(() => s.pause()).catch(() => {});
+}
+document.addEventListener('click', _unlockAudio, { once: true });
+document.addEventListener('keydown', _unlockAudio, { once: true });
 
 // ---------- Agent color assignment ----------
 export function getAgentColor(agentId) {
@@ -111,6 +246,14 @@ export function renderUserBubble(text, attachments) {
 export function appendAiText(text) {
   const chat = activeView.dom.chat;
   activeView.stream.aiText += text;
+  // 流式检测：发现完整的 <voice>...</voice> 块立即并行预取 TTS
+  const voiceMatches = activeView.stream.aiText.match(/<voice>([\s\S]+?)<\/voice>/g);
+  if (voiceMatches) {
+    voiceMatches.forEach(m => {
+      const content = m.replace(/<\/?voice>/g, '').trim();
+      VoicePlayer.prefetch(content);
+    });
+  }
   if (activeView.stream.currentAiBubble && activeView.stream.currentAiBubble.classList.contains('thinking-placeholder')) {
     if (window.__stopThinkingTimer) window.__stopThinkingTimer();
     activeView.stream.currentAiBubble.classList.remove('thinking-placeholder');
@@ -150,12 +293,19 @@ export function finishAi(durationMs, model) {
     }
     const askBox = activeView.stream.currentAiBubble.querySelector('.option-box');
     if (askBox) askBox.remove();
-    activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
-    if (askBox) activeView.stream.currentAiBubble.appendChild(askBox);
+    const bubble = activeView.stream.currentAiBubble;
+    bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
+    if (askBox) bubble.appendChild(askBox);
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(activeView.stream.currentAiBubble, durationMs, model, seed);
+      renderDurationBadge(bubble, durationMs, model, seed);
     }
+    // Trigger voice TTS: enqueue all <voice> blocks for sequential playback,
+    // and attach click-to-replay handlers on the green text.
+    bubble.querySelectorAll('.voice-block').forEach(el => {
+      el.addEventListener('click', () => VoicePlayer.replay(el));
+      VoicePlayer.enqueue(el.textContent, el);
+    });
     const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model };
     activeView.stream.currentAiBubble = null;
     activeView.stream.aiText = '';
@@ -299,32 +449,79 @@ export function finishAgent(agentId) {
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
   const chat = activeView.dom.chat;
-  const pending = state.sessionToolCards[sid];
-  if (pending) {
-    pending.remove();
-    delete state.sessionToolCards[sid];
-  }
-  const row = document.createElement('div');
-  row.className = 'row tool';
-  // NebLink tool marker
-  if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
-  const card = document.createElement('div');
-  card.className = 'tool-card';
 
-  // Try HTML card renderer first
-  // Always prefer `content` (server-processed, includes ___CARD_HTML___ marker with
-  // embedLocalFiles-processed /api/nf-file URLs). Previously inputJson.html was used
-  // for Card tools, but that's the raw LLM input before server-side file embedding.
-  const cardData = content || '';
-  if (renderWithRegistry(card, cardData, label)) {
-    card.classList.add('tool-card--html');
+  // Cancel any pending streaming rAF so it doesn't overwrite the final render
+  cancelToolStreamRAF();
+
+  // Reuse the pending card's DOM node for a smooth transition from streaming
+  // state to final state — no visual jump from remove+recreate.
+  // When multiple tools are called in one LLM response, sessionToolCards[sid]
+  // (a single slot) may point to a different tool's card. Search by
+  // data-tool-label to find the correct one.
+  cancelToolStreamRAF();
+  let pending = state.sessionToolCards[sid];
+  if (pending) {
+    const cardEl = pending.querySelector('.tool-card');
+    const existingLabel = cardEl?.dataset.toolLabel;
+    if (existingLabel && label && existingLabel !== label) {
+      // Slot points to a different tool's card — search DOM for the right one
+      pending = null;
+      const cards = chat.querySelectorAll('.row.tool .tool-card--pending');
+      for (const c of cards) {
+        if (c.dataset.toolLabel === label) { pending = c.closest('.row'); break; }
+      }
+    }
+  } else {
+    // No card in slot — search DOM by label
+    const cards = chat.querySelectorAll('.row.tool .tool-card--pending');
+    for (const c of cards) {
+      if (c.dataset.toolLabel === label || !c.dataset.toolLabel) { pending = c.closest('.row'); break; }
+    }
+  }
+  // Only clear the slot if we're consuming the card it points to
+  if (pending === state.sessionToolCards[sid]) delete state.sessionToolCards[sid];
+  let row, card;
+  if (pending && pending.isConnected) {
+    row = pending;
+    card = row.querySelector('.tool-card');
+    card.classList.remove('tool-card--pending');
+    card.innerHTML = '';
+  } else {
+    row = document.createElement('div');
+    row.className = 'row tool';
+    card = document.createElement('div');
+    card.className = 'tool-card';
     row.appendChild(card);
     chat.appendChild(row);
+  }
+  // NebLink tool marker
+  if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
+
+  // Card tool: render standard tool card (icon + label) then card iframe below.
+  // This unifies Card display with other tools — spinner → checkmark transition,
+  // consistent tool card header — while the rendered HTML card appears separately.
+  if (content && typeof content === 'string' && /^___\w+_HTML___/.test(content)) {
+    const cIcon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+    const cLocalLabel = localizeToolLabel(label);
+    const cLocalSummary = localizeToolSummary(summary, label);
+    const cLabelParts = cLocalLabel.split('\n', 2);
+    const cLabelHtml = escapeHtml(cLabelParts[0]) + ' &mdash; ' + escapeHtml(cLocalSummary)
+      + (cLabelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(cLabelParts[1]) + '</span>' : '');
+    card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + cIcon + '</span>' +
+      '<div class="content"><div class="label">' + cLabelHtml + '</div></div>';
+    // Card iframe in a separate row below the tool card
+    const cardRow = document.createElement('div');
+    cardRow.className = 'row card-content';
+    const cardContainer = document.createElement('div');
+    cardRow.appendChild(cardContainer);
+    row.after(cardRow);
+    renderWithRegistry(cardContainer, content, label);
     smartScroll();
     return { type: 'tool', label, summary, content, isError, input: inputJson };
   }
 
-  // Fallback to default rendering
+  // Default rendering for all other tools
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   const detailHtml = buildToolDetail(inputJson, label);
@@ -351,8 +548,6 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div>' +
     (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
-  row.appendChild(card);
-  chat.appendChild(row);
   smartScroll();
 
   if (hasBody) attachToolClick(card);
@@ -370,6 +565,17 @@ export function renderToolPending(label, sessionId) {
     activeView.stream.aiText = '';
   }
 
+  // Helper: update the label text on a pending card row.
+  function updateLabel(rowEl) {
+    const labelEl = rowEl.querySelector('.label');
+    if (labelEl) {
+      const localLabel = localizeToolLabel(label);
+      const labelParts = localLabel.split('\n', 2);
+      labelEl.innerHTML = escapeHtml(labelParts[0])
+        + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
+    }
+  }
+
   // If a pending card already exists for this session, update it in-place
   // to avoid spinner flicker between toolCallDetected → toolStart events.
   // Defense: if the DOM node was removed (e.g. historyPage cleared innerHTML
@@ -377,14 +583,39 @@ export function renderToolPending(label, sessionId) {
   // card is created.
   const existing = state.sessionToolCards[sid];
   if (existing && existing.isConnected) {
-    const labelEl = existing.querySelector('.label');
-    if (labelEl) {
-      const localLabel = localizeToolLabel(label);
-      const labelParts = localLabel.split('\n', 2);
-      labelEl.innerHTML = escapeHtml(labelParts[0])
-        + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
+    const cardEl = existing.querySelector('.tool-card');
+    const existingLabel = cardEl?.dataset.toolLabel;
+    // Reuse if no toolStart has claimed this card yet (toolCallDetected → toolStart
+    // for the same tool), or if the label matches (toolStart from execution phase
+    // for the same tool).
+    if (!existingLabel || existingLabel === label) {
+      updateLabel(existing);
+      return;
     }
-    return;
+    // Label mismatch — the slot holds a different tool's card.
+    // Search for a pending card with matching label in the DOM.
+    const cards = chat.querySelectorAll('.row.tool .tool-card--pending');
+    for (const c of cards) {
+      if (c.dataset.toolLabel === label) {
+        const matchedRow = c.closest('.row');
+        state.sessionToolCards[sid] = matchedRow;
+        updateLabel(matchedRow);
+        return;
+      }
+    }
+    // No match found — fall through to create a new card.
+  } else {
+    // No card in slot — try to find a pending card by label (orphaned card
+    // from a previous tool whose slot was overwritten).
+    const cards = chat.querySelectorAll('.row.tool .tool-card--pending');
+    for (const c of cards) {
+      if (c.dataset.toolLabel === label || !c.dataset.toolLabel) {
+        const matchedRow = c.closest('.row');
+        state.sessionToolCards[sid] = matchedRow;
+        updateLabel(matchedRow);
+        return;
+      }
+    }
   }
 
   const row = document.createElement('div');
@@ -415,6 +646,20 @@ const TOOL_PRIMARY_FIELDS = {
   'Edit': 'new_string',
   'Bash': 'command',
   'Card': 'html',
+  'Delegate': 'prompt',
+  'Read': 'file_path',
+  'Grep': 'pattern',
+  'Glob': 'pattern',
+  'Curl': 'body',
+  'WebSearch': 'query',
+  'WebFetch': 'url',
+  'WriteMemory': 'content',
+  'TaskCreate': 'description',
+  'TaskUpdate': 'description',
+  'RemoveUnnecessary': 'summary',
+  'Mail': 'message',
+  'TransferFile': 'sourcePath',
+  'MailAgent': 'message',
 };
 
 /**
@@ -516,7 +761,17 @@ export function appendToolStreamDelta(toolName, delta) {
           else card.appendChild(bodyEl);
         }
       }
-      bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
+      // Try syntax highlighting for code content (Write/Edit/Bash tools generate code).
+      // Falls back to plain text if hljs unavailable or content too large.
+      // Extract file_path from partial JSON for language detection (e.g. Write/Main.scala → Scala).
+      const fpResult = extractFieldValueFromPartialJson(target.rawText, 'file_path');
+      const highlightLabel = fpResult ? fpResult.value : target.toolName;
+      const highlighted = (displayContent.length < 20000) ? highlightCode(displayContent, highlightLabel) : null;
+      if (highlighted) {
+        bodyEl.innerHTML = highlighted.replace(/<\/code><\/pre>$/, '<span class="cursor"></span></code></pre>');
+      } else {
+        bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
+      }
 
       // Auto-scroll
       const threshold = 60;
@@ -527,12 +782,13 @@ export function appendToolStreamDelta(toolName, delta) {
   }
 }
 
-/** Cancel pending rAF — called on cleanup. */
+/** Cancel pending rAF and clear target — called when tool finalizes or on cleanup. */
 export function cancelToolStreamRAF() {
   if (_pendingToolStreamRAF) {
     cancelAnimationFrame(_pendingToolStreamRAF);
     _pendingToolStreamRAF = null;
   }
+  _toolStreamRafTarget = null;
 }
 
 // ---------- Error ----------
@@ -1161,7 +1417,7 @@ export function finishThinking() {
   if (activeView.stream.currentThinkingBubble) {
     const contentEl = activeView.stream.currentThinkingBubble.querySelector('.thinking-content');
     if (contentEl) {
-      contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText || '');
+      contentEl.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText || '', false);
     }
     // Collapse: hide content, make label clickable
     activeView.stream.currentThinkingBubble.classList.add('thinking-done');

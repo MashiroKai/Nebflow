@@ -1,0 +1,70 @@
+/* ── Voice TTS blocks (<voice> tags rendered as clickable green text) ──── */
+
+.voice-block {
+  color: var(--color-text);
+  opacity: 0.75;
+  cursor: pointer;
+  border-bottom: 1px dashed rgba(127, 156, 245, 0.4);
+  transition: opacity 0.15s, border-color 0.15s;
+}
+
+.voice-block:hover {
+  opacity: 1;
+  border-bottom-color: rgba(127, 156, 245, 0.8);
+}
+
+.voice-block.playing {
+  opacity: 1;
+  border-bottom-style: solid;
+  border-bottom-color: rgba(127, 156, 245, 0.8);
+}
+
+/* ── Voice toggle button (speaker icon in input bar) ──────────────────── */
+
+.voice-toggle {
+  background: none;
+  border: none;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  padding: 6px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.voice-toggle:hover {
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text);
+}
+
+.voice-toggle:active {
+  background: var(--color-frame-active);
+  transform: scale(0.96);
+}
+
+.voice-toggle svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
+}
+
+.voice-toggle.muted {
+  color: var(--color-text-muted);
+  opacity: 0.45;
+}
+
+/* ── Dark mode ────────────────────────────────────────────────────────── */
+
+@media (prefers-color-scheme: dark) {
+  .voice-toggle:hover {
+    background: rgba(255, 255, 255, 0.06);
+  }
+  .voice-toggle:active {
+    background: rgba(255, 255, 255, 0.10);
+  }
+}

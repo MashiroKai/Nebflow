@@ -74,8 +74,7 @@ final class NeblinkDiscovery(
               deviceName = info.deviceName,
               platform = info.platform,
               address = s"http://${entry.ip}:$serverPort",
-              capabilities = info.capabilities,
-              userDescription = info.userDescription
+              capabilities = info.capabilities
             )
           })
         }
@@ -182,7 +181,6 @@ final class NeblinkDiscovery(
             "deviceName" -> id.deviceName.asJson,
             "platform" -> id.platform.asJson,
             "capabilities" -> id.capabilities.asJson,
-            "userDescription" -> id.userDescription.asJson,
             "port" -> serverPort.asJson
           )
           val url = java.net.URI(s"${peer.address}/api/neblink/announce").toURL
