@@ -2,6 +2,7 @@ package nebflow.gateway
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.shared.UiMessage
 
@@ -211,6 +212,146 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
         assertEquals(histTotal, getTotal, "Both methods should report same total")
         assertEquals(historyPage.length, getPage.length, "Both should return same number of messages")
         assertEquals(historyPage.map(userText), getPage.map(userText), "Both should return same messages")
+    }
+  }
+
+  // ===== Tool content truncation on append (Fix 1) =====
+
+  private def toolMsg(content: String): UiMessage.Tool =
+    UiMessage.Tool(label = "Bash", summary = "ran cmd", content = content, isError = false, input = "{}")
+
+  private def toolContent(m: UiMessage): String = m.asInstanceOf[UiMessage.Tool].content
+
+  test("appendUiMessages truncates oversized non-card tool content") {
+    withStore { store =>
+      val sid = "truncate-tool"
+      // 100k chars — well above the 50k cap
+      val big = "x" * 100000
+      for
+        _ <- store.createSession("Truncate Test")
+        _ <- store.appendUiMessages(sid, List(toolMsg(big)))
+        _ <- store.flushPendingUiWrites
+        (page, total, _, _) <- store.getHistoryPage(sid, limit = 50, beforeIndex = None)
+        stored = toolContent(page.head)
+      yield
+        assertEquals(total, 1)
+        assert(stored.length < big.length, "Stored content must be shorter than original")
+        assert(stored.contains("[...truncated"), "Stored content should carry the truncation marker")
+    }
+  }
+
+  test("appendUiMessages preserves card marker content untruncated") {
+    withStore { store =>
+      val sid = "truncate-card"
+      // A large card payload — the ___CARD_HTML___ marker must make it exempt
+      val cardPayload =
+        """___CARD_HTML___{"html":"<div>""" + ("y" * 100000) + """</div>","title":"big"}"""
+      for
+        _ <- store.createSession("Card Truncate Test")
+        _ <- store.appendUiMessages(sid, List(toolMsg(cardPayload)))
+        _ <- store.flushPendingUiWrites
+        (page, _, _, _) <- store.getHistoryPage(sid, limit = 50, beforeIndex = None)
+        stored = toolContent(page.head)
+      yield
+        // Must round-trip exactly so the frontend's JSON.parse of the payload works.
+        assertEquals(stored, cardPayload, "Card content must be stored verbatim")
+    }
+  }
+
+  test("appendUiMessages leaves small tool content untouched") {
+    withStore { store =>
+      val sid = "truncate-small"
+      val small = "x" * 1000
+      for
+        _ <- store.createSession("Small Tool Test")
+        _ <- store.appendUiMessages(sid, List(toolMsg(small)))
+        _ <- store.flushPendingUiWrites
+        (page, _, _, _) <- store.getHistoryPage(sid, limit = 50, beforeIndex = None)
+      yield assertEquals(toolContent(page.head), small, "Content under the cap must be unchanged")
+    }
+  }
+
+  // ===== Debounced write: cache coherence vs disk persistence (Fix 3) =====
+
+  test("appendUiMessages is visible via getHistoryPage before flush (cache eager)") {
+    withStore { store =>
+      val sid = "debounce-cache"
+      for
+        _ <- store.createSession("Debounce Cache Test")
+        _ <- store.appendUiMessages(sid, List(userMsg(1), userMsg(2)))
+        // No flush — read straight from cache.
+        (page, total, _, _) <- store.getHistoryPage(sid, limit = 50, beforeIndex = None)
+      yield
+        assertEquals(total, 2, "Cache must reflect appended messages immediately")
+        assertEquals(page.length, 2)
+    }
+  }
+
+  test("flushPendingUiWrites persists cache to disk") {
+    // Use the underlying sessions dir so a second store can reload from disk
+    // and prove the debounced write actually reached the file.
+    val tmp = Files.createTempDirectory("nebflow-flush-test")
+    val sessionsDir = os.Path(tmp.resolve("sessions"))
+    val tasksDir = os.Path(tmp.resolve("tasks"))
+    try
+      val sid = "debounce-flush"
+      val store1 = SessionStore(sessionsDir, tasksDir)
+      store1.load.unsafeRunSync()
+      val setup = for
+        _ <- store1.createSession("Debounce Flush Test")
+        _ <- store1.appendUiMessages(sid, List(userMsg(1), userMsg(2)))
+        _ <- store1.flushPendingUiWrites
+      yield ()
+      setup.unsafeRunSync()
+
+      // Fresh store instance — its cache is empty, so it must read the .ui.json
+      // we just wrote to disk.
+      val store2 = SessionStore(sessionsDir, tasksDir)
+      store2.load.unsafeRunSync()
+      val (page, total, _, _) =
+        store2.getHistoryPage(sid, limit = 50, beforeIndex = None).unsafeRunSync()
+      assertEquals(total, 2, "Flushed messages must be readable from disk by a fresh store")
+      assertEquals(page.length, 2)
+    finally
+      if Files.exists(tmp) then
+        Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
+    end try
+  }
+
+  // ===== Message retention cap (Fix 5) =====
+
+  test("appendUiMessages trims to retention cap, keeping the newest messages") {
+    withStore { store =>
+      val sid = "trim-cap"
+      // Append 3x the cap in small batches so the trim runs repeatedly.
+      // MaxStoredUiMessages is private; verify behavior by observing that the
+      // total reported by getHistoryPage never exceeds the cap, and the newest
+      // messages are the ones retained.
+      for
+        _ <- store.createSession("Trim Cap Test")
+        _ <- (1 to 2400).toList.traverse_(i => store.appendUiMessages(sid, List(userMsg(i))))
+        _ <- store.flushPendingUiWrites
+        (page, total, offset, _) <- store.getHistoryPage(sid, limit = 50, beforeIndex = None)
+      yield
+        // Cap is 800; after appending 2400 the retained count must be exactly 800.
+        assertEquals(total, 800, "Retained message count must equal the cap")
+        assertEquals(page.length, 50)
+        // offset = total - limit = 750, and the newest message is #2400.
+        assertEquals(offset, 750)
+        assertEquals(userText(page.last), "User message 2400", "Newest message must be retained")
+        assertEquals(userText(page.head), "User message 2351", "Page starts at offset 750")
+    }
+  }
+
+  test("sessions under the retention cap are never trimmed") {
+    withStore { store =>
+      val sid = "trim-below-cap"
+      for
+        _ <- store.createSession("Below Cap Test")
+        _ <- store.appendUiMessages(sid, (1 to 100).map(i => userMsg(i)).toList)
+        _ <- store.flushPendingUiWrites
+        (_, total, _, _) <- store.getHistoryPage(sid, limit = 50, beforeIndex = None)
+      yield assertEquals(total, 100, "Sessions under the cap keep all messages")
     }
   }
 end SessionStoreHistorySpec

@@ -369,7 +369,12 @@ class WebSocketRoutes(
       StaticFile.fromResource(s"web/js/locales/$file", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / "js" / file =>
-      StaticFile.fromResource(s"web/js/$file", Some(req)).getOrElseF(NotFound())
+      // no-cache: revalidate (Last-Modified) every time so the browser picks up
+      // the rebuilt classpath resource during development instead of serving a
+      // stale heuristic-cached copy.
+      StaticFile.fromResource(s"web/js/$file", Some(req))
+        .map(_.putHeaders("Cache-Control" -> "no-cache"))
+        .getOrElseF(NotFound())
 
     case req @ GET -> Root / "vendor" / file =>
       StaticFile.fromResource(s"web/vendor/$file", Some(req)).getOrElseF(NotFound())
@@ -680,6 +685,17 @@ class WebSocketRoutes(
             sharedResources.thinkingConfigRef.set(tc) *>
             persistThinkingConfig(tc) *>
             broadcastServerConfig
+
+        case "setLlmLog" =>
+          val enabled = parse(text).toOption
+            .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+            .getOrElse(true)
+          LlmLogWriter.setEnabled(enabled)
+          logger.info(s"LLM log set to: $enabled") *>
+            wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
+
+        case "getLlmLog" =>
+          wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
 
         case "getModelOptions" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
