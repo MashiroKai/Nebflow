@@ -56,12 +56,25 @@ export function initMarkdown() {
 }
 
 // === KaTeX math rendering — protect math blocks from Markdown processing ===
-export function renderMarkdownWithMath(text) {
+export function renderMarkdownWithMath(text, parseVoice = true) {
   if (!text) return '';
   if (typeof marked === 'undefined') return escapeHtml(text);
+  // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
+  const voiceBlocks = [];
+  if (parseVoice) {
+    let vp = text.replace(/<voice>([\s\S]+?)<\/voice>/g, (m, content) => {
+      voiceBlocks.push(content.trim());
+      return `VOICEBLOCK${voiceBlocks.length - 1}END`;
+    });
+    return _renderMarkdownInternal(vp, voiceBlocks);
+  }
+  return _renderMarkdownInternal(text, voiceBlocks);
+}
+
+function _renderMarkdownInternal(protected_, voiceBlocks) {
   const mathBlocks = [];
   // Protect display math ($$...$$)
-  let protected_ = text.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => {
+  protected_ = protected_.replace(/\$\$([\s\S]+?)\$\$/g, (m, math) => {
     mathBlocks.push({ display: true, math: math.trim() });
     return `MATHBLOCK${mathBlocks.length - 1}END`;
   });
@@ -93,6 +106,12 @@ export function renderMarkdownWithMath(text) {
     } else {
       html = html.replace(token, block.display ? `$$${block.math}$$` : `$${block.math}$`);
     }
+  });
+  // Restore voice blocks as clickable green spans
+  html = html.replace(/VOICEBLOCK(\d+)END/g, (m, idx) => {
+    const i = parseInt(idx);
+    const vtext = voiceBlocks[i] || '';
+    return '<span class="voice-block" data-voice-index="' + i + '">' + escapeHtml(vtext) + '</span>';
   });
   return html;
 }
@@ -393,17 +412,14 @@ export function highlightCode(code, label) {
 /**
  * Render tool content with appropriate highlighting.
  * Returns HTML string for the body, or null if no special rendering applies.
- * Priority: diff > syntax highlight (Read/Grep only) > null (plain text)
+ * Priority: diff > syntax highlight (any tool) > null (plain text)
  */
 export function renderHighlightedContent(content, label) {
   if (!content) return null;
   const diffHtml = formatDiff(content);
   if (diffHtml) return diffHtml;
-  const toolName = label ? label.replace(/\(.*$/, '').trim() : '';
-  if (toolName === 'Read' || toolName === 'Grep') {
-    const hlHtml = highlightCode(content, label);
-    if (hlHtml) return hlHtml;
-  }
+  const hlHtml = highlightCode(content, label);
+  if (hlHtml) return hlHtml;
   return null;
 }
 

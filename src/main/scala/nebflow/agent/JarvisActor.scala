@@ -238,6 +238,17 @@ object JarvisActor extends AgentCore with AgentSession:
               IO.pure(idle(agentDef, resources, depth, parentRef, state))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
+      case AgentCommand.ForwardPermission(deferred, permJson) =>
+        if state.pendingPermission.isDefined then
+          ctx.forkTurn(deferred.complete(false).void.handleErrorWith(_ => IO.unit)) *>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state))
+        else
+          ctx.forkTurn(state.wsSend(permJson).handleErrorWith(_ => IO.unit)) *>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
+
+      case AgentCommand.SetBypass(bypass) =>
+        IO.pure(idle(agentDef, resources, depth, parentRef, state.withBypass(bypass)))
+
       case _ =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
   end idle
@@ -438,6 +449,19 @@ object JarvisActor extends AgentCore with AgentSession:
 
       case SetPermissionDeferred(deferred) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending))
+
+      case AgentCommand.ForwardPermission(deferred, permJson) =>
+        if state.pendingPermission.isDefined then
+          ctx.forkTurn(deferred.complete(false).void.handleErrorWith(_ => IO.unit)) *>
+            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+        else
+          ctx.forkTurn(state.wsSend(permJson).handleErrorWith(_ => IO.unit)) *>
+            IO.pure(
+              processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
+            )
+
+      case AgentCommand.SetBypass(bypass) =>
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.withBypass(bypass), pending))
 
       case UpdateContextWindow(window) =>
         IO.pure(

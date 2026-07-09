@@ -91,6 +91,15 @@ object AgentCommand:
   case class UserAnswered(answers: List[String]) extends AgentCommand
   case class PermissionAnswered(approved: Boolean) extends AgentCommand
 
+  /**
+   * Sub-agent → parent: forward a permission request so the parent can track
+   * the Deferred and route the frontend answer back to the sub-agent.
+   */
+  case class ForwardPermission(deferred: cats.effect.Deferred[IO, Boolean], permJson: Json) extends AgentCommand
+
+  /** Frontend → agent: update bypass (auto-approve) status for this session. */
+  case class SetBypass(bypass: Boolean) extends AgentCommand
+
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
@@ -317,8 +326,7 @@ case class AgentInfo(
   description: String,
   tools: List[String],
   displayName: Option[String] = None,
-  avatar: Option[String] = None,
-  mcpServers: List[String] = Nil
+  avatar: Option[String] = None
 )
 
 enum AgentErrorType:
@@ -384,7 +392,8 @@ case class SessionContext(
   folderId: Option[String] = None,
   lifecycle: Option[LifecycleContext] = None,
   chatWidth: Int = 0,
-  gitBranch: Option[String] = None
+  gitBranch: Option[String] = None,
+  bypass: Boolean = false
 )
 
 case class InteractionState(
@@ -466,7 +475,8 @@ object AgentState:
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
-    folderId: Option[String] = None
+    folderId: Option[String] = None,
+    bypass: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -483,7 +493,8 @@ object AgentState:
         contextWindow = contextWindow,
         folderId = folderId,
         projectRoot = projectRoot,
-        rulesMd = rulesMd
+        rulesMd = rulesMd,
+        bypass = bypass
       ),
       ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -523,6 +534,7 @@ extension (s: AgentState)
   def folderId: Option[String] = s.session.folderId
   def lifecycle: Option[LifecycleContext] = s.session.lifecycle
   def gitBranch: Option[String] = s.session.gitBranch
+  def bypass: Boolean = s.session.bypass
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
@@ -571,6 +583,7 @@ extension (s: AgentState)
   def withLifecycle(lc: LifecycleContext): AgentState = s.copy(session = s.session.copy(lifecycle = Some(lc)))
   def withLifecycleCleared: AgentState = s.copy(session = s.session.copy(lifecycle = None))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
+  def withBypass(b: Boolean): AgentState = s.copy(session = s.session.copy(bypass = b))
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))

@@ -52,6 +52,7 @@ export default {
   // === Settings panel ===
   'settings.runtime': '运行时',
   'settings.thinkingMode': '思考模式',
+  'settings.llmLog': 'LLM 日志记录',
   'settings.thinkingBudget': '思考词元预算',
   'settings.thinkingBudgetHint': '模型内部思考可使用的最大词元数。调高提升复杂推理质量，但增加延迟和成本。',
   'settings.language': '语言',
@@ -72,7 +73,7 @@ export default {
   'settings.addFallback': '+ 添加回退',
   'settings.mcpServers': 'MCP 服务器',
   'settings.noMcp': '未配置 MCP 服务器',
-  'settings.addMcp': '+ 添加 MCP 服务器',
+  'settings.toggleMcp': '启用 / 禁用',
   'settings.advanced': '高级',
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
@@ -382,4 +383,8 @@ export default {
   'neblink.cancel': '取消',
   'neblink.updating': '更新中…',
   'neblink.restarting': '重启中…',
+
+  // Dropbox
+  'dropbox.tabChat': '对话',
+  'dropbox.tabDesc': '描述',
 };

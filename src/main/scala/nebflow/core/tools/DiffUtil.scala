@@ -135,9 +135,21 @@ object DiffUtil:
   val OkCreatedPrefix: String = "OK:CREATED"
   val OkUpdatedPrefix: String = "OK:UPDATED"
 
-  /** Render the success string returned when a brand new file was created. */
-  def renderCreatedResult(filePath: Path): String =
-    s"$OkCreatedPrefix $filePath"
+  /**
+   * Render the success string returned when a brand new file was created.
+   * Includes the full content as a unified diff (all additions) so the
+   * frontend can display it with line numbers and syntax highlighting.
+   * The LLM only sees "File created" via summarizeResult.
+   */
+  def renderCreatedResult(filePath: Path, content: String): String =
+    val lines = splitLines(content)
+    val lineCount = lines.length
+    val short = filePath.toString.split("/").lastOption.getOrElse(filePath.toString)
+    val header = s"$OkCreatedPrefix $short, $lineCount line${if lineCount == 1 then "" else "s"}"
+    if lineCount == 0 then header
+    else
+      val diffLines = lines.map(l => "+" + l)
+      s"$header\n@@ -0,0 +1,$lineCount @@\n${diffLines.mkString("\n")}"
 
   private val UpdatedStatsRegex = """OK:UPDATED\s+\S+,\s*(\d+)\s+added,\s*(\d+)\s+removed""".r
 

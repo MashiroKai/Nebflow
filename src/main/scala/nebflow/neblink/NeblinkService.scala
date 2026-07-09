@@ -91,6 +91,14 @@ class NeblinkService private (
       _ <- DeviceIdentity.save(updated)
     yield ()
 
+  /** Update a peer's description locally. Not persisted — cleared on restart. */
+  def updatePeerDescription(deviceId: String, description: String): IO[Unit] =
+    peersRef.update { peers =>
+      peers.get(deviceId) match
+        case Some(p) => peers + (deviceId -> p.copy(userDescription = description))
+        case None => peers
+    }
+
   /** Run capability self-check and update device identity. Called on startup. */
   def selfCheckCapabilities: IO[Unit] =
     for
@@ -135,7 +143,12 @@ class NeblinkService private (
       else IO.unit
     }
 
-  /** Add or update a single peer from an announce push. */
+  /**
+   * Add or update a single peer from an announce push.
+   *
+   *  Device descriptions are never exchanged between devices — they are purely local
+   *  annotations. We only preserve any description the local user may have set.
+   */
   def handleAnnounce(info: DeviceDiscoveryInfo, remoteIp: String, port: Int): IO[Unit] =
     identityRef.get.flatMap { id =>
       if info.deviceId == id.deviceId then IO.unit // ignore self-announce
@@ -145,10 +158,15 @@ class NeblinkService private (
           deviceName = info.deviceName,
           platform = info.platform,
           address = s"http://$remoteIp:$port",
-          capabilities = info.capabilities,
-          userDescription = info.userDescription
+          capabilities = info.capabilities
         )
-        peersRef.update(_ + (info.deviceId -> peer)) *>
+        peersRef.update { peers =>
+          val existingDesc = peers.get(info.deviceId).flatMap(p => Option(p.userDescription).filter(_.nonEmpty))
+          val finalPeer = existingDesc match
+            case Some(d) => peer.copy(userDescription = d)
+            case None => peer
+          peers + (info.deviceId -> finalPeer)
+        } *>
           logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
     }
 
@@ -205,6 +223,22 @@ class NeblinkService private (
     dataHandlers.get.flatMap(
       _.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}")))
     )
+
+  /**
+   * Send function for outgoing WS data messages. Set by GatewayMain after
+   * NeblinkPresenceService is created. Default is a no-op so callers are safe
+   * before wiring is complete.
+   */
+  private val sendDataFnRef: Ref[IO, (String, String, Json) => IO[Unit]] =
+    Ref.unsafe[IO, (String, String, Json) => IO[Unit]]((_, _, _) => IO.unit)
+
+  /** Wire the send function (called once at startup by GatewayMain). */
+  def setSendDataFn(fn: (String, String, Json) => IO[Unit]): IO[Unit] =
+    sendDataFnRef.set(fn)
+
+  /** Send a data message to a peer over the WS presence connection. */
+  def sendData(deviceId: String, channel: String, payload: Json): IO[Unit] =
+    sendDataFnRef.get.flatMap(_(deviceId, channel, payload))
 
   // ===== File Transfer (P2P, Tailscale IP auth) =====
 

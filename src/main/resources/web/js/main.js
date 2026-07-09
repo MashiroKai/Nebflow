@@ -12,7 +12,7 @@ import {
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
-  appendToolStreamDelta
+  appendToolStreamDelta, cancelToolStreamRAF
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -39,6 +39,7 @@ import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initChatViews, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { initNeblink } from './neblink.js';
+import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 
 // Randomized cosmic thinking bubble text
@@ -143,9 +144,6 @@ state.dom = {
   agentOverlay: document.getElementById('agent-overlay'),
   agentModal: document.getElementById('agent-modal'),
   newSessionBtn: document.getElementById('new-session-btn'),
-  newAgentBtn: document.getElementById('new-agent-btn'),
-  agentNameInput: document.getElementById('agent-name-input'),
-  agentYamlInput: document.getElementById('agent-yaml-input'),
   agentSystemInput: document.getElementById('agent-system-input'),
   agentModalCancel: document.getElementById('agent-modal-cancel'),
   agentModalSave: document.getElementById('agent-modal-save'),
@@ -303,7 +301,10 @@ function consumeTurnDuration(sid) {
   return Date.now() - startTime;
 }
 
-// Helper: clear busy for a specific session
+// Helper: clear busy for a specific session, then drain any queued messages.
+// Called by ALL terminal events (done, error, interrupted, timeout, maxTokens,
+// compactFailed) — not just 'done' — so the queue drains regardless of how the
+// turn ended.
 function clearBusyFor(msg) {
   const sid = msg.sessionId || state.activeSessionId;
   if (state.busySessionIds.has(sid)) {
@@ -312,6 +313,10 @@ function clearBusyFor(msg) {
   if (state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
+  }
+  // Drain queued messages after a short delay to let the UI finalize first
+  if (sid) {
+    setTimeout(() => drainMessageQueue(sid), 50);
   }
   // Release the send lock for the view displaying this session
   const view = findViewBySessionId(sid);
@@ -463,6 +468,19 @@ onMessage('toolCallDetected', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
+    // In ask mode, finalize the current ask bubble so the tool card renders below it
+    if (activeView.stream.currentAskBubble) finishAskAnswer();
+    // If the existing pending card was claimed by a previous tool (toolStart fired),
+    // close its streaming display and clear the slot so a new card is created.
+    const existingCard = state.sessionToolCards[sid];
+    if (existingCard && existingCard.isConnected) {
+      const cardEl = existingCard.querySelector('.tool-card');
+      if (cardEl && cardEl.dataset.toolLabel) {
+        cancelToolStreamRAF();
+        existingCard.querySelectorAll('.cursor').forEach(el => el.remove());
+        delete state.sessionToolCards[sid];
+      }
+    }
     renderToolPending(msg.name, msg.sessionId);
     // Reset tool argument streaming for the new tool call
     activeView.stream.toolStreamText = '';
@@ -505,7 +523,16 @@ onMessage('toolStart', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
+    // In ask mode, finalize the current ask bubble so the tool card renders below it
+    if (activeView.stream.currentAskBubble) finishAskAnswer();
     renderToolPending(msg.label, msg.sessionId);
+    // Tag the card with the full tool label so toolEnd can find the right card
+    // when multiple tools share the session (single sessionToolCards slot).
+    const startedRow = state.sessionToolCards[msg.sessionId];
+    if (startedRow) {
+      const cardEl = startedRow.querySelector('.tool-card');
+      if (cardEl) cardEl.dataset.toolLabel = msg.label;
+    }
   }
 });
 
@@ -774,10 +801,7 @@ onMessage('done', (msg, view) => {
   } else {
     markSessionUnread(msg.sessionId);
   }
-  // Drain queued messages: send the first one as a normal UserInput
-  if (sid) {
-    setTimeout(() => drainMessageQueue(sid), 50);
-  }
+  // Queue drainage handled by clearBusyFor above — no duplicate call here.
 });
 
 // roundComplete: backend signals the current round's text is finalized but a new
@@ -958,6 +982,9 @@ onMessage('sessionList', (msg, view) => {
   const allSessions = msg.sessions || [];
   const allFolders = msg.folders || [];
   allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
+
+  // Restore bypass state from persisted session metadata
+  state.bypassSessions = new Set(allSessions.filter(s => s.bypass).map(s => s.id));
 
   // Dedup safety net for singleton agents only (same as agentSessionList).
   const SINGLETON_AGENTS = new Set(['Jarvis']);
@@ -1255,19 +1282,17 @@ onMessage('historyPage', (msg, view) => {
 // Click the indicator to see a dropdown with per-agent status.
 
 function updateDelegateIndicator() {
+  if (!activeView) return;
   const el = activeView.dom.delegateIndicatorEl;
   if (!el) return;
-  // Only count sub-agents belonging to the currently displayed session
   const sid = activeView?.sessionId;
-  const count = Object.values(activeView.stream.activeSubAgents || {})
-    .filter(info => !info.sessionId || info.sessionId === sid)
-    .length;
+  const delegates = (sid && state.sessionDelegates[sid]) || {};
+  const count = Object.keys(delegates).length;
   if (count > 0) {
     el.classList.remove('hidden');
     el.querySelector('.delegate-count').textContent = count;
   } else {
     el.classList.add('hidden');
-    // Also hide dropdown
     const dropdown = activeView.dom.delegateDropdownEl;
     if (dropdown) dropdown.classList.add('hidden');
   }
@@ -1276,13 +1301,12 @@ function updateDelegateIndicator() {
 state.updateDelegateIndicator = updateDelegateIndicator;
 
 function renderDelegateDropdown() {
+  if (!activeView) return;
   const listEl = activeView.dom.delegateDropdownListEl;
   if (!listEl) return;
-  const agents = activeView.stream.activeSubAgents || {};
-  // Only show sub-agents belonging to the currently displayed session
   const sid = activeView?.sessionId;
-  const entries = Object.entries(agents)
-    .filter(([id, info]) => !info.sessionId || info.sessionId === sid);
+  const delegates = (sid && state.sessionDelegates[sid]) || {};
+  const entries = Object.entries(delegates);
   if (entries.length === 0) {
     listEl.innerHTML = '';
     return;
@@ -1332,18 +1356,18 @@ document.addEventListener('click', (e) => {
 
 onMessage('agentStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (!view) return;
+  const sid = msg.sessionId || state.activeSessionId;
+  if (!sid) return;
   const aid = msg.agentId || msg.name;
-  activeView.stream.activeAgentId = aid;
-  if (!activeView.stream.activeSubAgents) activeView.stream.activeSubAgents = {};
-  activeView.stream.activeSubAgents[aid] = {
+  if (view) view.stream.activeAgentId = aid;
+  if (!state.sessionDelegates[sid]) state.sessionDelegates[sid] = {};
+  state.sessionDelegates[sid][aid] = {
     name: msg.name || aid,
     task: msg.taskDescription || '',
     currentTool: null,
     done: false,
-    sessionId: msg.sessionId || state.activeSessionId
   };
-  updateDelegateIndicator();
+  if (view) updateDelegateIndicator();
 });
 
 onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
@@ -1351,11 +1375,12 @@ onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessi
 
 onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (!view) return;
-  const aid = msg.agentId || activeView.stream.activeAgentId;
-  if (aid && activeView.stream.activeSubAgents && activeView.stream.activeSubAgents[aid]) {
-    activeView.stream.activeSubAgents[aid].currentTool = msg.label;
-    renderDelegateDropdown();
+  const sid = msg.sessionId || state.activeSessionId;
+  if (!sid) return;
+  const aid = msg.agentId || (view && view.stream.activeAgentId);
+  if (aid && state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
+    state.sessionDelegates[sid][aid].currentTool = msg.label;
+    if (view) renderDelegateDropdown();
   }
 });
 
@@ -1367,23 +1392,32 @@ onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId)
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
-  if (!view) return;
-  const aid = msg.agentId || activeView.stream.activeAgentId;
-  if (aid && activeView.stream.activeSubAgents) {
-    if (activeView.stream.activeSubAgents[aid]) activeView.stream.activeSubAgents[aid].done = true;
-    renderDelegateDropdown();
-    const v = activeView; // capture before setTimeout
+  const sid = msg.sessionId || state.activeSessionId;
+  if (!sid) return;
+  const aid = msg.agentId || (view && view.stream.activeAgentId);
+  if (aid && state.sessionDelegates[sid]) {
+    if (state.sessionDelegates[sid][aid]) state.sessionDelegates[sid][aid].done = true;
+    if (view) renderDelegateDropdown();
+    // Remove after 2s — always runs, even if the parent session isn't displayed
     setTimeout(() => {
-      if (v.stream.activeSubAgents && v.stream.activeSubAgents[aid]) {
-        delete v.stream.activeSubAgents[aid];
-        const saved = activeView;
-        setActiveView(v);
-        updateDelegateIndicator();
-        setActiveView(saved);
+      if (state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {
+        delete state.sessionDelegates[sid][aid];
+        // Clean up empty session entries
+        if (Object.keys(state.sessionDelegates[sid]).length === 0) {
+          delete state.sessionDelegates[sid];
+        }
+        // Update indicator if the affected view is currently displayed
+        const targetView = findViewBySessionId(sid);
+        if (targetView) {
+          const saved = activeView;
+          setActiveView(targetView);
+          updateDelegateIndicator();
+          setActiveView(saved);
+        }
       }
     }, 2000);
   }
-  activeView.stream.activeAgentId = null;
+  if (view) view.stream.activeAgentId = null;
 });
 
 // --- Compaction events (per-session) ---
@@ -1440,7 +1474,6 @@ onMessage('compactFailed', (msg, view) => {
 // --- Agent panel events (global) ---
 onMessage('agentList', (msg, view) => {
   state.agentsData = msg.agents || [];
-  if (msg.availableTools) state.agentAvailableTools = msg.availableTools;
   renderAgentList();
   // Auto-select first agent if none selected
   if (!state.selectedAgent && state.agentsData.length > 0) {
@@ -1476,6 +1509,9 @@ onMessage('agentSessionList', (msg, view) => {
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
 
+  // Restore bypass state from persisted session metadata
+  state.bypassSessions = new Set(sessions.filter(s => s.bypass).map(s => s.id));
+
   // ── Main window is locked to Jarvis ──────────────────────────────────
   // The primary ChatView always shows the Jarvis session; agent tab switches
   // only filter the sidebar list, they never change what the main window shows.
@@ -1492,9 +1528,8 @@ onMessage('agentSessionList', (msg, view) => {
   initHeaderModelInfo();
 });
 
-onMessage('agentConfig', (msg, view) => showAgentModal(msg.name, msg.configJson || '', msg.systemMd || ''));
-onMessage('agentCreated', () => sendWs({ type: 'listAgents' }));
-onMessage('agentUpdated', () => sendWs({ type: 'listAgents' }));
+onMessage('agentSystemPrompt', (msg, view) => showAgentModal(msg.name, msg.systemMd || ''));
+onMessage('agentSystemPromptSaved', () => sendWs({ type: 'listAgents' }));
 
 // --- Server config ---
 onMessage('serverConfig', (msg, view) => {
@@ -1563,7 +1598,7 @@ onMessage('modelOptions', (msg, view) => {
   }
   const options = models.map(m => {
     const isCurrent = current && m.ref === current;
-    return {label: m.label + (isCurrent ? ' ✓' : ''), desc: m.ref, ref: m.ref};
+    return {label: m.label + (isCurrent ? ' ✓' : ''), desc: m.description || '', ref: m.ref};
   });
   // Add "Default" option to reset
   const defaultLabel = t('chat.modelDefault');
@@ -1886,7 +1921,9 @@ onMessage('askDone', (msg, view) => {
   const durationMs = consumeTurnDuration(sid) || msg.durationMs;
   const buf = sid ? state.sessionAskBuffers[sid] : null;
   if (view) {
-    const answer = activeView.stream.askAnswerText || (buf ? buf.answer : '') || '';
+    // Prefer buf.answer (complete accumulated text across tool boundaries)
+    // over askAnswerText (only the last bubble segment)
+    const answer = (buf ? buf.answer : '') || activeView.stream.askAnswerText || '';
     const question = buf ? buf.question : '';
     finishAskAnswer(durationMs, msg.model);
     if (question || answer) {
@@ -1995,6 +2032,7 @@ initInput(chatViews.secondary);
 initMemory();
 initScheduledTask();
 initNeblink();
+initDropbox();
 
 // ---------- Bypass toggle (per-session auto-approve) ----------
 (function initBypassToggle() {
@@ -2016,12 +2054,14 @@ initNeblink();
     btn.addEventListener('click', () => {
       setActiveView(v);
       if (!v.sessionId) return;
-      if (state.bypassSessions.has(v.sessionId)) {
-        state.bypassSessions.delete(v.sessionId);
-      } else {
+      const enabled = !state.bypassSessions.has(v.sessionId);
+      if (enabled) {
         state.bypassSessions.add(v.sessionId);
+      } else {
+        state.bypassSessions.delete(v.sessionId);
       }
       state.updateBypassToggle(v);
+      sendWs({ type: 'setBypass', sessionId: v.sessionId, bypass: enabled });
     });
   }
 })();
@@ -2086,12 +2126,45 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 // session's history so the user sees the latest state.
 onReconnect(() => {
   const sid = state.activeSessionId;
-  if (!sid) return;
-  const view = findViewBySessionId(sid);
-  if (view) {
-    view.pagination.pendingInitialLoad = true;
-    sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
+  if (sid) {
+    const view = findViewBySessionId(sid);
+    if (view) {
+      view.pagination.pendingInitialLoad = true;
+      sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
+    }
   }
+  // Sync background task state — completion events may have been missed
+  sendWs({ type: 'getActiveBgTasks' });
+});
+
+// ---------- Reconnect: sync background tasks ----------
+// Backend responds with active tasks grouped by sessionId.
+// We remove any locally-tracked tasks that are no longer active on the backend
+// (they completed during the disconnect), and keep tasks the backend confirms.
+onMessage('activeBgTasks', (msg) => {
+  const backendTasks = msg.tasks || {};
+  // Remove locally-tracked tasks that the backend no longer knows about
+  for (const sid of Object.keys(state.sessionBgTasks)) {
+    const backendSessionTasks = backendTasks[sid] || [];
+    const backendIds = new Set(backendSessionTasks.map(t => t.taskId));
+    const before = state.sessionBgTasks[sid].length;
+    state.sessionBgTasks[sid] = state.sessionBgTasks[sid].filter(t => backendIds.has(t.taskId));
+    // If we removed tasks, also clean up finishedAt entries
+    if (state.sessionBgTasks[sid].length < before) {
+      const removed = before - state.sessionBgTasks[sid].length;
+      // Silently clean — no UI update needed since these were already "running"
+      // indicators that will disappear on next render
+    }
+    if (state.sessionBgTasks[sid].length === 0) {
+      delete state.sessionBgTasks[sid];
+    }
+  }
+  // Also clean stale delegate indicators — any session that has delegates
+  // tracked locally but no longer has an active agent on the backend
+  // can't be reliably detected here (delegates use actor system, not BgTaskRegistry).
+  // The agentDone fix (global sessionDelegates) already handles missed events.
+  // Refresh the UI for the active view
+  if (activeView) updateBgTasksUI();
 });
 
 // Scroll listener (primary window)
@@ -2106,7 +2179,7 @@ _primChat.addEventListener('scroll', () => {
     showHistoryLoader();
     sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
-});
+}, { passive: true });
 
 // Scroll listener (secondary window)
 const _secChat = chatViews.secondary?.dom?.chat;
@@ -2121,7 +2194,7 @@ if (_secChat) {
       showHistoryLoader();
       sendWs({ type: 'getHistory', sessionId: sv.sessionId, limit: 50, beforeIndex: sv.pagination.offset });
     }
-  });
+  }, { passive: true });
 }
 
 // ---------- 6. Expose global Nebflow API for plugins ----------

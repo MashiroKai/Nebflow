@@ -52,6 +52,7 @@ export default {
   // === Settings panel ===
   'settings.runtime': 'Runtime',
   'settings.thinkingMode': 'Thinking Mode',
+  'settings.llmLog': 'LLM Logging',
   'settings.thinkingBudget': 'Thinking Token Budget',
   'settings.thinkingBudgetHint': 'Maximum tokens for internal reasoning. Higher = better complex reasoning, but slower and more expensive.',
   'settings.language': 'Language',
@@ -72,7 +73,7 @@ export default {
   'settings.addFallback': '+ Add fallback',
   'settings.mcpServers': 'MCP Servers',
   'settings.noMcp': 'No MCP servers configured',
-  'settings.addMcp': '+ Add MCP Server',
+  'settings.toggleMcp': 'Enable / Disable',
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
@@ -381,4 +382,8 @@ export default {
   'neblink.cancel': 'Cancel',
   'neblink.updating': 'Updating...',
   'neblink.restarting': 'Restarting...',
+
+  // Dropbox
+  'dropbox.tabChat': 'Chat',
+  'dropbox.tabDesc': 'Description',
 };

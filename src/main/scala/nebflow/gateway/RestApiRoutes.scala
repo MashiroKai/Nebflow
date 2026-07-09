@@ -13,7 +13,7 @@ import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
-import org.http4s.headers.Authorization
+import org.http4s.headers.{Authorization, `Content-Type`}
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIStringSyntax
@@ -30,7 +30,8 @@ class RestApiRoutes(
   sharedResources: SharedResources,
   sessionStore: SessionStore,
   wsRoutes: WebSocketRoutes,
-  neblinkService: Option[NeblinkService] = None
+  neblinkService: Option[NeblinkService] = None,
+  ttsService: Option[TtsService] = None
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
@@ -38,6 +39,26 @@ class RestApiRoutes(
     // Health check
     case GET -> Root / "health" =>
       Ok(Json.obj("status" -> "ok".asJson, "version" -> nebflow.Version.string.asJson))
+
+    // TTS 语音合成（无需 auth，内部调用）
+    case req @ POST -> Root / "tts" =>
+      ttsService match
+        case None => NotFound(Json.obj("error" -> "TTS not configured".asJson))
+        case Some(svc) =>
+          req.as[Json].flatMap { body =>
+            val text = body.hcursor.downField("text").as[String].getOrElse("")
+            svc.synthesize(text).flatMap {
+              case Some(bytes) =>
+                IO.pure(
+                  Response[IO](
+                    status = Status.Ok,
+                    headers = Headers(`Content-Type`(MediaType.audio.wav)),
+                    body = Stream.emits(bytes).covary[IO]
+                  )
+                )
+              case None => NotFound(Json.obj("error" -> "TTS synthesis failed".asJson))
+            }
+          }
 
     // Generic command endpoint — mirrors WS messages
     case req @ POST -> Root / "command" =>
@@ -198,8 +219,7 @@ class RestApiRoutes(
                 "deviceId" -> id.deviceId.asJson,
                 "deviceName" -> id.deviceName.asJson,
                 "platform" -> id.platform.asJson,
-                "capabilities" -> id.capabilities.asJson,
-                "userDescription" -> id.userDescription.asJson
+                "capabilities" -> id.capabilities.asJson
               )
             )
           }
@@ -257,7 +277,9 @@ class RestApiRoutes(
                 "device" -> Json.obj(
                   "id" -> id.deviceId.asJson,
                   "name" -> id.deviceName.asJson,
-                  "platform" -> id.platform.asJson
+                  "platform" -> id.platform.asJson,
+                  "capabilities" -> id.capabilities.asJson,
+                  "userDescription" -> id.userDescription.asJson
                 ),
                 "peers" -> peersList
                   .map(p =>
@@ -266,6 +288,8 @@ class RestApiRoutes(
                       "deviceName" -> p.deviceName.asJson,
                       "platform" -> p.platform.asJson,
                       "address" -> p.address.asJson,
+                      "capabilities" -> p.capabilities.asJson,
+                      "userDescription" -> p.userDescription.asJson,
                       "lastSeen" -> p.lastSeen.asJson
                     )
                   )
@@ -349,6 +373,18 @@ class RestApiRoutes(
           val caps = body.hcursor.downField("capabilities").as[Option[Map[String, String]]].toOption.flatten
           ms.updateDeviceInfo(userDescription = userDesc, capabilities = caps) *>
             Ok(Json.obj("ok" -> true.asJson))
+        }
+      }
+
+    // Update a peer device's description (local override)
+    case req @ PUT -> Root / "neblink" / "peer-description" =>
+      withNeblink(req) { ms =>
+        req.as[Json].flatMap { body =>
+          val deviceId = body.hcursor.downField("deviceId").as[String].toOption
+          val desc = body.hcursor.downField("userDescription").as[String].toOption.getOrElse("")
+          deviceId match
+            case Some(did) => ms.updatePeerDescription(did, desc) *> Ok(Json.obj("ok" -> true.asJson))
+            case None => BadRequest(Json.obj("error" -> "missing deviceId".asJson))
         }
       }
 
@@ -480,6 +516,39 @@ class RestApiRoutes(
               case None => NotFound(Json.obj("error" -> s"File not found: $path".asJson))
             }
       }
+
+    // ===== Dropbox: cross-device file transfer =====
+
+    // Frontend uploads a file to send to a peer (gateway token auth)
+    case req @ POST -> Root / "neblink" / "dropbox" / "upload" / transferId =>
+      withAuth(req) {
+        sharedResources.dropboxService match
+          case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
+          case Some(svc) =>
+            svc.uploadAndRelay(transferId, req.body).flatMap {
+              case Right(_) => Ok(Json.obj("ok" -> true.asJson))
+              case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+            }
+      }
+
+    // Peer pushes a file via HTTP (Tailscale IP auth)
+    case req @ POST -> Root / "neblink" / "dropbox" / "transfer" / transferId =>
+      verifyPeerAccess(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(_) =>
+          sharedResources.dropboxService match
+            case None => NotFound(Json.obj("error" -> "Dropbox not enabled".asJson))
+            case Some(svc) =>
+              svc.receiveFromPeer(transferId, req.body).flatMap {
+                case Right(hash) => Ok(Json.obj("sha256" -> hash.asJson))
+                case Left(err) =>
+                  val status =
+                    if err.contains("not accepted") || err.contains("not found")
+                    then Status.NotFound
+                    else Status.InternalServerError
+                  Response[IO](status).withEntity(Json.obj("error" -> err.asJson)).pure[IO]
+              }
+      }
   }
 
   // ===== WebSocket Presence Server Endpoint =====
@@ -512,13 +581,11 @@ class RestApiRoutes(
               val peerPort = req.params.getOrElse("port", "8080").toIntOption.getOrElse(8080)
               val capsStr = req.params.getOrElse("capabilities", "{}")
               val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
-              val userDesc = req.params.getOrElse("userDescription", "")
               val info = nebflow.neblink.DeviceDiscoveryInfo(
                 peerDeviceId,
                 peerDeviceName,
                 peerPlatform,
-                capabilities,
-                userDesc
+                capabilities
               )
               // Silent upsert — the HTTP /neblink/announce endpoint already handles logging.
               // Calling handleAnnounce here too produces duplicate "Peer announced" logs.
@@ -527,8 +594,7 @@ class RestApiRoutes(
                 peerDeviceName,
                 peerPlatform,
                 s"http://$remoteIp:$peerPort",
-                capabilities = capabilities,
-                userDescription = userDesc
+                capabilities = capabilities
               )
               ms.upsertPeer(peer).flatMap { _ =>
                 Queue.unbounded[IO, WebSocketFrame].flatMap { sendQueue =>

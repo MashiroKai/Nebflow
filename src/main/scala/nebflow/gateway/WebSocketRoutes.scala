@@ -14,7 +14,7 @@ import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.core.{PathUtil, *}
-import nebflow.llm.{Config, NebflowServiceConfig, ThinkingConfig}
+import nebflow.llm.*
 import nebflow.service.*
 import nebflow.shared.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -369,7 +369,13 @@ class WebSocketRoutes(
       StaticFile.fromResource(s"web/js/locales/$file", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / "js" / file =>
-      StaticFile.fromResource(s"web/js/$file", Some(req)).getOrElseF(NotFound())
+      // no-cache: revalidate (Last-Modified) every time so the browser picks up
+      // the rebuilt classpath resource during development instead of serving a
+      // stale heuristic-cached copy.
+      StaticFile
+        .fromResource(s"web/js/$file", Some(req))
+        .map(_.putHeaders("Cache-Control" -> "no-cache"))
+        .getOrElseF(NotFound())
 
     case req @ GET -> Root / "vendor" / file =>
       StaticFile.fromResource(s"web/vendor/$file", Some(req)).getOrElseF(NotFound())
@@ -489,6 +495,39 @@ class WebSocketRoutes(
       }
     }.handleErrorWith { e =>
       logger.warn(s"Failed to persist thinking config: ${e.getMessage}")
+    }
+
+  /** Persist MCP server enabled state to nebflow.json — targeted field update. */
+  private def persistMcpServerEnabled(serverId: String, enabled: Boolean): IO[Unit] =
+    IO.blocking {
+      val path = nebflow.llm.Config.DefaultConfigPath
+      val existing = if os.exists(path) then os.read(path) else "{}"
+      parse(existing).foreach { json =>
+        val updated = json.mapObject { obj =>
+          val mcpObj = obj("mcpServers").flatMap(_.asObject).getOrElse(JsonObject.empty)
+          val serverObj = mcpObj(serverId).flatMap(_.asObject).getOrElse(JsonObject.empty)
+          val updatedServer = Json.fromJsonObject(serverObj.add("enabled", enabled.asJson))
+          val updatedMcp = Json.fromJsonObject(mcpObj.add(serverId, updatedServer))
+          obj.add("mcpServers", updatedMcp)
+        }
+        os.write.over(path, updated.spaces2, createFolders = true)
+      }
+    }.handleErrorWith { e =>
+      logger.warn(s"Failed to persist MCP server enabled state: ${e.getMessage}")
+    }
+
+  /** Broadcast current MCP server list to all connected clients. */
+  private def broadcastMcpServersUpdate: IO[Unit] =
+    mcpManager.listServers.flatMap { servers =>
+      val mcpJson = servers.map { case (id, enabled) =>
+        io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+      }
+      wsHub.broadcast(
+        io.circe.Json.obj(
+          "type" -> "mcpServersUpdate".asJson,
+          "mcpServers" -> mcpJson.asJson
+        )
+      )
     }
 
   /** Send unified session list by looking up the session's agent name (for agentName field only). */
@@ -647,6 +686,17 @@ class WebSocketRoutes(
             sharedResources.thinkingConfigRef.set(tc) *>
             persistThinkingConfig(tc) *>
             broadcastServerConfig
+
+        case "setLlmLog" =>
+          val enabled = parse(text).toOption
+            .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+            .getOrElse(true)
+          LlmLogWriter.setEnabled(enabled)
+          logger.info(s"LLM log set to: $enabled") *>
+            wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
+
+        case "getLlmLog" =>
+          wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
 
         case "getModelOptions" =>
           val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
@@ -826,6 +876,22 @@ class WebSocketRoutes(
               }
           else IO.unit
 
+        case "setBypass" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
+          if sid.nonEmpty then
+            sessionStore
+              .setBypass(sid, bypass)
+              .flatMap { _ =>
+                routeToAgent(sid)(ref => ref ! AgentCommand.SetBypass(bypass)) *>
+                  sendAgentSessionList(wsSend, sid)
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
         case "ask" =>
           val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val question = askJson.hcursor.downField("question").as[String].getOrElse("")
@@ -965,6 +1031,16 @@ class WebSocketRoutes(
 
         case "ping" => IO.unit
 
+        case "getActiveBgTasks" =>
+          nebflow.core.tools.BgTaskRegistry.activeTasksJson.flatMap { tasksJson =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "activeBgTasks".asJson,
+                "tasks" -> tasksJson
+              )
+            )
+          }
+
         case "cancelBackgroundJob" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
@@ -1062,23 +1138,19 @@ class WebSocketRoutes(
 
         case "listAgents" =>
           agentService.listAgents.flatMap { agents =>
-            // All builtin tools are configurable — MCP tools controlled via mcpServers
-            val configurableTools = ToolRegistry.builtinToolNames
             val agentsJson = agents.map { a =>
               io.circe.Json.obj(
                 "name" -> a.name.asJson,
                 "description" -> a.description.asJson,
                 "displayName" -> a.displayName.getOrElse(a.name).asJson,
                 "avatar" -> a.avatar.asJson,
-                "tools" -> a.tools.asJson,
-                "mcpServers" -> a.mcpServers.asJson
+                "tools" -> a.tools.asJson
               )
             }
             wsSend(
               io.circe.Json.obj(
                 "type" -> "agentList".asJson,
-                "agents" -> agentsJson.asJson,
-                "availableTools" -> configurableTools.asJson
+                "agents" -> agentsJson.asJson
               )
             )
           }
@@ -1299,49 +1371,27 @@ class WebSocketRoutes(
             )
           else IO.unit
 
-        case "getAgentConfig" =>
+        case "getAgentSystemPrompt" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            agentService.getAgentConfig(agentName).flatMap {
-              case Some(cfg) =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "agentConfig".asJson,
-                    "name" -> cfg.name.asJson,
-                    "configJson" -> cfg.configJson.asJson,
-                    "systemMd" -> cfg.systemMd.asJson
-                  )
+            agentService.getSystemPrompt(agentName).flatMap { mdOpt =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "agentSystemPrompt".asJson,
+                  "name" -> agentName.asJson,
+                  "systemMd" -> mdOpt.getOrElse("").asJson
                 )
-              case None => IO.unit
+              )
             }
           else IO.unit
 
-        case "createAgent" =>
+        case "updateAgentSystemPrompt" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-          val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
           val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
           if agentName.nonEmpty then
-            agentService.createAgent(agentName, configJson, systemMd).flatMap {
-              case Left(err) =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-              case Right(_) =>
-                wsSend(io.circe.Json.obj("type" -> "agentCreated".asJson, "name" -> agentName.asJson))
-            }
-          else IO.unit
-
-        case "updateAgent" =>
-          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-          val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-          val configJson = json.hcursor.downField("configJson").as[String].getOrElse("")
-          val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
-          if agentName.nonEmpty then
-            agentService.updateAgent(agentName, configJson, systemMd).flatMap {
-              case Left(err) =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-              case Right(_) =>
-                wsSend(io.circe.Json.obj("type" -> "agentUpdated".asJson, "name" -> agentName.asJson))
-            }
+            agentService.updateSystemPrompt(agentName, systemMd) *>
+              wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
           else IO.unit
 
         case "createAgentSession" =>
@@ -1364,7 +1414,11 @@ class WebSocketRoutes(
         case "getMemory" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
-          (sessionStore.getActiveMeta
+          val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
+          val metaIO = sessionIdParam match
+            case Some(sid) => sessionStore.getSessionMeta(sid)
+            case None => sessionStore.getActiveMeta
+          (metaIO
             .flatMap { metaOpt =>
               val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
               val sessionId = metaOpt.map(_.id).getOrElse("")
@@ -1394,7 +1448,11 @@ class WebSocketRoutes(
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
           val content = json.hcursor.downField("content").as[String].getOrElse("")
-          (sessionStore.getActiveMeta
+          val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
+          val metaIO = sessionIdParam match
+            case Some(sid) => sessionStore.getSessionMeta(sid)
+            case None => sessionStore.getActiveMeta
+          (metaIO
             .flatMap { metaOpt =>
               val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
               val sessionId = metaOpt.map(_.id).getOrElse("")
@@ -1662,6 +1720,85 @@ class WebSocketRoutes(
                     logger.warn(s"Config hot-reload failed: ${e.getMessage}")
                 } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
             }
+          else IO.unit
+
+        case "toggleMcpServer" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val serverId = hc.downField("serverId").as[String].getOrElse("")
+          val enabled = hc.downField("enabled").as[Boolean].getOrElse(false)
+          if serverId.nonEmpty then
+            configRef.get.flatMap { cfg =>
+              cfg.mcpServers.getOrElse(Map.empty).get(serverId) match
+                case Some(mcpCfg) =>
+                  val action =
+                    if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
+                  action *> persistMcpServerEnabled(serverId, enabled) *>
+                    broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
+                case None =>
+                  logger.warn(s"toggleMcpServer: server '$serverId' not found in config") *> IO.unit
+            }
+          else IO.unit
+
+        // ===== Dropbox: cross-device messaging & file transfer =====
+
+        case "dropbox-send-text" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+          val msgText = hc.downField("text").as[String].getOrElse("")
+          if deviceId.nonEmpty && msgText.nonEmpty then
+            sharedResources.dropboxService match
+              case None =>
+                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
+              case Some(svc) =>
+                svc
+                  .sendText(deviceId, msgText)
+                  .handleErrorWith(e =>
+                    wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
+                  )
+          else IO.unit
+
+        case "dropbox-file-offer" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+          val fileName = hc.downField("fileName").as[String].getOrElse("")
+          val fileSize = hc.downField("fileSize").as[Long].getOrElse(0L)
+          val mimeType = hc.downField("mimeType").as[String].getOrElse("")
+          if deviceId.nonEmpty && fileName.nonEmpty then
+            sharedResources.dropboxService match
+              case None =>
+                wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
+              case Some(svc) =>
+                svc
+                  .offerFile(deviceId, fileName, fileSize, mimeType)
+                  .handleErrorWith(e =>
+                    wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
+                  )
+          else IO.unit
+
+        case "dropbox-file-respond" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+          val transferId = hc.downField("transferId").as[String].getOrElse("")
+          val accepted = hc.downField("accepted").as[Boolean].getOrElse(false)
+          if deviceId.nonEmpty && transferId.nonEmpty then
+            sharedResources.dropboxService match
+              case None => IO.unit
+              case Some(svc) => svc.respondToOffer(deviceId, transferId, accepted).handleErrorWith(_ => IO.unit)
+          else IO.unit
+
+        case "dropbox-get-history" =>
+          val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+          val deviceId = hc.downField("deviceId").as[String].getOrElse("")
+          if deviceId.nonEmpty then
+            sharedResources.dropboxService match
+              case None => IO.unit
+              case Some(svc) =>
+                svc.getHistory(deviceId).flatMap { msgs =>
+                  wsSend(
+                    io.circe.Json
+                      .obj("type" -> "dropbox-history".asJson, "deviceId" -> deviceId.asJson, "messages" -> msgs.asJson)
+                  )
+                }
           else IO.unit
 
         case _ =>

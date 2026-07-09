@@ -18,6 +18,13 @@ import scala.concurrent.duration.*
 private[agent] trait AgentCore:
 
   protected val MaxDepth = 5
+
+  /**
+   * Tools removed from sub-agents (depth > 0): user-interaction tools that
+   * don't make sense in an autonomous sub-agent context.
+   */
+  private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
+
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
   private[agent] type ProcessingFn =
@@ -228,7 +235,21 @@ private[agent] trait AgentCore:
             .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
             .compile
             .toList
-            .map(aggregateChunks)
+            .flatMap { chunks =>
+              val cr = aggregateChunks(chunks)
+              LlmLogWriter.log(
+                request,
+                chunks,
+                cr.text,
+                cr.toolCalls,
+                cr.thinking,
+                cr.stopReason,
+                cr.usage,
+                cr.model,
+                isSubagent,
+                isCompactTurn
+              ) *> IO.pure(cr)
+            }
             .attempt
           _ <- result match
             case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
@@ -315,7 +336,7 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          (if ToolReversibility.isReversible(call.name, call.input) then executeTool(call, toolCtx)
+          (if ToolReversibility.isReversible(call.name, call.input) || state.bypass then executeTool(call, toolCtx)
            else askUserPermission(call, state, permissionDeferredRef, toolCtx))
             .map(r => (call, r))
             .attempt
@@ -387,35 +408,39 @@ private[agent] trait AgentCore:
         val deferred = cats.effect.Deferred.unsafe[IO, Boolean]
         (
           Some(deferred),
-          (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)).flatMap(_ =>
-            IO {
-              val summary = nebflow.core.summarizeToolCall(call)
-              val dangerLevel =
-                if call.name == "Bash" then
-                  call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
-                else if call.name == "Curl" then
-                  call.input("method").flatMap(_.asString).map(_.toUpperCase) match
-                    case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
-                    case _ => 0
-                else 1
-              Json.obj(
-                "type" -> "askPermission".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "toolName" -> call.name.asJson,
-                "summary" -> summary.asJson,
-                "input" -> call.input.asJson,
-                "dangerLevel" -> dangerLevel.asJson
-              )
-            }.flatMap { permJson =>
-              for
-                _ <- state.wsSend(permJson)
-                approved <- deferred.get
-                result <-
-                  if approved then executeTool(call, toolCtx)
-                  else IO.pure(ToolExecResult("Permission denied by user", isError = true))
-              yield result
-            }
-          )
+          IO {
+            val summary = nebflow.core.summarizeToolCall(call)
+            val dangerLevel =
+              if call.name == "Bash" then
+                call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
+              else if call.name == "Curl" then
+                call.input("method").flatMap(_.asString).map(_.toUpperCase) match
+                  case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
+                  case _ => 0
+              else 1
+            Json.obj(
+              "type" -> "askPermission".asJson,
+              "sessionId" -> state.sessionId.asJson,
+              "toolName" -> call.name.asJson,
+              "summary" -> summary.asJson,
+              "input" -> call.input.asJson,
+              "dangerLevel" -> dangerLevel.asJson
+            )
+          }.flatMap { permJson =>
+            // Sub-agents forward permission to parent agent so the answer
+            // (routed by sessionId to the root agent) reaches the right Deferred.
+            val sendPermission =
+              if state.depth > 0 && toolCtx.parentRef.isDefined then
+                toolCtx.parentRef.get ! AgentCommand.ForwardPermission(deferred, permJson)
+              else (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *> state.wsSend(permJson)
+            for
+              _ <- sendPermission
+              approved <- deferred.get
+              result <-
+                if approved then executeTool(call, toolCtx)
+                else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+            yield result
+          }
         )
     }.flatten
 
@@ -506,16 +531,11 @@ private[agent] trait AgentCore:
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(isMcpTool).toSet
       case names => names.toSet
-    val mcpToolNames = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool)
-    val mcpTools =
-      if agentDef.mcpServers == List("*") then mcpToolNames.toSet
-      else
-        agentDef.mcpServers.flatMap { serverId =>
-          val prefix = s"mcp__${serverId}__"
-          mcpToolNames.filter(_.startsWith(prefix))
-        }.toSet
+    // MCP servers are global — all enabled servers available to every agent
+    val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool).toSet
     val depthFiltered = if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" else base
-    depthFiltered ++ mcpTools
+    val subagentFiltered = if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
+    subagentFiltered ++ mcpTools
 
   end buildAllowedToolSet
 
@@ -673,11 +693,12 @@ private[agent] trait AgentCore:
           import cats.effect.unsafe.implicits.global
           val id = ms.identity.unsafeRunSync()
           val peersList = ms.peers.unsafeRunSync()
-          val parts = List.newBuilder[String]
-          parts += s"local (${id.deviceName})"
+          val localParts = List.newBuilder[String]
+          localParts += s"local (${id.deviceName})"
           val localCaps = id.capabilities.keys.toList.sorted
-          if localCaps.nonEmpty then parts += s"[${localCaps.mkString(", ")}]"
-          val localStr = parts.result.mkString(" ")
+          if localCaps.nonEmpty then localParts += s"[${localCaps.mkString(", ")}]"
+          if id.userDescription.nonEmpty then localParts += s"-${id.userDescription}"
+          val localStr = localParts.result.mkString(" ")
           val peerStrs =
             peersList
               .map { p =>
