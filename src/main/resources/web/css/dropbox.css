@@ -181,49 +181,55 @@
   border-color: rgba(91, 127, 191, 0.15);
 }
 
-.dropbox-file-info {
+/* File card layout */
+.dropbox-file-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--color-frame-text, #333);
+  gap: 8px;
 }
-.dropbox-file-name { font-weight: 500; }
-.dropbox-file-size { color: var(--color-frame-text-muted, #888); font-size: 11px; }
+.dropbox-file-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.dropbox-file-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-frame-text, #333);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dropbox-file-info-line {
+  font-size: 11px;
+  color: var(--color-frame-text-muted, #888);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dropbox-file-badge {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+}
+.dropbox-file-badge.completed { color: #34c759; }
+.dropbox-file-badge.transferring { color: var(--color-frame-text-muted, #888); animation: pulse 1.2s ease-in-out infinite; }
+.dropbox-file-badge.failed { color: #e44; }
 
-.dropbox-file-status {
-  display: inline-block;
+.dropbox-file-status-text {
   margin-top: 4px;
   font-size: 11px;
 }
-.dropbox-file-status.completed { color: #34c759; }
-.dropbox-file-status.transferring { color: rgba(91, 127, 191, 0.8); }
-.dropbox-file-status.failed { color: #e44; }
-.dropbox-file-status.rejected { color: var(--color-frame-text-muted, #888); }
-.dropbox-file-status.waiting { color: var(--color-frame-text-muted, #888); }
+.dropbox-file-status-text.completed { color: #34c759; }
+.dropbox-file-status-text.transferring { color: var(--color-frame-text-muted, #888); }
+.dropbox-file-status-text.failed { color: #e44; }
 
-/* File accept/reject buttons */
-.dropbox-file-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-}
-.dropbox-file-actions button {
-  font-size: 12px;
-  padding: 3px 14px;
-  border-radius: 6px;
-  border: none;
-  cursor: pointer;
-  font-family: inherit;
-}
-.dropbox-file-accept {
-  background: #34c759;
-  color: white;
-}
-.dropbox-file-reject {
-  background: transparent;
-  border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.3)) !important;
-  color: var(--color-frame-text, #333);
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
 
 /* Drop zone */
