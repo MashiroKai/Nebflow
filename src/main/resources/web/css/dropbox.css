@@ -262,9 +262,8 @@
 /* Clickable device name in settings */
 .neblink-peer-name.dropbox-clickable {
   cursor: pointer;
-  color: var(--color-primary);
   transition: color 0.15s;
 }
 .neblink-peer-name.dropbox-clickable:hover {
-  text-decoration: underline;
+  color: rgba(91, 127, 191, 0.8);
 }
