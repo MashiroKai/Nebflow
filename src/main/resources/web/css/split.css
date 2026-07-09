@@ -453,6 +453,7 @@ body.split-view #secondary-panel.visible {
 #secondary-ask-indicator.show,
 #secondary-skill-indicator.show { display: flex; }
 #secondary-skill-indicator-label {
+  min-width: 0;
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;

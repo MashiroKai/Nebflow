@@ -12,7 +12,7 @@ import {
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
-  appendToolStreamDelta
+  appendToolStreamDelta, cancelToolStreamRAF
 } from './chat.js';
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
@@ -470,6 +470,17 @@ onMessage('toolCallDetected', (msg, view) => {
     }
     // In ask mode, finalize the current ask bubble so the tool card renders below it
     if (activeView.stream.currentAskBubble) finishAskAnswer();
+    // If the existing pending card was claimed by a previous tool (toolStart fired),
+    // close its streaming display and clear the slot so a new card is created.
+    const existingCard = state.sessionToolCards[sid];
+    if (existingCard && existingCard.isConnected) {
+      const cardEl = existingCard.querySelector('.tool-card');
+      if (cardEl && cardEl.dataset.toolLabel) {
+        cancelToolStreamRAF();
+        existingCard.querySelectorAll('.cursor').forEach(el => el.remove());
+        delete state.sessionToolCards[sid];
+      }
+    }
     renderToolPending(msg.name, msg.sessionId);
     // Reset tool argument streaming for the new tool call
     activeView.stream.toolStreamText = '';
@@ -515,6 +526,13 @@ onMessage('toolStart', (msg, view) => {
     // In ask mode, finalize the current ask bubble so the tool card renders below it
     if (activeView.stream.currentAskBubble) finishAskAnswer();
     renderToolPending(msg.label, msg.sessionId);
+    // Tag the card with the full tool label so toolEnd can find the right card
+    // when multiple tools share the session (single sessionToolCards slot).
+    const startedRow = state.sessionToolCards[msg.sessionId];
+    if (startedRow) {
+      const cardEl = startedRow.querySelector('.tool-card');
+      if (cardEl) cardEl.dataset.toolLabel = msg.label;
+    }
   }
 });
 

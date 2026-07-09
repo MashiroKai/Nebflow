@@ -1451,6 +1451,7 @@
   display: flex;
 }
 #skill-indicator-label {
+  min-width: 0;
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
