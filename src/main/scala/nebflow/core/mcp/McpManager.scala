@@ -11,21 +11,25 @@ import scala.concurrent.duration.*
 /** Manages lifecycle of all MCP servers: config loading, connection, tool registration, shutdown. */
 class McpManager private (
   serversRef: Ref[IO, Map[String, (McpClient, List[nebflow.core.tools.Tool])]],
-  allServerIds: Ref[IO, Set[String]]
+  serverEnabledMap: Ref[IO, Map[String, Boolean]]
 ):
   private val logger = NebflowLogger.forName("nebflow.mcp")
 
-  /** Start all configured MCP servers concurrently. */
+  /** Start all enabled MCP servers concurrently. Disabled servers are tracked but not started. */
   def startAll(configs: Map[String, McpServerConfig]): IO[Unit] =
     if configs.isEmpty then IO.unit
     else
-      allServerIds.set(configs.keySet) *>
+      val enabledMap = configs.map { case (id, cfg) => id -> cfg.isEnabled }
+      serverEnabledMap.set(enabledMap) *>
         configs.toList.parTraverse { case (id, cfg) =>
-          connectServer(id, cfg)
-            .timeout(5.seconds)
-            .handleErrorWith { e =>
-              logger.error(s"MCP server '$id' failed to start: ${e.getMessage}") *> IO.unit
-            }
+          if cfg.isEnabled then
+            connectServer(id, cfg)
+              .timeout(5.seconds)
+              .handleErrorWith { e =>
+                logger.error(s"MCP server '$id' failed to start: ${e.getMessage}") *> IO.unit
+              }
+          else
+            logger.info(s"MCP server '$id' is disabled, skipping")
         }.void
 
   /** Gracefully close all MCP connections with per-server timeout. */
@@ -41,11 +45,39 @@ class McpManager private (
 
   /** Get all configured server IDs with their enabled status. */
   def listServers: IO[List[(String, Boolean)]] =
-    allServerIds.get.map(_.toList.sorted.map(id => (id, true)))
+    serverEnabledMap.get.map(_.toList.sorted.map { case (id, enabled) => (id, enabled) })
+
+  /** Enable a server: update enabled flag and start it. */
+  def enableServer(id: String, cfg: McpServerConfig): IO[Unit] =
+    serverEnabledMap.update(_ + (id -> true)) *>
+      connectServer(id, cfg)
+        .timeout(10.seconds)
+        .handleErrorWith { e =>
+          logger.error(s"MCP server '$id' failed to start: ${e.getMessage}") *> IO.unit
+        }
+
+  /** Disable a server: stop it and update enabled flag. */
+  def disableServer(id: String): IO[Unit] =
+    serverEnabledMap.update(_ + (id -> false)) *>
+      stopServer(id)
 
   /** Connect a single MCP server and register its tools. Public for AgentLibrary use. */
   def startServer(id: String, cfg: McpServerConfig): IO[Unit] =
     connectServer(id, cfg)
+
+  /** Stop a single MCP server, unregister its tools, and close the connection. */
+  def stopServer(id: String): IO[Unit] =
+    serversRef.get.flatMap { servers =>
+      servers.get(id) match
+        case Some((client, _)) =>
+          for
+            _ <- IO.delay(ToolRegistry.unregisterToolsByPrefix(s"mcp__${id}__"))
+            _ <- serversRef.update(_ - id)
+            _ <- client.close().timeout(3.seconds).handleErrorWith(_ => IO.unit)
+            _ <- logger.info(s"MCP server '$id' stopped")
+          yield ()
+        case None => IO.unit
+    }
 
   private def connectServer(id: String, cfg: McpServerConfig): IO[Unit] =
     (cfg.command, cfg.url) match
@@ -97,7 +129,7 @@ object McpManager:
   def create: IO[McpManager] =
     for
       serversRef <- Ref.of[IO, Map[String, (McpClient, List[nebflow.core.tools.Tool])]](Map.empty)
-      allServerIds <- Ref.of[IO, Set[String]](Set.empty)
-    yield new McpManager(serversRef, allServerIds)
+      serverEnabledMap <- Ref.of[IO, Map[String, Boolean]](Map.empty)
+    yield new McpManager(serversRef, serverEnabledMap)
 
 end McpManager
