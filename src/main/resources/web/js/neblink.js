@@ -62,11 +62,6 @@ export function neblinkSettingsHTML() {
   ];
 
   const deviceRows = allDevices.map(d => {
-    const caps = d.capabilities ? Object.keys(d.capabilities) : [];
-    const capStr = caps.length > 0
-      ? `<span class="neblink-peer-caps">${caps.join(', ')}</span>`
-      : '';
-
     // Build update UI for peer devices
     let updateUI = '';
     if (!d.isLocal) {
@@ -109,15 +104,9 @@ export function neblinkSettingsHTML() {
         ${d.isLocal
           ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
           : '<span class="neblink-peer-status">' + t('neblink.connected') + '</span>'}
-        ${capStr}
         ${updateUI}
       </div>`;
   }).join('');
-
-  const localCaps = local.capabilities ? Object.keys(local.capabilities) : [];
-  const capsDisplay = localCaps.length > 0
-    ? `<div class="neblink-caps-display">${t('neblink.detectedTools')}: ${localCaps.join(', ')}</div>`
-    : '';
 
   const peerHint = peers.length === 0
     ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure Tailscale is running on both device.'}</div>`
@@ -128,7 +117,6 @@ export function neblinkSettingsHTML() {
       <div class="neblink-section-label">${t('neblink.devices')}</div>
       <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
-      ${capsDisplay}
     </div>`;
 }
 
