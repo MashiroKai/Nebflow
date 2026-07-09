@@ -310,7 +310,6 @@ final class NeblinkPresenceService(
       "deviceName" -> id.deviceName,
       "platform" -> id.platform,
       "capabilities" -> id.capabilities.asJson.noSpaces,
-      "userDescription" -> id.userDescription,
       "port" -> serverPort.toString
     )
     val query = params.map((k, v) => s"$k=${enc(v)}").mkString("&")
