@@ -6,6 +6,7 @@ import state from './state.js';
 import { escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
+import { openDropbox } from './dropbox.js';
 
 let neblinkState = {
   device: null,
@@ -29,11 +30,25 @@ export async function fetchNeblinkStatus() {
     });
     if (!resp.ok) return;
     const data = await resp.json();
-    neblinkState.device = data.device || null;
+    // Normalize local device fields to match peer field names
+    const d = data.device;
+    neblinkState.device = d ? {
+      deviceId: d.id,
+      deviceName: d.name,
+      platform: d.platform,
+      capabilities: d.capabilities || {},
+      userDescription: d.userDescription || ''
+    } : null;
     neblinkState.peers = data.peers || [];
   } catch (e) {
     // neblink not available yet
   }
+}
+
+/** Re-fetch status and re-render settings panel. */
+export async function refreshNeblink() {
+  await fetchNeblinkStatus();
+  _rerender?.();
 }
 
 // ---- Settings section HTML ----
@@ -47,14 +62,6 @@ export function neblinkSettingsHTML() {
   ];
 
   const deviceRows = allDevices.map(d => {
-    const caps = d.capabilities ? Object.keys(d.capabilities) : [];
-    const capStr = caps.length > 0
-      ? `<span class="neblink-peer-caps">${caps.join(', ')}</span>`
-      : '';
-    const descStr = d.userDescription
-      ? `<span class="neblink-peer-desc">${escapeHtml(d.userDescription)}</span>`
-      : '';
-
     // Build update UI for peer devices
     let updateUI = '';
     if (!d.isLocal) {
@@ -82,27 +89,27 @@ export function neblinkSettingsHTML() {
       }
     }
 
+    const did = escapeHtml(d.deviceId || '');
+    const descVal = escapeHtml(d.userDescription || '');
+
     return `
       <div class="neblink-peer">
         <span class="neblink-peer-dot dot-on"></span>
-        <span class="neblink-peer-name">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
+        <span class="neblink-peer-name dropbox-clickable"
+          data-device-id="${did}"
+          data-device-name="${escapeHtml(d.deviceName || '')}"
+          data-platform="${escapeHtml(d.platform || '')}"
+          data-desc="${descVal}"
+          data-is-local="${d.isLocal ? '1' : '0'}">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
         ${d.isLocal
           ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
           : '<span class="neblink-peer-status">' + t('neblink.connected') + '</span>'}
-        ${capStr}
-        ${descStr}
         ${updateUI}
       </div>`;
   }).join('');
 
-  const localDesc = local.userDescription || '';
-  const localCaps = local.capabilities ? Object.keys(local.capabilities) : [];
-  const capsDisplay = localCaps.length > 0
-    ? `<div class="neblink-caps-display">${t('neblink.detectedTools')}: ${localCaps.join(', ')}</div>`
-    : '';
-
   const peerHint = peers.length === 0
-    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure Tailscale is running on both devices.'}</div>`
+    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure Tailscale is running on both device.'}</div>`
     : '';
 
   return `
@@ -110,24 +117,12 @@ export function neblinkSettingsHTML() {
       <div class="neblink-section-label">${t('neblink.devices')}</div>
       <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
-      ${capsDisplay}
-      <div class="neblink-section-label" style="margin-top:10px">${t('neblink.deviceDescription')}</div>
-      <input type="text" id="neblink-device-desc" class="cfg-input"
-             placeholder="${t('neblink.deviceDescHint')}"
-             value="${escapeHtml(localDesc)}"
-             style="margin-bottom:6px">
-      <button class="cfg-btn" id="neblink-save-desc" style="width:100%">${t('neblink.save')}</button>
     </div>`;
 }
 
 // ---- Bind events after HTML insert ----
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
-
-  document.getElementById('neblink-save-desc')?.addEventListener('click', () => doSaveDescription(rerender));
-  document.getElementById('neblink-device-desc')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') doSaveDescription(rerender);
-  });
 
   // Peer update buttons
   document.querySelectorAll('.neblink-peer-update-btn').forEach(btn => {
@@ -157,23 +152,19 @@ export function bindNeblinkEvents(rerender) {
       rerender();
     });
   });
-}
 
-// ---- Actions ----
-async function doSaveDescription(rerender) {
-  const desc = document.getElementById('neblink-device-desc')?.value?.trim() || '';
-  try {
-    const token = getAuthToken();
-    await fetch('/api/neblink/device-info', {
-      method: 'PUT',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userDescription: desc })
+  // Device name click → open device modal (all devices, including local)
+  document.querySelectorAll('.dropbox-clickable').forEach(el => {
+    el.addEventListener('click', () => {
+      openDropbox({
+        deviceId: el.dataset.deviceId,
+        deviceName: el.dataset.deviceName,
+        platform: el.dataset.platform,
+        userDescription: el.dataset.desc,
+        isLocal: el.dataset.isLocal === '1'
+      });
     });
-    if (neblinkState.device) neblinkState.device.userDescription = desc;
-    rerender();
-  } catch (e) {
-    // ignore
-  }
+  });
 }
 
 // ---- Init (called once from main.js) ----
@@ -181,7 +172,7 @@ export async function initNeblink() {
   await fetchNeblinkStatus();
   // Push-based peer status: when backend broadcasts peerListChanged,
   // immediately re-fetch neblink status instead of waiting for poll.
-  onMessage('peerListChanged', () => { fetchNeblinkStatus(); });
+  onMessage('peerListChanged', () => { fetchNeblinkStatus().then(() => _rerender?.()); });
 
   // Handle remote update result
   onMessage('remoteUpdateResult', (msg) => {

@@ -267,7 +267,7 @@ export function renderAgentList() {
     el.addEventListener('click', () => selectAgent(a.name));
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      sendWs({type: 'getAgentConfig', name: a.name});
+      sendWs({type: 'getAgentSystemPrompt', name: a.name});
     });
     list.appendChild(el);
   });
@@ -413,7 +413,7 @@ export function renderSettings() {
   const llm = cfg.llm || {};
   const providers = llm.providers || {};
   const model = llm.model || {};
-  const mcpServers = cfg.mcpServers || {};
+  const mcpServers = state.mcpServers || [];
   const compact = cfg.compact || {};
   const providerNames = Object.keys(providers);
 
@@ -454,6 +454,10 @@ export function renderSettings() {
         <label class="cfg-label">${t('settings.thinkingBudget')}</label>
         <input class="cfg-input" id="cfg-thinking-budget" type="number" min="1024" value="${state.thinkingMode?.budgetTokens ?? 32000}" autocomplete="off">
         <div class="cfg-hint">${t('settings.thinkingBudgetHint')}</div>
+      </div>
+      <div class="settings-row">
+        <span class="settings-label">${t('settings.llmLog')}</span>
+        <div class="toggle ${state.llmLogEnabled !== false ? 'on' : ''}" id="toggle-llm-log"></div>
       </div>
       <div class="settings-row">
         <span class="settings-label">${t('settings.language')}</span>
@@ -505,10 +509,9 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.mcpServers')}</div>
       <div id="mcp-server-list">
-        ${Object.keys(mcpServers).map(name => renderMcpServerCard(name, mcpServers[name])).join('')}
-        ${Object.keys(mcpServers).length === 0 ? `<div class="cfg-empty">${t('settings.noMcp')}</div>` : ''}
+        ${mcpServers.map(s => renderMcpServerCard(s.id, s.enabled)).join('')}
+        ${mcpServers.length === 0 ? `<div class="cfg-empty">${t('settings.noMcp')}</div>` : ''}
       </div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-mcp">${t('settings.addMcp')}</button>
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.cardDesign')}</div>
@@ -579,16 +582,13 @@ function renderProviderCard(name, p) {
     </div>`;
 }
 
-function renderMcpServerCard(name, s) {
-  const type = s.url ? 'URL' : 'CMD';
+function renderMcpServerCard(name, enabled) {
+  const on = enabled !== false;
   return `
     <div class="cfg-card" data-mcp="${escapeHtml(name)}">
       <div class="cfg-card-header">
         <span class="cfg-card-title">${escapeHtml(name)}</span>
-        <button class="cfg-card-remove" data-mcp="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
-      </div>
-      <div class="cfg-card-meta">
-        <span class="cfg-card-badge">${type}</span>
+        <button class="cfg-toggle ${on ? 'on' : ''}" data-mcp="${escapeHtml(name)}" data-enabled="${on}" title="${t('settings.toggleMcp')}"></button>
       </div>
     </div>`;
 }
@@ -612,6 +612,14 @@ function bindSettingsEvents(content, cfg, allModels) {
       state.thinkingMode = {enabled: true, budgetTokens: val};
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
+  });
+
+  // LLM Log toggle
+  document.getElementById('toggle-llm-log')?.addEventListener('click', function() {
+    this.classList.toggle('on');
+    const enabled = this.classList.contains('on');
+    state.llmLogEnabled = enabled;
+    sendWs({type: 'setLlmLog', enabled});
   });
 
   // Language selector
@@ -746,39 +754,16 @@ function bindSettingsEvents(content, cfg, allModels) {
     });
   }
 
-  // --- MCP Servers add/remove ---
-  document.getElementById('btn-add-mcp')?.addEventListener('click', () => {
-    showMcpModal(null, null, (name, data) => {
-      if (!state.parsedConfig) state.parsedConfig = {};
-      if (!state.parsedConfig.mcpServers) state.parsedConfig.mcpServers = {};
-      state.parsedConfig.mcpServers[name] = data;
-      state.configDirty = true;
-      flushConfigToServer();
-    });
-  });
-
-  content.querySelectorAll('.cfg-card[data-mcp]').forEach(card => {
-    const name = card.dataset.mcp;
-    card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
+  // --- MCP Servers toggle ---
+  content.querySelectorAll('.cfg-toggle[data-mcp]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (!confirm(t('mcp.removeConfirm', { name }))) return;
-      // Use null instead of delete — backend mergeConfig treats null as explicit deletion
-      state.parsedConfig.mcpServers[name] = null;
-      state.configDirty = true;
-      flushConfigToServer();
-      renderSettings();
-    });
-    card.addEventListener('click', () => {
-      const s = state.parsedConfig.mcpServers[name];
-      showMcpModal(name, s, (newName, data) => {
-        if (newName !== name) {
-          // Use null to signal explicit deletion of old name
-          state.parsedConfig.mcpServers[name] = null;
-        }
-        state.parsedConfig.mcpServers[newName] = data;
-        state.configDirty = true;
-        flushConfigToServer();
-      });
+      const serverId = btn.dataset.mcp;
+      const newEnabled = btn.dataset.enabled !== 'true';
+      sendWs({type: 'toggleMcpServer', serverId, enabled: newEnabled});
+      // Optimistic UI update
+      btn.dataset.enabled = String(newEnabled);
+      btn.classList.toggle('on', newEnabled);
     });
   });
 
@@ -883,47 +868,6 @@ function showProviderModal(existingName, existingData, onSave) {
         protocol: values.protocol,
         models: validModels,
       });
-    }
-  });
-}
-
-// --- MCP Server modal ---
-function showMcpModal(existingName, existingData, onSave) {
-  const isEdit = !!existingName;
-  const s = existingData || {};
-  const argsStr = (s.args || []).join(' ');
-  const envLines = s.env ? Object.entries(s.env).map(([k, v]) => `${k}=${v}`).join('\n') : '';
-  const headersLines = s.headers ? Object.entries(s.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
-
-  showModal({
-    title: isEdit ? t('mcp.edit', { name: existingName }) : t('mcp.add'),
-    fields: [
-      {key: 'name', label: t('mcp.serverId'), type: 'text', value: existingName || '', disabled: isEdit},
-      {key: 'command', label: t('mcp.command'), type: 'text', value: s.command || '', placeholder: t('mcp.commandPlaceholder')},
-      {key: 'args', label: t('mcp.args'), type: 'text', value: argsStr},
-      {key: 'env', label: t('mcp.env'), type: 'textarea', value: envLines},
-      {key: 'url', label: t('mcp.url'), type: 'text', value: s.url || ''},
-      {key: 'headers', label: t('mcp.headers'), type: 'textarea', value: headersLines},
-    ],
-    onConfirm(values) {
-      const name = values.name.trim();
-      if (!name) return alert(t('mcp.idRequired'));
-      const data = {};
-      if (values.url.trim()) {
-        data.url = values.url.trim();
-        if (values.headers.trim()) {
-          data.headers = Object.fromEntries(values.headers.trim().split('\n').map(l => { const i = l.indexOf(':'); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : null; }).filter(Boolean));
-        }
-      } else if (values.command.trim()) {
-        data.command = values.command.trim();
-        data.args = values.args.trim() ? values.args.trim().split(/\s+/) : [];
-        if (values.env.trim()) {
-          data.env = Object.fromEntries(values.env.trim().split('\n').map(l => { const i = l.indexOf('='); return i > 0 ? [l.slice(0, i).trim(), l.slice(i + 1).trim()] : null; }).filter(Boolean));
-        }
-      } else {
-        return alert(t('mcp.cmdOrUrlRequired'));
-      }
-      onSave(name, data);
     }
   });
 }
@@ -1223,9 +1167,14 @@ export function renderSessionSidebar(sessionData, activeId) {
   // sessionList and agentSessionList often carry identical data (especially during
   // initial load where both fire in sequence). Detect this and avoid the expensive
   // innerHTML='' + rebuild cycle. We compare a lightweight fingerprint: the set of
-  // session ids + their updatedAt timestamps + the active id + expanded folders
-  // (folder expand/collapse changes the DOM but not the session data).
-  const fingerprint = (activeId || '') + '|' +
+  // session ids + their updatedAt timestamps + expanded folders (folder
+  // expand/collapse changes the DOM but not the session data).
+  //
+  // NOTE: activeId is deliberately NOT in the fingerprint. Switching the active
+  // session only changes which item is highlighted — the in-place fast path below
+  // toggles the `.active` class and refreshes the header without rebuilding 100+
+  // DOM nodes. (Fix 4: session-switch sidebar performance.)
+  const fingerprint =
     (sessionData || []).map(s => s.id + ':' + (s.updatedAt || 0) + ':' + (s.hasUnread ? 1 : 0)).sort().join(',') +
     '|folders:' + (state.folders || []).map(f => f.id + ':' + (f.parentId || '')).sort().join(';') +
     '|expanded:' + [...(state.expandedFolders || [])].sort().join(',') +

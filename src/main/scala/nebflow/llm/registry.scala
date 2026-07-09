@@ -80,11 +80,15 @@ class ProviderRegistry(
       }.toList
     }
 
-  /** List all models with descriptions. Returns (ref, modelId, description) triples. */
+  /**
+   * List all models with descriptions. Returns (ref, displayLabel, description) triples.
+   * displayLabel includes the provider name to ensure uniqueness when multiple
+   * providers offer the same model ID (e.g. USTC and deepseek both have deepseek-v4-pro).
+   */
   def getAllModelsDetailed(): IO[List[(String, String, Option[String])]] =
     configRef.get.map { config =>
       config.llm.providers.flatMap { case (providerId, provider) =>
-        provider.models.map(mc => (s"$providerId/${mc.id}", mc.id, mc.description))
+        provider.models.map(mc => (s"$providerId/${mc.id}", s"$providerId / ${mc.id}", mc.description))
       }.toList
     }
 

@@ -40,7 +40,7 @@ object PathUtil:
       // Unix absolute or UNC path
       try os.Path(pathStr, base)
       catch case _: Exception => Path(java.nio.file.Paths.get(pathStr))
-    else base / pathStr
+    else base / os.RelPath(pathStr)
 
   /**
    * The root data directory for Nebflow state (sessions, tasks, memory, config, etc.).

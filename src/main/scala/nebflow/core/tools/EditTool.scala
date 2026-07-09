@@ -166,12 +166,12 @@ Edit patterns:
           case Left(err) => Left(err)
           case Right(()) =>
             DiffUtil.writeFile(filePath, newString, "\n")
-            Right(DiffUtil.renderCreatedResult(filePath))
+            Right(DiffUtil.renderCreatedResult(filePath, newString))
       else
         val parent = filePath.getParent
         if parent != null && !Files.exists(parent) then Files.createDirectories(parent)
         DiffUtil.writeFile(filePath, newString, "\n")
-        Right(DiffUtil.renderCreatedResult(filePath))
+        Right(DiffUtil.renderCreatedResult(filePath, newString))
     else
       // --- Existing file edit branch ---
       if !Files.exists(filePath) then Left(ToolError(s"File does not exist: $filePath"))

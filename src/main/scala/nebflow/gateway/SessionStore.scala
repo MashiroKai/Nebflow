@@ -13,6 +13,7 @@ import nebflow.shared.{*, given}
 export nebflow.shared.SessionMeta
 
 import java.util.UUID
+import scala.concurrent.duration.*
 
 // ===== Per-session bridge binding config =====
 // Generic: each platform stores its config as a Json object.
@@ -56,6 +57,42 @@ object Folder:
   }
 end Folder
 
+object SessionStore:
+  /**
+   * Max chars of a tool's `content` field to persist in `.ui.json` (the frontend
+   * rendering history). Aligned with `Defaults.DefaultMaxResultSizeChars`. Tool
+   * content with a card marker (`___*_HTML___` / `___*_JSON___`) is NEVER
+   * truncated — the frontend needs the full JSON payload to render the card.
+   *
+   * The LLM-facing copy has its own independent truncation via `ToolResultGuard`,
+   * which persists the full output to `~/.nebflow/tool-results/`; this only
+   * affects the UI replay history.
+   */
+  private val MaxStoredToolContentChars: Int = nebflow.shared.Defaults.DefaultMaxResultSizeChars
+
+  /**
+   * `.ui.json` files larger than this on startup are shrunk in-place (background
+   * migration). Picked well above `MaxStoredToolContentChars` so a single large
+   * tool output triggers a shrink but normal sessions don't.
+   */
+  private val ShrinkThresholdBytes: Long = 512L * 1024L
+
+  /**
+   * Cap on the number of UiMessages retained per session in `.ui.json`. Once a
+   * session exceeds this, the oldest messages are dropped on append (only the
+   * newest `MaxStoredUiMessages` are kept). This bounds file size — and therefore
+   * the cold-read decode cost on session switch — without affecting the LLM
+   * (whose full history lives in `<id>.json`).
+   *
+   * Picked so the median session (~90 messages) is never trimmed, while the
+   * largest sessions (~1600 messages) shrink ~2x, cutting their ~100ms cold
+   * decode roughly in half. Users who scroll past the retained window see the
+   * existing "history end" indicator.
+   */
+  private val MaxStoredUiMessages: Int = 800
+
+end SessionStore
+
 class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.session")
 
@@ -71,6 +108,14 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   // Invalidated on save/append/delete and populated on first load.
   private val uiCacheRef: Ref[IO, Map[String, List[UiMessage]]] =
     Ref.unsafe[IO, Map[String, List[UiMessage]]](Map.empty)
+
+  // Debounced UI write tracking. Sessions whose cache diverged from disk but
+  // haven't been flushed yet. A single scheduled fiber drains this set on a
+  // delay so many rapid appends coalesce into one full-file rewrite.
+  // (Fix 3: reduces write amplification on active sessions.)
+  private val dirtyUiSessions: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
+  private val flushDelayMs: Long = 500L
 
   /** Optional hook — called with sessionId after any session data change. */
   private var sessionChangedHook: Option[String => IO[Unit]] = None
@@ -93,7 +138,56 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     } *> (
       if os.exists(indexFile) then loadFromIndex
       else migrateFromLegacy
+    ) <* (
+      // Fire-and-forget: don't block startup on the migration. The fiber runs
+      // once, shrinks bloated .ui.json files in-place, then exits. Subsequent
+      // startups no-op once files are under the threshold. Errors are logged
+      // inside the fiber so they never surface to the load caller.
+      shrinkOversizedUiFiles
+        .handleErrorWith(e => IO(logger.warn(s"UI file shrink failed: ${e.getMessage}")).void)
+        .start
+        .void
     )
+
+  /**
+   * One-time startup migration: walk every `.ui.json` larger than
+   * `ShrinkThresholdBytes` and rewrite it with oversized tool content capped
+   * by `sanitizeForStorage` AND trimmed to `MaxStoredUiMessages`. Card content
+   * is preserved. Safe to run anytime — it's idempotent (a sanitized+trimmed
+   * file stays small).
+   *
+   * Runs in the background after load. Logs a single summary line at INFO
+   * (total files shrunk + bytes saved); per-file detail only at DEBUG.
+   */
+  private def shrinkOversizedUiFiles: IO[Unit] =
+    IO.blocking {
+      os.list(sessionsDir).filter(p => p.last.endsWith(".ui.json")).toList
+    }.flatMap { files =>
+      files
+        .flatTraverse { f =>
+          IO.blocking(os.size(f)).flatMap { size =>
+            if size > SessionStore.ShrinkThresholdBytes then
+              val id = f.last.stripSuffix(".ui.json")
+              loadUiMessages(id)
+                .flatMap(msgs =>
+                  val reduced = trimUiMessages(sanitizeForStorage(msgs))
+                  saveUiMessages(id, reduced) *>
+                    IO.blocking(os.size(f)).map(newSize => List((f.last, size, newSize, msgs.length, reduced.length)))
+                )
+                .handleErrorWith(e => IO(logger.warn(s"Failed to shrink ${f.last}: ${e.getMessage}")).as(Nil))
+            else IO.pure(Nil)
+          }
+        }
+        .flatMap { results =>
+          val saved = results.filter { case (_, oldSz, newSz, _, _) => newSz < oldSz }
+          val bytesSaved = results.foldLeft(0L)((acc, r) => acc + math.max(0, r._2 - r._3))
+          if saved.nonEmpty then
+            logger.info(
+              s"Shrunk ${saved.size} oversized UI file(s), saved ${bytesSaved / 1024}KB total"
+            )
+          else IO.unit
+        }
+    }
 
   private def loadFromIndex: IO[Unit] =
     IO.blocking {
@@ -320,9 +414,12 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case Left(Some(err)) => IO.raiseError(new RuntimeException(err))
         case Right(oldId) =>
           activeMessagesRef.get.flatMap { currentMsgs =>
-            saveSessionMessages(oldId, currentMsgs) *> loadSessionMessages(id).flatMap { newMsgs =>
-              activeMessagesRef.set(newMsgs) *> saveIndex *> newMsgs.pure[IO]
-            }
+            // Flush any debounced UI writes before switching, so the outgoing
+            // session's .ui.json is durable on disk.
+            flushPendingUiWrites *>
+              saveSessionMessages(oldId, currentMsgs) *> loadSessionMessages(id).flatMap { newMsgs =>
+                activeMessagesRef.set(newMsgs) *> saveIndex *> newMsgs.pure[IO]
+              }
           }
       }
 
@@ -507,6 +604,17 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       }
       (activeId, updated, folders)
     } *> saveIndex
+
+  def setBypass(id: String, bypass: Boolean): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      val updated = sessions.map(s => if s.id == id then s.copy(bypass = bypass) else s)
+      (activeId, updated, folders)
+    } *> saveIndex
+
+  def getBypass(id: String): IO[Boolean] =
+    indexRef.get.map { case (_, sessions, _) =>
+      sessions.find(_.id == id).exists(_.bypass)
+    }
 
   // ===== Folder Management =====
 
@@ -762,9 +870,24 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           else Nil
         }.flatTap(msgs => uiCacheRef.update(_.updated(id, msgs))))
 
+  /** Update the in-memory cache only (no disk write). */
+  private def updateUiCache(id: String, msgs: List[UiMessage]): IO[Unit] =
+    uiCacheRef.update(_.updated(id, msgs))
+
+  /**
+   * Write messages to disk only (no cache change). Reads current cache via the
+   * provided list so callers control what gets persisted.
+   */
+  private def writeUiMessagesToDisk(id: String, msgs: List[UiMessage]): IO[Unit] =
+    IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true))
+
+  /**
+   * Eager cache update + immediate disk write. Used by paths that need the
+   * write durable right away (fork, cloud sync, startup migration). The
+   * debounced append path uses `updateUiCache` + `scheduleFlush` instead.
+   */
   private def saveUiMessages(id: String, msgs: List[UiMessage]): IO[Unit] =
-    IO.blocking(os.write.over(uiFile(id), msgs.asJson.noSpaces, createFolders = true)) *>
-      uiCacheRef.update(_.updated(id, msgs))
+    writeUiMessagesToDisk(id, msgs) *> updateUiCache(id, msgs)
 
   // Per-session semaphore to serialize appendUiMessages (prevents TOCTOU race)
   private val appendSemaphores: Ref[IO, Map[String, Semaphore[IO]]] =
@@ -775,17 +898,149 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       case Some(sem) => IO.pure(sem)
       case None => Semaphore[IO](1).flatTap(sem => appendSemaphores.update(_.updated(sessionId, sem))))
 
-  /** Append UI messages to a session. Creates the file if it doesn't exist. */
+  /**
+   * Cap oversized tool `content` before persisting to `.ui.json`.
+   *
+   * Card tool output (prefixed with `___*_HTML___` / `___*_JSON___`) is returned
+   * untouched — the frontend parses the trailing JSON as a whole and would render
+   * raw marker text if it were cut. All other tool content above
+   * `MaxStoredToolContentChars` is truncated to a preview with a tail marker so
+   * the user can see the output was shortened. Non-Tool messages pass through.
+   *
+   * The full output remains available to the LLM via `ToolResultGuard`'s own
+   * persistence (`~/.nebflow/tool-results/`); this only bounds the UI replay file.
+   */
+  private def sanitizeForStorage(msgs: List[UiMessage]): List[UiMessage] =
+    msgs.map {
+      case t: UiMessage.Tool =>
+        if isCardContent(t.content) || t.content.length <= SessionStore.MaxStoredToolContentChars then t
+        else
+          t.copy(content =
+            t.content.take(SessionStore.MaxStoredToolContentChars) +
+              s"\n\n[...truncated, original output ${t.content.length} chars]"
+          )
+      case other => other
+    }
+
+  /**
+   * A tool content string is "card content" if it begins with a card marker.
+   * Matches both the current `___CARD_HTML___` and the legacy `___*_JSON___`
+   * forms, mirroring the frontend detection in `cardRegistry.js`.
+   */
+  private def isCardContent(content: String): Boolean =
+    content.startsWith("___") && (content.contains("_HTML___") || content.contains("_JSON___"))
+
+  /**
+   * Append UI messages to a session. Creates the file if it doesn't exist.
+   *
+   * The cache is updated eagerly so `getHistoryPage` sees the new messages
+   * immediately (frontend reads go through the cache). The disk write is
+   * debounced via `scheduleFlush` so a burst of streaming events (toolEnd,
+   * done, system, ...) coalesces into a single full-file rewrite instead of
+   * one rewrite per event. Call `flushPendingUiWrites` at durability points
+   * (session switch, delete, shutdown) to force any buffered writes.
+   */
   def appendUiMessages(sessionId: String, msgs: List[UiMessage]): IO[Unit] =
     if msgs.isEmpty then IO.unit
     else
+      val sanitized = sanitizeForStorage(msgs)
       getAppendSemaphore(sessionId).flatMap { sem =>
         sem.permit.use { _ =>
+          // Eager cache update (keeps getHistoryPage coherent), then mark dirty
+          // for a debounced disk flush. Trim to the retention cap so the file
+          // (and thus the cold-read decode cost) stays bounded as a session
+          // grows long.
           loadUiMessages(sessionId).flatMap { existing =>
-            saveUiMessages(sessionId, existing ++ msgs)
+            val combined = trimUiMessages(existing ++ sanitized)
+            updateUiCache(sessionId, combined) *> markDirty(sessionId)
           }
         }
       }
+
+  /**
+   * Keep only the newest `MaxStoredUiMessages`. The LLM's full history is
+   * unaffected (it lives in `<id>.json`); this only bounds the UI replay file.
+   * Returning the same list when under the cap avoids an allocation.
+   */
+  private def trimUiMessages(msgs: List[UiMessage]): List[UiMessage] =
+    if msgs.length <= SessionStore.MaxStoredUiMessages then msgs
+    else msgs.takeRight(SessionStore.MaxStoredUiMessages)
+
+  /** Mark a session as having unwritten UI changes and ensure a flush is scheduled. */
+  private def markDirty(sessionId: String): IO[Unit] =
+    dirtyUiSessions.update(_ + sessionId) *> scheduleFlush
+
+  /**
+   * Scheduled flush fiber ref. Holds the single pending debounce timer so a
+   * burst of appends resets the timer instead of stacking many writes.
+   */
+  private val flushFiber: Ref[IO, Option[cats.effect.kernel.Fiber[IO, Throwable, Unit]]] =
+    Ref.unsafe[IO, Option[cats.effect.kernel.Fiber[IO, Throwable, Unit]]](None)
+
+  /**
+   * Schedule a debounced flush `flushDelayMs` from now. Each call cancels any
+   * pending timer and starts a fresh one, so a steady stream of appends keeps
+   * deferring the write until activity settles. The flush re-checks the dirty
+   * set when it fires and reschedules if more landed during the window — this
+   * closes the race between an append marking a session dirty and the timer
+   * draining it.
+   */
+  private def scheduleFlush: IO[Unit] =
+    flushFiber.get.flatMap {
+      case Some(prev) => prev.cancel *> startTimer
+      case None => startTimer
+    }
+
+  private def startTimer: IO[Unit] =
+    (IO.sleep(flushDelayMs.millis) *> runFlush()).start.flatMap(fiber => flushFiber.set(Some(fiber)))
+
+  /**
+   * Flush one dirty session to disk from its current cache value, then clear
+   * its dirty flag. Returns the sessionId flushed (or empty if none).
+   */
+  private def flushOneDirty: IO[Option[String]] =
+    dirtyUiSessions
+      .modify { set =>
+        set.headOption match
+          case Some(sid) => (set - sid, Some(sid))
+          case None => (set, None)
+      }
+      .flatMap {
+        case Some(sid) =>
+          uiCacheRef.get.flatMap(_.get(sid) match
+            case Some(msgs) => writeUiMessagesToDisk(sid, msgs).as(Some(sid))
+            case None => IO.pure(Some(sid)) // nothing cached, nothing to write
+          )
+        case None => IO.pure(None)
+      }
+
+  /**
+   * Recursively drain every dirty session to disk. Errors are logged and the
+   * drain continues so one bad session can't strand the others.
+   */
+  private def drainDirty: IO[Unit] =
+    flushOneDirty
+      .flatMap {
+        case Some(_) => drainDirty // keep draining until empty
+        case None => IO.unit
+      }
+      .handleErrorWith(e => IO(logger.warn(s"UI flush failed: ${e.getMessage}")))
+
+  /**
+   * Drain, clear the pending-fiber slot, then re-check: if new appends marked
+   * sessions dirty during the drain, schedule another flush rather than
+   * leaving them stranded.
+   */
+  private def runFlush(): IO[Unit] =
+    flushFiber.set(None) *> drainDirty *> dirtyUiSessions.get.flatMap { remaining =>
+      if remaining.nonEmpty then scheduleFlush else IO.unit
+    }
+
+  /**
+   * Drain all dirty sessions to disk. Call at durability points (session
+   * switch, delete, shutdown). Synchronous: returns after disk write.
+   */
+  def flushPendingUiWrites: IO[Unit] = drainDirty
 
   /**
    * Get a page of UI messages for a session.
@@ -829,6 +1084,6 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
     IO.blocking {
       val f = uiFile(sessionId)
       if os.exists(f) then os.remove(f)
-    } *> uiCacheRef.update(_ - sessionId)
+    } *> uiCacheRef.update(_ - sessionId) *> dirtyUiSessions.update(_ - sessionId)
 
 end SessionStore

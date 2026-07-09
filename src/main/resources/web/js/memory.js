@@ -7,8 +7,11 @@ import { t } from './i18n.js';
 /** Currently active tab scope. */
 let activeScope = 'folder';
 
-/** Cache per-scope content so tab switches don't re-fetch within same session. */
+/** Cache per-scope content so tab switches don't re-fetch within same modal open. */
 const cache = { user: null, agent: null, folder: null };
+
+/** The session whose memory is being viewed. Set when the modal opens. */
+let memorySessionId = null;
 
 /** Show the Memory button in header (both windows). */
 export function showMemoryButton() {
@@ -32,7 +35,16 @@ export function clearMemoryCache() {
 }
 
 /** Open the memory modal, fetch active tab content. */
-export function openMemoryEditor() {
+export function openMemoryEditor(event) {
+  // Determine which session's memory to show based on which button was clicked.
+  const btnId = event?.currentTarget?.id;
+  if (btnId === 'secondary-memory-btn' && state.secondarySessionId) {
+    memorySessionId = state.secondarySessionId;
+  } else {
+    memorySessionId = state.activeSessionId;
+  }
+  // Clear cache so switching between primary/secondary always fetches fresh data.
+  clearMemoryCache();
   document.getElementById('memory-modal').classList.add('show');
   document.getElementById('memory-overlay').classList.add('on');
   loadTab(activeScope);
@@ -61,7 +73,7 @@ function loadTab(scope) {
     input.value = cache[scope];
   } else {
     input.value = '';
-    sendWs({ type: 'getMemory', scope });
+    sendWs({ type: 'getMemory', scope, sessionId: memorySessionId });
   }
 }
 
@@ -77,7 +89,7 @@ export function handleMemoryData(data) {
 export function saveMemory() {
   const content = document.getElementById('memory-content-input').value;
   cache[activeScope] = content;
-  sendWs({ type: 'saveMemory', scope: activeScope, content });
+  sendWs({ type: 'saveMemory', scope: activeScope, content, sessionId: memorySessionId });
 }
 
 /** Initialize memory UI — bind button, tabs, modal buttons, overlay dismiss. */

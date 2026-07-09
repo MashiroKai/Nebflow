@@ -143,102 +143,14 @@ function deleteSession(sessionId) {
 
 // ---------- Agent Modal ----------
 
-let currentAgentFields = {};
+let currentAgentName = null;
 
-function buildConfigJson(name, desc, tools, mcpServers, baseFields) {
-  const obj = { ...baseFields };
-  obj.name = name;
-  obj.description = desc || '';
-  obj.tools = tools;
-  if (mcpServers && mcpServers.length > 0) obj.mcpServers = mcpServers;
-  else delete obj.mcpServers;
-  return JSON.stringify(obj, null, 2);
-}
-
-export function showAgentModal(name, configJson, systemMd) {
+export function showAgentModal(name, systemMd) {
+  currentAgentName = name;
   document.getElementById('agent-modal').classList.add('show');
   document.getElementById('agent-overlay').classList.add('on');
-  document.getElementById('agent-modal-title').textContent = name ? t('agent.editTitle', { name }) : t('agent.newTitle');
-  document.getElementById('agent-name-input').value = name || '';
-  document.getElementById('agent-name-input').disabled = !!name;
-
-  // Parse JSON config
-  let fields = {};
-  try { fields = JSON.parse(configJson || '{}'); } catch(e) {}
-  currentAgentFields = fields;
-  document.getElementById('agent-desc-input').value = fields.description || '';
+  document.getElementById('agent-modal-title').textContent = t('agent.editTitle', { name });
   document.getElementById('agent-system-input').value = systemMd || '';
-
-  const selectedTools = Array.isArray(fields.tools) ? fields.tools : [];
-  const isWildcard = selectedTools.length === 1 && selectedTools[0] === '*';
-  const selectedMcp = Array.isArray(fields.mcpServers) ? fields.mcpServers : [];
-
-  // Build tool checkboxes from tool library
-  const grid = document.getElementById('agent-tools-grid');
-  grid.innerHTML = '';
-  const allTools = state.agentAvailableTools || [];
-
-  if (allTools.length === 0) {
-    grid.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">' + t('agent.loadingTools') + '</div>';
-    return;
-  }
-
-  // All tools are configurable
-  if (allTools.length > 0) {
-    allTools.sort().forEach(tool => {
-      const label = document.createElement('label');
-      const checked = isWildcard || selectedTools.includes(tool);
-      label.className = 'agent-tool-check' + (checked ? ' checked' : '');
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.value = tool;
-      cb.checked = checked;
-      label.appendChild(cb);
-      label.appendChild(document.createTextNode(tool));
-      label.onclick = () => {
-        cb.checked = !cb.checked;
-        label.classList.toggle('checked', cb.checked);
-      };
-      grid.appendChild(label);
-    });
-  }
-
-  // MCP servers section
-  const mcpSection = document.getElementById('agent-mcp-grid');
-  if (mcpSection) {
-    mcpSection.innerHTML = '';
-    const mcpServers = state.mcpServers || [];
-    if (mcpServers.length === 0) {
-      mcpSection.innerHTML = '<div style="color:var(--color-frame-text-muted);font-size:12px;">' + t('agent.noMcp') + '</div>';
-    } else {
-      mcpServers.forEach(server => {
-        const id = server.id || server;
-        const globallyEnabled = server.enabled !== false;
-        const label = document.createElement('label');
-        const checked = selectedMcp.includes(id);
-        label.className = 'agent-tool-check' + (checked ? ' checked' : '');
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.value = id;
-        cb.checked = checked;
-        // Always allow toggling — per-agent MCP selection is independent of global enabled state
-        if (!globallyEnabled) label.style.opacity = '0.5';
-        label.appendChild(cb);
-        label.appendChild(document.createTextNode(id));
-        if (!globallyEnabled) {
-          const hint = document.createElement('span');
-          hint.textContent = t('agent.offline');
-          hint.style.cssText = 'font-size:10px;color:var(--color-frame-text-muted);margin-left:2px;';
-          label.appendChild(hint);
-        }
-        label.onclick = () => {
-          cb.checked = !cb.checked;
-          label.classList.toggle('checked', cb.checked);
-        };
-        mcpSection.appendChild(label);
-      });
-    }
-  }
 }
 
 export function hideAgentModal() {
@@ -274,9 +186,6 @@ export function initModals() {
     if (e.target === modalOverlay) hideModals();
   };
 
-  // New agent button
-  document.getElementById('new-agent-btn')?.addEventListener('click', () => showAgentModal(null, '', ''));
-
   // Agent modal cancel
   document.getElementById('agent-modal-cancel')?.addEventListener('click', hideAgentModal);
 
@@ -285,36 +194,12 @@ export function initModals() {
     if (e.target.id === 'agent-overlay') hideAgentModal();
   });
 
-  // Agent modal save
+  // Agent modal save — only edits system prompt
   document.getElementById('agent-modal-save')?.addEventListener('click', () => {
-    const name = document.getElementById('agent-name-input').value.trim();
-    const desc = document.getElementById('agent-desc-input').value.trim();
+    const name = currentAgentName;
     const systemMd = document.getElementById('agent-system-input').value;
     if (!name) return;
-
-    // Gather checked configurable tools (exclude auto-injected/disabled ones)
-    const tools = [];
-    const allConfigurable = document.querySelectorAll('#agent-tools-grid input[type=checkbox]:not(:disabled)');
-    allConfigurable.forEach(cb => {
-      if (cb.checked) tools.push(cb.value);
-    });
-
-    // Use wildcard if all configurable tools are checked
-    const allChecked = tools.length === allConfigurable.length && allConfigurable.length > 0;
-    const finalTools = allChecked ? ['*'] : tools;
-
-    // Gather checked MCP servers
-    const mcpServers = [];
-    const mcpGrid = document.getElementById('agent-mcp-grid');
-    if (mcpGrid) {
-      mcpGrid.querySelectorAll('input[type=checkbox]:checked').forEach(cb => {
-        mcpServers.push(cb.value);
-      });
-    }
-
-    const isNew = !document.getElementById('agent-name-input').disabled;
-    const configJson = buildConfigJson(name, desc, finalTools, mcpServers, isNew ? {} : currentAgentFields);
-    sendWs({type: isNew ? 'createAgent' : 'updateAgent', name, configJson, systemMd});
+    sendWs({type: 'updateAgentSystemPrompt', name, systemMd});
     hideAgentModal();
   });
 
