@@ -10,10 +10,14 @@ import scala.concurrent.duration.FiniteDuration
  *
  * Messages are offered to the queue. A fiber processes them one at a time
  * by applying the current Behavior. Cancellation is via fiber.cancel.
+ *
+ * System signals (death watch notifications) go through a separate queue
+ * so they don't get stuck behind regular messages.
  */
 final class LocalActorRef[Msg](
   val path: ActorPath,
   queue: cats.effect.std.Queue[IO, Msg],
+  val systemQueue: cats.effect.std.Queue[IO, SystemSignal],
   fiberPromise: Deferred[IO, Fiber[IO, Throwable, Unit]]
 ) extends ActorRef[Msg]:
 

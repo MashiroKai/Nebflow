@@ -267,7 +267,7 @@ $prompt"""
         subagentId
       )
       adapterRef <- system.spawn(
-        syncAdapter(subagentRef, agentName, resources, resultDeferred),
+        guardedAdapter(subagentRef, agentName, resources, resultDeferred, DelegateTimeout),
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned sync sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
@@ -275,25 +275,70 @@ $prompt"""
       result <- resultDeferred.get
     yield result
 
-  /** Sync adapter: completes the Deferred, then cleans up. */
-  private def syncAdapter(
+  /** Timeout for sync delegation — generous to allow LLM retries (including Mac sleep/wake recovery). */
+  private val DelegateTimeout: FiniteDuration = 30.minutes
+
+  /**
+   * Guarded adapter — ensures the parent ALWAYS gets a result, even if the
+   * sub-agent crashes, deadlocks, or the machine sleeps.
+   *
+   * Three-layer defense:
+   *   1. Normal completion: sub-agent sends Completed/Failed → complete Deferred
+   *   2. Death watch: sub-agent's Fiber terminates → onSignal(Terminated) → complete Deferred
+   *   3. Timeout: no response within DelegateTimeout → complete Deferred with timeout error
+   *
+   * Uses complete (first wins) so all three can fire safely without double-completion.
+   */
+  private def guardedAdapter(
     subagentRef: ActorRef[AgentCommand],
     agentName: String,
     resources: SharedResources,
-    resultDeferred: Deferred[IO, Either[ToolError, String]]
+    resultDeferred: Deferred[IO, Either[ToolError, String]],
+    timeout: FiniteDuration
   ): Behavior[AgentEvent] =
-    Behaviors.receiveMessage { (event: AgentEvent) =>
-      val result: Either[ToolError, String] = event match
-        case AgentEvent.Completed(_, messages) =>
-          val text = extractLastAssistantText(messages)
-          Right(if text.nonEmpty then text else "(sub-agent produced no text output)")
-        case AgentEvent.Failed(_, error) =>
-          Left(ToolError(s"Sub-agent '$agentName' failed: ${error.message}"))
+    Behaviors.setup { ctx =>
+      given system: ActorSystem = ctx.system
+      // Layer 2: watch sub-agent — get Terminated signal if it dies
+      // Layer 3: timeout timer — completes Deferred with error after timeout
+      ctx.watch(subagentRef) *>
+        ctx.forkTurn(
+          IO.sleep(timeout) *>
+            resultDeferred
+              .complete(Left(ToolError(s"Sub-agent '$agentName' timed out after ${timeout.toMinutes}m")))
+              .void *>
+            system.stop(subagentRef).handleErrorWith(_ => IO.unit)
+        ) *>
+        IO.pure(
+          // Layer 1: normal message handler
+          new Behavior[AgentEvent]:
+            def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+              val result: Either[ToolError, String] = event match
+                case AgentEvent.Completed(_, messages) =>
+                  val text = extractLastAssistantText(messages)
+                  Right(if text.nonEmpty then text else "(sub-agent produced no text output)")
+                case AgentEvent.Failed(_, error) =>
+                  Left(ToolError(s"Sub-agent '$agentName' failed: ${error.message}"))
 
-      (resultDeferred.complete(result).void *>
-        (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
-        IO.pure(Behaviors.stopped))
-        .handleErrorWith(_ => IO.pure(Behaviors.stopped))
+              (resultDeferred.complete(result).void *>
+                system.stop(subagentRef) *>
+                IO.pure(Behaviors.stopped[AgentEvent]))
+                  .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+
+            override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+              signal match
+                case SystemSignal.Terminated(_) =>
+                  (resultDeferred
+                    .complete(Left(ToolError(s"Sub-agent '$agentName' terminated unexpectedly")))
+                    .void *>
+                    IO.pure(Behaviors.stopped[AgentEvent]))
+                    .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+
+            override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
+              resultDeferred
+                .complete(Left(ToolError(s"Adapter for '$agentName' stopped unexpectedly")))
+                .void
+                .handleErrorWith(_ => IO.unit)
+        )
     }
 
   // ============================================================
