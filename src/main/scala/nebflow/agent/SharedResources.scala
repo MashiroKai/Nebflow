@@ -47,6 +47,5 @@ case class SharedResources(
   telemetry: Option[TelemetryReporter] = None,
   neblinkService: Option[NeblinkService] = None,
   dropboxService: Option[DropboxService] = None,
-  dreamSchedulerRef: Option[DreamScheduler] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None
 )

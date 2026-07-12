@@ -76,6 +76,7 @@ class WebSocketRoutes(
                 }
             readTracker <- nebflow.core.tools.ReadTracker.create
             fileHistory <- nebflow.core.tools.FileHistory.create()
+            liveFileTracker <- nebflow.core.tools.LiveFileTracker.create
             modelOverrides <- sharedResources.sessionModelOverrides.get
             contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
             // Resolve folder-level projectRoot and inherited rules
@@ -117,6 +118,7 @@ class WebSocketRoutes(
                   initialMessages = history,
                   readTracker = Some(readTracker),
                   fileHistory = Some(fileHistory),
+                  liveFileTracker = Some(liveFileTracker),
                   contextWindow = contextWindow,
                   projectRoot = effectiveProjectRoot,
                   rulesMd = resolvedRules,
@@ -134,6 +136,7 @@ class WebSocketRoutes(
                   initialMessages = history,
                   readTracker = Some(readTracker),
                   fileHistory = Some(fileHistory),
+                  liveFileTracker = Some(liveFileTracker),
                   contextWindow = contextWindow,
                   projectRoot = effectiveProjectRoot,
                   rulesMd = resolvedRules,
