@@ -33,7 +33,7 @@ object ActorSystem:
 
   /** Create an actor system from a given device name, as a Resource. */
   def resource(deviceName: String): cats.effect.Resource[IO, ActorSystem] =
-    cats.effect.Resource.eval(IO(apply(deviceName)))
+    cats.effect.Resource.make(IO(apply(deviceName)))(_.stopAll)
 
 end ActorSystem
 
