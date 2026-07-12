@@ -68,6 +68,8 @@ object AgentCommand:
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None
   ) extends AgentCommand
 
+  case class Retry(reason: String) extends AgentCommand
+
   case class AskQuestion(question: String, sessionId: String) extends AgentCommand
 
   case class SkillActivate(
@@ -400,6 +402,12 @@ case class InteractionState(
   pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None
 )
 
+/** Tracks what was last dispatched (LLM call or tool execution) for Retry. */
+case class LastDispatch(
+  isToolExecution: Boolean,
+  llmResult: Option[ConsumeResult] = None
+)
+
 case class ExecutionContext(
   messages: List[Message] = Nil,
   status: AgentStatus = AgentStatus.Idle,
@@ -408,7 +416,8 @@ case class ExecutionContext(
   interaction: Option[InteractionState] = None,
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
   pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
-  emptyResponseRetries: Int = 0
+  emptyResponseRetries: Int = 0,
+  lastDispatch: Option[LastDispatch] = None
 )
 
 object ExecutionContext:
@@ -541,6 +550,11 @@ extension (s: AgentState)
 
   def withInteraction(interaction: Option[InteractionState]): AgentState =
     s.copy(execution = s.execution.copy(interaction = interaction))
+
+  def withLastDispatch(d: Option[LastDispatch]): AgentState =
+    s.copy(execution = s.execution.copy(lastDispatch = d))
+
+  def lastDispatch: Option[LastDispatch] = s.execution.lastDispatch
 
   def withPendingAskUser(d: Option[cats.effect.Deferred[IO, List[String]]]): AgentState =
     s.copy(execution =

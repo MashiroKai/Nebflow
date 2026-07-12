@@ -537,6 +537,23 @@ object AgentActor extends AgentCore with AgentSession:
           val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
 
+      // --- Retry: cancel current work, re-dispatch from last checkpoint ---
+      case AgentCommand.Retry(reason) =>
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
+        ctx.cancelCurrentTurn() *> (state.lastDispatch match
+            case Some(LastDispatch(false, _)) =>
+              // Re-dispatch LLM call with same messages
+              pipeLlmCall(agentDef, resources, depth, parentRef, state, None,
+                (ad, r, d, p, s) => processing(ad, r, d, p, s))
+            case Some(LastDispatch(true, Some(cr))) =>
+              // Re-dispatch tool execution with same LLM result
+              pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None,
+                (ad, r, d, p, s) => processing(ad, r, d, p, s))
+            case _ =>
+              // No checkpoint — go to idle
+              IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt))
+        )
+
       // --- Stop ---
       case AgentCommand.Stop(_) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
