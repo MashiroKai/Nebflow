@@ -271,7 +271,8 @@ private[agent] trait AgentCore:
             IO.delay(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}"))
               .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
           })
-        yield processing(agentDef, resources, depth, parentRef, stateForLlm)
+        yield processing(agentDef, resources, depth, parentRef,
+          stateForLlm.withLastDispatch(Some(LastDispatch(isToolExecution = false))))
 
   protected def pipeToolExecutions(
     agentDef: AgentDef,
@@ -391,6 +392,7 @@ private[agent] trait AgentCore:
       })
     yield
       val updatedState = state.copy(execution = state.execution.copy(turnIdx = nextTurnIdx))
+        .withLastDispatch(Some(LastDispatch(isToolExecution = true, Some(result))))
       processing(agentDef, resources, depth, parentRef, updatedState)
 
   end pipeToolExecutions

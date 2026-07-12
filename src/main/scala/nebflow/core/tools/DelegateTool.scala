@@ -283,7 +283,6 @@ $prompt"""
 
   /** Backoff between retry attempts (gives sub-agent time to reset). */
   private val RetryBackoff: FiniteDuration = 3.seconds
-
   /**
    * Guarded adapter — ensures the parent ALWAYS gets a result, with actor-level
    * state recovery retry on timeout.
@@ -291,20 +290,12 @@ $prompt"""
    * Four-layer defense:
    *   1. Normal completion: sub-agent sends Completed/Failed → complete Deferred
    *   2. Death watch: sub-agent's Fiber terminates → complete Deferred with error
-   *   3. Timeout + retry: no response within timeout → send Interrupt to reset
-   *      sub-agent to idle (preserving conversation history), then re-send
-   *      UserInput with retry context. Sub-agent uses its preserved messages
-   *      to try a different approach.
+   *   3. Timeout + retry: no response within timeout → send Retry message
+   *      Sub-agent cancels current work and re-dispatches from last checkpoint
+   *      (LLM call or tool execution), preserving full conversation history.
    *   4. Retry exhausted: complete Deferred with timeout error, stop sub-agent
    *
    * Uses complete (first wins) so all layers can fire safely.
-   *
-   * Retry flow (actor-level state recovery):
-   *   timeout fires → sub-agent still alive?
-   *     ├─ yes: send Interrupt (resets to idle, keeps messages)
-   *     │       send UserInput(retryPrompt) (new turn with full history)
-   *     │       restart timer for next attempt
-   *     └─ no:  Terminated signal already received → Deferred already completed
    */
   private def guardedAdapter(
     subagentRef: ActorRef[AgentCommand],
@@ -318,14 +309,6 @@ $prompt"""
     Behaviors.setup { ctx =>
       given system: ActorSystem = ctx.system
 
-      def retryPrompt(attempt: Int): String =
-        s"""<system-reminder>
-Your previous attempt (attempt #$attempt) timed out after ${timeout.toMinutes} minutes.
-Review what you've accomplished so far and try a different approach. Do not repeat the same steps that led to the timeout.
-</system-reminder>
-
-$originalPrompt"""
-
       /** Recursive timeout fiber: on timeout, either retry or give up. */
       def timeoutLoop(retriesLeft: Int): IO[Unit] =
         IO.sleep(timeout) *>
@@ -335,12 +318,10 @@ $originalPrompt"""
             else if retriesLeft > 0 then
               val attempt = maxRetries - retriesLeft + 1
               logger.info(s"Sub-agent '$agentName' timeout, retrying (attempt $attempt/$maxRetries)") *>
-                // Reset sub-agent to idle (preserves conversation history)
-                (subagentRef ! AgentCommand.Interrupt()) *>
-                IO.sleep(RetryBackoff) *>
-                // Re-send task with retry context — sub-agent sees full history
-                (subagentRef ! AgentCommand.UserInput(retryPrompt(attempt), Some(ctx.self))) *>
-                // Restart timer for the retry attempt
+                // Send Retry — sub-agent cancels current work and re-dispatches
+                // from last checkpoint (LLM call or tool execution). Conversation
+                // history is preserved; no new UserInput needed.
+                (subagentRef ! AgentCommand.Retry(s"timeout-attempt-$attempt")) *>
                 timeoutLoop(retriesLeft - 1)
             else
               logger.warn(s"Sub-agent '$agentName' timed out, no retries left") *>
