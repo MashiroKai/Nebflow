@@ -1,6 +1,7 @@
 package nebflow.actor
 
 import cats.effect.{Fiber, IO, Ref}
+import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 
 import scala.concurrent.duration.FiniteDuration
@@ -28,16 +29,25 @@ trait ActorContext[Msg]:
   /**
    * Fork an IO computation as a tracked turn fiber.
    *
+   * Multiple forkTurn calls can be active simultaneously — each is tracked
+   * independently by a unique key. This prevents side-effect forkTurns
+   * (e.g. wsSend, deferred.complete) from overwriting the main turn's fiber
+   * in the tracking slot.
+   *
    * The fiber is tracked so that [[cancelCurrentTurn]] can cancel it.
    * When the actor stops (returns [[Behaviors.stopped]] or system.stop),
    * any in-flight turn fiber is automatically cancelled.
+   *
+   * Errors in the IO are caught and logged — the fiber never fails silently.
+   * If the IO needs to notify the actor of failure (e.g. LlmFailed), it should
+   * include its own handleErrorWith that sends a message to [[self]].
    *
    * The Actor returns immediately — it never blocks on this IO.
    * The IO should send a message back to [[self]] when done.
    */
   def forkTurn(io: IO[Unit]): IO[Unit]
 
-  /** Cancel the currently running turn fiber (if any). */
+  /** Cancel all currently running turn fibers (if any). */
   def cancelCurrentTurn(): IO[Unit]
 
   /** Spawn a child actor with lifecycle bound to this actor. */
@@ -50,19 +60,23 @@ final class LocalActorContext[Msg](
   val self: ActorRef[Msg],
   val system: ActorSystem,
   val log: NebflowLogger,
-  private val currentTurnRef: Ref[IO, Option[Fiber[IO, Throwable, Unit]]],
+  private val activeTurnFibers: Ref[IO, Map[String, Fiber[IO, Throwable, Unit]]],
   private val childrenRef: Ref[IO, List[ActorRef[?]]]
 ) extends ActorContext[Msg]:
 
   def forkTurn(io: IO[Unit]): IO[Unit] =
-    io.guarantee(currentTurnRef.set(None)).start.flatMap { fiber =>
-      currentTurnRef.set(Some(fiber))
-    }
+    for
+      key <- IO(java.util.UUID.randomUUID().toString)
+      safeIo = io
+        .handleErrorWith(err => log.error(s"forkTurn IO failed: ${err.getMessage}").void)
+        .guarantee(activeTurnFibers.update(_ - key))
+      fiber <- safeIo.start
+      _ <- activeTurnFibers.update(_ + (key -> fiber))
+    yield ()
 
   def cancelCurrentTurn(): IO[Unit] =
-    currentTurnRef.get.flatMap {
-      case Some(fiber) => fiber.cancel *> currentTurnRef.set(None)
-      case None => IO.unit
+    activeTurnFibers.get.flatMap { fibers =>
+      fibers.values.toList.traverse_(_.cancel) *> activeTurnFibers.set(Map.empty)
     }
 
   def spawn[ChildMsg](behavior: Behavior[ChildMsg], name: String): IO[ActorRef[ChildMsg]] =
