@@ -168,6 +168,13 @@
   padding: 0 4px;
 }
 
+/* Copy button — reuse .code-copy-btn from chat.css, only adjust position */
+.dropbox-msg { position: relative; }
+.dropbox-msg .code-copy-btn { top: -6px; }
+.dropbox-msg.out .code-copy-btn { right: -4px; }
+.dropbox-msg.in  .code-copy-btn { left: -4px; }
+.dropbox-msg:hover .code-copy-btn { opacity: 1; }
+
 /* File card */
 .dropbox-file-card {
   padding: 8px 12px;
