@@ -267,7 +267,7 @@ $prompt"""
         subagentId
       )
       adapterRef <- system.spawn(
-        guardedAdapter(subagentRef, agentName, resources, resultDeferred, DelegateTimeout),
+        guardedAdapter(subagentRef, agentName, resources, resultDeferred, DelegateTimeout, prompt, MaxDelegateRetries),
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned sync sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
@@ -278,36 +278,82 @@ $prompt"""
   /** Timeout for sync delegation — generous to allow LLM retries (including Mac sleep/wake recovery). */
   private val DelegateTimeout: FiniteDuration = 30.minutes
 
+  /** Max retry attempts for sync delegation before giving up. */
+  private val MaxDelegateRetries: Int = 2
+
+  /** Backoff between retry attempts (gives sub-agent time to reset). */
+  private val RetryBackoff: FiniteDuration = 3.seconds
+
   /**
-   * Guarded adapter — ensures the parent ALWAYS gets a result, even if the
-   * sub-agent crashes, deadlocks, or the machine sleeps.
+   * Guarded adapter — ensures the parent ALWAYS gets a result, with actor-level
+   * state recovery retry on timeout.
    *
-   * Three-layer defense:
+   * Four-layer defense:
    *   1. Normal completion: sub-agent sends Completed/Failed → complete Deferred
-   *   2. Death watch: sub-agent's Fiber terminates → onSignal(Terminated) → complete Deferred
-   *   3. Timeout: no response within DelegateTimeout → complete Deferred with timeout error
+   *   2. Death watch: sub-agent's Fiber terminates → complete Deferred with error
+   *   3. Timeout + retry: no response within timeout → send Interrupt to reset
+   *      sub-agent to idle (preserving conversation history), then re-send
+   *      UserInput with retry context. Sub-agent uses its preserved messages
+   *      to try a different approach.
+   *   4. Retry exhausted: complete Deferred with timeout error, stop sub-agent
    *
-   * Uses complete (first wins) so all three can fire safely without double-completion.
+   * Uses complete (first wins) so all layers can fire safely.
+   *
+   * Retry flow (actor-level state recovery):
+   *   timeout fires → sub-agent still alive?
+   *     ├─ yes: send Interrupt (resets to idle, keeps messages)
+   *     │       send UserInput(retryPrompt) (new turn with full history)
+   *     │       restart timer for next attempt
+   *     └─ no:  Terminated signal already received → Deferred already completed
    */
   private def guardedAdapter(
     subagentRef: ActorRef[AgentCommand],
     agentName: String,
     resources: SharedResources,
     resultDeferred: Deferred[IO, Either[ToolError, String]],
-    timeout: FiniteDuration
+    timeout: FiniteDuration,
+    originalPrompt: String,
+    maxRetries: Int
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       given system: ActorSystem = ctx.system
-      // Layer 2: watch sub-agent — get Terminated signal if it dies
-      // Layer 3: timeout timer — completes Deferred with error after timeout
+
+      def retryPrompt(attempt: Int): String =
+        s"""<system-reminder>
+Your previous attempt (attempt #$attempt) timed out after ${timeout.toMinutes} minutes.
+Review what you've accomplished so far and try a different approach. Do not repeat the same steps that led to the timeout.
+</system-reminder>
+
+$originalPrompt"""
+
+      /** Recursive timeout fiber: on timeout, either retry or give up. */
+      def timeoutLoop(retriesLeft: Int): IO[Unit] =
+        IO.sleep(timeout) *>
+          resultDeferred.complete(Left(ToolError(""))).flatMap { alreadyCompleted =>
+            if alreadyCompleted then
+              IO.unit // Deferred already completed by normal path or death watch
+            else if retriesLeft > 0 then
+              val attempt = maxRetries - retriesLeft + 1
+              logger.info(s"Sub-agent '$agentName' timeout, retrying (attempt $attempt/$maxRetries)") *>
+                // Reset sub-agent to idle (preserves conversation history)
+                (subagentRef ! AgentCommand.Interrupt()) *>
+                IO.sleep(RetryBackoff) *>
+                // Re-send task with retry context — sub-agent sees full history
+                (subagentRef ! AgentCommand.UserInput(retryPrompt(attempt), Some(ctx.self))) *>
+                // Restart timer for the retry attempt
+                timeoutLoop(retriesLeft - 1)
+            else
+              logger.warn(s"Sub-agent '$agentName' timed out, no retries left") *>
+                resultDeferred
+                  .complete(Left(ToolError(
+                    s"Sub-agent '$agentName' timed out after ${timeout.toMinutes}m ($maxRetries retries exhausted)"
+                  )))
+                  .void *>
+                system.stop(subagentRef).handleErrorWith(_ => IO.unit)
+          }
+
       ctx.watch(subagentRef) *>
-        ctx.forkTurn(
-          IO.sleep(timeout) *>
-            resultDeferred
-              .complete(Left(ToolError(s"Sub-agent '$agentName' timed out after ${timeout.toMinutes}m")))
-              .void *>
-            system.stop(subagentRef).handleErrorWith(_ => IO.unit)
-        ) *>
+        ctx.forkTurn(timeoutLoop(maxRetries)) *>
         IO.pure(
           // Layer 1: normal message handler
           new Behavior[AgentEvent]:
@@ -328,7 +374,7 @@ $prompt"""
               signal match
                 case SystemSignal.Terminated(_) =>
                   (resultDeferred
-                    .complete(Left(ToolError(s"Sub-agent '$agentName' terminated unexpectedly")))
+                    .complete(Left(ToolError(s"Sub-agent '$agentName' terminated unexpectedly (crashed)")))
                     .void *>
                     IO.pure(Behaviors.stopped[AgentEvent]))
                     .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
@@ -396,7 +442,8 @@ You will be notified when it completes via a system message.
 Do NOT duplicate this agent's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
     )
 
-  /** Background adapter: forwards result to parent via ExternalEvent, then cleans up. */
+  /** Background adapter: forwards result to parent via ExternalEvent, then cleans up.
+    * Watches sub-agent for crashes — notifies parent if sub-agent dies unexpectedly. */
   private def backgroundAdapter(
     subagentRef: ActorRef[AgentCommand],
     parentRef: Option[ActorRef[AgentCommand]],
@@ -405,30 +452,39 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     subagentId: String,
     resources: SharedResources
   ): Behavior[AgentEvent] =
-    Behaviors.receiveMessage { (event: AgentEvent) =>
-      val (eventType, payload) = event match
-        case AgentEvent.Completed(_, messages) =>
-          val text = extractLastAssistantText(messages)
-          if text.nonEmpty then ("completed", s"[Sub-agent completed] \"$description\":\n$text")
-          else ("completed", s"[Sub-agent completed] \"$description\" (no text output)")
-        case AgentEvent.Failed(_, error) =>
-          ("failed", s"[Sub-agent failed] \"$description\": ${error.message}")
+    Behaviors.setup { ctx =>
+      ctx.watch(subagentRef)
 
-      val notifyParent = parentRef match
-        case Some(ref) =>
-          ref ! AgentCommand.ExternalEvent(
-            source = "delegate",
-            eventType = eventType,
-            payload = payload,
-            metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
-            correlationId = Some(subagentId)
-          )
-        case None => IO.unit
+      def notifyParentAndStop(eventType: String, payload: String): IO[Behavior[AgentEvent]] =
+        val notify = parentRef match
+          case Some(ref) =>
+            ref ! AgentCommand.ExternalEvent(
+              source = "delegate", eventType = eventType, payload = payload,
+              metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
+              correlationId = Some(subagentId)
+            )
+          case None => IO.unit
+        (notify *> (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
+          IO.pure(Behaviors.stopped[AgentEvent]))
+          .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
 
-      (notifyParent *>
-        (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
-        IO.pure(Behaviors.stopped))
-        .handleErrorWith(_ => IO.pure(Behaviors.stopped))
+      IO.pure(
+        new Behavior[AgentEvent]:
+          def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+            val (eventType, payload) = event match
+              case AgentEvent.Completed(_, messages) =>
+                val text = extractLastAssistantText(messages)
+                if text.nonEmpty then ("completed", s"[Sub-agent completed] \"$description\":\n$text")
+                else ("completed", s"[Sub-agent completed] \"$description\" (no text output)")
+              case AgentEvent.Failed(_, error) =>
+                ("failed", s"[Sub-agent failed] \"$description\": ${error.message}")
+            notifyParentAndStop(eventType, payload)
+
+          override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+            signal match
+              case SystemSignal.Terminated(_) =>
+                notifyParentAndStop("failed", s"[Sub-agent crashed] \"$description\": terminated unexpectedly")
+      )
     }
 
   // ============================================================
@@ -490,7 +546,8 @@ The sub-agent will stay alive after completing this task. You can send follow-up
 You will be notified when the initial task completes."""
     )
 
-  /** Persistent adapter: forwards completion to parent but does NOT stop the sub-agent. */
+  /** Persistent adapter: forwards completion to parent but does NOT stop the sub-agent.
+    * Watches sub-agent for crashes — notifies parent if persistent session dies. */
   private def persistentAdapter(
     subagentRef: ActorRef[AgentCommand],
     parentRef: Option[ActorRef[AgentCommand]],
@@ -499,32 +556,44 @@ You will be notified when the initial task completes."""
     subagentId: String,
     address: String
   ): Behavior[AgentEvent] =
-    Behaviors.receiveMessage { (event: AgentEvent) =>
-      val (eventType, payload) = event match
-        case AgentEvent.Completed(_, messages) =>
-          val text = extractLastAssistantText(messages)
-          if text.nonEmpty then ("completed", s"[Session update] \"$description\":\n$text")
-          else ("completed", s"[Session update] \"$description\" (task complete, awaiting instructions)")
-        case AgentEvent.Failed(_, error) =>
-          ("failed", s"[Session error] \"$description\": ${error.message}")
+    Behaviors.setup { ctx =>
+      ctx.watch(subagentRef)
 
-      val actions = parentRef match
-        case Some(ref) =>
-          (ref ! AgentCommand.ExternalEvent(
-            source = address,
-            eventType = eventType,
-            payload = payload,
-            metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
-            correlationId = Some(subagentId)
-          )) *> (ref ! AgentCommand.SessionUpdate(
-            address,
-            if eventType == "completed" then "idle (awaiting instructions)" else "failed"
-          ))
-        case None => IO.unit
+      def notifyParentAndStop(eventType: String, payload: String, sessionStatus: String): IO[Behavior[AgentEvent]] =
+        val actions = parentRef match
+          case Some(ref) =>
+            (ref ! AgentCommand.ExternalEvent(
+              source = address, eventType = eventType, payload = payload,
+              metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
+              correlationId = Some(subagentId)
+            )) *> (ref ! AgentCommand.SessionUpdate(address, sessionStatus))
+          case None => IO.unit
+        // Adapter stops itself; sub-agent stays alive for future Mail messages
+        // (unless Terminated — in that case sub-agent is already dead)
+        (actions *> IO.pure(Behaviors.stopped[AgentEvent]))
+          .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
 
-      // Adapter stops itself; sub-agent stays alive for future MailAgent messages
-      (actions *> IO.pure(Behaviors.stopped))
-        .handleErrorWith(_ => IO.pure(Behaviors.stopped))
+      IO.pure(
+        new Behavior[AgentEvent]:
+          def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+            val (eventType, payload, sessionStatus) = event match
+              case AgentEvent.Completed(_, messages) =>
+                val text = extractLastAssistantText(messages)
+                val p = if text.nonEmpty then s"[Session update] \"$description\":\n$text"
+                        else s"[Session update] \"$description\" (task complete, awaiting instructions)"
+                ("completed", p, "idle (awaiting instructions)")
+              case AgentEvent.Failed(_, error) =>
+                ("failed", s"[Session error] \"$description\": ${error.message}", "failed")
+            notifyParentAndStop(eventType, payload, sessionStatus)
+
+          override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+            signal match
+              case SystemSignal.Terminated(_) =>
+                // Persistent session died — notify parent, adapter stops
+                notifyParentAndStop("failed",
+                  s"[Session crashed] \"$description\": persistent session terminated unexpectedly",
+                  "crashed")
+      )
     }
 
   /** Extract the last assistant message text from a list of messages. */
