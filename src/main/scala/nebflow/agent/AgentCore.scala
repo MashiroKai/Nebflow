@@ -214,15 +214,25 @@ private[agent] trait AgentCore:
           modelDescs <- if isCompactTurn then IO.pure(Nil) else resources.providerRegistry.getAllModelsDetailed()
           freshTools =
             if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
+          // Memory auto-read: inject synthetic Read(live=true) for memory files
+          memoryMsgs = MemoryAutoRead.buildMessages(freshDef.name, stateForLlm.folderId, stateForLlm.sessionId)
+          _ <- if newLifecycle.isDefined then
+            stateForLlm.liveFileTracker.traverse_(t =>
+              MemoryAutoRead.register(t, freshDef.name, stateForLlm.folderId, stateForLlm.sessionId)
+            )
+          else IO.unit
+          // Live file patching: update tool_result content for changed live files
+          baseMessages = memoryMsgs ++ stateForLlm.messages
+          patchedMessages <- stateForLlm.liveFileTracker
+            .fold(IO.pure(baseMessages))(_.patchMessages(baseMessages))
           systemStable = baseSystemStable +
-            (if turnCtx.memoryBlock.nonEmpty then s"\n\n${turnCtx.memoryBlock}" else "") +
             stateForLlm.language
               .map(l =>
                 s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
               )
               .getOrElse("") + formatAgentSessions(stateForLlm.agentSessions)
           request = LlmRequest(
-            messages = stateForLlm.messages ++ dynamicMsg,
+            messages = patchedMessages ++ dynamicMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
@@ -321,13 +331,13 @@ private[agent] trait AgentCore:
           HookContext(sessionId = state.sessionId, projectRoot = effectiveProjectRoot, cwd = effectiveProjectRoot),
         folderId = state.folderId,
         mailboxAddress = state.session.sessionId,
-        dreamSchedulerRef = resources.dreamSchedulerRef,
         sharedResources = Some(resources),
         actorSystem = Some(ctx.system),
         messages = state.messages
       )
       freshResults <- filteredCalls.parTraverse { call =>
         val skipStreaming = call.name == "AskUserQuestion"
+        val callCtx = toolCtx.copy(toolCallId = call.id)
         (if !skipStreaming then
            emitStreamIO(
              state.wsSend,
@@ -336,8 +346,8 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          (if ToolReversibility.isReversible(call.name, call.input) || state.bypass then executeTool(call, toolCtx)
-           else askUserPermission(call, state, permissionDeferredRef, toolCtx))
+          (if ToolReversibility.isReversible(call.name, call.input) || state.bypass then executeTool(call, callCtx)
+           else askUserPermission(call, state, permissionDeferredRef, callCtx))
             .map(r => (call, r))
             .attempt
             .map {

@@ -362,7 +362,6 @@ case class TurnContext(
   systemPrefix: String,
   projectRoot: Option[String],
   rulesMd: Option[String],
-  memoryBlock: String,
   thinkingConfig: nebflow.llm.ThinkingConfig,
   branchChange: Option[SystemReminder] = None,
   currentBranch: Option[String] = None
@@ -371,7 +370,6 @@ case class TurnContext(
 case class LifecycleContext(
   systemPrefix: String,
   agentDef: AgentDef,
-  memoryBlock: String,
   rulesMd: Option[String],
   projectRoot: Option[String]
 )
@@ -384,6 +382,7 @@ case class SessionContext(
   depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None,
   fileHistory: Option[nebflow.core.tools.FileHistory] = None,
+  liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
   askMode: Option[String] = None,
   language: Option[String] = None,
@@ -471,6 +470,7 @@ object AgentState:
     wsSend: Json => IO[Unit] = _ => IO.unit,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
+    liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
     recentMessageIds: List[String] = Nil,
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
@@ -490,6 +490,7 @@ object AgentState:
         depth = depth,
         readTracker = readTracker,
         fileHistory = fileHistory,
+        liveFileTracker = liveFileTracker,
         contextWindow = contextWindow,
         folderId = folderId,
         projectRoot = projectRoot,
@@ -526,6 +527,7 @@ extension (s: AgentState)
     s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
   def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
+  def liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = s.session.liveFileTracker
   def contextWindow: Int = s.session.contextWindow
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
