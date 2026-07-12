@@ -265,7 +265,7 @@ object JarvisActor extends AgentCore with AgentSession:
     state: AgentState,
     pending: List[AgentCommand] = Nil
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage:
+    val base = Behaviors.receiveMessage[AgentCommand]:
 
       case UpdateLifecycle(lc) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withLifecycle(lc), pending))
@@ -503,6 +503,14 @@ object JarvisActor extends AgentCore with AgentSession:
 
       case _ =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+
+    new Behavior[AgentCommand]:
+      def receive(c: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
+        base.receive(c, msg)
+      override def onError(c: ActorContext[AgentCommand], err: Throwable): IO[Behavior[AgentCommand]] =
+        c.log.error(s"Jarvis error in processing, returning to idle: ${err.getMessage}")
+          .as(idle(agentDef, resources, depth, parentRef,
+            state.withStatus(AgentStatus.Idle).withInteraction(None)))
   end processing
 
   // ============================================================
@@ -517,7 +525,7 @@ object JarvisActor extends AgentCore with AgentSession:
     state: AgentState,
     pending: List[AgentCommand] = Nil
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage:
+    val base = Behaviors.receiveMessage[AgentCommand]:
 
       case LlmComplete(result, _, turnId) =>
         if turnId != state.currentTurnId then
@@ -569,6 +577,14 @@ object JarvisActor extends AgentCore with AgentSession:
 
       case _ =>
         IO.pure(memoryConsolidating(agentDef, resources, depth, parentRef, state, pending))
+
+    new Behavior[AgentCommand]:
+      def receive(c: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
+        base.receive(c, msg)
+      override def onError(c: ActorContext[AgentCommand], err: Throwable): IO[Behavior[AgentCommand]] =
+        c.log.error(s"Jarvis error in memoryConsolidating, returning to idle: ${err.getMessage}")
+          .as(idle(agentDef, resources, depth, parentRef,
+            state.withStatus(AgentStatus.Idle).withInteraction(None)))
   end memoryConsolidating
 
   // ============================================================
