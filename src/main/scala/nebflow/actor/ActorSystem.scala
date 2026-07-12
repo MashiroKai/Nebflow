@@ -53,11 +53,11 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
     val ctxLog = NebflowLogger.forName(s"nebflow.actor.$name")
     for
       queue <- Queue.unbounded[IO, Msg]
-      turnRef <- Ref.of[IO, Option[Fiber[IO, Throwable, Unit]]](None)
+      turnFibersRef <- Ref.of[IO, Map[String, Fiber[IO, Throwable, Unit]]](Map.empty)
       childrenRef <- Ref.of[IO, List[ActorRef[?]]](Nil)
       fiberPromise <- cats.effect.Deferred[IO, Fiber[IO, Throwable, Unit]]
       ref = new LocalActorRef[Msg](path, queue, fiberPromise)
-      ctx = new LocalActorContext[Msg](ref, this, ctxLog, turnRef, childrenRef)
+      ctx = new LocalActorContext[Msg](ref, this, ctxLog, turnFibersRef, childrenRef)
       initBehavior <- behavior.onStart(ctx)
       behaviorRef <- Ref.of[IO, Behavior[Msg]](initBehavior)
       fiber <- actorLoop(path, ctx, queue, behaviorRef, ttl, childrenRef).start
