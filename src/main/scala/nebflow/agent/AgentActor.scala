@@ -344,7 +344,7 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     pending: List[AgentCommand] = Nil
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage:
+    val base = Behaviors.receiveMessage[AgentCommand]:
 
       case AgentCommand.UpdateLifecycle(lc) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withLifecycle(lc), pending))
@@ -876,6 +876,15 @@ object AgentActor extends AgentCore with AgentSession:
 
       case _ =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+
+    // Supervision: on unhandled error, return to idle with safe state
+    new Behavior[AgentCommand]:
+      def receive(c: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
+        base.receive(c, msg)
+      override def onError(c: ActorContext[AgentCommand], err: Throwable): IO[Behavior[AgentCommand]] =
+        c.log.error(s"Agent error in processing, returning to idle: ${err.getMessage}")
+          .as(idle(agentDef, resources, depth, parentRef,
+            state.withStatus(AgentStatus.Idle).withInteraction(None)))
   end processing
   // ============================================================
   // LlmComplete branch selector
