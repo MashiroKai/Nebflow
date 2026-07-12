@@ -429,6 +429,8 @@ object AgentActor extends AgentCore with AgentSession:
                 }
                 .mkString("; ")
               s"All providers failed: $attempts"
+            case e: ToolPipelineError =>
+              e.message
             case _ =>
               Option(error.getMessage)
                 .filter(_.nonEmpty)
