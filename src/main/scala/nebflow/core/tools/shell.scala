@@ -330,6 +330,10 @@ final class ShellSession private (
 
   end buildProcessBuilder
 
+  private val SleepCommandRe = """\bsleep\s+\d+""".r
+
+  private val StuckDetectionGracePeriod: FiniteDuration = 8.seconds
+
   private def runProcess(
     command: String,
     cwd: String,
@@ -339,7 +343,8 @@ final class ShellSession private (
     IO.blocking {
       buildProcessBuilder(command, cwd).start()
     }.bracket { proc =>
-      val storeProc = health.fold(IO.unit)(h => IO(h.processRef.set(proc)))
+      val h = health.getOrElse(new JobHealth())
+      val storeProc = IO(h.processRef.set(proc))
       // On Windows, write the command to bash's stdin (bash -s mode), then
       // close stdin to signal EOF. This avoids Java ProcessBuilder's Windows
       // argument quoting which mangles double quotes and special characters.
@@ -355,10 +360,11 @@ final class ShellSession private (
         readStream(
           proc.getInputStream,
           line =>
-            health.foreach { h =>
-              h.lastActivityMs.set(System.currentTimeMillis())
-              h.outputLineCount.incrementAndGet()
-            }
+            // Health tracking uses the local health tracker (h), not the
+            // outer health — ensures stuck detection works even when caller
+            // passed health = None.
+            h.lastActivityMs.set(System.currentTimeMillis())
+            h.outputLineCount.incrementAndGet()
         )
       )
       val stderrIO = IO.blocking(readStream(proc.getErrorStream))
@@ -367,11 +373,65 @@ final class ShellSession private (
         proc.exitValue()
       }
 
-      storeProc *> writeStdin *> (stdoutIO, stderrIO, waitIO)
-        .parMapN { (out, err, code) =>
-          ProcessResult(out, err, code, cwd)
-        }
-        .timeout(timeout)
+      // ── Stuck process detection ──────────────────────────────────────
+      // If a foreground command produces no output on stdout/stderr within
+      // a grace period and hasn't exited, it is likely waiting for terminal
+      // input (e.g. ssh, sudo, telnet). Kill it early so the agent gets
+      // immediate feedback instead of blocking for the full 120s timeout.
+      //
+      // Sleep-like commands are excluded — they legitimately produce no
+      // output while their timer runs.
+      val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
+      val enableStuckDetection = !isSleepLike && timeout > StuckDetectionGracePeriod
+
+      for
+        stuckFlag <- IO.ref(false)
+
+        // Stuck detector fiber: fires once after the grace period, then exits.
+        stuckFiber <- (
+          if enableStuckDetection then
+            IO.sleep(StuckDetectionGracePeriod) *>
+              IO {
+                val alive = proc.isAlive()
+                val hasOutput = h.outputLineCount.get() > 0
+                alive && !hasOutput
+              }.flatMap { stuck =>
+                if stuck then
+                  stuckFlag.set(true) *>
+                    IO.blocking {
+                      proc.destroyForcibly()
+                      try proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                      catch case _: InterruptedException => ()
+                      ()
+                    }
+                else IO.unit
+              }
+          else IO.unit
+        ).start
+
+        // Main execution: read stdout/stderr and wait for process completion
+        result <- (stdoutIO, stderrIO, waitIO)
+          .parMapN { (out, err, code) =>
+            ProcessResult(out, err, code, cwd)
+          }
+          .timeout(timeout)
+
+        // Cleanup: cancel the stuck detector fiber
+        _ <- stuckFiber.cancel
+
+        // Check if the process was killed by the stuck detector
+        wasStuck <- stuckFlag.get
+        finalResult <-
+          if wasStuck then
+            IO.raiseError(
+              new TimeoutException(
+                "Command produced no output within " + StuckDetectionGracePeriod.toSeconds +
+                  " seconds and was terminated. This command likely requires interactive terminal input. " +
+                  "Use a non-interactive alternative, or run it manually in your terminal."
+              )
+            )
+          else IO.pure(result)
+      yield finalResult
     } { proc =>
       IO.blocking {
         proc.destroyForcibly()
