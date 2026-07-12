@@ -38,8 +38,6 @@ object ToolRegistry:
       "Delegate" -> DelegateTool,
       // Inter-agent messaging
       "Mail" -> MailTool,
-      // Memory
-      "WriteMemory" -> WriteMemoryTool,
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool
     )

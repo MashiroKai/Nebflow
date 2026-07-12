@@ -11,20 +11,22 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters.*
 
 /**
- * Three-level memory store backed by Markdown files.
+ * Four-level memory store backed by Markdown files.
  *
  * Levels:
  *   - User:    ~/.nebflow/NEBFLOW.md                    (global, all agents)
  *   - Agent:   ~/.nebflow/agents/{name}/memory.md       (per agent)
  *   - Folder:  ~/.nebflow/folders/{fid}.memory.md       (per folder)
+ *   - Session: ~/.nebflow/sessions/{sid}.memory.md      (per session)
  *
  * Detail files: ~/.nebflow/memory/{hash}.md
- *   - When an entry has detail content, MemoryAgent stores it in a separate file
+ *   - When an entry has detail content, it is stored in a separate file
  *     named by the SHA-256 hash of the entry content (first 12 hex chars).
  *   - The index entry carries a →hash reference so agents can find it.
  *
- * Write flow:
- *   WriteMemoryTool → Dream actor mailbox → MemoryAgent processes → final memory files
+ * Memory files are read automatically via synthetic Read tool calls at session
+ * start (MemoryAutoRead) and kept live via LiveFileTracker. Agents update them
+ * directly using Edit/Write.
  *
  * All reads use mtime-based caching.
  */
@@ -39,6 +41,9 @@ object MemoryStore:
 
   def folderMemoryPath(folderId: String): os.Path =
     PathUtil.dataRoot / "folders" / s"$folderId.memory.md"
+
+  def sessionMemoryPath(sessionId: String): os.Path =
+    PathUtil.dataRoot / "sessions" / s"$sessionId.memory.md"
 
   /** Directory for detail files. */
   def detailDir: os.Path = PathUtil.dataRoot / "memory"
