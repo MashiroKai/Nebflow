@@ -40,6 +40,10 @@ Usage:
         "filter" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Regex pattern to filter lines. Only matching lines are returned (with original line numbers). Useful for large log files. offset/limit paginate the filtered results.".asJson
+        ),
+        "live" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "If true, the tool result will be automatically updated in the conversation when the file is modified on disk. Use for files that may change during the session (e.g. memory files).".asJson
         )
       ),
       "required" -> io.circe.Json.arr("file_path".asJson)
@@ -134,7 +138,13 @@ Usage:
           catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
       }.flatMap {
         case Right((output, isPartialView)) =>
-          ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView)).as(Right(output))
+          val isLive = input("live").flatMap(_.asBoolean).getOrElse(false)
+          for
+            _ <- ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView))
+            _ <- if isLive && ctx.toolCallId.nonEmpty then
+              ctx.liveFileTracker.traverse_(_.register(filePathStr, ctx.toolCallId))
+            else IO.unit
+          yield Right(output)
         case Left(err) => IO.pure(Left(err))
       }
     end if

@@ -33,10 +33,11 @@ case class ToolContext(
   hookContext: HookContext = HookContext(None, "", ""),
   folderId: Option[String] = None,
   mailboxAddress: Option[String] = None,
-  dreamSchedulerRef: Option[DreamScheduler] = None,
   sharedResources: Option[SharedResources] = None,
   actorSystem: Option[ActorSystem] = None,
-  messages: List[Message] = Nil
+  messages: List[Message] = Nil,
+  liveFileTracker: Option[LiveFileTracker] = None,
+  toolCallId: String = ""
 )
 
 case class ToolError(message: String)

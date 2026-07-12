@@ -653,7 +653,6 @@ const TOOL_PRIMARY_FIELDS = {
   'Curl': 'body',
   'WebSearch': 'query',
   'WebFetch': 'url',
-  'WriteMemory': 'content',
   'TaskCreate': 'description',
   'TaskUpdate': 'description',
   'RemoveUnnecessary': 'summary',

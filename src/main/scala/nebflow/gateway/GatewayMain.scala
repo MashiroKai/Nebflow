@@ -257,18 +257,6 @@ object GatewayMain extends IOApp.Simple:
 
                                   val wsHub = new WsHub()
 
-                                  // Dream scheduler: event-driven memory consolidation + pattern extraction
-                                  val memoryAgentManager = new MemoryAgentManager(
-                                    dispatcher,
-                                    sessionStore
-                                  )
-                                  // Wire dreamScheduler into SharedResources (created after SharedResources init)
-                                  val sharedResourcesWithDream = sharedResourcesWithTelemetry.copy(
-                                    dreamSchedulerRef = Some(memoryAgentManager.dreamScheduler)
-                                  )
-                                  memoryAgentManager.setSharedResources(sharedResourcesWithDream)
-                                  memoryAgentManager.setWsHub(wsHub)
-
                                   // --- Bridge Manager (plugins: telegram, etc.) ---
                                   val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
                                     Ref.unsafe(None)
@@ -338,7 +326,7 @@ object GatewayMain extends IOApp.Simple:
                                         nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
                                           dropboxService =>
                                             val sharedResourcesWithBridge =
-                                              sharedResourcesWithDream.copy(
+                                              sharedResourcesWithTelemetry.copy(
                                                 bridgeManager = Some(bridgeManager),
                                                 neblinkService = Some(neblinkService),
                                                 dropboxService = Some(dropboxService)

@@ -20,7 +20,6 @@ object ToolReversibility:
     "WebFetch",
     "Edit",
     "Write",
-    "WriteMemory",
     "AskUserQuestion",
     "TaskCreate",
     "TaskUpdate",

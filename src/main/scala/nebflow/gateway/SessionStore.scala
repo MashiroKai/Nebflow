@@ -439,7 +439,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
 
   /**
    * Get an existing session by ID, or create one with that exact ID.
-   * Used by MemoryAgentManager to maintain persistent sessions across restarts.
+   * Used to maintain persistent sessions across restarts.
    * Returns (meta, wasCreated).
    */
   def getOrCreateSession(

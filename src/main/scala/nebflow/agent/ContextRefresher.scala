@@ -11,7 +11,6 @@ import nebflow.service.{MemoryStore, RulesStore}
  * == Lifecycle sources (resolved once, cached until reset) ==
  *   • system-prefix  — FileInjectionSource with mtime cache
  *   • agentDef       — AgentLibrary.get (mtime-cached directory)
- *   • memoryBlock    — 3-level index files → MemoryStore (mtime-cached)
  *   • rulesMd        — folder chain → RulesStore.resolveInheritedRules (mtime-cached)
  *   • projectRoot    — folder chain → SessionStore.resolveProjectRoot
  *
@@ -19,14 +18,13 @@ import nebflow.service.{MemoryStore, RulesStore}
  *   • thinkingConfig — global Ref[IO, ThinkingConfig]
  *   • fileChanges    — FileChangeTracker (5s debounce)
  *   • gitBranch      — git rev-parse --abbrev-ref HEAD
+ *   • memory files   — injected via MemoryAutoRead synthetic Read calls,
+ *                       kept fresh by LiveFileTracker (no system prompt injection)
  *
  * == Lifecycle reset triggers ==
  *   • /clear (ResetSession) — clears messages + lifecycle
  *   • Compaction complete   — lifecycle re-resolved on next turn
  *   • Model switch          — lifecycle re-resolved on next turn
- *
- * Memory injection uses progressive disclosure: only the index layer is injected.
- * Agents can Read the full file on demand to access the detail layer.
  */
 object ContextRefresher:
 
@@ -56,17 +54,6 @@ object ContextRefresher:
   // ============================================================
   // Lifecycle resolution (first turn or after reset)
   // ============================================================
-
-  /** Build memory block from index layers. Uses mtime-cached reads. */
-  private def buildMemoryBlock(agentDef: AgentDef, folderId: Option[String]): String =
-    val userMemory = MemoryStore.loadUserMemory
-    val agentMemory = MemoryStore.loadAgentMemory(agentDef.name)
-    val folderMemory = folderId.flatMap(MemoryStore.loadFolderMemory)
-    List(
-      folderMemory.map(c => s"# Memory — Folder\n$c"),
-      agentMemory.map(c => s"# Memory — Agent\n$c"),
-      userMemory.map(c => s"# Memory — User\n$c")
-    ).flatten.mkString("\n\n")
 
   /** Resolve inherited rules.md from folder chain. Pure — mtime-cached per file. */
   private def resolveRules(state: AgentState, resources: SharedResources): Option[String] =
@@ -108,8 +95,7 @@ object ContextRefresher:
       systemPrefix <- systemPrefixSource.get
       projectRoot <- resolveProjectRoot(state.folderId, resources, freshDef.name)
       rulesMd = resolveRules(state, resources)
-      memoryBlock = buildMemoryBlock(freshDef, state.folderId)
-    yield LifecycleContext(systemPrefix, freshDef, memoryBlock, rulesMd, projectRoot)
+    yield LifecycleContext(systemPrefix, freshDef, rulesMd, projectRoot)
 
   // ============================================================
   // Git branch detection (EveryTurn source)
@@ -203,7 +189,6 @@ object ContextRefresher:
             lc.systemPrefix,
             lc.projectRoot,
             lc.rulesMd,
-            lc.memoryBlock,
             thinkingConfig,
             branchReminder,
             currentBranch
@@ -222,7 +207,6 @@ object ContextRefresher:
             lc.systemPrefix,
             lc.projectRoot,
             lc.rulesMd,
-            lc.memoryBlock,
             thinkingConfig,
             branchReminder,
             currentBranch

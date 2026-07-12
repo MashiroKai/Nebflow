@@ -192,14 +192,6 @@ You can speak to the user by wrapping text in `<voice></voice>` tags. The conten
 - The Companion (Pickle) is a separate system. When the user addresses Pickle, stay out of the way — respond in one line or less for any part meant for you. Do not explain that you're not Pickle."""
     ),
     DefaultAgent(
-      "MemoryAgent",
-      "Internal memory management agent",
-      None,
-      None,
-      List("Read", "Write", "Edit", "Glob", "Grep"),
-      MemoryAgentPrompts.systemPrompt
-    ),
-    DefaultAgent(
       "Explorer",
       "Code exploration and research",
       None,
