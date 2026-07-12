@@ -207,7 +207,7 @@ export function clearBusy(sessionId) {
 }
 
 // ---------- User bubble ----------
-export function renderUserBubble(text, attachments) {
+export function renderUserBubble(text, attachments, timestamp) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row user';
@@ -237,9 +237,24 @@ export function renderUserBubble(text, attachments) {
     row.appendChild(bubble);
   });
 
+  // Timestamp below bubble
+  const ts = timestamp || Date.now();
+  const timeEl = document.createElement('div');
+  timeEl.className = 'msg-time';
+  timeEl.textContent = formatHm(ts);
+  row.appendChild(timeEl);
+
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
   return { type: 'user', text, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
+}
+
+/** Format epoch millis as HH:MM */
+export function formatHm(ms) {
+  const d = new Date(ms);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return hh + ':' + mm;
 }
 
 // ---------- AI text streaming ----------
