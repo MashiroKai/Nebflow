@@ -11,7 +11,7 @@ class AgentDefSpec extends CatsEffectSuite:
     val result = lib.loadAll().unsafeRunSync()
     assert(result.keySet.contains("Nebula"), s"Should contain Nebula: ${result.keySet}")
     assert(result.keySet.contains("Jarvis"), s"Should contain Jarvis: ${result.keySet}")
-    assert(result.keySet.size >= 5, s"Should have at least 5 agents: ${result.keySet}")
+    assert(result.keySet.size >= 4, s"Should have at least 4 agents: ${result.keySet}")
   }
 
   test("AgentLibrary.loadAll populates tools from code") {

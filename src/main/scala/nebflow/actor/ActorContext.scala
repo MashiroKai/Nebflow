@@ -53,9 +53,11 @@ trait ActorContext[Msg]:
   /** Spawn a child actor with lifecycle bound to this actor. */
   def spawn[ChildMsg](behavior: Behavior[ChildMsg], name: String): IO[ActorRef[ChildMsg]]
 
-  /** Register interest in another actor's lifecycle. When the watched actor
-    * terminates, this actor receives [[SystemSignal.Terminated]] via the system
-    * signal channel. */
+  /**
+   * Register interest in another actor's lifecycle. When the watched actor
+   * terminates, this actor receives [[SystemSignal.Terminated]] via the system
+   * signal channel.
+   */
   def watch(ref: ActorRef[?]): IO[Unit]
 
   /** Unregister interest in another actor's lifecycle. */

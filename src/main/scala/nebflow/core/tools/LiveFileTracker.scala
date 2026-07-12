@@ -4,8 +4,8 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import nebflow.shared.*
 
-import java.nio.file.{Files, Paths}
 import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
 
 /**
  * Tracks files read with `live: true` and patches their tool_result content
@@ -41,24 +41,25 @@ class LiveFileTracker private (ref: Ref[IO, Map[String, LiveFileEntry]]):
     ref.get.flatMap { entries =>
       if entries.isEmpty then IO.pure(messages)
       else
-        val changed = entries.values.filter(e =>
-          LiveFileTracker.currentMtime(e.path) > e.originalMtime
-        ).toList
+        val changed = entries.values.filter(e => LiveFileTracker.currentMtime(e.path) > e.originalMtime).toList
         if changed.isEmpty then IO.pure(messages)
         else
-          changed.traverse { entry =>
-            IO.blocking {
-              val path = Paths.get(entry.path)
-              val content =
-                if Files.exists(path) && !Files.isDirectory(path) then
-                  new String(Files.readAllBytes(path), StandardCharsets.UTF_8)
-                else
-                  s"File does not exist: ${entry.path}"
-              entry.toolCallId -> LiveFileTracker.formatWithLineNumbers(content)
+          changed
+            .traverse { entry =>
+              IO.blocking {
+                val path = Paths.get(entry.path)
+                val content =
+                  if Files.exists(path) && !Files.isDirectory(path) then
+                    new String(Files.readAllBytes(path), StandardCharsets.UTF_8)
+                  else s"File does not exist: ${entry.path}"
+                entry.toolCallId -> LiveFileTracker.formatWithLineNumbers(content)
+              }
             }
-          }.map(_.toMap).map { patches =>
-            LiveFileTracker.applyPatches(messages, patches)
-          }
+            .map(_.toMap)
+            .map { patches =>
+              LiveFileTracker.applyPatches(messages, patches)
+            }
+        end if
     }
 
   def clear(): IO[Unit] = ref.set(Map.empty)
@@ -83,9 +84,13 @@ object LiveFileTracker:
   private def formatWithLineNumbers(content: String): String =
     if content.isEmpty then ""
     else
-      content.split("\\r?\\n").zipWithIndex.map { case (line, i) =>
-        s"${i + 1}\t$line"
-      }.mkString("\n")
+      content
+        .split("\\r?\\n")
+        .zipWithIndex
+        .map { case (line, i) =>
+          s"${i + 1}\t$line"
+        }
+        .mkString("\n")
 
   /** Replace tool_result content for matching toolUseIds in the message list. */
   private def applyPatches(messages: List[Message], patches: Map[String, String]): List[Message] =

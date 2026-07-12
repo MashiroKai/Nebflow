@@ -141,9 +141,10 @@ Usage:
           val isLive = input("live").flatMap(_.asBoolean).getOrElse(false)
           for
             _ <- ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView))
-            _ <- if isLive && ctx.toolCallId.nonEmpty then
-              ctx.liveFileTracker.traverse_(_.register(filePathStr, ctx.toolCallId))
-            else IO.unit
+            _ <-
+              if isLive && ctx.toolCallId.nonEmpty then
+                ctx.liveFileTracker.traverse_(_.register(filePathStr, ctx.toolCallId))
+              else IO.unit
           yield Right(output)
         case Left(err) => IO.pure(Left(err))
       }

@@ -58,7 +58,6 @@ object AgentActor extends AgentCore with AgentSession:
             messages = initialMessages,
             status = AgentStatus.Idle,
             depth = depth,
-
             sessionId = sessionId,
             sessionName = sessionName,
             pendingCompaction = None,
@@ -131,9 +130,7 @@ object AgentActor extends AgentCore with AgentSession:
           val newMessages = stateWithWidth.messages :+ userMsg
           val sessionBusyIO =
             if depth == 0 then
-              stateWithWidth.sessionId.fold(IO.unit)(sid =>
-                emitSessionBusy(stateWithWidth.wsSend, sid, busy = true)
-              )
+              stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
             else IO.unit
           for
             _ <- sessionBusyIO
@@ -171,8 +168,7 @@ object AgentActor extends AgentCore with AgentSession:
           .withMessages(state.messages :+ Message(MessageRole.User, Left(combinedText)))
           .withStatus(AgentStatus.Processing)
         val sessionBusyIO2 =
-          if depth == 0 then
-            state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+          if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
         for
           _ <- sessionBusyIO2
@@ -321,8 +317,8 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.SetBypass(bypass) =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state.withBypass(bypass)))
 
-      case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed |
-          _: AgentCommand.ToolsComplete | _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
+      case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
+          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
           _: AgentCommand.UpdateGitBranch =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
@@ -439,7 +435,7 @@ object AgentActor extends AgentCore with AgentSession:
                 .map(m => s"LLM request failed: ${m.take(200)}")
                 .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
           for
-  
+
             _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
               val doneEvent = AgentStreamEvent.Done(None)
               val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
@@ -545,18 +541,32 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.Retry(reason) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
         ctx.cancelCurrentTurn() *> (state.lastDispatch match
-            case Some(LastDispatch(false, _)) =>
-              // Re-dispatch LLM call with same messages
-              pipeLlmCall(agentDef, resources, depth, parentRef, state, None,
-                (ad, r, d, p, s) => processing(ad, r, d, p, s))
-            case Some(LastDispatch(true, Some(cr))) =>
-              // Re-dispatch tool execution with same LLM result
-              pipeToolExecutions(agentDef, resources, depth, parentRef, state, cr, None,
-                (ad, r, d, p, s) => processing(ad, r, d, p, s))
-            case _ =>
-              // No checkpoint — go to idle
-              IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt))
-        )
+          case Some(LastDispatch(false, _)) =>
+            // Re-dispatch LLM call with same messages
+            pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state,
+              None,
+              (ad, r, d, p, s) => processing(ad, r, d, p, s)
+            )
+          case Some(LastDispatch(true, Some(cr))) =>
+            // Re-dispatch tool execution with same LLM result
+            pipeToolExecutions(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state,
+              cr,
+              None,
+              (ad, r, d, p, s) => processing(ad, r, d, p, s)
+            )
+          case _ =>
+            // No checkpoint — go to idle
+            IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
 
       // --- Stop ---
       case AgentCommand.Stop(_) =>
@@ -903,9 +913,9 @@ object AgentActor extends AgentCore with AgentSession:
       def receive(c: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
         base.receive(c, msg)
       override def onError(c: ActorContext[AgentCommand], err: Throwable): IO[Behavior[AgentCommand]] =
-        c.log.error(s"Agent error in processing, returning to idle: ${err.getMessage}")
-          .as(idle(agentDef, resources, depth, parentRef,
-            state.withStatus(AgentStatus.Idle).withInteraction(None)))
+        c.log
+          .error(s"Agent error in processing, returning to idle: ${err.getMessage}")
+          .as(idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Idle).withInteraction(None)))
   end processing
   // ============================================================
   // LlmComplete branch selector

@@ -216,11 +216,11 @@ private[agent] trait AgentCore:
             if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
           // Memory auto-read: inject synthetic Read(live=true) for memory files
           memoryMsgs = MemoryAutoRead.buildMessages(freshDef.name, stateForLlm.folderId, stateForLlm.sessionId)
-          _ <- if newLifecycle.isDefined then
-            stateForLlm.liveFileTracker.traverse_(t =>
-              MemoryAutoRead.register(t, freshDef.name, stateForLlm.folderId, stateForLlm.sessionId)
-            )
-          else IO.unit
+          _ <-
+            if newLifecycle.isDefined then
+              stateForLlm.liveFileTracker
+                .traverse_(t => MemoryAutoRead.register(t, freshDef.name, stateForLlm.folderId, stateForLlm.sessionId))
+            else IO.unit
           // Live file patching: update tool_result content for changed live files
           baseMessages = memoryMsgs ++ stateForLlm.messages
           patchedMessages <- stateForLlm.liveFileTracker
@@ -281,8 +281,13 @@ private[agent] trait AgentCore:
             IO.delay(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}"))
               .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
           })
-        yield processing(agentDef, resources, depth, parentRef,
-          stateForLlm.withLastDispatch(Some(LastDispatch(isToolExecution = false))))
+        yield processing(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          stateForLlm.withLastDispatch(Some(LastDispatch(isToolExecution = false)))
+        )
 
   protected def pipeToolExecutions(
     agentDef: AgentDef,
@@ -401,7 +406,8 @@ private[agent] trait AgentCore:
         )
       })
     yield
-      val updatedState = state.copy(execution = state.execution.copy(turnIdx = nextTurnIdx))
+      val updatedState = state
+        .copy(execution = state.execution.copy(turnIdx = nextTurnIdx))
         .withLastDispatch(Some(LastDispatch(isToolExecution = true, Some(result))))
       processing(agentDef, resources, depth, parentRef, updatedState)
 
@@ -588,8 +594,10 @@ private[agent] trait AgentCore:
       )
     )
 
-  /** Direct wsSend for use inside Fiber context (pipeLlmCall, pipeToolExecutions).
-    * Do NOT call from receive handlers — use emitStream instead (non-blocking forkTurn wrapper). */
+  /**
+   * Direct wsSend for use inside Fiber context (pipeLlmCall, pipeToolExecutions).
+   * Do NOT call from receive handlers — use emitStream instead (non-blocking forkTurn wrapper).
+   */
   protected def emitStreamIO(
     wsSend: io.circe.Json => IO[Unit],
     event: AgentStreamEvent,

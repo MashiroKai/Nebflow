@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.Defaults
 
-import java.io.{BufferedReader, File, InputStreamReader, PushbackInputStream}
+import java.io.File
 import java.lang.Process
 import java.nio.ByteBuffer
 import java.nio.charset.*
@@ -432,6 +432,7 @@ final class ShellSession private (
             )
           else IO.pure(result)
       yield finalResult
+      end for
     } { proc =>
       IO.blocking {
         proc.destroyForcibly()
@@ -564,7 +565,7 @@ final class ShellSession private (
       if isWindows then probeCharset(is)
       else (is, StandardCharsets.UTF_8)
 
-    Using.resource(new BufferedReader(new InputStreamReader(stream, charset))) { reader =>
+    Using.resource(new java.io.BufferedReader(new java.io.InputStreamReader(stream, charset))) { reader =>
       val sb = new StringBuilder
       var line: String = null
       val truncationMarker = "\n[Output truncated due to size limit]\n"
@@ -601,7 +602,7 @@ final class ShellSession private (
    */
   private def probeCharset(is: java.io.InputStream): (java.io.InputStream, Charset) =
     val ProbeSize = 4096
-    val pushback = new PushbackInputStream(is, ProbeSize)
+    val pushback = new java.io.PushbackInputStream(is, ProbeSize)
     val probe = new Array[Byte](ProbeSize)
     val n = pushback.read(probe)
     if n <= 0 then (pushback, StandardCharsets.UTF_8)
