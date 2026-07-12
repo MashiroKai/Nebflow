@@ -530,10 +530,11 @@ object AgentActor extends AgentCore with AgentSession:
           _ <- ctx.cancelCurrentTurn()
 
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+
+          _ <- state.pendingCompaction
+            .flatMap(_.replyDeferred)
+            .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
         yield
-          state.pendingCompaction.flatMap(_.replyDeferred).foreach { d =>
-            d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit)
-          }
           val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
 
@@ -1233,7 +1234,6 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     responseText: String
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val pending = state.pendingCompaction
     val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
     val readPathsIO = state.readTracker
       .map(_.recentFiles(CompactConfig().postCompactMaxFiles).map(_.map(_.toString)))

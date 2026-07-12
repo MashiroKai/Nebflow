@@ -94,7 +94,7 @@ object MemoryStore:
   def loadFolderMemory(folderId: String): Option[String] =
     getFolderCache(folderId).get.unsafeRunSync().flatten
 
-  // --- Save (called from WS routes / Dream agent, invalidates cache) ---
+  // --- Save (called from WS routes / Edit-Write tools, invalidates cache) ---
 
   private def saveFile(path: os.Path, content: String, invalidateCache: () => IO[Unit]): IO[Unit] =
     IO.blocking(os.write.over(path, content, createFolders = true)) *> invalidateCache()
@@ -108,7 +108,7 @@ object MemoryStore:
   def saveFolderMemory(folderId: String, content: String): IO[Unit] =
     saveFile(folderMemoryPath(folderId), content, () => getFolderCache(folderId).invalidate)
 
-  // --- Detail files (called by Dream agent via Write tool) ---
+  // --- Detail files (called by agents via Write/Edit tool) ---
 
   /** Write a detail file to ~/.nebflow/memory/{hash}.md. */
   def writeDetailFile(hash: String, content: String): IO[Unit] =

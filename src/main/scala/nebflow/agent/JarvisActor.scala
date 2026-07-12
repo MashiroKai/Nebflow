@@ -317,7 +317,8 @@ object JarvisActor extends AgentCore with AgentSession:
                 .filter(_.nonEmpty)
                 .map(m => s"LLM request failed: ${m.take(200)}")
                 .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
-          for _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
+          for
+            _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
               ctx.forkTurn(
                 cleanedState
                   .wsSend(Json.obj("type" -> "error".asJson, "sessionId" -> sid.asJson, "message" -> errMsg.asJson))
@@ -325,6 +326,12 @@ object JarvisActor extends AgentCore with AgentSession:
                   emitSessionBusy(cleanedState.wsSend, sid, busy = false)
               )
             }
+            _ <- replyTo.traverse_(
+              _ ! AgentEvent.Failed(
+                cleanedState.sessionId.getOrElse(""),
+                AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
+              )
+            )
           yield idle(
             agentDef,
             resources,
@@ -539,7 +546,7 @@ object JarvisActor extends AgentCore with AgentSession:
               s"textLen=${result.text.length}"
             )
           yield
-            pending.headOption.foreach(msg => ctx.self ! msg)
+            pending.foreach(msg => ctx.self ! msg)
             idle(agentDef, resources, depth, parentRef, state)
 
       case LlmFailed(error, _, turnId) =>
@@ -547,13 +554,13 @@ object JarvisActor extends AgentCore with AgentSession:
           IO.pure(memoryConsolidating(agentDef, resources, depth, parentRef, state, pending))
         else
           logger.warn(s"Memory consolidation failed: ${error.getMessage}")
-          pending.headOption.foreach(msg => ctx.self ! msg)
+          pending.foreach(msg => ctx.self ! msg)
           IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case Interrupt() =>
         for _ <- ctx.cancelCurrentTurn()
         yield
-          pending.headOption.foreach(msg => ctx.self ! msg)
+          pending.foreach(msg => ctx.self ! msg)
           idle(agentDef, resources, depth, parentRef, state)
 
       case Stop(_) =>

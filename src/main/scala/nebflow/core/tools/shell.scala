@@ -87,11 +87,16 @@ final class ShellSession private (
    * Execute a command synchronously, updating cwd afterwards via pwd.
    *  If pwd fails (e.g. old cwd was deleted), currentDir is left unchanged.
    */
-  def execute(command: String, timeout: FiniteDuration, health: Option[JobHealth] = None): IO[ProcessResult] =
+  def execute(
+    command: String,
+    timeout: FiniteDuration,
+    health: Option[JobHealth] = None,
+    isBackground: Boolean = false
+  ): IO[ProcessResult] =
     for
       _ <- checkAlive *> touch
       cwd <- currentDir.get
-      result <- runProcess(command, cwd, timeout, health)
+      result <- runProcess(command, cwd, timeout, health, isBackground)
       // On Windows (Git Bash), pwd -W returns Windows-style paths (C:/Users/...)
       // which Java's File and Paths APIs accept. Plain pwd would return MSYS2
       // paths (/c/Users/...) which are unusable for Read/Write/Edit tools.
@@ -338,7 +343,8 @@ final class ShellSession private (
     command: String,
     cwd: String,
     timeout: FiniteDuration,
-    health: Option[JobHealth] = None
+    health: Option[JobHealth] = None,
+    isBackground: Boolean = false
   ): IO[ProcessResult] =
     IO.blocking {
       buildProcessBuilder(command, cwd).start()
@@ -367,7 +373,14 @@ final class ShellSession private (
             h.outputLineCount.incrementAndGet()
         )
       )
-      val stderrIO = IO.blocking(readStream(proc.getErrorStream))
+      val stderrIO = IO.blocking(
+        readStream(
+          proc.getErrorStream,
+          line =>
+            h.lastActivityMs.set(System.currentTimeMillis())
+            h.outputLineCount.incrementAndGet()
+        )
+      )
       val waitIO = IO.blocking {
         proc.waitFor()
         proc.exitValue()
@@ -382,7 +395,7 @@ final class ShellSession private (
       // Sleep-like commands are excluded — they legitimately produce no
       // output while their timer runs.
       val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
-      val enableStuckDetection = !isSleepLike && timeout > StuckDetectionGracePeriod
+      val enableStuckDetection = !isBackground && !isSleepLike && timeout > StuckDetectionGracePeriod
 
       for
         stuckFlag <- IO.ref(false)
@@ -449,7 +462,7 @@ final class ShellSession private (
     on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None
   ): IO[Unit] =
     // Background jobs have no timeout — they run until completion or cancellation
-    execute(command, 365.days, Some(health)).attempt.flatMap { result =>
+    execute(command, 365.days, Some(health), isBackground = true).attempt.flatMap { result =>
       deferred.complete(result).void *>
         on_complete.fold(IO.unit) { cb =>
           // IO.delay catches exceptions thrown during IO construction

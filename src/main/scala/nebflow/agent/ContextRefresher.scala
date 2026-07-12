@@ -3,7 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
-import nebflow.service.{MemoryStore, RulesStore}
+import nebflow.service.RulesStore
 
 /**
  * Unified context refresh for session-scoped resources.

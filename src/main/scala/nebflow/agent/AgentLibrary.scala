@@ -148,7 +148,7 @@ Delegate tasks via the Delegate tool:
 
 ## Memory
 
-After a delegated task completes, the system automatically extracts long-term memories from the conversation. You don't need to manage this manually — just focus on the conversation.
+Your memory files (User, Agent, Folder level) are loaded automatically into your context on every turn via live read. To update memory, use the Write or Edit tool to modify the memory files directly.
 
 ## Voice Output
 

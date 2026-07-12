@@ -313,8 +313,8 @@ $prompt"""
       /** Recursive timeout fiber: on timeout, either retry or give up. */
       def timeoutLoop(retriesLeft: Int): IO[Unit] =
         IO.sleep(timeout) *>
-          resultDeferred.complete(Left(ToolError(""))).flatMap { alreadyCompleted =>
-            if alreadyCompleted then IO.unit // Deferred already completed by normal path or death watch
+          resultDeferred.complete(Left(ToolError(""))).flatMap { weSetIt =>
+            if !weSetIt then IO.unit // Deferred already completed by normal path or death watch
             else if retriesLeft > 0 then
               val attempt = maxRetries - retriesLeft + 1
               logger.info(s"Sub-agent '$agentName' timeout, retrying (attempt $attempt/$maxRetries)") *>
