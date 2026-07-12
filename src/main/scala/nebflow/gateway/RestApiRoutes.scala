@@ -411,7 +411,8 @@ class RestApiRoutes(
               case Some(tool) =>
                 val projectRoot = hc.downField("projectRoot").as[String].getOrElse(System.getProperty("user.dir", "."))
                 val ctx = nebflow.core.tools.ToolContext(
-                  projectRoot = projectRoot
+                  projectRoot = projectRoot,
+                  isRemoteExec = true
                 )
                 tool.call(params, ctx).attempt.flatMap {
                   case Right(Right(result)) => Ok(Json.obj("output" -> result.asJson))
