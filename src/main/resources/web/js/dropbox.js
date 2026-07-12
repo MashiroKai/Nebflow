@@ -278,14 +278,16 @@ function renderMessages(deviceId) {
   container.innerHTML = msgs.map(m => renderMessage(m)).join('');
 
   // Copy button delegation (re-bound each render since innerHTML replaces children)
-  container.querySelectorAll('.dropbox-msg-copy').forEach(btn => {
+  container.querySelectorAll('.dropbox-msg .code-copy-btn').forEach(btn => {
     btn.onclick = async (e) => {
       e.stopPropagation();
-      const text = btn.dataset.text;
       try {
-        await navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(btn.dataset.text);
+        const span = btn.querySelector('span');
+        const orig = span.textContent;
+        span.textContent = t('chat.copied');
         btn.classList.add('copied');
-        setTimeout(() => btn.classList.remove('copied'), 1200);
+        setTimeout(() => { span.textContent = orig; btn.classList.remove('copied'); }, 2000);
       } catch (err) {
         console.error('[dropbox] Copy failed:', err);
       }
@@ -304,8 +306,9 @@ function renderMessage(m) {
     return `
       <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
         <div class="dropbox-msg-bubble">${escapeHtml(m.text)}</div>
-        <button class="dropbox-msg-copy" data-text="${escapeHtml(m.text)}" title="${t('dropbox.copy')}">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" stroke="currentColor" stroke-width="1.3"/></svg>
+        <button class="code-copy-btn" data-text="${escapeHtml(m.text)}" title="${t('chat.copy')}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>${t('chat.copy')}</span>
         </button>
         <div class="dropbox-msg-time">${time}</div>
       </div>`;

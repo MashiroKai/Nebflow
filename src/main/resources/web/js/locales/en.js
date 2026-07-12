@@ -394,5 +394,4 @@ export default {
   'dropbox.saved': 'Saved',
   'dropbox.completed': 'Completed',
   'dropbox.failed': 'Transfer failed',
-  'dropbox.copy': 'Copy',
 };
