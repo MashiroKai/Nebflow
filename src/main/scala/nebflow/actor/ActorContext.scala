@@ -53,6 +53,14 @@ trait ActorContext[Msg]:
   /** Spawn a child actor with lifecycle bound to this actor. */
   def spawn[ChildMsg](behavior: Behavior[ChildMsg], name: String): IO[ActorRef[ChildMsg]]
 
+  /** Register interest in another actor's lifecycle. When the watched actor
+    * terminates, this actor receives [[SystemSignal.Terminated]] via the system
+    * signal channel. */
+  def watch(ref: ActorRef[?]): IO[Unit]
+
+  /** Unregister interest in another actor's lifecycle. */
+  def unwatch(ref: ActorRef[?]): IO[Unit]
+
 end ActorContext
 
 /** Implementation of ActorContext for local actors. */
@@ -81,4 +89,10 @@ final class LocalActorContext[Msg](
 
   def spawn[ChildMsg](behavior: Behavior[ChildMsg], name: String): IO[ActorRef[ChildMsg]] =
     system.spawn(behavior, name).flatTap(ref => childrenRef.update(_ :+ ref))
+
+  def watch(ref: ActorRef[?]): IO[Unit] =
+    system.watch(self.path, ref.path)
+
+  def unwatch(ref: ActorRef[?]): IO[Unit] =
+    system.unwatch(self.path, ref.path)
 end LocalActorContext
