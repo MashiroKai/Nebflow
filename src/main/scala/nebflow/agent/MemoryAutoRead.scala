@@ -2,8 +2,8 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
-import io.circe.syntax.*
 import io.circe.JsonObject
+import io.circe.syntax.*
 import nebflow.core.tools.LiveFileTracker
 import nebflow.service.MemoryStore
 import nebflow.shared.*
@@ -43,10 +43,14 @@ object MemoryAutoRead:
         (id, path, readFileContent(path))
       }
       val toolUses = reads.map { (id, path, _) =>
-        ContentBlock.ToolUse(id, "Read", JsonObject(
-          "file_path" -> path.asJson,
-          "live" -> true.asJson
-        ))
+        ContentBlock.ToolUse(
+          id,
+          "Read",
+          JsonObject(
+            "file_path" -> path.asJson,
+            "live" -> true.asJson
+          )
+        )
       }
       val toolResults = reads.map { (id, _, content) =>
         ContentBlock.ToolResult(id, content, None)
@@ -55,6 +59,10 @@ object MemoryAutoRead:
         Message(MessageRole.Assistant, Right(toolUses)),
         Message(MessageRole.User, Right(toolResults))
       )
+
+    end if
+
+  end buildMessages
 
   /**
    * Register all memory files in the LiveFileTracker with forceLive=true
@@ -91,10 +99,13 @@ object MemoryAutoRead:
       val raw = os.read(os.Path(path))
       if raw.isEmpty then ""
       else
-        raw.split("\\r?\\n").zipWithIndex.map { case (line, i) =>
-          s"${i + 1}\t$line"
-        }.mkString("\n")
-    catch
-      case _: Exception => s"Error reading: $path"
+        raw
+          .split("\\r?\\n")
+          .zipWithIndex
+          .map { case (line, i) =>
+            s"${i + 1}\t$line"
+          }
+          .mkString("\n")
+    catch case _: Exception => s"Error reading: $path"
 
 end MemoryAutoRead

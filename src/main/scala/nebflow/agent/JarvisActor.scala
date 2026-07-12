@@ -144,9 +144,7 @@ object JarvisActor extends AgentCore with AgentSession:
           val newMessages = stateWithWidth.messages :+ userMsg
           val busyIO =
             if depth == 0 then
-              stateWithWidth.sessionId.fold(IO.unit)(sid =>
-                emitSessionBusy(stateWithWidth.wsSend, sid, busy = true)
-              )
+              stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
             else IO.unit
           for
             _ <- busyIO
@@ -175,8 +173,7 @@ object JarvisActor extends AgentCore with AgentSession:
           .withMessages(state.messages :+ Message(MessageRole.User, Left(combinedText)))
           .withStatus(AgentStatus.Processing)
         val busyIO =
-          if depth == 0 then
-            state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+          if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
         for
           _ <- busyIO
@@ -320,9 +317,7 @@ object JarvisActor extends AgentCore with AgentSession:
                 .filter(_.nonEmpty)
                 .map(m => s"LLM request failed: ${m.take(200)}")
                 .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
-          for
-  
-            _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
+          for _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
               ctx.forkTurn(
                 cleanedState
                   .wsSend(Json.obj("type" -> "error".asJson, "sessionId" -> sid.asJson, "message" -> errMsg.asJson))
@@ -376,9 +371,7 @@ object JarvisActor extends AgentCore with AgentSession:
         yield Behaviors.stopped
 
       case ResetSession =>
-        for
-
-          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+        for _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
         yield
           val resetState = state
             .withMessages(Nil)
@@ -512,9 +505,9 @@ object JarvisActor extends AgentCore with AgentSession:
       def receive(c: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
         base.receive(c, msg)
       override def onError(c: ActorContext[AgentCommand], err: Throwable): IO[Behavior[AgentCommand]] =
-        c.log.error(s"Jarvis error in processing, returning to idle: ${err.getMessage}")
-          .as(idle(agentDef, resources, depth, parentRef,
-            state.withStatus(AgentStatus.Idle).withInteraction(None)))
+        c.log
+          .error(s"Jarvis error in processing, returning to idle: ${err.getMessage}")
+          .as(idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Idle).withInteraction(None)))
   end processing
 
   // ============================================================
@@ -558,9 +551,7 @@ object JarvisActor extends AgentCore with AgentSession:
           IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case Interrupt() =>
-        for
-          _ <- ctx.cancelCurrentTurn()
-
+        for _ <- ctx.cancelCurrentTurn()
         yield
           pending.headOption.foreach(msg => ctx.self ! msg)
           idle(agentDef, resources, depth, parentRef, state)
@@ -586,9 +577,9 @@ object JarvisActor extends AgentCore with AgentSession:
       def receive(c: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
         base.receive(c, msg)
       override def onError(c: ActorContext[AgentCommand], err: Throwable): IO[Behavior[AgentCommand]] =
-        c.log.error(s"Jarvis error in memoryConsolidating, returning to idle: ${err.getMessage}")
-          .as(idle(agentDef, resources, depth, parentRef,
-            state.withStatus(AgentStatus.Idle).withInteraction(None)))
+        c.log
+          .error(s"Jarvis error in memoryConsolidating, returning to idle: ${err.getMessage}")
+          .as(idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Idle).withInteraction(None)))
   end memoryConsolidating
 
   // ============================================================

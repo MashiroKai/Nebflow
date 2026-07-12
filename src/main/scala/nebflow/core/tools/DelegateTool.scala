@@ -283,6 +283,7 @@ $prompt"""
 
   /** Backoff between retry attempts (gives sub-agent time to reset). */
   private val RetryBackoff: FiniteDuration = 3.seconds
+
   /**
    * Guarded adapter — ensures the parent ALWAYS gets a result, with actor-level
    * state recovery retry on timeout.
@@ -313,8 +314,7 @@ $prompt"""
       def timeoutLoop(retriesLeft: Int): IO[Unit] =
         IO.sleep(timeout) *>
           resultDeferred.complete(Left(ToolError(""))).flatMap { alreadyCompleted =>
-            if alreadyCompleted then
-              IO.unit // Deferred already completed by normal path or death watch
+            if alreadyCompleted then IO.unit // Deferred already completed by normal path or death watch
             else if retriesLeft > 0 then
               val attempt = maxRetries - retriesLeft + 1
               logger.info(s"Sub-agent '$agentName' timeout, retrying (attempt $attempt/$maxRetries)") *>
@@ -326,9 +326,13 @@ $prompt"""
             else
               logger.warn(s"Sub-agent '$agentName' timed out, no retries left") *>
                 resultDeferred
-                  .complete(Left(ToolError(
-                    s"Sub-agent '$agentName' timed out after ${timeout.toMinutes}m ($maxRetries retries exhausted)"
-                  )))
+                  .complete(
+                    Left(
+                      ToolError(
+                        s"Sub-agent '$agentName' timed out after ${timeout.toMinutes}m ($maxRetries retries exhausted)"
+                      )
+                    )
+                  )
                   .void *>
                 system.stop(subagentRef).handleErrorWith(_ => IO.unit)
           }
@@ -349,7 +353,7 @@ $prompt"""
               (resultDeferred.complete(result).void *>
                 system.stop(subagentRef) *>
                 IO.pure(Behaviors.stopped[AgentEvent]))
-                  .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+                .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
 
             override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
               signal match
@@ -423,8 +427,10 @@ You will be notified when it completes via a system message.
 Do NOT duplicate this agent's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
     )
 
-  /** Background adapter: forwards result to parent via ExternalEvent, then cleans up.
-    * Watches sub-agent for crashes — notifies parent if sub-agent dies unexpectedly. */
+  /**
+   * Background adapter: forwards result to parent via ExternalEvent, then cleans up.
+   * Watches sub-agent for crashes — notifies parent if sub-agent dies unexpectedly.
+   */
   private def backgroundAdapter(
     subagentRef: ActorRef[AgentCommand],
     parentRef: Option[ActorRef[AgentCommand]],
@@ -440,7 +446,9 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
         val notify = parentRef match
           case Some(ref) =>
             ref ! AgentCommand.ExternalEvent(
-              source = "delegate", eventType = eventType, payload = payload,
+              source = "delegate",
+              eventType = eventType,
+              payload = payload,
               metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
               correlationId = Some(subagentId)
             )
@@ -527,8 +535,10 @@ The sub-agent will stay alive after completing this task. You can send follow-up
 You will be notified when the initial task completes."""
     )
 
-  /** Persistent adapter: forwards completion to parent but does NOT stop the sub-agent.
-    * Watches sub-agent for crashes — notifies parent if persistent session dies. */
+  /**
+   * Persistent adapter: forwards completion to parent but does NOT stop the sub-agent.
+   * Watches sub-agent for crashes — notifies parent if persistent session dies.
+   */
   private def persistentAdapter(
     subagentRef: ActorRef[AgentCommand],
     parentRef: Option[ActorRef[AgentCommand]],
@@ -544,7 +554,9 @@ You will be notified when the initial task completes."""
         val actions = parentRef match
           case Some(ref) =>
             (ref ! AgentCommand.ExternalEvent(
-              source = address, eventType = eventType, payload = payload,
+              source = address,
+              eventType = eventType,
+              payload = payload,
               metadata = JsonObject("description" -> description.asJson, "agentName" -> agentName.asJson),
               correlationId = Some(subagentId)
             )) *> (ref ! AgentCommand.SessionUpdate(address, sessionStatus))
@@ -553,6 +565,7 @@ You will be notified when the initial task completes."""
         // (unless Terminated — in that case sub-agent is already dead)
         (actions *> IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
+      end notifyParentAndStop
 
       IO.pure(
         new Behavior[AgentEvent]:
@@ -560,8 +573,9 @@ You will be notified when the initial task completes."""
             val (eventType, payload, sessionStatus) = event match
               case AgentEvent.Completed(_, messages) =>
                 val text = extractLastAssistantText(messages)
-                val p = if text.nonEmpty then s"[Session update] \"$description\":\n$text"
-                        else s"[Session update] \"$description\" (task complete, awaiting instructions)"
+                val p =
+                  if text.nonEmpty then s"[Session update] \"$description\":\n$text"
+                  else s"[Session update] \"$description\" (task complete, awaiting instructions)"
                 ("completed", p, "idle (awaiting instructions)")
               case AgentEvent.Failed(_, error) =>
                 ("failed", s"[Session error] \"$description\": ${error.message}", "failed")
@@ -571,9 +585,11 @@ You will be notified when the initial task completes."""
             signal match
               case SystemSignal.Terminated(_) =>
                 // Persistent session died — notify parent, adapter stops
-                notifyParentAndStop("failed",
+                notifyParentAndStop(
+                  "failed",
                   s"[Session crashed] \"$description\": persistent session terminated unexpectedly",
-                  "crashed")
+                  "crashed"
+                )
       )
     }
 

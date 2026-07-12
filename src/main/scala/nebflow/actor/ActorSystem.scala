@@ -124,18 +124,20 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
 
   /** Deliver Terminated signal to all watchers of the given path. */
   private def notifyWatchers(deadPath: String, deadRef: ActorRef[?]): IO[Unit] =
-    watchers.get.flatMap { watchersMap =>
-      val watcherPaths = watchersMap.getOrElse(deadPath, Set.empty)
-      // Clean up: remove dead actor from watchers map
-      watchers.update(_ - deadPath) *>
-      registry.get.flatMap { entries =>
-        watcherPaths.toList.traverse_ { wp =>
-          entries.get(wp) match
-            case Some(entry) => entry.systemQueue.offer(SystemSignal.Terminated(deadRef))
-            case None => IO.unit
-        }
+    watchers.get
+      .flatMap { watchersMap =>
+        val watcherPaths = watchersMap.getOrElse(deadPath, Set.empty)
+        // Clean up: remove dead actor from watchers map
+        watchers.update(_ - deadPath) *>
+          registry.get.flatMap { entries =>
+            watcherPaths.toList.traverse_ { wp =>
+              entries.get(wp) match
+                case Some(entry) => entry.systemQueue.offer(SystemSignal.Terminated(deadRef))
+                case None => IO.unit
+            }
+          }
       }
-    }.handleErrorWith(e => log.warn(s"notifyWatchers failed: ${e.getMessage}").void)
+      .handleErrorWith(e => log.warn(s"notifyWatchers failed: ${e.getMessage}").void)
 
   // ============================================================
   // Actor message loop — dual queue (messages + system signals)
@@ -193,11 +195,13 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
     // Guarantee: always runs when loop ends (normal stop, crash, cancel)
     loop.guarantee {
       for
-        _ <- ctx.cancelCurrentTurn().handleErrorWith(e =>
-          ctx.log.warn(s"cancelCurrentTurn during cleanup failed: ${e.getMessage}").void)
+        _ <- ctx
+          .cancelCurrentTurn()
+          .handleErrorWith(e => ctx.log.warn(s"cancelCurrentTurn during cleanup failed: ${e.getMessage}").void)
         _ <- cleanupChildren(childrenRef)
-        _ <- behaviorRef.get.flatMap(_.onStop(ctx)).handleErrorWith(e =>
-          ctx.log.error(s"onStop failed: ${e.getMessage}").void)
+        _ <- behaviorRef.get
+          .flatMap(_.onStop(ctx))
+          .handleErrorWith(e => ctx.log.error(s"onStop failed: ${e.getMessage}").void)
         _ <- notifyWatchers(path.toString, ctx.self)
       yield ()
     }

@@ -13,8 +13,10 @@ import nebflow.core.NebflowLogger
 sealed trait SystemSignal
 
 object SystemSignal:
-  /** Delivered to an actor that called [[ActorContext.watch]] when the
-    * watched actor's Fiber terminates (normal stop, crash, or cancellation). */
+  /**
+   * Delivered to an actor that called [[ActorContext.watch]] when the
+   * watched actor's Fiber terminates (normal stop, crash, or cancellation).
+   */
   case class Terminated(ref: ActorRef[?]) extends SystemSignal
 end SystemSignal
 
@@ -38,12 +40,16 @@ trait Behavior[Msg]:
   /** System signal handler (death watch, etc). Default: ignore. */
   def onSignal(ctx: ActorContext[Msg], signal: SystemSignal): IO[Behavior[Msg]] = IO.pure(this)
 
-  /** Cleanup hook — guaranteed to run once when the actor stops, regardless
-    * of how it stops (normal, crash, cancelled). Default: no-op. */
+  /**
+   * Cleanup hook — guaranteed to run once when the actor stops, regardless
+   * of how it stops (normal, crash, cancelled). Default: no-op.
+   */
   def onStop(ctx: ActorContext[Msg]): IO[Unit] = IO.unit
 
-  /** Error handler — called when [[receive]] throws. Default: log and resume
-    * with same behavior. Override to return a safe fallback behavior (e.g. idle). */
+  /**
+   * Error handler — called when [[receive]] throws. Default: log and resume
+   * with same behavior. Override to return a safe fallback behavior (e.g. idle).
+   */
   def onError(ctx: ActorContext[Msg], err: Throwable): IO[Behavior[Msg]] =
     ctx.log.error(s"Actor error: ${err.getMessage}").as(this)
 end Behavior

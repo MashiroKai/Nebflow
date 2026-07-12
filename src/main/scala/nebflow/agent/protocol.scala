@@ -153,8 +153,10 @@ object AgentCommand:
   case class SessionUpdate(address: String, status: String) extends AgentCommand
 end AgentCommand
 
-/** Tool/compaction pipeline error — distinct from LLM failures.
-  * Carried via LlmFailed but pattern-matched to show correct message to user. */
+/**
+ * Tool/compaction pipeline error — distinct from LLM failures.
+ * Carried via LlmFailed but pattern-matched to show correct message to user.
+ */
 case class ToolPipelineError(message: String) extends RuntimeException(message)
 
 sealed trait AgentEvent
