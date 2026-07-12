@@ -142,17 +142,39 @@ Git safety:
   // Interactive command patterns: commands that require terminal interaction.
   // These cannot work in this environment because stdin is /dev/null and there is no tty.
   private val InteractivePatterns = List(
-    ("""^\s*top\b(?!.*-b)""".r, "`top` is interactive. Use `top -b -n 1` for batch output."),
-    ("""^\s*(htop|btop|atop)\b""".r, "Interactive system monitor. Use `ps aux` or `top -b -n 1` instead."),
+    // Pagers & editors
     ("""^\s*(less|more)\b""".r, "Interactive pager. Use Read tool, `cat`, `head`, or `tail` instead."),
     ("""^\s*(vim?|nano|emacs|pico)\b""".r, "Interactive text editor. Use Edit or Write tool instead."),
+    ("""^\s*crontab\s+-e\b""".r, "`crontab -e` opens an editor. Use `crontab <file>` instead."),
+    // System monitors
+    ("""^\s*top\b(?!.*-b)""".r, "`top` is interactive. Use `top -b -n 1` for batch output."),
+    ("""^\s*(htop|btop|atop)\b""".r, "Interactive system monitor. Use `ps aux` or `top -b -n 1` instead."),
+    // Terminal multiplexers & debuggers
     ("""^\s*(tmux|screen)\b""".r, "Terminal multiplexer. Run this command manually in your terminal."),
     ("""^\s*(gdb|lldb)\b""".r, "Interactive debugger. Run this command manually in your terminal."),
+    // Password / authentication
     ("""^\s*passwd\b""".r, "`passwd` requires interactive terminal. Run manually in your terminal."),
-    ("""^\s*su\b""".r, "`su` requires interactive terminal. Run manually in your terminal."),
-    ("""crontab\s+-e\b""".r, "`crontab -e` opens an editor. Use `crontab <file>` instead."),
+    ("""^\s*(su|sudo)\b(\s|$)""".r, "`su`/`sudo` requires interactive terminal. Run manually in your terminal."),
+    ("""^\s*ssh\b(?!.*-o\s+BatchMode)""".r, "`ssh` without `-o BatchMode=yes` (or without a remote command) is interactive. Use `ssh -o BatchMode=yes host 'command'` instead."),
+    ("""^\s*(telnet|ftp|sftp)\b""".r, "Interactive network command. Run this command manually in your terminal."),
+    ("""^\s*expect\b""".r, "`expect` is interactive scripting. Not supported in this environment."),
+    ("""^\s*script\b""".r, "`script` records terminal sessions. Not supported in this environment."),
+    // Interactive interpreters / REPLs
+    ("""^\s*(python|python3|ipython)\s*$""".r, "Interactive interpreter. Use `python -c '...'` to execute code."),
+    ("""^\s*(node)\s*$""".r, "Interactive interpreter. Use `node -e '...'` to execute code."),
+    ("""^\s*(irb|pry)\b""".r, "Interactive Ruby interpreter. Use `ruby -e '...'` instead."),
+    // Database clients (interactive mode)
+    ("""^\s*mysql\b(?!.*-e\b)(?!.*--execute\b)""".r, "MySQL client without `-e` is interactive. Use `mysql -e 'query'` or provide SQL inline."),
+    ("""^\s*psql\b(?!.*-c\b)(?!.*--command\b)""".r, "psql without `-c` is interactive. Use `psql -c 'query'` instead."),
+    ("""^\s*sqlite3\b(?!.*\.dump|\..*\.mode)""".r, "SQLite interactive shell. Use `sqlite3 db 'query'` or provide commands on stdin."),
+    ("""^\s*redis-cli\b(?!.*--raw\b)""".r, "Redis CLI is interactive without a command. Use `redis-cli <command>` instead."),
+    // Git interactive commands
     ("""git\s+rebase\s+-i\b""".r, "Interactive rebase. Use non-interactive git commands."),
-    ("""git\s+add\s+-i\b""".r, "Interactive staging. Use `git add <file>` instead.")
+    ("""git\s+add\s+-i\b""".r, "Interactive staging. Use `git add <file>` instead."),
+    // Login/publish commands
+    ("""^\s*(npm|pnpm|yarn)\s+login\b""".r, "Login command is interactive. Use a `.npmrc` token or env var instead."),
+    ("""^\s*cargo\s+login\b""".r, "Login command is interactive. Use `cargo login --token TOKEN` or env var instead."),
+    ("""^\s*gh\s+auth\s+login\b""".r, "GitHub CLI login is interactive. Use `gh auth login --with-token < token.txt` instead.")
   )
 
   // Injection patterns: gated by ToolReversibility — requires user confirmation
