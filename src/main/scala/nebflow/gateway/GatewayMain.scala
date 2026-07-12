@@ -226,6 +226,7 @@ object GatewayMain extends IOApp.Simple:
                               nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                 val hooksConfig = HooksConfigLoader.load(os.pwd)
                                 val hookEngine = HookEngine(hooksConfig)
+                                val actorSystem = nebflow.actor.ActorSystem("local")
                                 val sharedResources = SharedResources(
                                   llm = handle,
                                   dispatcher = dispatcher,
@@ -243,6 +244,7 @@ object GatewayMain extends IOApp.Simple:
                                   sessionModelOverrides = sessionModelOverrides,
                                   providerRegistry = registry,
                                   healthMonitor = healthMonitor,
+                                  actorSystem = actorSystem,
                                   hookEngine = hookEngine
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
