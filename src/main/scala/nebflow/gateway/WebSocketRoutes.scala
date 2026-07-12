@@ -41,7 +41,7 @@ class WebSocketRoutes(
   mcpManager: McpManager
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
-  private val nebulaSystem = NebulaActorSystem("local")
+  private val nebulaSystem = sharedResources.actorSystem
 
   /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
   private val rootAgents: Ref[IO, Map[String, nebflow.actor.ActorRef[AgentCommand]]] =
