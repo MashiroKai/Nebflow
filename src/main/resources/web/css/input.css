@@ -381,6 +381,39 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.queue-item-att {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.queue-item-att-thumb {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+.queue-item-att-file {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: var(--glass-etched-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-item-att-more {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  background: var(--glass-etched-bg);
+  padding: 2px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
 .queue-item-actions {
   display: flex;
   align-items: center;
