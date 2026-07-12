@@ -385,7 +385,7 @@ private[agent] trait AgentCore:
         val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
         NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg")
         ctx.self ! LlmFailed(
-          new RuntimeException(s"Tool execution pipeline failed: $msg"),
+          ToolPipelineError(s"Tool execution pipeline failed: $msg"),
           replyTo,
           state.currentTurnId
         )

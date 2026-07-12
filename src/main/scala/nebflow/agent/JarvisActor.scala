@@ -311,6 +311,8 @@ object JarvisActor extends AgentCore with AgentSession:
           val errMsg = error match
             case e: FallbackExhaustedError =>
               e.attempts.map(a => s"${a.providerId}/${a.model}").mkString("; ")
+            case e: ToolPipelineError =>
+              e.message
             case _ =>
               Option(error.getMessage)
                 .filter(_.nonEmpty)
