@@ -395,5 +395,4 @@ export default {
   'dropbox.saved': '已保存',
   'dropbox.completed': '已完成',
   'dropbox.failed': '传输失败',
-  'dropbox.copy': '复制',
 };
