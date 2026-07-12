@@ -160,20 +160,38 @@
   color: var(--color-frame-text, #333);
 }
 
-/* Message timestamp */
-.dropbox-msg-time {
-  font-size: 10px;
-  color: var(--color-frame-text-muted, #aaa);
+/* Message meta row (timestamp + copy) */
+.dropbox-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin-top: 2px;
   padding: 0 4px;
 }
 
-/* Copy button — reuse .code-copy-btn from chat.css, only adjust position */
-.dropbox-msg { position: relative; }
-.dropbox-msg .code-copy-btn { top: -6px; }
-.dropbox-msg.out .code-copy-btn { right: -4px; }
-.dropbox-msg.in  .code-copy-btn { left: -4px; }
-.dropbox-msg:hover .code-copy-btn { opacity: 1; }
+/* Message timestamp */
+.dropbox-msg-time {
+  font-size: 10px;
+  color: var(--color-frame-text-muted, #aaa);
+}
+
+/* Inline copy button */
+.dropbox-msg-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  color: var(--color-frame-text-muted, #aaa);
+  padding: 2px;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+.dropbox-msg-copy:hover { color: var(--color-frame-text, #666); }
+.dropbox-msg-copy.copied { color: #34c759; opacity: 1; }
+.dropbox-msg:hover .dropbox-msg-copy { opacity: 1; }
 
 /* File card */
 .dropbox-file-card {

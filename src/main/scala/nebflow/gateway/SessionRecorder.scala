@@ -69,7 +69,11 @@ class SessionRecorder private (
       case "user" =>
         val text = hc.downField("text").as[String].getOrElse("")
         val injected = hc.downField("injected").as[Boolean].getOrElse(false)
-        if text.nonEmpty then sessionStore.appendUiMessages(sessionId, List(UiMessage.User(text, injected = injected)))
+        if text.nonEmpty then
+          sessionStore.appendUiMessages(
+            sessionId,
+            List(UiMessage.User(text, injected = injected, timestamp = System.currentTimeMillis()))
+          )
         else IO.unit
 
       case _ => IO.unit

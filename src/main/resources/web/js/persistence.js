@@ -7,7 +7,7 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
-import { createDurationBadgeElement } from './chat.js';
+import { createDurationBadgeElement, formatHm } from './chat.js';
 
 // ---------- Duration formatting (mirrors chat.js formatDuration) ----------
 function formatDurationPersisted(ms) {
@@ -424,6 +424,13 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       });
+      // Timestamp
+      if (m.timestamp && m.timestamp > 0) {
+        const timeEl = document.createElement('div');
+        timeEl.className = 'msg-time';
+        timeEl.textContent = formatHm(m.timestamp);
+        row.appendChild(timeEl);
+      }
       fragment.appendChild(row);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
