@@ -4,7 +4,7 @@
 import state, { LS_HISTORY_KEY } from './state.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
 import { sendWs } from './ws.js';
-import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble } from './chat.js';
+import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF } from './chat.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
@@ -18,9 +18,24 @@ const slashCommands = {
   '/clear': {
     desc: () => t('slash.clear'),
     run: () => {
-      sendWs({type:'command', command:'clear', sessionId: activeView.sessionId});
-      delete state.sessionTasks[activeView.sessionId];
+      const v = activeView;
+      sendWs({type:'command', command:'clear', sessionId: v.sessionId});
+      delete state.sessionTasks[v.sessionId];
       renderTaskList([]);
+      // Clean up stream state — remove orphaned thinking placeholders and
+      // reset stream variables so the next message starts fresh.
+      if (window.__stopThinkingTimer) window.__stopThinkingTimer();
+      cancelToolStreamRAF();
+      v.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+        const row = el.closest('.row');
+        if (row) row.remove();
+      });
+      v.stream.currentAiBubble = null;
+      v.stream.aiText = '';
+      v.stream.currentThinkingBubble = null;
+      v.stream.thinkingText = '';
+      v.stream.toolStreamText = '';
+      v.stream.toolStreamToolName = '';
       renderSystemBubble(t('slash.clearDone'));
     }
   },
@@ -154,6 +169,7 @@ function pickSlashCommand(index) {
   if (index < 0 || index >= activeView.slashMatches.length) return;
   const cmd = activeView.slashMatches[index].cmd;
   activeView.dom.input.value = '';
+  activeView.dom.input.style.height = 'auto';
   closeSlashDropdown();
   activeView.dom.input.focus();
   if (slashCommands[cmd] && slashCommands[cmd].run) slashCommands[cmd].run();
@@ -430,6 +446,7 @@ export function send() {
   if (text.startsWith('/') && !text.startsWith('/ask ')) {
     if (handleSlash(text)) {
       input.value = '';
+      input.style.height = 'auto';
       saveInputDraft(v.sessionId);
       setTimeout(() => { v.isSending = false; }, 300);
       return;
@@ -472,6 +489,7 @@ export function send() {
   }
   if (handleSlash(text)) {
     input.value = '';
+    input.style.height = 'auto';
     saveInputDraft(v.sessionId);
     // Debounce: keep lock briefly to prevent accidental double-trigger of slash commands
     setTimeout(() => { v.isSending = false; }, 300);

@@ -205,6 +205,14 @@ export class ChatView {
       this.pendingAttachments = [];
     }
     this.dom.input.style.height = 'auto';
+    // Render attachment preview for restored image/file attachments
+    if (this.dom.attPreview) this.dom.attPreview.innerHTML = '';
+    if (this.pendingAttachments.length > 0) {
+      import('./chat.js').then(({ renderAttachmentPreview }) => {
+        setActiveView(this);
+        renderAttachmentPreview();
+      });
+    }
   }
 }
 
