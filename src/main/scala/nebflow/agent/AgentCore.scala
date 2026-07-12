@@ -165,7 +165,7 @@ private[agent] trait AgentCore:
         val sessionIdOpt = state.sessionId
         val onAttemptCb: FallbackAttempt => IO[Unit] = attempt =>
           val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
-          emitStreamIO(state.wsSend, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
+          state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
         val turnId = state.currentTurnId + 1
         val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
@@ -576,6 +576,8 @@ private[agent] trait AgentCore:
       )
     )
 
+  /** Direct wsSend for use inside Fiber context (pipeLlmCall, pipeToolExecutions).
+    * Do NOT call from receive handlers — use emitStream instead (non-blocking forkTurn wrapper). */
   protected def emitStreamIO(
     wsSend: io.circe.Json => IO[Unit],
     event: AgentStreamEvent,

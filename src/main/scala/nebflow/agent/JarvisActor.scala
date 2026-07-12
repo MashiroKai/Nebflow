@@ -143,7 +143,7 @@ object JarvisActor extends AgentCore with AgentSession:
           val busyIO =
             if depth == 0 then
               stateWithWidth.sessionId.fold(IO.unit)(sid =>
-                ctx.forkTurn(emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
+                emitSessionBusy(stateWithWidth.wsSend, sid, busy = true)
               )
             else IO.unit
           for
@@ -174,7 +174,7 @@ object JarvisActor extends AgentCore with AgentSession:
           .withStatus(AgentStatus.Processing)
         val busyIO =
           if depth == 0 then
-            state.sessionId.fold(IO.unit)(sid => ctx.forkTurn(emitSessionBusy(state.wsSend, sid, busy = true)))
+            state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
         for
           _ <- busyIO
@@ -205,7 +205,7 @@ object JarvisActor extends AgentCore with AgentSession:
       case Stop(_) =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
@@ -234,16 +234,16 @@ object JarvisActor extends AgentCore with AgentSession:
       case PermissionAnswered(approved) =>
         state.pendingPermission match
           case Some(deferred) =>
-            ctx.forkTurn(deferred.complete(approved).void.handleErrorWith(_ => IO.unit)) *>
+            deferred.complete(approved).void.handleErrorWith(_ => IO.unit) *>
               IO.pure(idle(agentDef, resources, depth, parentRef, state))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case AgentCommand.ForwardPermission(deferred, permJson) =>
         if state.pendingPermission.isDefined then
-          ctx.forkTurn(deferred.complete(false).void.handleErrorWith(_ => IO.unit)) *>
+          deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
             IO.pure(idle(agentDef, resources, depth, parentRef, state))
         else
-          ctx.forkTurn(state.wsSend(permJson).handleErrorWith(_ => IO.unit)) *>
+          state.wsSend(permJson).handleErrorWith(_ => IO.unit) *>
             IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
 
       case AgentCommand.SetBypass(bypass) =>
@@ -266,9 +266,6 @@ object JarvisActor extends AgentCore with AgentSession:
     pending: List[AgentCommand] = Nil
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
-
-      case StreamFiberStarted(fiber) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(Some(fiber)), pending))
 
       case UpdateLifecycle(lc) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withLifecycle(lc), pending))
@@ -310,7 +307,7 @@ object JarvisActor extends AgentCore with AgentSession:
       case LlmFailed(error, replyTo, turnId) =>
         if turnId != state.currentTurnId then IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
-          val cleanedState = state.withActiveStreamFiber(None)
+          val cleanedState = state
           val errMsg = error match
             case e: FallbackExhaustedError =>
               e.attempts.map(a => s"${a.providerId}/${a.model}").mkString("; ")
@@ -320,7 +317,7 @@ object JarvisActor extends AgentCore with AgentSession:
                 .map(m => s"LLM request failed: ${m.take(200)}")
                 .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
           for
-            _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+  
             _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
               ctx.forkTurn(
                 cleanedState
@@ -363,20 +360,20 @@ object JarvisActor extends AgentCore with AgentSession:
       case Interrupt() =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
         yield idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)
 
       case Stop(_) =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
       case ResetSession =>
         for
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
         yield
           val resetState = state
@@ -429,9 +426,9 @@ object JarvisActor extends AgentCore with AgentSession:
             Some(InteractionState(pendingPermission = state.pendingPermission, pendingAskUserReplyTo = replyToOpt))
           )
         )
-        ctx.forkTurn(state.wsSend(askJson).handleErrorWith { _ =>
-          replyToOpt.foreach(r => ctx.forkTurn(r ! Nil)); IO.unit
-        }) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
+        state.wsSend(askJson).handleErrorWith { _ =>
+          (replyToOpt.foreach(r => r ! Nil)); IO.unit
+        } *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
 
       case UserAnswered(answers) =>
         state.execution.interaction.flatMap(_.pendingAskUserReplyTo) match
@@ -443,7 +440,7 @@ object JarvisActor extends AgentCore with AgentSession:
       case PermissionAnswered(approved) =>
         state.pendingPermission match
           case Some(deferred) =>
-            ctx.forkTurn(deferred.complete(approved).void.handleErrorWith(_ => IO.unit)) *>
+            deferred.complete(approved).void.handleErrorWith(_ => IO.unit) *>
               IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(None), pending))
           case None => IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
@@ -452,10 +449,10 @@ object JarvisActor extends AgentCore with AgentSession:
 
       case AgentCommand.ForwardPermission(deferred, permJson) =>
         if state.pendingPermission.isDefined then
-          ctx.forkTurn(deferred.complete(false).void.handleErrorWith(_ => IO.unit)) *>
+          deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
             IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
-          ctx.forkTurn(state.wsSend(permJson).handleErrorWith(_ => IO.unit)) *>
+          state.wsSend(permJson).handleErrorWith(_ => IO.unit) *>
             IO.pure(
               processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
             )
@@ -522,11 +519,6 @@ object JarvisActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     Behaviors.receiveMessage:
 
-      case StreamFiberStarted(fiber) =>
-        IO.pure(
-          memoryConsolidating(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(Some(fiber)), pending)
-        )
-
       case LlmComplete(result, _, turnId) =>
         if turnId != state.currentTurnId then
           IO.pure(memoryConsolidating(agentDef, resources, depth, parentRef, state, pending))
@@ -543,7 +535,7 @@ object JarvisActor extends AgentCore with AgentSession:
             )
           yield
             pending.headOption.foreach(msg => ctx.self ! msg)
-            idle(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(None))
+            idle(agentDef, resources, depth, parentRef, state)
 
       case LlmFailed(error, _, turnId) =>
         if turnId != state.currentTurnId then
@@ -551,12 +543,12 @@ object JarvisActor extends AgentCore with AgentSession:
         else
           logger.warn(s"Memory consolidation failed: ${error.getMessage}")
           pending.headOption.foreach(msg => ctx.self ! msg)
-          IO.pure(idle(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(None)))
+          IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case Interrupt() =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
         yield
           pending.headOption.foreach(msg => ctx.self ! msg)
           idle(agentDef, resources, depth, parentRef, state)
@@ -564,7 +556,7 @@ object JarvisActor extends AgentCore with AgentSession:
       case Stop(_) =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 

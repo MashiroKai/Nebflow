@@ -38,8 +38,6 @@ object AgentCommand:
     replyTo: ActorRef[Boolean]
   ) extends AgentCommand
 
-  case class StreamFiberStarted(fiber: cats.effect.Fiber[IO, Throwable, Unit]) extends AgentCommand
-
   case class LlmComplete(
     result: ConsumeResult,
     replyTo: Option[ActorRef[AgentEvent]],
@@ -407,7 +405,6 @@ case class ExecutionContext(
   status: AgentStatus = AgentStatus.Idle,
   turnIdx: Int = 0,
   currentTurnId: Long = 0L,
-  activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
   interaction: Option[InteractionState] = None,
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
   pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
@@ -422,7 +419,6 @@ object ExecutionContext:
       status = AgentStatus.Idle,
       turnIdx = turnIdx,
       currentTurnId = currentTurnId,
-      activeStreamFiber = None,
       interaction = None,
       pendingEvents = Nil,
       pendingImmediateInputs = Nil,
@@ -459,7 +455,6 @@ object AgentState:
     messages: List[Message] = Nil,
     status: AgentStatus = AgentStatus.Idle,
     depth: Int = 0,
-    activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
     sessionId: Option[String] = None,
     sessionName: Option[String] = None,
     pendingCompaction: Option[CompactionJob] = None,
@@ -496,7 +491,7 @@ object AgentState:
         rulesMd = rulesMd,
         bypass = bypass
       ),
-      ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
+      ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
       Nil
     )
@@ -512,7 +507,6 @@ extension (s: AgentState)
   def depth: Int = s.session.depth
   def turnIdx: Int = s.execution.turnIdx
   def currentTurnId: Long = s.execution.currentTurnId
-  def activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = s.execution.activeStreamFiber
   def recentMessageIds: List[String] = s.session.recentMessageIds
   def pendingCompaction: Option[CompactionJob] = s.compaction.pendingJob
   def compactionFailures: Int = s.compaction.compactionFailures
@@ -544,9 +538,6 @@ extension (s: AgentState)
   def withStatus(st: AgentStatus): AgentState = s.copy(execution = s.execution.copy(status = st))
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
   def withCurrentTurnId(id: Long): AgentState = s.copy(execution = s.execution.copy(currentTurnId = id))
-
-  def withActiveStreamFiber(fiber: Option[cats.effect.Fiber[IO, Throwable, Unit]]): AgentState =
-    s.copy(execution = s.execution.copy(activeStreamFiber = fiber))
 
   def withInteraction(interaction: Option[InteractionState]): AgentState =
     s.copy(execution = s.execution.copy(interaction = interaction))
