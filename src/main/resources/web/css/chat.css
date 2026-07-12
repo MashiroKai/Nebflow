@@ -473,6 +473,17 @@
 .row.notice { justify-content: center; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ---------- Message timestamp ---------- */
+.msg-time {
+  font-size: 10px;
+  color: var(--color-text);
+  opacity: 0.35;
+  margin-top: 3px;
+  padding: 0 4px;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
 .bubble {
   max-width: 100%;
   padding: 10px 14px;

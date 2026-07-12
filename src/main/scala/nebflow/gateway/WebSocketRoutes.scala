@@ -201,7 +201,7 @@ class WebSocketRoutes(
           logger.info(s"Bridge message for session $sessionId: ${content.take(60)}... $source") *>
             // Record as UiMessage
             sharedResources.sessionStore
-              .appendUiMessages(sessionId, List(UiMessage.User(content, Nil)))
+              .appendUiMessages(sessionId, List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis())))
               .handleErrorWith(e => IO(logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}"))) *>
             // Push to frontend in real-time so it shows without switching sessions
             wsHub.broadcast(
@@ -593,7 +593,10 @@ class WebSocketRoutes(
           (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
             case (Right(answers), Right(askSessionId)) =>
               val answerText = answers.mkString("\n")
-              sessionStore.appendUiMessages(askSessionId, List(UiMessage.User(answerText))) *>
+              sessionStore.appendUiMessages(
+                askSessionId,
+                List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
+              ) *>
                 routeToAgent(askSessionId)(ref => ref ! AgentCommand.UserAnswered(answers))
             case _ => IO.unit
 
@@ -613,7 +616,10 @@ class WebSocketRoutes(
           val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
           if immSessionId.nonEmpty && immContent.nonEmpty then
             logger.info(s"Immediate input for session $immSessionId (${immContent.length} chars)") *>
-              sessionStore.appendUiMessages(immSessionId, List(UiMessage.User(immContent, Nil))) *>
+              sessionStore.appendUiMessages(
+                immSessionId,
+                List(UiMessage.User(immContent, Nil, timestamp = System.currentTimeMillis()))
+              ) *>
               routeToAgent(immSessionId)(ref => ref ! AgentCommand.ImmediateInput(immContent))
           else IO.unit
 
@@ -933,7 +939,7 @@ class WebSocketRoutes(
             sharedResources.sessionStore.appendUiMessages(
               skillSessionId,
               List(
-                UiMessage.User(skillInput),
+                UiMessage.User(skillInput, timestamp = System.currentTimeMillis()),
                 UiMessage.System(
                   s"Using skill: $skillName",
                   Some("slash.skillActivated"),
@@ -1901,7 +1907,10 @@ class WebSocketRoutes(
                        }
                        val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
                        sharedResources.sessionStore
-                         .appendUiMessages(msgSessionId, List(UiMessage.User(content, attJson, injected)))
+                         .appendUiMessages(
+                           msgSessionId,
+                           List(UiMessage.User(content, attJson, injected, timestamp = System.currentTimeMillis()))
+                         )
                          .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
                      else IO.unit) *> {
                       // Track turn count + session start time for telemetry
