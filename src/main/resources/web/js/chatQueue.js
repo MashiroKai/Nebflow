@@ -45,14 +45,42 @@ export function renderQueueBar(sessionId, handlers = {}) {
     row.className = 'queue-item';
     row.dataset.queueId = item.id;
 
-    const textEl = document.createElement('span');
-    textEl.className = 'queue-item-text';
-    const previewLen = 80;
-    const fullText = item.skillName ? `/${item.skillName} ${item.text}` : item.text;
-    textEl.textContent = fullText.length > previewLen
-      ? fullText.slice(0, previewLen) + '…'
-      : fullText;
-    row.appendChild(textEl);
+	    const textEl = document.createElement('span');
+	    textEl.className = 'queue-item-text';
+	    const previewLen = 80;
+	    const fullText = item.skillName ? `/${item.skillName} ${item.text}` : item.text;
+	    textEl.textContent = fullText.length > previewLen
+	      ? fullText.slice(0, previewLen) + '…'
+	      : fullText;
+	    row.appendChild(textEl);
+
+	    // Attachment indicator: show small thumbnail for images, file icon for others
+	    const atts = item.attachments || [];
+	    if (atts.length > 0) {
+	      const attEl = document.createElement('span');
+	      attEl.className = 'queue-item-att';
+	      atts.slice(0, 3).forEach((att, i) => {
+	        if (att.type === 'image' && att.preview && typeof att.preview === 'string') {
+	          const img = document.createElement('img');
+	          img.className = 'queue-item-att-thumb';
+	          img.src = att.preview;
+	          img.alt = '';
+	          attEl.appendChild(img);
+	        } else {
+	          const fileLabel = document.createElement('span');
+	          fileLabel.className = 'queue-item-att-file';
+	          fileLabel.textContent = att.name || 'file';
+	          attEl.appendChild(fileLabel);
+	        }
+	      });
+	      if (atts.length > 3) {
+	        const more = document.createElement('span');
+	        more.className = 'queue-item-att-more';
+	        more.textContent = '+' + (atts.length - 3);
+	        attEl.appendChild(more);
+	      }
+	      row.appendChild(attEl);
+	    }
 
     const actions = document.createElement('div');
     actions.className = 'queue-item-actions';
