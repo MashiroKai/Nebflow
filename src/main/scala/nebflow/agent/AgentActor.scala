@@ -320,22 +320,33 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.StartPlan(task) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-start", s"task=${task.take(60)}")
         val projectRootStr = state.projectRoot.getOrElse(resources.projectRoot.toString)
-        for
-          planAgentRef <- PlanAgent.spawn(
-            task = task,
-            mainAgentRef = ctx.self,
-            system = ctx.system,
-            resources = resources,
-            parentDepth = depth,
-            wsSend = state.wsSend,
-            projectRoot = projectRootStr,
-            parentSessionId = state.sessionId
-          )
-          planState = PlanModeState(
-            planAgentRef = planAgentRef,
-            taskDescription = task
-          )
-        yield planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(Some(planState)))
+        resources.agentLibrary.get("Planner").flatMap {
+          case Some(plannerDef) =>
+            PlanAgent.spawn(
+              agentDef = plannerDef,
+              task = task,
+              mainAgentRef = ctx.self,
+              system = ctx.system,
+              resources = resources,
+              parentDepth = depth,
+              wsSend = state.wsSend,
+              projectRoot = projectRootStr,
+              parentSessionId = state.sessionId
+            ).map { planAgentRef =>
+              val planState = PlanModeState(planAgentRef = planAgentRef, taskDescription = task)
+              planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(Some(planState)))
+            }
+          case None =>
+            ctx.forkTurn(
+              state.wsSend(
+                Json.obj(
+                  "type" -> "error".asJson,
+                  "sessionId" -> state.sessionId.asJson,
+                  "message" -> "Planner agent not found in agent library".asJson
+                )
+              ).handleErrorWith(_ => IO.unit)
+            ).as(idle(agentDef, resources, depth, parentRef, state))
+        }
 
       case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
           _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
@@ -999,65 +1010,6 @@ object AgentActor extends AgentCore with AgentSession:
       // --- Bypass toggled while processing ---
       case AgentCommand.SetBypass(bypass) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withBypass(bypass), pending))
-
-      // --- Plan mode: register plan agent ref and deferred (from Plan tool) ---
-      case AgentCommand.SetPlanState(planAgentRef, deferred) =>
-        val planState = PlanModeState(
-          planAgentRef = planAgentRef,
-          deferred = deferred
-        )
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withPlanMode(Some(planState)), pending))
-
-      // --- Plan mode: plan agent turn completed ---
-      case AgentCommand.PlanTurnComplete(planText) =>
-        val updatedPlanState = state.planMode.map(_.copy(currentPlanText = planText))
-        val planAgentId = updatedPlanState.flatMap(_.planAgentRef.path.name.split("/").lastOption).getOrElse("")
-        for
-          _ <- ctx.forkTurn(
-            state.wsSend(
-              Json.obj(
-                "type" -> "planReady".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "agentId" -> planAgentId.asJson
-              )
-            ).handleErrorWith(_ => IO.unit)
-          )
-        yield processing(agentDef, resources, depth, parentRef, state.withPlanMode(updatedPlanState), pending)
-
-      // --- Plan mode: user feedback → forward to plan agent ---
-      case AgentCommand.PlanFeedback(text) =>
-        state.planMode.foreach(_.planAgentRef ! AgentCommand.UserInput(text))
-        IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-      // --- Plan mode: user approved → resolve deferred, stop plan agent ---
-      case AgentCommand.PlanApproved =>
-        state.planMode match
-          case Some(pm) =>
-            pm.deferred.foreach(d => d.complete(PlanResult.Approved(pm.currentPlanText)).void.handleErrorWith(_ => IO.unit))
-            for _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
-            yield processing(agentDef, resources, depth, parentRef, state.withPlanMode(None), pending)
-          case None =>
-            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-      // --- Plan mode: user cancelled → resolve deferred, stop plan agent ---
-      case AgentCommand.PlanCancelled =>
-        state.planMode match
-          case Some(pm) =>
-            pm.deferred.foreach(d => d.complete(PlanResult.Cancelled).void.handleErrorWith(_ => IO.unit))
-            for _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
-            yield processing(agentDef, resources, depth, parentRef, state.withPlanMode(None), pending)
-          case None =>
-            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
-
-      // --- Plan mode: plan agent failed ---
-      case AgentCommand.PlanFailed(error) =>
-        state.planMode match
-          case Some(pm) =>
-            pm.deferred.foreach(d => d.complete(PlanResult.Cancelled).void.handleErrorWith(_ => IO.unit))
-            for _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
-            yield processing(agentDef, resources, depth, parentRef, state.withPlanMode(None), pending)
-          case None =>
-            IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>

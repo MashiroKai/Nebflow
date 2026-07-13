@@ -55,11 +55,8 @@ const slashCommands = {
   },
   '/plan': {
     desc: () => 'Enter plan mode — analyze and plan before executing',
-    run: (text) => {
-      const task = (text || '').replace(/^\/plan\s+/, '').trim();
-      if (task) {
-        sendWs({type:'command', command:'plan', sessionId: activeView.sessionId, task: task});
-      }
+    run: () => {
+      enterPlanMode();
     }
   },
   '/ask': {
@@ -200,6 +197,22 @@ export function cancelAskMode() {
   activeView.dom.input.placeholder = t('input.placeholder');
 }
 
+// ---------- Plan Mode ----------
+export function enterPlanMode() {
+  if (activeView.stream.planMode) return;
+  activeView.stream.planMode = true;
+  updateInputIndicator();
+  activeView.dom.input.placeholder = 'Describe the task to plan...';
+  activeView.dom.input.focus();
+}
+
+export function cancelPlanMode() {
+  if (!activeView.stream.planMode) return;
+  activeView.stream.planMode = false;
+  updateInputIndicator();
+  activeView.dom.input.placeholder = t('input.placeholder');
+}
+
 function updateAskIndicator() {
   updateInputIndicator();
 }
@@ -209,30 +222,40 @@ function updateInputIndicator() {
   const askEl = document.getElementById(prefix + 'ask-indicator');
   const skillEl = document.getElementById(prefix + 'skill-indicator');
   const skillLabel = document.getElementById(prefix + 'skill-indicator-label');
+  const planEl = document.getElementById(prefix + 'plan-indicator');
   const input = activeView.dom.input;
-  // Ask mode takes priority over skill mode
-  if (activeView.stream.askMode) {
+  // Plan/Ask mode take priority over skill mode
+  if (activeView.stream.planMode) {
+    if (planEl) planEl.classList.add('show');
+    if (askEl) askEl.classList.remove('show');
+    if (skillEl) skillEl.classList.remove('show');
+    input.style.paddingLeft = '';
+    if (planEl) {
+      const w = planEl.offsetWidth + 12;
+      input.style.paddingLeft = Math.max(w, 48) + 'px';
+    }
+  } else if (activeView.stream.askMode) {
+    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.add('show');
     if (skillEl) skillEl.classList.remove('show');
     input.style.paddingLeft = '';
     if (askEl) {
-      askEl.classList.add('show');
-      // Measure ask indicator width after layout
       const w = askEl.offsetWidth + 12;
       input.style.paddingLeft = Math.max(w, 48) + 'px';
     }
   } else if (activeView.skillMode) {
+    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) {
       if (skillLabel) skillLabel.textContent = activeView.skillModeName || 'SKILL';
       skillEl.classList.add('show');
-      // Measure skill indicator width after layout
       const w = skillEl.offsetWidth + 12;
       input.style.paddingLeft = Math.max(w, 56) + 'px';
     } else {
       input.style.paddingLeft = '';
     }
   } else {
+    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
     input.style.paddingLeft = '';
@@ -426,6 +449,22 @@ export function send() {
     sendWs({ type: 'skill', skillName, input: text, sessionId: v.sessionId });
     renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
+    input.value = '';
+    input.style.height = 'auto';
+    saveInputDraft(v.sessionId);
+    setTimeout(() => { v.isSending = false; }, 300);
+    return;
+  }
+  // If in plan mode, send as plan command
+  if (v.stream.planMode) {
+    cancelPlanMode();
+    if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      v.isSending = false;
+      return;
+    }
+    v.isSending = true;
+    sendWs({type:'command', command:'plan', sessionId: v.sessionId, task: text});
+    renderSystemBubble('Plan mode started — analyzing...');
     input.value = '';
     input.style.height = 'auto';
     saveInputDraft(v.sessionId);
@@ -1149,6 +1188,15 @@ export function initInput(view) {
         e.stopPropagation();
         setActiveView(view);
         cancelSkillMode();
+        input.focus();
+      });
+    }
+    const planCancel = document.getElementById(prefix + 'plan-indicator-cancel');
+    if (planCancel) {
+      planCancel.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setActiveView(view);
+        cancelPlanMode();
         input.focus();
       });
     }

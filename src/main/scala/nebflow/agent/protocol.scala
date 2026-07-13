@@ -122,12 +122,6 @@ object AgentCommand:
   /** Frontend → agent: user cancelled plan mode. */
   case object PlanCancelled extends AgentCommand
 
-  /** Plan tool → agent: register plan agent ref and optional deferred. */
-  case class SetPlanState(
-    planAgentRef: ActorRef[AgentCommand],
-    deferred: Option[cats.effect.Deferred[IO, PlanResult]] = None
-  ) extends AgentCommand
-
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
@@ -488,26 +482,16 @@ case class AgentSessionInfo(
 // Plan mode
 // ============================================================
 
-/** Result of a plan session — either approved with plan text, or cancelled. */
-sealed trait PlanResult
-object PlanResult:
-  case class Approved(planText: String) extends PlanResult
-  case object Cancelled extends PlanResult
-
 /**
  * Tracks active plan mode state on the main agent.
  *
  * @param planAgentRef   ref to the plan sub-agent (for forwarding feedback)
  * @param currentPlanText  latest plan text from the plan agent's last turn
- * @param deferred       Some when triggered via Plan tool (main agent in processing,
- *                       blocked on deferred.get); None when triggered via /plan
- *                         (main agent in planWaiting state)
  * @param taskDescription  the original user task, for context injection on approve
  */
 case class PlanModeState(
   planAgentRef: ActorRef[AgentCommand],
   currentPlanText: String = "",
-  deferred: Option[cats.effect.Deferred[IO, PlanResult]] = None,
   taskDescription: String = ""
 )
 

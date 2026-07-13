@@ -1,20 +1,20 @@
-/* planMode.css — Plan mode canvas panel */
+/* planMode.css — Plan mode split-view panel (matches secondary panel size) */
 
 .plan-canvas {
   position: fixed;
   top: 0;
   right: 0;
-  width: 55%;
+  width: 50%;
   max-width: 700px;
+  min-width: 360px;
   height: 100vh;
   background: var(--color-bg, #1a1a2e);
   border-left: 1px solid var(--color-border, rgba(255,255,255,0.08));
-  box-shadow: -4px 0 24px rgba(0,0,0,0.3);
-  z-index: 1000;
+  z-index: 900;
   display: flex;
   flex-direction: column;
   transform: translateX(100%);
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none;
 }
 
@@ -27,33 +27,32 @@
   .plan-canvas {
     background: var(--color-bg, #f8f9fa);
     border-left-color: var(--color-border, rgba(0,0,0,0.08));
-    box-shadow: -4px 0 16px rgba(0,0,0,0.08);
   }
 }
 
-/* Header */
+/* Header — matches secondary panel header style */
 .plan-canvas-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 18px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--color-border, rgba(255,255,255,0.06));
-  backdrop-filter: blur(20px);
   flex-shrink: 0;
+  min-height: 44px;
 }
 
 .plan-canvas-title {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 15px;
+  gap: 6px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--color-text, #e0e0e0);
 }
 
 .plan-canvas-title i {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   color: var(--color-primary, #7B68EE);
 }
 
@@ -76,65 +75,36 @@
 }
 
 .plan-canvas-close i {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
 }
 
 /* Body */
 .plan-canvas-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 18px;
+  padding: 14px 16px;
 }
 
-/* Tool activity */
-.plan-canvas-tools {
+/* Loading indicator */
+.plan-canvas-loading {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-bottom: 12px;
-}
-
-.plan-tool-item {
-  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  font-size: 12px;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
   color: var(--color-text-muted, #888);
-  background: var(--color-surface, rgba(255,255,255,0.03));
+  font-size: 13px;
 }
 
-.plan-tool-item.active .plan-tool-icon i {
-  animation: spin 1s linear infinite;
-  color: var(--color-primary, #7B68EE);
-}
-
-.plan-tool-item.done .plan-tool-icon i {
-  color: var(--color-success, #5CB85C);
-}
-
-.plan-tool-icon {
-  display: flex;
-  align-items: center;
-}
-
-.plan-tool-icon i {
-  width: 14px;
-  height: 14px;
-}
-
-.plan-tool-label {
-  flex-shrink: 0;
-}
-
-.plan-tool-summary {
-  color: var(--color-text-muted, #666);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 300px;
+.plan-canvas-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--color-border, rgba(255,255,255,0.1));
+  border-top-color: var(--color-primary, #7B68EE);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 
 @keyframes spin {
@@ -198,43 +168,21 @@
 .plan-canvas-footer {
   flex-shrink: 0;
   border-top: 1px solid var(--color-border, rgba(255,255,255,0.06));
-  padding: 14px 18px;
-}
-
-.plan-canvas-waiting {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--color-text-muted, #888);
-}
-
-.plan-canvas-waiting::before {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-primary, #7B68EE);
-  animation: pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+  padding: 10px 14px;
 }
 
 .plan-canvas-controls {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .plan-feedback-input {
   width: 100%;
   resize: vertical;
-  min-height: 36px;
-  max-height: 100px;
-  padding: 8px 12px;
+  min-height: 34px;
+  max-height: 80px;
+  padding: 7px 10px;
   border: 1px solid var(--color-border, rgba(255,255,255,0.1));
   border-radius: 8px;
   background: var(--color-surface, rgba(255,255,255,0.03));
@@ -252,15 +200,15 @@
 
 .plan-canvas-buttons {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   justify-content: flex-end;
 }
 
 .plan-btn {
-  padding: 7px 16px;
+  padding: 6px 14px;
   border: none;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
@@ -293,4 +241,40 @@
 
 .plan-btn-cancel:hover {
   color: var(--color-error, #D9534F);
+}
+
+/* Plan indicator (in input area, same style as ask-indicator) */
+#plan-indicator, #secondary-plan-indicator {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  background: var(--color-primary, #7B68EE);
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  pointer-events: auto;
+  z-index: 5;
+  white-space: nowrap;
+  align-items: center;
+  gap: 4px;
+}
+
+#plan-indicator.show, #secondary-plan-indicator.show {
+  display: flex;
+}
+
+#plan-indicator-cancel, #secondary-plan-indicator-cancel {
+  cursor: pointer;
+  opacity: 0.7;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#plan-indicator-cancel:hover, #secondary-plan-indicator-cancel:hover {
+  opacity: 1;
 }
