@@ -36,8 +36,6 @@ object ToolRegistry:
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Sub-agent delegation
       "Delegate" -> DelegateTool,
-      // Plan mode
-      "Plan" -> PlanTool,
       // Inter-agent messaging
       "Mail" -> MailTool,
       // Cross-device file transfer
