@@ -243,25 +243,23 @@
   color: var(--color-error, #D9534F);
 }
 
-/* Plan indicator (in input area, same style as ask-indicator) */
+/* Plan indicator (in input area, same style as ask/skill indicator) */
 #plan-indicator, #secondary-plan-indicator {
   display: none;
-  position: absolute;
-  top: 50%;
-  left: 10px;
-  transform: translateY(-50%);
-  background: var(--color-primary, #7B68EE);
-  color: white;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  padding: 2px 7px;
-  border-radius: 4px;
-  pointer-events: auto;
-  z-index: 5;
-  white-space: nowrap;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  pointer-events: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  opacity: 0.5;
+  color: var(--color-text, #666);
 }
 
 #plan-indicator.show, #secondary-plan-indicator.show {
@@ -270,9 +268,11 @@
 
 #plan-indicator-cancel, #secondary-plan-indicator-cancel {
   cursor: pointer;
-  opacity: 0.7;
+  pointer-events: auto;
   font-size: 14px;
   line-height: 1;
+  opacity: 0.6;
+  padding: 0 2px;
 }
 
 #plan-indicator-cancel:hover, #secondary-plan-indicator-cancel:hover {
