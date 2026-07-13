@@ -606,6 +606,25 @@ class WebSocketRoutes(
           logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
             routeToAgent(permSessionId)(ref => ref ! AgentCommand.PermissionAnswered(approved))
 
+        case "planApprove" =>
+          val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+          logger.info(s"Plan approved for session $planSessionId") *>
+            routeToAgent(planSessionId)(ref => ref ! AgentCommand.PlanApproved)
+
+        case "planFeedback" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val fbSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val fbText = json.hcursor.downField("text").as[String].getOrElse("")
+          if fbSessionId.nonEmpty && fbText.nonEmpty then
+            logger.info(s"Plan feedback for session $fbSessionId: ${fbText.take(60)}") *>
+              routeToAgent(fbSessionId)(ref => ref ! AgentCommand.PlanFeedback(fbText))
+          else IO.unit
+
+        case "planCancel" =>
+          val cancelSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+          logger.info(s"Plan cancelled for session $cancelSessionId") *>
+            routeToAgent(cancelSessionId)(ref => ref ! AgentCommand.PlanCancelled)
+
         case "interrupt" =>
           val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
           logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
@@ -649,6 +668,14 @@ class WebSocketRoutes(
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
               logger.info("Manual compaction triggered") *>
                 routeToAgent(compactSessionId)(ref => ref ! AgentCommand.TriggerCompaction("full"))
+            case "plan" =>
+              val planSessionId =
+                parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+              val planTask = parse(text).flatMap(_.hcursor.downField("task").as[String]).toOption.getOrElse("")
+              if planSessionId.nonEmpty && planTask.nonEmpty then
+                logger.info(s"Plan mode started: ${planTask.take(60)}") *>
+                  routeToAgent(planSessionId)(ref => ref ! AgentCommand.StartPlan(planTask))
+              else IO.unit
             case "fork" =>
               val forkSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")

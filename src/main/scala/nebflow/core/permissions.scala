@@ -27,7 +27,8 @@ object ToolReversibility:
     "Card",
     "RemoveUnnecessary",
     "Delegate",
-    "Mail"
+    "Mail",
+    "Plan"
   )
 
   private val SafeHttpMethods = Set("GET", "HEAD", "OPTIONS")
