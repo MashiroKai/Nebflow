@@ -23,7 +23,7 @@ private[agent] trait AgentCore:
    * Tools removed from sub-agents (depth > 0): user-interaction tools that
    * don't make sense in an autonomous sub-agent context.
    */
-  private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
+  private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion", "Plan")
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 

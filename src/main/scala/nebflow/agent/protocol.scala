@@ -100,6 +100,34 @@ object AgentCommand:
   /** Frontend → agent: update bypass (auto-approve) status for this session. */
   case class SetBypass(bypass: Boolean) extends AgentCommand
 
+  // ============================================================
+  // Plan mode commands
+  // ============================================================
+
+  /** WebSocketRoutes → agent: start plan mode with the given task. */
+  case class StartPlan(task: String) extends AgentCommand
+
+  /** Plan adapter → agent: plan agent completed a turn, carrying the plan text. */
+  case class PlanTurnComplete(planText: String) extends AgentCommand
+
+  /** Plan adapter → agent: plan agent failed or terminated. */
+  case class PlanFailed(error: String) extends AgentCommand
+
+  /** Frontend → agent: user approved the plan. */
+  case object PlanApproved extends AgentCommand
+
+  /** Frontend → agent: user sent feedback to adjust the plan. */
+  case class PlanFeedback(text: String) extends AgentCommand
+
+  /** Frontend → agent: user cancelled plan mode. */
+  case object PlanCancelled extends AgentCommand
+
+  /** Plan tool → agent: register plan agent ref and optional deferred. */
+  case class SetPlanState(
+    planAgentRef: ActorRef[AgentCommand],
+    deferred: Option[cats.effect.Deferred[IO, PlanResult]] = None
+  ) extends AgentCommand
+
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
@@ -456,11 +484,39 @@ case class AgentSessionInfo(
   createdAt: Long = System.currentTimeMillis()
 )
 
+// ============================================================
+// Plan mode
+// ============================================================
+
+/** Result of a plan session — either approved with plan text, or cancelled. */
+sealed trait PlanResult
+object PlanResult:
+  case class Approved(planText: String) extends PlanResult
+  case object Cancelled extends PlanResult
+
+/**
+ * Tracks active plan mode state on the main agent.
+ *
+ * @param planAgentRef   ref to the plan sub-agent (for forwarding feedback)
+ * @param currentPlanText  latest plan text from the plan agent's last turn
+ * @param deferred       Some when triggered via Plan tool (main agent in processing,
+ *                       blocked on deferred.get); None when triggered via /plan
+ *                         (main agent in planWaiting state)
+ * @param taskDescription  the original user task, for context injection on approve
+ */
+case class PlanModeState(
+  planAgentRef: ActorRef[AgentCommand],
+  currentPlanText: String = "",
+  deferred: Option[cats.effect.Deferred[IO, PlanResult]] = None,
+  taskDescription: String = ""
+)
+
 case class AgentState(
   session: SessionContext,
   execution: ExecutionContext,
   compaction: CompactionState,
-  agentSessions: List[AgentSessionInfo]
+  agentSessions: List[AgentSessionInfo],
+  planMode: Option[PlanModeState]
 )
 
 object AgentState:
@@ -509,7 +565,8 @@ object AgentState:
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
-      Nil
+      Nil,
+      None
     )
   end apply
 end AgentState
@@ -597,6 +654,8 @@ extension (s: AgentState)
   def withLifecycleCleared: AgentState = s.copy(session = s.session.copy(lifecycle = None))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
   def withBypass(b: Boolean): AgentState = s.copy(session = s.session.copy(bypass = b))
+
+  def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))

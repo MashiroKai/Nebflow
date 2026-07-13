@@ -53,6 +53,15 @@ const slashCommands = {
       renderSystemBubble(t('slash.forkPending'));
     }
   },
+  '/plan': {
+    desc: () => 'Enter plan mode — analyze and plan before executing',
+    run: (text) => {
+      const task = (text || '').replace(/^\/plan\s+/, '').trim();
+      if (task) {
+        sendWs({type:'command', command:'plan', sessionId: activeView.sessionId, task: task});
+      }
+    }
+  },
   '/ask': {
     desc: () => t('slash.ask'),
     run: () => {
@@ -94,7 +103,7 @@ export function registerSkillCommands(skills) {
 export function handleSlash(text) {
   const cmd = text.trim().split(/\s/)[0];
   if (slashCommands[cmd] && slashCommands[cmd].run) {
-    slashCommands[cmd].run();
+    slashCommands[cmd].run(text);
     return true;
   }
   return false;
