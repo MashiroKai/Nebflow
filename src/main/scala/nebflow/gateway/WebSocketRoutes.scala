@@ -960,6 +960,29 @@ class WebSocketRoutes(
           else IO.unit
           end if
 
+        case "deleteSkill" =>
+          val delJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val delName = delJson.hcursor.downField("name").as[String].getOrElse("")
+          if delName.nonEmpty then
+            SkillService.deleteSkill(delName).flatMap { success =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "skillDeleted".asJson,
+                  "name" -> delName.asJson,
+                  "success" -> success.asJson
+                )
+              ) *>
+                SkillService.listSkills().flatMap { skills =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "skillList".asJson,
+                      "skills" -> skills.asJson
+                    )
+                  )
+                }
+            }
+          else IO.unit
+
         // ===== Scheduled Task Management =====
 
         case "createScheduledTask" =>

@@ -1956,6 +1956,16 @@ onMessage('skillError', (msg, view) => {
   if (view) renderSystemBubble(msg.message || 'Skill error');
 });
 
+onMessage('skillDeleted', (msg, view) => {
+  if (view) {
+    if (msg.success) {
+      renderSystemBubble(t('slash.skillDeleted').replace('{skill}', msg.name));
+    } else {
+      renderSystemBubble(t('slash.skillDeleteFailed').replace('{skill}', msg.name));
+    }
+  }
+});
+
 
 // --- Memory ---
 onMessage('memoryData', (msg, view) => handleMemoryData(msg));
