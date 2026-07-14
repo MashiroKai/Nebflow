@@ -113,6 +113,23 @@ object SkillService:
     }
   }
 
+  /**
+   * Delete a user-level skill by name.
+   * Only skills under ~/.nebflow/skills/ can be deleted (source = "user").
+   * Project-level and legacy command skills are managed via version control.
+   * Returns true if the skill was found and deleted, false otherwise.
+   */
+  def deleteSkill(name: String): IO[Boolean] = IO.delay {
+    val skillDir = userSkillsDir / name
+    if os.isDir(skillDir) then
+      os.remove.all(skillDir)
+      logger.info(s"Deleted skill '$name' from $skillDir")
+      true
+    else
+      logger.warn(s"Cannot delete skill '$name': directory $skillDir not found or not a user-level skill")
+      false
+  }
+
   /** Load full skill content from a skill file path. */
   def loadSkill(filePath: String): IO[Option[SkillContent]] = IO.delay {
     val f = os.Path(filePath)
