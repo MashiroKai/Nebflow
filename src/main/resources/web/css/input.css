@@ -255,6 +255,7 @@
   flex-direction: column;
   gap: 2px;
   border-bottom: 1px solid #f0f0f0;
+  position: relative;
 }
 .slash-item:last-child { border-bottom: none; }
 .slash-item:hover, .slash-item.active {
@@ -296,6 +297,26 @@
   color: var(--color-text-muted);
   background: rgba(128,128,128,0.12);
   margin-left: auto;
+}
+.slash-delete {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.slash-item:hover .slash-delete {
+  display: flex;
+  align-items: center;
+}
+.slash-delete:hover {
+  color: #e53935;
+  background: rgba(229,57,53,0.1);
 }
 
 /* ── Queue Bar (messages typed while LLM is busy) ──────────────────────
