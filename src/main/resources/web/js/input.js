@@ -87,6 +87,8 @@ export function registerSkillCommands(skills) {
     if (!slashCommands[cmd] || slashCommands[cmd]._skill) {
       slashCommands[cmd] = {
         _skill: true,
+        _source: skill.source,
+        _skillName: skill.name,
         desc: () => skill.description || t('slash.skillDefault'),
         whenToUse: skill.whenToUse || '',
         argumentHint: skill.argumentHint || '',
@@ -117,7 +119,7 @@ function updateSlashDropdown() {
   const query = text.slice(1).toLowerCase();
   activeView.slashMatches = Object.entries(slashCommands)
     .filter(([cmd]) => cmd.slice(1).toLowerCase().startsWith(query))
-    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, whenToUse: info.whenToUse || '', isSkill: !!info._skill }));
+    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, whenToUse: info.whenToUse || '', isSkill: !!info._skill, source: info._source || '', skillName: info._skillName || '' }));
   if (activeView.slashMatches.length === 0) {
     closeSlashDropdown();
     return;
@@ -129,9 +131,21 @@ function updateSlashDropdown() {
     div.className = 'slash-item' + (i === 0 ? ' active' : '');
     const badge = item.isSkill ? '<span class="slash-badge skill">' + escapeHtml(t('slash.skillBadge')) + '</span>' : '';
     const whenToUseHtml = item.whenToUse ? '<span class="slash-when">' + escapeHtml(item.whenToUse) + '</span>' : '';
-      div.innerHTML = '<div style="display:flex;align-items:center"><span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge + '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>' + whenToUseHtml;
+    const deleteHtml = (item.isSkill && item.source === 'user')
+      ? '<span class="slash-delete" title="' + escapeHtml(t('slash.deleteSkill')) + '" data-skill="' + escapeHtml(item.skillName) + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>'
+      : '';
+    div.innerHTML = '<div style="display:flex;align-items:center"><span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge + '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>' + whenToUseHtml + deleteHtml;
     div.onclick = () => { pickSlashCommand(i); };
     div.onmouseenter = () => { setSlashHighlight(i); };
+    if (deleteHtml) {
+      const delBtn = div.querySelector('.slash-delete');
+      if (delBtn) {
+        delBtn.onclick = (e) => {
+          e.stopPropagation();
+          handleDeleteSkill(item.skillName);
+        };
+      }
+    }
     slashDropdown.appendChild(div);
   });
   activeView.slashSelectedIndex = 0;
@@ -179,6 +193,15 @@ function pickSlashCommand(index) {
   closeSlashDropdown();
   activeView.dom.input.focus();
   if (slashCommands[cmd] && slashCommands[cmd].run) slashCommands[cmd].run();
+}
+
+/** Delete a user-level skill after confirmation. */
+function handleDeleteSkill(skillName) {
+  const msg = t('slash.confirmDelete').replace('{skill}', skillName);
+  if (confirm(msg)) {
+    sendWs({ type: 'deleteSkill', name: skillName });
+    closeSlashDropdown();
+  }
 }
 
 // ---------- Ask Mode ----------

@@ -275,6 +275,10 @@ export default {
   'slash.skillDefault': 'Run a skill',
   'slash.skillActivated': 'Using skill: {skill}',
   'slash.skillBadge': 'skill',
+  'slash.deleteSkill': 'Delete skill',
+  'slash.confirmDelete': 'Delete skill "{skill}"? This cannot be undone.',
+  'slash.skillDeleted': 'Skill "{skill}" deleted',
+  'slash.skillDeleteFailed': 'Failed to delete skill "{skill}": not a user-level skill',
   'slash.model': 'Select model for this session',
   'bypass.toggle': 'Auto-approve: skip all permission prompts for this session',
 
