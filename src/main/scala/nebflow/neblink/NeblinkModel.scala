@@ -196,3 +196,21 @@ object NeblinkConfig:
       os.write.over(configPath, config.asJson.spaces2, createFolders = true)
     }
 end NeblinkConfig
+
+// ===== Peer Description Store =====
+
+/** Persists user-set peer descriptions across restarts. Stored in ~/.nebflow/peer-descriptions.json. */
+object PeerDescriptionStore:
+  private val path = PathUtil.dataRoot / "peer-descriptions.json"
+
+  def load: IO[Map[String, String]] =
+    IO.blocking {
+      if os.exists(path) then
+        decode[Map[String, String]](os.read(path)).getOrElse(Map.empty)
+      else Map.empty
+    }
+
+  def save(descs: Map[String, String]): IO[Unit] =
+    IO.blocking {
+      os.write.over(path, descs.asJson.spaces2, createFolders = true)
+    }

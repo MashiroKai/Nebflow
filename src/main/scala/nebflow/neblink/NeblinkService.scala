@@ -42,6 +42,7 @@ class NeblinkService private (
   identityRef: Ref[IO, DeviceIdentity],
   configRef: Ref[IO, NeblinkConfig],
   peersRef: Ref[IO, Map[String, PeerInfo]],
+  peerDescRef: Ref[IO, Map[String, String]],
   serverPort: Int,
   private val syncQueue: Queue[IO, SyncCommand],
   private val dispatcher: Dispatcher[IO]
@@ -91,13 +92,20 @@ class NeblinkService private (
       _ <- DeviceIdentity.save(updated)
     yield ()
 
-  /** Update a peer's description locally. Not persisted — cleared on restart. */
+  /** Update a peer's description locally and persist to disk. */
   def updatePeerDescription(deviceId: String, description: String): IO[Unit] =
-    peersRef.update { peers =>
-      peers.get(deviceId) match
-        case Some(p) => peers + (deviceId -> p.copy(userDescription = description))
-        case None => peers
-    }
+    for
+      _ <- peersRef.update { peers =>
+        peers.get(deviceId) match
+          case Some(p) => peers + (deviceId -> p.copy(userDescription = description))
+          case None => peers
+      }
+      updated <- peerDescRef.modify { descs =>
+        val next = descs + (deviceId -> description)
+        (next, next)
+      }
+      _ <- PeerDescriptionStore.save(updated)
+    yield ()
 
   /** Run capability self-check and update device identity. Called on startup. */
   def selfCheckCapabilities: IO[Unit] =
@@ -128,11 +136,20 @@ class NeblinkService private (
 
   def peers: IO[List[PeerInfo]] = peersRef.get.map(_.values.toList)
 
+  /** Apply any persisted description override to a peer. */
+  private def applyDescOverride(peer: PeerInfo): IO[PeerInfo] =
+    peerDescRef.get.map { descs =>
+      descs.get(peer.deviceId).filter(_.nonEmpty) match
+        case Some(d) => peer.copy(userDescription = d)
+        case None    => peer
+    }
+
   /** Add or update a single peer. Fires callback only when peer is newly discovered. */
   def upsertPeer(peer: PeerInfo): IO[Unit] =
     for
       isNew <- peersRef.get.map(!_.contains(peer.deviceId))
-      _ <- peersRef.update(_ + (peer.deviceId -> peer))
+      finalPeer <- applyDescOverride(peer)
+      _ <- peersRef.update(_ + (peer.deviceId -> finalPeer))
       _ <- if isNew then notifyPeersChanged else IO.unit
     yield ()
 
@@ -147,7 +164,7 @@ class NeblinkService private (
    * Add or update a single peer from an announce push.
    *
    *  Device descriptions are never exchanged between devices — they are purely local
-   *  annotations. We only preserve any description the local user may have set.
+   *  annotations stored in peerDescRef. We apply any saved description here.
    */
   def handleAnnounce(info: DeviceDiscoveryInfo, remoteIp: String, port: Int): IO[Unit] =
     identityRef.get.flatMap { id =>
@@ -160,14 +177,11 @@ class NeblinkService private (
           address = s"http://$remoteIp:$port",
           capabilities = info.capabilities
         )
-        peersRef.update { peers =>
-          val existingDesc = peers.get(info.deviceId).flatMap(p => Option(p.userDescription).filter(_.nonEmpty))
-          val finalPeer = existingDesc match
-            case Some(d) => peer.copy(userDescription = d)
-            case None => peer
-          peers + (info.deviceId -> finalPeer)
-        } *>
-          logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
+        for
+          finalPeer <- applyDescOverride(peer)
+          _ <- peersRef.update(_ + (info.deviceId -> finalPeer))
+          _ <- logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
+        yield ()
     }
 
   /** Check if an IP belongs to the Tailscale CGNAT range (100.64.0.0/10). */
@@ -192,8 +206,11 @@ class NeblinkService private (
   ): IO[Unit] =
     val address = s"http://$callerIp:$port"
     val peer = PeerInfo(deviceId, deviceName, platform, address, callerSecret)
-    peersRef.update(_ + (deviceId -> peer)) *>
-      logger.info(s"Peer joined: $deviceName at $address")
+    for
+      finalPeer <- applyDescOverride(peer)
+      _ <- peersRef.update(_ + (deviceId -> finalPeer))
+      _ <- logger.info(s"Peer joined: $deviceName at $address")
+    yield ()
 
   // ===== Sync =====
 
@@ -316,11 +333,13 @@ object NeblinkService:
     for
       identity <- DeviceIdentity.loadOrCreate
       config <- NeblinkConfig.load
+      peerDescs <- PeerDescriptionStore.load
       idRef <- Ref.of[IO, DeviceIdentity](identity)
       cfgRef <- Ref.of[IO, NeblinkConfig](config)
       peersRef <- Ref.of[IO, Map[String, PeerInfo]](Map.empty)
+      descRef <- Ref.of[IO, Map[String, String]](peerDescs)
       syncQueue <- Queue.unbounded[IO, SyncCommand]
-      service = new NeblinkService(idRef, cfgRef, peersRef, serverPort, syncQueue, dispatcher)
+      service = new NeblinkService(idRef, cfgRef, peersRef, descRef, serverPort, syncQueue, dispatcher)
       // Start sync loop — Tailscale is the trust boundary, no login needed.
       _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
       _ = dispatcher.unsafeRunAndForget(
