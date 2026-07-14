@@ -81,7 +81,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     params: JsonObject,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val remoteParams = params.remove("run_in_background")
+    val remoteParams = ensureRemoteTimeout(params.remove("run_in_background"))
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
@@ -115,7 +115,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     params: JsonObject,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val remoteParams = params.remove("run_in_background")
+    val remoteParams = ensureRemoteTimeout(params.remove("run_in_background"))
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
@@ -389,6 +389,13 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
     msg.startsWith("cannot reach")
 
   // ---- Helpers ----
+
+  /** Ensure remote params have a timeout matching the HTTP timeout.
+   * Without this, the remote BashTool uses its default 120s timeout,
+   * causing premature timeout for long-running remote tasks. */
+  private def ensureRemoteTimeout(params: JsonObject): JsonObject =
+    if params.contains("timeout") then params
+    else params.add("timeout", BgTimeout.toMillis.asJson)
 
   private def resolvePeer(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
     peers.find(p =>

@@ -356,6 +356,21 @@ Git safety:
                 yield Right(
                   s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
                 )
+              else if ctx.isRemoteExec then
+                // Remote-exec: run synchronously without auto-background.
+                // The caller (another Nebflow instance via HTTP) manages the
+                // lifecycle — auto-background here would return a useless
+                // "[moved to background]" message instead of the real output.
+                shell
+                  .execute(command, timeoutDuration)
+                  .attempt
+                  .map {
+                    case Right(pr) => formatResult(pr, desc)
+                    case Left(_: TimeoutException) =>
+                      Left(ToolError(s"[Command timed out after ${timeoutDuration.toMillis}ms]"))
+                    case Left(e) =>
+                      Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
+                  }
               else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, ctx)
             }
           end if
