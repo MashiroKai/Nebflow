@@ -41,6 +41,7 @@ import { initChatViews, chatViews, findViewBySessionId, activeView, setActiveVie
 import { initNeblink } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
+import * as planMode from './planMode.js';
 
 // Randomized cosmic thinking bubble text
 const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
@@ -2033,6 +2034,13 @@ initMemory();
 initScheduledTask();
 initNeblink();
 initDropbox();
+planMode.init();
+
+// ---------- Plan mode event handlers ----------
+onMessage('planStart', (msg) => planMode.onPlanStart(msg));
+onMessage('planReady', (msg) => planMode.onPlanReady(msg));
+onMessage('planEnd', (msg) => planMode.onPlanEnd(msg));
+onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 
 // ---------- Bypass toggle (per-session auto-approve) ----------
 (function initBypassToggle() {

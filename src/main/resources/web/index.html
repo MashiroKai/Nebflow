@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="css/sapphire.css">
   <link rel="stylesheet" href="css/split.css">
   <link rel="stylesheet" href="css/voice.css">
+  <link rel="stylesheet" href="css/planMode.css">
 </head>
 <body>
   <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
@@ -133,6 +134,7 @@
         <div id="attachment-preview"></div>
         <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
         <div id="skill-indicator"><span id="skill-indicator-label">SKILL</span><span id="skill-indicator-cancel">&times;</span></div>
+        <div id="plan-indicator"><span id="plan-indicator-label">PLAN</span><span id="plan-indicator-cancel">&times;</span></div>
         <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
       </div>
       <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
@@ -198,8 +200,9 @@
         <button class="icon-btn" id="secondary-voice-btn" title="Voice"><i data-lucide="mic"></i></button>
         <div id="secondary-input-wrap" style="position:relative;">
           <div id="secondary-attachment-preview"></div>
-          <div id="secondary-ask-indicator"><span id="secondary-ask-indicator-label">ASK</span><span id="secondary-ask-indicator-cancel">&times;</span></div>
-          <div id="secondary-skill-indicator"><span id="secondary-skill-indicator-label">SKILL</span><span id="secondary-skill-indicator-cancel">&times;</span></div>
+        <div id="secondary-ask-indicator"><span id="secondary-ask-indicator-label">ASK</span><span id="secondary-ask-indicator-cancel">&times;</span></div>
+        <div id="secondary-skill-indicator"><span id="secondary-skill-indicator-label">SKILL</span><span id="secondary-skill-indicator-cancel">&times;</span></div>
+        <div id="secondary-plan-indicator"><span id="secondary-plan-indicator-label">PLAN</span><span id="secondary-plan-indicator-cancel">&times;</span></div>
           <textarea id="secondary-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
         </div>
         <button class="icon-btn" id="secondary-attach-btn" title="Attach"><i data-lucide="paperclip"></i></button>

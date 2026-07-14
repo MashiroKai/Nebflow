@@ -100,6 +100,28 @@ object AgentCommand:
   /** Frontend → agent: update bypass (auto-approve) status for this session. */
   case class SetBypass(bypass: Boolean) extends AgentCommand
 
+  // ============================================================
+  // Plan mode commands
+  // ============================================================
+
+  /** WebSocketRoutes → agent: start plan mode with the given task. */
+  case class StartPlan(task: String) extends AgentCommand
+
+  /** Plan adapter → agent: plan agent completed a turn, carrying the plan text. */
+  case class PlanTurnComplete(planText: String) extends AgentCommand
+
+  /** Plan adapter → agent: plan agent failed or terminated. */
+  case class PlanFailed(error: String) extends AgentCommand
+
+  /** Frontend → agent: user approved the plan. */
+  case object PlanApproved extends AgentCommand
+
+  /** Frontend → agent: user sent feedback to adjust the plan. */
+  case class PlanFeedback(text: String) extends AgentCommand
+
+  /** Frontend → agent: user cancelled plan mode. */
+  case object PlanCancelled extends AgentCommand
+
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
@@ -456,11 +478,29 @@ case class AgentSessionInfo(
   createdAt: Long = System.currentTimeMillis()
 )
 
+// ============================================================
+// Plan mode
+// ============================================================
+
+/**
+ * Tracks active plan mode state on the main agent.
+ *
+ * @param planAgentRef   ref to the plan sub-agent (for forwarding feedback)
+ * @param currentPlanText  latest plan text from the plan agent's last turn
+ * @param taskDescription  the original user task, for context injection on approve
+ */
+case class PlanModeState(
+  planAgentRef: ActorRef[AgentCommand],
+  currentPlanText: String = "",
+  taskDescription: String = ""
+)
+
 case class AgentState(
   session: SessionContext,
   execution: ExecutionContext,
   compaction: CompactionState,
-  agentSessions: List[AgentSessionInfo]
+  agentSessions: List[AgentSessionInfo],
+  planMode: Option[PlanModeState]
 )
 
 object AgentState:
@@ -509,7 +549,8 @@ object AgentState:
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
-      Nil
+      Nil,
+      None
     )
   end apply
 end AgentState
@@ -597,6 +638,8 @@ extension (s: AgentState)
   def withLifecycleCleared: AgentState = s.copy(session = s.session.copy(lifecycle = None))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
   def withBypass(b: Boolean): AgentState = s.copy(session = s.session.copy(bypass = b))
+
+  def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
