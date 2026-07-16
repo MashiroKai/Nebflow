@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.*
 
 import scala.concurrent.TimeoutException
 import scala.concurrent.duration.*
+import scala.jdk.StreamConverters.*
 import scala.util.Using
 
 /** Tracks process health for heartbeat / progress detection. Thread-safe via atomics. */
@@ -337,7 +338,23 @@ final class ShellSession private (
 
   private val SleepCommandRe = """\bsleep\s+\d+""".r
 
-  private val StuckDetectionGracePeriod: FiniteDuration = 8.seconds
+  /** Grace period before checking if a quiet process is stuck. */
+  private val StuckDetectionGracePeriod: FiniteDuration = 12.seconds
+
+  /** CPU sampling window to distinguish slow builds from idle prompts. */
+  private val CpuSampleInterval: FiniteDuration = 2.seconds
+
+  /** Minimum CPU delta (nanos) during sampling to consider a process "active".
+   * 10ms of CPU work in 2s means the process is computing, not waiting for input. */
+  private val CpuActiveThresholdNanos: Long = 10_000_000L
+
+  /** Sum total CPU duration (nanos) of a process and all its descendants. */
+  private def sampleProcessCpuTime(proc: Process): Long =
+    val handle = proc.toHandle
+    def cpuNanos(ph: ProcessHandle): Long =
+      val opt = ph.info().totalCpuDuration()
+      if opt.isPresent then opt.get().toNanos else 0L
+    cpuNanos(handle) + handle.descendants().toScala(List).map(cpuNanos).sum
 
   private def runProcess(
     command: String,
@@ -387,10 +404,11 @@ final class ShellSession private (
       }
 
       // ── Stuck process detection ──────────────────────────────────────
-      // If a foreground command produces no output on stdout/stderr within
-      // a grace period and hasn't exited, it is likely waiting for terminal
-      // input (e.g. ssh, sudo, telnet). Kill it early so the agent gets
-      // immediate feedback instead of blocking for the full 120s timeout.
+      // If a foreground command produces no output within a grace period,
+      // it MAY be waiting for terminal input (ssh, sudo, telnet…). But it
+      // could also be a slow-starting build tool (sbt, mvn, cargo) that
+      // hasn't printed anything yet. We distinguish the two by checking
+      // CPU activity: a stuck prompt is idle; a building process is not.
       //
       // Sleep-like commands are excluded — they legitimately produce no
       // output while their timer runs.
@@ -400,7 +418,8 @@ final class ShellSession private (
       for
         stuckFlag <- IO.ref(false)
 
-        // Stuck detector fiber: fires once after the grace period, then exits.
+        // Stuck detector fiber: after the grace period, if the process is
+        // quiet, sample CPU over a short window before deciding to kill.
         stuckFiber <- (
           if enableStuckDetection then
             IO.sleep(StuckDetectionGracePeriod) *>
@@ -408,16 +427,31 @@ final class ShellSession private (
                 val alive = proc.isAlive()
                 val hasOutput = h.outputLineCount.get() > 0
                 alive && !hasOutput
-              }.flatMap { stuck =>
-                if stuck then
-                  stuckFlag.set(true) *>
-                    IO.blocking {
-                      proc.destroyForcibly()
-                      try proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
-                      catch case _: InterruptedException => ()
-                      ()
-                    }
-                else IO.unit
+              }.flatMap { possiblyStuck =>
+                if !possiblyStuck then IO.unit
+                else
+                  // Quiet but alive — sample CPU to distinguish slow builds
+                  // from interactive prompts waiting for input.
+                  for
+                    cpu1 <- IO(sampleProcessCpuTime(proc))
+                    _ <- IO.sleep(CpuSampleInterval)
+                    cpu2 <- IO(sampleProcessCpuTime(proc))
+                    cpuActive = (cpu2 - cpu1) >= CpuActiveThresholdNanos
+                    _ <-
+                      if !cpuActive then
+                        IO(proc.isAlive()).flatMap { stillAlive =>
+                          if stillAlive then
+                            stuckFlag.set(true) *>
+                              IO.blocking {
+                                proc.destroyForcibly()
+                                try proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                                catch case _: InterruptedException => ()
+                                ()
+                              }
+                          else IO.unit
+                        }
+                      else IO.unit
+                  yield ()
               }
           else IO.unit
         ).start
@@ -439,8 +473,9 @@ final class ShellSession private (
             IO.raiseError(
               new TimeoutException(
                 "Command produced no output within " + StuckDetectionGracePeriod.toSeconds +
-                  " seconds and was terminated. This command likely requires interactive terminal input. " +
-                  "Use a non-interactive alternative, or run it manually in your terminal."
+                  " seconds and no CPU activity was detected. This command likely requires " +
+                  "interactive terminal input. Use a non-interactive alternative, or run it " +
+                  "manually in your terminal."
               )
             )
           else IO.pure(result)
