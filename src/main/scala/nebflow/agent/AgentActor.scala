@@ -202,7 +202,6 @@ object AgentActor extends AgentCore with AgentSession:
             .withCompactionFailures(0)
             .withLastCompactionFailureAt(0L)
             .withRecentMessageIds(Nil)
-            .withLifecycleCleared
           idle(agentDef, resources, depth, parentRef, resetState)
 
       case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
@@ -218,7 +217,7 @@ object AgentActor extends AgentCore with AgentSession:
         )
 
       case AgentCommand.UpdateContextWindow(window) =>
-        val newState = state.withContextWindow(window).withLifecycleCleared
+        val newState = state.withContextWindow(window)
         val estimatedTokens = TokenEstimator.estimate(newState.messages)
         val config = CompactConfig()
         val threshold = window - config.bufferForWindow(window)
@@ -505,9 +504,6 @@ object AgentActor extends AgentCore with AgentSession:
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     val base = Behaviors.receiveMessage[AgentCommand]:
 
-      case AgentCommand.UpdateLifecycle(lc) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withLifecycle(lc), pending))
-
       case AgentCommand.UpdateGitBranch(branch) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withGitBranch(branch), pending))
 
@@ -756,7 +752,6 @@ object AgentActor extends AgentCore with AgentSession:
             .withCompactionFailures(0)
             .withLastCompactionFailureAt(0L)
             .withRecentMessageIds(Nil)
-            .withLifecycleCleared
             .resetToIdle(Nil)
           idle(agentDef, resources, depth, parentRef, resetState)
 
@@ -824,7 +819,6 @@ object AgentActor extends AgentCore with AgentSession:
                 .withCompactionFailures(0)
                 .withEmptyResponseRetries(0)
                 .withLatestUsage(None)
-                .withLifecycleCleared
               if compactionPending.exists(_.resumeAfterCompact) then
                 ctx.forkTurn(compactEmitIO) *>
                   pipeLlmCall(
@@ -1019,7 +1013,7 @@ object AgentActor extends AgentCore with AgentSession:
             resources,
             depth,
             parentRef,
-            state.withContextWindow(window).withLifecycleCleared,
+            state.withContextWindow(window),
             pending
           )
         )
