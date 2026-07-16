@@ -390,9 +390,11 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
 
   // ---- Helpers ----
 
-  /** Ensure remote params have a timeout matching the HTTP timeout.
+  /**
+   * Ensure remote params have a timeout matching the HTTP timeout.
    * Without this, the remote BashTool uses its default 30s timeout,
-   * causing premature timeout for long-running remote tasks. */
+   * causing premature timeout for long-running remote tasks.
+   */
   private def ensureRemoteTimeout(params: JsonObject): JsonObject =
     if params.contains("timeout") then params
     else params.add("timeout", BgTimeout.toMillis.asJson)

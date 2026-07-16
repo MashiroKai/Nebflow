@@ -41,16 +41,28 @@ object FlowActor:
       given ActorContext[FlowCommand] = ctx
 
       val cfg = FlowConfig(
-        flowDef, parentAgentRef, wsSend, parentSessionId,
-        parentDepth, resources, projectRoot, bypass
+        flowDef,
+        parentAgentRef,
+        wsSend,
+        parentSessionId,
+        parentDepth,
+        resources,
+        projectRoot,
+        bypass
       )
       val stateRef = Ref.unsafe[IO, FlowState](FlowState.empty(flowDef))
 
       for
-        _ <- emit(wsSend, parentSessionId, "flowStarted",
-                  "flowName" -> flowDef.name.asJson,
-                  "totalSteps" -> flowDef.steps.length.asJson)
-        _ <- logger.info(s"Flow '${flowDef.name}' started: ${flowDef.steps.length} steps, verify=${flowDef.verify.agent}")
+        _ <- emit(
+          wsSend,
+          parentSessionId,
+          "flowStarted",
+          "flowName" -> flowDef.name.asJson,
+          "totalSteps" -> flowDef.steps.length.asJson
+        )
+        _ <- logger.info(
+          s"Flow '${flowDef.name}' started: ${flowDef.steps.length} steps, verify=${flowDef.verify.agent}"
+        )
         _ <- scheduleReadySteps(ctx, stateRef, cfg)
       yield running(ctx, stateRef, cfg)
     }
@@ -105,9 +117,11 @@ object FlowActor:
             for
               _ <- stateRef.update(_.copy(phase = FlowPhase.Failed))
               _ <- cfg.parentAgentRef ! AgentCommand.ExternalEvent(
-                source = "flow", eventType = "cancelled",
+                source = "flow",
+                eventType = "cancelled",
                 payload = s"[Flow: ${cfg.flowDef.name}] Cancelled: $reason",
-                metadata = JsonObject("flowName" -> cfg.flowDef.name.asJson))
+                metadata = JsonObject("flowName" -> cfg.flowDef.name.asJson)
+              )
             yield Behaviors.stopped[FlowCommand]
 
       override def onStop(ctx: ActorContext[FlowCommand]): IO[Unit] =
@@ -116,52 +130,75 @@ object FlowActor:
           _ <- state.runningAgents.values.toList.traverse_(ref => ctx.system.stop(ref))
           _ <- logger.info(s"Flow '${cfg.flowDef.name}' stopped, cleaned up ${state.runningAgents.size} agent(s)")
         yield ()
+    end new
+  end running
 
   // ============================================================
   // Step completion / failure
   // ============================================================
 
   private def handleCompleted(
-    ctx: ActorContext[FlowCommand], stateRef: Ref[IO, FlowState],
-    cfg: FlowConfig, stepId: String, output: String, state: FlowState
+    ctx: ActorContext[FlowCommand],
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig,
+    stepId: String,
+    output: String,
+    state: FlowState
   )(using ActorContext[FlowCommand]): IO[Unit] =
     if stepId == VerifyId then
       // Verify completed — parse PASS/FAIL
       val vr = parseVerifyResult(output)
       for
-        _ <- stateRef.update(s => s.copy(
-          verifyResult = Some(output),
-          stepStatus = s.stepStatus + (VerifyId -> StepStatus.Done),
-          runningAgents = s.runningAgents - VerifyId,
-          phase = if vr.pass then FlowPhase.Completed else s.phase
-        ))
-        _ <- emit(cfg.wsSend, cfg.sessionId, "flowVerifyResult",
-          "pass" -> vr.pass.asJson, "summary" -> vr.summary.take(500).asJson)
-        _ <- (if vr.pass then completeFlow(stateRef, cfg, vr.summary)
-              else handleVerifyFail(ctx, stateRef, cfg, vr.summary, state))
+        _ <- stateRef.update(s =>
+          s.copy(
+            verifyResult = Some(output),
+            stepStatus = s.stepStatus + (VerifyId -> StepStatus.Done),
+            runningAgents = s.runningAgents - VerifyId,
+            phase = if vr.pass then FlowPhase.Completed else s.phase
+          )
+        )
+        _ <- emit(
+          cfg.wsSend,
+          cfg.sessionId,
+          "flowVerifyResult",
+          "pass" -> vr.pass.asJson,
+          "summary" -> vr.summary.take(500).asJson
+        )
+        _ <-
+          (if vr.pass then completeFlow(stateRef, cfg, vr.summary)
+           else handleVerifyFail(ctx, stateRef, cfg, vr.summary, state))
       yield ()
+      end for
     else if stepId == FixId then
       // Fix completed → re-run verify
-      stateRef.update(s => s.copy(
-        stepStatus = s.stepStatus + (FixId -> StepStatus.Done),
-        runningAgents = s.runningAgents - FixId,
-        phase = FlowPhase.VerifyRunning
-      )) *> runVerify(ctx, stateRef, cfg, state.results)
+      stateRef.update(s =>
+        s.copy(
+          stepStatus = s.stepStatus + (FixId -> StepStatus.Done),
+          runningAgents = s.runningAgents - FixId,
+          phase = FlowPhase.VerifyRunning
+        )
+      ) *> runVerify(ctx, stateRef, cfg, state.results)
     else
       // Normal work step completed
       for
-        _ <- stateRef.update(s => s.copy(
-          results = s.results + (stepId -> output),
-          stepStatus = s.stepStatus + (stepId -> StepStatus.Done),
-          runningAgents = s.runningAgents - stepId
-        ))
+        _ <- stateRef.update(s =>
+          s.copy(
+            results = s.results + (stepId -> output),
+            stepStatus = s.stepStatus + (stepId -> StepStatus.Done),
+            runningAgents = s.runningAgents - stepId
+          )
+        )
         _ <- emit(cfg.wsSend, cfg.sessionId, "flowStepCompleted", "stepId" -> stepId.asJson)
         _ <- logger.info(s"Step '$stepId' completed (${output.length} chars)")
       yield ()
 
   private def handleFailed(
-    ctx: ActorContext[FlowCommand], stateRef: Ref[IO, FlowState],
-    cfg: FlowConfig, stepId: String, error: String, state: FlowState
+    ctx: ActorContext[FlowCommand],
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig,
+    stepId: String,
+    error: String,
+    state: FlowState
   )(using ActorContext[FlowCommand]): IO[Unit] =
     if stepId == FixId then
       // Fix failed → flow fails immediately
@@ -175,54 +212,60 @@ object FlowActor:
       if retries > 0 then
         val step = cfg.flowDef.steps.find(_.id == stepId).getOrElse(cfg.flowDef.steps.head)
         for
-          _ <- stateRef.update(s => s.copy(
-            retryLeft = s.retryLeft + (stepId -> (retries - 1)),
-            runningAgents = s.runningAgents - stepId
-          ))
+          _ <- stateRef.update(s =>
+            s.copy(
+              retryLeft = s.retryLeft + (stepId -> (retries - 1)),
+              runningAgents = s.runningAgents - stepId
+            )
+          )
           _ <- logger.info(s"Step '$stepId' failed ($error), retrying (${retries - 1} left)")
           _ <- spawnStep(ctx, stateRef, cfg, step, stepId)
         yield ()
       else
         // Retries exhausted
         for
-          _ <- stateRef.update(s => s.copy(
-            stepStatus = s.stepStatus + (stepId -> StepStatus.Failed),
-            runningAgents = s.runningAgents - stepId
-          ))
-          _ <- emit(cfg.wsSend, cfg.sessionId, "flowStepFailed",
-            "stepId" -> stepId.asJson, "error" -> error.asJson)
+          _ <- stateRef.update(s =>
+            s.copy(
+              stepStatus = s.stepStatus + (stepId -> StepStatus.Failed),
+              runningAgents = s.runningAgents - stepId
+            )
+          )
+          _ <- emit(cfg.wsSend, cfg.sessionId, "flowStepFailed", "stepId" -> stepId.asJson, "error" -> error.asJson)
           _ <- logger.warn(s"Step '$stepId' permanently failed: $error")
           // Check if any pending step depends on the failed one
           hasDependers = cfg.flowDef.steps.exists(s =>
             s.dependsOn.contains(stepId) &&
-            state.stepStatus.get(s.id).contains(StepStatus.Pending))
-          _ <- if hasDependers then failFlow(stateRef, cfg, s"Step '$stepId' failed, dependents cannot run")
-               else IO.unit
+              state.stepStatus.get(s.id).contains(StepStatus.Pending)
+          )
+          _ <-
+            if hasDependers then failFlow(stateRef, cfg, s"Step '$stepId' failed, dependents cannot run")
+            else IO.unit
         yield ()
+      end if
 
   // ============================================================
   // Post-step update: decide what to do next
   // ============================================================
 
   private def afterStepUpdate(
-    ctx: ActorContext[FlowCommand], stateRef: Ref[IO, FlowState], cfg: FlowConfig
+    ctx: ActorContext[FlowCommand],
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig
   )(using ActorContext[FlowCommand]): IO[Unit] =
     for
       state <- stateRef.get
       _ <-
         if state.phase == FlowPhase.Working then
-          val allDone = cfg.flowDef.steps.forall(s =>
-            state.stepStatus.get(s.id).exists(x => x == StepStatus.Done || x == StepStatus.Failed))
+          val allDone = cfg.flowDef.steps
+            .forall(s => state.stepStatus.get(s.id).exists(x => x == StepStatus.Done || x == StepStatus.Failed))
           if allDone then
             stateRef.update(_.copy(phase = FlowPhase.VerifyRunning)) *>
-            runVerify(ctx, stateRef, cfg, state.results)
-          else
-            scheduleReadySteps(ctx, stateRef, cfg)
+              runVerify(ctx, stateRef, cfg, state.results)
+          else scheduleReadySteps(ctx, stateRef, cfg)
         else if state.phase == FlowPhase.LoopFixing then
           // Fix just completed, verify already re-triggered by handleCompleted
           IO.unit
-        else
-          IO.unit // VerifyRunning / Completed / Failed — nothing to schedule
+        else IO.unit // VerifyRunning / Completed / Failed — nothing to schedule
     yield ()
 
   // ============================================================
@@ -230,40 +273,54 @@ object FlowActor:
   // ============================================================
 
   private def handleVerifyFail(
-    ctx: ActorContext[FlowCommand], stateRef: Ref[IO, FlowState],
-    cfg: FlowConfig, reason: String, state: FlowState
+    ctx: ActorContext[FlowCommand],
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig,
+    reason: String,
+    state: FlowState
   )(using ActorContext[FlowCommand]): IO[Unit] =
     cfg.flowDef.loop match
       case Some(loop) if state.iteration < loop.maxIterations =>
         for
-          _ <- stateRef.update(s => s.copy(
-            phase = FlowPhase.LoopFixing,
-            iteration = s.iteration + 1,
-            stepStatus = s.stepStatus ++ Map(FixId -> StepStatus.Pending)
-          ))
-          _ <- emit(cfg.wsSend, cfg.sessionId, "flowLoopIteration",
+          _ <- stateRef.update(s =>
+            s.copy(
+              phase = FlowPhase.LoopFixing,
+              iteration = s.iteration + 1,
+              stepStatus = s.stepStatus ++ Map(FixId -> StepStatus.Pending)
+            )
+          )
+          _ <- emit(
+            cfg.wsSend,
+            cfg.sessionId,
+            "flowLoopIteration",
             "iteration" -> (state.iteration + 1).asJson,
-            "maxIterations" -> loop.maxIterations.asJson)
+            "maxIterations" -> loop.maxIterations.asJson
+          )
           _ <- logger.info(s"Verify FAIL (iter ${state.iteration}), running fix")
           verifyOut = state.verifyResult.getOrElse("")
-          fixPrompt = resolveTemplate(loop.fix.prompt,
-            state.results ++ Map("verify" -> verifyOut))
+          fixPrompt = resolveTemplate(loop.fix.prompt, state.results ++ Map("verify" -> verifyOut))
           _ <- spawnById(ctx, stateRef, cfg, loop.fix.agent, fixPrompt, FixId, loop.fix.timeout)
         yield ()
       case _ =>
-        failFlow(stateRef, cfg,
-          s"Verification failed after ${state.iteration} iteration(s): $reason")
+        failFlow(stateRef, cfg, s"Verification failed after ${state.iteration} iteration(s): $reason")
 
   private def runVerify(
-    ctx: ActorContext[FlowCommand], stateRef: Ref[IO, FlowState],
-    cfg: FlowConfig, results: Map[String, String]
+    ctx: ActorContext[FlowCommand],
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig,
+    results: Map[String, String]
   )(using ActorContext[FlowCommand]): IO[Unit] =
     for
       state <- stateRef.get
       contextBlock = buildVerifyContext(results, state.stepStatus)
       prompt = s"$contextBlock\n\n${cfg.flowDef.verify.prompt}"
-      _ <- emit(cfg.wsSend, cfg.sessionId, "flowStepStarted",
-        "stepId" -> VerifyId.asJson, "agentName" -> cfg.flowDef.verify.agent.asJson)
+      _ <- emit(
+        cfg.wsSend,
+        cfg.sessionId,
+        "flowStepStarted",
+        "stepId" -> VerifyId.asJson,
+        "agentName" -> cfg.flowDef.verify.agent.asJson
+      )
       _ <- spawnById(ctx, stateRef, cfg, cfg.flowDef.verify.agent, prompt, VerifyId, cfg.flowDef.verify.timeout)
     yield ()
 
@@ -272,7 +329,9 @@ object FlowActor:
   // ============================================================
 
   private def scheduleReadySteps(
-    ctx: ActorContext[FlowCommand], stateRef: Ref[IO, FlowState], cfg: FlowConfig
+    ctx: ActorContext[FlowCommand],
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig
   )(using ActorContext[FlowCommand]): IO[Unit] =
     for
       state <- stateRef.get
@@ -285,7 +344,7 @@ object FlowActor:
       toStart = ready.take(slots)
       _ <- toStart.traverse_(step => spawnStep(ctx, stateRef, cfg, step, step.id))
       _ = if toStart.nonEmpty then logger.info(s"Scheduled: ${toStart.map(_.id).mkString(", ")}")
-           else ()
+      else ()
     yield ()
 
   // ============================================================
@@ -293,8 +352,11 @@ object FlowActor:
   // ============================================================
 
   private def spawnStep(
-    ctx: ActorContext[FlowCommand], stateRef: Ref[IO, FlowState],
-    cfg: FlowConfig, step: FlowStep, stepId: String
+    ctx: ActorContext[FlowCommand],
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig,
+    step: FlowStep,
+    stepId: String
   )(using ActorContext[FlowCommand]): IO[Unit] =
     for
       state <- stateRef.get
@@ -304,9 +366,13 @@ object FlowActor:
     yield ()
 
   private def spawnById(
-    ctx: ActorContext[FlowCommand], stateRef: Ref[IO, FlowState],
-    cfg: FlowConfig, agentName: String, prompt: String,
-    stepId: String, timeout: FiniteDuration
+    ctx: ActorContext[FlowCommand],
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig,
+    agentName: String,
+    prompt: String,
+    stepId: String,
+    timeout: FiniteDuration
   )(using ActorContext[FlowCommand]): IO[Unit] =
     for
       defOpt <- cfg.resources.agentLibrary.get(agentName)
@@ -323,9 +389,11 @@ object FlowActor:
             agentUid = s"flow-${cfg.flowDef.name.take(16)}-$stepId-${java.util.UUID.randomUUID().toString.take(8)}"
             childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
             // Mark as running BEFORE spawn so duplicate messages are ignored
-            _ <- stateRef.update(s => s.copy(
-              stepStatus = s.stepStatus + (stepId -> StepStatus.Running)
-            ))
+            _ <- stateRef.update(s =>
+              s.copy(
+                stepStatus = s.stepStatus + (stepId -> StepStatus.Running)
+              )
+            )
             agentRef <- ctx.system.spawn(
               AgentActor(
                 agentDef = agentDef,
@@ -348,8 +416,13 @@ object FlowActor:
               s"$agentUid-adapter"
             )
             _ <- stateRef.update(s => s.copy(runningAgents = s.runningAgents + (stepId -> agentRef)))
-            _ <- emit(cfg.wsSend, cfg.sessionId, "flowStepStarted",
-              "stepId" -> stepId.asJson, "agentName" -> agentName.asJson)
+            _ <- emit(
+              cfg.wsSend,
+              cfg.sessionId,
+              "flowStepStarted",
+              "stepId" -> stepId.asJson,
+              "agentName" -> agentName.asJson
+            )
             _ <- agentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
             _ = logger.info(s"Spawned '$stepId' ($agentName, depth=$childDepth)")
           yield ()
@@ -360,30 +433,48 @@ object FlowActor:
   // ============================================================
 
   private def completeFlow(
-    stateRef: Ref[IO, FlowState], cfg: FlowConfig, summary: String
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig,
+    summary: String
   )(using ctx: ActorContext[?]): IO[Unit] =
     for
       _ <- stateRef.update(_.copy(phase = FlowPhase.Completed))
-      _ <- emit(cfg.wsSend, cfg.sessionId, "flowCompleted",
-        "pass" -> true.asJson, "summary" -> summary.take(500).asJson)
+      _ <- emit(
+        cfg.wsSend,
+        cfg.sessionId,
+        "flowCompleted",
+        "pass" -> true.asJson,
+        "summary" -> summary.take(500).asJson
+      )
       _ <- cfg.parentAgentRef ! AgentCommand.ExternalEvent(
-        source = "flow", eventType = "completed",
+        source = "flow",
+        eventType = "completed",
         payload = s"[Flow: ${cfg.flowDef.name}] PASS\n$summary",
-        metadata = JsonObject("flowName" -> cfg.flowDef.name.asJson))
+        metadata = JsonObject("flowName" -> cfg.flowDef.name.asJson)
+      )
       _ <- logger.info(s"Flow '${cfg.flowDef.name}' COMPLETED")
     yield ()
 
   private def failFlow(
-    stateRef: Ref[IO, FlowState], cfg: FlowConfig, reason: String
+    stateRef: Ref[IO, FlowState],
+    cfg: FlowConfig,
+    reason: String
   )(using ctx: ActorContext[?]): IO[Unit] =
     for
       _ <- stateRef.update(_.copy(phase = FlowPhase.Failed))
-      _ <- emit(cfg.wsSend, cfg.sessionId, "flowCompleted",
-        "pass" -> false.asJson, "summary" -> reason.take(500).asJson)
+      _ <- emit(
+        cfg.wsSend,
+        cfg.sessionId,
+        "flowCompleted",
+        "pass" -> false.asJson,
+        "summary" -> reason.take(500).asJson
+      )
       _ <- cfg.parentAgentRef ! AgentCommand.ExternalEvent(
-        source = "flow", eventType = "failed",
+        source = "flow",
+        eventType = "failed",
         payload = s"[Flow: ${cfg.flowDef.name}] FAIL\n$reason",
-        metadata = JsonObject("flowName" -> cfg.flowDef.name.asJson))
+        metadata = JsonObject("flowName" -> cfg.flowDef.name.asJson)
+      )
       _ <- logger.warn(s"Flow '${cfg.flowDef.name}' FAILED: $reason")
     yield ()
 
@@ -403,8 +494,8 @@ object FlowActor:
       // Timeout: stop agent and notify FlowActor
       ctx.forkTurn(
         IO.sleep(timeout) *>
-        ctx.system.stop(subagentRef) *>
-        (flowActorRef ! StepFailed(stepId, s"timeout after ${timeout.toSeconds}s"))
+          ctx.system.stop(subagentRef) *>
+          (flowActorRef ! StepFailed(stepId, s"timeout after ${timeout.toSeconds}s"))
       )
 
       IO.pure(new Behavior[AgentEvent]:
@@ -422,8 +513,7 @@ object FlowActor:
           signal match
             case SystemSignal.Terminated(_) =>
               for _ <- flowActorRef ! StepFailed(stepId, "agent crashed")
-              yield Behaviors.stopped[AgentEvent]
-      )
+              yield Behaviors.stopped[AgentEvent])
     }
 
   // ============================================================
@@ -450,8 +540,7 @@ object FlowActor:
     val rest = output.linesIterator.drop(1).mkString("\n").trim
     if firstLine.toLowerCase.startsWith("pass") then
       VerifyResult(true, if rest.nonEmpty then rest else "Completed successfully.")
-    else
-      VerifyResult(false, if rest.nonEmpty then rest else output.trim)
+    else VerifyResult(false, if rest.nonEmpty then rest else output.trim)
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse
@@ -474,8 +563,10 @@ object FlowActor:
       case _ => json => base(patches.foldLeft(json)((j, p) => j.deepMerge(p)))
 
   private def emit(
-    wsSend: Option[Json => IO[Unit]], sessionId: Option[String],
-    eventName: String, fields: (String, Json)*
+    wsSend: Option[Json => IO[Unit]],
+    sessionId: Option[String],
+    eventName: String,
+    fields: (String, Json)*
   )(using ctx: ActorContext[?]): IO[Unit] =
     ctx.forkTurn(
       wsSend match
@@ -513,6 +604,7 @@ case class FlowState(
 )
 
 object FlowState:
+
   def empty(flowDef: FlowDef): FlowState =
     FlowState(
       results = Map.empty,

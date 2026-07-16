@@ -141,7 +141,7 @@ class NeblinkService private (
     peerDescRef.get.map { descs =>
       descs.get(peer.deviceId).filter(_.nonEmpty) match
         case Some(d) => peer.copy(userDescription = d)
-        case None    => peer
+        case None => peer
     }
 
   /** Add or update a single peer. Fires callback only when peer is newly discovered. */
@@ -211,6 +211,7 @@ class NeblinkService private (
       _ <- peersRef.update(_ + (deviceId -> finalPeer))
       _ <- logger.info(s"Peer joined: $deviceName at $address")
     yield ()
+  end handleHandshake
 
   // ===== Sync =====
 

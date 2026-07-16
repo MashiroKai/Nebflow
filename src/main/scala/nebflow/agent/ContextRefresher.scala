@@ -28,9 +28,7 @@ object ContextRefresher:
     systemPrefixSource
   )
 
-  /**
-   * System prefix: ~/.nebflow/system-prefix.md with JAR fallback.
-   */
+  /** System prefix: ~/.nebflow/system-prefix.md with JAR fallback. */
   val systemPrefixSource: FileInjectionSource =
     val jarFallback =
       val is = getClass.getResourceAsStream("/system-prefix.md")
@@ -170,9 +168,7 @@ object ContextRefresher:
       currentBranch
     )
 
-  /**
-   * Resolve projectRoot for ToolContext (called from buildToolContext).
-   */
+  /** Resolve projectRoot for ToolContext (called from buildToolContext). */
   def resolveProjectRootForTool(
     state: AgentState,
     resources: SharedResources,

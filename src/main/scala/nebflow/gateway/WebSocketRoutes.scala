@@ -983,6 +983,7 @@ class WebSocketRoutes(
                 }
             }
           else IO.unit
+          end if
 
         // ===== Scheduled Task Management =====
 
@@ -1193,15 +1194,15 @@ class WebSocketRoutes(
           if agentName.nonEmpty then
             // Return ALL sessions and folders (unified list)
             (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "agentSessionList".asJson,
-                    "agentName" -> agentName.asJson,
-                    "sessions" -> sessions.asJson,
-                    "folders" -> folders.asJson
-                  )
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "agentSessionList".asJson,
+                  "agentName" -> agentName.asJson,
+                  "sessions" -> sessions.asJson,
+                  "folders" -> folders.asJson
                 )
-              }
+              )
+            }
           else IO.unit
           end if
 

@@ -545,7 +545,8 @@ private[agent] trait AgentCore:
       case names => names.toSet
     // MCP servers are global — all enabled servers available to every agent
     val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool).toSet
-    val depthFiltered = if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "ExecuteFlow" else base
+    val depthFiltered =
+      if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "ExecuteFlow" else base
     val subagentFiltered = if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
     subagentFiltered ++ mcpTools
 
