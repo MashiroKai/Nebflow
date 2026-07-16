@@ -7,6 +7,23 @@ import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromp
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 
+// ---------- Time format preference (12h / 24h toggle) ----------
+const TIME_FORMAT_KEY = 'nebflow:timeFormat';
+let _timeFormat = localStorage.getItem(TIME_FORMAT_KEY) || '24h';
+
+function refreshAllTimestamps() {
+  document.querySelectorAll('[data-ts]').forEach(el => {
+    const ts = parseInt(el.getAttribute('data-ts'), 10);
+    if (ts) el.textContent = formatHm(ts);
+  });
+}
+
+export function toggleTimeFormat() {
+  _timeFormat = _timeFormat === '24h' ? '12h' : '24h';
+  localStorage.setItem(TIME_FORMAT_KEY, _timeFormat);
+  refreshAllTimestamps();
+}
+
 // ---------- Voice TTS player ----------
 // Module-level singleton. Manages sequential playback of <voice> blocks:
 // fetches WAV from /api/tts, plays them in order, supports click-to-replay
@@ -241,7 +258,10 @@ export function renderUserBubble(text, attachments, timestamp) {
   const ts = timestamp || Date.now();
   const timeEl = document.createElement('div');
   timeEl.className = 'msg-time';
+  timeEl.setAttribute('data-ts', ts);
   timeEl.textContent = formatHm(ts);
+  timeEl.title = '点击切换 12/24 小时制';
+  timeEl.addEventListener('click', toggleTimeFormat);
   row.appendChild(timeEl);
 
   chat.appendChild(row);
@@ -249,12 +269,17 @@ export function renderUserBubble(text, attachments, timestamp) {
   return { type: 'user', text, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
 }
 
-/** Format epoch millis as HH:MM */
+/** Format epoch millis as HH:MM (24h) or h:MM AM/PM (12h), respecting user preference */
 export function formatHm(ms) {
   const d = new Date(ms);
-  const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
-  return hh + ':' + mm;
+  if (_timeFormat === '12h') {
+    let h = d.getHours();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + mm + ' ' + ampm;
+  }
+  return String(d.getHours()).padStart(2, '0') + ':' + mm;
 }
 
 // ---------- AI text streaming ----------
@@ -311,9 +336,10 @@ export function finishAi(durationMs, model) {
     const bubble = activeView.stream.currentAiBubble;
     bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
     if (askBox) bubble.appendChild(askBox);
+    const ts = Date.now();
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(bubble, durationMs, model, seed);
+      renderDurationBadge(bubble, durationMs, model, seed, ts);
     }
     // Trigger voice TTS: enqueue all <voice> blocks for sequential playback,
     // and attach click-to-replay handlers on the green text.
@@ -321,7 +347,7 @@ export function finishAi(durationMs, model) {
       el.addEventListener('click', () => VoicePlayer.replay(el));
       VoicePlayer.enqueue(el.textContent, el);
     });
-    const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model };
+    const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model, timestamp: ts };
     activeView.stream.currentAiBubble = null;
     activeView.stream.aiText = '';
     return result;
@@ -380,13 +406,14 @@ export function pickThinkingPhrase(durationMs, seed) {
 
 /**
  * Create a duration badge DOM element (pill style).
- * Shows the full phrase with duration embedded, plus optional model tag.
+ * Shows the full phrase with duration embedded, plus optional model tag and timestamp.
  * @param {number} durationMs
  * @param {string} [model]
  * @param {number} [seed]
+ * @param {number} [timestamp] - epoch millis for display
  * @returns {HTMLElement}
  */
-export function createDurationBadgeElement(durationMs, model, seed) {
+export function createDurationBadgeElement(durationMs, model, seed, timestamp) {
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
 
@@ -405,17 +432,30 @@ export function createDurationBadgeElement(durationMs, model, seed) {
     badge.appendChild(modelSpan);
   }
 
+  if (timestamp) {
+    const div = document.createElement('span');
+    div.className = 'duration-badge-divider';
+    badge.appendChild(div);
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'duration-badge-time';
+    timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.textContent = formatHm(timestamp);
+    timeSpan.title = '点击切换 12/24 小时制';
+    timeSpan.addEventListener('click', toggleTimeFormat);
+    badge.appendChild(timeSpan);
+  }
+
   return badge;
 }
 
 /**
  * Render a subtle duration badge below an AI bubble.
  */
-export function renderDurationBadge(bubble, durationMs, model, seed) {
+export function renderDurationBadge(bubble, durationMs, model, seed, timestamp) {
   if (!bubble) return;
   const row = bubble.closest('.row');
   if (!row) return;
-  const badge = createDurationBadgeElement(durationMs, model, seed);
+  const badge = createDurationBadgeElement(durationMs, model, seed, timestamp);
   row.appendChild(badge);
 }
 
@@ -1334,7 +1374,7 @@ export function finishAskAnswer(durationMs, model) {
     }
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed);
+      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed, Date.now());
     }
     activeView.stream.currentAskBubble = null;
     activeView.stream.askAnswerText = '';
