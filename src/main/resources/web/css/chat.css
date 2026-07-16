@@ -482,7 +482,10 @@
   padding: 0 4px;
   user-select: none;
   font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: opacity 0.15s;
 }
+.msg-time:hover { opacity: 0.6; }
 
 .bubble {
   max-width: 100%;
@@ -698,6 +701,16 @@
   opacity: 0.35;
   letter-spacing: 0.1px;
 }
+.duration-badge-time {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text);
+  opacity: 0.35;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.duration-badge-time:hover { opacity: 0.6; }
 
 /* ---------- Thinking Indicator (live timer) ---------- */
 .thinking-indicator {
@@ -1023,6 +1036,7 @@
   }
   .duration-badge-text { opacity: 0.55; }
   .duration-badge-model { opacity: 0.28; }
+  .duration-badge-time { opacity: 0.28; }
 
   #status-wrap { background: rgba(23,26,33,0.9); }
 
