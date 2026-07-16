@@ -1212,7 +1212,7 @@ export function initInput(view) {
         input.focus();
       });
     }
-    const planCancel = document.getElementById(prefix + 'plan-indicator-cancel');
+    const planCancel = document.getElementById('plan-indicator-cancel');
     if (planCancel) {
       planCancel.addEventListener('click', (e) => {
         e.stopPropagation();
