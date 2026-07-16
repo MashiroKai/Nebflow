@@ -305,8 +305,6 @@ export function selectAgent(agentName) {
     }
     return;
   }
-  // Agent tab switches only filter the sidebar list — the main window stays
-  // locked to Jarvis regardless. No draft saving / session switching needed.
   state.selectedAgent = agentName;
   // Clear unread count for this agent
   const prevCount = state.agentUnreadCounts[agentName] || 0;
@@ -1185,12 +1183,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     agentGroups[agent].folders.push(f);
   });
 
-  // Skip Jarvis sessions — Jarvis is always in the main view, not in the sidebar
-  if (agentGroups['Jarvis']) {
-    delete agentGroups['Jarvis'];
-  }
-
-  // Sort remaining agent groups alphabetically
+  // Sort agent groups alphabetically
   const agentOrder = Object.keys(agentGroups).sort((a, b) => a.localeCompare(b));
 
   // Render each agent group
