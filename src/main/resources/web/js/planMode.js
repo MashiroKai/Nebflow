@@ -1,7 +1,12 @@
 // planMode.js — Plan mode canvas panel for Nebflow.
 // Uses the shared #canvas-panel infrastructure (canvas.js).
-// No header — plan content fills the canvas as a card.
-// Floating glassmorphism action bar at the bottom.
+//
+// Design:
+// - No loading state — canvas only opens when the plan result is ready.
+// - Session-bound — closing the session closes the canvas; switching back
+//   to a session with a pending plan auto-reopens it.
+// - No header; plan content fills the canvas as a card.
+// - Floating glassmorphism action bar at the bottom.
 
 import state from './state.js';
 import { sendWs } from './ws.js';
@@ -10,20 +15,19 @@ import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader } from './c
 
 // ---------- State ----------
 let planText = '';
+let planReady = false;
 
 // ---------- Init ----------
 export function init() {
-  // Register session-change callback so canvas closes when user switches sessions.
   state.onPlanSessionChange = (newSessionId) => {
-    if (state.planSessionId && state.planSessionId !== newSessionId) {
-      // Cancel the plan on the backend — this triggers planEnd which cleans up state.
-      sendWs({ type: 'planCancel', sessionId: state.planSessionId });
-      // Close canvas visually now, but keep planAgentId set so plan agent
-      // events stay intercepted until planEnd arrives and clears it.
-      restoreCloseButton();
-      showCanvasHeader(true);
-      closeCanvas();
-      state.planSessionId = null;
+    // Close canvas when leaving any session.
+    showCanvasHeader(true);
+    closeCanvas();
+    // Auto-open if the session being entered has a pending plan.
+    if (planReady && state.planSessionId === newSessionId) {
+      showCanvasHeader(false);
+      openCanvas();
+      showPlanContent();
     }
   };
 }
@@ -34,10 +38,8 @@ export function onPlanStart(msg) {
   state.planAgentId = msg.agentId;
   state.planSessionId = msg.sessionId;
   planText = '';
-  showCanvasHeader(false);
-  openCanvas();
-  overrideCloseButton();
-  showLoading();
+  planReady = false;
+  // Don't open canvas — wait for planReady.
 }
 
 export function onPlanAgentEvent(msg) {
@@ -47,11 +49,22 @@ export function onPlanAgentEvent(msg) {
 }
 
 export function onPlanReady(msg) {
-  showPlanContent();
+  planReady = true;
+  // Only show if the user is currently on the plan's session.
+  if (state.activeSessionId === state.planSessionId) {
+    showCanvasHeader(false);
+    openCanvas();
+    showPlanContent();
+  }
 }
 
 export function onPlanEnd(msg) {
-  forceClose();
+  showCanvasHeader(true);
+  closeCanvas();
+  planText = '';
+  planReady = false;
+  state.planAgentId = null;
+  state.planSessionId = null;
 }
 
 // ---------- Actions ----------
@@ -59,19 +72,23 @@ export function onPlanEnd(msg) {
 function approvePlan() {
   if (!state.planSessionId) return;
   sendWs({ type: 'planApprove', sessionId: state.planSessionId });
-  forceClose();
+  planReady = false;
+  showCanvasHeader(true);
+  closeCanvas();
+  // planEnd from backend will clear planAgentId / planSessionId.
 }
 
 function cancelPlan() {
   if (!state.planSessionId) return;
   sendWs({ type: 'planCancel', sessionId: state.planSessionId });
-  forceClose();
+  planReady = false;
+  showCanvasHeader(true);
+  closeCanvas();
 }
 
 function toggleFeedback() {
   const bar = document.getElementById('plan-action-bar');
   if (!bar) return;
-  // Switch to feedback mode: show textarea, change buttons
   bar.innerHTML = feedbackBarHTML();
   document.getElementById('plan-feedback-send')?.addEventListener('click', sendFeedback);
   document.getElementById('plan-feedback-cancel')?.addEventListener('click', showPlanContent);
@@ -93,41 +110,10 @@ function sendFeedback() {
   if (!text) return;
   sendWs({ type: 'planFeedback', sessionId: state.planSessionId, text });
   planText = '';
-  showLoading();
-}
-
-// ---------- Close button override ----------
-
-function overrideCloseButton() {
-  const closeBtn = document.getElementById('canvas-close-btn');
-  if (closeBtn) closeBtn.addEventListener('click', cancelPlan);
-}
-
-function restoreCloseButton() {
-  const closeBtn = document.getElementById('canvas-close-btn');
-  if (closeBtn) closeBtn.removeEventListener('click', cancelPlan);
-}
-
-// ---------- Internal helpers ----------
-
-/** Fully close canvas, restore UI state, and clear plan tracking. */
-function forceClose() {
-  restoreCloseButton();
+  planReady = false;
   showCanvasHeader(true);
   closeCanvas();
-  state.planAgentId = null;
-  state.planSessionId = null;
-}
-
-// ---------- UI: Loading ----------
-
-function showLoading() {
-  setCanvasContent(`
-    <div class="plan-loading">
-      <div class="plan-spinner"></div>
-      <span>Plan agent is analyzing...</span>
-    </div>
-  `);
+  // Canvas will reopen when next planReady arrives.
 }
 
 // ---------- UI: Plan content + action bar ----------
