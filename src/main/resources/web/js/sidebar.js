@@ -157,6 +157,8 @@ function switchToSession(sessionId) {
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
   if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
+  // Close plan canvas if bound to a different session
+  if (typeof state.onPlanSessionChange === 'function') state.onPlanSessionChange(sessionId);
 }
 
 export function initNavTabs() {
