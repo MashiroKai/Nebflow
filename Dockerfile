@@ -2,7 +2,7 @@ FROM eclipse-temurin:17-jre-alpine
 
 WORKDIR /workspace
 
-COPY target/scala-3.5.2/nebflow-assembly-*.jar /app/nebflow.jar
+COPY target/scala-*/nebflow-assembly-*.jar /app/nebflow.jar
 
 # Create config directory
 RUN mkdir -p /root/.config/nebflow
