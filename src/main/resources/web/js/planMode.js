@@ -1,99 +1,49 @@
-// planMode.js — Plan mode canvas panel for Nebflow
-// Displays plan agent's final output as a markdown card with approve/feedback/cancel.
-// Does NOT show streaming process — only renders when the plan agent's turn ends.
+// planMode.js — Plan mode canvas panel for Nebflow.
+// Uses the shared #canvas-panel infrastructure (canvas.js) instead of a
+// separate overlay. Plan content is injected into #canvas-content.
+// Does NOT show streaming process — only renders when planReady arrives.
 
 import state from './state.js';
 import { sendWs } from './ws.js';
-import { renderMarkdownWithMath, escapeHtml } from './utils.js';
+import { renderMarkdownWithMath } from './utils.js';
+import { openCanvas, closeCanvas, setCanvasContent } from './canvas.js';
 
 // ---------- State ----------
-let canvasEl = null;
-let loadingEl = null;
-let contentEl = null;
-let footerEl = null;
-let feedbackTextarea = null;
 let planText = '';
 
 // ---------- Init ----------
 export function init() {
-  canvasEl = document.createElement('div');
-  canvasEl.id = 'plan-canvas';
-  canvasEl.className = 'plan-canvas';
-  canvasEl.innerHTML = `
-    <div class="plan-canvas-header">
-      <div class="plan-canvas-title">
-        <i data-lucide="clipboard-list"></i>
-        <span>Plan</span>
-      </div>
-      <button class="plan-canvas-close" id="plan-close-btn" title="Cancel plan">
-        <i data-lucide="x"></i>
-      </button>
-    </div>
-    <div class="plan-canvas-body">
-      <div class="plan-canvas-loading" id="plan-loading">
-        <div class="plan-canvas-spinner"></div>
-        <span>Plan agent is analyzing...</span>
-      </div>
-      <div class="plan-canvas-content markdown-body" id="plan-content" style="display:none"></div>
-    </div>
-    <div class="plan-canvas-footer" id="plan-footer">
-      <div class="plan-canvas-controls" style="display:none">
-        <textarea class="plan-feedback-input" id="plan-feedback-input" rows="2" placeholder="Send feedback to adjust the plan..."></textarea>
-        <div class="plan-canvas-buttons">
-          <button class="plan-btn plan-btn-cancel" id="plan-cancel-btn">Cancel</button>
-          <button class="plan-btn plan-btn-feedback" id="plan-feedback-btn">Send Feedback</button>
-          <button class="plan-btn plan-btn-approve" id="plan-approve-btn">Approve</button>
-        </div>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(canvasEl);
-
-  loadingEl = canvasEl.querySelector('#plan-loading');
-  contentEl = canvasEl.querySelector('#plan-content');
-  footerEl = canvasEl.querySelector('#plan-footer');
-  feedbackTextarea = canvasEl.querySelector('#plan-feedback-input');
-
-  canvasEl.querySelector('#plan-approve-btn').addEventListener('click', approvePlan);
-  canvasEl.querySelector('#plan-cancel-btn').addEventListener('click', cancelPlan);
-  canvasEl.querySelector('#plan-close-btn').addEventListener('click', cancelPlan);
-  canvasEl.querySelector('#plan-feedback-btn').addEventListener('click', sendFeedback);
-  feedbackTextarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendFeedback();
-    }
-  });
-
-  if (typeof lucide !== 'undefined') lucide.createIcons();
+  // No DOM creation — #canvas-panel already exists in index.html.
+  // Close button override is set up in onPlanStart, restored in onPlanEnd.
 }
 
 // ---------- Event handlers ----------
 
-/** Called when planStart event arrives — open the canvas. */
+/** Called when planStart event arrives — open the canvas with loading state. */
 export function onPlanStart(msg) {
   state.planAgentId = msg.agentId;
   state.planSessionId = msg.sessionId;
   planText = '';
+  openCanvas('Plan');
+  overrideCloseButton();
   showLoading();
-  openCanvas();
 }
 
 /** Handle a plan agent streaming event — accumulate text silently. */
 export function onPlanAgentEvent(msg) {
-  // Silently accumulate text; don't render until planReady
   if (msg.type === 'agentTextDelta') {
     planText += msg.delta;
   }
 }
 
-/** Called when planReady event arrives — show final markdown + controls. */
+/** Called when planReady event arrives — show plan markdown + controls. */
 export function onPlanReady(msg) {
   showPlanContent();
 }
 
 /** Called when planEnd event arrives — close the canvas. */
 export function onPlanEnd(msg) {
+  restoreCloseButton();
   closeCanvas();
   state.planAgentId = null;
   state.planSessionId = null;
@@ -104,52 +54,81 @@ export function onPlanEnd(msg) {
 function approvePlan() {
   if (!state.planSessionId) return;
   sendWs({ type: 'planApprove', sessionId: state.planSessionId });
+  restoreCloseButton();
   closeCanvas();
 }
 
 function cancelPlan() {
   if (!state.planSessionId) return;
   sendWs({ type: 'planCancel', sessionId: state.planSessionId });
+  restoreCloseButton();
   closeCanvas();
 }
 
 function sendFeedback() {
-  if (!state.planSessionId || !feedbackTextarea) return;
-  const text = feedbackTextarea.value.trim();
+  if (!state.planSessionId) return;
+  const textarea = document.getElementById('plan-feedback-input');
+  if (!textarea) return;
+  const text = textarea.value.trim();
   if (!text) return;
   sendWs({ type: 'planFeedback', sessionId: state.planSessionId, text });
-  feedbackTextarea.value = '';
-  // Back to loading while plan agent revises
+  textarea.value = '';
   planText = '';
   showLoading();
 }
 
+// ---------- Close button override ----------
+
+function overrideCloseButton() {
+  const closeBtn = document.getElementById('canvas-close-btn');
+  if (closeBtn) closeBtn.addEventListener('click', cancelPlan);
+}
+
+function restoreCloseButton() {
+  const closeBtn = document.getElementById('canvas-close-btn');
+  if (closeBtn) closeBtn.removeEventListener('click', cancelPlan);
+}
+
 // ---------- UI helpers ----------
 
-function openCanvas() {
-  if (canvasEl) canvasEl.classList.add('open');
-}
-
-function closeCanvas() {
-  if (canvasEl) canvasEl.classList.remove('open');
-}
-
 function showLoading() {
-  if (loadingEl) loadingEl.style.display = 'flex';
-  if (contentEl) contentEl.style.display = 'none';
-  const controls = footerEl?.querySelector('.plan-canvas-controls');
-  if (controls) controls.style.display = 'none';
+  setCanvasContent(`
+    <div class="plan-loading">
+      <div class="plan-spinner"></div>
+      <span>Plan agent is analyzing...</span>
+    </div>
+  `);
 }
 
 function showPlanContent() {
-  // Render the accumulated plan text as markdown
-  if (contentEl) {
-    contentEl.innerHTML = renderMarkdownWithMath(planText);
-    contentEl.style.display = 'block';
+  // Render the accumulated plan text as markdown, plus footer controls.
+  const html = `
+    <div class="plan-content markdown-body">${renderMarkdownWithMath(planText)}</div>
+    <div class="plan-footer">
+      <textarea class="plan-feedback-input" id="plan-feedback-input" rows="2"
+        placeholder="Send feedback to adjust the plan..."></textarea>
+      <div class="plan-buttons">
+        <button class="plan-btn plan-btn-cancel" id="plan-cancel-btn">Cancel</button>
+        <button class="plan-btn plan-btn-feedback" id="plan-feedback-btn">Send Feedback</button>
+        <button class="plan-btn plan-btn-approve" id="plan-approve-btn">Approve</button>
+      </div>
+    </div>
+  `;
+  setCanvasContent(html);
+
+  // Wire up buttons
+  document.getElementById('plan-approve-btn')?.addEventListener('click', approvePlan);
+  document.getElementById('plan-cancel-btn')?.addEventListener('click', cancelPlan);
+  document.getElementById('plan-feedback-btn')?.addEventListener('click', sendFeedback);
+
+  const textarea = document.getElementById('plan-feedback-input');
+  if (textarea) {
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendFeedback();
+      }
+    });
+    textarea.focus();
   }
-  if (loadingEl) loadingEl.style.display = 'none';
-  // Show approve/feedback/cancel controls
-  const controls = footerEl?.querySelector('.plan-canvas-controls');
-  if (controls) controls.style.display = '';
-  if (feedbackTextarea) feedbackTextarea.focus();
 }
