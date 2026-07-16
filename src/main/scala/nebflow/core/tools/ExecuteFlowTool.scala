@@ -51,60 +51,76 @@ Requirements:
 - Verify prompt should instruct: "Start first line with PASS or FAIL"
 """
 
-  val inputSchema = JsonObject.fromIterable(List(
-    "type" -> "object".asJson,
-    "properties" -> Json.obj(
-      "name" -> Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "Short name for the workflow.".asJson
-      ),
-      "description" -> Json.obj(
-        "type" -> "string".asJson,
-        "description" -> "What this workflow accomplishes.".asJson
-      ),
-      "steps" -> Json.obj(
-        "type" -> "array".asJson,
-        "description" -> "Work steps forming a DAG. Steps with no unmet dependencies run in parallel (up to maxConcurrency).".asJson,
-        "items" -> Json.obj(
-          "type" -> "object".asJson,
-          "properties" -> Json.obj(
-            "id" -> Json.obj("type" -> "string".asJson, "description" -> "Unique step identifier.".asJson),
-            "agent" -> Json.obj("type" -> "string".asJson, "description" -> "Agent name: Explorer, Planner, Nebula.".asJson),
-            "prompt" -> Json.obj("type" -> "string".asJson, "description" -> "Task prompt. Use ${stepId} to reference upstream results.".asJson),
-            "dependsOn" -> Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson), "description" -> "Step IDs that must complete first.".asJson)
-          ),
-          "required" -> Json.arr("id".asJson, "agent".asJson, "prompt".asJson)
-        )
-      ),
-      "verify" -> Json.obj(
-        "type" -> "object".asJson,
-        "description" -> "Mandatory verification step. Evaluates all work, outputs PASS/FAIL + summary.".asJson,
-        "properties" -> Json.obj(
-          "agent" -> Json.obj("type" -> "string".asJson, "default" -> "Explorer".asJson),
-          "prompt" -> Json.obj("type" -> "string".asJson, "description" -> "Verification instructions. Must start output with PASS or FAIL.".asJson)
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> Json.obj(
+        "name" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Short name for the workflow.".asJson
         ),
-        "required" -> Json.arr("prompt".asJson)
-      ),
-      "loop" -> Json.obj(
-        "type" -> "object".asJson,
-        "description" -> "Optional retry loop. On verify FAIL, runs fix step then re-verifies.".asJson,
-        "properties" -> Json.obj(
-          "fix" -> Json.obj(
+        "description" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "What this workflow accomplishes.".asJson
+        ),
+        "steps" -> Json.obj(
+          "type" -> "array".asJson,
+          "description" -> "Work steps forming a DAG. Steps with no unmet dependencies run in parallel (up to maxConcurrency).".asJson,
+          "items" -> Json.obj(
             "type" -> "object".asJson,
             "properties" -> Json.obj(
-              "id" -> Json.obj("type" -> "string".asJson),
-              "agent" -> Json.obj("type" -> "string".asJson),
-              "prompt" -> Json.obj("type" -> "string".asJson, "description" -> "Fix instructions. Use ${verify} for verify output.".asJson)
+              "id" -> Json.obj("type" -> "string".asJson, "description" -> "Unique step identifier.".asJson),
+              "agent" -> Json
+                .obj("type" -> "string".asJson, "description" -> "Agent name: Explorer, Planner, Nebula.".asJson),
+              "prompt" -> Json.obj(
+                "type" -> "string".asJson,
+                "description" -> "Task prompt. Use ${stepId} to reference upstream results.".asJson
+              ),
+              "dependsOn" -> Json.obj(
+                "type" -> "array".asJson,
+                "items" -> Json.obj("type" -> "string".asJson),
+                "description" -> "Step IDs that must complete first.".asJson
+              )
             ),
-            "required" -> Json.arr("agent".asJson, "prompt".asJson)
+            "required" -> Json.arr("id".asJson, "agent".asJson, "prompt".asJson)
+          )
+        ),
+        "verify" -> Json.obj(
+          "type" -> "object".asJson,
+          "description" -> "Mandatory verification step. Evaluates all work, outputs PASS/FAIL + summary.".asJson,
+          "properties" -> Json.obj(
+            "agent" -> Json.obj("type" -> "string".asJson, "default" -> "Explorer".asJson),
+            "prompt" -> Json.obj(
+              "type" -> "string".asJson,
+              "description" -> "Verification instructions. Must start output with PASS or FAIL.".asJson
+            )
           ),
-          "maxIterations" -> Json.obj("type" -> "integer".asJson, "default" -> 3.asJson)
-        )
+          "required" -> Json.arr("prompt".asJson)
+        ),
+        "loop" -> Json.obj(
+          "type" -> "object".asJson,
+          "description" -> "Optional retry loop. On verify FAIL, runs fix step then re-verifies.".asJson,
+          "properties" -> Json.obj(
+            "fix" -> Json.obj(
+              "type" -> "object".asJson,
+              "properties" -> Json.obj(
+                "id" -> Json.obj("type" -> "string".asJson),
+                "agent" -> Json.obj("type" -> "string".asJson),
+                "prompt" -> Json.obj(
+                  "type" -> "string".asJson,
+                  "description" -> "Fix instructions. Use ${verify} for verify output.".asJson
+                )
+              ),
+              "required" -> Json.arr("agent".asJson, "prompt".asJson)
+            ),
+            "maxIterations" -> Json.obj("type" -> "integer".asJson, "default" -> 3.asJson)
+          )
+        ),
+        "maxConcurrency" -> Json.obj("type" -> "integer".asJson, "default" -> 5.asJson)
       ),
-      "maxConcurrency" -> Json.obj("type" -> "integer".asJson, "default" -> 5.asJson)
-    ),
-    "required" -> Json.arr("name".asJson, "description".asJson, "steps".asJson, "verify".asJson)
-  ))
+      "required" -> Json.arr("name".asJson, "description".asJson, "steps".asJson, "verify".asJson)
+    )
+  )
 
   def summarize(input: JsonObject): String =
     val name = input("name").flatMap(_.asString).getOrElse("?")
@@ -116,32 +132,32 @@ Requirements:
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     // Depth check — same threshold as Delegate
     if ctx.depth >= DelegateTool.MaxDepth then
-      return IO.pure(Left(ToolError(
-        s"Maximum depth (${DelegateTool.MaxDepth}) reached. Cannot create flow at this depth.")))
+      IO.pure(
+        Left(ToolError(s"Maximum depth (${DelegateTool.MaxDepth}) reached. Cannot create flow at this depth."))
+      )
+    else
+      // Parse input → FlowDef
+      FlowDefParser.parse(input) match
+        case Left(parseError) =>
+          IO.pure(Left(ToolError(s"Invalid flow definition: $parseError")))
 
-    // Parse input → FlowDef
-    FlowDefParser.parse(input) match
-      case Left(parseError) =>
-        IO.pure(Left(ToolError(s"Invalid flow definition: $parseError")))
+        case Right(flowDef) =>
+          // Validate structure
+          FlowValidator.validate(flowDef) match
+            case Left(validationError) =>
+              IO.pure(Left(ToolError(s"Flow validation failed: $validationError")))
 
-      case Right(flowDef) =>
-        // Validate structure
-        FlowValidator.validate(flowDef) match
-          case Left(validationError) =>
-            IO.pure(Left(ToolError(s"Flow validation failed: $validationError")))
-
-          case Right(_) =>
-            // Check prerequisites
-            (ctx.actorSystem, ctx.sharedResources, ctx.agentLibrary) match
-              case (Some(system), Some(resources), Some(agentLibrary)) =>
-                checkAgentsExist(flowDef, agentLibrary).flatMap {
-                  case Left(err) => IO.pure(Left(ToolError(err)))
-                  case Right(_) =>
-                    spawnFlow(flowDef, ctx, system, resources)
-                }
-              case _ =>
-                IO.pure(Left(ToolError(
-                  "ExecuteFlow requires ActorSystem, SharedResources, and AgentLibrary")))
+            case Right(_) =>
+              // Check prerequisites
+              (ctx.actorSystem, ctx.sharedResources, ctx.agentLibrary) match
+                case (Some(system), Some(resources), Some(agentLibrary)) =>
+                  checkAgentsExist(flowDef, agentLibrary).flatMap {
+                    case Left(err) => IO.pure(Left(ToolError(err)))
+                    case Right(_) =>
+                      spawnFlow(flowDef, ctx, system, resources)
+                  }
+                case _ =>
+                  IO.pure(Left(ToolError("ExecuteFlow requires ActorSystem, SharedResources, and AgentLibrary")))
   end call
 
   // ============================================================
@@ -149,7 +165,8 @@ Requirements:
   // ============================================================
 
   private def checkAgentsExist(
-    flowDef: FlowDef, library: AgentLibrary
+    flowDef: FlowDef,
+    library: AgentLibrary
   ): IO[Either[String, Unit]] =
     val allAgents = flowDef.steps.map(_.agent) ++
       List(flowDef.verify.agent) ++
@@ -162,14 +179,17 @@ Requirements:
     yield
       if missing.isEmpty then Right(())
       else Left(s"Unknown agent(s): ${missing.mkString(", ")}")
+  end checkAgentsExist
 
   // ============================================================
   // Spawn FlowActor
   // ============================================================
 
   private def spawnFlow(
-    flowDef: FlowDef, ctx: ToolContext,
-    system: ActorSystem, resources: SharedResources
+    flowDef: FlowDef,
+    ctx: ToolContext,
+    system: ActorSystem,
+    resources: SharedResources
   ): IO[Either[ToolError, String]] =
     // Inherit bypass from parent session
     val bypassIO = (ctx.sessionStore, ctx.sessionId) match
@@ -180,35 +200,41 @@ Requirements:
       val flowId = s"flow-${flowDef.name.take(20)}-${java.util.UUID.randomUUID().toString.take(8)}"
 
       // Spawn FlowActor as a top-level actor
-      system.spawn(
-        FlowActor(
-          flowDef = flowDef,
-          parentAgentRef = ctx.agentActorRef.getOrElse(
-            throw RuntimeException("ExecuteFlow requires agentActorRef")),
-          wsSend = ctx.wsSend,
-          parentSessionId = ctx.sessionId,
-          parentDepth = ctx.depth,
-          resources = resources,
-          projectRoot = ctx.projectRoot,
-          bypass = bypass
-        ),
-        flowId
-      ).flatMap { ref =>
-        logger.info(s"Spawned FlowActor: $flowId (parent=${ctx.agentActorRef.map(_.path.name)})")
+      system
+        .spawn(
+          FlowActor(
+            flowDef = flowDef,
+            parentAgentRef = ctx.agentActorRef.getOrElse(throw RuntimeException("ExecuteFlow requires agentActorRef")),
+            wsSend = ctx.wsSend,
+            parentSessionId = ctx.sessionId,
+            parentDepth = ctx.depth,
+            resources = resources,
+            projectRoot = ctx.projectRoot,
+            bypass = bypass
+          ),
+          flowId
+        )
+        .flatMap { ref =>
+          logger.info(s"Spawned FlowActor: $flowId (parent=${ctx.agentActorRef.map(_.path.name)})")
 
-        val stepSummary = flowDef.steps.map(s =>
-          s"  ${s.id} (${s.agent})" +
-          (if s.dependsOn.nonEmpty then s" <- ${s.dependsOn.mkString(", ")}" else "")
-        ).mkString("\n")
+          val stepSummary = flowDef.steps
+            .map(s =>
+              s"  ${s.id} (${s.agent})" +
+                (if s.dependsOn.nonEmpty then s" <- ${s.dependsOn.mkString(", ")}" else "")
+            )
+            .mkString("\n")
 
-        IO.pure(Right(
-          s"""Flow '${flowDef.name}' started ($flowId).
+          IO.pure(
+            Right(
+              s"""Flow '${flowDef.name}' started ($flowId).
              |$stepSummary
              |verify: ${flowDef.verify.agent}
              |${flowDef.loop.map(l => s"loop: fix=${l.fix.agent}, max=${l.maxIterations}").getOrElse("no loop")}
              |You will be notified when the flow completes via a system message.""".stripMargin
-        ))
-      }
+            )
+          )
+        }
     }
+  end spawnFlow
 
 end ExecuteFlowTool

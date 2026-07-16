@@ -205,8 +205,7 @@ object PeerDescriptionStore:
 
   def load: IO[Map[String, String]] =
     IO.blocking {
-      if os.exists(path) then
-        decode[Map[String, String]](os.read(path)).getOrElse(Map.empty)
+      if os.exists(path) then decode[Map[String, String]](os.read(path)).getOrElse(Map.empty)
       else Map.empty
     }
 

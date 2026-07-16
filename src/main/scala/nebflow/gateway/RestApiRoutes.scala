@@ -422,6 +422,7 @@ class RestApiRoutes(
                 }
               case None =>
                 BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
+            end match
           }
       }
 

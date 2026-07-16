@@ -343,8 +343,10 @@ final class ShellSession private (
   /** CPU sampling window to distinguish slow builds from idle prompts. */
   private val CpuSampleInterval: FiniteDuration = 2.seconds
 
-  /** Minimum CPU delta (nanos) during sampling to consider a process "active".
-   * 10ms of CPU work in 2s means the process is computing, not waiting for input. */
+  /**
+   * Minimum CPU delta (nanos) during sampling to consider a process "active".
+   * 10ms of CPU work in 2s means the process is computing, not waiting for input.
+   */
   private val CpuActiveThresholdNanos: Long = 10_000_000L
 
   /** Sum total CPU duration (nanos) of a process and all its descendants. */

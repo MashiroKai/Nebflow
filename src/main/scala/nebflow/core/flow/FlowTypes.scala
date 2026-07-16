@@ -48,19 +48,20 @@ case class LoopDef(
 // ============================================================
 
 sealed trait FlowResult extends Product with Serializable
+
 object FlowResult:
   case class Pass(summary: String) extends FlowResult
   case class Fail(summary: String) extends FlowResult
   case class Cancelled(reason: String) extends FlowResult
 
   def resultType(fr: FlowResult): String = fr match
-    case Pass(_)      => "pass"
-    case Fail(_)      => "fail"
+    case Pass(_) => "pass"
+    case Fail(_) => "fail"
     case Cancelled(_) => "cancelled"
 
   def summary(fr: FlowResult): String = fr match
-    case Pass(s)      => s
-    case Fail(s)      => s
+    case Pass(s) => s
+    case Fail(s) => s
     case Cancelled(s) => s
 end FlowResult
 
@@ -82,19 +83,20 @@ case class VerifyResult(pass: Boolean, summary: String)
 
 object FlowDefParser:
 
-  /** Parse a JsonObject (from ExecuteFlow tool input) into FlowDef.
+  /**
+   * Parse a JsonObject (from ExecuteFlow tool input) into FlowDef.
    * Returns Right(FlowDef) on success, Left(error message) on failure.
    */
   def parse(input: JsonObject): Either[String, FlowDef] =
     for
-      name        <- reqStr(input, "name")
+      name <- reqStr(input, "name")
       description <- reqStr(input, "description")
-      stepsRaw    <- reqArray(input, "steps")
-      steps       <- parseSteps(stepsRaw)
-      verifyRaw   <- reqObject(input, "verify")
-      verify      <- parseVerify(verifyRaw)
-      loop         = parseLoop(input("loop").flatMap(_.asObject))
-      maxConv      = input("maxConcurrency").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(5)
+      stepsRaw <- reqArray(input, "steps")
+      steps <- parseSteps(stepsRaw)
+      verifyRaw <- reqObject(input, "verify")
+      verify <- parseVerify(verifyRaw)
+      loop = parseLoop(input("loop").flatMap(_.asObject))
+      maxConv = input("maxConcurrency").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(5)
     yield FlowDef(name, description, steps, verify, loop, maxConv)
 
   // ---------- step parsing ----------
@@ -106,13 +108,16 @@ object FlowDefParser:
   private def parseStep(json: Json): Either[String, FlowStep] =
     for
       obj <- json.asObject.toRight(s"step must be an object: $json")
-      id      <- reqStr(obj, "id")
-      _       <- if id.isBlank then Left("step id cannot be blank") else Right(())
-      agent   <- reqStr(obj, "agent")
-      prompt  <- reqStr(obj, "prompt")
-      deps     = obj("dependsOn").flatMap(_.asArray).getOrElse(Vector.empty)
-                   .flatMap(_.asString).toSet
-      retry    = obj("retry").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(2)
+      id <- reqStr(obj, "id")
+      _ <- if id.isBlank then Left("step id cannot be blank") else Right(())
+      agent <- reqStr(obj, "agent")
+      prompt <- reqStr(obj, "prompt")
+      deps = obj("dependsOn")
+        .flatMap(_.asArray)
+        .getOrElse(Vector.empty)
+        .flatMap(_.asString)
+        .toSet
+      retry = obj("retry").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(2)
       timeoutS = obj("timeoutSeconds").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(1800)
     yield FlowStep(id, agent, prompt, deps, retry, timeoutS.seconds)
 
@@ -120,8 +125,8 @@ object FlowDefParser:
 
   private def parseVerify(obj: JsonObject): Either[String, VerifyStep] =
     for
-      prompt  <- reqStr(obj, "prompt")
-      agent    = obj("agent").flatMap(_.asString).getOrElse("Explorer")
+      prompt <- reqStr(obj, "prompt")
+      agent = obj("agent").flatMap(_.asString).getOrElse("Explorer")
       timeoutS = obj("timeoutSeconds").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(1800)
     yield VerifyStep(agent, prompt, timeoutS.seconds)
 
@@ -132,7 +137,7 @@ object FlowDefParser:
       obj("fix").flatMap(_.asObject).map { fixObj =>
         val fixStep = parseStep(fixObj.asJson) match
           case Right(s) => s
-          case Left(_)  => FlowStep("fix", "Nebula", "Fix issues", Set.empty)
+          case Left(_) => FlowStep("fix", "Nebula", "Fix issues", Set.empty)
         val maxIter = obj("maxIterations").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(3)
         LoopDef(fixStep, maxIter)
       }
@@ -174,7 +179,8 @@ object FlowValidator:
     if dupIds.nonEmpty then errors += s"Duplicate step IDs: ${dupIds.mkString(", ")}"
 
     // Check no self-dependencies
-    flow.steps.filter(s => s.dependsOn.contains(s.id))
+    flow.steps
+      .filter(s => s.dependsOn.contains(s.id))
       .foreach(s => errors += s"Step '${s.id}' cannot depend on itself")
 
     // Check all dependsOn references exist
@@ -186,8 +192,7 @@ object FlowValidator:
 
     // Check fix step ID doesn't collide with work step IDs
     flow.loop.foreach { loop =>
-      if idSet.contains(loop.fix.id) then
-        errors += s"Loop fix step ID '${loop.fix.id}' collides with a work step ID"
+      if idSet.contains(loop.fix.id) then errors += s"Loop fix step ID '${loop.fix.id}' collides with a work step ID"
     }
 
     // Check DAG (no cycles)
@@ -197,6 +202,8 @@ object FlowValidator:
 
     val errs = errors.result()
     if errs.isEmpty then Right(()) else Left(errs.mkString("; "))
+
+  end validate
 
   /** Topological sort to detect cycles. Returns Left(cycle) if found. */
   private def checkDag(steps: List[FlowStep]): Either[List[String], Unit] =
@@ -242,5 +249,6 @@ object FlowValidator:
 
     val cycle = steps.flatMap(s => hasCycle(s.id)).headOption
     cycle.toLeft(())
+  end checkDag
 
 end FlowValidator

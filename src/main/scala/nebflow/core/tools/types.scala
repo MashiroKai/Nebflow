@@ -38,8 +38,10 @@ case class ToolContext(
   messages: List[Message] = Nil,
   liveFileTracker: Option[LiveFileTracker] = None,
   toolCallId: String = "",
-  /** True when this call originates from another Nebflow instance via remote-exec.
-   * Disables BashTool's auto-background mechanism — the caller manages lifecycle. */
+  /**
+   * True when this call originates from another Nebflow instance via remote-exec.
+   * Disables BashTool's auto-background mechanism — the caller manages lifecycle.
+   */
   isRemoteExec: Boolean = false
 )
 

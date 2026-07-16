@@ -72,7 +72,10 @@ Git safety:
           "description" -> "The bash command to run. Required unless background_job_id is provided.".asJson
         ),
         "timeout" -> io.circe.Json
-          .obj("type" -> "number".asJson, "description" -> "Optional timeout in milliseconds (max 3600000). If exceeded, the command is killed.".asJson),
+          .obj(
+            "type" -> "number".asJson,
+            "description" -> "Optional timeout in milliseconds (max 3600000). If exceeded, the command is killed.".asJson
+          ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Clear, concise description of what this command does".asJson

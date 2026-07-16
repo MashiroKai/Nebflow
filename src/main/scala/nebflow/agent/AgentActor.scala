@@ -321,30 +321,36 @@ object AgentActor extends AgentCore with AgentSession:
         val projectRootStr = state.projectRoot.getOrElse(resources.projectRoot.toString)
         resources.agentLibrary.get("Planner").flatMap {
           case Some(plannerDef) =>
-            PlanAgent.spawn(
-              agentDef = plannerDef,
-              task = task,
-              mainAgentRef = ctx.self,
-              system = ctx.system,
-              resources = resources,
-              parentDepth = depth,
-              wsSend = state.wsSend,
-              projectRoot = projectRootStr,
-              parentSessionId = state.sessionId
-            ).map { planAgentRef =>
-              val planState = PlanModeState(planAgentRef = planAgentRef, taskDescription = task)
-              planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(Some(planState)))
-            }
+            PlanAgent
+              .spawn(
+                agentDef = plannerDef,
+                task = task,
+                mainAgentRef = ctx.self,
+                system = ctx.system,
+                resources = resources,
+                parentDepth = depth,
+                wsSend = state.wsSend,
+                projectRoot = projectRootStr,
+                parentSessionId = state.sessionId
+              )
+              .map { planAgentRef =>
+                val planState = PlanModeState(planAgentRef = planAgentRef, taskDescription = task)
+                planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(Some(planState)))
+              }
           case None =>
-            ctx.forkTurn(
-              state.wsSend(
-                Json.obj(
-                  "type" -> "error".asJson,
-                  "sessionId" -> state.sessionId.asJson,
-                  "message" -> "Planner agent not found in agent library".asJson
-                )
-              ).handleErrorWith(_ => IO.unit)
-            ).as(idle(agentDef, resources, depth, parentRef, state))
+            ctx
+              .forkTurn(
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "error".asJson,
+                      "sessionId" -> state.sessionId.asJson,
+                      "message" -> "Planner agent not found in agent library".asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+              )
+              .as(idle(agentDef, resources, depth, parentRef, state))
         }
 
       case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
@@ -375,21 +381,29 @@ object AgentActor extends AgentCore with AgentSession:
 
       case AgentCommand.PlanTurnComplete(planText) =>
         val updatedPlanState = state.planMode.map(_.copy(currentPlanText = planText))
-        for
-          _ <- ctx.forkTurn(
-            state.wsSend(
-              Json.obj(
-                "type" -> "planReady".asJson,
-                "sessionId" -> state.sessionId.asJson
+        for _ <- ctx.forkTurn(
+            state
+              .wsSend(
+                Json.obj(
+                  "type" -> "planReady".asJson,
+                  "sessionId" -> state.sessionId.asJson
+                )
               )
-            ).handleErrorWith(_ => IO.unit)
+              .handleErrorWith(_ => IO.unit)
           )
         yield planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(updatedPlanState))
 
       case AgentCommand.PlanFeedback(text) =>
         state.planMode match
           case Some(pm) =>
-            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-feedback", s"text=${text.take(60)}")
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "plan-feedback",
+              s"text=${text.take(60)}"
+            )
             (pm.planAgentRef ! AgentCommand.UserInput(text)) *>
               IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
           case None =>
@@ -398,29 +412,49 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.PlanApproved =>
         state.planMode match
           case Some(pm) =>
-            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-approved", s"textLen=${pm.currentPlanText.length}")
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "plan-approved",
+              s"textLen=${pm.currentPlanText.length}"
+            )
             for
               _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
               _ <- ctx.forkTurn(
-                state.wsSend(
-                  Json.obj("type" -> "planEnd".asJson, "sessionId" -> state.sessionId.asJson, "reason" -> "approved".asJson)
-                ).handleErrorWith(_ => IO.unit)
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "planEnd".asJson,
+                      "sessionId" -> state.sessionId.asJson,
+                      "reason" -> "approved".asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
               )
               // Inject approved plan as user message so the main agent executes it
-              planMsg = Message(MessageRole.User, Left(
-                s"User requested planning for: ${pm.taskDescription}\n\n" +
-                s"The plan below has been approved by the user. Execute it now.\n\n" +
-                s"## Approved Plan\n\n${pm.currentPlanText}\n\n" +
-                s"Start by creating tasks with TaskCreate to track progress, then execute each step."
-              ))
+              planMsg = Message(
+                MessageRole.User,
+                Left(
+                  s"User requested planning for: ${pm.taskDescription}\n\n" +
+                    s"The plan below has been approved by the user. Execute it now.\n\n" +
+                    s"## Approved Plan\n\n${pm.currentPlanText}\n\n" +
+                    s"Start by creating tasks with TaskCreate to track progress, then execute each step."
+                )
+              )
               newMessages = state.messages :+ planMsg
               sessionBusyIO = state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
               result <- sessionBusyIO *> pipeLlmCall(
-                agentDef, resources, depth, parentRef,
+                agentDef,
+                resources,
+                depth,
+                parentRef,
                 state.withMessages(newMessages).withPlanMode(None),
                 None
               )
             yield result
+            end for
           case None =>
             IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
@@ -431,9 +465,15 @@ object AgentActor extends AgentCore with AgentSession:
             for
               _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
               _ <- ctx.forkTurn(
-                state.wsSend(
-                  Json.obj("type" -> "planEnd".asJson, "sessionId" -> state.sessionId.asJson, "reason" -> "cancelled".asJson)
-                ).handleErrorWith(_ => IO.unit)
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "planEnd".asJson,
+                      "sessionId" -> state.sessionId.asJson,
+                      "reason" -> "cancelled".asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
               )
             yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
           case None =>
@@ -444,31 +484,45 @@ object AgentActor extends AgentCore with AgentSession:
         state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
         for
           _ <- ctx.forkTurn(
-            state.wsSend(
-              Json.obj(
-                "type" -> "planEnd".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "reason" -> "failed".asJson,
-                "error" -> error.asJson
+            state
+              .wsSend(
+                Json.obj(
+                  "type" -> "planEnd".asJson,
+                  "sessionId" -> state.sessionId.asJson,
+                  "reason" -> "failed".asJson,
+                  "error" -> error.asJson
+                )
               )
-            ).handleErrorWith(_ => IO.unit)
+              .handleErrorWith(_ => IO.unit)
           )
           _ <- ctx.forkTurn(
             state.sessionId.fold(IO.unit)(sid =>
-              state.wsSend(
-                Json.obj("type" -> "error".asJson, "sessionId" -> sid.asJson, "message" -> s"Plan agent failed: $error".asJson)
-              ).handleErrorWith(_ => IO.unit)
+              state
+                .wsSend(
+                  Json.obj(
+                    "type" -> "error".asJson,
+                    "sessionId" -> sid.asJson,
+                    "message" -> s"Plan agent failed: $error".asJson
+                  )
+                )
+                .handleErrorWith(_ => IO.unit)
             )
           )
         yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
+        end for
 
       case AgentCommand.Interrupt() =>
         state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
-        for
-          _ <- ctx.forkTurn(
-            state.wsSend(
-              Json.obj("type" -> "planEnd".asJson, "sessionId" -> state.sessionId.asJson, "reason" -> "cancelled".asJson)
-            ).handleErrorWith(_ => IO.unit)
+        for _ <- ctx.forkTurn(
+            state
+              .wsSend(
+                Json.obj(
+                  "type" -> "planEnd".asJson,
+                  "sessionId" -> state.sessionId.asJson,
+                  "reason" -> "cancelled".asJson
+                )
+              )
+              .handleErrorWith(_ => IO.unit)
           )
         yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
 
