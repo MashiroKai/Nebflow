@@ -497,7 +497,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    * mutation happen in a single `indexRef.modify`, so two concurrent invocations can
    * never both observe "missing" and both create.
    *
-   * Used to guarantee Jarvis has exactly one persistent session. Returns (meta, wasCreated).
+   * Used to guarantee a singleton agent has exactly one persistent session. Returns (meta, wasCreated).
    */
   def ensureAgentSession(agentName: String): IO[(SessionMeta, Boolean)] =
     // modify is an atomic read-modify-write: the decide-to-create and the state

@@ -117,9 +117,7 @@ function showPanel(tab) {
 
 // ---------- Session Switching ----------
 
-/** Switch the main panel to display a different session.
- *  Replaces the old Jarvis-lock + openInSecondary dual-panel routing.
- *  Any session (Jarvis or not) now switches the single main view. */
+/** Switch the main panel to display a different session. */
 function switchToSession(sessionId) {
   if (!sessionId) return;
 
@@ -180,7 +178,6 @@ export function initNavTabs() {
   }
 
   // Secondary panel close button — removed (canvas panel has its own close)
-  // Jarvis toggle button — removed (no more Jarvis-hide toggle)
 }
 
 // ---------- Agent icons in Nav Bar ----------
@@ -305,8 +302,7 @@ export function selectAgent(agentName) {
     }
     return;
   }
-  // Agent tab switches only filter the sidebar list — the main window stays
-  // locked to Jarvis regardless. No draft saving / session switching needed.
+  // Agent tab switches only filter the sidebar list.
   state.selectedAgent = agentName;
   // Clear unread count for this agent
   const prevCount = state.agentUnreadCounts[agentName] || 0;
@@ -1185,11 +1181,6 @@ export function renderSessionSidebar(sessionData, activeId) {
     agentGroups[agent].folders.push(f);
   });
 
-  // Skip Jarvis sessions — Jarvis is always in the main view, not in the sidebar
-  if (agentGroups['Jarvis']) {
-    delete agentGroups['Jarvis'];
-  }
-
   // Sort remaining agent groups alphabetically
   const agentOrder = Object.keys(agentGroups).sort((a, b) => a.localeCompare(b));
 
@@ -1968,7 +1959,7 @@ export function getTargetAgent() {
   // 1. Active folder context
   if (state.activeFolderId) {
     const folder = (state.folders || []).find(f => f.id === state.activeFolderId);
-    if (folder?.agentName && folder.agentName !== 'Jarvis') return folder.agentName;
+    if (folder?.agentName) return folder.agentName;
   }
   // 2. Active session
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);

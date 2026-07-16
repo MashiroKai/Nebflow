@@ -10,8 +10,7 @@ class AgentDefSpec extends CatsEffectSuite:
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
     assert(result.keySet.contains("Nebula"), s"Should contain Nebula: ${result.keySet}")
-    assert(result.keySet.contains("Jarvis"), s"Should contain Jarvis: ${result.keySet}")
-    assert(result.keySet.size >= 4, s"Should have at least 4 agents: ${result.keySet}")
+    assert(result.keySet.size >= 3, s"Should have at least 3 agents: ${result.keySet}")
   }
 
   test("AgentLibrary.loadAll populates tools from code") {
@@ -20,10 +19,6 @@ class AgentDefSpec extends CatsEffectSuite:
     val result = lib.loadAll().unsafeRunSync()
     val nebula = result("Nebula")
     assertEquals(nebula.tools, List("*"))
-    val jarvis = result("Jarvis")
-    assert(jarvis.tools.contains("Delegate"))
-    assert(jarvis.tools.contains("Mail"))
-    assert(!jarvis.tools.contains("Write"))
   }
 
   test("AgentLibrary.loadAll reads systemPrompt from defaults") {
@@ -72,7 +67,6 @@ class AgentDefSpec extends CatsEffectSuite:
     val lib = new AgentLibrary(tmpDir, None)
     val tools = lib.builtinTools
     assert(tools.contains("Nebula"))
-    assert(tools.contains("Jarvis"))
     assert(tools("Nebula") == List("*"))
   }
 
