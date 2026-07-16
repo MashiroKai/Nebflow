@@ -36,6 +36,8 @@ object ToolRegistry:
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Sub-agent delegation
       "Delegate" -> DelegateTool,
+      // Multi-step workflow orchestration
+      "ExecuteFlow" -> ExecuteFlowTool,
       // Inter-agent messaging
       "Mail" -> MailTool,
       // Cross-device file transfer

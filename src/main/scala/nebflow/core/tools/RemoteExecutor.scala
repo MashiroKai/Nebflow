@@ -25,7 +25,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
   /** Foreground remote calls that exceed this are automatically moved to background. */
-  private val AutoBgThreshold = 120.seconds
+  private val AutoBgThreshold = 30.seconds
 
   /** Timeout for synchronous remote calls without ToolContext (fallback path). */
   private val SyncTimeout = 120.seconds
@@ -391,7 +391,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
   // ---- Helpers ----
 
   /** Ensure remote params have a timeout matching the HTTP timeout.
-   * Without this, the remote BashTool uses its default 120s timeout,
+   * Without this, the remote BashTool uses its default 30s timeout,
    * causing premature timeout for long-running remote tasks. */
   private def ensureRemoteTimeout(params: JsonObject): JsonObject =
     if params.contains("timeout") then params
