@@ -70,11 +70,6 @@
   flex-shrink: 0;
 }
 
-/* Jarvis session bold */
-.session-item.is-jarvis .session-name {
-  font-weight: 600;
-}
-
 /* ===== Canvas Panel (画板) ===== */
 /* Generic display container on the right side.
    Hidden by default; shown via body.canvas-open.

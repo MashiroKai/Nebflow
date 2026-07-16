@@ -106,43 +106,23 @@ class WebSocketRoutes(
               )
             }.flatten
             ref <- nebulaSystem.spawn(
-              if agentDef.name == "Jarvis" then
-                JarvisActor(
-                  agentDef,
-                  sharedResources,
-                  recordingWsSend,
-                  depth = 0,
-                  parentRef = None,
-                  sessionId = Some(sessionId),
-                  sessionName = metaOpt.map(_.name),
-                  initialMessages = history,
-                  readTracker = Some(readTracker),
-                  fileHistory = Some(fileHistory),
-                  liveFileTracker = Some(liveFileTracker),
-                  contextWindow = contextWindow,
-                  projectRoot = effectiveProjectRoot,
-                  rulesMd = resolvedRules,
-                  folderId = folderId
-                )
-              else
-                AgentActor(
-                  agentDef,
-                  sharedResources,
-                  recordingWsSend,
-                  depth = 0,
-                  parentRef = None,
-                  sessionId = Some(sessionId),
-                  sessionName = metaOpt.map(_.name),
-                  initialMessages = history,
-                  readTracker = Some(readTracker),
-                  fileHistory = Some(fileHistory),
-                  liveFileTracker = Some(liveFileTracker),
-                  contextWindow = contextWindow,
-                  projectRoot = effectiveProjectRoot,
-                  rulesMd = resolvedRules,
-                  folderId = folderId
-                )
-              ,
+              AgentActor(
+                agentDef,
+                sharedResources,
+                recordingWsSend,
+                depth = 0,
+                parentRef = None,
+                sessionId = Some(sessionId),
+                sessionName = metaOpt.map(_.name),
+                initialMessages = history,
+                readTracker = Some(readTracker),
+                fileHistory = Some(fileHistory),
+                liveFileTracker = Some(liveFileTracker),
+                contextWindow = contextWindow,
+                projectRoot = effectiveProjectRoot,
+                rulesMd = resolvedRules,
+                folderId = folderId
+              ),
               s"agent-$sessionId"
             )
             pr = effectiveProjectRoot.getOrElse("")
@@ -285,12 +265,6 @@ class WebSocketRoutes(
             )
           )
           activeMeta <- sessionStore.getActiveMeta
-          // Ensure the singleton Jarvis session exists on connect so the main window
-          // has something to show immediately, not only after the user clicks the tab.
-          _ <- sessionStore.ensureAgentSession("Jarvis").flatMap { case (meta, created) =>
-            logger.info(s"[connect] ensureAgentSession(Jarvis): meta=${meta.id.take(8)} created=$created")
-            IO.pure(meta -> created)
-          }
           agentName = activeMeta.flatMap(_.agentName).getOrElse("Nebula")
           _ <- sessionService.sendSessionList(perConnWsSend, agentName)
           ws <- wsb.build(sendStream, receivePipe)
@@ -1217,11 +1191,8 @@ class WebSocketRoutes(
         case "listAgentSessions" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            // Ensure Jarvis session exists (atomically — no race even under concurrent calls).
-            val ensureJarvis = sessionStore.ensureAgentSession("Jarvis").void
             // Return ALL sessions and folders (unified list)
-            ensureJarvis *>
-              (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
+            (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
                 wsSend(
                   io.circe.Json.obj(
                     "type" -> "agentSessionList".asJson,

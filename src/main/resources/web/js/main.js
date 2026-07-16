@@ -961,23 +961,12 @@ onMessage('sessionList', (msg, view) => {
   // Restore bypass state from persisted session metadata
   state.bypassSessions = new Set(allSessions.filter(s => s.bypass).map(s => s.id));
 
-  // Dedup safety net for singleton agents only (same as agentSessionList).
-  const SINGLETON_AGENTS = new Set(['Jarvis']);
-  const sessionsToShow = allSessions.filter(s => {
-    const a = s.agentName || 'Nebula';
-    if (!SINGLETON_AGENTS.has(a)) return true;
-    const sameAgent = allSessions.filter(x => (x.agentName || 'Nebula') === a);
-    if (sameAgent.length <= 1) return true;
-    const keeper = sameAgent.reduce((m, x) => x.updatedAt > m.updatedAt ? x : m);
-    return s.id === keeper.id;
-  });
   state.folders = allFolders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
 
-  // Use backend's activeId directly — no Jarvis lock
   const activeId = msg.activeId;
 
-  renderSessionSidebar(sessionsToShow, activeId);
+  renderSessionSidebar(allSessions, activeId);
   initHeaderModelInfo();
   // Mark the initial session as restored — getHistory is already sent by
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
@@ -1448,9 +1437,7 @@ onMessage('agentList', (msg, view) => {
   // Auto-select first agent if none selected
   if (!state.selectedAgent && state.agentsData.length > 0) {
     import('./sidebar.js').then(({ selectAgent }) => {
-      // Default to Jarvis (main orchestrator)
-      const jarvis = state.agentsData.find(a => a.name === 'Jarvis');
-      selectAgent(jarvis ? 'Jarvis' : (state.agentsData[0]?.name || 'Nebula'));
+      selectAgent(state.agentsData[0]?.name || 'Nebula');
     });
   }
 });
@@ -1462,19 +1449,6 @@ onMessage('agentSessionList', (msg, view) => {
   const folders = msg.folders || [];
   state.folders = folders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
-
-  // Front-end dedup safety net for singleton agents only (e.g. Jarvis must have
-  // exactly one session). Normal agents like Nebula may have many sessions.
-  // Keep the most recently updated one; this complements the backend dedup.
-  const SINGLETON_AGENTS = new Set(['Jarvis']);
-  sessions = sessions.filter(s => {
-    const a = s.agentName || agentName;
-    if (!SINGLETON_AGENTS.has(a)) return true;
-    const sameAgent = sessions.filter(x => (x.agentName || agentName) === a);
-    if (sameAgent.length <= 1) return true;
-    const keeper = sameAgent.reduce((m, x) => x.updatedAt > m.updatedAt ? x : m);
-    return s.id === keeper.id;
-  });
 
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
