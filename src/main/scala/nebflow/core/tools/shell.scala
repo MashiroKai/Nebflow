@@ -110,7 +110,6 @@ final class ShellSession private (
   /** Start a background job and return its job ID */
   def executeBackground(
     command: String,
-    timeout: FiniteDuration,
     description: Option[String] = None,
     on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None,
     on_heartbeat: Option[(String, JobHealth) => IO[Unit]] = None,
@@ -122,7 +121,7 @@ final class ShellSession private (
         jobId <- jobIdOverride.fold(IO.randomUUID.map(_.toString.take(8)))(IO.pure)
         deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
         health = new JobHealth()
-        fiber <- backgroundExecute(command, timeout, deferred, health, on_complete).start
+        fiber <- backgroundExecute(command, deferred, health, on_complete).start
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
           case None => IO.pure(None)
@@ -390,7 +389,7 @@ final class ShellSession private (
       // If a foreground command produces no output on stdout/stderr within
       // a grace period and hasn't exited, it is likely waiting for terminal
       // input (e.g. ssh, sudo, telnet). Kill it early so the agent gets
-      // immediate feedback instead of blocking for the full 120s timeout.
+      // immediate feedback instead of blocking for the full 30s timeout.
       //
       // Sleep-like commands are excluded — they legitimately produce no
       // output while their timer runs.
@@ -456,7 +455,6 @@ final class ShellSession private (
 
   private def backgroundExecute(
     command: String,
-    timeout: FiniteDuration,
     deferred: Deferred[IO, Either[Throwable, ProcessResult]],
     health: JobHealth,
     on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None

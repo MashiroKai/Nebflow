@@ -182,10 +182,7 @@ private[agent] trait AgentCore:
           case None => state.withCurrentTurnId(turnId)
 
         val llmIo = for
-          (turnCtx, newLifecycle) <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
-          _ <- newLifecycle match
-            case Some(lc) => ctx.self ! AgentCommand.UpdateLifecycle(lc)
-            case None => IO.unit
+          turnCtx <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
           freshDef = turnCtx.agentDef
           baseSystemStable = buildSystemPrompt(
             freshDef,
@@ -216,11 +213,8 @@ private[agent] trait AgentCore:
             if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
           // Memory auto-read: inject synthetic Read(live=true) for memory files
           memoryMsgs = MemoryAutoRead.buildMessages(freshDef.name, stateForLlm.folderId, stateForLlm.sessionId)
-          _ <-
-            if newLifecycle.isDefined then
-              stateForLlm.liveFileTracker
-                .traverse_(t => MemoryAutoRead.register(t, freshDef.name, stateForLlm.folderId, stateForLlm.sessionId))
-            else IO.unit
+          _ <- stateForLlm.liveFileTracker
+            .traverse_(t => MemoryAutoRead.register(t, freshDef.name, stateForLlm.folderId, stateForLlm.sessionId))
           // Live file patching: update tool_result content for changed live files
           baseMessages = memoryMsgs ++ stateForLlm.messages
           patchedMessages <- stateForLlm.liveFileTracker
@@ -551,7 +545,7 @@ private[agent] trait AgentCore:
       case names => names.toSet
     // MCP servers are global — all enabled servers available to every agent
     val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool).toSet
-    val depthFiltered = if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" else base
+    val depthFiltered = if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "ExecuteFlow" else base
     val subagentFiltered = if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
     subagentFiltered ++ mcpTools
 

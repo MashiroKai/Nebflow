@@ -126,7 +126,6 @@ object AgentCommand:
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
 
-  case class UpdateLifecycle(lc: LifecycleContext) extends AgentCommand
   case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
 
   case class BackgroundTaskNotification(
@@ -395,13 +394,6 @@ case class TurnContext(
   currentBranch: Option[String] = None
 )
 
-case class LifecycleContext(
-  systemPrefix: String,
-  agentDef: AgentDef,
-  rulesMd: Option[String],
-  projectRoot: Option[String]
-)
-
 case class SessionContext(
   sessionId: Option[String] = None,
   sessionName: Option[String] = None,
@@ -417,7 +409,6 @@ case class SessionContext(
   projectRoot: Option[String] = None,
   rulesMd: Option[String] = None,
   folderId: Option[String] = None,
-  lifecycle: Option[LifecycleContext] = None,
   chatWidth: Int = 0,
   gitBranch: Option[String] = None,
   bypass: Boolean = false
@@ -584,7 +575,6 @@ extension (s: AgentState)
   def projectRoot: Option[String] = s.session.projectRoot
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
-  def lifecycle: Option[LifecycleContext] = s.session.lifecycle
   def gitBranch: Option[String] = s.session.gitBranch
   def bypass: Boolean = s.session.bypass
 
@@ -634,8 +624,6 @@ extension (s: AgentState)
 
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
-  def withLifecycle(lc: LifecycleContext): AgentState = s.copy(session = s.session.copy(lifecycle = Some(lc)))
-  def withLifecycleCleared: AgentState = s.copy(session = s.session.copy(lifecycle = None))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
   def withBypass(b: Boolean): AgentState = s.copy(session = s.session.copy(bypass = b))
 

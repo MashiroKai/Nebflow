@@ -16,10 +16,10 @@ object BashTool extends Tool:
   /** Bash output can be very large — persist early. */
   override val maxResultSizeChars: Int = 30_000
 
-  val DEFAULT_TIMEOUT = 120_000L // 2 minutes
+  val DEFAULT_TIMEOUT = 30_000L // 30s — fallback for synchronous remote-exec only
   val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
   /** Foreground commands running longer than this are automatically moved to background. */
-  val AutoBackgroundThresholdMs = 120_000L
+  val AutoBackgroundThresholdMs = 30_000L
 
   val name = "Bash"
 
@@ -28,7 +28,7 @@ object BashTool extends Tool:
 Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
 - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd.
-- You may specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). By default, your command will timeout after 120000ms (2 minutes).
+- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, commands that exceed 30 seconds are automatically moved to background.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -38,7 +38,7 @@ Background execution (run_in_background):
 - **Use `run_in_background: true`, never `&` or `nohup`.** Shell backgrounding (`&`) bypasses Nebflow's task tracking — you won't be notified when it finishes, and the frontend won't show the background indicator.
 - You will be automatically notified when the job finishes. DO NOT poll or use sleep loops.
 - After starting a background job, continue with other work or finish your turn.
-- If a foreground command exceeds 2 minutes, it is automatically moved to background — same rules apply.
+- If a foreground command exceeds 30 seconds, it is automatically moved to background — same rules apply.
 
 Querying background jobs (background_job_id):
 - Only query when you receive a "stuck" notification or the user asks about a job's status.
@@ -72,7 +72,7 @@ Git safety:
           "description" -> "The bash command to run. Required unless background_job_id is provided.".asJson
         ),
         "timeout" -> io.circe.Json
-          .obj("type" -> "number".asJson, "description" -> "Optional timeout in milliseconds (max 600000)".asJson),
+          .obj("type" -> "number".asJson, "description" -> "Optional timeout in milliseconds (max 3600000). If exceeded, the command is killed.".asJson),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Clear, concise description of what this command does".asJson
@@ -275,11 +275,10 @@ Git safety:
       else s"${lines.length} lines of output"
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val timeout = input("timeout")
+    val explicitTimeoutMs: Option[Long] = input("timeout")
       .flatMap(_.asNumber)
       .flatMap(_.toLong)
       .map(t => t.max(1L).min(MAX_TIMEOUT))
-      .getOrElse(DEFAULT_TIMEOUT)
     val commandOpt = input("command").flatMap(_.asString)
     val command = commandOpt.getOrElse("")
     val background = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
@@ -288,7 +287,6 @@ Git safety:
     val cancelBg = input("cancel_background_job").flatMap(_.asBoolean).getOrElse(false)
 
     val sessionId = ctx.sessionId.getOrElse("default")
-    val timeoutDuration = timeout.millis
 
     // If background_job_id is provided, enter query/cancel mode
     bgJobId match
@@ -351,7 +349,7 @@ Git safety:
                 for
                   jobId <- IO.randomUUID.map(_.toString.take(8))
                   onComplete = makeNotifyCallback(command, desc, ctx, jobId)
-                  _ <- shell.executeBackground(command, timeoutDuration, desc, onComplete, onHeartbeat, Some(jobId))
+                  _ <- shell.executeBackground(command, desc, onComplete, onHeartbeat, Some(jobId))
                   _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
                 yield Right(
                   s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
@@ -361,17 +359,18 @@ Git safety:
                 // The caller (another Nebflow instance via HTTP) manages the
                 // lifecycle — auto-background here would return a useless
                 // "[moved to background]" message instead of the real output.
+                val remoteTimeout = explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT).millis
                 shell
-                  .execute(command, timeoutDuration)
+                  .execute(command, remoteTimeout)
                   .attempt
                   .map {
                     case Right(pr) => formatResult(pr, desc)
                     case Left(_: TimeoutException) =>
-                      Left(ToolError(s"[Command timed out after ${timeoutDuration.toMillis}ms]"))
+                      Left(ToolError(s"[Command timed out after ${remoteTimeout.toMillis}ms]"))
                     case Left(e) =>
                       Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
                   }
-              else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, ctx)
+              else executeForegroundWithAutoBackground(shell, command, explicitTimeoutMs, desc, ctx)
             }
           end if
     end match
@@ -386,11 +385,14 @@ Git safety:
   private def executeForegroundWithAutoBackground(
     shell: ShellSession,
     command: String,
-    timeout: FiniteDuration,
+    explicitTimeoutMs: Option[Long],
     desc: Option[String],
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     val threshold = AutoBackgroundThresholdMs.millis
+    // When no explicit timeout, use a duration long enough that .timeout() never fires.
+    // The process is managed solely by auto-background (30s) + stuck detection (8s no output).
+    val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
     val health = new JobHealth()
     for
       // Ref to store command result when it finishes
@@ -403,7 +405,7 @@ Git safety:
 
       // Start the actual command — runs to completion, never cancelled
       commandFiber <- (for
-        r <- shell.execute(command, timeout, Some(health)).attempt
+        r <- shell.execute(command, processTimeout, Some(health)).attempt
         _ <- resultRef.set(Some(r))
         _ <- signal.complete(()).void // no-op if threshold already completed it
       yield ()).start
@@ -448,7 +450,8 @@ Git safety:
       if !didThresholdWin then
         resultOpt match
           case Some(Right(pr)) => formatResult(pr, desc)
-          case Some(Left(_: TimeoutException)) => Left(ToolError(s"[Command timed out after ${timeout.toMillis}ms]"))
+          case Some(Left(e: TimeoutException)) =>
+            Left(ToolError(Option(e.getMessage).getOrElse("[Command timed out]")))
           case Some(Left(e)) => Left(ToolError(s"Error: ${e.getMessage}"))
           case None => Left(ToolError("[Unexpected: no result from foreground command]"))
       else

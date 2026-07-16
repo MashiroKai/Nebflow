@@ -4,25 +4,14 @@ import cats.effect.IO
 import nebflow.shared.MtimeCache
 
 /**
- * Injection mode: controls when a source is re-evaluated.
- *
- *   - [[EveryTurn]] — re-resolved every turn; edits take effect immediately.
- *   - [[Lifecycle]] — resolved once per session lifecycle; cached until reset.
- */
-enum InjectionMode derives CanEqual:
-  case EveryTurn
-  case Lifecycle
-
-/**
  * A named, mtime-tracked source of prompt injection content.
  *
  * File-backed sources use [[MtimeFileCache]] so unchanged files cost
- * only a stat() syscall. Lifecycle sources are cached in [[LifecycleContext]]
- * and only re-read on lifecycle reset (/clear, compact, model switch).
+ * only a stat() syscall. All sources are re-evaluated every turn;
+ * edits take effect immediately on the next LLM call.
  */
 trait InjectionSource:
   def name: String
-  def mode: InjectionMode
   def get: IO[String]
 
 /**
@@ -32,7 +21,6 @@ trait InjectionSource:
  */
 class FileInjectionSource(
   val name: String,
-  val mode: InjectionMode,
   path: os.Path,
   fallback: => String = ""
 ) extends InjectionSource:

@@ -215,11 +215,10 @@ object JarvisActor extends AgentCore with AgentSession:
             .withMessages(Nil)
             .withLatestUsage(None)
             .withRecentMessageIds(Nil)
-            .withLifecycleCleared
           idle(agentDef, resources, depth, parentRef, resetState)
 
       case UpdateContextWindow(window) =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state.withContextWindow(window).withLifecycleCleared))
+        IO.pure(idle(agentDef, resources, depth, parentRef, state.withContextWindow(window)))
 
       case n: BackgroundTaskNotification =>
         (ctx.self ! n.toExternalEvent) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
@@ -265,9 +264,6 @@ object JarvisActor extends AgentCore with AgentSession:
     pending: List[AgentCommand] = Nil
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
     val base = Behaviors.receiveMessage[AgentCommand]:
-
-      case UpdateLifecycle(lc) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withLifecycle(lc), pending))
 
       case UpdateGitBranch(branch) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withGitBranch(branch), pending))
@@ -384,7 +380,6 @@ object JarvisActor extends AgentCore with AgentSession:
             .withMessages(Nil)
             .withLatestUsage(None)
             .withRecentMessageIds(Nil)
-            .withLifecycleCleared
             .resetToIdle(Nil)
           idle(agentDef, resources, depth, parentRef, resetState)
 
@@ -471,7 +466,7 @@ object JarvisActor extends AgentCore with AgentSession:
             resources,
             depth,
             parentRef,
-            state.withContextWindow(window).withLifecycleCleared,
+            state.withContextWindow(window),
             pending
           )
         )
