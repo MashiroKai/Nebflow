@@ -1,15 +1,46 @@
 /* planMode.css — Plan mode UI inside #canvas-content.
-   No header; plan content as a card; floating glassmorphism action bar. */
+   No header; plan content as a centered glassmorphism card. */
+
+/* ---------- Centering wrapper ---------- */
+.plan-center-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px 0;
+  width: 100%;
+}
 
 /* ---------- Plan content card ---------- */
 .plan-card {
-  flex: 1;
+  width: 100%;
+  max-width: 680px;
+  flex: 0 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  padding: 16px 18px 80px 18px;
+  padding: 28px 32px;
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow:
+    inset 0 1px 0 0 var(--sapphire-refraction),
+    0px 2px 8px rgba(0, 0, 0, 0.06),
+    0px 8px 24px rgba(0, 0, 0, 0.08);
   font-size: 14px;
   line-height: 1.65;
   color: var(--color-text);
   scrollbar-color: var(--color-frame-border) transparent;
+  animation: plan-card-in 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes plan-card-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
 }
 
 .plan-card h1,
@@ -54,13 +85,12 @@
   background: none;
 }
 
-/* ---------- Floating glass action bar ---------- */
+/* ---------- Glass action bar (in-flow, aligned with card) ---------- */
 .plan-action-bar {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  right: 8px;
-  z-index: 40;
+  position: relative;
+  flex-shrink: 0;
+  width: 100%;
+  max-width: 680px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -79,6 +109,12 @@
 }
 
 @media (prefers-color-scheme: dark) {
+  .plan-card {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.25),
+      0px 8px 24px rgba(0, 0, 0, 0.40);
+  }
   .plan-action-bar {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),

@@ -120,8 +120,10 @@ function sendFeedback() {
 
 function showPlanContent() {
   setCanvasContent(`
-    <div class="plan-card markdown-body">${renderMarkdownWithMath(planText)}</div>
-    <div class="plan-action-bar" id="plan-action-bar">${defaultBarHTML()}</div>
+    <div class="plan-center-wrapper">
+      <div class="plan-card markdown-body">${renderMarkdownWithMath(planText)}</div>
+      <div class="plan-action-bar" id="plan-action-bar">${defaultBarHTML()}</div>
+    </div>
   `);
   wireDefaultBar();
 }
