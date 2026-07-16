@@ -20,10 +20,16 @@ Thumbs.db
 
 # Internal / development-only
 .claude/
+.codex/
+.envrc
+.java-version
 SKEL
 archives/
 temp/
 docs/
+test-envs.sh
+CHANGELOG.md
+package-lock.json
 *demo*.html
 /nebflow
 nul
