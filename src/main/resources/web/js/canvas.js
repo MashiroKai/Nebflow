@@ -50,3 +50,12 @@ export function initCanvas() {
     closeBtn.addEventListener('click', closeCanvas);
   }
 }
+
+/** Show or hide the canvas header bar.
+ *  @param {boolean} visible */
+export function showCanvasHeader(visible) {
+  const header = document.querySelector('.canvas-header');
+  const content = document.getElementById('canvas-content');
+  if (header) header.style.display = visible ? '' : 'none';
+  if (content) content.style.paddingTop = visible ? '' : '0px';
+}
