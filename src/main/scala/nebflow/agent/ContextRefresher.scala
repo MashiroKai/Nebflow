@@ -8,23 +8,18 @@ import nebflow.service.RulesStore
 /**
  * Unified context refresh for session-scoped resources.
  *
- * == Lifecycle sources (resolved once, cached until reset) ==
+ * All sources are re-resolved every turn (EveryTurn). MtimeCache ensures
+ * unchanged files cost only a stat() syscall — no re-read, no rebuild.
+ *
+ * Sources:
  *   • system-prefix  — FileInjectionSource with mtime cache
- *   • agentDef       — AgentLibrary.get (mtime-cached directory)
+ *   • agentDef       — AgentLibrary.get (reads system.md from disk)
  *   • rulesMd        — folder chain → RulesStore.resolveInheritedRules (mtime-cached)
  *   • projectRoot    — folder chain → SessionStore.resolveProjectRoot
- *
- * == EveryTurn sources (re-resolved every turn) ==
  *   • thinkingConfig — global Ref[IO, ThinkingConfig]
- *   • fileChanges    — FileChangeTracker (5s debounce)
  *   • gitBranch      — git rev-parse --abbrev-ref HEAD
  *   • memory files   — injected via MemoryAutoRead synthetic Read calls,
- *                       kept fresh by LiveFileTracker (no system prompt injection)
- *
- * == Lifecycle reset triggers ==
- *   • /clear (ResetSession) — clears messages + lifecycle
- *   • Compaction complete   — lifecycle re-resolved on next turn
- *   • Model switch          — lifecycle re-resolved on next turn
+ *                       kept fresh by LiveFileTracker
  */
 object ContextRefresher:
 
@@ -35,7 +30,6 @@ object ContextRefresher:
 
   /**
    * System prefix: ~/.nebflow/system-prefix.md with JAR fallback.
-   *  Lifecycle source — resolved once, changes only on lifecycle reset.
    */
   val systemPrefixSource: FileInjectionSource =
     val jarFallback =
@@ -46,13 +40,12 @@ object ContextRefresher:
       else ""
     new FileInjectionSource(
       "system-prefix",
-      InjectionMode.Lifecycle,
       PathUtil.dataRoot / "system-prefix.md",
       fallback = if jarFallback.nonEmpty then jarFallback + "\n\n" else ""
     )
 
   // ============================================================
-  // Lifecycle resolution (first turn or after reset)
+  // Resolution helpers
   // ============================================================
 
   /** Resolve inherited rules.md from folder chain. Pure — mtime-cached per file. */
@@ -83,22 +76,8 @@ object ContextRefresher:
         yield effectiveRoot
       case None => IO.pure(None)
 
-  /** Resolve all Lifecycle sources from disk. Called once per session lifecycle. */
-  private def resolveLifecycle(
-    state: AgentState,
-    resources: SharedResources,
-    agentDef: AgentDef
-  ): IO[LifecycleContext] =
-    for
-      freshDefOpt <- resources.agentLibrary.get(agentDef.name)
-      freshDef = freshDefOpt.getOrElse(agentDef)
-      systemPrefix <- systemPrefixSource.get
-      projectRoot <- resolveProjectRoot(state.folderId, resources, freshDef.name)
-      rulesMd = resolveRules(state, resources)
-    yield LifecycleContext(systemPrefix, freshDef, rulesMd, projectRoot)
-
   // ============================================================
-  // Git branch detection (EveryTurn source)
+  // Git branch detection
   // ============================================================
 
   /**
@@ -165,67 +144,40 @@ object ContextRefresher:
   /**
    * Refresh context for the current turn.
    *
-   * Returns (TurnContext, Option[LifecycleContext]):
-   *   - TurnContext always contains current values.
-   *   - Option[LifecycleContext] is Some only on first turn (to be cached by caller).
-   *
-   * Lifecycle sources use SessionContext.lifecycle if cached.
-   * EveryTurn sources (thinkingConfig, fileChanges) are always fresh.
+   * All sources are resolved fresh from disk (mtime-cached so unchanged
+   * files cost only a stat() syscall). Returns TurnContext with current values.
    */
   def refreshTurn(
     state: AgentState,
     resources: SharedResources,
     agentDef: AgentDef
-  ): IO[(TurnContext, Option[LifecycleContext])] =
-
-    state.lifecycle match
-      case Some(lc) =>
-        for
-          thinkingConfig <- resources.thinkingConfigRef.get
-          (branchReminder, currentBranch) <- checkBranchChange(lc.projectRoot, state.gitBranch)
-        yield (
-          TurnContext(
-            lc.agentDef,
-            lc.systemPrefix,
-            lc.projectRoot,
-            lc.rulesMd,
-            thinkingConfig,
-            branchReminder,
-            currentBranch
-          ),
-          None
-        )
-
-      case None =>
-        for
-          lc <- resolveLifecycle(state, resources, agentDef)
-          thinkingConfig <- resources.thinkingConfigRef.get
-          (branchReminder, currentBranch) <- checkBranchChange(lc.projectRoot, state.gitBranch)
-        yield (
-          TurnContext(
-            lc.agentDef,
-            lc.systemPrefix,
-            lc.projectRoot,
-            lc.rulesMd,
-            thinkingConfig,
-            branchReminder,
-            currentBranch
-          ),
-          Some(lc)
-        )
-  end refreshTurn
+  ): IO[TurnContext] =
+    for
+      freshDefOpt <- resources.agentLibrary.get(agentDef.name)
+      freshDef = freshDefOpt.getOrElse(agentDef)
+      systemPrefix <- systemPrefixSource.get
+      projectRoot <- resolveProjectRoot(state.folderId, resources, freshDef.name)
+      rulesMd = resolveRules(state, resources)
+      thinkingConfig <- resources.thinkingConfigRef.get
+      (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
+    yield TurnContext(
+      freshDef,
+      systemPrefix,
+      projectRoot,
+      rulesMd,
+      thinkingConfig,
+      branchReminder,
+      currentBranch
+    )
 
   /**
    * Resolve projectRoot for ToolContext (called from buildToolContext).
-   * Uses cached LifecycleContext if available, otherwise resolves from disk.
    */
   def resolveProjectRootForTool(
     state: AgentState,
     resources: SharedResources,
     agentDef: AgentDef
   ): IO[Option[String]] =
-    state.lifecycle match
-      case Some(lc) => IO.pure(lc.projectRoot)
-      case None => resolveProjectRoot(state.folderId, resources, agentDef.name)
+    resolveProjectRoot(state.folderId, resources, agentDef.name)
 
 end ContextRefresher

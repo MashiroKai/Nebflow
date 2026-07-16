@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import cats.effect.{Deferred, IO}
+import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
@@ -8,18 +8,16 @@ import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.{Message, MessageRole}
 
-import scala.concurrent.duration.*
-
 /**
  * DelegateTool — lets an agent spawn a sub-agent for a subtask.
  *
  * Two modes:
- *   - **Synchronous** (default): blocks until the sub-agent finishes, returns
- *     the sub-agent's output as the tool result.  The LLM cannot race ahead.
- *   - **Background** (`run_in_background: true`): returns immediately.  The
- *     sub-agent's result arrives later via ExternalEvent.  The tool result
- *     includes an anti-duplication instruction so the LLM doesn't compete
- *     with the sub-agent.
+ *   - **Background** (default): returns immediately. The sub-agent's result
+ *     arrives later via ExternalEvent. The tool result includes an
+ *     anti-duplication instruction so the LLM doesn't compete with the
+ *     sub-agent.
+ *   - **Persistent** (`lifecycle: "persistent"`): sub-agent stays alive after
+ *     task completion, returns actor address for follow-up Mail communication.
  *
  * Multiple Delegate calls in one LLM response run in parallel via parTraverse.
  *
@@ -55,7 +53,7 @@ object DelegateTool extends Tool:
   val description =
     """Delegate a subtask to a sub-agent. The sub-agent runs autonomously with its own context and tools, then returns its final result.
 
-By default the tool call BLOCKS until the sub-agent completes — the result IS the sub-agent's output. Set run_in_background=true to return immediately and be notified later.
+By default the sub-agent runs in the background — the tool returns immediately and you will be notified when it completes via a system message.
 
 Available sub-agents (pass as agentName):
 - "Explorer" — Code exploration and research. Use for: searching codebases, understanding architecture, finding relevant files, running git/test commands for investigation. Cannot modify files.
@@ -71,7 +69,7 @@ Key rules:
 - Every prompt must be self-contained (the sub-agent starts with a clean context by default).
 - Set fork=true to pass your current conversation context to the sub-agent.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
-- When using run_in_background=true: do NOT duplicate the sub-agent's work. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.
+- Do NOT duplicate the sub-agent's work. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.
 
 Do NOT use Delegate for:
 - Trivial tasks you can handle directly with Read/Bash/etc.
@@ -99,11 +97,6 @@ Do NOT use Delegate for:
           "description" -> "If true, pass current conversation context to the sub-agent (enables prompt cache reuse, saves tokens). Default: false.".asJson,
           "default" -> false.asJson
         ),
-        "run_in_background" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "If true, return immediately and be notified when the sub-agent completes. Do NOT duplicate the sub-agent's work while waiting. Default: false.".asJson,
-          "default" -> false.asJson
-        ),
         "lifecycle" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "enum" -> io.circe.Json.arr("ephemeral".asJson, "persistent".asJson),
@@ -123,9 +116,7 @@ Do NOT use Delegate for:
     val desc = input("description").flatMap(_.asString).getOrElse("")
     val agent = input("agentName").flatMap(_.asString).getOrElse("Nebula")
     val forked = input("fork").flatMap(_.asBoolean).getOrElse(false)
-    val bg = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
-    val tags = List(if forked then Some("fork") else None, if bg then Some("bg") else None).flatten
-    if tags.nonEmpty then s"Delegate($agent: $desc [${tags.mkString(", ")}])"
+    if forked then s"Delegate($agent: $desc [fork])"
     else s"Delegate($agent: $desc)"
 
   def summarizeResult(input: JsonObject, result: String): String =
@@ -136,7 +127,6 @@ Do NOT use Delegate for:
     val description = input("description").flatMap(_.asString).getOrElse("subtask")
     val agentName = input("agentName").flatMap(_.asString).getOrElse("Nebula")
     val fork = input("fork").flatMap(_.asBoolean).getOrElse(false)
-    val runInBackground = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
     val lifecycle = input("lifecycle").flatMap(_.asString).getOrElse("ephemeral")
     val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
 
@@ -183,24 +173,8 @@ $prompt"""
                     parentSessionId = ctx.sessionId,
                     bypass = bypass
                   )
-                else if runInBackground then
-                  spawnBackground(
-                    agentDef = agentDef,
-                    prompt = adjustedPrompt,
-                    description = description,
-                    agentName = agentName,
-                    initialMessages = if fork then ctx.messages else Nil,
-                    system = system,
-                    resources = resources,
-                    parentDepth = ctx.depth,
-                    parentRef = ctx.agentActorRef,
-                    wsSend = ctx.wsSend,
-                    projectRoot = ctx.projectRoot,
-                    parentSessionId = ctx.sessionId,
-                    bypass = bypass
-                  )
                 else
-                  spawnSync(
+                  spawnBackground(
                     agentDef = agentDef,
                     prompt = adjustedPrompt,
                     description = description,
@@ -221,156 +195,6 @@ $prompt"""
           IO.pure(Left(ToolError("Delegate requires ActorSystem, SharedResources, and agent library")))
     end if
   end call
-
-  // ============================================================
-  // Synchronous: block until sub-agent completes
-  // ============================================================
-
-  private def spawnSync(
-    agentDef: AgentDef,
-    prompt: String,
-    description: String,
-    agentName: String,
-    initialMessages: List[Message],
-    system: ActorSystem,
-    resources: SharedResources,
-    parentDepth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    wsSend: Option[io.circe.Json => IO[Unit]],
-    projectRoot: String,
-    parentSessionId: Option[String] = None,
-    bypass: Boolean = false
-  ): IO[Either[ToolError, String]] =
-    for
-      resultDeferred <- Deferred[IO, Either[ToolError, String]]
-      readTracker <- ReadTracker.create
-      fileHistory <- FileHistory.create()
-      childDepth = parentDepth + 1
-      subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = routeWsSend(wsSend, parentSessionId)
-      subagentRef <- system.spawn(
-        AgentActor(
-          agentDef = agentDef,
-          resources = resources,
-          wsSend = childWsSend,
-          depth = childDepth,
-          parentRef = parentRef,
-          sessionId = parentSessionId,
-          sessionName = Some(description),
-          initialMessages = initialMessages,
-          readTracker = Some(readTracker),
-          fileHistory = Some(fileHistory),
-          contextWindow = resources.contextWindow,
-          projectRoot = Some(projectRoot),
-          bypass = bypass
-        ),
-        subagentId
-      )
-      adapterRef <- system.spawn(
-        guardedAdapter(subagentRef, agentName, resources, resultDeferred, DelegateTimeout, prompt, MaxDelegateRetries),
-        s"$subagentId-adapter"
-      )
-      _ = logger.info(s"Spawned sync sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
-      _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
-      result <- resultDeferred.get
-    yield result
-
-  /** Timeout for sync delegation — generous to allow LLM retries (including Mac sleep/wake recovery). */
-  private val DelegateTimeout: FiniteDuration = 30.minutes
-
-  /** Max retry attempts for sync delegation before giving up. */
-  private val MaxDelegateRetries: Int = 2
-
-  /** Backoff between retry attempts (gives sub-agent time to reset). */
-  private val RetryBackoff: FiniteDuration = 3.seconds
-
-  /**
-   * Guarded adapter — ensures the parent ALWAYS gets a result, with actor-level
-   * state recovery retry on timeout.
-   *
-   * Four-layer defense:
-   *   1. Normal completion: sub-agent sends Completed/Failed → complete Deferred
-   *   2. Death watch: sub-agent's Fiber terminates → complete Deferred with error
-   *   3. Timeout + retry: no response within timeout → send Retry message
-   *      Sub-agent cancels current work and re-dispatches from last checkpoint
-   *      (LLM call or tool execution), preserving full conversation history.
-   *   4. Retry exhausted: complete Deferred with timeout error, stop sub-agent
-   *
-   * Uses complete (first wins) so all layers can fire safely.
-   */
-  private def guardedAdapter(
-    subagentRef: ActorRef[AgentCommand],
-    agentName: String,
-    resources: SharedResources,
-    resultDeferred: Deferred[IO, Either[ToolError, String]],
-    timeout: FiniteDuration,
-    originalPrompt: String,
-    maxRetries: Int
-  ): Behavior[AgentEvent] =
-    Behaviors.setup { ctx =>
-      given system: ActorSystem = ctx.system
-
-      /** Recursive timeout fiber: on timeout, either retry or give up. */
-      def timeoutLoop(retriesLeft: Int): IO[Unit] =
-        IO.sleep(timeout) *>
-          resultDeferred.complete(Left(ToolError(""))).flatMap { weSetIt =>
-            if !weSetIt then IO.unit // Deferred already completed by normal path or death watch
-            else if retriesLeft > 0 then
-              val attempt = maxRetries - retriesLeft + 1
-              logger.info(s"Sub-agent '$agentName' timeout, retrying (attempt $attempt/$maxRetries)") *>
-                // Send Retry — sub-agent cancels current work and re-dispatches
-                // from last checkpoint (LLM call or tool execution). Conversation
-                // history is preserved; no new UserInput needed.
-                (subagentRef ! AgentCommand.Retry(s"timeout-attempt-$attempt")) *>
-                timeoutLoop(retriesLeft - 1)
-            else
-              logger.warn(s"Sub-agent '$agentName' timed out, no retries left") *>
-                resultDeferred
-                  .complete(
-                    Left(
-                      ToolError(
-                        s"Sub-agent '$agentName' timed out after ${timeout.toMinutes}m ($maxRetries retries exhausted)"
-                      )
-                    )
-                  )
-                  .void *>
-                system.stop(subagentRef).handleErrorWith(_ => IO.unit)
-          }
-
-      ctx.watch(subagentRef) *>
-        ctx.forkTurn(timeoutLoop(maxRetries)) *>
-        IO.pure(
-          // Layer 1: normal message handler
-          new Behavior[AgentEvent]:
-            def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
-              val result: Either[ToolError, String] = event match
-                case AgentEvent.Completed(_, messages) =>
-                  val text = extractLastAssistantText(messages)
-                  Right(if text.nonEmpty then text else "(sub-agent produced no text output)")
-                case AgentEvent.Failed(_, error) =>
-                  Left(ToolError(s"Sub-agent '$agentName' failed: ${error.message}"))
-
-              (resultDeferred.complete(result).void *>
-                system.stop(subagentRef) *>
-                IO.pure(Behaviors.stopped[AgentEvent]))
-                .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
-
-            override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
-              signal match
-                case SystemSignal.Terminated(_) =>
-                  (resultDeferred
-                    .complete(Left(ToolError(s"Sub-agent '$agentName' terminated unexpectedly (crashed)")))
-                    .void *>
-                    IO.pure(Behaviors.stopped[AgentEvent]))
-                    .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
-
-            override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
-              resultDeferred
-                .complete(Left(ToolError(s"Adapter for '$agentName' stopped unexpectedly")))
-                .void
-                .handleErrorWith(_ => IO.unit)
-        )
-    }
 
   // ============================================================
   // Background: return immediately, deliver result via ExternalEvent

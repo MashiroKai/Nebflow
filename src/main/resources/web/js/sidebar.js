@@ -1181,7 +1181,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     agentGroups[agent].folders.push(f);
   });
 
-  // Sort remaining agent groups alphabetically
+  // Sort agent groups alphabetically
   const agentOrder = Object.keys(agentGroups).sort((a, b) => a.localeCompare(b));
 
   // Render each agent group
