@@ -13,12 +13,15 @@ assembly:
 clean:
 	sbt clean
 
+VERSION := $(shell cat VERSION)
+SCALA_DIR := $(notdir $(wildcard target/scala-*))
+
 install: assembly
-	@echo "Installing nebflow..."
+	@echo "Installing nebflow v$(VERSION)..."
 	@mkdir -p $(HOME)/.local/bin
-	@cp target/scala-3.5.2/nebflow-assembly-1.0.0.jar $(HOME)/.local/bin/nebflow.jar
+	@cp target/$(SCALA_DIR)/nebflow-assembly-$(VERSION).jar $(HOME)/.local/bin/nebflow.jar
 	@echo '#!/bin/sh' > $(HOME)/.local/bin/nebflow
-	@echo 'exec java -jar "$(HOME)/.local/bin/nebflow.jar" "$$@"' >> $(HOME)/.local/bin/nebflow
+	@echo 'exec java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$(HOME)/.local/bin/nebflow.jar" "$$@"' >> $(HOME)/.local/bin/nebflow
 	@chmod +x $(HOME)/.local/bin/nebflow
 	@echo "Installed to $(HOME)/.local/bin/nebflow"
 	@echo "Make sure $(HOME)/.local/bin is in your PATH"
