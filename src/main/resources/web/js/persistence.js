@@ -7,7 +7,7 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
-import { createDurationBadgeElement, formatHm } from './chat.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat } from './chat.js';
 
 // ---------- Duration formatting (mirrors chat.js formatDuration) ----------
 function formatDurationPersisted(ms) {
@@ -154,7 +154,7 @@ export function restoreFromStorage() {
         bubble.innerHTML = renderMarkdownWithMath(m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           row.appendChild(badge);
         }
         chat.appendChild(row);
@@ -308,7 +308,7 @@ export function restoreFromStorage() {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           aRow.appendChild(badge);
         }
         chat.appendChild(aRow);
@@ -428,7 +428,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       if (m.timestamp && m.timestamp > 0) {
         const timeEl = document.createElement('div');
         timeEl.className = 'msg-time';
+        timeEl.setAttribute('data-ts', m.timestamp);
         timeEl.textContent = formatHm(m.timestamp);
+        timeEl.title = '点击切换 12/24 小时制';
+        timeEl.addEventListener('click', toggleTimeFormat);
         row.appendChild(timeEl);
       }
       fragment.appendChild(row);
@@ -470,7 +473,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         deferMd(bubble, m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           row.appendChild(badge);
         }
         fragment.appendChild(row);
@@ -630,7 +633,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           aRow.appendChild(badge);
         }
         fragment.appendChild(aRow);
