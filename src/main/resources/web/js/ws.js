@@ -167,9 +167,10 @@ export function connect() {
       // ── Plan mode routing ──────────────────────────────────────────
       // If this event is from the active plan agent, route to plan handlers
       // and skip normal chat dispatch (plan agent output goes to canvas, not chat).
-      // planStart/planReady/planEnd events use sessionId (not agentId) so they
-      // fall through to normal dispatch below.
-      if (msg.agentId && state.planAgentId === msg.agentId) {
+      // Plan control events (planStart/planReady/planEnd) must fall through to
+      // normal dispatch — they carry sessionId for routing, not agentId.
+      const PLAN_CONTROL_EVENTS = new Set(['planStart', 'planReady', 'planEnd']);
+      if (msg.agentId && state.planAgentId === msg.agentId && !PLAN_CONTROL_EVENTS.has(msg.type)) {
         const planList = handlers['_planAgent'];
         if (planList) for (const h of planList) h(msg);
         return;

@@ -375,14 +375,12 @@ object AgentActor extends AgentCore with AgentSession:
 
       case AgentCommand.PlanTurnComplete(planText) =>
         val updatedPlanState = state.planMode.map(_.copy(currentPlanText = planText))
-        val planAgentId = updatedPlanState.flatMap(_.planAgentRef.path.name.split("/").lastOption).getOrElse("")
         for
           _ <- ctx.forkTurn(
             state.wsSend(
               Json.obj(
                 "type" -> "planReady".asJson,
-                "sessionId" -> state.sessionId.asJson,
-                "agentId" -> planAgentId.asJson
+                "sessionId" -> state.sessionId.asJson
               )
             ).handleErrorWith(_ => IO.unit)
           )
