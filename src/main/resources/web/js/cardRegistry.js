@@ -102,6 +102,13 @@ window.addEventListener('message', (e) => {
     }
     const oldHeight = iframe.style.height;
     const newHeight = e.data._nfCardH + 'px';
+    // Height collapse protection: if the iframe already has a reasonable
+    // height, ignore suspiciously small reports that would clip all content.
+    // These can occur from transient layout changes during font/image loading
+    // or browser resource management discarding and partially restoring the
+    // iframe's browsing context.
+    const oldHeightNum = parseInt(oldHeight) || 0;
+    if (oldHeightNum > 50 && e.data._nfCardH < 20) return;
     // Track whether height actually changed (first measurement always counts as "changed")
     const heightChanged = !oldHeight || oldHeight !== newHeight;
     iframe.style.height = newHeight;
@@ -241,9 +248,15 @@ function renderHtmlCard(container, html, title) {
   // This prevents all card iframes in a session from being created and
   // parsed at once — only visible (+ margin) cards are instantiated.
   let srcdocSet = false;
+  let lastReloadCheck = 0;
+
   const applySrcdoc = () => {
     if (srcdocSet) return;
     srcdocSet = true;
+    // Set the reload throttle baseline so we don't attempt a reload check
+    // during the initial load (the iframe's size change from 0→150px can
+    // re-trigger the IntersectionObserver while content is still parsing).
+    lastReloadCheck = Date.now();
     iframe.setAttribute('srcdoc', srcdoc);
     // Fallback: force iframe visible after 800ms even if the height postMessage
     // hasn't arrived yet. During active streaming the browser event loop may be
@@ -257,11 +270,58 @@ function renderHtmlCard(container, html, title) {
     }, 800);
   };
 
+  // Check if the iframe's content has been lost (browser may discard iframe
+  // browsing contexts under memory pressure when they scroll far out of view)
+  // and reload from srcdoc if needed. Called when the iframe re-enters the
+  // viewport via IntersectionObserver.
+  const reloadIfBlank = () => {
+    if (!srcdocSet) return;
+    // Throttle: at most one check per 2s per card
+    const now = Date.now();
+    if (now - lastReloadCheck < 2000) return;
+    lastReloadCheck = now;
+
+    let needsReload = false;
+    try {
+      const doc = iframe.contentDocument;
+      if (!doc || !doc.body) {
+        // Browsing context was destroyed by the browser
+        needsReload = true;
+      } else {
+        const innerWrap = doc.body.querySelector('#nf-wrap');
+        if (!innerWrap || (innerWrap.children.length === 0 && !innerWrap.textContent.trim())) {
+          // Content rendered but is now empty
+          needsReload = true;
+        }
+      }
+    } catch (e) {
+      // Cross-origin — can't inspect, skip
+      return;
+    }
+
+    if (needsReload) {
+      // Force reload by re-applying srcdoc. Removing and re-adding the
+      // attribute in the same frame doesn't always trigger a navigation,
+      // so we use requestAnimationFrame to ensure the browser processes
+      // the removal before re-adding.
+      iframe.removeAttribute('srcdoc');
+      requestAnimationFrame(() => {
+        iframe.setAttribute('srcdoc', srcdoc);
+      });
+    }
+  };
+
   if ('IntersectionObserver' in window) {
     const io = new IntersectionObserver((entries) => {
       if (entries.some(e => e.isIntersecting)) {
-        applySrcdoc();
-        io.disconnect();
+        if (!srcdocSet) {
+          applySrcdoc();
+        } else {
+          reloadIfBlank();
+        }
+        // Don't disconnect — keep observing so we can detect and reload
+        // blank cards (e.g. browser-discarded iframes) when they scroll
+        // back into view.
       }
     }, { rootMargin: '300px' });
     io.observe(iframe);
