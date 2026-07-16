@@ -241,11 +241,10 @@ function updateAskIndicator() {
 }
 
 function updateInputIndicator() {
-  const prefix = activeView.id === 'secondary' ? 'secondary-' : '';
-  const askEl = document.getElementById(prefix + 'ask-indicator');
-  const skillEl = document.getElementById(prefix + 'skill-indicator');
-  const skillLabel = document.getElementById(prefix + 'skill-indicator-label');
-  const planEl = document.getElementById(prefix + 'plan-indicator');
+  const askEl = document.getElementById('ask-indicator');
+  const skillEl = document.getElementById('skill-indicator');
+  const skillLabel = document.getElementById('skill-indicator-label');
+  const planEl = document.getElementById('plan-indicator');
   const input = activeView.dom.input;
   // Plan/Ask mode take priority over skill mode
   if (activeView.stream.planMode) {
@@ -1193,10 +1192,9 @@ export function initInput(view) {
     }
   });
 
-  // Ask/skill indicator cancel buttons (view-specific element IDs)
+  // Ask/skill indicator cancel buttons
   {
-    const prefix = view.id === 'primary' ? '' : 'secondary-';
-    const askCancel = document.getElementById(prefix + 'ask-indicator-cancel');
+    const askCancel = document.getElementById('ask-indicator-cancel');
     if (askCancel) {
       askCancel.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1205,7 +1203,7 @@ export function initInput(view) {
         input.focus();
       });
     }
-    const skillCancel = document.getElementById(prefix + 'skill-indicator-cancel');
+    const skillCancel = document.getElementById('skill-indicator-cancel');
     if (skillCancel) {
       skillCancel.addEventListener('click', (e) => {
         e.stopPropagation();

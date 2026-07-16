@@ -37,11 +37,12 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
-import { initChatViews, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
+import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { initNeblink } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
+import { initCanvas } from './canvas.js';
 
 // Randomized cosmic thinking bubble text
 const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
@@ -152,8 +153,7 @@ state.dom = {
   bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
   bgDropdownEl: document.getElementById('bg-dropdown'),
   bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
-  // Header status indicators — surfaced on state.dom so the ws.js swap can redirect
-  // them to the secondary panel, giving both windows identical indicator behaviour.
+  // Header status indicators — surfaced on state.dom for ws.js indicator updates.
   headerModelInfoEl: document.getElementById('header-model-info'),
   bypassToggleEl: document.getElementById('bypass-toggle'),
   delegateIndicatorEl: document.getElementById('delegate-indicator'),
@@ -162,11 +162,11 @@ state.dom = {
   memoryBtnEl: document.getElementById('memory-btn'),
 };
 
-// ── Initialize ChatView instances ──────────────────────────────────────
-// Each window gets its own ChatView with scoped DOM refs + streaming state.
-// The secondary view is multi-purpose (chat today, mind-map/diff tomorrow),
-// so it starts unmounted; secondary-chat.js mounts it when a session opens.
-initChatViews(
+// ── Initialize ChatView ───────────────────────────────────────────────
+// Single view instance for the main panel. The chatViews registry supports
+// future multi-view expansion — additional views can register via
+// chatViews.<id> = new ChatView(...).
+initChatView(
   // Primary window DOM refs — field names MUST match state.dom keys exactly,
   // so Object.assign(state.dom, view.dom) correctly overrides each field.
   {
@@ -193,32 +193,6 @@ initChatViews(
     delegateDropdownEl: document.getElementById('delegate-dropdown'),
     delegateDropdownListEl: document.getElementById('delegate-dropdown')?.querySelector('.bg-dropdown-list'),
     sessionNameEl: document.getElementById('session-name'),
-  },
-  // Secondary panel DOM refs (chat subtree only — panel itself is multi-purpose)
-  {
-    chat: document.getElementById('secondary-chat'),
-    input: document.getElementById('secondary-input'),
-    sendBtn: document.getElementById('secondary-send-btn'),
-    stopBtn: document.getElementById('secondary-stop-btn'),
-    attachBtn: document.getElementById('secondary-attach-btn'),
-    statusWrap: document.getElementById('secondary-status-wrap'),
-    statusText: document.getElementById('secondary-status-text'),
-    lottieSpinnerEl: document.getElementById('secondary-spinner'),
-    attPreview: document.getElementById('secondary-attachment-preview'),
-    slashDropdown: document.getElementById('secondary-slash-dropdown'),
-    queueBar: document.getElementById('secondary-queue-bar'),
-    voiceBtn: document.getElementById('secondary-voice-btn'),
-    voiceOverlay: document.getElementById('secondary-voice-overlay'),
-    voiceText: document.getElementById('secondary-voice-text'),
-    headerModelInfoEl: document.getElementById('secondary-header-model-info'),
-    bgIndicatorEl: document.getElementById('secondary-bg-indicator'),
-    bgCountEl: document.getElementById('secondary-bg-indicator')?.querySelector('.bg-count'),
-    bgDropdownEl: document.getElementById('secondary-bg-dropdown'),
-    bgDropdownListEl: document.getElementById('secondary-bg-dropdown')?.querySelector('.bg-dropdown-list'),
-    delegateIndicatorEl: document.getElementById('secondary-delegate-indicator'),
-    delegateDropdownEl: document.getElementById('secondary-delegate-dropdown'),
-    delegateDropdownListEl: document.getElementById('secondary-delegate-dropdown')?.querySelector('.bg-dropdown-list'),
-    sessionNameEl: document.getElementById('secondary-session-name'),
   }
 );
 
@@ -1000,13 +974,8 @@ onMessage('sessionList', (msg, view) => {
   state.folders = allFolders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
 
-  // ── Main window locked to Jarvis ──
-  // Override the backend's activeId: the primary view always shows Jarvis.
-  const jarvisSess = sessionsToShow.find(s => s.agentName === 'Jarvis');
-  let activeId = jarvisSess ? jarvisSess.id : msg.activeId;
-  if (jarvisSess && chatViews.primary) {
-    chatViews.primary.sessionId = jarvisSess.id;
-  }
+  // Use backend's activeId directly — no Jarvis lock
+  const activeId = msg.activeId;
 
   renderSessionSidebar(sessionsToShow, activeId);
   initHeaderModelInfo();
@@ -1513,18 +1482,7 @@ onMessage('agentSessionList', (msg, view) => {
   // Restore bypass state from persisted session metadata
   state.bypassSessions = new Set(sessions.filter(s => s.bypass).map(s => s.id));
 
-  // ── Main window is locked to Jarvis ──────────────────────────────────
-  // The primary ChatView always shows the Jarvis session; agent tab switches
-  // only filter the sidebar list, they never change what the main window shows.
-  // Find (or create) the Jarvis session and pin the primary view to it.
-  const jarvisSession = sessions.find(s => s.agentName === 'Jarvis');
-  if (jarvisSession && chatViews.primary) {
-    if (chatViews.primary.sessionId !== jarvisSession.id) {
-      chatViews.primary.sessionId = jarvisSession.id;
-      state.activeSessionId = jarvisSession.id; // keep legacy in sync
-    }
-  }
-  // Render sidebar — active highlight shows Jarvis (primary) session
+  // Render sidebar — active highlight shows the current active session
   renderSessionSidebar(sessions, state.activeSessionId);
   initHeaderModelInfo();
 });
@@ -1691,9 +1649,7 @@ onMessage('sessionBusy', (msg, view) => {
 onMessage('taskListUpdate', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
-  if (view?.id === 'secondary') {
-    renderTaskList(msg.tasks, document.getElementById('secondary-task-list'));
-  } else if (view) {
+  if (view) {
     renderTaskList(msg.tasks);
   }
 });
@@ -2039,8 +1995,8 @@ initModals();
 initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
-initInput(chatViews.secondary);
 initMemory();
+initCanvas();
 initScheduledTask();
 initNeblink();
 initDropbox();
@@ -2059,28 +2015,28 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
     const v = view || activeView;
     if (!v || !v.sessionId) return;
     const enabled = state.bypassSessions.has(v.sessionId);
-    const prefix = v.id === 'secondary' ? 'secondary-' : '';
-    const btn = document.getElementById(prefix + 'bypass-toggle');
+    const btn = document.getElementById('bypass-toggle');
     if (btn) btn.classList.toggle('active', enabled);
   };
 
   // Click handler: toggle bypass for the current session
-  for (const v of Object.values(chatViews)) {
-    const prefix = v.id === 'secondary' ? 'secondary-' : '';
-    const btn = document.getElementById(prefix + 'bypass-toggle');
-    if (!btn) continue;
-    btn.addEventListener('click', () => {
-      setActiveView(v);
-      if (!v.sessionId) return;
-      const enabled = !state.bypassSessions.has(v.sessionId);
-      if (enabled) {
-        state.bypassSessions.add(v.sessionId);
-      } else {
-        state.bypassSessions.delete(v.sessionId);
-      }
-      state.updateBypassToggle(v);
-      sendWs({ type: 'setBypass', sessionId: v.sessionId, bypass: enabled });
-    });
+  {
+    const btn = document.getElementById('bypass-toggle');
+    if (btn) {
+      const v = chatViews.primary;
+      btn.addEventListener('click', () => {
+        setActiveView(v);
+        if (!v.sessionId) return;
+        const enabled = !state.bypassSessions.has(v.sessionId);
+        if (enabled) {
+          state.bypassSessions.add(v.sessionId);
+        } else {
+          state.bypassSessions.delete(v.sessionId);
+        }
+        state.updateBypassToggle(v);
+        sendWs({ type: 'setBypass', sessionId: v.sessionId, bypass: enabled });
+      });
+    }
   }
 })();
 
@@ -2198,22 +2154,6 @@ _primChat.addEventListener('scroll', () => {
     sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
 }, { passive: true });
-
-// Scroll listener (secondary window)
-const _secChat = chatViews.secondary?.dom?.chat;
-if (_secChat) {
-  _secChat.addEventListener('scroll', () => {
-    const sv = chatViews.secondary;
-    if (!sv || !sv.mounted) return;
-    sv.stream.scrollSnapped = _secChat.scrollTop + _secChat.clientHeight >= _secChat.scrollHeight - 40;
-    if (_secChat.scrollTop < 100 && sv?.pagination?.hasMore && !sv?.pagination?.loading && sv?.pagination?.offset > 0) {
-      sv.pagination.loading = true;
-      setActiveView(sv);
-      showHistoryLoader();
-      sendWs({ type: 'getHistory', sessionId: sv.sessionId, limit: 50, beforeIndex: sv.pagination.offset });
-    }
-  }, { passive: true });
-}
 
 // ---------- 6. Expose global Nebflow API for plugins ----------
 // Theme tokens extracted from CSS custom properties — agents can read these for consistency.

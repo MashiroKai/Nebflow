@@ -24,7 +24,7 @@ export function getActiveView() { return activeView; }
 
 export class ChatView {
   /**
-   * @param {string} id  — 'primary' | 'secondary' | ...
+   * @param {string} id  — 'primary' (future: additional view IDs for multi-instance)
    * @param {object} dom — pre-resolved DOM refs for this window's chat subtree
    */
   constructor(id, dom) {
@@ -129,9 +129,8 @@ export class ChatView {
     if (this.dom.input) {
       this.dom.input.style.paddingLeft = '';
     }
-    const prefix = this.id === 'secondary' ? 'secondary-' : '';
-    const askEl = document.getElementById(prefix + 'ask-indicator');
-    const skillEl = document.getElementById(prefix + 'skill-indicator');
+    const askEl = document.getElementById('ask-indicator');
+    const skillEl = document.getElementById('skill-indicator');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
   }
@@ -234,11 +233,12 @@ export function findViewBySessionId(sessionId) {
 }
 
 /**
- * Initialize both ChatView instances and register them.
+ * Initialize the primary ChatView instance and register it.
  * Called from main.js after DOM is ready.
+ *
+ * The chatViews registry supports future multi-view expansion —
+ * additional views can be registered via chatViews.<id> = new ChatView(...).
  */
-export function initChatViews(primaryDom, secondaryDom) {
+export function initChatView(primaryDom) {
   chatViews.primary = new ChatView('primary', primaryDom);
-  chatViews.secondary = new ChatView('secondary', secondaryDom);
-  chatViews.secondary.mounted = false;
 }

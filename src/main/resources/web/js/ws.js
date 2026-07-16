@@ -147,7 +147,6 @@ export function connect() {
       // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
       // lookup and to avoid per-message allocation.
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
-          msg.sessionId !== state.secondarySessionId &&
           !GLOBAL_MSG_TYPES.has(msg.type) && !TERMINAL_MSG_TYPES.has(msg.type) &&
           !STREAM_MSG_TYPES.has(msg.type)) {
         return;

@@ -115,92 +115,50 @@ function showPanel(tab) {
   if (panel) panel.classList.add('active');
 }
 
-function closeSecondaryPanel() {
-  if (state.secondarySessionId && chatViews.secondary) {
-    chatViews.secondary.saveDraft(state.secondarySessionId);
-    saveInputDraft(state.secondarySessionId, chatViews.secondary);
-  }
-  state.secondarySessionId = null;
-  if (chatViews.secondary) {
-    chatViews.secondary.mounted = false;
-    chatViews.secondary.sessionId = null;
-  }
-  document.body.classList.remove('split-view');
-  const panel = document.getElementById('secondary-panel');
-  if (panel) {
-    panel.classList.remove('visible');
-    panel.classList.add('hidden');
-  }
-  renderSessionSidebar(state.sessions, state.activeSessionId);
-}
+// ---------- Session Switching ----------
 
-/** Load a session into the secondary view — replaces the old loadSecondary. */
-function loadSecondaryView(sessionId) {
-  const view = chatViews.secondary;
-  if (!view) return;
-  // setSession resets stream + pagination + drafts, clears chat DOM
-  view.setSession(sessionId);
-  // Also restore from localStorage if no in-memory draft exists for this session
-  if (!view.inputDrafts[sessionId] && state.sessionInputDrafts[sessionId]) {
-    restoreInputDraft(sessionId, view);
+/** Switch the main panel to display a different session.
+ *  Replaces the old Jarvis-lock + openInSecondary dual-panel routing.
+ *  Any session (Jarvis or not) now switches the single main view. */
+function switchToSession(sessionId) {
+  if (!sessionId) return;
+
+  // Same-session: just clear unread and scroll to bottom
+  if (sessionId === state.activeSessionId) {
+    state.unreadSessions.delete(sessionId);
+    state.markedUnreadSessions.delete(sessionId);
+    persistUnread();
+    persistMarkedUnread();
+    updateSessionStatus(sessionId);
+    renderSessionSidebar(state.sessions, state.activeSessionId);
+    if (chatViews.primary?.dom?.chat) {
+      chatViews.primary.dom.chat.scrollTop = chatViews.primary.dom.chat.scrollHeight;
+    }
+    return;
   }
-  // Chat is already cleared by setSession — no need for a loading placeholder
-  // Sync busy button state
-  const sendBtn = document.getElementById('secondary-send-btn');
-  const stopBtn = document.getElementById('secondary-stop-btn');
-  if (sendBtn) sendBtn.style.display = state.busySessionIds.has(sessionId) ? 'none' : 'flex';
-  if (stopBtn) stopBtn.style.display = state.busySessionIds.has(sessionId) ? 'flex' : 'none';
-  // Render task list
-  renderTaskList(state.sessionTasks[sessionId] || [], document.getElementById('secondary-task-list'));
-  // Refresh header indicators by briefly activating the secondary view
-  const saved = activeView;
-  setActiveView(view);
+
+  // Different session: save draft, switch, reset
+  const prevId = state.activeSessionId;
+  state.activeSessionId = sessionId;
+  setActiveView(chatViews.primary);
+  saveInputDraft(prevId);
+  resetChatForActiveSession();
+  restoreInputDraft(sessionId);
+  clearMemoryCache();
+
+  // Clear unread for the newly active session
+  state.unreadSessions.delete(sessionId);
+  state.markedUnreadSessions.delete(sessionId);
+  persistUnread();
+  persistMarkedUnread();
+  updateSessionStatus(sessionId);
+
+  renderSessionSidebar(state.sessions, sessionId);
+  // Sync header indicators
   if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
-  if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(view);
-  setActiveView(saved);
-  // Request history
-  sendWs({ type: 'getHistory', sessionId, limit: 50 });
-}
-
-function openInSecondary(session) {
-  // Same-session guard: if this session is already displayed in the secondary
-  // view, skip everything. Without this, repeated clicks send redundant
-  // getHistory requests, and since setSession no-ops for the same session,
-  // pagination state isn't reset — causing duplicate messages.
-  if (state.secondarySessionId === session.id && chatViews.secondary?.mounted) return;
-
-  if (state.secondarySessionId && state.secondarySessionId !== session.id && chatViews.secondary) {
-    chatViews.secondary.saveDraft(state.secondarySessionId);
-    saveInputDraft(state.secondarySessionId, chatViews.secondary);
-  }
-  state.secondarySessionId = session.id;
-  if (chatViews.secondary) {
-    chatViews.secondary.mounted = true;
-    // Don't set sessionId here — loadSecondaryView→setSession handles it.
-    // Setting it early causes setSession's early-return guard to skip resetAll(),
-    // leaving stale messages and breaking scroll-to-bottom on session switch.
-  }
-  state.unreadSessions.delete(session.id);
-  state.markedUnreadSessions.delete(session.id);
-  persistUnread();
-  persistMarkedUnread();
-  updateSessionStatus(session.id);
-  document.body.classList.add('split-view');
-  const panel = document.getElementById('secondary-panel');
-  panel.classList.remove('hidden');
-  panel.classList.add('visible');
-  const nameEl = document.getElementById('secondary-session-name');
-  if (nameEl) nameEl.textContent = session.name;
-  const badge = document.getElementById('secondary-agent-badge');
-  if (badge) {
-    const agentName = session.agentName || 'Nebula';
-    const agent = state.agentsData.find(a => a.name === agentName);
-    badge.textContent = agent ? (agent.displayName || agent.name) : agentName;
-  }
-  loadSecondaryView(session.id);
-  renderSessionSidebar(state.sessions, state.activeSessionId);
+  if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
 }
 
 export function initNavTabs() {
@@ -221,30 +179,8 @@ export function initNavTabs() {
     });
   }
 
-  // Secondary panel close button
-  const secondaryCloseBtn = document.getElementById('secondary-close-btn');
-  if (secondaryCloseBtn) {
-    secondaryCloseBtn.addEventListener('click', () => {
-      closeSecondaryPanel();
-    });
-  }
-
-  // Jarvis main window hide/show — toggles body.jarvis-hidden.
-  // The ChatView is NOT unmounted and activeSessionId is unchanged, so Jarvis
-  // streaming keeps accumulating into the hidden DOM and reappears on reopen.
-  // When #main is hidden, the secondary panel (if visible) expands via flex:1.
-  const mainCloseBtn = document.getElementById('main-close-btn');
-  if (mainCloseBtn) {
-    mainCloseBtn.addEventListener('click', () => {
-      document.body.classList.add('jarvis-hidden');
-    });
-  }
-  const jarvisToggleBtn = document.getElementById('jarvis-toggle-btn');
-  if (jarvisToggleBtn) {
-    jarvisToggleBtn.addEventListener('click', () => {
-      document.body.classList.toggle('jarvis-hidden');
-    });
-  }
+  // Secondary panel close button — removed (canvas panel has its own close)
+  // Jarvis toggle button — removed (no more Jarvis-hide toggle)
 }
 
 // ---------- Agent icons in Nav Bar ----------
@@ -1003,7 +939,7 @@ function renderOneSessionItem(s, container, opts = {}) {
   const isSelected = state.selectedSessionIds.has(s.id);
   item.className = 'session-item'
     + (inFolder ? ' in-folder' : '')
-    + (s.id === state.activeSessionId || s.id === state.secondarySessionId ? ' active' : '')
+    + (s.id === state.activeSessionId ? ' active' : '')
     + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
     + (isSelected ? ' selected' : '');
   item.dataset.id = s.id;
@@ -1097,27 +1033,13 @@ function renderOneSessionItem(s, container, opts = {}) {
         // do nothing, keep selection
       } else {
         exitBatchMode();
-        // Main window is locked to Jarvis — non-Jarvis sessions open in secondary.
-        openInSecondary(s);
+        // Unified: any session switches the main panel
+        switchToSession(s.id);
       }
     } else {
       clearActiveFolder();
-      const isJarvis = (s.agentName || 'Nebula') === 'Jarvis';
-      if (isJarvis) {
-        // Main window is locked to Jarvis — clicking the Jarvis session just
-        // clears unread and scrolls to top. No session switch needed.
-        state.unreadSessions.delete(s.id);
-        state.markedUnreadSessions.delete(s.id);
-        persistUnread();
-        persistMarkedUnread();
-        updateSessionStatus(s.id);
-        renderSessionSidebar(state.sessions, state.activeSessionId);
-        // Scroll main chat to bottom
-        if (chatViews.primary?.dom?.chat) chatViews.primary.dom.chat.scrollTop = chatViews.primary.dom.chat.scrollHeight;
-      } else {
-        // Non-Jarvis session → secondary panel (画板)
-        openInSecondary(s);
-      }
+      // Unified session switching — all agents display in the main panel
+      switchToSession(s.id);
     }
   };
   item.addEventListener('contextmenu', (e) => {
@@ -2048,29 +1970,18 @@ export function getTargetAgent() {
     const folder = (state.folders || []).find(f => f.id === state.activeFolderId);
     if (folder?.agentName && folder.agentName !== 'Jarvis') return folder.agentName;
   }
-  // 2. Secondary view session (the session the user is currently looking at)
-  if (state.secondarySessionId) {
-    const sec = (state.sessions || []).find(s => s.id === state.secondarySessionId);
-    if (sec?.agentName && sec.agentName !== 'Jarvis') return sec.agentName;
-  }
-  // 3. Active session — but never Jarvis (it's a singleton locked to main view,
-  //    and Jarvis sessions are hidden from the sidebar)
+  // 2. Active session
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
-  if (active?.agentName && active.agentName !== 'Jarvis') return active.agentName;
+  if (active?.agentName) return active.agentName;
   return 'Nebula';
 }
 
 /** Resolve the target folder ID for creating new sessions/folders, based on context.
- *  Priority: explicitly selected folder → secondary session's folder → active session's folder. */
+ *  Priority: explicitly selected folder → active session's folder. */
 export function getCurrentFolderId() {
   // 1. Active folder context (user clicked on a folder in the sidebar)
   if (state.activeFolderId) return state.activeFolderId;
-  // 2. Secondary view session (the session the user is currently looking at)
-  if (state.secondarySessionId) {
-    const sec = (state.sessions || []).find(s => s.id === state.secondarySessionId);
-    if (sec?.folderId) return sec.folderId;
-  }
-  // 3. Main view session
+  // 2. Active session
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
   return active?.folderId || null;
 }

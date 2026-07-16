@@ -221,11 +221,10 @@
 }
 
 /* ---------- Slash Command Autocomplete ----------
-   Now children of #input-area / #secondary-input-area (not #input-wrap) so
+   Now children of #input-area so
    backdrop-filter can blur chat content instead of being trapped inside
    #input-bar's backdrop root. */
-#slash-dropdown,
-#secondary-slash-dropdown {
+#slash-dropdown {
   position: absolute;
   bottom: 100%;
   left: 12px;
@@ -246,8 +245,7 @@
   z-index: 50;
   pointer-events: auto;
 }
-#slash-dropdown.on,
-#secondary-slash-dropdown.on { display: block; }
+#slash-dropdown.on { display: block; }
 .slash-item {
   padding: 10px 14px;
   cursor: pointer;
@@ -322,8 +320,7 @@
 /* ── Queue Bar (messages typed while LLM is busy) ──────────────────────
    Sapphire glass panel that expands above the input bar.
    Mirrors #input-bar's glass material, border-radius, and shadow stack. */
-#queue-bar,
-#secondary-queue-bar {
+#queue-bar {
   position: relative;
   pointer-events: auto;
   flex-shrink: 0;
@@ -337,8 +334,7 @@
               opacity 0.22s ease,
               margin-bottom 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
-#queue-bar.visible,
-#secondary-queue-bar.visible {
+#queue-bar.visible {
   max-height: 280px;
   opacity: 1;
   margin-bottom: 4px;
@@ -355,8 +351,7 @@
     0px 8px 24px rgba(0, 0, 0, 0.06);
 }
 /* Top-edge refraction line — same technique as .glass::before */
-#queue-bar.visible::before,
-#secondary-queue-bar.visible::before {
+#queue-bar.visible::before {
   content: '';
   position: absolute;
   top: 0;
@@ -490,16 +485,14 @@
   .icon-btn:active { background: rgba(255,255,255,0.10); transform: scale(0.96); }
   .icon-btn.recording { background: rgba(244,67,54,0.15); }
 
-  #slash-dropdown,
-  #secondary-slash-dropdown {
+  #slash-dropdown {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 4px 16px rgba(0, 0, 0, 0.30),
       0px 8px 32px rgba(0, 0, 0, 0.45);
   }
 
-  #queue-bar.visible,
-  #secondary-queue-bar.visible {
+  #queue-bar.visible {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
