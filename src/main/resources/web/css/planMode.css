@@ -1,4 +1,4 @@
-/* planMode.css — Plan mode split-view panel (matches secondary panel size) */
+/* planMode.css — Plan mode split-view panel (matches canvas panel size) */
 
 .plan-canvas {
   position: fixed;
@@ -244,7 +244,7 @@
 }
 
 /* Plan indicator (in input area, same style as ask/skill indicator) */
-#plan-indicator, #secondary-plan-indicator {
+#plan-indicator {
   display: none;
   align-items: center;
   gap: 2px;
@@ -262,11 +262,11 @@
   color: var(--color-text, #666);
 }
 
-#plan-indicator.show, #secondary-plan-indicator.show {
+#plan-indicator.show {
   display: flex;
 }
 
-#plan-indicator-cancel, #secondary-plan-indicator-cancel {
+#plan-indicator-cancel {
   cursor: pointer;
   pointer-events: auto;
   font-size: 14px;
@@ -275,6 +275,6 @@
   padding: 0 2px;
 }
 
-#plan-indicator-cancel:hover, #secondary-plan-indicator-cancel:hover {
+#plan-indicator-cancel:hover {
   opacity: 1;
 }

@@ -27,9 +27,8 @@
   <div id="sidebar">
     <div id="sidebar-panel">
       <div id="panel-sessions" class="panel active">
-        <!-- Sidebar top bar — Jarvis entry + settings gear + connection indicator -->
+        <!-- Sidebar top bar — settings gear + connection indicator -->
         <div class="sidebar-topbar">
-          <button id="jarvis-toggle-btn" class="panel-btn jarvis-toggle-btn" title="Jarvis"><span class="jarvis-letter">J</span></button>
           <button id="settings-btn" class="panel-btn" title="Settings"><i data-lucide="settings"></i></button>
           <div class="conn off" id="conn"></div>
         </div>
@@ -96,7 +95,6 @@
           <span class="delegate-dot"></span>
           <span class="delegate-count">0</span>
         </div>
-        <button id="main-close-btn" class="secondary-close-btn main-close-btn" title="Hide Jarvis"><i data-lucide="x"></i></button>
       </div>
     </div>
     <!-- Dropdowns moved outside #header so backdrop-filter can blur chat content.
@@ -144,72 +142,15 @@
   </div>
   </div>
 
-  <!-- Secondary Panel — split view for non-Jarvis sessions -->
-  <div id="secondary-panel" class="hidden">
-    <div class="secondary-header">
-      <div class="secondary-header-left">
-        <span class="secondary-header-brand" id="secondary-agent-badge"></span>
-        <span id="secondary-header-model-info"></span>
-      </div>
-      <div class="secondary-header-center"><span id="secondary-session-name"></span><button id="secondary-memory-btn" class="memory-btn" style="display:none">Memory</button></div>
-      <div class="secondary-header-right">
-        <button id="secondary-bypass-toggle" class="bypass-toggle" title="Toggle auto-approve">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        </button>
-        <div id="secondary-bg-indicator" class="hidden">
-          <span class="bg-dot"></span>
-          <span class="bg-count">0</span>
-        </div>
-        <div id="secondary-delegate-indicator" class="hidden" title="Sub-agents running">
-          <span class="delegate-dot"></span>
-          <span class="delegate-count">0</span>
-        </div>
-        <button id="secondary-close-btn" class="secondary-close-btn" title="Close">
-          <i data-lucide="x"></i>
-        </button>
-      </div>
+  <!-- Canvas Panel — generic display container (画板) -->
+  <div id="canvas-panel" class="hidden">
+    <div class="canvas-header">
+      <span class="canvas-title" id="canvas-title"></span>
+      <button id="canvas-close-btn" class="canvas-close-btn" title="Close">
+        <i data-lucide="x"></i>
+      </button>
     </div>
-    <!-- Dropdowns moved outside .secondary-header so backdrop-filter can blur chat content -->
-    <div id="secondary-delegate-dropdown" class="hidden">
-      <div class="bg-dropdown-header">Sub-agents</div>
-      <div class="bg-dropdown-list"></div>
-    </div>
-    <div id="secondary-bg-dropdown" class="hidden">
-      <div class="bg-dropdown-header">Background tasks</div>
-      <div class="bg-dropdown-list"></div>
-    </div>
-    <div id="secondary-overlays">
-      <div id="secondary-task-list"></div>
-      <div id="secondary-notification-banner"></div>
-    </div>
-    <div id="secondary-chat"></div>
-    <div id="secondary-status-wrap">
-      <div id="secondary-spinner"></div>
-      <span id="secondary-status-text"></span>
-    </div>
-    <div id="secondary-input-area">
-      <div class="voice-overlay" id="secondary-voice-overlay">
-        <div class="voice-wave"><i data-lucide="mic"></i></div>
-        <div class="voice-text" id="secondary-voice-text">Listening...</div>
-        <div class="voice-hint" id="secondary-voice-hint">Release to send</div>
-      </div>
-      <!-- Moved outside .secondary-input-bar so backdrop-filter can blur chat content -->
-      <div id="secondary-slash-dropdown"></div>
-      <div id="secondary-queue-bar"></div>
-      <div class="secondary-input-bar">
-        <button class="icon-btn" id="secondary-voice-btn" title="Voice"><i data-lucide="mic"></i></button>
-        <div id="secondary-input-wrap" style="position:relative;">
-          <div id="secondary-attachment-preview"></div>
-        <div id="secondary-ask-indicator"><span id="secondary-ask-indicator-label">ASK</span><span id="secondary-ask-indicator-cancel">&times;</span></div>
-        <div id="secondary-skill-indicator"><span id="secondary-skill-indicator-label">SKILL</span><span id="secondary-skill-indicator-cancel">&times;</span></div>
-        <div id="secondary-plan-indicator"><span id="secondary-plan-indicator-label">PLAN</span><span id="secondary-plan-indicator-cancel">&times;</span></div>
-          <textarea id="secondary-input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
-        </div>
-        <button class="icon-btn" id="secondary-attach-btn" title="Attach"><i data-lucide="paperclip"></i></button>
-        <button id="secondary-send-btn"><i data-lucide="send"></i></button>
-        <button id="secondary-stop-btn"><i data-lucide="square"></i></button>
-      </div>
-    </div>
+    <div id="canvas-content"></div>
   </div>
 
   <!-- Modals -->

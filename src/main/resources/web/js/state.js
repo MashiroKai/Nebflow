@@ -19,7 +19,6 @@ export default {
 
   // Session
   activeSessionId: null,
-  secondarySessionId: null,
   activeFolderId: null,
   sessions: [],
   folders: [],

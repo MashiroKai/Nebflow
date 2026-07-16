@@ -1359,8 +1359,6 @@ export function renderAskError(msg) {
 // lag when user tries to interact (e.g. switching agents).
 let _pendingThinkingRAF = null;
 // Capture the bubble + chat at schedule time so the rAF renders into the correct
-// window. For the secondary view, ws.js push/pull restores global state to primary
-// before the rAF fires — reading state.* at fire time would target the wrong window.
 let _thinkingRafTarget = null;
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
