@@ -324,6 +324,15 @@ export function selectAgent(agentName) {
   // Exit batch mode and clear active folder when switching agents
   if (state.selectedSessionIds.size > 0) exitBatchMode();
   clearActiveFolder();
+  // For singleton agents (e.g. Jarvis), switch to their session directly
+  const SINGLETON_AGENTS = new Set(['Jarvis']);
+  if (SINGLETON_AGENTS.has(agentName)) {
+    const agentSessionId = Object.entries(state.sessionAgentMap)
+      .find(([_, a]) => a === agentName)?.[0];
+    if (agentSessionId && agentSessionId !== state.activeSessionId) {
+      switchToSession(agentSessionId);
+    }
+  }
   // Load sessions for this agent
   sendWs({type: 'listAgentSessions', name: agentName});
 }
