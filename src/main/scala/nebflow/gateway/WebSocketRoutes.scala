@@ -2255,7 +2255,10 @@ class WebSocketRoutes(
                   .flatMap { thinking =>
                     sharedResources.sessionStore.appendUiMessages(
                       sessionId,
-                      List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis()))
+                      List(
+                        UiMessage
+                          .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis())
+                      )
                     )
                   }
               else
@@ -2281,8 +2284,11 @@ class WebSocketRoutes(
                 .flatMap { thinking =>
                   sharedResources.sessionStore.appendUiMessages(
                     sessionId,
-                      List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis()))
+                    List(
+                      UiMessage
+                        .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis())
                     )
+                  )
                 }
             else
               sessionThinkingBuffers.update(_ - sessionId)
@@ -2337,8 +2343,14 @@ class WebSocketRoutes(
                       else if durationMs.isDefined then
                         // No text to flush (already flushed at roundComplete/toolStart),
                         // but we have a duration — backfill onto the last saved Ai message.
-                        sharedResources.sessionStore.updateLastAiMeta(sessionId, durationMs, model, System.currentTimeMillis())
+                        sharedResources.sessionStore.updateLastAiMeta(
+                          sessionId,
+                          durationMs,
+                          model,
+                          System.currentTimeMillis()
+                        )
                       else IO.unit
+                      end if
                     }
                 }
           }
