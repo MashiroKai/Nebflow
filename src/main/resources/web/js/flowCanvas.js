@@ -41,7 +41,10 @@ function computeLayout(steps, verifyId) {
   function getDepth(id) {
     if (id in depthMap) return depthMap[id];
     const step = steps.find(s => s.id === id);
-    if (!step || step.dependsOn.length === 0) return 0;
+    if (!step || !step.dependsOn || step.dependsOn.length === 0) {
+      depthMap[id] = 0;
+      return 0;
+    }
     const d = Math.max(...step.dependsOn.map(getDepth)) + 1;
     depthMap[id] = d;
     return d;
@@ -272,6 +275,7 @@ function animate() {
 
 /** Start a new flow visualization. Call on 'flowStarted' event. */
 export function startFlow(msg) {
+  console.log('[flowCanvas] flowStarted received:', { flowName: msg.flowName, stepCount: msg.steps?.length, steps: msg.steps });
   const steps = msg.steps || [];
   const verifyId = '__verify__';
 
@@ -309,11 +313,42 @@ export function startFlow(msg) {
   if (!rafId) animate();
 }
 
+/** Reposition dynamically-created nodes when steps arrive incrementally. */
+function relayoutIncremental() {
+  if (!flowData) return;
+  const stepNodes = flowData.nodes.filter(n => n.id !== '__verify__');
+  const count = stepNodes.length;
+  stepNodes.forEach((n, i) => {
+    n.x = 0.5;
+    n.y = (i + 1) / (count + 1) * 0.85;
+  });
+  const verify = flowData.nodes.find(n => n.id === '__verify__');
+  if (verify) {
+    verify.x = 0.5;
+    verify.y = 0.92;
+  }
+}
+
 /** Update a step's status. Call on flowStepStarted/Completed/Failed. */
 export function updateStep(msg) {
   if (!flowData) return;
-  const node = flowData.nodes.find(n => n.id === msg.stepId);
-  if (!node) return;
+  let node = flowData.nodes.find(n => n.id === msg.stepId);
+  if (!node) {
+    // Incremental fallback: step wasn't in the initial layout (msg.steps
+    // was empty or missing). Create it on-the-fly and reposition.
+    node = {
+      id: msg.stepId,
+      agent: msg.agent || '',
+      label: msg.stepId,
+      x: 0.5,
+      y: 0,
+      status: 'pending',
+      rings: makeRings(),
+    };
+    flowData.nodes.push(node);
+    flowData.edges.push({ from: msg.stepId, to: '__verify__' });
+    relayoutIncremental();
+  }
 
   const oldStatus = node.status;
   const newStatus = msg.status || (msg.type === 'flowStepStarted' ? 'running'

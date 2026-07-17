@@ -38,6 +38,8 @@ object ToolRegistry:
       "Delegate" -> DelegateTool,
       // Multi-step workflow orchestration
       "ExecuteFlow" -> ExecuteFlowTool,
+      // Flow verification tool (used by verify agents)
+      "FlowVerify" -> FlowVerifyTool,
       // Inter-agent messaging
       "Mail" -> MailTool,
       // Cross-device file transfer

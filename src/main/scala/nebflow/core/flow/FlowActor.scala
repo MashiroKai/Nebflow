@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import cats.effect.{IO, Ref}
+import cats.effect.{IO, Deferred, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -18,10 +18,24 @@ object FlowActor:
   sealed trait FlowCommand
   case class StepCompleted(stepId: String, output: String) extends FlowCommand
   case class StepFailed(stepId: String, error: String) extends FlowCommand
+  case class VerifyCompleted(passed: Boolean, summary: String) extends FlowCommand
   case class StopFlow(reason: String = "") extends FlowCommand
 
   private val VerifyId = "__verify__"
   private val FixId = "__fix__"
+
+  val VerifyPromptPreamble =
+    """You are the verification step of this workflow.
+      |
+      |You MUST call the FlowVerify tool to report your result:
+      |  - passed=true if the work meets all requirements
+      |  - passed=false if there are issues
+      |  - Include a concise summary of findings
+      |
+      |If you finish without calling FlowVerify, the verification will fail and retry.
+      |
+      |--- Verification Criteria ---
+      |""".stripMargin
 
   // ============================================================
   // Factory
@@ -125,6 +139,32 @@ object FlowActor:
               then Behaviors.stopped[FlowCommand]
               else this
 
+          case VerifyCompleted(passed, summary) =>
+            for
+              state <- stateRef.get
+              _ <- state.stepStatus.get(VerifyId) match
+                case Some(StepStatus.Running) =>
+                  for
+                    _ <- stateRef.update(s => s.copy(
+                      verifyResult = Some(summary),
+                      stepStatus = s.stepStatus + (VerifyId -> StepStatus.Done),
+                      runningAgents = s.runningAgents - VerifyId,
+                      phase = if passed then FlowPhase.Completed else s.phase
+                    ))
+                    _ <- emit(cfg.wsSend, cfg.sessionId, "flowVerifyResult",
+                      "pass" -> passed.asJson,
+                      "summary" -> summary.take(500).asJson,
+                      "iteration" -> state.iteration.asJson)
+                    _ <- if passed then completeFlow(stateRef, cfg, summary)
+                         else handleVerifyFail(ctx, stateRef, cfg, summary, state)
+                  yield ()
+                case _ => IO.unit // ignore duplicate or unexpected
+              st <- stateRef.get
+            yield
+              if st.phase == FlowPhase.Completed || st.phase == FlowPhase.Failed
+              then Behaviors.stopped[FlowCommand]
+              else this
+
           case StopFlow(reason) =>
             for
               _ <- stateRef.update(_.copy(phase = FlowPhase.Failed))
@@ -157,31 +197,7 @@ object FlowActor:
     output: String,
     state: FlowState
   )(using ActorContext[FlowCommand]): IO[Unit] =
-    if stepId == VerifyId then
-      // Verify completed — parse PASS/FAIL
-      val vr = parseVerifyResult(output)
-      for
-        _ <- stateRef.update(s =>
-          s.copy(
-            verifyResult = Some(output),
-            stepStatus = s.stepStatus + (VerifyId -> StepStatus.Done),
-            runningAgents = s.runningAgents - VerifyId,
-            phase = if vr.pass then FlowPhase.Completed else s.phase
-          )
-        )
-        _ <- emit(
-          cfg.wsSend,
-          cfg.sessionId,
-          "flowVerifyResult",
-          "pass" -> vr.pass.asJson,
-          "summary" -> vr.summary.take(500).asJson
-        )
-        _ <-
-          (if vr.pass then completeFlow(stateRef, cfg, vr.summary)
-           else handleVerifyFail(ctx, stateRef, cfg, vr.summary, state))
-      yield ()
-      end for
-    else if stepId == FixId then
+    if stepId == FixId then
       // Fix completed → re-run verify
       stateRef.update(s =>
         s.copy(
@@ -394,12 +410,28 @@ object FlowActor:
           ctx.self ! StepFailed(stepId, s"Agent '$agentName' not found")
           IO.unit
         case Some(agentDef) =>
+          val isVerify = stepId == VerifyId
+          val agentUid = s"flow-${cfg.flowDef.name.take(16)}-$stepId-${java.util.UUID.randomUUID().toString.take(8)}"
           for
+            // Verify setup: create Deferred and register before spawning agent
+            _ <- if isVerify then
+              for
+                d <- Deferred[IO, VerifyResult]
+                _ <- FlowVerifyRegistry.register(agentUid, d)
+              yield ()
+            else IO.unit
             readTracker <- ReadTracker.create
             fileHistory <- FileHistory.create()
             childDepth = cfg.parentDepth + 1
-            agentUid = s"flow-${cfg.flowDef.name.take(16)}-$stepId-${java.util.UUID.randomUUID().toString.take(8)}"
             childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
+            // For verify: add FlowVerify tool to agent's tools
+            actualDef = if isVerify then
+              agentDef.tools match
+                case List("*") => agentDef
+                case _ => agentDef.copy(tools = agentDef.tools :+ "FlowVerify")
+            else agentDef
+            // For verify: prepend fixed preamble to prompt
+            actualPrompt = if isVerify then VerifyPromptPreamble + prompt else prompt
             // Mark as running BEFORE spawn so duplicate messages are ignored
             _ <- stateRef.update(s =>
               s.copy(
@@ -408,7 +440,7 @@ object FlowActor:
             )
             agentRef <- ctx.system.spawn(
               AgentActor(
-                agentDef = agentDef,
+                agentDef = actualDef,
                 resources = cfg.resources,
                 wsSend = childWs,
                 depth = childDepth,
@@ -424,7 +456,7 @@ object FlowActor:
               agentUid
             )
             adapterRef <- ctx.spawn(
-              stepAdapter(ctx.self, stepId, agentRef, timeout),
+              stepAdapter(ctx.self, stepId, agentRef, timeout, isVerify, agentUid),
               s"$agentUid-adapter"
             )
             _ <- stateRef.update(s => s.copy(runningAgents = s.runningAgents + (stepId -> agentRef)))
@@ -435,7 +467,7 @@ object FlowActor:
               "stepId" -> stepId.asJson,
               "agentName" -> agentName.asJson
             )
-            _ <- agentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
+            _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
             _ = logger.info(s"Spawned '$stepId' ($agentName, depth=$childDepth)")
           yield ()
     yield ()
@@ -498,7 +530,9 @@ object FlowActor:
     flowActorRef: ActorRef[FlowCommand],
     stepId: String,
     subagentRef: ActorRef[AgentCommand],
-    timeout: FiniteDuration
+    timeout: FiniteDuration,
+    isVerify: Boolean = false,
+    verifyAgentPath: String = ""
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
@@ -507,6 +541,7 @@ object FlowActor:
       ctx.forkTurn(
         IO.sleep(timeout) *>
           ctx.system.stop(subagentRef) *>
+          (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
           (flowActorRef ! StepFailed(stepId, s"timeout after ${timeout.toSeconds}s"))
       )
 
@@ -514,17 +549,41 @@ object FlowActor:
         def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
           event match
             case AgentEvent.Completed(_, messages) =>
-              val text = extractLastAssistantText(messages)
-              for _ <- flowActorRef ! StepCompleted(stepId, text)
-              yield Behaviors.stopped[AgentEvent]
+              if isVerify then
+                // Check if FlowVerify tool was called
+                for
+                  deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
+                  _ <- FlowVerifyRegistry.remove(verifyAgentPath)
+                  result <- deferredOpt match
+                    case Some(deferred) =>
+                      deferred.tryGet.flatMap {
+                        case Some(vr) =>
+                          IO.delay(flowActorRef ! VerifyCompleted(vr.pass, vr.summary))
+                        case None =>
+                          IO.delay(flowActorRef ! StepFailed(stepId,
+                            "Verify agent completed without calling FlowVerify tool"))
+                      }
+                    case None =>
+                      IO.delay(flowActorRef ! StepFailed(stepId, "Verify registry error"))
+                  _ = result
+                yield Behaviors.stopped[AgentEvent]
+              else
+                val text = extractLastAssistantText(messages)
+                for _ <- flowActorRef ! StepCompleted(stepId, text)
+                yield Behaviors.stopped[AgentEvent]
+
             case AgentEvent.Failed(_, error) =>
-              for _ <- flowActorRef ! StepFailed(stepId, error.message)
+              for
+                _ <- if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit
+                _ <- flowActorRef ! StepFailed(stepId, error.message)
               yield Behaviors.stopped[AgentEvent]
 
         override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
           signal match
             case SystemSignal.Terminated(_) =>
-              for _ <- flowActorRef ! StepFailed(stepId, "agent crashed")
+              for
+                _ <- if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit
+                _ <- flowActorRef ! StepFailed(stepId, "agent crashed")
               yield Behaviors.stopped[AgentEvent])
     }
 
@@ -546,13 +605,6 @@ object FlowActor:
     }
     sb.append("=== End Results ===\n")
     sb.toString
-
-  private def parseVerifyResult(output: String): VerifyResult =
-    val firstLine = output.linesIterator.nextOption().getOrElse("").trim
-    val rest = output.linesIterator.drop(1).mkString("\n").trim
-    if firstLine.toLowerCase.startsWith("pass") then
-      VerifyResult(true, if rest.nonEmpty then rest else "Completed successfully.")
-    else VerifyResult(false, if rest.nonEmpty then rest else output.trim)
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse
