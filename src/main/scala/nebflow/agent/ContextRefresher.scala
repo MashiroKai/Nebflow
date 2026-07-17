@@ -3,6 +3,7 @@ package nebflow.agent
 import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
+import nebflow.core.skill.SkillService
 import nebflow.service.RulesStore
 
 /**
@@ -158,6 +159,7 @@ object ContextRefresher:
       rulesMd = resolveRules(state, resources)
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
+      skillCatalog <- SkillService.buildSkillCatalog()
     yield TurnContext(
       freshDef,
       systemPrefix,
@@ -165,7 +167,8 @@ object ContextRefresher:
       rulesMd,
       thinkingConfig,
       branchReminder,
-      currentBranch
+      currentBranch,
+      skillCatalog
     )
 
   /** Resolve projectRoot for ToolContext (called from buildToolContext). */

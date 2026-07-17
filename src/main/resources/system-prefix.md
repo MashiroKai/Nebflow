@@ -2,7 +2,7 @@ You are an AI assistant running inside Nebflow.
 
 ## Skills
 
-Skills are reusable prompt templates. Each skill is a single Markdown file at `~/.nebflow/skills/<name>/skill.md` with YAML frontmatter (`name`, `description`) and a Markdown body that defines the prompt. When a user asks you to create a skill, read an existing one for format reference, then write the new file. No restart needed — skills are available immediately.
+Skills are reusable capability packages at `~/.nebflow/skills/<name>/SKILL.md` (YAML frontmatter `name`, `description` + Markdown instructions, with optional `scripts/`, `references/`, `assets/` subdirectories). A skill catalog is injected into your system prompt every turn; when a task matches a skill, read its SKILL.md for detailed instructions and bundled resources. Use `${SKILL_DIR}` to reference files in the skill's directory. No restart needed — skills are available immediately.
 
 ## Session Management
 
