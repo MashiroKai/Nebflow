@@ -368,13 +368,36 @@ function compressImage(file, opts = {}) {
 }
 
 // ---------- File Attachment ----------
+
+/** Show an inline error in the attachment preview area (no alert popup). */
+function showAttError(msg, target) {
+  const attPreview = (target && target.attPreviewEl) || activeView.dom.attPreview;
+  if (!attPreview) { console.warn(msg); return; }
+  const err = document.createElement('div');
+  err.className = 'att-error';
+  err.textContent = msg;
+  attPreview.appendChild(err);
+  setTimeout(() => { err.classList.add('att-error-fade'); setTimeout(() => err.remove(), 300); }, 2500);
+}
+
+/** Convert ArrayBuffer to base64 in chunks (avoids reading file twice). */
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export async function addFileAttachment(file, callback, target) {
   // target: optional { attPreviewEl, attachments } for non-primary windows.
   // Defaults to primary window's pendingAttachments.
   const attachments = (target && target.attachments) || activeView.pendingAttachments;
   if (file.type.startsWith('image/')) {
     if (file.size > 10 * 1024 * 1024) {
-      alert('Image too large (max 10MB): ' + file.name);
+      showAttError('Image too large (max 10MB): ' + file.name, target);
       return;
     }
     try {
@@ -386,55 +409,54 @@ export async function addFileAttachment(file, callback, target) {
       });
     } catch (e) {
       console.warn('[input] image compression failed, using original:', e);
-      // Fallback to original
-      const reader = new FileReader();
-      reader.onload = () => {
+      // Fallback: read once as ArrayBuffer, derive both base64 and preview
+      try {
+        const buffer = await file.arrayBuffer();
+        const base64Data = arrayBufferToBase64(buffer);
+        const mimeType = file.type || 'image/jpeg';
+        const preview = 'data:' + mimeType + ';base64,' + base64Data;
         attachments.push({
-          type: 'image', mimeType: 'image/jpeg',
-          data: reader.result.split(',')[1],
-          name: file.name, preview: reader.result
+          type: 'image', mimeType,
+          data: base64Data, name: file.name, preview
         });
-        renderAttachmentPreview(target);
-        if (callback) callback();
-      };
-      reader.readAsDataURL(file);
-      return;
+      } catch (e2) {
+        console.warn('[input] image fallback read failed:', e2);
+        showAttError('Failed to read image: ' + file.name, target);
+        return;
+      }
     }
     renderAttachmentPreview(target);
     if (callback) callback();
   } else {
-    // Non-image: compute SHA-256 hash for local file search, also keep data as fallback
+    // Non-image: read once as ArrayBuffer, derive both hash and base64
     const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
     if (file.size > MAX_FILE_SIZE) {
-      alert('File too large (max 50MB): ' + file.name);
+      showAttError('File too large (max 50MB): ' + file.name, target);
       return;
     }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const resultStr = reader.result;
-      const commaIdx = resultStr.indexOf(',');
-      const base64Data = commaIdx >= 0 ? resultStr.substring(commaIdx + 1) : resultStr;
-      // Compute SHA-256 hash from the file ArrayBuffer
+    try {
+      const buffer = await file.arrayBuffer();
+      // Compute SHA-256 hash from the same buffer (no second file read)
       let hash = '';
       try {
-        const buffer = await file.arrayBuffer();
         const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
       } catch (e) {
         console.warn('[input] SHA-256 computation failed:', e);
       }
+      // Convert to base64 from the same buffer
+      const base64Data = arrayBufferToBase64(buffer);
       attachments.push({
         type: 'text', mimeType: file.type || 'application/octet-stream',
         data: base64Data, name: file.name, hash, size: file.size
       });
       renderAttachmentPreview(target);
       if (callback) callback();
-    };
-    reader.onerror = () => {
-      console.warn('[input] file read failed:', reader.error);
-    };
-    reader.readAsDataURL(file);
+    } catch (e) {
+      console.warn('[input] file read failed:', e);
+      showAttError('Failed to read file: ' + file.name, target);
+    }
   }
 }
 
@@ -1013,35 +1035,66 @@ export function initInput(view) {
     }
   };
 
-  // Attach button — hidden file input trigger
+  // Attach button — hidden file input trigger (supports multiple files)
   attachBtn.onclick = () => {
     setActiveView(view);
     const f = document.createElement('input');
     f.type = 'file';
+    f.multiple = true;
     f.style.display = 'none';
     document.body.appendChild(f);
     f.onchange = (e) => {
-      const file = e.target.files[0];
-      if (file) addFileAttachment(file);
+      const files = Array.from(e.target.files);
+      files.forEach(file => addFileAttachment(file));
       f.remove();
     };
     f.click();
   };
 
-  // Drag & drop on document.body — only register once (primary view)
+  // Drag & drop + paste on document.body — only register once (primary view)
   if (view.id === 'primary') {
+    let dragCounter = 0;
+    document.body.addEventListener('dragenter', (e) => {
+      if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        dragCounter++;
+        document.body.classList.add('drag-over');
+      }
+    });
     document.body.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.stopPropagation();
     });
+    document.body.addEventListener('dragleave', () => {
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        document.body.classList.remove('drag-over');
+      }
+    });
     document.body.addEventListener('drop', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      dragCounter = 0;
+      document.body.classList.remove('drag-over');
       const files = [];
       if (e.dataTransfer.files) {
         for (const f of e.dataTransfer.files) files.push(f);
       }
       files.forEach(f => addFileAttachment(f));
+    });
+    // Paste image support (Cmd/Ctrl+V)
+    document.addEventListener('paste', (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type && item.type.startsWith('image/')) {
+          const f = item.getAsFile();
+          if (f) {
+            e.preventDefault();
+            addFileAttachment(f);
+          }
+        }
+      }
     });
   }
 

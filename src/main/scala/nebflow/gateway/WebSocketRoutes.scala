@@ -1860,8 +1860,9 @@ class WebSocketRoutes(
                   val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
                   if content.nonEmpty then blocks += ContentBlock.Text(content)
 
-                  val savedPaths = scala.collection.mutable.ListBuffer.empty[String]
-                  attachments.foreach { att =>
+                  // Map attachment index → saved/local path (only non-image files get entries)
+                  val savedPaths = scala.collection.mutable.Map.empty[Int, String]
+                  attachments.zipWithIndex.foreach { case (att, attIdx) =>
                     val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
                     val data = att.hcursor.downField("data").as[String].getOrElse("")
                     val name = att.hcursor.downField("name").as[String].getOrElse("")
@@ -1880,7 +1881,7 @@ class WebSocketRoutes(
                         if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
                       localPath match
                         case Some(path) =>
-                          savedPaths += path
+                          savedPaths(attIdx) = path
                           blocks += ContentBlock.Text(s"[用户附加文件: $path]")
                           logger.info(s"Attachment '$name' resolved to local file: $path")
                         case None =>
@@ -1891,13 +1892,13 @@ class WebSocketRoutes(
                             val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
                             val fileName = s"${System.nanoTime()}_$safeName"
                             val filePath = uploadDir / fileName
-                            os.write.over(filePath, java.util.Base64.getDecoder.decode(data))
+                            val decoded = java.util.Base64.getDecoder.decode(data)
+                            os.write.over(filePath, decoded)
                             val absPath = filePath.toString
-                            val decodedSize = java.util.Base64.getDecoder.decode(data).length
                             if absPath.startsWith(uploadDir.toString) then
-                              savedPaths += absPath
+                              savedPaths(attIdx) = absPath
                               blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                              logger.info(s"Saved attachment '$name' to $absPath ($decodedSize bytes)")
+                              logger.info(s"Saved attachment '$name' to $absPath (${decoded.length} bytes)")
                             else
                               logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
                               blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
@@ -1919,8 +1920,7 @@ class WebSocketRoutes(
                        val attJson = attachments.zipWithIndex.map { case (att, idx) =>
                          val name = att.hcursor.downField("name").as[String].getOrElse("")
                          val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                         val savedPath =
-                           if !mimeType.startsWith("image/") && idx < savedPaths.length then savedPaths(idx) else ""
+                         val savedPath = savedPaths.getOrElse(idx, "")
                          io.circe.Json.obj(
                            "name" -> name.asJson,
                            "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
