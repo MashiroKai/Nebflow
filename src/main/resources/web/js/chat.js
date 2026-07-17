@@ -6,6 +6,7 @@ import { activeView, setActiveView } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
+import { sendWs } from './ws.js';
 
 // ---------- Time format preference (12h / 24h toggle) ----------
 const TIME_FORMAT_KEY = 'nebflow:timeFormat';
@@ -127,6 +128,7 @@ const VoicePlayer = {
     this.muted = !this.muted;
     localStorage.setItem('voiceMuted', String(this.muted));
     if (this.muted) this._cancel();
+    sendWs({ type: 'setVoiceMuted', muted: this.muted });
     return this.muted;
   },
 };

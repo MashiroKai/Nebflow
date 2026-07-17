@@ -227,6 +227,7 @@ object GatewayMain extends IOApp.Simple:
                                 val hooksConfig = HooksConfigLoader.load(os.pwd)
                                 val hookEngine = HookEngine(hooksConfig)
                                 val actorSystem = nebflow.actor.ActorSystem("local")
+                                val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
                                 val sharedResources = SharedResources(
                                   llm = handle,
                                   dispatcher = dispatcher,
@@ -245,7 +246,8 @@ object GatewayMain extends IOApp.Simple:
                                   providerRegistry = registry,
                                   healthMonitor = healthMonitor,
                                   actorSystem = actorSystem,
-                                  hookEngine = hookEngine
+                                  hookEngine = hookEngine,
+                                  voiceMutedRef = voiceMutedRef
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
                                 val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
