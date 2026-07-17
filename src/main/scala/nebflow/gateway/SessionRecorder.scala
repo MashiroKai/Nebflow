@@ -93,7 +93,7 @@ class SessionRecorder private (
         thinkingBuf.getAndSet("").flatMap { thinking =>
           sessionStore.appendUiMessages(
             sessionId,
-            List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking)))
+            List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis()))
           )
         }
       else thinkingBuf.set("") *> IO.unit
@@ -106,9 +106,14 @@ class SessionRecorder private (
       thinking <- thinkingBuf.getAndSet("")
       durationMs = start.map(s => System.currentTimeMillis() - s)
       thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
+      now = System.currentTimeMillis()
       _ <-
         if text.nonEmpty || thinkingOpt.isDefined then
-          sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text, durationMs, model, thinkingOpt)))
+          sessionStore.appendUiMessages(sessionId, List(UiMessage.Ai(text, durationMs, model, thinkingOpt, now)))
+        else if durationMs.isDefined then
+          // No text to flush (already flushed by a prior flushText call),
+          // but we have a duration — backfill onto the last saved Ai message.
+          sessionStore.updateLastAiMeta(sessionId, durationMs, model, now)
         else IO.unit
     yield ()
 
