@@ -10,10 +10,10 @@ import nebflow.core.PathUtil
 
 /**
  * Persistence layer for Flow snapshots.
- * 
+ *
  * Each flow's state is stored as a JSON file under the session directory:
  *   ~/.nebflow/sessions/<sessionId>/flows/<flowId>.json
- * 
+ *
  * On restart, SessionStore loads the session, then FlowStore.listRestorable
  * returns flows that were still running (phase != Completed/Failed) and need
  * to be restored.
@@ -68,9 +68,7 @@ object FlowStore:
   def listRestorable(sessionId: String): IO[List[String]] =
     listFlows(sessionId).flatMap { ids =>
       ids.traverseFilter(id =>
-        load(sessionId, id).map(_.filter(s =>
-          s.phase != "Completed" && s.phase != "Failed"
-        ).map(_ => id))
+        load(sessionId, id).map(_.filter(s => s.phase != "Completed" && s.phase != "Failed").map(_ => id))
       )
     }
 

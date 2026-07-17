@@ -701,6 +701,8 @@ private[agent] trait AgentCore:
     val skillsBlock = if skillCatalog.nonEmpty then s"\n\n$skillCatalog" else ""
     s"$systemPrefix$agentPrompt$voiceBlock\n\n$envInfo$rulesBlock$skillsBlock"
 
+  end buildSystemPrompt
+
   /** Format active persistent sub-agent sessions for system prompt injection. */
   protected def formatAgentSessions(sessions: List[AgentSessionInfo]): String =
     if sessions.isEmpty then ""
@@ -717,26 +719,29 @@ private[agent] trait AgentCore:
     val (lastUpdate, cached) = deviceInfoCache
     if now - lastUpdate < 30000 && cached.nonEmpty then cached
     else
-      val refreshed = RemoteExecutor.current.flatMap(_.neblinkServiceOpt).flatMap { ms =>
-        try
-          import cats.effect.unsafe.implicits.global
-          val id = ms.identity.unsafeRunSync()
-          val peersList = ms.peers.unsafeRunSync()
-          val localStr =
-            s"local (${id.deviceName})" +
-              (if id.userDescription.nonEmpty then s" -${id.userDescription}" else "")
-          val peerStrs =
-            peersList.map { p =>
-              p.deviceName + (if p.userDescription.nonEmpty then s" -${p.userDescription}" else "")
-            }
-          val allDevices = (localStr :: peerStrs).mkString("; ")
-          val deviceHint =
-            if peersList.nonEmpty then
-              "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
-            else ""
-          Some(s"$allDevices$deviceHint")
-        catch case _: Exception => None
-      }.getOrElse("")
+      val refreshed = RemoteExecutor.current
+        .flatMap(_.neblinkServiceOpt)
+        .flatMap { ms =>
+          try
+            import cats.effect.unsafe.implicits.global
+            val id = ms.identity.unsafeRunSync()
+            val peersList = ms.peers.unsafeRunSync()
+            val localStr =
+              s"local (${id.deviceName})" +
+                (if id.userDescription.nonEmpty then s" -${id.userDescription}" else "")
+            val peerStrs =
+              peersList.map { p =>
+                p.deviceName + (if p.userDescription.nonEmpty then s" -${p.userDescription}" else "")
+              }
+            val allDevices = (localStr :: peerStrs).mkString("; ")
+            val deviceHint =
+              if peersList.nonEmpty then
+                "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
+              else ""
+            Some(s"$allDevices$deviceHint")
+          catch case _: Exception => None
+        }
+        .getOrElse("")
       deviceInfoCache = (now, refreshed)
       refreshed
 

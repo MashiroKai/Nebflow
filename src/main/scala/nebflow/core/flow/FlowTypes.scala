@@ -68,7 +68,9 @@ given Decoder[FlowStep] = Decoder.instance { c =>
     retry <- c.downField("retry").as[Option[Int]]
     timeoutS <- c.downField("timeoutSeconds").as[Option[Int]]
   yield FlowStep(
-    id, agent, prompt,
+    id,
+    agent,
+    prompt,
     deps.getOrElse(Nil).toSet,
     retry.getOrElse(2),
     timeoutS.getOrElse(1800).seconds
@@ -145,6 +147,7 @@ case class FlowSnapshot(
 )
 
 object FlowSnapshot:
+
   given Encoder[FlowSnapshot] = Encoder.instance { s =>
     Json.obj(
       "flowDef" -> s.flowDef.asJson,
@@ -171,7 +174,9 @@ object FlowSnapshot:
       verifyResult <- c.downField("verifyResult").as[Option[String]]
       iteration <- c.downField("iteration").as[Option[Int]]
     yield FlowSnapshot(
-      flowDef, flowId, phase,
+      flowDef,
+      flowId,
+      phase,
       stepStatus.getOrElse(Map.empty),
       results.getOrElse(Map.empty),
       failedReasons.getOrElse(Map.empty),
@@ -180,6 +185,7 @@ object FlowSnapshot:
       iteration.getOrElse(0)
     )
   }
+end FlowSnapshot
 
 // ============================================================
 // Flow Result (returned to main agent via ExternalEvent)

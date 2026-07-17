@@ -16,7 +16,8 @@ object ReadTool extends Tool:
   /** Read controls its own output via the limit parameter — exempt from guard. */
   override val maxResultSizeChars: Int = Int.MaxValue
 
-  val description = """Reads a file from the local filesystem. All read results are live: if the file is modified on disk, the tool result in your conversation history is automatically updated to reflect the latest content. You never need to re-read a file you have already read — its content is always current.
+  val description =
+    """Reads a file from the local filesystem. All read results are live: if the file is modified on disk, the tool result in your conversation history is automatically updated to reflect the latest content. You never need to re-read a file you have already read — its content is always current.
 
 You can access any file on the machine. If the user provides a path, assume it is valid. Reading a non-existent file returns an error, which is fine.
 
@@ -143,8 +144,7 @@ Guidelines:
           for
             _ <- ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView))
             _ <-
-              if ctx.toolCallId.nonEmpty then
-                ctx.liveFileTracker.traverse_(_.register(filePathStr, ctx.toolCallId))
+              if ctx.toolCallId.nonEmpty then ctx.liveFileTracker.traverse_(_.register(filePathStr, ctx.toolCallId))
               else IO.unit
           yield Right(output)
         case Left(err) => IO.pure(Left(err))
