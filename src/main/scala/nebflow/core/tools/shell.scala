@@ -381,8 +381,7 @@ final class ShellSession private (
         val output = new String(psProc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
         psProc.getInputStream.close()
         sumCpuTimeFromProcessTree(output, rootPid)
-    catch
-      case _: Exception => 0L
+    catch case _: Exception => 0L
 
   /** Parse `ps` output, build process tree, and sum CPU time of root + all descendants. */
   private def sumCpuTimeFromProcessTree(psOutput: String, rootPid: Long): Long =
@@ -405,6 +404,8 @@ final class ShellSession private (
         if cpuOpt.isPresent then cpuOpt.get().toNanos else 0L
       else 0L
     }.sum
+
+  end sumCpuTimeFromProcessTree
 
   private def runProcess(
     command: String,
