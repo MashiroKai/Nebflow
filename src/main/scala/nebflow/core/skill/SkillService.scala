@@ -189,9 +189,11 @@ object SkillService:
         val catalog =
           if visible.isEmpty then ""
           else
-            val entries = visible.map { s =>
-              s"- ${s.name}: ${s.description.take(200)}"
-            }.mkString("\n")
+            val entries = visible
+              .map { s =>
+                s"- ${s.name}: ${s.description.take(200)}"
+              }
+              .mkString("\n")
             s"""# Skills
                |
                |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
@@ -200,6 +202,8 @@ object SkillService:
         catalogCache = (now, catalog)
         catalog
       }
+    end if
+  end buildSkillCatalog
 
   // ============================================================
   // Public API

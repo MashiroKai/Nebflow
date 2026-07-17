@@ -59,11 +59,15 @@ object FlowActor:
           "flowStarted",
           "flowName" -> flowDef.name.asJson,
           "totalSteps" -> flowDef.steps.length.asJson,
-          "steps" -> flowDef.steps.map(s => Json.obj(
-            "id" -> s.id.asJson,
-            "agent" -> s.agent.asJson,
-            "dependsOn" -> s.dependsOn.toList.asJson
-          )).asJson,
+          "steps" -> flowDef.steps
+            .map(s =>
+              Json.obj(
+                "id" -> s.id.asJson,
+                "agent" -> s.agent.asJson,
+                "dependsOn" -> s.dependsOn.toList.asJson
+              )
+            )
+            .asJson,
           "hasLoop" -> flowDef.loop.isDefined.asJson,
           "maxIterations" -> flowDef.loop.map(_.maxIterations).getOrElse(0).asJson
         )
@@ -72,6 +76,7 @@ object FlowActor:
         )
         _ <- scheduleReadySteps(ctx, stateRef, cfg)
       yield running(ctx, stateRef, cfg)
+      end for
     }
 
   // ============================================================

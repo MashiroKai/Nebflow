@@ -210,10 +210,12 @@ class FlowEngineSpec extends CatsEffectSuite:
         FlowStep("fix", "Explorer", "work step named fix")
       ),
       verify = VerifyStep(prompt = "check"),
-      loop = Some(LoopDef(
-        fix = FlowStep("fix", "Nebula", "the actual fix"),
-        maxIterations = 2
-      ))
+      loop = Some(
+        LoopDef(
+          fix = FlowStep("fix", "Nebula", "the actual fix"),
+          maxIterations = 2
+        )
+      )
     )
     FlowValidator.validate(flow) match
       case Right(()) => fail("Should detect fix ID collision")
@@ -293,3 +295,4 @@ class FlowEngineSpec extends CatsEffectSuite:
     val resolved = resolve("Hello ${name}", Map("name" -> "World"))
     assert(!resolved.contains("${"), s"No template vars should remain: $resolved")
   }
+end FlowEngineSpec

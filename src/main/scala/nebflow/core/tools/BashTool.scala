@@ -499,7 +499,7 @@ Git safety:
     val exitLine = if result.exitCode != 0 then s"(exit ${result.exitCode})\n" else ""
     val rawOut = tailN match
       case Some(n) => applyTailTruncation(result.stdout, n)
-      case None    => result.stdout
+      case None => result.stdout
     val cleanedOut = cleanOutput(sanitizeCardOutput(rawOut))
     val cleanedErr = cleanOutput(result.stderr)
     val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
@@ -507,6 +507,8 @@ Git safety:
     val full = prefix + dirLine + exitLine + output
     if full.trim.isEmpty then Right("[Command executed successfully with no output]")
     else Right(full)
+
+  end formatResult
 
   /**
    * Best-effort repair of shell-damaged card JSON output.
@@ -570,7 +572,7 @@ Git safety:
         case Right(pr) =>
           val rawOut = tailN match
             case Some(n) => applyTailTruncation(pr.stdout, n)
-            case None    => pr.stdout
+            case None => pr.stdout
           val out = cleanOutput(sanitizeCardOutput(rawOut))
           val cleanedErr = cleanOutput(pr.stderr)
           val output = out + (if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else "")
