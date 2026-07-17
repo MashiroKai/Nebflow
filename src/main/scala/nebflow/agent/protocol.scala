@@ -391,7 +391,8 @@ case class TurnContext(
   rulesMd: Option[String],
   thinkingConfig: nebflow.llm.ThinkingConfig,
   branchChange: Option[SystemReminder] = None,
-  currentBranch: Option[String] = None
+  currentBranch: Option[String] = None,
+  skillCatalog: String = ""
 )
 
 case class SessionContext(

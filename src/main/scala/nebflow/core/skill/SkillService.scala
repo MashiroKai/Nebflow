@@ -16,6 +16,7 @@ final case class SkillInfo(
   argumentHint: Option[String] = None,
   argumentNames: List[String] = Nil,
   userInvocable: Boolean = true,
+  modelInvocable: Boolean = true,
   version: Option[String] = None,
   /** Where this skill was loaded from: "user" | "project" | "commands" */
   source: String = "user"
@@ -33,6 +34,7 @@ object SkillInfo:
       "argumentHint" -> s.argumentHint.asJson,
       "argumentNames" -> s.argumentNames.asJson,
       "userInvocable" -> s.userInvocable.asJson,
+      "modelInvocable" -> s.modelInvocable.asJson,
       "version" -> s.version.asJson,
       "source" -> s.source.asJson
     )
@@ -49,14 +51,19 @@ object SkillService:
   private def userSkillsDir: os.Path =
     PathUtil.dataRoot / "skills"
 
-  /** Create user-level skills directory and a starter template on first run. */
+  /** Create user-level skills directory and built-in skills on first run. */
   def ensureDefaults(): IO[Unit] = IO.delay {
     if !os.isDir(userSkillsDir) then
       os.makeDir.all(userSkillsDir)
-      val exampleDir = userSkillsDir / "_example"
-      val exampleFile = exampleDir / "skill.md"
-      if !os.isFile(exampleFile) then os.write(exampleFile, exampleSkillMd, createFolders = true)
-      logger.info(s"Created skills directory at $userSkillsDir with starter template")
+      logger.info(s"Created skills directory at $userSkillsDir")
+    // Starter template
+    val exampleFile = userSkillsDir / "_example" / "skill.md"
+    if !os.isFile(exampleFile) then os.write(exampleFile, exampleSkillMd, createFolders = true)
+    // Built-in skill-creator
+    val creatorFile = userSkillsDir / "skill-creator" / "skill.md"
+    if !os.isFile(creatorFile) then
+      os.write(creatorFile, skillCreatorMd, createFolders = true)
+      logger.info("Created built-in skill-creator skill")
   }
 
   private val exampleSkillMd: String =
@@ -89,6 +96,115 @@ object SkillService:
       |
       |Describe the expected output format.
       |""".stripMargin
+
+  private val skillCreatorMd: String =
+    """---
+      |name: skill-creator
+      |description: Create and update Nebflow skills — directory structure, frontmatter fields, scripts, and best practices. Use when the user asks to create, modify, or learn about skills.
+      |language: zh
+      |---
+      |
+      |# Skill Creator
+      |
+      |You are creating or updating a Nebflow skill. A skill is a reusable capability package that combines prompt instructions with scripts, templates, and other resources.
+      |
+      |## Directory Structure
+      |
+      |Each skill lives in a directory under `~/.nebflow/skills/`:
+      |
+      |```
+      |~/.nebflow/skills/
+      |└── my-skill/
+      |    ├── skill.md          # Main skill file (SKILL.md also accepted)
+      |    ├── helper.py         # Optional scripts
+      |    ├── template.ts       # Optional templates
+      |    └── config.json       # Optional config files
+      |```
+      |
+      |## Frontmatter Fields
+      |
+      || Field | Required | Default | Description |
+      ||-------|----------|---------|-------------|
+      || `name` | Yes | dir name | Skill identifier, used in slash commands and catalog |
+      || `description` | Yes | — | One-line summary shown in agent's skill catalog. Must explain both **what** the skill does and **when** to use it |
+      || `language` | No | — | Preferred response language (zh, en, etc.) |
+      || `user-invocable` | No | true | Whether users can invoke via `/skill-name` slash command |
+      || `disable-model-invocation` | No | false | When true, skill is hidden from agent's skill catalog (slash-command only) |
+      || `version` | No | — | Semantic version string |
+      || `when_to_use` | No | — | Additional context for when to use this skill |
+      || `allowed-tools` | No | all | Comma-separated tool allowlist |
+      || `arguments` | No | — | List of argument names (YAML block list or comma-separated) |
+      |
+      |## ${SKILL_DIR} Variable
+      |
+      |The `${SKILL_DIR}` placeholder in skill content is replaced with the skill's absolute directory path at load time. Use it to reference bundled scripts and files:
+      |
+      |```bash
+      |bash ${SKILL_DIR}/analyze.sh
+      |python ${SKILL_DIR}/process.py --input data.csv
+      |```
+      |
+      |## Progressive Disclosure
+      |
+      |Skills use a two-level disclosure model:
+      |
+      |1. **Catalog (always visible)**: The agent sees each skill's `name` + `description` in its system prompt every turn.
+      |2. **Full content (on demand)**: When the agent decides a skill is relevant, it reads the skill file to get complete instructions, scripts, and resources.
+      |
+      |This means the `description` field is critical — it must be specific enough for the agent to unambiguously decide when the skill applies.
+      |
+      |## How to Create a Skill
+      |
+      |1. Choose a kebab-case name (e.g., `code-reviewer`, `api-tester`)
+      |2. Create the directory `~/.nebflow/skills/<name>/`
+      |3. Write `skill.md` with frontmatter + markdown body
+      |4. Add any scripts, templates, or config files the skill needs
+      |5. Test by asking the agent to use it, or invoke via `/<name>`
+      |
+      |## Best Practices
+      |
+      |- **Description is the most important field** — it is the only thing the agent sees before deciding to read the full skill. Include what the skill does AND when to use it.
+      |- **Instructions should be imperative** — tell the agent exactly what to do, step by step.
+      |- **Scripts extend capability** — bundle real scripts that do real work, don't just write prompts.
+      |- **One skill = one purpose** — don't combine unrelated workflows.
+      |- **Use tables and lists** — structured data is easier for the agent to follow than prose.
+      |- **Skill content is injected as-is** — markdown, code blocks, and file references all work.
+      |""".stripMargin
+
+  // ============================================================
+  // Skill Catalog (for progressive disclosure)
+  // ============================================================
+
+  /** Simple TTL cache to avoid rebuilding the catalog every turn. */
+  @volatile private var catalogCache: (Long, String) = (0L, "")
+  private val CatalogTtlMs = 3000L
+
+  /**
+   * Build a compact skill catalog string for system prompt injection.
+   * Only skills with `modelInvocable = true` and a non-empty description are included.
+   * The catalog tells the agent what skills exist and where to find them;
+   * the agent reads the full skill file when it decides a skill is relevant.
+   */
+  def buildSkillCatalog(): IO[String] =
+    val now = System.currentTimeMillis()
+    if now - catalogCache._1 < CatalogTtlMs then IO.pure(catalogCache._2)
+    else
+      listSkills().map { skills =>
+        val visible = skills.filter(s => s.modelInvocable && s.description.nonEmpty)
+        val catalog =
+          if visible.isEmpty then ""
+          else
+            val entries = visible.map { s =>
+              s"- ${s.name}: ${s.description.take(200)} (file: ${s.filePath})"
+            }.mkString("\n")
+            s"""# Skills
+               |
+               |When a task matches a skill, read its file for detailed instructions and bundled resources.
+               |
+               |$entries""".stripMargin
+        catalogCache = (now, catalog)
+        catalog
+      }
 
   // ============================================================
   // Public API
@@ -233,6 +349,9 @@ object SkillService:
     val userInvocable = extractField(fm, "user-invocable")
       .map(v => v == "true" || v == "true")
       .getOrElse(true)
+    val modelInvocable = extractField(fm, "disable-model-invocation")
+      .map(v => !v.equalsIgnoreCase("true"))
+      .getOrElse(true)
 
     val allowedTools = extractListField(fm, "allowed-tools")
     val argumentNames = extractListField(fm, "arguments")
@@ -246,6 +365,7 @@ object SkillService:
       argumentHint = argumentHint,
       argumentNames = argumentNames,
       userInvocable = userInvocable,
+      modelInvocable = modelInvocable,
       version = version,
       source = source
     )
