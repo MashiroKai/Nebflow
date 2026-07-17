@@ -291,6 +291,8 @@ export function startFlow(msg) {
     </div>`);
   showCanvasHeader(false);
   openCanvas('');
+  document.getElementById('flow-toggle-btn')?.classList.remove('hidden');
+  document.getElementById('flow-toggle-btn')?.classList.add('active');
 
   // Position nodes
   positionNodes();
@@ -386,6 +388,30 @@ export function closeFlow() {
   if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
   closeCanvas();
   flowData = null;
+  document.getElementById('flow-toggle-btn')?.classList.add('hidden');
+  document.getElementById('flow-toggle-btn')?.classList.remove('active');
+}
+
+export function toggleCanvas() {
+  if (!flowData) return;
+  const isOpen = document.body.classList.contains('canvas-open');
+  const btn = document.getElementById('flow-toggle-btn');
+  if (isOpen) {
+    closeCanvas();
+    btn?.classList.remove('active');
+  } else {
+    // Re-render content and open
+    const nodesHtml = flowData.nodes.map(n =>
+      nodeHtml(n.id, n.label, n.status, n.id === '__root__')
+    ).join('');
+    const infoHtml = `<div class="flow-info"><div>${flowData.name}</div><div class="sub" id="flow-info-sub"></div></div>`;
+    setCanvasContent(`${FLOW_CSS}<div class="flow-root">${infoHtml}<svg class="flow-svg" xmlns="http://www.w3.org/2000/svg"></svg>${nodesHtml}</div>`);
+    showCanvasHeader(false);
+    openCanvas('');
+    positionNodes();
+    requestAnimationFrame(() => { refreshLines(); updateInfo(); });
+    btn?.classList.add('active');
+  }
 }
 
 export function onSessionChange(activeSessionId) {
