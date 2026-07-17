@@ -57,10 +57,10 @@ object SkillService:
       os.makeDir.all(userSkillsDir)
       logger.info(s"Created skills directory at $userSkillsDir")
     // Starter template
-    val exampleFile = userSkillsDir / "_example" / "skill.md"
+    val exampleFile = userSkillsDir / "_example" / "SKILL.md"
     if !os.isFile(exampleFile) then os.write(exampleFile, exampleSkillMd, createFolders = true)
     // Built-in skill-creator
-    val creatorFile = userSkillsDir / "skill-creator" / "skill.md"
+    val creatorFile = userSkillsDir / "skill-creator" / "SKILL.md"
     if !os.isFile(creatorFile) then
       os.write(creatorFile, skillCreatorMd, createFolders = true)
       logger.info("Created built-in skill-creator skill")
@@ -106,69 +106,64 @@ object SkillService:
       |
       |# Skill Creator
       |
-      |You are creating or updating a Nebflow skill. A skill is a reusable capability package that combines prompt instructions with scripts, templates, and other resources.
+      |You are creating or updating a Nebflow skill. A skill is a reusable capability package that combines prompt instructions with bundled resources (scripts, references, assets).
       |
-      |## Directory Structure
-      |
-      |Each skill lives in a directory under `~/.nebflow/skills/`:
+      |## Standard Directory Structure
       |
       |```
-      |~/.nebflow/skills/
-      |└── my-skill/
-      |    ├── skill.md          # Main skill file (SKILL.md also accepted)
-      |    ├── helper.py         # Optional scripts
-      |    ├── template.ts       # Optional templates
-      |    └── config.json       # Optional config files
+      |skill-name/
+      |├── SKILL.md              # Required — frontmatter + instructions
+      |├── scripts/              # Optional — executable code (Python, Bash, etc.)
+      |├── references/           # Optional — docs loaded into context on demand
+      |└── assets/               # Optional — output files (templates, icons, fonts, etc.)
       |```
       |
-      |## Frontmatter Fields
+      |Skills live at `~/.nebflow/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name.
+      |
+      |## Frontmatter (YAML)
+      |
+      |Only `name` and `description` are required. The description is the sole text the agent sees in its skill catalog — it must explain both **what** the skill does and **when** to use it.
       |
       || Field | Required | Default | Description |
       ||-------|----------|---------|-------------|
-      || `name` | Yes | dir name | Skill identifier, used in slash commands and catalog |
-      || `description` | Yes | — | One-line summary shown in agent's skill catalog. Must explain both **what** the skill does and **when** to use it |
-      || `language` | No | — | Preferred response language (zh, en, etc.) |
+      || `name` | Yes | dir name | Skill identifier, must match directory name |
+      || `description` | Yes | — | One-line summary shown in agent catalog. Determines whether the agent recognizes the skill as relevant |
+      || `language` | No | — | Preferred response language (zh, en) |
       || `user-invocable` | No | true | Whether users can invoke via `/skill-name` slash command |
-      || `disable-model-invocation` | No | false | When true, skill is hidden from agent's skill catalog (slash-command only) |
+      || `disable-model-invocation` | No | false | When true, skill is hidden from agent catalog (slash-command only) |
       || `version` | No | — | Semantic version string |
       || `when_to_use` | No | — | Additional context for when to use this skill |
       || `allowed-tools` | No | all | Comma-separated tool allowlist |
-      || `arguments` | No | — | List of argument names (YAML block list or comma-separated) |
+      || `arguments` | No | — | Argument names (YAML block list or comma-separated) |
       |
       |## ${SKILL_DIR} Variable
       |
-      |The `${SKILL_DIR}` placeholder in skill content is replaced with the skill's absolute directory path at load time. Use it to reference bundled scripts and files:
+      |`${SKILL_DIR}` is replaced with the skill's absolute directory path at load time. Use it to reference bundled resources:
       |
       |```bash
-      |bash ${SKILL_DIR}/analyze.sh
-      |python ${SKILL_DIR}/process.py --input data.csv
+      |python ${SKILL_DIR}/scripts/analyze.py --input data.csv
+      |cat ${SKILL_DIR}/references/spec.md
+      |cp ${SKILL_DIR}/assets/template.tex output/
       |```
       |
       |## Progressive Disclosure
       |
-      |Skills use a two-level disclosure model:
-      |
-      |1. **Catalog (always visible)**: The agent sees each skill's `name` + `description` in its system prompt every turn.
-      |2. **Full content (on demand)**: When the agent decides a skill is relevant, it reads the skill file to get complete instructions, scripts, and resources.
-      |
-      |This means the `description` field is critical — it must be specific enough for the agent to unambiguously decide when the skill applies.
+      |1. **Catalog (always in system prompt)**: Agent sees `name` + `description` every turn.
+      |2. **Full content (on demand)**: Agent reads `SKILL.md` when it decides the skill is relevant, getting instructions plus access to bundled scripts and resources.
       |
       |## How to Create a Skill
       |
       |1. Choose a kebab-case name (e.g., `code-reviewer`, `api-tester`)
-      |2. Create the directory `~/.nebflow/skills/<name>/`
-      |3. Write `skill.md` with frontmatter + markdown body
-      |4. Add any scripts, templates, or config files the skill needs
-      |5. Test by asking the agent to use it, or invoke via `/<name>`
+      |2. Create `~/.nebflow/skills/<name>/SKILL.md` with frontmatter + instructions
+      |3. Add `scripts/`, `references/`, or `assets/` subdirectories as needed
+      |4. Test: ask the agent to use it, or invoke via `/<name>`
       |
       |## Best Practices
       |
-      |- **Description is the most important field** — it is the only thing the agent sees before deciding to read the full skill. Include what the skill does AND when to use it.
-      |- **Instructions should be imperative** — tell the agent exactly what to do, step by step.
-      |- **Scripts extend capability** — bundle real scripts that do real work, don't just write prompts.
+      |- **Description is critical** — it is the only signal for the agent to decide relevance. Be specific about what AND when.
+      |- **Scripts do real work** — bundle executable scripts in `scripts/` rather than describing steps in prose.
+      |- **References for deep context** — put large docs in `references/` that the agent can Read on demand, keeping SKILL.md concise.
       |- **One skill = one purpose** — don't combine unrelated workflows.
-      |- **Use tables and lists** — structured data is easier for the agent to follow than prose.
-      |- **Skill content is injected as-is** — markdown, code blocks, and file references all work.
       |""".stripMargin
 
   // ============================================================
@@ -195,11 +190,11 @@ object SkillService:
           if visible.isEmpty then ""
           else
             val entries = visible.map { s =>
-              s"- ${s.name}: ${s.description.take(200)} (file: ${s.filePath})"
+              s"- ${s.name}: ${s.description.take(200)}"
             }.mkString("\n")
             s"""# Skills
                |
-               |When a task matches a skill, read its file for detailed instructions and bundled resources.
+               |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
                |
                |$entries""".stripMargin
         catalogCache = (now, catalog)
