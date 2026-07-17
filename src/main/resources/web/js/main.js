@@ -1381,6 +1381,10 @@ onMessage('agentDone', (msg, view) => {
 });
 
 // --- Flow events → canvas DAG visualization ---
+window.addEventListener('nebflow-session-change', (e) => {
+  flowCanvas.onSessionChange(e.detail.sessionId);
+});
+
 onMessage('flowStarted', (msg) => {
   flowCanvas.startFlow(msg);
 });
