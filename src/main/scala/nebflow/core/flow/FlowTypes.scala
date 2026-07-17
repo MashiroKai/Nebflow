@@ -175,6 +175,7 @@ object FlowValidator:
 
     // Check step IDs are unique and non-blank
     val stepIds = flow.steps.map(_.id)
+    flow.steps.filter(_.id.isBlank).foreach(_ => errors += "Step ID cannot be blank")
     val dupIds = stepIds.groupBy(identity).filter(_._2.size > 1).keys
     if dupIds.nonEmpty then errors += s"Duplicate step IDs: ${dupIds.mkString(", ")}"
 

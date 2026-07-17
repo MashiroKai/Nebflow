@@ -43,6 +43,7 @@ import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
 import { initCanvas } from './canvas.js';
+import * as flowCanvas from './flowCanvas.js';
 
 // Randomized cosmic thinking bubble text
 const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
@@ -1377,6 +1378,35 @@ onMessage('agentDone', (msg, view) => {
     }, 2000);
   }
   if (view) view.stream.activeAgentId = null;
+});
+
+// --- Flow events → canvas DAG visualization ---
+onMessage('flowStarted', (msg) => {
+  flowCanvas.startFlow(msg);
+});
+
+onMessage('flowStepStarted', (msg) => {
+  flowCanvas.updateStep({ ...msg, status: 'running' });
+});
+
+onMessage('flowStepCompleted', (msg) => {
+  flowCanvas.updateStep({ ...msg, status: 'done' });
+});
+
+onMessage('flowStepFailed', (msg) => {
+  flowCanvas.updateStep({ ...msg, status: 'failed' });
+});
+
+onMessage('flowVerifyResult', (msg) => {
+  flowCanvas.updateVerify(msg);
+});
+
+onMessage('flowLoopIteration', (msg) => {
+  flowCanvas.updateLoop(msg);
+});
+
+onMessage('flowCompleted', (msg) => {
+  flowCanvas.completeFlow(msg);
 });
 
 // --- Compaction events (per-session) ---

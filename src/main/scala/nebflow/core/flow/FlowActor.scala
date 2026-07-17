@@ -58,7 +58,14 @@ object FlowActor:
           parentSessionId,
           "flowStarted",
           "flowName" -> flowDef.name.asJson,
-          "totalSteps" -> flowDef.steps.length.asJson
+          "totalSteps" -> flowDef.steps.length.asJson,
+          "steps" -> flowDef.steps.map(s => Json.obj(
+            "id" -> s.id.asJson,
+            "agent" -> s.agent.asJson,
+            "dependsOn" -> s.dependsOn.toList.asJson
+          )).asJson,
+          "hasLoop" -> flowDef.loop.isDefined.asJson,
+          "maxIterations" -> flowDef.loop.map(_.maxIterations).getOrElse(0).asJson
         )
         _ <- logger.info(
           s"Flow '${flowDef.name}' started: ${flowDef.steps.length} steps, verify=${flowDef.verify.agent}"
