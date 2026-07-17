@@ -2005,6 +2005,7 @@ initPathPicker();
 initInput(chatViews.primary);
 initMemory();
 initCanvas();
+document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
 initScheduledTask();
 initNeblink();
 initDropbox();
