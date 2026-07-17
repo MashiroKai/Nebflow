@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
 
 /**
- * Tracks files read with `live: true` and patches their tool_result content
+ * Tracks all files read by ReadTool and patches their tool_result content
  * in the conversation history when the file changes on disk.
  *
  * Each entry stores the original mtime (from when the file was first read).
@@ -24,7 +24,7 @@ case class LiveFileEntry(path: String, toolCallId: String, originalMtime: Long)
 class LiveFileTracker private (ref: Ref[IO, Map[String, LiveFileEntry]]):
 
   /**
-   * Register a file for live tracking. Called by ReadTool when `live: true`.
+   * Register a file for live tracking. Called by ReadTool on every read.
    * When forceLive=true, originalMtime is set to 0 so the patcher always
    * re-reads the file (used for memory auto-read files).
    */
