@@ -239,18 +239,23 @@ export function renderUserBubble(text, attachments, timestamp) {
     row.appendChild(bubble);
   }
 
-  // Attachment bubbles (small gray, below text)
+  // Attachment bubbles (below text)
   (attachments || []).forEach(att => {
     const bubble = document.createElement('div');
     bubble.className = 'bubble user att-bubble';
-    const tag = document.createElement('span');
-    tag.className = 'att-file-tag';
-    if (att.type === 'image') {
-      tag.textContent = '[image' + (att.name ? ': ' + att.name : '') + ']';
+    if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
+      const img = document.createElement('img');
+      img.className = 'att-img';
+      img.src = att.preview;
+      img.title = att.name || '';
+      img.onerror = () => { img.style.display = 'none'; };
+      bubble.appendChild(img);
     } else {
-      tag.textContent = '[file' + (att.name ? ': ' + att.name : '') + ']';
+      const tag = document.createElement('span');
+      tag.className = 'att-file-tag';
+      tag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span style="margin-left:2px">' + escapeHtml(att.name || 'file') + '</span>';
+      bubble.appendChild(tag);
     }
-    bubble.appendChild(tag);
     row.appendChild(bubble);
   });
 
@@ -1289,11 +1294,11 @@ export function renderAttachmentPreview(target) {
     } else {
       const wrap = document.createElement('div');
       wrap.className = 'att-file';
-      wrap.innerHTML = '<span>[f]</span><span>' + escapeHtml(att.name) + '</span>';
-      const rm = document.createElement('span');
-      rm.textContent = ' x';
-      rm.style.cursor = 'pointer';
-      rm.style.color = '#f44336';
+      wrap.style.position = 'relative';
+      wrap.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px">' + escapeHtml(att.name) + '</span>';
+      const rm = document.createElement('div');
+      rm.className = 'att-remove';
+      rm.textContent = 'x';
       rm.onclick = () => {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
