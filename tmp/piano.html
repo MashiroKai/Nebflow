@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Piano</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    background: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
+    user-select: none;
+    overflow: hidden;
+  }
+
+  h1 {
+    color: #eee;
+    font-size: 1.4rem;
+    font-weight: 300;
+    letter-spacing: 4px;
+    margin-bottom: 4px;
+    text-shadow: 0 0 20px rgba(100, 140, 255, 0.4);
+  }
+
+  .subtitle {
+    color: #888;
+    font-size: 0.8rem;
+    margin-bottom: 20px;
+    letter-spacing: 1px;
+  }
+
+  /* Piano container */
+  .piano-wrap {
+    position: relative;
+    padding: 16px 16px 20px;
+    background: linear-gradient(180deg, #2a2a3e, #1a1a2e);
+    border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.05);
+  }
+
+  .piano {
+    position: relative;
+    display: flex;
+    /* white keys */
+  }
+
+  /* White keys */
+  .white-key {
+    width: 52px;
+    height: 200px;
+    background: linear-gradient(180deg, #fafafa 0%, #eee 70%, #ddd 100%);
+    border: 1px solid #bbb;
+    border-radius: 0 0 7px 7px;
+    margin-right: 2px;
+    position: relative;
+    cursor: pointer;
+    transition: all 0.04s ease;
+    box-shadow: 0 4px 0 rgba(0,0,0,0.2), inset 0 -3px 6px rgba(0,0,0,0.06);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 10px;
+  }
+
+  .white-key:last-child { margin-right: 0; }
+
+  .white-key.active {
+    background: linear-gradient(180deg, #c5d4ff, #a3b8ff);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.3), inset 0 0 15px rgba(80,120,255,0.3);
+    transform: translateY(2px);
+    height: 198px;
+  }
+
+  .key-label {
+    font-size: 0.65rem;
+    color: #999;
+    text-transform: uppercase;
+    pointer-events: none;
+  }
+
+  /* Black keys overlay */
+  .black-keys {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+    z-index: 2;
+  }
+
+  .black-key {
+    position: absolute;
+    width: 34px;
+    height: 128px;
+    background: linear-gradient(180deg, #333 0%, #111 60%, #000 100%);
+    border-radius: 0 0 5px 5px;
+    cursor: pointer;
+    pointer-events: auto;
+    box-shadow: 0 4px 0 rgba(0,0,0,0.4), inset 0 -3px 5px rgba(255,255,255,0.08);
+    transition: all 0.04s ease;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 8px;
+  }
+
+  .black-key.active {
+    background: linear-gradient(180deg, #5566cc, #3344aa);
+    box-shadow: 0 1px 0 rgba(0,0,0,0.4), inset 0 0 15px rgba(100,150,255,0.4);
+    transform: translateY(2px);
+    height: 126px;
+  }
+
+  .black-key .key-label {
+    color: #666;
+    font-size: 0.6rem;
+  }
+
+  /* Controls */
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin-top: 18px;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .control-btn {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: #ccc;
+    padding: 7px 16px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .control-btn:hover {
+    background: rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.2);
+  }
+
+  .control-btn.active {
+    background: rgba(100,140,255,0.2);
+    border-color: rgba(100,140,255,0.4);
+    color: #aabfff;
+  }
+
+  .volume-wrap {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .volume-wrap label {
+    color: #888;
+    font-size: 0.75rem;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    width: 100px;
+    height: 4px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 2px;
+    outline: none;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    background: #88aaff;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+
+  .now-playing {
+    margin-top: 14px;
+    color: #667;
+    font-size: 0.75rem;
+    height: 18px;
+    letter-spacing: 1px;
+  }
+
+  .now-playing span { color: #88aaff; font-weight: 500; }
+</style>
+</head>
+<body>
+
+<h1>Piano</h1>
+<p class="subtitle">鼠标点击或键盘弹奏 | A S D F G H J K 为白键, W E T Y U 为黑键</p>
+
+<div class="piano-wrap">
+  <div class="piano" id="piano"></div>
+</div>
+
+<div class="controls">
+  <button class="control-btn" id="sustainBtn">延音: 开</button>
+  <div class="volume-wrap">
+    <label>音量</label>
+    <input type="range" id="volume" min="0" max="100" value="45">
+  </div>
+</div>
+
+<div class="now-playing" id="nowPlaying"></div>
+
+<script>
+// ==================== Audio Engine ====================
+let audioCtx = null;
+let masterGain = null;
+let sustainOn = true;
+let activeNotes = new Map(); // midiNote -> { oscillators, gain }
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioCtx.createGain();
+  masterGain.gain.value = 0.45;
+  masterGain.connect(audioCtx.destination);
+}
+
+function midiToFreq(midi) {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+function noteName(midi) {
+  const octave = Math.floor(midi / 12) - 1;
+  return NOTE_NAMES[midi % 12] + octave;
+}
+
+// Piano-like tone: fundamental + harmonics with ADSR
+function playNote(midi) {
+  initAudio();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (activeNotes.has(midi)) stopNote(midi, true);
+
+  const freq = midiToFreq(midi);
+  const t = audioCtx.currentTime;
+
+  const noteGain = audioCtx.createGain();
+  noteGain.connect(masterGain);
+
+  // Attack + Decay + Sustain envelope
+  const peak = 0.5;
+  const sustainLevel = sustainOn ? 0.15 : 0.0;
+  noteGain.gain.setValueAtTime(0, t);
+  noteGain.gain.linearRampToValueAtTime(peak, t + 0.008);   // Attack 8ms
+  noteGain.gain.exponentialRampToValueAtTime(Math.max(sustainLevel, 0.001), t + 0.6); // Decay
+
+  // Harmonics: sine waves at 1x, 2x, 3x, 4x, 6x with decreasing amplitude
+  const harmonics = [
+    { mult: 1,  amp: 1.0,  type: 'sine' },
+    { mult: 2,  amp: 0.45, type: 'sine' },
+    { mult: 3,  amp: 0.22, type: 'sine' },
+    { mult: 4,  amp: 0.12, type: 'triangle' },
+    { mult: 6,  amp: 0.06, type: 'sine' },
+  ];
+
+  const oscs = harmonics.map(h => {
+    const osc = audioCtx.createOscillator();
+    osc.type = h.type;
+    osc.frequency.value = freq * h.mult;
+
+    const og = audioCtx.createGain();
+    og.gain.value = h.amp;
+    osc.connect(og);
+    og.connect(noteGain);
+    osc.start(t);
+    return osc;
+  });
+
+  activeNotes.set(midi, { oscs, gain: noteGain });
+}
+
+function stopNote(midi, fast = false) {
+  const note = activeNotes.get(midi);
+  if (!note) return;
+  const t = audioCtx.currentTime;
+  const releaseTime = fast ? 0.04 : (sustainOn ? 0.8 : 0.04);
+
+  note.gain.gain.cancelScheduledValues(t);
+  note.gain.gain.setValueAtTime(note.gain.gain.value, t);
+  note.gain.gain.exponentialRampToValueAtTime(0.0001, t + releaseTime);
+
+  note.oscs.forEach(osc => {
+    try { osc.stop(t + releaseTime + 0.05); } catch(e) {}
+  });
+
+  activeNotes.delete(midi);
+}
+
+// ==================== Build Keyboard ====================
+// Two octaves: C4(60) .. D6(86) => 15 white keys
+const startMidi = 60; // C4
+const numWhite = 15;  // C4 to D6
+
+const piano = document.getElementById('piano');
+const whiteKeys = [];
+const whiteMidis = [];
+
+// Generate white key midis
+for (let i = 0, m = startMidi; i < numWhite; m++) {
+  if ([1,3,6,8,10].includes(m % 12)) continue; // skip black
+  whiteMidis.push(m);
+  i++;
+}
+
+// Create white keys
+whiteMidis.forEach((midi, i) => {
+  const el = document.createElement('div');
+  el.className = 'white-key';
+  el.dataset.midi = midi;
+  const lbl = document.createElement('span');
+  lbl.className = 'key-label';
+  lbl.textContent = noteName(midi);
+  el.appendChild(lbl);
+  piano.appendChild(el);
+  whiteKeys.push(el);
+});
+
+// Create black keys overlay
+const blackKeysContainer = document.createElement('div');
+blackKeysContainer.className = 'black-keys';
+piano.appendChild(blackKeysContainer);
+
+const blackKeyOffsets = []; // {midi, afterWhiteIndex}
+whiteMidis.forEach((midi, i) => {
+  // Check if there's a black key after this white key
+  const nextMidi = midi + 1;
+  if ([1,3,6,8,10].includes(nextMidi % 12)) {
+    blackKeyOffsets.push({ midi: nextMidi, afterWhite: i });
+  }
+});
+
+const WHITE_KEY_W = 54; // 52 + 2 margin
+
+blackKeyOffsets.forEach(({ midi, afterWhite }) => {
+  const el = document.createElement('div');
+  el.className = 'black-key';
+  el.dataset.midi = midi;
+  // Position: right edge of white key - half black key width
+  // White key i spans from i*54 to i*54+52. Black key sits between i and i+1.
+  const left = (afterWhite + 1) * WHITE_KEY_W - 17 - 1;
+  el.style.left = left + 'px';
+  const lbl = document.createElement('span');
+  lbl.className = 'key-label';
+  lbl.textContent = noteName(midi);
+  el.appendChild(lbl);
+  blackKeysContainer.appendChild(el);
+});
+
+// ==================== Key Mapping ====================
+// White keys: A S D F G H J K L ; '  (and Z X for lower)
+// Black keys: W E T Y U O P
+const keyMap = {
+  'z': 60, 'x': 62, 'c': 64, 'v': 65, 'b': 67, 'n': 69, 'm': 71,
+  'a': 60, 's': 62, 'd': 64, 'f': 65, 'g': 67, 'h': 69, 'j': 71, 'k': 72, 'l': 74, ';': 76, "'": 77,
+  // black keys
+  'w': 61, 'e': 63, 't': 66, 'y': 68, 'u': 70, 'o': 73, 'p': 75,
+};
+
+// Build reverse map and assign keyboard labels
+const midiToKey = {};
+Object.entries(keyMap).forEach(([k, m]) => {
+  // Prefer the main row (a-l-;) over z-m
+  if (!midiToKey[m] || 'asdfghjkl;\''.includes(k)) {
+    midiToKey[m] = k;
+  }
+});
+
+// Show keyboard hint on keys
+document.querySelectorAll('[data-midi]').forEach(el => {
+  const midi = parseInt(el.dataset.midi);
+  const k = midiToKey[midi];
+  if (k) {
+    const lbl = el.querySelector('.key-label');
+    lbl.innerHTML = `<b style="font-size:0.7rem;color:${el.classList.contains('black-key')?'#aaa':'#555'}">${k.toUpperCase()}</b><br>${noteName(midi)}`;
+  }
+});
+
+// ==================== Interaction ====================
+function pressKey(midi) {
+  const el = document.querySelector(`[data-midi="${midi}"]`);
+  if (el) el.classList.add('active');
+  playNote(midi);
+  document.getElementById('nowPlaying').innerHTML = `正在弹奏: <span>${noteName(midi)}</span> (${midiToFreq(midi).toFixed(1)} Hz)`;
+}
+
+function releaseKey(midi) {
+  const el = document.querySelector(`[data-midi="${midi}"]`);
+  if (el) el.classList.remove('active');
+  stopNote(midi);
+}
+
+// Mouse / Touch
+document.querySelectorAll('[data-midi]').forEach(el => {
+  const midi = parseInt(el.dataset.midi);
+
+  const onDown = (e) => { e.preventDefault(); pressKey(midi); };
+  const onUp = (e) => { e.preventDefault(); releaseKey(midi); };
+
+  el.addEventListener('mousedown', onDown);
+  el.addEventListener('mouseup', onUp);
+  el.addEventListener('mouseleave', () => { if (el.classList.contains('active')) releaseKey(midi); });
+  el.addEventListener('touchstart', onDown, { passive: false });
+  el.addEventListener('touchend', onUp, { passive: false });
+});
+
+// Keyboard
+const pressedKeys = new Set();
+window.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  const key = e.key.toLowerCase();
+  if (keyMap[key] !== undefined && !pressedKeys.has(key)) {
+    pressedKeys.add(key);
+    pressKey(keyMap[key]);
+  }
+});
+
+window.addEventListener('keyup', (e) => {
+  const key = e.key.toLowerCase();
+  if (pressedKeys.has(key)) {
+    pressedKeys.delete(key);
+    releaseKey(keyMap[key]);
+  }
+});
+
+// Controls
+document.getElementById('volume').addEventListener('input', (e) => {
+  if (masterGain) masterGain.gain.value = e.target.value / 100;
+});
+
+const sustainBtn = document.getElementById('sustainBtn');
+sustainBtn.addEventListener('click', () => {
+  sustainOn = !sustainOn;
+  sustainBtn.textContent = '延音: ' + (sustainOn ? '开' : '关');
+  sustainBtn.classList.toggle('active', sustainOn);
+});
+
+// Click anywhere to init audio (browser autoplay policy)
+document.addEventListener('click', () => initAudio(), { once: true });
+</script>
+
+</body>
+</html>
