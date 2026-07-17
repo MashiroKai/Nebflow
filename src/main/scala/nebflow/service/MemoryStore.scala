@@ -19,14 +19,8 @@ import scala.jdk.CollectionConverters.*
  *   - Folder:  ~/.nebflow/folders/{fid}.memory.md       (per folder)
  *   - Session: ~/.nebflow/sessions/{sid}.memory.md      (per session)
  *
- * Detail files: ~/.nebflow/memory/{hash}.md
- *   - When an entry has detail content, it is stored in a separate file
- *     named by the SHA-256 hash of the entry content (first 12 hex chars).
- *   - The index entry carries a →hash reference so agents can find it.
- *
- * Memory files are read automatically via synthetic Read tool calls at session
- * start (MemoryAutoRead) and kept live via LiveFileTracker. Agents update them
- * directly using Edit/Write.
+ * Memory files are read automatically via synthetic Read tool calls (MemoryAutoRead)
+ * and kept live via LiveFileTracker. Agents update them directly using Edit/Write.
  *
  * All reads use mtime-based caching.
  */
@@ -45,25 +39,11 @@ object MemoryStore:
   def sessionMemoryPath(sessionId: String): os.Path =
     PathUtil.dataRoot / "sessions" / s"$sessionId.memory.md"
 
-  /** Directory for detail files. */
-  def detailDir: os.Path = PathUtil.dataRoot / "memory"
-
-  /** Path for a detail file given its hash. */
-  def detailPath(hash: String): os.Path = detailDir / s"$hash.md"
-
   /** List all folder memory files that exist on disk. */
   def allFolderMemoryPaths: Seq[os.Path] =
     val dir = PathUtil.dataRoot / "folders"
     if !os.exists(dir) then Seq.empty
     else os.list(dir).filter(_.last.endsWith(".memory.md")).toSeq
-
-  // --- Hash utility ---
-
-  /** Compute a 12-char hex hash from content. */
-  def contentHash(content: String): String =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
-    digest.update(content.getBytes("UTF-8"))
-    digest.digest().take(6).map(b => String.format("%02x", b)).mkString
 
   // --- Mtime-cached file reads ---
 
@@ -107,14 +87,6 @@ object MemoryStore:
 
   def saveFolderMemory(folderId: String, content: String): IO[Unit] =
     saveFile(folderMemoryPath(folderId), content, () => getFolderCache(folderId).invalidate)
-
-  // --- Detail files (called by agents via Write/Edit tool) ---
-
-  /** Write a detail file to ~/.nebflow/memory/{hash}.md. */
-  def writeDetailFile(hash: String, content: String): IO[Unit] =
-    IO.blocking {
-      os.write.over(detailPath(hash), content, createFolders = true)
-    }
 
   // --- Cache invalidation ---
 
