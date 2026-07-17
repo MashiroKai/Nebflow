@@ -9,7 +9,7 @@ import nebflow.service.MemoryStore
 import nebflow.shared.*
 
 /**
- * Constructs synthetic Read(live=true) tool_use/tool_result messages for
+ * Constructs synthetic Read tool_use/tool_result messages for
  * the four memory levels: User, Agent, Folder, Session.
  *
  * These messages are prepended to the conversation on every LLM call so the
@@ -46,10 +46,7 @@ object MemoryAutoRead:
         ContentBlock.ToolUse(
           id,
           "Read",
-          JsonObject(
-            "file_path" -> path.asJson,
-            "live" -> true.asJson
-          )
+          JsonObject("file_path" -> path.asJson)
         )
       }
       val toolResults = reads.map { (id, _, content) =>
