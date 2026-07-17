@@ -69,15 +69,17 @@ const FLOW_CSS = `
 .flow-ring-2 .flow-dot { left: 8px; }
 .flow-ring-3 .flow-dot { left: 13px; }
 
-/* Running: orbit animation */
+/* Running: orbit animation — negative delays scatter starting angles */
 .flow-node.running .flow-dot-wrap {
   animation: flow-spin 3s linear infinite;
 }
 .flow-node.running .flow-ring-2 .flow-dot-wrap {
   animation: flow-spin 4.5s linear infinite reverse;
+  animation-delay: -3s;
 }
 .flow-node.running .flow-ring-3 .flow-dot-wrap {
   animation: flow-spin 6s linear infinite;
+  animation-delay: -4s;
 }
 @keyframes flow-spin { to { transform: rotate(360deg); } }
 
@@ -97,6 +99,12 @@ const FLOW_CSS = `
 .flow-label {
   font: 500 10px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
+  white-space: nowrap;
+}
+.flow-agent {
+  font: 500 8px -apple-system, sans-serif;
+  color: var(--color-primary, #6366f1);
+  margin-top: 1px;
   white-space: nowrap;
 }
 .flow-status {
@@ -163,10 +171,11 @@ function computeLayout(steps) {
 }
 
 // ── Node HTML ──────────────────────────────────────────────
-function nodeHtml(id, label, status, isRoot = false) {
+function nodeHtml(id, label, status, isRoot = false, agent = '') {
   const cls = `flow-node ${status}${isRoot ? ' root' : ''}`;
   const displayLabel = isRoot ? 'Main Agent' : label;
   const statusText = isRoot ? 'orchestrator' : status;
+  const agentHtml = (!isRoot && agent) ? `<div class="flow-agent">${agent}</div>` : '';
   return `
     <div class="${cls}" data-step-id="${id}">
       <div class="flow-orbit">
@@ -175,6 +184,7 @@ function nodeHtml(id, label, status, isRoot = false) {
         <div class="flow-ring flow-ring-3"><div class="flow-dot-wrap"><div class="flow-dot"></div></div></div>
       </div>
       <div class="flow-label">${displayLabel}</div>
+      ${agentHtml}
       <div class="flow-status">${statusText}</div>
     </div>`;
 }
@@ -256,8 +266,8 @@ export function startFlow(msg) {
 
   const nodes = [
     { id: '__root__', label: 'Main Agent', status: 'done' },
-    ...steps.map(s => ({ id: s.id, label: s.id, status: 'pending' })),
-    { id: '__verify__', label: 'verify', status: 'pending' },
+    ...steps.map(s => ({ id: s.id, label: s.id, agent: s.agent, status: 'pending' })),
+    { id: '__verify__', label: 'verify', agent: msg.verifyAgent || 'Explorer', status: 'pending' },
   ];
 
   flowData = {
@@ -274,7 +284,7 @@ export function startFlow(msg) {
 
   // Build HTML
   const nodesHtml = nodes.map(n =>
-    nodeHtml(n.id, n.label, n.status, n.id === '__root__')
+    nodeHtml(n.id, n.label, n.status, n.id === '__root__', n.agent || '')
   ).join('');
 
   const infoHtml = `
@@ -402,7 +412,7 @@ export function toggleCanvas() {
   } else {
     // Re-render content and open
     const nodesHtml = flowData.nodes.map(n =>
-      nodeHtml(n.id, n.label, n.status, n.id === '__root__')
+      nodeHtml(n.id, n.label, n.status, n.id === '__root__', n.agent || '')
     ).join('');
     const infoHtml = `<div class="flow-info"><div>${flowData.name}</div><div class="sub" id="flow-info-sub"></div></div>`;
     setCanvasContent(`${FLOW_CSS}<div class="flow-root">${infoHtml}<svg class="flow-svg" xmlns="http://www.w3.org/2000/svg"></svg>${nodesHtml}</div>`);
