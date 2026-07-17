@@ -37,7 +37,9 @@ const STREAM_MSG_TYPES = new Set([
   'roundComplete',
   'agentStart', 'agentTextDelta', 'agentToolCallDetected',
   'agentToolStart', 'agentToolEnd', 'agentEnd',
-  'agentThinking', 'agentRetryStatus', 'agentDone'
+  'agentThinking', 'agentRetryStatus', 'agentDone',
+  'flowStarted', 'flowStepStarted', 'flowStepCompleted', 'flowStepFailed',
+  'flowVerifyResult', 'flowLoopIteration', 'flowCompleted'
 ]);
 
 export function onMessage(type, handler) {
