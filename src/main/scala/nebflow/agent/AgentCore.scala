@@ -26,7 +26,7 @@ private[agent] trait AgentCore:
    */
   private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
 
-  /** Internal tools excluded from List("*") wildcard expansion. Only injected explicitly by FlowActor. */
+  /** Internal tools excluded from List("*") wildcard expansion. Only injected explicitly by pipeline verify. */
   private val InternalTools = Set("FlowVerify")
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")

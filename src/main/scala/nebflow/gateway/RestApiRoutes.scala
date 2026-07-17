@@ -5,8 +5,9 @@ import cats.effect.std.Queue
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.syntax.*
-import io.circe.{Json, parser}
+import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.SharedResources
+import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.NeblinkService
 import nebflow.service.ConfigService
@@ -627,6 +628,25 @@ class RestApiRoutes(
               }
             end if
           end if
+
+    // POST /api/flow/event — Source scripts inject external events (no auth, local only)
+    case req @ POST -> Root / "flow" / "event" =>
+      req.as[Json].flatMap { body =>
+        val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
+        val eventType = body.hcursor.downField("type").as[String].getOrElse("")
+        val data = body.hcursor.downField("data").as[JsonObject].getOrElse(JsonObject.empty)
+
+        if sessionId.isEmpty || eventType.isEmpty then
+          BadRequest(Json.obj("error" -> "Missing 'sessionId' or 'type'".asJson))
+        else
+          FlowTreeRegistry.get(sessionId).flatMap {
+            case Some(treeRef) =>
+              treeRef ! TreeCommand.EventFired(eventType, data)
+              Ok(Json.obj("status" -> "ok".asJson, "event" -> eventType.asJson))
+            case None =>
+              NotFound(Json.obj("error" -> s"No FlowTree for session '$sessionId'".asJson))
+          }
+      }
   }
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =

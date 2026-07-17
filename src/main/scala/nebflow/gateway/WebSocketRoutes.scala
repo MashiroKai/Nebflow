@@ -9,7 +9,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
-import nebflow.core.flow.{FlowActor, FlowStore}
+// FlowTreeStore import will be added in Phase 1 when the file is created
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
@@ -144,49 +144,12 @@ class WebSocketRoutes(
               }
               .void *>
               rootAgents.update(_ + (sessionId -> ref)) *>
-              restoreFlowsForSession(sessionId, ref, pr).start.as(ref)
+              // FlowTree restoration will be handled here in Phase 5
+              IO.unit.as(ref)
           }
     }
 
-  /** Restore persisted flows for a session after restart (graceful restart). */
-  private def restoreFlowsForSession(
-    sessionId: String,
-    agentRef: nebflow.actor.ActorRef[AgentCommand],
-    projectRoot: String
-  ): IO[Unit] =
-    FlowStore.listRestorable(sessionId).flatMap { flowIds =>
-      if flowIds.isEmpty then IO.unit
-      else
-        logger.info(s"Restoring ${flowIds.size} flow(s) for session $sessionId") *>
-          flowIds.traverse_ { flowId =>
-            FlowStore.load(sessionId, flowId).flatMap {
-              case Some(snapshot) =>
-                val broadcastWsSend = (json: Json) => wsHub.broadcast(json)
-                val recordingWsSend = makeRecordingWsSend(sessionId, broadcastWsSend)
-                nebulaSystem
-                  .spawn(
-                    FlowActor(
-                      flowDef = snapshot.flowDef,
-                      flowId = snapshot.flowId,
-                      parentAgentRef = agentRef,
-                      wsSend = Some(recordingWsSend),
-                      parentSessionId = Some(sessionId),
-                      parentDepth = 0,
-                      resources = sharedResources,
-                      projectRoot = projectRoot,
-                      bypass = false,
-                      restoreSnapshot = Some(snapshot)
-                    ),
-                    snapshot.flowId
-                  )
-                  .void
-                  .handleErrorWith { e =>
-                    logger.warn(s"Failed to restore flow $flowId: ${e.getMessage}").void
-                  }
-              case None => IO.unit
-            }
-          }
-    }
+  /** Restore persisted flows for a session after restart — Phase 5 will implement FlowTree restoration. */
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
