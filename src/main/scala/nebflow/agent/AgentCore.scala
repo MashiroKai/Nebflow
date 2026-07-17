@@ -212,7 +212,7 @@ private[agent] trait AgentCore:
           modelDescs <- if isCompactTurn then IO.pure(Nil) else resources.providerRegistry.getAllModelsDetailed()
           freshTools =
             if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
-          // Memory auto-read: inject synthetic Read(live=true) for memory files
+          // Memory auto-read: inject synthetic Read for memory files
           memoryMsgs = MemoryAutoRead.buildMessages(freshDef.name, stateForLlm.folderId, stateForLlm.sessionId)
           _ <- stateForLlm.liveFileTracker
             .traverse_(t => MemoryAutoRead.register(t, freshDef.name, stateForLlm.folderId, stateForLlm.sessionId))
