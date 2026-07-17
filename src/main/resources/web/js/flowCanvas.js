@@ -1,42 +1,128 @@
 // flowCanvas.js — Flow DAG visualization on the canvas panel.
 //
-// Each agent is a mini solar system: concentric rings with orbiting dots.
-// Running agents have dots in motion; done/pending are static.
-// All black-and-white, line-based aesthetic.
-// Data flows along edges only when a done node feeds a running node.
+// Tree-branch layout with glassmorphism node cards.
+// Each node is a mini solar system with CSS-animated orbiting dots.
+// Theme-aware via CSS variables. Session-bound.
 
 import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader } from './canvas.js';
-import state from './state.js';
-
-// ── Constants ──────────────────────────────────────────────
-const INK = '#333333';
-const LINE = '#CCCCCC';
-const LINE_ACTIVE = '#999999';
-const TXT = '#888888';
-const TXT_DIM = '#AAAAAA';
 
 // ── State ──────────────────────────────────────────────────
-let canvasEl = null;
-let ctx = null;
-let rafId = null;
+let flowData = null;
 let resizeObs = null;
-let W = 0, H = 0;
-let time = 0;
 
-let flowData = null;  // { name, steps, edges, verify, loop, iteration, maxIterations, phase }
+// ── CSS (injected once into canvas-content) ────────────────
+const FLOW_CSS = `
+<style>
+.flow-root {
+  width: 100%; height: 100%; position: relative; overflow: hidden;
+}
+.flow-svg {
+  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 1;
+}
+.flow-svg path { fill: none; stroke: var(--color-border); stroke-width: 1; }
+.flow-svg path.active { stroke: var(--color-text-muted); }
 
-// ── Solar system node model ────────────────────────────────
-function makeRings() {
-  return [
-    { r: 5,  dots: [{ a: Math.random() * 6.28, s: 0.025 }] },
-    { r: 10, dots: [{ a: Math.random() * 6.28, s: 0.018 }, { a: Math.random() * 6.28, s: 0.018 }] },
-    { r: 15, dots: [{ a: Math.random() * 6.28, s: 0.012 }] },
-  ];
+/* Node card — glassmorphism */
+.flow-node {
+  position: absolute; transform: translate(-50%, -50%);
+  z-index: 2;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  padding: 10px 14px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
+  text-align: center;
+  min-width: 70px;
+  transition: opacity 0.4s ease;
+}
+.flow-node.root {
+  min-width: 90px;
+  border-radius: 16px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08), 0 6px 20px rgba(0,0,0,0.06);
 }
 
-// ── Layout: compute node positions from DAG ────────────────
-function computeLayout(steps, verifyId) {
-  // Compute depth (longest dependency chain) for each step
+/* Solar system orbit */
+.flow-orbit {
+  position: relative; width: 36px; height: 36px; margin: 0 auto 6px;
+}
+.flow-ring {
+  position: absolute; top: 50%; left: 50%;
+  border: 1px solid var(--color-border);
+  border-radius: 50%; transform: translate(-50%, -50%);
+}
+.flow-ring-1 { width: 8px; height: 8px; }
+.flow-ring-2 { width: 18px; height: 18px; }
+.flow-ring-3 { width: 28px; height: 28px; }
+
+.flow-dot-wrap {
+  position: absolute; top: 50%; left: 50%; width: 0; height: 0;
+}
+.flow-dot {
+  position: absolute; width: 3px; height: 3px;
+  background: var(--color-text); border-radius: 50%;
+  top: -1.5px;
+}
+.flow-ring-1 .flow-dot { left: 3px; }
+.flow-ring-2 .flow-dot { left: 8px; }
+.flow-ring-3 .flow-dot { left: 13px; }
+
+/* Running: orbit animation */
+.flow-node.running .flow-dot-wrap {
+  animation: flow-spin 3s linear infinite;
+}
+.flow-node.running .flow-ring-2 .flow-dot-wrap {
+  animation: flow-spin 4.5s linear infinite reverse;
+}
+.flow-node.running .flow-ring-3 .flow-dot-wrap {
+  animation: flow-spin 6s linear infinite;
+}
+@keyframes flow-spin { to { transform: rotate(360deg); } }
+
+/* Pending: dashed rings, dimmed */
+.flow-node.pending .flow-ring { border-style: dashed; opacity: 0.4; }
+.flow-node.pending .flow-dot { opacity: 0.3; }
+.flow-node.pending .flow-label { opacity: 0.4; }
+
+/* Done: stable, slightly dimmed */
+.flow-node.done .flow-dot-wrap { animation: none; }
+.flow-node.done .flow-label { opacity: 0.6; }
+
+/* Failed */
+.flow-node.failed .flow-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
+
+/* Labels */
+.flow-label {
+  font: 500 10px -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+.flow-status {
+  font: 400 7px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 2px;
+}
+
+/* Header */
+.flow-info {
+  position: absolute; top: 16px; left: 20px; z-index: 3;
+  font: 600 12px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.flow-info .sub {
+  font: 400 9px -apple-system, sans-serif;
+  color: var(--color-text-muted); opacity: 0.6;
+  margin-top: 3px;
+}
+</style>
+`;
+
+// ── Layout ─────────────────────────────────────────────────
+function computeLayout(steps) {
   const depthMap = {};
   function getDepth(id) {
     if (id in depthMap) return depthMap[id];
@@ -50,389 +136,281 @@ function computeLayout(steps, verifyId) {
     return d;
   }
   steps.forEach(s => getDepth(s.id));
-
-  // Group by depth level
-  const maxDepth = Math.max(...Object.values(depthMap), 0);
+  const maxDepth = Math.max(0, ...Object.values(depthMap));
   const levels = {};
   steps.forEach(s => {
     const d = depthMap[s.id];
     if (!levels[d]) levels[d] = [];
     levels[d].push(s);
   });
-
-  // Position each level
-  const nodes = [];
-  const levelCount = maxDepth + 1;
+  // Position: root at top, steps by level, verify at bottom
+  const totalLevels = maxDepth + 2; // +1 for root, +1 for verify
+  const positions = {};
+  // Root (main agent)
+  positions['__root__'] = { x: 0.5, y: 0.08 };
+  // Work steps
   for (let lv = 0; lv <= maxDepth; lv++) {
     const group = levels[lv] || [];
-    const y = (lv + 0.5) / (levelCount + 1.5);  // +1.5 to leave room for verify
+    const y = (lv + 1) / (totalLevels + 0.5);
     group.forEach((step, i) => {
       const x = group.length === 1 ? 0.5 : (i + 1) / (group.length + 1);
-      nodes.push({
-        id: step.id,
-        agent: step.agent,
-        label: step.id,
-        x, y,
-        status: 'pending',
-        rings: makeRings(),
+      positions[step.id] = { x, y };
+    });
+  }
+  // Verify at bottom
+  positions['__verify__'] = { x: 0.5, y: (maxDepth + 1.5) / (totalLevels + 0.5) };
+  return { positions, maxDepth, levels };
+}
+
+// ── Node HTML ──────────────────────────────────────────────
+function nodeHtml(id, label, status, isRoot = false) {
+  const cls = `flow-node ${status}${isRoot ? ' root' : ''}`;
+  const displayLabel = isRoot ? 'Main Agent' : label;
+  const statusText = isRoot ? 'orchestrator' : status;
+  return `
+    <div class="${cls}" data-step-id="${id}">
+      <div class="flow-orbit">
+        <div class="flow-ring flow-ring-1"><div class="flow-dot-wrap"><div class="flow-dot"></div></div></div>
+        <div class="flow-ring flow-ring-2"><div class="flow-dot-wrap"><div class="flow-dot"></div></div></div>
+        <div class="flow-ring flow-ring-3"><div class="flow-dot-wrap"><div class="flow-dot"></div></div></div>
+      </div>
+      <div class="flow-label">${displayLabel}</div>
+      <div class="flow-status">${statusText}</div>
+    </div>`;
+}
+
+// ── SVG paths ──────────────────────────────────────────────
+function buildSvgPaths(positions, steps, containerW, containerH) {
+  const verifyId = '__verify__';
+  const rootId = '__root__';
+  const paths = [];
+
+  function pos(id) {
+    const p = positions[id];
+    return p ? { x: p.x * containerW, y: p.y * containerH } : null;
+  }
+
+  // Root → first level steps (or directly to verify if no steps)
+  steps.forEach(s => {
+    if (!s.dependsOn || s.dependsOn.length === 0) {
+      const from = pos(rootId), to = pos(s.id);
+      if (from && to) paths.push({ from, to, fromId: rootId, toId: s.id });
+    }
+    // Step → dependencies
+    if (s.dependsOn) {
+      s.dependsOn.forEach(d => {
+        const from = pos(d), to = pos(s.id);
+        if (from && to) paths.push({ from, to, fromId: d, toId: s.id });
       });
-    });
-  }
-
-  // Verify node at bottom
-  nodes.push({
-    id: verifyId,
-    agent: 'verify',
-    label: 'verify',
-    x: 0.5,
-    y: (maxDepth + 1.5) / (levelCount + 1.5),
-    status: 'pending',
-    rings: makeRings(),
+    }
+    // Step → verify
+    const from = pos(s.id), to = pos(verifyId);
+    if (from && to) paths.push({ from, to, fromId: s.id, toId: verifyId });
   });
 
-  return nodes;
+  // Build path strings with cubic bezier (organic branch curve)
+  return paths.map(p => {
+    const dy = p.to.y - p.from.y;
+    const cp1y = p.from.y + dy * 0.5;
+    const cp2y = p.to.y - dy * 0.5;
+    const d = `M ${p.from.x},${p.from.y} C ${p.from.x},${cp1y} ${p.to.x},${cp2y} ${p.to.x},${p.to.y}`;
+    return { d, fromId: p.fromId, toId: p.toId };
+  });
 }
 
-// ── Canvas setup ───────────────────────────────────────────
-function ensureCanvas() {
-  setCanvasContent('<canvas id="flow-dag" style="width:100%;height:100%;display:block;"></canvas>');
-  showCanvasHeader(false);
-  canvasEl = document.getElementById('flow-dag');
-  ctx = canvasEl.getContext('2d');
-
-  function resize() {
-    const rect = canvasEl.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-    canvasEl.width = rect.width * dpr;
-    canvasEl.height = rect.height * dpr;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    W = rect.width;
-    H = rect.height;
-  }
-
-  resize();
-  resizeObs = new ResizeObserver(resize);
-  resizeObs.observe(canvasEl);
+function renderSvg(paths, activeFromIds) {
+  const svg = document.querySelector('.flow-svg');
+  if (!svg) return;
+  svg.innerHTML = paths.map(p => {
+    const isActive = activeFromIds.includes(p.fromId);
+    return `<path d="${p.d}" class="${isActive ? 'active' : ''}"/>`;
+  }).join('');
 }
 
-function destroyCanvas() {
-  if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-  if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
-  canvasEl = null;
-  ctx = null;
-}
-
-// ── Drawing ────────────────────────────────────────────────
-const N = id => flowData?.nodes.find(n => n.id === id);
-
-function edgePath(from, to) {
-  const x1 = from.x * W, y1 = from.y * H;
-  const x2 = to.x * W, y2 = to.y * H;
-  const dx = x2 - x1, dy = y2 - y1;
-  const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-  const ux = dx / dist, uy = dy / dist;
-  const pad = 18; // node radius + margin
-  return {
-    x1: x1 + ux * pad, y1: y1 + uy * pad,
-    x2: x2 - ux * pad, y2: y2 - uy * pad,
-    mx: (x1 + x2) / 2, my: (y1 + y2) / 2,
-  };
-}
-
-function bezierPt(p, t) {
-  return {
-    x: (1-t)*(1-t)*p.x1 + 2*(1-t)*t*p.mx + t*t*p.x2,
-    y: (1-t)*(1-t)*p.y1 + 2*(1-t)*t*p.my + t*t*p.y2,
-  };
-}
-
-function drawEdges() {
+// ── Refresh line positions after layout ────────────────────
+function refreshLines() {
   if (!flowData) return;
-  const { nodes, edges, flows } = flowData;
-
-  // Static lines
-  edges.forEach(e => {
-    const f = N(e.from), t = N(e.to);
-    if (!f || !t) return;
-    const p = edgePath(f, t);
-    const isActive = f.status === 'done' || f.status === 'running';
-    ctx.beginPath();
-    ctx.moveTo(p.x1, p.y1);
-    ctx.quadraticCurveTo(p.mx, p.my, p.x2, p.y2);
-    ctx.strokeStyle = isActive ? LINE_ACTIVE : LINE;
-    ctx.lineWidth = 0.8;
-    ctx.stroke();
-  });
-
-  // Flowing dots (done → running only)
-  flows.forEach(f => {
-    f.t += f.speed;
-    if (f.t > 1) f.t = 0;
-    const from = N(f.fromId), to = N(f.toId);
-    if (!from || !to) return;
-    const p = edgePath(from, to);
-    const pt = bezierPt(p, f.t);
-    ctx.fillStyle = INK;
-    ctx.beginPath();
-    ctx.arc(pt.x, pt.y, 1.5, 0, 6.28);
-    ctx.fill();
-  });
-}
-
-function drawNode(n) {
-  const x = n.x * W, y = n.y * H;
-  const running = n.status === 'running';
-  const done = n.status === 'done';
-  const failed = n.status === 'failed';
-  const pending = n.status === 'pending';
-
-  // Consistent opacity — user requested uniform visibility
-  const color = INK;
-  const lineColor = INK;
-
-  // Concentric rings + orbiting dots
-  n.rings.forEach(ring => {
-    // Ring circle
-    ctx.beginPath();
-    ctx.arc(x, y, ring.r, 0, 6.28);
-    ctx.strokeStyle = lineColor;
-    ctx.lineWidth = 0.7;
-    if (pending) ctx.setLineDash([1.5, 1.5]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Dots on ring
-    ring.dots.forEach(d => {
-      if (running) d.a += d.s;
-      const dx = x + ring.r * Math.cos(d.a);
-      const dy = y + ring.r * Math.sin(d.a);
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(dx, dy, 1.2, 0, 6.28);
-      ctx.fill();
-    });
-  });
-
-  // Center point
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y, 1.2, 0, 6.28);
-  ctx.fill();
-
-  // Failed marker
-  if (failed) {
-    ctx.strokeStyle = INK;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x - 18, y - 18);
-    ctx.lineTo(x + 18, y + 18);
-    ctx.moveTo(x + 18, y - 18);
-    ctx.lineTo(x - 18, y + 18);
-    ctx.stroke();
-  }
-
-  // Label
-  ctx.font = '500 9px -apple-system, sans-serif';
-  ctx.fillStyle = TXT;
-  ctx.textAlign = 'center';
-  ctx.fillText(n.label, x, y + 24);
-
-  // Status subtitle
-  const sub = running ? 'running' : done ? 'done' : pending ? 'pending' : 'failed';
-  ctx.font = '400 7px -apple-system, sans-serif';
-  ctx.fillStyle = TXT_DIM;
-  ctx.fillText(sub, x, y + 34);
-}
-
-function drawHeader() {
-  if (!flowData) return;
-  const { name, iteration, maxIterations, completedSteps, totalSteps, phase } = flowData;
-
-  ctx.font = '600 11px -apple-system, sans-serif';
-  ctx.fillStyle = TXT;
-  ctx.textAlign = 'left';
-  ctx.fillText(name, 24, 28);
-
-  ctx.font = '400 9px -apple-system, sans-serif';
-  ctx.fillStyle = TXT_DIM;
-  const running = flowData.nodes.filter(n => n.status === 'running').length;
-  let info = `${running} running · ${completedSteps}/${totalSteps} steps`;
-  if (iteration > 0) info += ` · iter ${iteration}/${maxIterations}`;
-  ctx.fillText(info, 24, 42);
-}
-
-function animate() {
-  time += 0.016;
-  if (!ctx) return;
-  ctx.clearRect(0, 0, W, H);
-  drawHeader();
-  drawEdges();
-  flowData?.nodes.forEach(drawNode);
-  rafId = requestAnimationFrame(animate);
+  const container = document.querySelector('.flow-root');
+  if (!container) return;
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  const paths = buildSvgPaths(flowData.positions, flowData.steps, w, h);
+  const activeFromIds = flowData.nodes
+    .filter(n => n.status === 'done' || n.status === 'running')
+    .map(n => n.id);
+  renderSvg(paths, activeFromIds);
 }
 
 // ── Public API ─────────────────────────────────────────────
 
-/** Start a new flow visualization. Call on 'flowStarted' event. */
 export function startFlow(msg) {
-  console.log('[flowCanvas] flowStarted received:', { flowName: msg.flowName, stepCount: msg.steps?.length, steps: msg.steps });
-  const steps = msg.steps || [];
-  const verifyId = '__verify__';
+  console.log('[flowCanvas] flowStarted:', msg.flowName, 'steps:', msg.steps?.length);
 
-  // Build layout
-  const nodes = computeLayout(steps.map(s => ({
+  const steps = (msg.steps || []).map(s => ({
     id: s.id || s.stepId,
     agent: s.agent || s.agentName || '',
     dependsOn: s.dependsOn || [],
-  })), verifyId);
+  }));
 
-  // Build edges from dependencies
-  const edges = [];
-  steps.forEach(s => {
-    const sid = s.id || s.stepId;
-    const deps = s.dependsOn || [];
-    deps.forEach(d => edges.push({ from: d, to: sid }));
-    // Each step → verify (verify depends on all)
-    edges.push({ from: sid, to: verifyId });
-  });
+  const { positions } = computeLayout(steps);
+
+  const nodes = [
+    { id: '__root__', label: 'Main Agent', status: 'done' },
+    ...steps.map(s => ({ id: s.id, label: s.id, status: 'pending' })),
+    { id: '__verify__', label: 'verify', status: 'pending' },
+  ];
 
   flowData = {
     name: msg.flowName || msg.name || 'flow',
+    sessionId: msg.sessionId || null,
+    steps,
+    positions,
     nodes,
-    edges,
-    flows: [],     // active flowing dots
     iteration: 0,
     maxIterations: msg.maxIterations || 3,
     completedSteps: 0,
     totalSteps: steps.length,
-    phase: 'working',
   };
 
-  ensureCanvas();
-  openCanvas('');
-  if (!rafId) animate();
-}
+  // Build HTML
+  const nodesHtml = nodes.map(n =>
+    nodeHtml(n.id, n.label, n.status, n.id === '__root__')
+  ).join('');
 
-/** Reposition dynamically-created nodes when steps arrive incrementally. */
-function relayoutIncremental() {
-  if (!flowData) return;
-  const stepNodes = flowData.nodes.filter(n => n.id !== '__verify__');
-  const count = stepNodes.length;
-  stepNodes.forEach((n, i) => {
-    n.x = 0.5;
-    n.y = (i + 1) / (count + 1) * 0.85;
+  const infoHtml = `
+    <div class="flow-info">
+      <div>${flowData.name}</div>
+      <div class="sub" id="flow-info-sub"></div>
+    </div>`;
+
+  setCanvasContent(`${FLOW_CSS}
+    <div class="flow-root">
+      ${infoHtml}
+      <svg class="flow-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      ${nodesHtml}
+    </div>`);
+  showCanvasHeader(false);
+  openCanvas('');
+
+  // Position nodes
+  positionNodes();
+
+  // Draw lines after layout
+  requestAnimationFrame(() => {
+    refreshLines();
+    updateInfo();
   });
-  const verify = flowData.nodes.find(n => n.id === '__verify__');
-  if (verify) {
-    verify.x = 0.5;
-    verify.y = 0.92;
+
+  // Watch for resize
+  const container = document.querySelector('.flow-root');
+  if (container && !resizeObs) {
+    resizeObs = new ResizeObserver(() => {
+      positionNodes();
+      refreshLines();
+    });
+    resizeObs.observe(container);
   }
 }
 
-/** Update a step's status. Call on flowStepStarted/Completed/Failed. */
+function positionNodes() {
+  if (!flowData) return;
+  const container = document.querySelector('.flow-root');
+  if (!container) return;
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  flowData.nodes.forEach(n => {
+    const p = flowData.positions[n.id];
+    if (!p) return;
+    const el = container.querySelector(`[data-step-id="${n.id}"]`);
+    if (el) {
+      el.style.left = (p.x * w) + 'px';
+      el.style.top = (p.y * h) + 'px';
+    }
+  });
+}
+
 export function updateStep(msg) {
   if (!flowData) return;
-  let node = flowData.nodes.find(n => n.id === msg.stepId);
-  if (!node) {
-    // Incremental fallback: step wasn't in the initial layout (msg.steps
-    // was empty or missing). Create it on-the-fly and reposition.
-    node = {
-      id: msg.stepId,
-      agent: msg.agent || '',
-      label: msg.stepId,
-      x: 0.5,
-      y: 0,
-      status: 'pending',
-      rings: makeRings(),
-    };
-    flowData.nodes.push(node);
-    flowData.edges.push({ from: msg.stepId, to: '__verify__' });
-    relayoutIncremental();
-  }
-
-  const oldStatus = node.status;
+  const node = flowData.nodes.find(n => n.id === msg.stepId);
+  if (!node) return;
   const newStatus = msg.status || (msg.type === 'flowStepStarted' ? 'running'
     : msg.type === 'flowStepCompleted' ? 'done'
     : msg.type === 'flowStepFailed' ? 'failed' : node.status);
   node.status = newStatus;
-
-  // Recompute completed count
+  // Update DOM
+  const el = document.querySelector(`[data-step-id="${msg.stepId}"]`);
+  if (el) {
+    el.className = `flow-node ${newStatus}${node.id === '__root__' ? ' root' : ''}`;
+    const statusEl = el.querySelector('.flow-status');
+    if (statusEl) statusEl.textContent = newStatus;
+  }
   flowData.completedSteps = flowData.nodes.filter(n =>
     n.status === 'done' || n.status === 'failed').length;
-
-  // Manage flowing dots: add when from=done → to=running
-  refreshFlows();
+  refreshLines();
+  updateInfo();
 }
 
-/** Update verify result. Call on flowVerifyResult. */
 export function updateVerify(msg) {
   if (!flowData) return;
   const node = flowData.nodes.find(n => n.id === '__verify__');
   if (!node) return;
-  if (msg.pass) {
-    node.status = 'done';
-  } else {
-    node.status = 'failed';
+  node.status = msg.pass ? 'done' : 'failed';
+  const el = document.querySelector('[data-step-id="__verify__"]');
+  if (el) {
+    el.className = `flow-node ${node.status}`;
+    const s = el.querySelector('.flow-status');
+    if (s) s.textContent = msg.pass ? 'passed' : 'failed';
   }
-  refreshFlows();
+  refreshLines();
+  updateInfo();
 }
 
-/** Update loop iteration. Call on flowLoopIteration. */
 export function updateLoop(msg) {
   if (!flowData) return;
   flowData.iteration = msg.iteration || flowData.iteration + 1;
   flowData.maxIterations = msg.maxIterations || flowData.maxIterations;
-
-  // Reset verify to pending for next iteration
-  const verify = flowData.nodes.find(n => n.id === '__verify__');
-  if (verify) verify.status = 'pending';
-
-  // Reset fix node if exists
-  const fix = flowData.nodes.find(n => n.id === '__fix__');
-  if (fix) fix.status = 'running';
+  const v = flowData.nodes.find(n => n.id === '__verify__');
+  if (v) { v.status = 'pending'; updateNodeDom('__verify__', 'pending'); }
+  updateInfo();
 }
 
-/** Finalize flow. Call on flowCompleted. */
 export function completeFlow(msg) {
   if (!flowData) return;
-  flowData.phase = msg.pass ? 'completed' : 'failed';
-
-  // Mark verify node
-  const verify = flowData.nodes.find(n => n.id === '__verify__');
-  if (verify) verify.status = msg.pass ? 'done' : 'failed';
-
-  // Stop all animations
-  flowData.flows = [];
-
-  // Close after delay
-  setTimeout(() => {
-    destroyCanvas();
-    closeCanvas();
-    flowData = null;
-  }, 5000);
+  const v = flowData.nodes.find(n => n.id === '__verify__');
+  if (v) { v.status = msg.pass ? 'done' : 'failed'; updateNodeDom('__verify__', v.status); }
+  refreshLines();
+  setTimeout(() => closeFlow(), 5000);
 }
 
-/** Force-close the flow visualization. */
 export function closeFlow() {
-  destroyCanvas();
+  if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
   closeCanvas();
   flowData = null;
 }
 
-// ── Internal: recompute flowing dots ───────────────────────
-function refreshFlows() {
+export function onSessionChange(activeSessionId) {
+  if (flowData && flowData.sessionId && flowData.sessionId !== activeSessionId) {
+    closeFlow();
+  }
+}
+
+// ── Internal helpers ───────────────────────────────────────
+function updateNodeDom(id, status) {
+  const el = document.querySelector(`[data-step-id="${id}"]`);
+  if (el) {
+    const isRoot = id === '__root__';
+    el.className = `flow-node ${status}${isRoot ? ' root' : ''}`;
+    const s = el.querySelector('.flow-status');
+    if (s) s.textContent = status;
+  }
+}
+
+function updateInfo() {
   if (!flowData) return;
-  flowData.flows = [];
-  flowData.edges.forEach(e => {
-    const f = flowData.nodes.find(n => n.id === e.from);
-    const t = flowData.nodes.find(n => n.id === e.to);
-    if (f && t && f.status === 'done' && t.status === 'running') {
-      flowData.flows.push({
-        fromId: e.from,
-        toId: e.to,
-        t: Math.random(),
-        speed: 0.004 + Math.random() * 0.002,
-      });
-    }
-  });
+  const sub = document.getElementById('flow-info-sub');
+  if (!sub) return;
+  const running = flowData.nodes.filter(n => n.status === 'running').length;
+  let info = `${running} running · ${flowData.completedSteps}/${flowData.totalSteps} steps`;
+  if (flowData.iteration > 0) info += ` · iter ${flowData.iteration}/${flowData.maxIterations}`;
+  sub.textContent = info;
 }
