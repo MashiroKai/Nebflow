@@ -4,15 +4,16 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.flow.{FlowVerifyRegistry, VerifyResult}
 import nebflow.core.NebflowLogger
+import nebflow.core.flow.{FlowVerifyRegistry, VerifyResult}
 
-/** FlowVerify — report verification result for a flow step.
-  *
-  * This tool is mandatory for flow verify agents. The verify agent MUST call
-  * it to report whether the work passed or failed. If the agent finishes
-  * without calling this tool, the flow will fail and retry.
-  */
+/**
+ * FlowVerify — report verification result for a flow step.
+ *
+ * This tool is mandatory for flow verify agents. The verify agent MUST call
+ * it to report whether the work passed or failed. If the agent finishes
+ * without calling this tool, the flow will fail and retry.
+ */
 object FlowVerifyTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
@@ -53,16 +54,13 @@ This tool is mandatory. If you finish without calling it, the verification will 
     val summary = input("summary").flatMap(_.asString).getOrElse("")
     val agentPath = ctx.agentActorRef.map(_.path.toString).getOrElse("")
 
-    if agentPath.isBlank then
-      IO.pure(Left(ToolError("Cannot determine agent identity for FlowVerify.")))
+    if agentPath.isBlank then IO.pure(Left(ToolError("Cannot determine agent identity for FlowVerify.")))
     else
       for
         success <- FlowVerifyRegistry.complete(agentPath, VerifyResult(passed, summary))
         _ <- logger.info(s"FlowVerify called: passed=$passed, agent=$agentPath")
       yield
-        if success then
-          Right(if passed then "Verification PASSED." else s"Verification FAILED: $summary")
-        else
-          Left(ToolError("No pending flow verification for this agent. This tool is only for flow verify steps."))
+        if success then Right(if passed then "Verification PASSED." else s"Verification FAILED: $summary")
+        else Left(ToolError("No pending flow verification for this agent. This tool is only for flow verify steps."))
 
 end FlowVerifyTool

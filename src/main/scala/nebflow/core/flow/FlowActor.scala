@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import cats.effect.{IO, Deferred, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -145,18 +145,25 @@ object FlowActor:
               _ <- state.stepStatus.get(VerifyId) match
                 case Some(StepStatus.Running) =>
                   for
-                    _ <- stateRef.update(s => s.copy(
-                      verifyResult = Some(summary),
-                      stepStatus = s.stepStatus + (VerifyId -> StepStatus.Done),
-                      runningAgents = s.runningAgents - VerifyId,
-                      phase = if passed then FlowPhase.Completed else s.phase
-                    ))
-                    _ <- emit(cfg.wsSend, cfg.sessionId, "flowVerifyResult",
+                    _ <- stateRef.update(s =>
+                      s.copy(
+                        verifyResult = Some(summary),
+                        stepStatus = s.stepStatus + (VerifyId -> StepStatus.Done),
+                        runningAgents = s.runningAgents - VerifyId,
+                        phase = if passed then FlowPhase.Completed else s.phase
+                      )
+                    )
+                    _ <- emit(
+                      cfg.wsSend,
+                      cfg.sessionId,
+                      "flowVerifyResult",
                       "pass" -> passed.asJson,
                       "summary" -> summary.take(500).asJson,
-                      "iteration" -> state.iteration.asJson)
-                    _ <- if passed then completeFlow(stateRef, cfg, summary)
-                         else handleVerifyFail(ctx, stateRef, cfg, summary, state)
+                      "iteration" -> state.iteration.asJson
+                    )
+                    _ <-
+                      if passed then completeFlow(stateRef, cfg, summary)
+                      else handleVerifyFail(ctx, stateRef, cfg, summary, state)
                   yield ()
                 case _ => IO.unit // ignore duplicate or unexpected
               st <- stateRef.get
@@ -414,22 +421,24 @@ object FlowActor:
           val agentUid = s"flow-${cfg.flowDef.name.take(16)}-$stepId-${java.util.UUID.randomUUID().toString.take(8)}"
           for
             // Verify setup: create Deferred and register before spawning agent
-            _ <- if isVerify then
-              for
-                d <- Deferred[IO, VerifyResult]
-                _ <- FlowVerifyRegistry.register(agentUid, d)
-              yield ()
-            else IO.unit
+            _ <-
+              if isVerify then
+                for
+                  d <- Deferred[IO, VerifyResult]
+                  _ <- FlowVerifyRegistry.register(agentUid, d)
+                yield ()
+              else IO.unit
             readTracker <- ReadTracker.create
             fileHistory <- FileHistory.create()
             childDepth = cfg.parentDepth + 1
             childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
             // For verify: add FlowVerify tool to agent's tools
-            actualDef = if isVerify then
-              agentDef.tools match
-                case List("*") => agentDef
-                case _ => agentDef.copy(tools = agentDef.tools :+ "FlowVerify")
-            else agentDef
+            actualDef =
+              if isVerify then
+                agentDef.tools match
+                  case List("*") => agentDef
+                  case _ => agentDef.copy(tools = agentDef.tools :+ "FlowVerify")
+              else agentDef
             // For verify: prepend fixed preamble to prompt
             actualPrompt = if isVerify then VerifyPromptPreamble + prompt else prompt
             // Mark as running BEFORE spawn so duplicate messages are ignored
@@ -470,6 +479,7 @@ object FlowActor:
             _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
             _ = logger.info(s"Spawned '$stepId' ($agentName, depth=$childDepth)")
           yield ()
+          end for
     yield ()
 
   // ============================================================
@@ -560,8 +570,9 @@ object FlowActor:
                         case Some(vr) =>
                           IO.delay(flowActorRef ! VerifyCompleted(vr.pass, vr.summary))
                         case None =>
-                          IO.delay(flowActorRef ! StepFailed(stepId,
-                            "Verify agent completed without calling FlowVerify tool"))
+                          IO.delay(
+                            flowActorRef ! StepFailed(stepId, "Verify agent completed without calling FlowVerify tool")
+                          )
                       }
                     case None =>
                       IO.delay(flowActorRef ! StepFailed(stepId, "Verify registry error"))
