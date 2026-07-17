@@ -355,7 +355,56 @@ final class ShellSession private (
     def cpuNanos(ph: ProcessHandle): Long =
       val opt = ph.info().totalCpuDuration()
       if opt.isPresent then opt.get().toNanos else 0L
-    cpuNanos(handle) + handle.descendants().toScala(List).map(cpuNanos).sum
+    // Method 1: ProcessHandle descendants API
+    val viaHandle = cpuNanos(handle) + handle.descendants().toScala(List).map(cpuNanos).sum
+    // Method 2: ps-based enumeration (more reliable for deep trees on macOS, e.g. sbt → sh → java)
+    val viaPs = if !isWindows then sampleCpuTimeViaPs(proc.pid) else 0L
+    math.max(viaHandle, viaPs)
+
+  /**
+   * Enumerate all descendant PIDs via `ps` and sum their CPU time through
+   * the ProcessHandle API (nanosecond precision). More reliable than
+   * `ProcessHandle.descendants()` which may miss deeply nested processes.
+   */
+  private def sampleCpuTimeViaPs(rootPid: Long): Long =
+    try
+      val pb = new ProcessBuilder("ps", "-A", "-o", "pid=,ppid=")
+      pb.redirectInput(new File("/dev/null"))
+      pb.redirectOutput(ProcessBuilder.Redirect.PIPE)
+      pb.redirectErrorStream(true)
+      val psProc = pb.start()
+      val ok = psProc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+      if !ok then
+        psProc.destroyForcibly()
+        0L
+      else
+        val output = new String(psProc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
+        psProc.getInputStream.close()
+        sumCpuTimeFromProcessTree(output, rootPid)
+    catch
+      case _: Exception => 0L
+
+  /** Parse `ps` output, build process tree, and sum CPU time of root + all descendants. */
+  private def sumCpuTimeFromProcessTree(psOutput: String, rootPid: Long): Long =
+    val childrenMap = scala.collection.mutable.Map.empty[Long, List[Long]]
+    for line <- psOutput.linesIterator do
+      val parts = line.trim.split("\\s+")
+      if parts.length >= 2 then
+        parts(0).toLongOption.foreach { pid =>
+          parts(1).toLongOption.foreach { ppid =>
+            childrenMap(ppid) = pid :: childrenMap.getOrElse(ppid, Nil)
+          }
+        }
+    def collect(pid: Long): List[Long] =
+      childrenMap.getOrElse(pid, Nil).flatMap(child => child :: collect(child))
+    val allPids = rootPid :: collect(rootPid)
+    allPids.map { pid =>
+      val phOpt = ProcessHandle.of(pid)
+      if phOpt.isPresent then
+        val cpuOpt = phOpt.get().info().totalCpuDuration()
+        if cpuOpt.isPresent then cpuOpt.get().toNanos else 0L
+      else 0L
+    }.sum
 
   private def runProcess(
     command: String,
