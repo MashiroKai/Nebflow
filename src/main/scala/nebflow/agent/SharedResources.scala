@@ -47,5 +47,6 @@ case class SharedResources(
   telemetry: Option[TelemetryReporter] = None,
   neblinkService: Option[NeblinkService] = None,
   dropboxService: Option[DropboxService] = None,
-  scheduledTaskService: Option[ScheduledTaskService] = None
+  scheduledTaskService: Option[ScheduledTaskService] = None,
+  voiceMutedRef: Ref[IO, Boolean]
 )

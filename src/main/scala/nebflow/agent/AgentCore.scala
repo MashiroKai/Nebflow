@@ -6,6 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.AgentCommand.*
+import nebflow.agent.PromptSections.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
@@ -184,10 +185,12 @@ private[agent] trait AgentCore:
         val llmIo = for
           turnCtx <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
           freshDef = turnCtx.agentDef
+          voiceEnabled <- resources.voiceMutedRef.get.map(!_)
           baseSystemStable = buildSystemPrompt(
             freshDef,
             resources,
             turnCtx.systemPrefix,
+            PromptContext(voiceEnabled = voiceEnabled),
             turnCtx.projectRoot,
             turnCtx.rulesMd,
             state.session.chatWidth,
@@ -681,16 +684,19 @@ private[agent] trait AgentCore:
     agentDef: AgentDef,
     resources: SharedResources,
     systemPrefix: String,
+    promptCtx: PromptContext = PromptContext.default,
     sessionProjectRoot: Option[String] = None,
     sessionRulesMd: Option[String] = None,
     chatWidth: Int = 0,
     skillCatalog: String = ""
   ): String =
-    val agentPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
+    val rawPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
+    val agentPrompt = PromptSections.stripSection(rawPrompt, "Voice Output")
     val envInfo = Repl.buildEnvInfo(chatWidth)
+    val voiceBlock = if promptCtx.voiceEnabled then s"\n\n${PromptSections.voiceSection}" else ""
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     val skillsBlock = if skillCatalog.nonEmpty then s"\n\n$skillCatalog" else ""
-    s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock$skillsBlock"
+    s"$systemPrefix$agentPrompt$voiceBlock\n\n$envInfo$rulesBlock$skillsBlock"
 
   /** Format active persistent sub-agent sessions for system prompt injection. */
   protected def formatAgentSessions(sessions: List[AgentSessionInfo]): String =
