@@ -1381,6 +1381,10 @@ onMessage('agentDone', (msg, view) => {
 });
 
 // --- Flow events → canvas DAG visualization ---
+window.addEventListener('nebflow-session-change', (e) => {
+  flowCanvas.onSessionChange(e.detail.sessionId);
+});
+
 onMessage('flowStarted', (msg) => {
   flowCanvas.startFlow(msg);
 });
@@ -2001,6 +2005,7 @@ initPathPicker();
 initInput(chatViews.primary);
 initMemory();
 initCanvas();
+document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
 initScheduledTask();
 initNeblink();
 initDropbox();

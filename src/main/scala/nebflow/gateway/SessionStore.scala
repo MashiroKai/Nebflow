@@ -958,6 +958,35 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       }
 
   /**
+   * Backfill `durationMs`, `model`, and `timestamp` onto the last saved Ai message.
+   *
+   * In multi-round tool conversations, intermediate text segments are flushed
+   * by `flushText()` (which saves Ai without meta). When `done` fires with an
+   * empty text buffer, the computed duration has nowhere to go. This method
+   * finds the last Ai message in the cache and updates its meta fields.
+   */
+  def updateLastAiMeta(sessionId: String, durationMs: Option[Long], model: Option[String], timestamp: Long): IO[Unit] =
+    getAppendSemaphore(sessionId).flatMap { sem =>
+      sem.permit.use { _ =>
+        loadUiMessages(sessionId).flatMap { existing =>
+          existing.lastIndexWhere {
+            case _: UiMessage.Ai => true
+            case _ => false
+          } match
+            case -1 => IO.unit
+            case idx =>
+              val (before, rest) = existing.splitAt(idx)
+              rest.headOption match
+                case Some(ai: UiMessage.Ai) =>
+                  val updatedAi = ai.copy(durationMs = durationMs, model = model, timestamp = timestamp)
+                  val updated = before ++ (updatedAi :: rest.tail)
+                  updateUiCache(sessionId, updated) *> markDirty(sessionId)
+                case _ => IO.unit
+        }
+      }
+    }
+
+  /**
    * Keep only the newest `MaxStoredUiMessages`. The LLM's full history is
    * unaffected (it lives in `<id>.json`); this only bounds the UI replay file.
    * Returning the same list when under the cap avoids an allocation.
