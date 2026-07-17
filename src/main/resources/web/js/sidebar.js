@@ -138,6 +138,7 @@ function switchToSession(sessionId) {
   // Different session: save draft, switch, reset
   const prevId = state.activeSessionId;
   state.activeSessionId = sessionId;
+  window.dispatchEvent(new CustomEvent('nebflow-session-change', { detail: { sessionId } }));
   setActiveView(chatViews.primary);
   saveInputDraft(prevId);
   resetChatForActiveSession();
@@ -1073,7 +1074,10 @@ function updateHeaderSessionName() {
 export function renderSessionSidebar(sessionData, activeId) {
   state.sessions = sessionData || [];
   const prevActiveId = state.activeSessionId;
-  if (activeId) state.activeSessionId = activeId;
+  if (activeId) {
+    state.activeSessionId = activeId;
+    window.dispatchEvent(new CustomEvent('nebflow-session-change', { detail: { sessionId: activeId } }));
+  }
   // If active session changed (new session, agent session, delete active), reset chat area
   if (activeId && activeId !== prevActiveId) {
     setActiveView(chatViews.primary);

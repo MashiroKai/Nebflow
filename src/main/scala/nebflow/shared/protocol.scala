@@ -234,7 +234,8 @@ object UiMessage:
     text: String,
     durationMs: Option[Long] = None,
     model: Option[String] = None,
-    thinking: Option[String] = None
+    thinking: Option[String] = None,
+    timestamp: Long = 0L
   ) extends UiMessage:
     val typeName = "ai"
 
@@ -272,7 +273,8 @@ object UiMessage:
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
-      m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
+      val withThinking = m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
+      if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
     case m: Tool =>
       Json.obj(
         "type" -> "tool".asJson,
@@ -316,7 +318,8 @@ object UiMessage:
           durationMs <- cursor.downField("durationMs").as[Option[Long]]
           model <- cursor.downField("model").as[Option[String]]
           thinking <- cursor.downField("thinking").as[Option[String]]
-        yield Ai(text, durationMs, model, thinking)
+          timestamp <- cursor.downField("timestamp").as[Option[Long]]
+        yield Ai(text, durationMs, model, thinking, timestamp.getOrElse(0L))
       case "tool" =>
         for
           label <- cursor.downField("label").as[String]

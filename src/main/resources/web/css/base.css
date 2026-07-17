@@ -187,3 +187,24 @@ body.sidebar-collapsed #sidebar {
   color: #e8923c;
   background: rgba(232, 146, 60, 0.12);
 }
+.flow-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.flow-toggle-btn:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.flow-toggle-btn.active {
+  color: var(--color-text);
+}
