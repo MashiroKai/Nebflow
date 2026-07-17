@@ -1,17 +1,19 @@
-// planMode.js — Plan mode canvas panel for Nebflow.
-// Uses the shared #canvas-panel infrastructure (canvas.js).
+// planMode.js — Plan mode inline card for Nebflow.
 //
 // Design:
-// - No loading state — canvas only opens when the plan result is ready.
-// - Session-bound — closing the session closes the canvas; switching back
-//   to a session with a pending plan auto-reopens it.
-// - No header; plan content fills the canvas as a card.
-// - Floating glassmorphism action bar at the bottom.
+// - Plan result is displayed as a centered glassmorphism card inline in the
+//   main chat area (not a separate canvas panel).
+// - The plan agent shows as a normal sub-agent: its agentStart, agentToolStart,
+//   agentDone events flow through normal dispatch so the delegate indicator
+//   and tool activity are visible. Only agentTextDelta is intercepted to
+//   accumulate the plan text for the card.
+// - Session-bound: switching sessions removes the card; switching back to a
+//   session with a pending plan re-injects it.
 
 import state from './state.js';
 import { sendWs } from './ws.js';
 import { renderMarkdownWithMath } from './utils.js';
-import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader } from './canvas.js';
+import { findViewBySessionId } from './chatView.js';
 
 // ---------- State ----------
 let planText = '';
@@ -20,14 +22,12 @@ let planReady = false;
 // ---------- Init ----------
 export function init() {
   state.onPlanSessionChange = (newSessionId) => {
-    // Close canvas when leaving any session.
-    showCanvasHeader(true);
-    closeCanvas();
-    // Auto-open if the session being entered has a pending plan.
+    // Remove any plan card from DOM (session switch clears chat anyway).
+    removeInlineCard();
+    // Re-inject if the session being entered has a pending plan.
     if (planReady && state.planSessionId === newSessionId) {
-      showCanvasHeader(false);
-      openCanvas();
-      showPlanContent();
+      const view = findViewBySessionId(newSessionId);
+      if (view) showPlanContent(view);
     }
   };
 }
@@ -39,7 +39,6 @@ export function onPlanStart(msg) {
   state.planSessionId = msg.sessionId;
   planText = '';
   planReady = false;
-  // Don't open canvas — wait for planReady.
 }
 
 export function onPlanAgentEvent(msg) {
@@ -48,19 +47,16 @@ export function onPlanAgentEvent(msg) {
   }
 }
 
-export function onPlanReady(msg) {
+export function onPlanReady(msg, view) {
   planReady = true;
   // Only show if the user is currently on the plan's session.
-  if (state.activeSessionId === state.planSessionId) {
-    showCanvasHeader(false);
-    openCanvas();
-    showPlanContent();
+  if (view && state.activeSessionId === state.planSessionId) {
+    showPlanContent(view);
   }
 }
 
 export function onPlanEnd(msg) {
-  showCanvasHeader(true);
-  closeCanvas();
+  removeInlineCard();
   planText = '';
   planReady = false;
   state.planAgentId = null;
@@ -73,8 +69,7 @@ function approvePlan() {
   if (!state.planSessionId) return;
   sendWs({ type: 'planApprove', sessionId: state.planSessionId });
   planReady = false;
-  showCanvasHeader(true);
-  closeCanvas();
+  removeInlineCard();
   // planEnd from backend will clear planAgentId / planSessionId.
 }
 
@@ -82,8 +77,7 @@ function cancelPlan() {
   if (!state.planSessionId) return;
   sendWs({ type: 'planCancel', sessionId: state.planSessionId });
   planReady = false;
-  showCanvasHeader(true);
-  closeCanvas();
+  removeInlineCard();
 }
 
 function toggleFeedback() {
@@ -91,15 +85,20 @@ function toggleFeedback() {
   if (!bar) return;
   bar.innerHTML = feedbackBarHTML();
   document.getElementById('plan-feedback-send')?.addEventListener('click', sendFeedback);
-  document.getElementById('plan-feedback-cancel')?.addEventListener('click', showPlanContent);
+  document.getElementById('plan-feedback-cancel')?.addEventListener('click', restoreDefaultBar);
   const ta = document.getElementById('plan-feedback-input');
   if (ta) {
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendFeedback(); }
-      if (e.key === 'Escape') { e.preventDefault(); showPlanContent(); }
+      if (e.key === 'Escape') { e.preventDefault(); restoreDefaultBar(); }
     });
     ta.focus();
   }
+}
+
+function restoreDefaultBar() {
+  const view = findViewBySessionId(state.planSessionId);
+  if (view) showPlanContent(view);
 }
 
 function sendFeedback() {
@@ -111,21 +110,32 @@ function sendFeedback() {
   sendWs({ type: 'planFeedback', sessionId: state.planSessionId, text });
   planText = '';
   planReady = false;
-  showCanvasHeader(true);
-  closeCanvas();
-  // Canvas will reopen when next planReady arrives.
+  removeInlineCard();
+  // Card will reappear when next planReady arrives.
 }
 
-// ---------- UI: Plan content + action bar ----------
+// ---------- UI: inline plan card + action bar ----------
 
-function showPlanContent() {
-  setCanvasContent(`
-    <div class="plan-center-wrapper">
-      <div class="plan-card markdown-body">${renderMarkdownWithMath(planText)}</div>
-      <div class="plan-action-bar" id="plan-action-bar">${defaultBarHTML()}</div>
-    </div>
-  `);
+function showPlanContent(view) {
+  if (!view || !view.dom.chat) return;
+  removeInlineCard(); // remove any stale card first
+
+  const container = document.createElement('div');
+  container.id = 'plan-inline-container';
+  container.className = 'plan-inline-container';
+  container.innerHTML = `
+    <div class="plan-card markdown-body">${renderMarkdownWithMath(planText)}</div>
+    <div class="plan-action-bar" id="plan-action-bar">${defaultBarHTML()}</div>
+  `;
+  view.dom.chat.appendChild(container);
   wireDefaultBar();
+
+  // Scroll so the plan card is visible.
+  view.dom.chat.scrollTop = view.dom.chat.scrollHeight;
+}
+
+function removeInlineCard() {
+  document.getElementById('plan-inline-container')?.remove();
 }
 
 function defaultBarHTML() {

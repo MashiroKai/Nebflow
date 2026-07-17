@@ -164,13 +164,12 @@ export function connect() {
       }
       setActiveView(view || null);
 
-      // ── Plan mode routing ──────────────────────────────────────────
-      // If this event is from the active plan agent, route to plan handlers
-      // and skip normal chat dispatch (plan agent output goes to canvas, not chat).
-      // Plan control events (planStart/planReady/planEnd) must fall through to
-      // normal dispatch — they carry sessionId for routing, not agentId.
-      const PLAN_CONTROL_EVENTS = new Set(['planStart', 'planReady', 'planEnd']);
-      if (msg.agentId && state.planAgentId === msg.agentId && !PLAN_CONTROL_EVENTS.has(msg.type)) {
+      // ── Plan mode: intercept only agentTextDelta ───────────────────
+      // We accumulate plan text for the card, but let all other plan agent
+      // events (agentStart, agentToolStart, agentDone, etc.) flow through
+      // normal dispatch so the plan agent shows as a sub-agent with its
+      // delegate indicator and tool activity.
+      if (msg.agentId && state.planAgentId === msg.agentId && msg.type === 'agentTextDelta') {
         const planList = handlers['_planAgent'];
         if (planList) for (const h of planList) h(msg);
         return;
