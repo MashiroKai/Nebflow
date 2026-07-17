@@ -88,8 +88,7 @@ class FlowPersistenceSpec extends CatsEffectSuite:
       _ <- FlowMembership.join("agent-B", "flow-1")
       _ <- FlowMembership.join("agent-C", "flow-2")
       members <- FlowMembership.membersOf("flow-1")
-    yield
-      assertEquals(members.toSet, Set("agent-A", "agent-B"))
+    yield assertEquals(members.toSet, Set("agent-A", "agent-B"))
   }
 
   // ============================================================
@@ -211,8 +210,7 @@ class FlowPersistenceSpec extends CatsEffectSuite:
   }
 
   test("FlowStore: load returns None for non-existent flow") {
-    for
-      loaded <- FlowStore.load(testSessionId, "non-existent")
+    for loaded <- FlowStore.load(testSessionId, "non-existent")
     yield assert(loaded.isEmpty, "Should return None for non-existent flow")
   }
 
@@ -233,8 +231,7 @@ class FlowPersistenceSpec extends CatsEffectSuite:
       _ <- FlowStore.save(testSessionId, "flow-list-1", snap.copy(flowId = "flow-list-1"))
       _ <- FlowStore.save(testSessionId, "flow-list-2", snap.copy(flowId = "flow-list-2"))
       flows <- FlowStore.listFlows(testSessionId)
-    yield assert(flows.contains("flow-list-1") && flows.contains("flow-list-2"),
-      s"Should list both flows, got: $flows")
+    yield assert(flows.contains("flow-list-1") && flows.contains("flow-list-2"), s"Should list both flows, got: $flows")
   }
 
   test("FlowStore: listRestorable excludes terminal flows") {

@@ -73,25 +73,30 @@ object FlowActor:
       val restoreIO = restoreSnapshot match
         case Some(snap) =>
           val restoredStatus = snap.stepStatus.view.mapValues {
-            case "Running" => StepStatus.Pending  // interrupted steps → re-run
+            case "Running" => StepStatus.Pending // interrupted steps → re-run
             case other => StepStatus.valueOf(other)
           }.toMap
           for
-            _ <- stateRef.update(_.copy(
-              results = snap.results,
-              failedReasons = snap.failedReasons,
-              stepStatus = restoredStatus,
-              retryLeft = snap.retryLeft,
-              verifyResult = snap.verifyResult,
-              iteration = snap.iteration,
-              phase = FlowPhase.valueOf(snap.phase) match
-                case FlowPhase.Working => FlowPhase.Working
-                case FlowPhase.VerifyRunning => FlowPhase.Working  // re-verify after working
-                case FlowPhase.LoopFixing => FlowPhase.Working     // go back to working
-                case terminal => terminal
-            ))
-            _ <- logger.info(s"Flow '${flowDef.name}' restored from snapshot (phase=${snap.phase}, steps=${restoredStatus.size})")
+            _ <- stateRef.update(
+              _.copy(
+                results = snap.results,
+                failedReasons = snap.failedReasons,
+                stepStatus = restoredStatus,
+                retryLeft = snap.retryLeft,
+                verifyResult = snap.verifyResult,
+                iteration = snap.iteration,
+                phase = FlowPhase.valueOf(snap.phase) match
+                  case FlowPhase.Working => FlowPhase.Working
+                  case FlowPhase.VerifyRunning => FlowPhase.Working // re-verify after working
+                  case FlowPhase.LoopFixing => FlowPhase.Working // go back to working
+                  case terminal => terminal
+              )
+            )
+            _ <- logger.info(
+              s"Flow '${flowDef.name}' restored from snapshot (phase=${snap.phase}, steps=${restoredStatus.size})"
+            )
           yield ()
+          end for
         case None => IO.unit
 
       for
@@ -594,7 +599,7 @@ object FlowActor:
       ctx.forkTurn(
         IO.sleep(timeout) *>
           done.get.flatMap {
-            case true  => IO.unit
+            case true => IO.unit
             case false =>
               ctx.system.stop(subagentRef) *>
                 (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
@@ -608,28 +613,31 @@ object FlowActor:
             case AgentEvent.Completed(_, messages) =>
               done.set(true) *>
                 (if isVerify then
-                  // Check if FlowVerify tool was called
-                  for
-                    deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
-                    _ <- FlowVerifyRegistry.remove(verifyAgentPath)
-                    result <- deferredOpt match
-                      case Some(deferred) =>
-                        deferred.tryGet.flatMap {
-                          case Some(vr) =>
-                            IO.delay(flowActorRef ! VerifyCompleted(vr.pass, vr.summary))
-                          case None =>
-                            IO.delay(
-                              flowActorRef ! StepFailed(stepId, "Verify agent completed without calling FlowVerify tool")
-                            )
-                        }
-                      case None =>
-                        IO.delay(flowActorRef ! StepFailed(stepId, "Verify registry error"))
-                    _ = result
-                  yield Behaviors.stopped[AgentEvent]
-                else
-                  val text = extractLastAssistantText(messages)
-                  for _ <- flowActorRef ! StepCompleted(stepId, text)
-                  yield Behaviors.stopped[AgentEvent])
+                   // Check if FlowVerify tool was called
+                   for
+                     deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
+                     _ <- FlowVerifyRegistry.remove(verifyAgentPath)
+                     result <- deferredOpt match
+                       case Some(deferred) =>
+                         deferred.tryGet.flatMap {
+                           case Some(vr) =>
+                             IO.delay(flowActorRef ! VerifyCompleted(vr.pass, vr.summary))
+                           case None =>
+                             IO.delay(
+                               flowActorRef ! StepFailed(
+                                 stepId,
+                                 "Verify agent completed without calling FlowVerify tool"
+                               )
+                             )
+                         }
+                       case None =>
+                         IO.delay(flowActorRef ! StepFailed(stepId, "Verify registry error"))
+                     _ = result
+                   yield Behaviors.stopped[AgentEvent]
+                 else
+                   val text = extractLastAssistantText(messages)
+                   for _ <- flowActorRef ! StepCompleted(stepId, text)
+                   yield Behaviors.stopped[AgentEvent])
 
             case AgentEvent.Failed(_, error) =>
               done.set(true) *>
@@ -647,15 +655,13 @@ object FlowActor:
                   if isVerify then FlowVerifyRegistry.remove(verifyAgentPath)
                   else IO.unit
                 _ <-
-                  if !alreadyDone then
-                    IO.delay(flowActorRef ! StepFailed(stepId, "agent crashed"))
+                  if !alreadyDone then IO.delay(flowActorRef ! StepFailed(stepId, "agent crashed"))
                   else IO.unit
               yield Behaviors.stopped[AgentEvent]
 
         override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
           (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
-            FlowMembership.leaveAll(subagentRef.path.toString)
-      )
+            FlowMembership.leaveAll(subagentRef.path.toString))
     }
 
   // ============================================================
@@ -692,6 +698,8 @@ object FlowActor:
        |${all.mkString("\n")}
        |
        |""".stripMargin
+
+  end buildTeamRoster
 
   /** Persist current state to disk for graceful restart recovery. */
   private def saveSnapshot(stateRef: Ref[IO, FlowState], cfg: FlowConfig): IO[Unit] =
@@ -733,6 +741,8 @@ object FlowActor:
     }
     sb.append("=== End Results ===\n")
     sb.toString
+
+  end buildVerifyContext
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse

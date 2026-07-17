@@ -69,29 +69,35 @@ object MailTool extends Tool:
           val senderPath = ctx.agentActorRef.map(_.path.toString).getOrElse("")
           for
             allowed <- FlowMembership.canCommunicate(senderPath, address)
-            result <- if !allowed then
-              IO.pure(Left(ToolError(
-                s"Cannot send mail to $address: recipient is in a different flow. " +
-                "Mail is only allowed between agents in the same flow."
-              )))
-            else
-              system.resolve[AgentCommand](address).attempt.flatMap {
-                case Right(ref) =>
-                  val adapterName = s"mail-reply-${java.util.UUID.randomUUID().toString.take(8)}"
-                  for
-                    adapterRef <- system.spawn(
-                      replyAdapter(address, ctx.agentActorRef),
-                      adapterName
+            result <-
+              if !allowed then
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"Cannot send mail to $address: recipient is in a different flow. " +
+                        "Mail is only allowed between agents in the same flow."
                     )
-                    _ <-
-                      if mode == "immediate" then
-                        (ref ! AgentCommand.Interrupt()) *> (ref ! AgentCommand.UserInput(message, Some(adapterRef)))
-                      else ref ! AgentCommand.UserInput(message, Some(adapterRef))
-                  yield Right(s"Message sent to $address ($mode mode). The agent will process it in its mailbox.")
-                case Left(err) =>
-                  IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
-              }
+                  )
+                )
+              else
+                system.resolve[AgentCommand](address).attempt.flatMap {
+                  case Right(ref) =>
+                    val adapterName = s"mail-reply-${java.util.UUID.randomUUID().toString.take(8)}"
+                    for
+                      adapterRef <- system.spawn(
+                        replyAdapter(address, ctx.agentActorRef),
+                        adapterName
+                      )
+                      _ <-
+                        if mode == "immediate" then
+                          (ref ! AgentCommand.Interrupt()) *> (ref ! AgentCommand.UserInput(message, Some(adapterRef)))
+                        else ref ! AgentCommand.UserInput(message, Some(adapterRef))
+                    yield Right(s"Message sent to $address ($mode mode). The agent will process it in its mailbox.")
+                  case Left(err) =>
+                    IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
+                }
           yield result
+          end for
     end if
   end call
 

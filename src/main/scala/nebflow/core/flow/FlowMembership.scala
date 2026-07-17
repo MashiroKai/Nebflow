@@ -4,7 +4,7 @@ import cats.effect.{IO, Ref}
 
 /**
  * Global registry tracking which agents belong to which flows.
- * 
+ *
  * Communication rule: two agents can Mail each other if they share at least
  * one flow membership. Non-flow agents (standalone, Delegate-spawned) are
  * unrestricted — the flow scoping is an additional constraint on flow agents,
@@ -14,6 +14,7 @@ import cats.effect.{IO, Ref}
  * giving it the ability to communicate with all agents in flows it created.
  */
 object FlowMembership:
+
   private val membership: Ref[IO, Map[String, Set[String]]] =
     Ref.unsafe[IO, Map[String, Set[String]]](Map.empty)
 
@@ -45,7 +46,7 @@ object FlowMembership:
 
   /**
    * Check if two agents can communicate via Mail.
-   * 
+   *
    * Rules:
    * - Non-flow senders: unrestricted (backward compat for Delegate, standalone)
    * - Flow agent → non-flow agent: allowed (reaching outside is OK)

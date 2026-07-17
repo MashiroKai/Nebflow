@@ -163,23 +163,26 @@ class WebSocketRoutes(
               case Some(snapshot) =>
                 val broadcastWsSend = (json: Json) => wsHub.broadcast(json)
                 val recordingWsSend = makeRecordingWsSend(sessionId, broadcastWsSend)
-                nebulaSystem.spawn(
-                  FlowActor(
-                    flowDef = snapshot.flowDef,
-                    flowId = snapshot.flowId,
-                    parentAgentRef = agentRef,
-                    wsSend = Some(recordingWsSend),
-                    parentSessionId = Some(sessionId),
-                    parentDepth = 0,
-                    resources = sharedResources,
-                    projectRoot = projectRoot,
-                    bypass = false,
-                    restoreSnapshot = Some(snapshot)
-                  ),
-                  snapshot.flowId
-                ).void.handleErrorWith { e =>
-                  logger.warn(s"Failed to restore flow $flowId: ${e.getMessage}").void
-                }
+                nebulaSystem
+                  .spawn(
+                    FlowActor(
+                      flowDef = snapshot.flowDef,
+                      flowId = snapshot.flowId,
+                      parentAgentRef = agentRef,
+                      wsSend = Some(recordingWsSend),
+                      parentSessionId = Some(sessionId),
+                      parentDepth = 0,
+                      resources = sharedResources,
+                      projectRoot = projectRoot,
+                      bypass = false,
+                      restoreSnapshot = Some(snapshot)
+                    ),
+                    snapshot.flowId
+                  )
+                  .void
+                  .handleErrorWith { e =>
+                    logger.warn(s"Failed to restore flow $flowId: ${e.getMessage}").void
+                  }
               case None => IO.unit
             }
           }

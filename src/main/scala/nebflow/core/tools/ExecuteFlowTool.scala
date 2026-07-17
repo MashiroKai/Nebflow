@@ -218,7 +218,8 @@ Requirements:
             FlowActor(
               flowDef = flowDef,
               flowId = flowId,
-              parentAgentRef = ctx.agentActorRef.getOrElse(throw RuntimeException("ExecuteFlow requires agentActorRef")),
+              parentAgentRef =
+                ctx.agentActorRef.getOrElse(throw RuntimeException("ExecuteFlow requires agentActorRef")),
               wsSend = ctx.wsSend,
               parentSessionId = ctx.sessionId,
               parentDepth = ctx.depth,
@@ -245,6 +246,7 @@ Requirements:
              |${flowDef.loop.map(l => s"loop: fix=${l.fix.agent}, max=${l.maxIterations}").getOrElse("no loop")}
              |You will be notified when the flow completes via a system message.""".stripMargin
         )
+      end for
     }
   end spawnFlow
 
