@@ -1100,6 +1100,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     '|expanded:' + [...(state.expandedFolders || [])].sort().join(',') +
     '|pinned:' + [...(state.pinnedSessions || [])].sort().join(',') +
     '|selected:' + [...state.selectedSessionIds].sort().join(',') +
+    '|rules:' + [...(state.foldersWithRules || [])].sort().join(',') +
     '|locale:' + getLocale();
   const sessionList = state.dom.sessionList;
   if (sessionList && sessionList._lastFingerprint === fingerprint) {
