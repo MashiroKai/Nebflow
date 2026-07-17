@@ -46,7 +46,8 @@ object FlowTreeActor:
     sessionId: Option[String],
     resources: SharedResources,
     projectRoot: String,
-    bypass: Boolean
+    bypass: Boolean,
+    gatewayPort: Int = 8080
   )
 
   case class BranchRuntime(
@@ -69,6 +70,7 @@ object FlowTreeActor:
 
       for
         _ <- logger.info(s"FlowTreeActor started for session ${config.sessionId}")
+        _ <- startFileWatcher(ctx, config)
       yield running(ctx, branchesRef, config)
     }
 
@@ -114,16 +116,14 @@ object FlowTreeActor:
             handleEvent(ctx, branchesRef, cfg, eventType, data).as(this)
 
           case TreeCommand.SourceExited(branchName, exitCode) =>
-            // Phase 4: Source script management
-            logger.warn(s"Source '$branchName' exited with code $exitCode (handling: Phase 4)").as(this)
+            handleSourceExited(ctx, branchesRef, cfg, branchName, exitCode).as(this)
 
           case TreeCommand.MailForBranch(address, message) =>
-            // Phase 3: Daemon mail routing
-            logger.info(s"Mail for $address (handling: Phase 3)").as(this)
+            // Mail routing for serverless daemons is handled by the proxy actor directly
+            logger.info(s"Mail for $address").as(this)
 
           case TreeCommand.ReloadDefinition(flowName) =>
-            // Phase 6: Hot reload
-            logger.info(s"Reload request for '$flowName' (handling: Phase 6)").as(this)
+            handleReload(ctx, branchesRef, cfg, flowName).as(this)
 
           case TreeCommand.Shutdown =>
             for
@@ -192,30 +192,18 @@ object FlowTreeActor:
       _ <- defn.branchType match
         case _: BranchType.Pipeline =>
           startPipeline(ctx, branchesRef, cfg, name)
-        case _: BranchType.Daemon =>
-          // Phase 3: daemon handling
-          for
-            _ <- branchesRef.update(s =>
-              s.updated(name, s(name).copy(state = s(name).state.copy(phase = BranchPhase.Running)))
-            )
-            _ <- logger.info(s"Daemon '$name' mounted (full handling: Phase 3)")
-          yield ()
+        case daemon: BranchType.Daemon =>
+          startDaemon(ctx, branchesRef, cfg, name, daemon)
         case _: BranchType.Reactor =>
-          // Phase 4: reactor handling
+          // Reactor: just mark as Running — it listens via handleEvent
           for
             _ <- branchesRef.update(s =>
               s.updated(name, s(name).copy(state = s(name).state.copy(phase = BranchPhase.Running)))
             )
-            _ <- logger.info(s"Reactor '$name' mounted (full handling: Phase 4)")
+            _ <- logger.info(s"Reactor '$name' mounted and listening")
           yield ()
-        case _: BranchType.Source =>
-          // Phase 4: source handling
-          for
-            _ <- branchesRef.update(s =>
-              s.updated(name, s(name).copy(state = s(name).state.copy(phase = BranchPhase.Running)))
-            )
-            _ <- logger.info(s"Source '$name' mounted (full handling: Phase 4)")
-          yield ()
+        case source: BranchType.Source =>
+          startSource(ctx, branchesRef, cfg, name, source)
       // Inject address table to main agent
       _ <- injectAddressTable(branchesRef, cfg)
       // Persist
@@ -945,8 +933,337 @@ object FlowTreeActor:
     yield ()
 
   // ============================================================
-  // Step adapter (watches agent, handles completion/timeout)
+  // Daemon management
   // ============================================================
+
+  private def startDaemon(
+    ctx: ActorContext[TreeCommand],
+    branchesRef: Ref[IO, Map[String, BranchRuntime]],
+    cfg: TreeConfig,
+    name: String,
+    daemon: BranchType.Daemon
+  )(using ActorContext[TreeCommand]): IO[Unit] =
+    for
+      defOpt <- cfg.resources.agentLibrary.get(daemon.agent)
+      _ <- defOpt match
+        case None =>
+          // Agent not found — mark as crashed
+          branchesRef.update(m => m.updated(name,
+            m(name).copy(state = m(name).state.copy(phase = BranchPhase.Crashed))
+          ))
+        case Some(agentDef) =>
+          if daemon.persistent then
+            // Persistent: spawn AgentActor directly at the daemon's address
+            for
+              readTracker <- ReadTracker.create
+              fileHistory <- FileHistory.create()
+              agentUid = s"daemon-$name-${java.util.UUID.randomUUID().toString.take(8)}"
+              childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(name))
+              agentRef <- ctx.system.spawn(
+                AgentActor(
+                  agentDef = agentDef,
+                  resources = cfg.resources,
+                  wsSend = childWs,
+                  depth = 1,
+                  parentRef = Some(cfg.parentAgentRef),
+                  sessionId = cfg.sessionId,
+                  sessionName = Some(s"$name (daemon)"),
+                  readTracker = Some(readTracker),
+                  fileHistory = Some(fileHistory),
+                  contextWindow = cfg.resources.contextWindow,
+                  projectRoot = Some(cfg.projectRoot),
+                  bypass = cfg.bypass
+                ),
+                agentUid
+              )
+              _ <- branchesRef.update(m => m.updated(name,
+                m(name).copy(
+                  state = m(name).state.copy(
+                    phase = BranchPhase.Running,
+                    address = agentRef.path.toString
+                  ),
+                  runningAgents = m(name).runningAgents + ("__daemon__" -> agentRef)
+                )
+              ))
+              _ <- FlowMembership.join(agentRef.path.toString, name)
+              _ <- agentRef ! AgentCommand.UserInput(daemon.prompt, None)
+              _ <- emit(cfg, "daemonStarted",
+                "branchName" -> name.asJson,
+                "mode" -> "persistent".asJson,
+                "address" -> agentRef.path.toString.asJson
+              )
+              _ = logger.info(s"Daemon '$name' mounted (persistent) at ${agentRef.path}")
+            yield ()
+          else
+            // Serverless: spawn a proxy actor at the daemon's address
+            val daemonName = s"daemon-proxy-$name-${java.util.UUID.randomUUID().toString.take(8)}"
+            for
+              proxyRef <- ctx.system.spawn(
+                daemonProxy(ctx.self, name, agentDef, daemon.prompt, cfg),
+                daemonName
+              )
+              _ <- branchesRef.update(m => m.updated(name,
+                m(name).copy(
+                  state = m(name).state.copy(
+                    phase = BranchPhase.Running,
+                    address = proxyRef.path.toString
+                  ),
+                  runningAgents = m(name).runningAgents + ("__daemon__" -> proxyRef)
+                )
+              ))
+              _ <- FlowMembership.join(proxyRef.path.toString, name)
+              _ <- emit(cfg, "daemonStarted",
+                "branchName" -> name.asJson,
+                "mode" -> "serverless".asJson,
+                "address" -> proxyRef.path.toString.asJson
+              )
+              _ = logger.info(s"Daemon '$name' mounted (serverless) at ${proxyRef.path}")
+            yield ()
+    yield ()
+
+  /** Serverless daemon proxy: spawns temp agent on each incoming Mail. */
+  private def daemonProxy(
+    treeRef: ActorRef[TreeCommand],
+    branchName: String,
+    agentDef: AgentDef,
+    daemonPrompt: String,
+    cfg: TreeConfig
+  ): Behavior[AgentCommand] =
+    Behaviors.setup { ctx =>
+      def loop(): Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand] {
+        case AgentCommand.UserInput(message, replyTo, _, _, _) =>
+          for
+            readTracker <- ReadTracker.create
+            fileHistory <- FileHistory.create()
+            agentUid = s"daemon-call-$branchName-${java.util.UUID.randomUUID().toString.take(8)}"
+            childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(branchName))
+            agentRef <- ctx.system.spawn(
+              AgentActor(
+                agentDef = agentDef,
+                resources = cfg.resources,
+                wsSend = childWs,
+                depth = 1,
+                parentRef = Some(cfg.parentAgentRef),
+                sessionId = cfg.sessionId,
+                sessionName = Some(s"$branchName/call"),
+                readTracker = Some(readTracker),
+                fileHistory = Some(fileHistory),
+                contextWindow = cfg.resources.contextWindow,
+                projectRoot = Some(cfg.projectRoot),
+                bypass = cfg.bypass
+              ),
+              agentUid
+            )
+            adapterRef <- ctx.spawn(
+              daemonCallAdapter(replyTo, agentRef, branchName),
+              s"$agentUid-adapter"
+            )
+            fullPrompt = s"$daemonPrompt\n\n--- Incoming Message ---\n$message"
+            _ <- agentRef ! AgentCommand.UserInput(fullPrompt, Some(adapterRef))
+            _ = logger.info(s"[$branchName] Daemon invoked (serverless)")
+          yield loop()
+
+        case _ => IO.pure(loop())
+      }
+      IO.pure(loop())
+    }
+
+  /** Adapter for a serverless daemon call: forwards result to the Mail sender's replyTo. */
+  private def daemonCallAdapter(
+    replyTo: Option[ActorRef[AgentEvent]],
+    agentRef: ActorRef[AgentCommand],
+    branchName: String
+  ): Behavior[AgentEvent] =
+    Behaviors.setup { ctx =>
+      ctx.watch(agentRef)
+      val done = Ref.unsafe[IO, Boolean](false)
+
+      IO.pure(new Behavior[AgentEvent]:
+        def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
+          done.set(true) *>
+            IO.delay(replyTo.foreach(_ ! event)) *>
+            IO.pure(Behaviors.stopped[AgentEvent])
+
+        override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
+          signal match
+            case SystemSignal.Terminated(_) =>
+              for
+                alreadyDone <- done.get
+                _ <- done.set(true)
+                _ <-
+                  if !alreadyDone then
+                    IO.delay(replyTo.foreach(_ ! AgentEvent.Failed("",
+                      AgentError("", branchName, 1, AgentErrorType.Unknown, "daemon agent crashed"))))
+                  else IO.unit
+              yield Behaviors.stopped[AgentEvent]
+      )
+    }
+
+  // ============================================================
+  // Hot reload — file watcher + definition reload
+  // ============================================================
+
+  private def startFileWatcher(
+    ctx: ActorContext[TreeCommand],
+    cfg: TreeConfig
+  ): IO[Unit] =
+    val flowsDir = (nebflow.core.PathUtil.dataRoot / "flows").toIO.toPath
+    ctx.forkTurn(
+      IO.blocking {
+        if !java.nio.file.Files.exists(flowsDir) then java.nio.file.Files.createDirectories(flowsDir)
+        val watcher = java.nio.file.FileSystems.getDefault.newWatchService()
+        flowsDir.register(
+          watcher,
+          java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY,
+          java.nio.file.StandardWatchEventKinds.ENTRY_CREATE
+        )
+        while true do
+          val key = watcher.take()
+          val events = key.pollEvents()
+          events.forEach { event =>
+            val fileName = event.context().toString
+            if fileName.endsWith(".yaml") then
+              val flowName = fileName.stripSuffix(".yaml")
+              ctx.self ! TreeCommand.ReloadDefinition(flowName)
+          }
+          key.reset()
+      }.void.handleErrorWith(e =>
+        logger.warn(s"File watcher error: ${e.getMessage}").void
+      )
+    )
+
+  private def handleReload(
+    ctx: ActorContext[TreeCommand],
+    branchesRef: Ref[IO, Map[String, BranchRuntime]],
+    cfg: TreeConfig,
+    flowName: String
+  )(using ActorContext[TreeCommand]): IO[Unit] =
+    for
+      newDefOpt <- FlowDefLoader.load(flowName)
+      _ <- newDefOpt match
+        case None => logger.warn(s"Hot reload: '$flowName' not found or invalid")
+        case Some(newDef) =>
+          for
+            branches <- branchesRef.get
+            // Find branches mounted from this definition (by matching flowDef.name)
+            matching = branches.filter { case (_, br) =>
+              br.flowDef.name == flowName || br.state.name.startsWith(flowName)
+            }
+            _ <- matching.toList.traverse_ { case (name, _) =>
+              // Unmount old, mount new
+              for
+                _ <- handleUnmount(ctx, branchesRef, cfg, name)
+                _ <- ctx.self ! TreeCommand.MountBranch(newDef, Some(name), None)
+                _ <- emit(cfg, "treeBranchUpdated",
+                  "name" -> name.asJson,
+                  "flowName" -> flowName.asJson
+                )
+                _ <- logger.info(s"Hot reload: '$name' reloaded from '$flowName'")
+              yield ()
+            }
+          yield ()
+    yield ()
+
+  // ============================================================
+  // Source script management
+  // ============================================================
+
+  private def startSource(
+    ctx: ActorContext[TreeCommand],
+    branchesRef: Ref[IO, Map[String, BranchRuntime]],
+    cfg: TreeConfig,
+    name: String,
+    source: BranchType.Source
+  )(using ActorContext[TreeCommand]): IO[Unit] =
+    for
+      _ <- branchesRef.update(m => m.updated(name,
+        m(name).copy(state = m(name).state.copy(phase = BranchPhase.Running))
+      ))
+      _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
+      _ <- emit(cfg, "sourceStarted",
+        "branchName" -> name.asJson,
+        "command" -> source.command.asJson
+      )
+      _ = logger.info(s"Source '$name' started: ${source.command}")
+    yield ()
+
+  private def spawnSourceProcess(
+    ctx: ActorContext[TreeCommand],
+    branchesRef: Ref[IO, Map[String, BranchRuntime]],
+    cfg: TreeConfig,
+    name: String,
+    source: BranchType.Source
+  )(using ActorContext[TreeCommand]): IO[Unit] =
+    val sessionId = cfg.sessionId.getOrElse("")
+    val pb = new ProcessBuilder("sh", "-c", source.command)
+    pb.environment().put("NEBFLOW_GATEWAY_PORT", cfg.gatewayPort.toString)
+    pb.environment().put("NEBFLOW_SESSION_ID", sessionId)
+    pb.environment().put("NEBFLOW_BRANCH_NAME", name)
+
+    ctx.forkTurn(
+      IO.blocking {
+        val process = pb.start()
+        // Log stdout/stderr for debugging
+        val stdout = scala.io.Source.fromInputStream(process.getInputStream)
+        val stderr = scala.io.Source.fromInputStream(process.getErrorStream)
+        // Consume output in background to prevent pipe blocking
+        val stdoutThread = new Thread(() => {
+          try stdout.getLines().foreach(line => logger.info(s"[$name] stdout: $line"))
+          catch case _: Exception => ()
+        })
+        val stderrThread = new Thread(() => {
+          try stderr.getLines().foreach(line => logger.warn(s"[$name] stderr: $line"))
+          catch case _: Exception => ()
+        })
+        stdoutThread.setDaemon(true)
+        stderrThread.setDaemon(true)
+        stdoutThread.start()
+        stderrThread.start()
+
+        val exitCode = process.waitFor()
+        ctx.self ! TreeCommand.SourceExited(name, exitCode)
+      }.void
+    )
+
+  private def handleSourceExited(
+    ctx: ActorContext[TreeCommand],
+    branchesRef: Ref[IO, Map[String, BranchRuntime]],
+    cfg: TreeConfig,
+    name: String,
+    exitCode: Int
+  )(using ActorContext[TreeCommand]): IO[Unit] =
+    for
+      branches <- branchesRef.get
+      _ <- branches.get(name) match
+        case Some(br) => br.state.branchType match
+          case source: BranchType.Source =>
+            source.restart match
+              case RestartPolicy.Permanent =>
+                for
+                  _ <- logger.info(s"Source '$name' exited (code=$exitCode), restarting (permanent)")
+                  _ <- emit(cfg, "sourceRestarted",
+                    "branchName" -> name.asJson,
+                    "exitCode" -> exitCode.asJson
+                  )
+                  _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
+                yield ()
+              case RestartPolicy.Transient if exitCode != 0 =>
+                for
+                  _ <- logger.info(s"Source '$name' crashed (code=$exitCode), restarting (transient)")
+                  _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
+                yield ()
+              case _ =>
+                for
+                  _ <- branchesRef.update(m => m.updated(name,
+                    m(name).copy(state = m(name).state.copy(phase = BranchPhase.Stopped))
+                  ))
+                  _ <- logger.info(s"Source '$name' exited (code=$exitCode), not restarting")
+                yield ()
+          case _ => IO.unit
+        case None => IO.unit
+    yield ()
+
+
 
   private def stepAdapter(
     treeRef: ActorRef[TreeCommand],

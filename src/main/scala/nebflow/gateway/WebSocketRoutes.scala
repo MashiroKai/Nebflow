@@ -9,7 +9,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
-// FlowTreeStore import will be added in Phase 1 when the file is created
+import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
@@ -144,24 +144,44 @@ class WebSocketRoutes(
               }
               .void *>
               rootAgents.update(_ + (sessionId -> ref)) *>
-              // FlowTree restoration will be handled here in Phase 5
-              IO.unit.as(ref)
+              initFlowTree(sessionId, ref, pr).start.as(ref)
           }
     }
 
-  /** Restore persisted flows for a session after restart — Phase 5 will implement FlowTree restoration. */
+  /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
+  private def initFlowTree(
+    sessionId: String,
+    agentRef: nebflow.actor.ActorRef[AgentCommand],
+    projectRoot: String
+  ): IO[Unit] =
+    val bypass = false // TODO: get from session
+    val config = FlowTreeActor.TreeConfig(
+      parentAgentRef = agentRef,
+      wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),
+      sessionId = Some(sessionId),
+      resources = sharedResources,
+      projectRoot = projectRoot,
+      bypass = bypass
+    )
+    for
+      treeRef <- nebulaSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
+      _ <- FlowTreeRegistry.register(sessionId, treeRef)
+      // TODO: restore from FlowTreeStore (Phase 5 continued)
+      _ = logger.info(s"FlowTreeActor created for session $sessionId")
+    yield ()
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
-    rootAgents.modify { agents =>
-      agents.get(sessionId) match
-        case Some(ref) =>
-          (
-            agents - sessionId,
-            ref ! AgentCommand.Stop(s"session $sessionId deleted")
-          )
-        case None => (agents, IO.unit)
-    }.flatten
+    FlowTreeRegistry.unregister(sessionId) *>
+      rootAgents.modify { agents =>
+        agents.get(sessionId) match
+          case Some(ref) =>
+            (
+              agents - sessionId,
+              ref ! AgentCommand.Stop(s"session $sessionId deleted")
+            )
+          case None => (agents, IO.unit)
+      }.flatten
 
   /** Route a message to the root agent of a specific session. Discards if sessionId is empty. */
   private def routeToAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
