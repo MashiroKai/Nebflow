@@ -113,6 +113,7 @@ export function connect() {
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
+    sendWs({type: 'setVoiceMuted', muted: localStorage.getItem('voiceMuted') === 'true'});
     sendWs({type: 'getSkills'});
     sendWs({type: 'memoryStatus'});
     sendWs({type: 'getLlmLog'});
