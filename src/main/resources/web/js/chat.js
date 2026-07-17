@@ -788,6 +788,7 @@ export function appendToolStreamDelta(toolName, delta) {
   _toolStreamRafTarget = {
     row: pendingRow,
     chat: activeView.dom.chat,
+    snapped: activeView.stream.scrollSnapped,
     toolName: toolName,
     rawText: activeView.stream.toolStreamText,
   };
@@ -832,9 +833,9 @@ export function appendToolStreamDelta(toolName, delta) {
         bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
       }
 
-      // Auto-scroll
+      // Auto-scroll — snapped captured at schedule time to match smartScroll()'s logic
       const threshold = 60;
-      if (target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+      if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
         target.chat.scrollTop = target.chat.scrollHeight;
       }
     });
@@ -1437,7 +1438,7 @@ export function appendThinkingDelta(delta) {
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
   // which view global state points to at fire time.
-  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat };
+  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat, snapped: activeView.stream.scrollSnapped };
   _thinkingRafTarget.bubble._nfText = activeView.stream.thinkingText;
   // Schedule a rAF render if one isn't already pending — caps re-render rate
   // and coalesces multiple deltas into a single DOM update.
@@ -1452,9 +1453,10 @@ export function appendThinkingDelta(delta) {
         contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
       }
       // Scroll the correct chat element directly — smartScroll() reads state.dom
-      // at rAF time which may be the wrong window.
+      // at rAF time which may be the wrong window. Capture snapped at schedule
+      // time to match smartScroll()'s snapped || near-bottom logic.
       const threshold = 60;
-      if (target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+      if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
         target.chat.scrollTop = target.chat.scrollHeight;
       }
     });
