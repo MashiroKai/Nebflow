@@ -45,10 +45,10 @@ Do NOT use ExecuteFlow for:
 - Tasks needing user interaction during execution (ask first, then flow)
 
 Requirements:
-- "verify" is mandatory — it evaluates all work, outputs PASS or FAIL on the first line, then a summary
+- "verify" is mandatory — the verify agent calls the FlowVerify tool to report PASS/FAIL + summary
 - "loop" is optional — if verify fails, the fix step runs, then verify re-runs (up to maxIterations)
 - Step prompts can reference upstream outputs with ${stepId} (e.g. "Based on: ${explore}")
-- Verify prompt should instruct: "Start first line with PASS or FAIL"
+- In the loop fix step, use ${verify} to reference the verify failure summary
 """
 
   val inputSchema = JsonObject.fromIterable(
@@ -87,12 +87,12 @@ Requirements:
         ),
         "verify" -> Json.obj(
           "type" -> "object".asJson,
-          "description" -> "Mandatory verification step. Evaluates all work, outputs PASS/FAIL + summary.".asJson,
+          "description" -> "Mandatory verification step. The verify agent uses the FlowVerify tool to report PASS/FAIL.".asJson,
           "properties" -> Json.obj(
             "agent" -> Json.obj("type" -> "string".asJson, "default" -> "Explorer".asJson),
             "prompt" -> Json.obj(
               "type" -> "string".asJson,
-              "description" -> "Verification instructions. Must start output with PASS or FAIL.".asJson
+              "description" -> "Verification instructions. The agent will call FlowVerify tool with passed=true/false.".asJson
             )
           ),
           "required" -> Json.arr("prompt".asJson)
@@ -130,34 +130,28 @@ Requirements:
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    // Depth check — same threshold as Delegate
-    if ctx.depth >= DelegateTool.MaxDepth then
-      IO.pure(
-        Left(ToolError(s"Maximum depth (${DelegateTool.MaxDepth}) reached. Cannot create flow at this depth."))
-      )
-    else
-      // Parse input → FlowDef
-      FlowDefParser.parse(input) match
-        case Left(parseError) =>
-          IO.pure(Left(ToolError(s"Invalid flow definition: $parseError")))
+    // Parse input → FlowDef
+    FlowDefParser.parse(input) match
+      case Left(parseError) =>
+        IO.pure(Left(ToolError(s"Invalid flow definition: $parseError")))
 
-        case Right(flowDef) =>
-          // Validate structure
-          FlowValidator.validate(flowDef) match
-            case Left(validationError) =>
-              IO.pure(Left(ToolError(s"Flow validation failed: $validationError")))
+      case Right(flowDef) =>
+        // Validate structure
+        FlowValidator.validate(flowDef) match
+          case Left(validationError) =>
+            IO.pure(Left(ToolError(s"Flow validation failed: $validationError")))
 
-            case Right(_) =>
-              // Check prerequisites
-              (ctx.actorSystem, ctx.sharedResources, ctx.agentLibrary) match
-                case (Some(system), Some(resources), Some(agentLibrary)) =>
-                  checkAgentsExist(flowDef, agentLibrary).flatMap {
-                    case Left(err) => IO.pure(Left(ToolError(err)))
-                    case Right(_) =>
-                      spawnFlow(flowDef, ctx, system, resources)
-                  }
-                case _ =>
-                  IO.pure(Left(ToolError("ExecuteFlow requires ActorSystem, SharedResources, and AgentLibrary")))
+          case Right(_) =>
+            // Check prerequisites
+            (ctx.actorSystem, ctx.sharedResources, ctx.agentLibrary) match
+              case (Some(system), Some(resources), Some(agentLibrary)) =>
+                checkAgentsExist(flowDef, agentLibrary).flatMap {
+                  case Left(err) => IO.pure(Left(ToolError(err)))
+                  case Right(_) =>
+                    spawnFlow(flowDef, ctx, system, resources)
+                }
+              case _ =>
+                IO.pure(Left(ToolError("ExecuteFlow requires ActorSystem, SharedResources, and AgentLibrary")))
   end call
 
   // ============================================================
@@ -198,42 +192,59 @@ Requirements:
 
     bypassIO.flatMap { bypass =>
       val flowId = s"flow-${flowDef.name.take(20)}-${java.util.UUID.randomUUID().toString.take(8)}"
+      val sessionId = ctx.sessionId.getOrElse("")
 
-      // Spawn FlowActor as a top-level actor
-      system
-        .spawn(
-          FlowActor(
-            flowDef = flowDef,
-            parentAgentRef = ctx.agentActorRef.getOrElse(throw RuntimeException("ExecuteFlow requires agentActorRef")),
-            wsSend = ctx.wsSend,
-            parentSessionId = ctx.sessionId,
-            parentDepth = ctx.depth,
-            resources = resources,
-            projectRoot = ctx.projectRoot,
-            bypass = bypass
-          ),
-          flowId
-        )
-        .flatMap { ref =>
-          logger.info(s"Spawned FlowActor: $flowId (parent=${ctx.agentActorRef.map(_.path.name)})")
+      // Save initial snapshot for persistence
+      val initialSnapshot = FlowSnapshot(
+        flowDef = flowDef,
+        flowId = flowId,
+        phase = FlowPhase.Working.toString,
+        stepStatus = flowDef.steps.map(s => s.id -> StepStatus.Pending.toString).toMap,
+        results = Map.empty,
+        failedReasons = Map.empty,
+        retryLeft = Map.empty,
+        verifyResult = None,
+        iteration = 0
+      )
 
-          val stepSummary = flowDef.steps
-            .map(s =>
-              s"  ${s.id} (${s.agent})" +
-                (if s.dependsOn.nonEmpty then s" <- ${s.dependsOn.mkString(", ")}" else "")
-            )
-            .mkString("\n")
+      // Register parent agent as flow member
+      val parentPath = ctx.agentActorRef.map(_.path.toString).getOrElse("")
 
-          IO.pure(
-            Right(
-              s"""Flow '${flowDef.name}' started ($flowId).
+      for
+        _ <- FlowStore.save(sessionId, flowId, initialSnapshot)
+        _ <- if parentPath.nonEmpty then FlowMembership.join(parentPath, flowId) else IO.unit
+        _ <- system
+          .spawn(
+            FlowActor(
+              flowDef = flowDef,
+              flowId = flowId,
+              parentAgentRef = ctx.agentActorRef.getOrElse(throw RuntimeException("ExecuteFlow requires agentActorRef")),
+              wsSend = ctx.wsSend,
+              parentSessionId = ctx.sessionId,
+              parentDepth = ctx.depth,
+              resources = resources,
+              projectRoot = ctx.projectRoot,
+              bypass = bypass,
+              restoreSnapshot = None
+            ),
+            flowId
+          )
+      yield
+        logger.info(s"Spawned FlowActor: $flowId (parent=${ctx.agentActorRef.map(_.path.name)})")
+        val stepSummary = flowDef.steps
+          .map(s =>
+            s"  ${s.id} (${s.agent})" +
+              (if s.dependsOn.nonEmpty then s" <- ${s.dependsOn.mkString(", ")}" else "")
+          )
+          .mkString("\n")
+
+        Right(
+          s"""Flow '${flowDef.name}' started ($flowId).
              |$stepSummary
              |verify: ${flowDef.verify.agent}
              |${flowDef.loop.map(l => s"loop: fix=${l.fix.agent}, max=${l.maxIterations}").getOrElse("no loop")}
              |You will be notified when the flow completes via a system message.""".stripMargin
-            )
-          )
-        }
+        )
     }
   end spawnFlow
 

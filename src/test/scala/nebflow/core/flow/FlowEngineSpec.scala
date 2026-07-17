@@ -2,7 +2,6 @@ package nebflow.core.flow
 
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
-import io.circe.parser.parse
 import munit.CatsEffectSuite
 
 class FlowEngineSpec extends CatsEffectSuite:
@@ -36,7 +35,7 @@ class FlowEngineSpec extends CatsEffectSuite:
       ),
       "verify" -> Json.obj(
         "agent" -> "Explorer".asJson,
-        "prompt" -> "Run tests. Start with PASS or FAIL.".asJson
+        "prompt" -> "Run tests. Call FlowVerify with result.".asJson
       ),
       "loop" -> Json.obj(
         "fix" -> Json.obj(
@@ -104,6 +103,65 @@ class FlowEngineSpec extends CatsEffectSuite:
     FlowDefParser.parse(input) match
       case Right(_) => fail("Should fail on empty steps")
       case Left(err) => assert(err.contains("steps"), s"Error should mention steps: $err")
+  }
+
+  test("parser: loop fix missing agent returns error instead of silent fallback") {
+    val input = JsonObject(
+      "name" -> "x".asJson,
+      "description" -> "d".asJson,
+      "steps" -> Json.arr(
+        Json.obj("id" -> "s1".asJson, "agent" -> "Explorer".asJson, "prompt" -> "Do X".asJson)
+      ),
+      "verify" -> Json.obj("prompt" -> "v".asJson),
+      "loop" -> Json.obj(
+        "fix" -> Json.obj(
+          "id" -> "fix".asJson,
+          // missing "agent" — should error, not silently default to "Nebula"
+          "prompt" -> "Fix it".asJson
+        )
+      )
+    )
+    FlowDefParser.parse(input) match
+      case Right(_) => fail("Should fail on missing agent in loop.fix")
+      case Left(err) => assert(err.contains("agent"), s"Error should mention agent: $err")
+  }
+
+  test("parser: loop fix missing prompt returns error") {
+    val input = JsonObject(
+      "name" -> "x".asJson,
+      "description" -> "d".asJson,
+      "steps" -> Json.arr(
+        Json.obj("id" -> "s1".asJson, "agent" -> "Explorer".asJson, "prompt" -> "Do X".asJson)
+      ),
+      "verify" -> Json.obj("prompt" -> "v".asJson),
+      "loop" -> Json.obj(
+        "fix" -> Json.obj(
+          "id" -> "fix".asJson,
+          "agent" -> "Nebula".asJson
+          // missing "prompt" — should error
+        )
+      )
+    )
+    FlowDefParser.parse(input) match
+      case Right(_) => fail("Should fail on missing prompt in loop.fix")
+      case Left(err) => assert(err.contains("prompt"), s"Error should mention prompt: $err")
+  }
+
+  test("parser: loop fix with non-object fix returns error") {
+    val input = JsonObject(
+      "name" -> "x".asJson,
+      "description" -> "d".asJson,
+      "steps" -> Json.arr(
+        Json.obj("id" -> "s1".asJson, "agent" -> "Explorer".asJson, "prompt" -> "Do X".asJson)
+      ),
+      "verify" -> Json.obj("prompt" -> "v".asJson),
+      "loop" -> Json.obj(
+        "fix" -> "not-an-object".asJson
+      )
+    )
+    FlowDefParser.parse(input) match
+      case Right(_) => fail("Should fail when loop.fix is not an object")
+      case Left(err) => assert(err.contains("fix"), s"Error should mention fix: $err")
   }
 
   // ============================================================
@@ -231,68 +289,103 @@ class FlowEngineSpec extends CatsEffectSuite:
       ),
       verify = VerifyStep(prompt = "check")
     )
-    // Parser should catch blank IDs, but let's test validator too
     FlowValidator.validate(flow) match
       case Right(()) => fail("Should detect blank ID")
       case Left(err) => ()
   }
 
   // ============================================================
-  // Verify Result Parsing (via reflection-independent approach)
+  // resolveTemplate — real code path
   // ============================================================
 
-  test("verify parsing: PASS detection") {
-    // parseVerifyResult is private, but we can test via VerifyResult directly
-    // This validates the expected behavior
-    val passOutput = "PASS\nImplemented auth module.\n15 tests passing."
-    val failOutput = "FAIL\n3 tests still failing.\nToken refresh broken."
-    val ambiguous = "Not sure if it works."
-
-    // Simulate the parsing logic
-    def parse(output: String): Boolean =
-      output.linesIterator.nextOption().getOrElse("").trim.toLowerCase.startsWith("pass")
-
-    assert(parse(passOutput), "Should detect PASS")
-    assert(!parse(failOutput), "Should not detect PASS for FAIL")
-    assert(!parse(ambiguous), "Ambiguous output should not be PASS")
-  }
-
-  test("verify parsing: case insensitive and whitespace tolerant") {
-    def parse(output: String): Boolean =
-      output.linesIterator.nextOption().getOrElse("").trim.toLowerCase.startsWith("pass")
-
-    assert(parse("PASS\nok"))
-    assert(parse("pass\nok"))
-    assert(parse("  PASS  \nok"))
-    assert(parse("Pass\nok"))
-    assert(parse("PASS. All good."))
-  }
-
-  // ============================================================
-  // Template Resolution (validating the expected behavior)
-  // ============================================================
-
-  test("template: ${stepId} replacement") {
-    // Simulate the resolveTemplate logic
-    def resolve(prompt: String, results: Map[String, String]): String =
-      results.foldLeft(prompt) { case (p, (id, output)) =>
-        p.replace("${" + id + "}", output)
-      }
-
+  test("resolveTemplate: ${stepId} replacement via real function") {
     val results = Map("explore" -> "Found 5 files", "plan" -> "Step 1: do X")
     val prompt = "Based on exploration: ${explore}\nPlan: ${plan}"
 
-    val resolved = resolve(prompt, results)
+    val resolved = FlowActor.resolveTemplate(prompt, results)
     assertEquals(resolved, "Based on exploration: Found 5 files\nPlan: Step 1: do X")
   }
 
-  test("template: no variables remain unresolved when all deps are met") {
-    def resolve(prompt: String, results: Map[String, String]): String =
-      results.foldLeft(prompt) { case (p, (id, output)) =>
-        p.replace("${" + id + "}", output)
-      }
-
-    val resolved = resolve("Hello ${name}", Map("name" -> "World"))
+  test("resolveTemplate: no variables remain unresolved when all deps are met") {
+    val resolved = FlowActor.resolveTemplate("Hello ${name}", Map("name" -> "World"))
     assert(!resolved.contains("${"), s"No template vars should remain: $resolved")
   }
+
+  test("resolveTemplate: ${verify} variable resolves correctly") {
+    // Regression test for Bug 1: handleVerifyFail used stale state.verifyResult
+    // instead of the current verify summary. The template mechanism itself works —
+    // the bug was in what was passed to it. Verify that resolveTemplate correctly
+    // interpolates the "verify" key.
+    val results = Map("explore" -> "Found 3 issues", "verify" -> "FAIL: tests broken at line 42")
+    val prompt = "Previous verification found:\n${verify}\nFix these issues."
+
+    val resolved = FlowActor.resolveTemplate(prompt, results)
+    assert(resolved.contains("FAIL: tests broken at line 42"), s"Verify output should be interpolated: $resolved")
+    assert(!resolved.contains("${verify}"), s"${'$'}{verify} should be resolved: $resolved")
+  }
+
+  test("resolveTemplate: large output is truncated") {
+    // Regression test for inter-step truncation
+    val bigOutput = "X" * 20000
+    val resolved = FlowActor.resolveTemplate("Result: ${step1}", Map("step1" -> bigOutput))
+    assert(resolved.length < 20000, s"Output should be truncated, got ${resolved.length} chars")
+    assert(resolved.contains("truncated"), s"Should contain truncation notice: $resolved")
+  }
+
+  test("resolveTemplate: small output is not truncated") {
+    val resolved = FlowActor.resolveTemplate("Result: ${step1}", Map("step1" -> "small output"))
+    assertEquals(resolved, "Result: small output")
+  }
+
+  // ============================================================
+  // buildVerifyContext — real code path
+  // ============================================================
+
+  test("buildVerifyContext: shows completed step output") {
+    val results = Map("step1" -> "All tests passed")
+    val failedReasons = Map.empty[String, String]
+    val stepStatus = Map("step1" -> StepStatus.Done)
+
+    val context = FlowActor.buildVerifyContext(results, failedReasons, stepStatus)
+    assert(context.contains("[step1]"), s"Should show step1: $context")
+    assert(context.contains("All tests passed"), s"Should show step output: $context")
+    assert(!context.contains("[FAILED]"), s"Should not show FAILED for completed step: $context")
+  }
+
+  test("buildVerifyContext: shows failed step with error reason") {
+    // Regression test for Bug 2: failed steps were invisible to verify agent
+    val results = Map("step1" -> "All tests passed")
+    val failedReasons = Map("step2" -> "Compilation error: missing semicolon")
+    val stepStatus = Map("step1" -> StepStatus.Done, "step2" -> StepStatus.Failed)
+
+    val context = FlowActor.buildVerifyContext(results, failedReasons, stepStatus)
+    assert(context.contains("[step2] [FAILED]"), s"Should show failed step2: $context")
+    assert(context.contains("Compilation error"), s"Should show error reason: $context")
+    assert(context.contains("[step1]"), s"Should also show successful step: $context")
+  }
+
+  test("buildVerifyContext: truncates long step output") {
+    val longOutput = "A" * 5000
+    val results = Map("step1" -> longOutput)
+    val failedReasons = Map.empty[String, String]
+    val stepStatus = Map("step1" -> StepStatus.Done)
+
+    val context = FlowActor.buildVerifyContext(results, failedReasons, stepStatus)
+    assert(context.contains("truncated"), s"Should show truncation notice: $context")
+    assert(context.length < longOutput.length, s"Output should be truncated in context")
+  }
+
+  // ============================================================
+  // FlowResult
+  // ============================================================
+
+  test("FlowResult: Pass/Fail/Cancelled type detection") {
+    assertEquals(FlowResult.resultType(FlowResult.Pass("ok")), "pass")
+    assertEquals(FlowResult.resultType(FlowResult.Fail("bad")), "fail")
+    assertEquals(FlowResult.resultType(FlowResult.Cancelled("stopped")), "cancelled")
+
+    assertEquals(FlowResult.summary(FlowResult.Pass("all good")), "all good")
+    assertEquals(FlowResult.summary(FlowResult.Fail("issues found")), "issues found")
+  }
+
 end FlowEngineSpec

@@ -25,6 +25,9 @@ private[agent] trait AgentCore:
    */
   private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
 
+  /** Internal tools excluded from List("*") wildcard expansion. Only injected explicitly by FlowActor. */
+  private val InternalTools = Set("FlowVerify")
+
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
   private[agent] type ProcessingFn =
@@ -542,7 +545,7 @@ private[agent] trait AgentCore:
     val isMcpTool = (name: String) => name.startsWith("mcp__")
     val base = agentDef.tools match
       case Nil => Set.empty[String]
-      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(isMcpTool).toSet
+      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(isMcpTool).filterNot(InternalTools.contains).toSet
       case names => names.toSet
     // MCP servers are global — all enabled servers available to every agent
     val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool).toSet
