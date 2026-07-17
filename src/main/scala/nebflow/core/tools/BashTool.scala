@@ -277,6 +277,28 @@ Git safety:
       else if lines.length == 1 then lines.head
       else s"${lines.length} lines of output"
 
+  // ── Pipe truncation handling ──────────────────────────────────────────
+  // `cmd | tail -N` causes tail to buffer ALL output until EOF, so the stuck
+  // detector sees zero output lines even though the real command is printing.
+  // We strip the trailing `| tail -N` and apply truncation in Java instead.
+
+  private val TrailingTailRe = """\|\s*tail\s+(?:-n\s+)?(\d+)\s*$""".r
+
+  /** Extract trailing `| tail -N`, returning (command without pipe, N). */
+  private def extractTailTruncation(command: String): (String, Option[Int]) =
+    TrailingTailRe.findFirstMatchIn(command) match
+      case Some(m) =>
+        val stripped = command.substring(0, m.start).trim
+        if stripped.nonEmpty then (stripped, Some(m.group(1).toInt))
+        else (command, None)
+      case None => (command, None)
+
+  /** Take the last N lines of output. */
+  private def applyTailTruncation(stdout: String, n: Int): String =
+    val lines = stdout.split("\n")
+    if lines.length <= n then stdout
+    else lines.takeRight(n).mkString("\n")
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val explicitTimeoutMs: Option[Long] = input("timeout")
       .flatMap(_.asNumber)
@@ -284,6 +306,7 @@ Git safety:
       .map(t => t.max(1L).min(MAX_TIMEOUT))
     val commandOpt = input("command").flatMap(_.asString)
     val command = commandOpt.getOrElse("")
+    val (actualCommand, tailN) = extractTailTruncation(command)
     val background = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
     val desc = input("description").flatMap(_.asString)
     val bgJobId = input("background_job_id").flatMap(_.asString)
@@ -351,8 +374,8 @@ Git safety:
                 val bgDescription = desc.getOrElse(firstLine)
                 for
                   jobId <- IO.randomUUID.map(_.toString.take(8))
-                  onComplete = makeNotifyCallback(command, desc, ctx, jobId)
-                  _ <- shell.executeBackground(command, desc, onComplete, onHeartbeat, Some(jobId))
+                  onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN)
+                  _ <- shell.executeBackground(actualCommand, desc, onComplete, onHeartbeat, Some(jobId))
                   _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
                 yield Right(
                   s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
@@ -364,16 +387,16 @@ Git safety:
                 // "[moved to background]" message instead of the real output.
                 val remoteTimeout = explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT).millis
                 shell
-                  .execute(command, remoteTimeout)
+                  .execute(actualCommand, remoteTimeout)
                   .attempt
                   .map {
-                    case Right(pr) => formatResult(pr, desc)
+                    case Right(pr) => formatResult(pr, desc, tailN)
                     case Left(_: TimeoutException) =>
                       Left(ToolError(s"[Command timed out after ${remoteTimeout.toMillis}ms]"))
                     case Left(e) =>
                       Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
                   }
-              else executeForegroundWithAutoBackground(shell, command, explicitTimeoutMs, desc, ctx)
+              else executeForegroundWithAutoBackground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
             }
           end if
     end match
@@ -390,7 +413,8 @@ Git safety:
     command: String,
     explicitTimeoutMs: Option[Long],
     desc: Option[String],
-    ctx: ToolContext
+    ctx: ToolContext,
+    tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
     val threshold = AutoBackgroundThresholdMs.millis
     // When no explicit timeout, use a duration long enough that .timeout() never fires.
@@ -427,7 +451,7 @@ Git safety:
       // If threshold won, start a background fiber that waits for command completion and notifies agent
       _ <-
         if didThresholdWin then
-          val onComplete = makeNotifyCallback(command, desc, ctx, autoBgJobId)
+          val onComplete = makeNotifyCallback(command, desc, ctx, autoBgJobId, tailN)
           val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
           val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
           val bgDescription = desc.getOrElse(firstLine)
@@ -452,7 +476,7 @@ Git safety:
     yield
       if !didThresholdWin then
         resultOpt match
-          case Some(Right(pr)) => formatResult(pr, desc)
+          case Some(Right(pr)) => formatResult(pr, desc, tailN)
           case Some(Left(e: TimeoutException)) =>
             Left(ToolError(Option(e.getMessage).getOrElse("[Command timed out]")))
           case Some(Left(e)) => Left(ToolError(s"Error: ${e.getMessage}"))
@@ -467,12 +491,16 @@ Git safety:
 
   private def formatResult(
     result: ProcessResult,
-    desc: Option[String]
+    desc: Option[String],
+    tailN: Option[Int] = None
   ): Either[ToolError, String] =
     val prefix = desc.map(d => s"[$d]\n").getOrElse("")
     val dirLine = s"(cwd: ${result.cwd})\n"
     val exitLine = if result.exitCode != 0 then s"(exit ${result.exitCode})\n" else ""
-    val cleanedOut = cleanOutput(sanitizeCardOutput(result.stdout))
+    val rawOut = tailN match
+      case Some(n) => applyTailTruncation(result.stdout, n)
+      case None    => result.stdout
+    val cleanedOut = cleanOutput(sanitizeCardOutput(rawOut))
     val cleanedErr = cleanOutput(result.stderr)
     val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
     val output = cleanedOut + errLine
@@ -532,14 +560,18 @@ Git safety:
     command: String,
     desc: Option[String],
     ctx: ToolContext,
-    jobId: String
+    jobId: String,
+    tailN: Option[Int] = None
   ): Option[Either[Throwable, ProcessResult] => IO[Unit]] =
     ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       val description = desc.getOrElse(firstLine)
       val (eventType, payload, metadata, exitInfo) = result match
         case Right(pr) =>
-          val out = cleanOutput(sanitizeCardOutput(pr.stdout))
+          val rawOut = tailN match
+            case Some(n) => applyTailTruncation(pr.stdout, n)
+            case None    => pr.stdout
+          val out = cleanOutput(sanitizeCardOutput(rawOut))
           val cleanedErr = cleanOutput(pr.stderr)
           val output = out + (if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else "")
           val exitTxt = if pr.exitCode != 0 then s" (exit ${pr.exitCode})" else ""
