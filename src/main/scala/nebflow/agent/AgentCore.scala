@@ -190,7 +190,8 @@ private[agent] trait AgentCore:
             turnCtx.systemPrefix,
             turnCtx.projectRoot,
             turnCtx.rulesMd,
-            state.session.chatWidth
+            state.session.chatWidth,
+            turnCtx.skillCatalog
           )
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
           timeReminders = SystemReminders.collectAll(isUserTurn)
@@ -682,12 +683,14 @@ private[agent] trait AgentCore:
     systemPrefix: String,
     sessionProjectRoot: Option[String] = None,
     sessionRulesMd: Option[String] = None,
-    chatWidth: Int = 0
+    chatWidth: Int = 0,
+    skillCatalog: String = ""
   ): String =
     val agentPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
     val envInfo = Repl.buildEnvInfo(chatWidth)
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
-    s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
+    val skillsBlock = if skillCatalog.nonEmpty then s"\n\n$skillCatalog" else ""
+    s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock$skillsBlock"
 
   /** Format active persistent sub-agent sessions for system prompt injection. */
   protected def formatAgentSessions(sessions: List[AgentSessionInfo]): String =
