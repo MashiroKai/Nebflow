@@ -3,7 +3,7 @@ package nebflow.core.flow
 import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
-import io.circe.{Json, JsonObject}
+import io.circe.{Decoder, Encoder, Json, JsonObject}
 
 import scala.concurrent.duration.{FiniteDuration, *}
 
@@ -43,6 +43,143 @@ case class LoopDef(
   fix: FlowStep,
   maxIterations: Int = 3
 )
+
+// ============================================================
+// JSON Codecs (for persistence)
+// ============================================================
+
+given Encoder[FlowStep] = Encoder.instance { s =>
+  Json.obj(
+    "id" -> s.id.asJson,
+    "agent" -> s.agent.asJson,
+    "prompt" -> s.prompt.asJson,
+    "dependsOn" -> s.dependsOn.toList.asJson,
+    "retry" -> s.retry.asJson,
+    "timeoutSeconds" -> s.timeout.toSeconds.asJson
+  )
+}
+
+given Decoder[FlowStep] = Decoder.instance { c =>
+  for
+    id <- c.downField("id").as[String]
+    agent <- c.downField("agent").as[String]
+    prompt <- c.downField("prompt").as[String]
+    deps <- c.downField("dependsOn").as[Option[List[String]]]
+    retry <- c.downField("retry").as[Option[Int]]
+    timeoutS <- c.downField("timeoutSeconds").as[Option[Int]]
+  yield FlowStep(
+    id, agent, prompt,
+    deps.getOrElse(Nil).toSet,
+    retry.getOrElse(2),
+    timeoutS.getOrElse(1800).seconds
+  )
+}
+
+given Encoder[VerifyStep] = Encoder.instance { v =>
+  Json.obj(
+    "agent" -> v.agent.asJson,
+    "prompt" -> v.prompt.asJson,
+    "timeoutSeconds" -> v.timeout.toSeconds.asJson
+  )
+}
+
+given Decoder[VerifyStep] = Decoder.instance { c =>
+  for
+    agent <- c.downField("agent").as[Option[String]]
+    prompt <- c.downField("prompt").as[String]
+    timeoutS <- c.downField("timeoutSeconds").as[Option[Int]]
+  yield VerifyStep(agent.getOrElse("Explorer"), prompt, timeoutS.getOrElse(1800).seconds)
+}
+
+given Encoder[LoopDef] = Encoder.instance { l =>
+  Json.obj(
+    "fix" -> l.fix.asJson,
+    "maxIterations" -> l.maxIterations.asJson
+  )
+}
+
+given Decoder[LoopDef] = Decoder.instance { c =>
+  for
+    fix <- c.downField("fix").as[FlowStep]
+    maxIter <- c.downField("maxIterations").as[Option[Int]]
+  yield LoopDef(fix, maxIter.getOrElse(3))
+}
+
+given Encoder[FlowDef] = Encoder.instance { f =>
+  Json.obj(
+    "name" -> f.name.asJson,
+    "description" -> f.description.asJson,
+    "steps" -> f.steps.asJson,
+    "verify" -> f.verify.asJson,
+    "loop" -> f.loop.asJson,
+    "maxConcurrency" -> f.maxConcurrency.asJson
+  )
+}
+
+given Decoder[FlowDef] = Decoder.instance { c =>
+  for
+    name <- c.downField("name").as[String]
+    description <- c.downField("description").as[String]
+    steps <- c.downField("steps").as[List[FlowStep]]
+    verify <- c.downField("verify").as[VerifyStep]
+    loop <- c.downField("loop").as[Option[LoopDef]]
+    maxConv <- c.downField("maxConcurrency").as[Option[Int]]
+  yield FlowDef(name, description, steps, verify, loop, maxConv.getOrElse(5))
+}
+
+// ============================================================
+// FlowSnapshot (serializable persisted state)
+// ============================================================
+
+/** Serializable snapshot of a flow's state, excluding runtime ActorRefs. */
+case class FlowSnapshot(
+  flowDef: FlowDef,
+  flowId: String,
+  phase: String,
+  stepStatus: Map[String, String],
+  results: Map[String, String],
+  failedReasons: Map[String, String],
+  retryLeft: Map[String, Int],
+  verifyResult: Option[String],
+  iteration: Int
+)
+
+object FlowSnapshot:
+  given Encoder[FlowSnapshot] = Encoder.instance { s =>
+    Json.obj(
+      "flowDef" -> s.flowDef.asJson,
+      "flowId" -> s.flowId.asJson,
+      "phase" -> s.phase.asJson,
+      "stepStatus" -> s.stepStatus.asJson,
+      "results" -> s.results.asJson,
+      "failedReasons" -> s.failedReasons.asJson,
+      "retryLeft" -> s.retryLeft.asJson,
+      "verifyResult" -> s.verifyResult.asJson,
+      "iteration" -> s.iteration.asJson
+    )
+  }
+
+  given Decoder[FlowSnapshot] = Decoder.instance { c =>
+    for
+      flowDef <- c.downField("flowDef").as[FlowDef]
+      flowId <- c.downField("flowId").as[String]
+      phase <- c.downField("phase").as[String]
+      stepStatus <- c.downField("stepStatus").as[Option[Map[String, String]]]
+      results <- c.downField("results").as[Option[Map[String, String]]]
+      failedReasons <- c.downField("failedReasons").as[Option[Map[String, String]]]
+      retryLeft <- c.downField("retryLeft").as[Option[Map[String, Int]]]
+      verifyResult <- c.downField("verifyResult").as[Option[String]]
+      iteration <- c.downField("iteration").as[Option[Int]]
+    yield FlowSnapshot(
+      flowDef, flowId, phase,
+      stepStatus.getOrElse(Map.empty),
+      results.getOrElse(Map.empty),
+      failedReasons.getOrElse(Map.empty),
+      retryLeft.getOrElse(Map.empty),
+      verifyResult,
+      iteration.getOrElse(0)
+    )
+  }
 
 // ============================================================
 // Flow Result (returned to main agent via ExternalEvent)
@@ -96,7 +233,7 @@ object FlowDefParser:
       steps <- parseSteps(stepsRaw)
       verifyRaw <- reqObject(input, "verify")
       verify <- parseVerify(verifyRaw)
-      loop = parseLoop(input("loop").flatMap(_.asObject))
+      loop <- parseLoop(input("loop").flatMap(_.asObject))
       maxConv = input("maxConcurrency").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(5)
     yield FlowDef(name, description, steps, verify, loop, maxConv)
 
@@ -133,16 +270,17 @@ object FlowDefParser:
 
   // ---------- loop parsing ----------
 
-  private def parseLoop(loopObj: Option[JsonObject]): Option[LoopDef] =
-    loopObj.flatMap { obj =>
-      obj("fix").flatMap(_.asObject).map { fixObj =>
-        val fixStep = parseStep(fixObj.asJson) match
-          case Right(s) => s
-          case Left(_) => FlowStep("fix", "Nebula", "Fix issues", Set.empty)
-        val maxIter = obj("maxIterations").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(3)
-        LoopDef(fixStep, maxIter)
-      }
-    }
+  private def parseLoop(loopObj: Option[JsonObject]): Either[String, Option[LoopDef]] =
+    loopObj match
+      case None => Right(None)
+      case Some(obj) =>
+        obj("fix").flatMap(_.asObject) match
+          case None => Left("loop.fix must be an object")
+          case Some(fixObj) =>
+            parseStep(fixObj.asJson).map { fixStep =>
+              val maxIter = obj("maxIterations").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(3)
+              Some(LoopDef(fixStep, maxIter))
+            }
 
   // ---------- helpers ----------
 
@@ -207,33 +345,12 @@ object FlowValidator:
 
   end validate
 
-  /** Topological sort to detect cycles. Returns Left(cycle) if found. */
+  /** Detect cycles in the step dependency graph. Returns Left(cycle) if found. */
   private def checkDag(steps: List[FlowStep]): Either[List[String], Unit] =
     val deps = steps.map(s => s.id -> s.dependsOn).toMap
     val visited = scala.collection.mutable.Set.empty[String]
     val inStack = scala.collection.mutable.Set.empty[String]
     val path = scala.collection.mutable.ListBuffer.empty[String]
-
-    def dfs(id: String): Option[List[String]] =
-      if inStack.contains(id) then
-        val cycleStart = path.indexOf(id)
-        Some(path.slice(cycleStart, path.length).toList :+ id)
-      else if visited.contains(id) then None
-      else
-        visited += id
-        inStack += id
-        path += id
-        val result = deps.get(id).toList.flatten.flatMap(f => dfs(f).toList)
-        path -= id
-        inStack -= id
-        result.headOption
-
-    steps.foreach(s => dfs(s.id))
-    // If dfs found any cycle, it was returned but we need to check differently
-    // Redo with proper propagation
-    visited.clear()
-    inStack.clear()
-    path.clear()
 
     def hasCycle(id: String): Option[List[String]] =
       if inStack.contains(id) then

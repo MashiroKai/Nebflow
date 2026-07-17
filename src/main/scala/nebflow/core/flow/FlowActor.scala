@@ -7,7 +7,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
-import nebflow.core.tools.{FileHistory, ReadTracker}
+import nebflow.core.tools.{FileHistory, ReadTracker, ToolRegistry}
 import nebflow.shared.{Message, MessageRole}
 
 import scala.concurrent.duration.FiniteDuration
@@ -43,19 +43,22 @@ object FlowActor:
 
   def apply(
     flowDef: FlowDef,
+    flowId: String,
     parentAgentRef: ActorRef[AgentCommand],
     wsSend: Option[Json => IO[Unit]],
     parentSessionId: Option[String],
     parentDepth: Int,
     resources: SharedResources,
     projectRoot: String,
-    bypass: Boolean
+    bypass: Boolean,
+    restoreSnapshot: Option[FlowSnapshot] = None
   ): Behavior[FlowCommand] =
     Behaviors.setup { ctx =>
       given ActorContext[FlowCommand] = ctx
 
       val cfg = FlowConfig(
         flowDef,
+        flowId,
         parentAgentRef,
         wsSend,
         parentSessionId,
@@ -66,7 +69,34 @@ object FlowActor:
       )
       val stateRef = Ref.unsafe[IO, FlowState](FlowState.empty(flowDef))
 
+      // Restore from snapshot if provided (graceful restart recovery)
+      val restoreIO = restoreSnapshot match
+        case Some(snap) =>
+          val restoredStatus = snap.stepStatus.view.mapValues {
+            case "Running" => StepStatus.Pending  // interrupted steps → re-run
+            case other => StepStatus.valueOf(other)
+          }.toMap
+          for
+            _ <- stateRef.update(_.copy(
+              results = snap.results,
+              failedReasons = snap.failedReasons,
+              stepStatus = restoredStatus,
+              retryLeft = snap.retryLeft,
+              verifyResult = snap.verifyResult,
+              iteration = snap.iteration,
+              phase = FlowPhase.valueOf(snap.phase) match
+                case FlowPhase.Working => FlowPhase.Working
+                case FlowPhase.VerifyRunning => FlowPhase.Working  // re-verify after working
+                case FlowPhase.LoopFixing => FlowPhase.Working     // go back to working
+                case terminal => terminal
+            ))
+            _ <- logger.info(s"Flow '${flowDef.name}' restored from snapshot (phase=${snap.phase}, steps=${restoredStatus.size})")
+          yield ()
+        case None => IO.unit
+
       for
+        _ <- restoreIO
+        _ <- FlowMembership.join(parentAgentRef.path.toString, flowId)
         _ <- emit(
           wsSend,
           parentSessionId,
@@ -187,7 +217,10 @@ object FlowActor:
       override def onStop(ctx: ActorContext[FlowCommand]): IO[Unit] =
         for
           state <- stateRef.get
-          _ <- state.runningAgents.values.toList.traverse_(ref => ctx.system.stop(ref))
+          _ <- state.runningAgents.values.toList.traverse_(ref =>
+            ctx.system.stop(ref) *> FlowMembership.leaveAll(ref.path.toString)
+          )
+          _ <- FlowMembership.leaveAll(cfg.parentAgentRef.path.toString)
           _ <- logger.info(s"Flow '${cfg.flowDef.name}' stopped, cleaned up ${state.runningAgents.size} agent(s)")
         yield ()
     end new
@@ -263,6 +296,7 @@ object FlowActor:
           _ <- stateRef.update(s =>
             s.copy(
               stepStatus = s.stepStatus + (stepId -> StepStatus.Failed),
+              failedReasons = s.failedReasons + (stepId -> error),
               runningAgents = s.runningAgents - stepId
             )
           )
@@ -333,8 +367,7 @@ object FlowActor:
             "maxIterations" -> loop.maxIterations.asJson
           )
           _ <- logger.info(s"Verify FAIL (iter ${state.iteration}), running fix")
-          verifyOut = state.verifyResult.getOrElse("")
-          fixPrompt = resolveTemplate(loop.fix.prompt, state.results ++ Map("verify" -> verifyOut))
+          fixPrompt = resolveTemplate(loop.fix.prompt, state.results ++ Map("verify" -> reason))
           _ <- spawnById(ctx, stateRef, cfg, loop.fix.agent, fixPrompt, FixId, loop.fix.timeout)
         yield ()
       case _ =>
@@ -348,7 +381,7 @@ object FlowActor:
   )(using ActorContext[FlowCommand]): IO[Unit] =
     for
       state <- stateRef.get
-      contextBlock = buildVerifyContext(results, state.stepStatus)
+      contextBlock = buildVerifyContext(results, state.failedReasons, state.stepStatus)
       prompt = s"$contextBlock\n\n${cfg.flowDef.verify.prompt}"
       _ <- emit(
         cfg.wsSend,
@@ -429,15 +462,18 @@ object FlowActor:
             fileHistory <- FileHistory.create()
             childDepth = cfg.parentDepth + 1
             childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
-            // For verify: add FlowVerify tool to agent's tools
+            // For verify: ensure FlowVerify tool is available (excluded from * expansion)
             actualDef =
               if isVerify then
                 agentDef.tools match
-                  case List("*") => agentDef
-                  case _ => agentDef.copy(tools = agentDef.tools :+ "FlowVerify")
+                  case List("*") => agentDef.copy(tools = ToolRegistry.builtinToolNames)
+                  case tools => agentDef.copy(tools = (tools :+ "FlowVerify").distinct)
               else agentDef
-            // For verify: prepend fixed preamble to prompt
-            actualPrompt = if isVerify then VerifyPromptPreamble + prompt else prompt
+            // For verify: prepend fixed preamble; for others: inject team roster
+            st <- stateRef.get
+            actualPrompt =
+              if isVerify then VerifyPromptPreamble + prompt
+              else buildTeamRoster(cfg, st) + prompt
             // Mark as running BEFORE spawn so duplicate messages are ignored
             _ <- stateRef.update(s =>
               s.copy(
@@ -470,6 +506,8 @@ object FlowActor:
               s"$agentUid-adapter"
             )
             _ <- stateRef.update(s => s.copy(runningAgents = s.runningAgents + (stepId -> agentRef)))
+            _ <- FlowMembership.join(agentRef.path.toString, cfg.flowId)
+            _ <- saveSnapshot(stateRef, cfg)
             _ <- emit(
               cfg.wsSend,
               cfg.sessionId,
@@ -494,6 +532,7 @@ object FlowActor:
   )(using ctx: ActorContext[?]): IO[Unit] =
     for
       _ <- stateRef.update(_.copy(phase = FlowPhase.Completed))
+      _ <- saveSnapshot(stateRef, cfg)
       _ <- emit(
         cfg.wsSend,
         cfg.sessionId,
@@ -517,6 +556,7 @@ object FlowActor:
   )(using ctx: ActorContext[?]): IO[Unit] =
     for
       _ <- stateRef.update(_.copy(phase = FlowPhase.Failed))
+      _ <- saveSnapshot(stateRef, cfg)
       _ <- emit(
         cfg.wsSend,
         cfg.sessionId,
@@ -548,72 +588,148 @@ object FlowActor:
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
 
-      // Timeout: stop agent and notify FlowActor
+      val done = Ref.unsafe[IO, Boolean](false)
+
+      // Timeout: stop agent and notify FlowActor (skipped if step already completed)
       ctx.forkTurn(
         IO.sleep(timeout) *>
-          ctx.system.stop(subagentRef) *>
-          (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
-          (flowActorRef ! StepFailed(stepId, s"timeout after ${timeout.toSeconds}s"))
+          done.get.flatMap {
+            case true  => IO.unit
+            case false =>
+              ctx.system.stop(subagentRef) *>
+                (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
+                (flowActorRef ! StepFailed(stepId, s"timeout after ${timeout.toSeconds}s"))
+          }
       )
 
       IO.pure(new Behavior[AgentEvent]:
         def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
           event match
             case AgentEvent.Completed(_, messages) =>
-              if isVerify then
-                // Check if FlowVerify tool was called
-                for
-                  deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
-                  _ <- FlowVerifyRegistry.remove(verifyAgentPath)
-                  result <- deferredOpt match
-                    case Some(deferred) =>
-                      deferred.tryGet.flatMap {
-                        case Some(vr) =>
-                          IO.delay(flowActorRef ! VerifyCompleted(vr.pass, vr.summary))
-                        case None =>
-                          IO.delay(
-                            flowActorRef ! StepFailed(stepId, "Verify agent completed without calling FlowVerify tool")
-                          )
-                      }
-                    case None =>
-                      IO.delay(flowActorRef ! StepFailed(stepId, "Verify registry error"))
-                  _ = result
-                yield Behaviors.stopped[AgentEvent]
-              else
-                val text = extractLastAssistantText(messages)
-                for _ <- flowActorRef ! StepCompleted(stepId, text)
-                yield Behaviors.stopped[AgentEvent]
+              done.set(true) *>
+                (if isVerify then
+                  // Check if FlowVerify tool was called
+                  for
+                    deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
+                    _ <- FlowVerifyRegistry.remove(verifyAgentPath)
+                    result <- deferredOpt match
+                      case Some(deferred) =>
+                        deferred.tryGet.flatMap {
+                          case Some(vr) =>
+                            IO.delay(flowActorRef ! VerifyCompleted(vr.pass, vr.summary))
+                          case None =>
+                            IO.delay(
+                              flowActorRef ! StepFailed(stepId, "Verify agent completed without calling FlowVerify tool")
+                            )
+                        }
+                      case None =>
+                        IO.delay(flowActorRef ! StepFailed(stepId, "Verify registry error"))
+                    _ = result
+                  yield Behaviors.stopped[AgentEvent]
+                else
+                  val text = extractLastAssistantText(messages)
+                  for _ <- flowActorRef ! StepCompleted(stepId, text)
+                  yield Behaviors.stopped[AgentEvent])
 
             case AgentEvent.Failed(_, error) =>
-              for
-                _ <- if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit
-                _ <- flowActorRef ! StepFailed(stepId, error.message)
-              yield Behaviors.stopped[AgentEvent]
+              done.set(true) *>
+                (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
+                IO.delay(flowActorRef ! StepFailed(stepId, error.message)) *>
+                IO.pure(Behaviors.stopped[AgentEvent])
 
         override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
           signal match
             case SystemSignal.Terminated(_) =>
               for
-                _ <- if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit
-                _ <- flowActorRef ! StepFailed(stepId, "agent crashed")
-              yield Behaviors.stopped[AgentEvent])
+                alreadyDone <- done.get
+                _ <- done.set(true)
+                _ <-
+                  if isVerify then FlowVerifyRegistry.remove(verifyAgentPath)
+                  else IO.unit
+                _ <-
+                  if !alreadyDone then
+                    IO.delay(flowActorRef ! StepFailed(stepId, "agent crashed"))
+                  else IO.unit
+              yield Behaviors.stopped[AgentEvent]
+
+        override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
+          (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
+            FlowMembership.leaveAll(subagentRef.path.toString)
+      )
     }
 
   // ============================================================
   // Utility helpers
   // ============================================================
 
-  private def resolveTemplate(prompt: String, results: Map[String, String]): String =
+  private[flow] val MaxStepOutputChars = 8000
+
+  private[flow] def resolveTemplate(prompt: String, results: Map[String, String]): String =
     results.foldLeft(prompt) { case (p, (id, output)) =>
-      p.replace("${" + id + "}", output)
+      val truncated =
+        if output.length > MaxStepOutputChars
+        then output.take(MaxStepOutputChars) + s"\n... (truncated, ${output.length} chars total)"
+        else output
+      p.replace("${" + id + "}", truncated)
     }
 
-  private def buildVerifyContext(results: Map[String, String], stepStatus: Map[String, StepStatus]): String =
+  /** Build team roster string for injection into agent prompts. */
+  private def buildTeamRoster(cfg: FlowConfig, state: FlowState): String =
+    val members = state.runningAgents.toList.flatMap { (stepId, ref) =>
+      val agentName = cfg.flowDef.steps.find(_.id == stepId).map(_.agent).getOrElse(stepId)
+      if ref.path.toString != cfg.parentAgentRef.path.toString then
+        Some(s"| $stepId ($agentName) | ${ref.path.toString} |")
+      else None
+    }
+    val parent = s"| main (parent) | ${cfg.parentAgentRef.path.toString} |"
+    val all = parent :: members
+    s"""## Flow Team Members
+       |
+       |You can communicate with these agents using the Mail tool:
+       |
+       || Role | Address |
+       |------|---------|
+       |${all.mkString("\n")}
+       |
+       |""".stripMargin
+
+  /** Persist current state to disk for graceful restart recovery. */
+  private def saveSnapshot(stateRef: Ref[IO, FlowState], cfg: FlowConfig): IO[Unit] =
+    for
+      state <- stateRef.get
+      snapshot = FlowSnapshot(
+        flowDef = cfg.flowDef,
+        flowId = cfg.flowId,
+        phase = state.phase.toString,
+        stepStatus = state.stepStatus.view.mapValues(_.toString).toMap,
+        results = state.results,
+        failedReasons = state.failedReasons,
+        retryLeft = state.retryLeft,
+        verifyResult = state.verifyResult,
+        iteration = state.iteration
+      )
+      _ <- cfg.sessionId match
+        case Some(sid) if sid.nonEmpty => FlowStore.save(sid, cfg.flowId, snapshot)
+        case _ => IO.unit
+    yield ()
+
+  private[flow] def buildVerifyContext(
+    results: Map[String, String],
+    failedReasons: Map[String, String],
+    stepStatus: Map[String, StepStatus]
+  ): String =
     val sb = new StringBuilder("=== Step Results ===\n\n")
-    results.toList.sortBy(_._1).foreach { case (id, output) =>
-      val status = if stepStatus.get(id).contains(StepStatus.Failed) then " [FAILED]" else ""
-      val truncated = if output.length > 3000 then output.take(3000) + "\n... (truncated)" else output
-      sb.append(s"[$id]$status\n$truncated\n\n")
+    val allIds = (results.keys ++ failedReasons.keys).toSeq.sorted
+    allIds.foreach { id =>
+      stepStatus.get(id) match
+        case Some(StepStatus.Failed) =>
+          val reason = failedReasons.getOrElse(id, "unknown error")
+          sb.append(s"[$id] [FAILED]\n$reason\n\n")
+        case _ =>
+          val output = results.getOrElse(id, "")
+          val truncated = if output.length > 3000 then output.take(3000) + "\n... (truncated)" else output
+          sb.append(s"[$id]\n$truncated\n\n")
+      end match
     }
     sb.append("=== End Results ===\n")
     sb.toString
@@ -660,6 +776,7 @@ end FlowActor
 
 private case class FlowConfig(
   flowDef: FlowDef,
+  flowId: String,
   parentAgentRef: ActorRef[AgentCommand],
   wsSend: Option[Json => IO[Unit]],
   sessionId: Option[String],
@@ -671,6 +788,7 @@ private case class FlowConfig(
 
 case class FlowState(
   results: Map[String, String],
+  failedReasons: Map[String, String],
   stepStatus: Map[String, StepStatus],
   runningAgents: Map[String, ActorRef[AgentCommand]],
   retryLeft: Map[String, Int],
@@ -684,6 +802,7 @@ object FlowState:
   def empty(flowDef: FlowDef): FlowState =
     FlowState(
       results = Map.empty,
+      failedReasons = Map.empty,
       stepStatus = flowDef.steps.map(s => s.id -> StepStatus.Pending).toMap,
       runningAgents = Map.empty,
       retryLeft = Map.empty,
