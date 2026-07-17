@@ -1977,9 +1977,9 @@ initDropbox();
 planMode.init();
 
 // ---------- Plan mode event handlers ----------
-onMessage('planStart', (msg) => planMode.onPlanStart(msg));
-onMessage('planReady', (msg) => planMode.onPlanReady(msg));
-onMessage('planEnd', (msg) => planMode.onPlanEnd(msg));
+onMessage('planStart', (msg, view) => planMode.onPlanStart(msg, view));
+onMessage('planReady', (msg, view) => planMode.onPlanReady(msg, view));
+onMessage('planEnd', (msg, view) => planMode.onPlanEnd(msg, view));
 onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 
 // ---------- Bypass toggle (per-session auto-approve) ----------
