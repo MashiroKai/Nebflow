@@ -194,8 +194,7 @@ private[agent] trait AgentCore:
             turnCtx.skillCatalog
           )
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
-          timeReminders = SystemReminders.collectAll(isUserTurn)
-          reminders = timeReminders ++ deviceReminder.toList
+          reminders = SystemReminders.collectAll(isUserTurn)
           _ <- turnCtx.branchChange match
             case Some(_) => ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
             case None =>
@@ -225,7 +224,8 @@ private[agent] trait AgentCore:
               .map(l =>
                 s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
               )
-              .getOrElse("") + formatAgentSessions(stateForLlm.agentSessions)
+              .getOrElse("") + formatAgentSessions(stateForLlm.agentSessions) +
+            (if deviceInfoBlock.nonEmpty then s"\n\n# Devices\n\n$deviceInfoBlock" else "")
           request = LlmRequest(
             messages = patchedMessages ++ dynamicMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -701,48 +701,39 @@ private[agent] trait AgentCore:
       "\n\n# Active Sessions\n\n" + lines.mkString("\n") +
         "\n\nUse Mail to send follow-up instructions to any session above."
 
-  @volatile private var deviceReminderCache: (Long, Option[SystemReminder]) = (0L, None)
+  @volatile private var deviceInfoCache: (Long, String) = (0L, "")
 
-  private def deviceReminder: Option[SystemReminder] =
+  private def deviceInfoBlock: String =
     val now = System.currentTimeMillis()
-    val (lastUpdate, cached) = deviceReminderCache
-    if now - lastUpdate < 30000 then cached
+    val (lastUpdate, cached) = deviceInfoCache
+    if now - lastUpdate < 30000 && cached.nonEmpty then cached
     else
       val refreshed = RemoteExecutor.current.flatMap(_.neblinkServiceOpt).flatMap { ms =>
         try
           import cats.effect.unsafe.implicits.global
           val id = ms.identity.unsafeRunSync()
           val peersList = ms.peers.unsafeRunSync()
-          val localParts = List.newBuilder[String]
-          localParts += s"local (${id.deviceName})"
-          val localCaps = id.capabilities.keys.toList.sorted
-          if localCaps.nonEmpty then localParts += s"[${localCaps.mkString(", ")}]"
-          if id.userDescription.nonEmpty then localParts += s"-${id.userDescription}"
-          val localStr = localParts.result.mkString(" ")
+          val localStr =
+            s"local (${id.deviceName})" +
+              (if id.userDescription.nonEmpty then s" -${id.userDescription}" else "")
           val peerStrs =
-            peersList
-              .map { p =>
-                val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
-                val desc = p.userDescription
-                List(p.deviceName) ++
-                  (if caps.nonEmpty then List(s"[${caps.mkString(", ")}]") else Nil) ++
-                  (if desc.nonEmpty then List(s"-$desc") else Nil)
-              }
-              .map(_.mkString(" "))
+            peersList.map { p =>
+              p.deviceName + (if p.userDescription.nonEmpty then s" -${p.userDescription}" else "")
+            }
           val allDevices = (localStr :: peerStrs).mkString("; ")
           val deviceHint =
             if peersList.nonEmpty then
               "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
             else ""
-          Some(SystemReminder("devices", s"Devices: $allDevices$deviceHint"))
+          Some(s"$allDevices$deviceHint")
         catch case _: Exception => None
-      }
-      deviceReminderCache = (now, refreshed)
+      }.getOrElse("")
+      deviceInfoCache = (now, refreshed)
       refreshed
 
     end if
 
-  end deviceReminder
+  end deviceInfoBlock
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)

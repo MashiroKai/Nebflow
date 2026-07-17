@@ -27,20 +27,6 @@ object DeviceIdentity:
 
   private val devicePath = PathUtil.dataRoot / "device.json"
 
-  /** Tools to auto-detect on startup. Key = display name, value = command to check. */
-  private val detectionTargets = List(
-    "python" -> "python3",
-    "node" -> "node",
-    "git" -> "git",
-    "java" -> "java",
-    "vivado" -> "vivado",
-    "quartus" -> "quartus_sh",
-    "sbt" -> "sbt",
-    "rust" -> "cargo",
-    "go" -> "go",
-    "docker" -> "docker"
-  )
-
   private def detectPlatform: String =
     val osName = System.getProperty("os.name", "unknown").toLowerCase
     if osName.contains("mac") then "macos"
@@ -57,28 +43,6 @@ object DeviceIdentity:
       )
       .map(_.stripSuffix(".local")) // macOS mDNS returns "hostname.local"
       .getOrElse("Unknown")
-
-  /** Detect available tools by running `which`/`where`. Returns map of name → path. */
-  def detectCapabilities: IO[Map[String, String]] =
-    val whichCmd = detectPlatform match
-      case "windows" => "where"
-      case _ => "which"
-    IO.blocking {
-      val results = scala.collection.mutable.Map.empty[String, String]
-      for (name, binary) <- detectionTargets do
-        try
-          val proc = new ProcessBuilder(whichCmd, binary).redirectErrorStream(true).start()
-          val exited = proc.waitFor()
-          if exited == 0 then
-            val output = scala.io.Source.fromInputStream(proc.getInputStream).mkString.trim
-            val firstLine = output.linesIterator.nextOption().getOrElse("")
-            if firstLine.nonEmpty then results(name) = firstLine
-          proc.getInputStream.close()
-        catch case _: Exception => ()
-      results.toMap
-    }
-
-  end detectCapabilities
 
   def loadOrCreate: IO[DeviceIdentity] =
     IO.blocking {
