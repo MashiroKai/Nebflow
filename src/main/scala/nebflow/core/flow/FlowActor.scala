@@ -83,7 +83,8 @@ object FlowActor:
             )
             .asJson,
           "hasLoop" -> flowDef.loop.isDefined.asJson,
-          "maxIterations" -> flowDef.loop.map(_.maxIterations).getOrElse(0).asJson
+          "maxIterations" -> flowDef.loop.map(_.maxIterations).getOrElse(0).asJson,
+          "verifyAgent" -> flowDef.verify.agent.asJson
         )
         _ <- logger.info(
           s"Flow '${flowDef.name}' started: ${flowDef.steps.length} steps, verify=${flowDef.verify.agent}"
@@ -420,14 +421,10 @@ object FlowActor:
           val isVerify = stepId == VerifyId
           val agentUid = s"flow-${cfg.flowDef.name.take(16)}-$stepId-${java.util.UUID.randomUUID().toString.take(8)}"
           for
-            // Verify setup: create Deferred and register before spawning agent
-            _ <-
-              if isVerify then
-                for
-                  d <- Deferred[IO, VerifyResult]
-                  _ <- FlowVerifyRegistry.register(agentUid, d)
-                yield ()
-              else IO.unit
+            // Verify setup: create Deferred now, register AFTER spawn with agent's real path
+            verifyDeferred <-
+              if isVerify then Deferred[IO, VerifyResult].map(Some(_))
+              else IO.pure(None)
             readTracker <- ReadTracker.create
             fileHistory <- FileHistory.create()
             childDepth = cfg.parentDepth + 1
@@ -464,8 +461,12 @@ object FlowActor:
               ),
               agentUid
             )
+            // Register verify Deferred with agent's full path (must match FlowVerifyTool's ctx.agentActorRef.path.toString)
+            _ <- verifyDeferred match
+              case Some(d) => FlowVerifyRegistry.register(agentRef.path.toString, d)
+              case None => IO.unit
             adapterRef <- ctx.spawn(
-              stepAdapter(ctx.self, stepId, agentRef, timeout, isVerify, agentUid),
+              stepAdapter(ctx.self, stepId, agentRef, timeout, isVerify, agentRef.path.toString),
               s"$agentUid-adapter"
             )
             _ <- stateRef.update(s => s.copy(runningAgents = s.runningAgents + (stepId -> agentRef)))
