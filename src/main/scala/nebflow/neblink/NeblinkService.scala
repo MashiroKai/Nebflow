@@ -107,14 +107,6 @@ class NeblinkService private (
       _ <- PeerDescriptionStore.save(updated)
     yield ()
 
-  /** Run capability self-check and update device identity. Called on startup. */
-  def selfCheckCapabilities: IO[Unit] =
-    for
-      caps <- DeviceIdentity.detectCapabilities
-      id <- identityRef.get
-      _ <- if id.capabilities != caps then updateDeviceInfo(capabilities = Some(caps)) else IO.unit
-    yield ()
-
   /** Send a command to the sync loop. */
   def sendSync(cmd: SyncCommand): IO[Unit] = syncQueue.offer(cmd)
 
@@ -343,9 +335,6 @@ object NeblinkService:
       service = new NeblinkService(idRef, cfgRef, peersRef, descRef, serverPort, syncQueue, dispatcher)
       // Start sync loop — Tailscale is the trust boundary, no login needed.
       _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
-      _ = dispatcher.unsafeRunAndForget(
-        service.selfCheckCapabilities.handleErrorWith(e => logger.debug(s"Capability detection: ${e.getMessage}"))
-      )
     yield service
 
 end NeblinkService
