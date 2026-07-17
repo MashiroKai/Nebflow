@@ -697,6 +697,12 @@ class WebSocketRoutes(
             persistThinkingConfig(tc) *>
             broadcastServerConfig
 
+        case "setVoiceMuted" =>
+          val muted = parse(text).toOption
+            .flatMap(_.hcursor.downField("muted").as[Boolean].toOption)
+            .getOrElse(false)
+          sharedResources.voiceMutedRef.set(muted)
+
         case "setLlmLog" =>
           val enabled = parse(text).toOption
             .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
