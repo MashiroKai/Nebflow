@@ -340,7 +340,8 @@ private[agent] trait AgentCore:
         mailboxAddress = state.session.sessionId,
         sharedResources = Some(resources),
         actorSystem = Some(ctx.system),
-        messages = state.messages
+        messages = state.messages,
+        liveFileTracker = state.liveFileTracker
       )
       freshResults <- filteredCalls.parTraverse { call =>
         val skipStreaming = call.name == "AskUserQuestion"
