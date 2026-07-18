@@ -1597,8 +1597,11 @@ object FlowTreeActor:
       cfg.wsSend match
         case Some(send) =>
           val all = ("type", eventName.asJson) :: ("sessionId", cfg.sessionId.getOrElse("").asJson) :: fields.toList
-          send(Json.fromJsonObject(JsonObject.fromIterable(all)))
-        case None => IO.unit
+          val json = Json.fromJsonObject(JsonObject.fromIterable(all))
+          logger.info(s"emit: $eventName sessionId=${cfg.sessionId.getOrElse("")}") *>
+            send(json)
+        case None =>
+          logger.warn(s"emit: $eventName but wsSend is None!") *> IO.unit
     )
 
   private def saveTree(

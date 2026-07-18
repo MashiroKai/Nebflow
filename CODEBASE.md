@@ -10,26 +10,96 @@ Nebflow is a self-hosted AI agent platform (Scala 3 + Pekko) that runs locally a
 src/
   main/
     scala/nebflow/
-      agent/           — Agent actor system, prompt building, context refresh
-        AgentCore.scala       — Core agent behavior: LLM calls, tool execution, system prompt assembly
-        AgentDef.scala        — Agent definition (name, tools, systemPrompt)
-        AgentLibrary.scala    — Loads agents from disk, seeds defaults
-        AgentActor.scala      — Pekko actor implementing agent behavior
-        ContextRefresher.scala — Per-turn context refresh (system prefix, rules, skills, git branch)
-        PromptSections.scala  — Conditional system prompt section registry
-        InjectionSource.scala — File-backed prompt injection with mtime caching
-        protocol.scala        — Agent state, messages, session context types
-      core/             — Core utilities, tools, compaction, reminders
-      llm/              — LLM provider adapters (Anthropic, OpenAI, etc.)
-      actor/            — Pekko actor system wrappers
-      service/          — Session store, rules store, file management
-      gateway/          — HTTP/WebSocket gateway
-      cli/              — CLI entry point
+      actor/      (6 files)   — Pekko actor system wrappers (ActorRef, ActorSystem, Behavior, etc.)
+      agent/      (14 files)  — Agent actor system, prompt building, context refresh, plan agent
+      bridge/     (2 files)   — Bridge manager and plugin for external connections
+      cli/        (21 files)  — CLI entry point, commands, TUI rendering, process management
+      core/       (85 files)  — Core utilities, tools, compaction, flow engine, hooks, MCP, telemetry
+        tools/    (38 files)  — All built-in tools (Bash, Edit, Read, Grep, Glob, Card, Delegate, etc.)
+        compact/  (7 files)   — Context compaction (fast micro, full, history archiver)
+        flow/     (7 files)   — Flow tree engine (daemon/pipeline/reactor/source orchestration)
+        hooks/    (5 files)   — Hook engine, matchers, config loader
+        mcp/      (4 files)   — MCP client, manager, JSON-RPC, transports
+        scheduler/(3 files)   — Scheduled task actor, model, store
+        task/     (2 files)   — Task model and store
+        telemetry/(4 files)   — Telemetry events, reporter, sender, task inferencer
+        skill/    (1 file)    — Skill service (loading from ~/.nebflow/skills/)
+        ask/      (1 file)    — AskUser service
+      dropbox/    (3 files)   — Dropbox sync models, service, utilities
+      gateway/    (12 files)  — HTTP/WebSocket gateway, auth, rate limiting, session store, TTS
+      llm/        (8 files)   — LLM provider adapters (Anthropic, OpenAI), health monitor, fallback
+        providers/(2 files)   — Provider-specific adapters
+      neblink/    (4 files)   — NebLink device discovery, presence, mesh sync
+      service/    (7 files)   — Session store, config, memory, rules, backup services
+      shared/     (10 files)  — Shared utilities (protocol, session meta, HTTP, CJK, terminal, etc.)
+      Main.scala  (1 file)    — Application entry point
+      Version.scala (1 file)  — Version constant (single source of truth)
     resources/
       system-prefix.md  — JAR-bundled system prompt prefix (skills, memory, session mgmt)
   test/
-    scala/nebflow/      — Test suites
+    scala/nebflow/
+      actor/      (1 file)    — ActorSpec
+      agent/      (3 files)   — AgentActorCompactionSpec, AgentDefSpec, PromptSectionsSpec
+      core/       (14 files)  — Compaction, flow tree, tools, reversibility tests
+        compact/  (4 files)   — CompactionPolicy, FastMicroCompact, FullCompact, HistoryArchiver
+        flow/     (4 files)   — FlowTreeRegistry, FlowTreeScheduling, FlowTreeStore, FlowTreeTypes
+        tools/    (5 files)   — AcademicSearch, DelegateTool, FileHistory, StringMatcher, ToolLoader
+      demo/       (1 file)    — CompactionDemo
+      dropbox/    (1 file)    — DropboxUtilSpec
+      gateway/    (3 files)   — CloudSync, SessionStoreFolder, SessionStoreHistory
+      llm/        (2 files)   — HealthMonitorSpec, OpenAiAdapterSpec
+      neblink/    (4 files)   — DeviceCapabilities, GracePeriod, Model, Security
+docs/
+  (see docs breakdown below)
 ```
+
+## File Counts
+
+| Category | Files | Lines |
+|----------|-------|-------|
+| Source (`src/main/scala/nebflow/`) | 174 | 33,883 |
+| Tests (`src/test/scala/nebflow/`) | 29 | 5,361 |
+| Docs (`docs/`, excl. .DS_Store) | 53 | — |
+
+### Source files by package (174 total)
+
+| Package | Files | Description |
+|---------|-------|-------------|
+| core/ | 85 | Tools, compaction, flow engine, hooks, MCP, telemetry, scheduler |
+| cli/ | 21 | CLI commands, TUI, process management |
+| agent/ | 14 | Agent actor, core logic, prompt sections, context refresh |
+| gateway/ | 12 | HTTP/WebSocket server, auth, session store, TTS |
+| shared/ | 10 | Protocol, session meta, HTTP utils, CJK, terminal |
+| llm/ | 8 | Provider adapters, health monitor, fallback, config |
+| service/ | 7 | Session, config, memory, rules, backup services |
+| actor/ | 6 | Pekko actor system wrappers |
+| neblink/ | 4 | Device discovery, presence, mesh sync |
+| dropbox/ | 3 | Dropbox sync |
+| bridge/ | 2 | Bridge manager and plugin |
+| (root) | 2 | Main.scala, Version.scala |
+
+### Test files by package (29 total, 5,361 lines)
+
+| Package | Files | Key tests |
+|---------|-------|-----------|
+| core/ | 14 | FlowTreeTypesSpec (795L), FullCompactSpec, DelegateToolSpec, FileHistorySpec, ToolLoaderSpec, StringMatcherSpec |
+| neblink/ | 4 | NeblinkSecuritySpec (209L), GracePeriodSpec, ModelSpec, DeviceCapabilitiesSpec |
+| gateway/ | 3 | CloudSyncSpec (360L), SessionStoreHistorySpec (357L), SessionStoreFolderSpec |
+| agent/ | 3 | AgentActorCompactionSpec, AgentDefSpec, PromptSectionsSpec |
+| llm/ | 2 | HealthMonitorSpec, OpenAiAdapterSpec |
+| dropbox/ | 1 | DropboxUtilSpec |
+| demo/ | 1 | CompactionDemo |
+| actor/ | 1 | ActorSpec |
+
+### Docs breakdown (53 files, excl. .DS_Store)
+
+| Directory | Files | Contents |
+|-----------|-------|----------|
+| docs/design/ | 18 | 17 .md + 1 .html — flow engine, sync, memory, CLI, card rendering, telemetry, etc. |
+| docs/issues/ | 18 | .md issue specs (#000–#026, not all numbers used) |
+| docs/issues/templates/ | 11 | 9 .md + 1 .py + 1 .md README — issue templates (bug, feature, perf, refactor, etc.) |
+| docs/architecture/ | 2 | JARVIS Phase 1 spec and summary |
+| docs/ (root) | 4 | actor-mailbox-pattern-review.md, agent-icon-design-guide.md, design-memory-v2.md, hooks-and-callbacks.md |
 
 ## Development Log
 
