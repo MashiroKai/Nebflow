@@ -440,7 +440,9 @@ case class ExecutionContext(
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
   pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
   emptyResponseRetries: Int = 0,
-  lastDispatch: Option[LastDispatch] = None
+  lastDispatch: Option[LastDispatch] = None,
+  delegateCount: Int = 0,
+  lastMaintenanceDelegateCount: Int = 0
 )
 
 object ExecutionContext:
@@ -635,6 +637,13 @@ extension (s: AgentState)
     s.copy(session = s.session.copy(safetyMode = mode))
 
   def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
+
+  def delegateCount: Int = s.execution.delegateCount
+  def lastMaintenanceDelegateCount: Int = s.execution.lastMaintenanceDelegateCount
+  def withDelegateCount(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(delegateCount = count))
+  def withLastMaintenanceDelegateCount(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(lastMaintenanceDelegateCount = count))
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))
