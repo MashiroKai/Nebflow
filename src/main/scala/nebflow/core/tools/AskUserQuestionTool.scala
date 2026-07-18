@@ -13,25 +13,17 @@ object AskUserQuestionTool extends Tool:
   val description =
     """Ask the user one or more questions. Each question can have predefined options or be open-ended.
 
-Use `AskUserQuestion` when you need to pause and get clarification from the user before proceeding. Typical scenarios:
-
-1. **Ambiguous input** — the user's request is unclear or could lead to incorrect output.
-2. **Insufficient details** — the requirement is too vague and needs more context.
-3. **Technical or design decisions** — multiple valid approaches exist and you need the user to choose or confirm.
-4. **Missing information** — you need the user to provide files, credentials, preferences, or other data to continue.
+Use this tool when you need user input to proceed. Never ask clarifying questions in plain text — use this tool instead.
 
 Guidelines:
 - For multiple-choice questions, provide clear label values and optional description for each option.
 - For open-ended questions, omit options so the user gets a free-text input.
-- Do not use this tool for trivial confirmations you can decide yourself.
 - The UI always provides an "Other..." option so the user can type freely even for multiple-choice.
+- Independent questions are shown together and can be answered at once.
 
-Conditional branching:
-- When a question's relevance depends on the answer to an earlier question, use `id` and `dependsOn` to express the dependency.
+Conditional branching (dependsOn):
 - Give the upstream question an `id`, then set `dependsOn: {"ref": "<id>", "equals": "<answer>"}` on the dependent question.
 - The dependent question is only shown when the referenced answer matches `equals`.
-- Independent questions (no `dependsOn`) are always shown and can be answered together.
-- Example: ask "Which language?" with id "lang" and options "Python" / "Rust", then ask "Which framework?" with dependsOn {"ref": "lang", "equals": "Python"} and options "Django" / "FastAPI". The framework question only appears if the user chose Python.
 
 Behavior:
 - This tool blocks until the user responds. Your turn pauses and resumes automatically when the user answers."""

@@ -189,11 +189,12 @@ private[agent] trait AgentCore:
           turnCtx <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
           freshDef = turnCtx.agentDef
           voiceEnabled <- resources.voiceMutedRef.get.map(!_)
+          hasAskUser = buildAllowedToolSet(freshDef, depth).contains("AskUserQuestion")
           baseSystemStable = buildSystemPrompt(
             freshDef,
             resources,
             turnCtx.systemPrefix,
-            PromptContext(voiceEnabled = voiceEnabled),
+            PromptContext(voiceEnabled = voiceEnabled, hasAskUser = hasAskUser),
             turnCtx.projectRoot,
             turnCtx.rulesMd,
             state.session.chatWidth,
@@ -697,9 +698,10 @@ private[agent] trait AgentCore:
     val agentPrompt = PromptSections.stripSection(rawPrompt, "Voice Output")
     val envInfo = Repl.buildEnvInfo(chatWidth)
     val voiceBlock = if promptCtx.voiceEnabled then s"\n\n${PromptSections.voiceSection}" else ""
+    val askBlock = if promptCtx.hasAskUser then s"\n\n${PromptSections.askUserSection}" else ""
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     val skillsBlock = if skillCatalog.nonEmpty then s"\n\n$skillCatalog" else ""
-    s"$systemPrefix$agentPrompt$voiceBlock\n\n$envInfo$rulesBlock$skillsBlock"
+    s"$systemPrefix$agentPrompt$voiceBlock$askBlock\n\n$envInfo$rulesBlock$skillsBlock"
 
   end buildSystemPrompt
 

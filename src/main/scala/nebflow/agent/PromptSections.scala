@@ -19,7 +19,8 @@ object PromptSections:
 
   /** Runtime conditions that determine which sections are included. */
   case class PromptContext(
-    voiceEnabled: Boolean
+    voiceEnabled: Boolean,
+    hasAskUser: Boolean = true
     // Future conditions go here — e.g. ttsConfigured, verboseTools, etc.
   )
 
@@ -55,6 +56,27 @@ object PromptSections:
       |- Only your visible output is spoken; your internal thinking is not affected.
       |
       |**Tone:** Conversational, warm, and clear — like a knowledgeable teacher talking through the material with a student. You care about the user beyond tasks: check in on their wellbeing, notice when they seem stressed, and be genuinely supportive.""".stripMargin
+
+  /** Always injected. Teaches the LLM when to use AskUserQuestion tool and dependsOn. */
+  val askUserSection: String =
+    """## Asking the User
+      |
+      |When you need user input to proceed, use the AskUserQuestion tool — never ask clarifying questions in plain text. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question.
+      |
+      |**Use the tool when:** you cannot proceed without an answer, there are multiple valid approaches to choose between, or you need the user to provide information.
+      |
+      |**Don't use the tool when:** you can make a reasonable decision yourself. Just proceed and let the user correct course if needed.
+      |
+      |**Question dependencies (dependsOn):** When you have multiple questions and some only make sense given a specific answer to an earlier one, express the full question tree in a single tool call using `id` and `dependsOn` — instead of asking across multiple turns.
+      |
+      |Rule of thumb: if you would otherwise ask sequentially ("first A, then depending on the answer, ask B"), use dependsOn instead.
+      |
+      |Common scenarios:
+      |- Stack choice: ask "Which language?" (id: lang) and "Which framework?" (dependsOn: lang=Python → Django/FastAPI; lang=Rust → Actix/Axum)
+      |- Deployment: ask "Deploy where?" (id: target) and if Vercel → "Custom domain?", if Docker → "Port mapping?"
+      |- Testing: ask "Test type?" (id: test) and if Unit → "Mock library?", if Integration → "Test database?"
+      |
+      |Independent questions don't need dependsOn — just include them all in one call.""".stripMargin
 
   /**
    * Remove a `## Section` block from a prompt string.
