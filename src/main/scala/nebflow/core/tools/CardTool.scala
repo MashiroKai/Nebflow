@@ -280,6 +280,17 @@ HTML must be self-contained (all styles/tags inline, no external CSS/JS). Local 
   private val baseDescription =
     """Renders an interactive HTML card embedded in the chat.
 
+## Frontend / Design Change Protocol — MANDATORY
+
+When a task involves **frontend or visual design changes** (CSS, UI layout, styling, color schemes, component design, icon changes), you MUST use Card to render a visual preview of the proposed result BEFORE writing the actual code changes. The workflow is:
+
+1. Understand the design change requested
+2. Use Card to create a visual mockup or preview showing the intended result
+3. Wait for the user to confirm the design direction
+4. Only then proceed with implementation
+
+This applies to ALL UI changes, no matter how small (color tweaks, spacing adjustments, new buttons, layout changes, etc.). Never write frontend code without first showing the user what it will look like via Card.
+
 ## Why use cards
 
 Humans process visual information far more efficiently than long paragraphs of text. A well-chosen diagram conveys in a glance what would take paragraphs to explain. Use cards to present relationships, structure, and data visually — when a visual makes your answer clearer than words alone.
