@@ -178,31 +178,21 @@ body.sidebar-collapsed #sidebar {
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, color 0.2s ease;
   position: relative;
 }
 .bypass-toggle:hover {
   background: var(--color-surface);
 }
-/* Dot badge — color indicates safety mode, icon stays neutral */
-.bypass-badge {
-  position: absolute;
-  top: 3px;
-  right: 4px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: transparent;
-  transition: background 0.2s ease;
+/* Shield icon color changes with safety mode */
+.bypass-toggle[data-mode="confirm-edits"] {
+  color: var(--color-frame-text-muted);
 }
-.bypass-badge[data-mode="confirm-edits"] {
-  background: transparent;
+.bypass-toggle[data-mode="auto-edits"] {
+  color: #e8923c;
 }
-.bypass-badge[data-mode="auto-edits"] {
-  background: #e8923c;
-}
-.bypass-badge[data-mode="auto-all"] {
-  background: var(--color-error);
+.bypass-toggle[data-mode="auto-all"] {
+  color: var(--color-error);
 }
 /* Text label below icon — always muted, does not change with mode */
 .bypass-label {
