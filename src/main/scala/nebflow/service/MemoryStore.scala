@@ -19,8 +19,8 @@ import scala.jdk.CollectionConverters.*
  *   - Folder:  ~/.nebflow/folders/{fid}.memory.md       (per folder)
  *   - Session: ~/.nebflow/sessions/{sid}.memory.md      (per session)
  *
- * Memory files are read automatically via synthetic Read tool calls (MemoryAutoRead)
- * and kept live via LiveFileTracker. Agents update them directly using Edit/Write.
+ * Memory files are injected into the system prompt every turn by
+ * ContextRefresher.buildMemoryBlock. Agents update them directly using Edit/Write.
  *
  * All reads use mtime-based caching.
  */
@@ -57,11 +57,16 @@ object MemoryStore:
 
   private val folderCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
 
+  private val sessionCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
+
   private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
     agentCaches.asScala.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
 
   private def getFolderCache(folderId: String): MtimeFileCache[Option[String]] =
     folderCaches.asScala.getOrElseUpdate(folderId, MtimeCache.file(folderMemoryPath(folderId), parseMemory))
+
+  private def getSessionCache(sessionId: String): MtimeFileCache[Option[String]] =
+    sessionCaches.asScala.getOrElseUpdate(sessionId, MtimeCache.file(sessionMemoryPath(sessionId), parseMemory))
 
   // --- Load (mtime-cached) — injected into system prompts ---
 
@@ -73,6 +78,9 @@ object MemoryStore:
 
   def loadFolderMemory(folderId: String): Option[String] =
     getFolderCache(folderId).get.unsafeRunSync().flatten
+
+  def loadSessionMemory(sessionId: String): Option[String] =
+    getSessionCache(sessionId).get.unsafeRunSync().flatten
 
   // --- Save (called from WS routes / Edit-Write tools, invalidates cache) ---
 
@@ -88,6 +96,9 @@ object MemoryStore:
   def saveFolderMemory(folderId: String, content: String): IO[Unit] =
     saveFile(folderMemoryPath(folderId), content, () => getFolderCache(folderId).invalidate)
 
+  def saveSessionMemory(sessionId: String, content: String): IO[Unit] =
+    saveFile(sessionMemoryPath(sessionId), content, () => getSessionCache(sessionId).invalidate)
+
   // --- Cache invalidation ---
 
   def invalidateUserCache(): Unit =
@@ -98,6 +109,9 @@ object MemoryStore:
 
   def invalidateFolderCache(folderId: String): Unit =
     getFolderCache(folderId).invalidate.unsafeRunSync()
+
+  def invalidateSessionCache(sessionId: String): Unit =
+    getSessionCache(sessionId).invalidate.unsafeRunSync()
 
   // --- Preview (first non-heading, non-empty line, max 80 chars) ---
 

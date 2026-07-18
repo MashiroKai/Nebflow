@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.skill.SkillService
 import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
-import nebflow.service.RulesStore
+import nebflow.service.{MemoryStore, RulesStore}
 
 /**
  * Unified context refresh for session-scoped resources.
@@ -19,8 +19,7 @@ import nebflow.service.RulesStore
  *   • projectRoot    — folder chain → SessionStore.resolveProjectRoot
  *   • thinkingConfig — global Ref[IO, ThinkingConfig]
  *   • gitBranch      — git rev-parse --abbrev-ref HEAD
- *   • memory files   — injected via MemoryAutoRead synthetic Read calls,
- *                       kept fresh by LiveFileTracker
+ *   • memory files   — built into memoryBlock string, injected into system prompt
  */
 object ContextRefresher:
 
@@ -137,6 +136,40 @@ object ContextRefresher:
     }
 
   // ============================================================
+  // Memory block builder
+  // ============================================================
+
+  /**
+   * Build a memory block string for system prompt injection.
+   *
+   * Reads all four memory levels (User, Agent, Folder, Session) and formats
+   * them into a single Markdown block. Only levels that exist on disk are
+   * included. This replaces the old MemoryAutoRead synthetic Read messages.
+   */
+  def buildMemoryBlock(
+    agentName: String,
+    folderId: Option[String],
+    sessionId: Option[String]
+  ): String =
+    val sections = List(
+      MemoryStore.loadUserMemory.map(content => s"## User Memory\n\n$content"),
+      MemoryStore.loadAgentMemory(agentName).map(content => s"## Agent Memory\n\n$content"),
+      folderId.flatMap(fid => MemoryStore.loadFolderMemory(fid))
+        .map(content => s"## Folder Memory\n\n$content"),
+      sessionId.flatMap(sid => MemoryStore.loadSessionMemory(sid))
+        .map(content => s"## Session Memory\n\n$content")
+    ).flatten
+
+    if sections.isEmpty then ""
+    else
+      s"""# Memory
+         |
+         |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches.
+         |
+         |${sections.mkString("\n\n")}""".stripMargin
+  end buildMemoryBlock
+
+  // ============================================================
   // Main entry point
   // ============================================================
 
@@ -162,6 +195,7 @@ object ContextRefresher:
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
       skillCatalog <- SkillService.buildSkillCatalog()
+      memoryBlock = buildMemoryBlock(freshDef.name, state.folderId, state.sessionId)
     yield TurnContext(
       freshDef,
       systemPrefix,
@@ -170,7 +204,8 @@ object ContextRefresher:
       thinkingConfig,
       branchReminder,
       currentBranch,
-      skillCatalog
+      skillCatalog,
+      memoryBlock
     )
 
   /** Resolve projectRoot for ToolContext (called from buildToolContext). */
