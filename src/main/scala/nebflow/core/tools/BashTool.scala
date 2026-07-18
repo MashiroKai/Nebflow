@@ -418,7 +418,8 @@ Git safety:
   ): IO[Either[ToolError, String]] =
     val threshold = AutoBackgroundThresholdMs.millis
     // When no explicit timeout, use a duration long enough that .timeout() never fires.
-    // The process is managed solely by auto-background (30s) + stuck detection (8s no output).
+    // The process is managed by auto-background (30s) for foreground commands,
+    // and stuck detection (30s no output + no CPU) for background tasks.
     val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
     val health = new JobHealth()
     for
