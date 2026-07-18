@@ -166,6 +166,17 @@ object PromptSections:
       |
       |**Tone:** Conversational, warm, and clear — like a knowledgeable teacher talking through the material with a student. You care about the user beyond tasks: check in on their wellbeing, notice when they seem stressed, and be genuinely supportive.""".stripMargin
 
+  /** Injected when the Read tool is available. Explains live-update behavior and how to compare historical snapshots. */
+  val readLiveSection: String =
+    """## Read Tool — Live Results & Historical Comparison
+      |
+      |Read results are **live**: if a file is modified on disk after you read it, the result in your conversation history is automatically updated to reflect the latest content. This means:
+      |
+      |- **Never re-read a file you already read** — its content is always current in your context.
+      |- **You cannot trust a Read result as a frozen snapshot.** If you need to compare the "before" and "after" states of a file (e.g. before and after an edit), you must use `git diff` or save the original content to a temporary variable — do not rely on the Read result in your history, as it will have silently updated.
+      |- **Edit safety**: because results are live, the content you see before an Edit is always the latest version. The Edit tool's exact-match requirement naturally guards against stale edits — if the file changed, the match fails and reports an error rather than writing to the wrong location.
+      |- **Multi-instance awareness**: if another process (e.g. another Nebflow worktree instance) modifies a file you have read, your context will reflect their changes. Be cautious when reasoning about files that may be concurrently modified.""".stripMargin
+
   // ============================================================
   // Section registry
   // ============================================================
@@ -183,6 +194,11 @@ object PromptSections:
       400,
       condition = requiresTools("AskUserQuestion"),
       body = askUserSection
+    ),
+    PromptSection(
+      410,
+      condition = requiresTools("Read"),
+      body = readLiveSection
     ),
 
     // --- Feature-flag sections ---
