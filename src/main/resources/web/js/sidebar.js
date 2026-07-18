@@ -609,6 +609,8 @@ function bindSettingsEvents(content, cfg, allModels) {
       if (!confirm(t('provider.removeConfirm', { name }))) return;
       // Use null instead of delete — backend mergeConfig treats null as explicit deletion
       state.parsedConfig.llm.providers[name] = null;
+      // Clean up model chain references to the removed provider
+      cleanModelChainForProvider(name);
       state.configDirty = true;
       flushConfigToServer();
       renderSettings();
@@ -619,6 +621,8 @@ function bindSettingsEvents(content, cfg, allModels) {
         if (newName !== name) {
           // Use null to signal explicit deletion of old name
           state.parsedConfig.llm.providers[name] = null;
+          // Update model chain references from old name to new name
+          renameProviderInModelChain(name, newName);
         }
         state.parsedConfig.llm.providers[newName] = data;
         state.configDirty = true;
@@ -750,6 +754,53 @@ function bindSettingsEvents(content, cfg, allModels) {
   document.getElementById('btn-dismiss-update')?.addEventListener('click', () => {
     document.getElementById('update-action').style.display = 'none';
   });
+}
+
+/** Remove all references to a provider from the model chain (default + fallbacks).
+ *  Must be called when a provider is deleted, otherwise backend validation fails
+ *  because fallbacks point to a provider that no longer exists. */
+function cleanModelChainForProvider(providerName) {
+  if (!state.parsedConfig?.llm?.model) return;
+  const model = state.parsedConfig.llm.model;
+  const prefix = providerName + '/';
+
+  // Clear default if it points to the removed provider
+  if (model.default && model.default.startsWith(prefix)) {
+    model.default = '';
+  }
+
+  // Remove all fallbacks that reference the removed provider
+  if (model.fallbacks) {
+    model.fallbacks = model.fallbacks.filter(f => !f.startsWith(prefix));
+  }
+
+  // Auto-set a new default if possible
+  if (!model.default) {
+    const remainingProviders = state.parsedConfig.llm.providers || {};
+    const firstProvider = Object.entries(remainingProviders).find(([_, p]) => p && p.models?.length > 0);
+    if (firstProvider) {
+      const [pName, pData] = firstProvider;
+      model.default = `${pName}/${pData.models[0].id}`;
+    }
+  }
+}
+
+/** Update model chain references when a provider is renamed (default + fallbacks). */
+function renameProviderInModelChain(oldName, newName) {
+  if (!state.parsedConfig?.llm?.model) return;
+  const model = state.parsedConfig.llm.model;
+  const oldPrefix = oldName + '/';
+  const newPrefix = newName + '/';
+
+  if (model.default && model.default.startsWith(oldPrefix)) {
+    model.default = newPrefix + model.default.slice(oldPrefix.length);
+  }
+
+  if (model.fallbacks) {
+    model.fallbacks = model.fallbacks.map(f =>
+      f.startsWith(oldPrefix) ? newPrefix + f.slice(oldPrefix.length) : f
+    );
+  }
 }
 
 function flushConfigToServer() {
