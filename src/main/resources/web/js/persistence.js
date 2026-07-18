@@ -25,10 +25,22 @@ function formatDurationPersisted(ms) {
 function safeSetItem(key, value) {
   try {
     localStorage.setItem(key, value);
+    return true;
   } catch (e) {
     // Quota exceeded — just drop the cache silently; backend is the source of truth
-    console.warn('[persistence] localStorage quota exceeded, dropping cache');
+    console.debug('[persistence] localStorage quota exceeded, dropping cache');
+    return false;
   }
+}
+
+// ---------- Prune old sessions from the cache and retry writing once ----------
+// Removes roughly half of the non-active sessions to free space. Returns true on success.
+function pruneAndRetrySetSessions(all, keepSid) {
+  const otherSids = Object.keys(all).filter(k => k !== keepSid);
+  if (otherSids.length === 0) return false; // nothing to prune
+  const removeCount = Math.ceil(otherSids.length / 2);
+  for (let i = 0; i < removeCount; i++) delete all[otherSids[i]];
+  return safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
 }
 
 // ---------- Safe JSON parse from localStorage ----------
@@ -45,7 +57,10 @@ export function saveMsg(entry, sessionId) {
     const arr = all[sid] || [];
     arr.push(entry);
     all[sid] = arr;
-    safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
+    if (!safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) {
+      // Quota exceeded — prune old sessions and retry once
+      pruneAndRetrySetSessions(all, sid);
+    }
   } catch (e) {
     // Silently ignore — backend is the source of truth
   }
@@ -716,7 +731,9 @@ export function migrateLegacyIfNeeded() {
     const oldMsgs = safeGetJSON(LS_KEY, []);
     if (Array.isArray(oldMsgs) && oldMsgs.length > 0) {
       all[state.activeSessionId] = oldMsgs;
-      safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
+      if (!safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) {
+        pruneAndRetrySetSessions(all, state.activeSessionId);
+      }
       // Re-render chat with the migrated data
       if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
       restoreFromStorage();
