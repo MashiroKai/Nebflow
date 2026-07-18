@@ -1,11 +1,12 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.core.NebflowLogger
 
 import java.util.concurrent.TimeUnit
+
 import scala.io.Source
 import scala.util.Using.resource
 

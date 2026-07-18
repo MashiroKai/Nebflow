@@ -1,7 +1,7 @@
 package nebflow.core.flow
 
+import io.circe.*
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, Json, JsonObject}
 
 import scala.concurrent.duration.*
 

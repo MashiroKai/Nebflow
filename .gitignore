@@ -26,6 +26,7 @@ Thumbs.db
 SKEL
 archives/
 temp/
+tmp/
 docs/
 test-envs.sh
 CHANGELOG.md

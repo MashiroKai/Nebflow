@@ -1,6 +1,6 @@
 package nebflow.core.tools
 
-import io.circe.{Decoder, Encoder, Json, JsonObject}
+import io.circe.*
 import io.circe.syntax.*
 
 case class ExternalToolConfig(
