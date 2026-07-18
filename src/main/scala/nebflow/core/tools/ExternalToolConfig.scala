@@ -12,6 +12,7 @@ case class ExternalToolConfig(
 )
 
 object ExternalToolConfig:
+
   given Encoder[ExternalToolConfig] = Encoder.instance { cfg =>
     Json.obj(
       "name" -> cfg.name.asJson,
@@ -31,3 +32,4 @@ object ExternalToolConfig:
       timeoutSeconds <- c.downField("timeoutSeconds").as[Option[Int]].map(_.getOrElse(120))
     yield ExternalToolConfig(name, description, command, inputSchema, timeoutSeconds)
   }
+end ExternalToolConfig

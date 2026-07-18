@@ -133,6 +133,8 @@ object FlowTreeActor:
               }
               _ <- logger.info("FlowTreeActor shutdown complete")
             yield Behaviors.stopped[TreeCommand]
+        end match
+      end receive
 
       override def onStop(ctx: ActorContext[TreeCommand]): IO[Unit] =
         for
@@ -183,7 +185,9 @@ object FlowTreeActor:
       // Insert
       _ <- branchesRef.update(_ + (name -> runtime))
       _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, name)
-      _ <- emit(cfg, "treeBranchMounted",
+      _ <- emit(
+        cfg,
+        "treeBranchMounted",
         "name" -> name.asJson,
         "type" -> defn.branchType.typeName.asJson,
         "address" -> address.asJson
@@ -246,25 +250,29 @@ object FlowTreeActor:
   )(using ActorContext[TreeCommand]): IO[Unit] =
     for
       branches <- branchesRef.get
-      _ <- branches.get(name).flatMap(_.state.branchType match
-        case p: BranchType.Pipeline => Some(p)
-        case _ => None
-      ) match
+      _ <- branches
+        .get(name)
+        .flatMap(_.state.branchType match
+          case p: BranchType.Pipeline => Some(p)
+          case _ => None) match
         case Some(pipeline) =>
           for
             _ <- branchesRef.update { m =>
-              m.updated(name, m(name).copy(
-                state = m(name).state.copy(
-                  phase = BranchPhase.Starting,
-                  stepStatus = pipeline.steps.map(s => s.id -> StepStatus.Pending.toString).toMap,
-                  results = Map.empty,
-                  failedReasons = Map.empty,
-                  retryLeft = Map.empty,
-                  verifyResult = None,
-                  iteration = 0
-                ),
-                runningAgents = Map.empty
-              ))
+              m.updated(
+                name,
+                m(name).copy(
+                  state = m(name).state.copy(
+                    phase = BranchPhase.Starting,
+                    stepStatus = pipeline.steps.map(s => s.id -> StepStatus.Pending.toString).toMap,
+                    results = Map.empty,
+                    failedReasons = Map.empty,
+                    retryLeft = Map.empty,
+                    verifyResult = None,
+                    iteration = 0
+                  ),
+                  runningAgents = Map.empty
+                )
+              )
             }
             _ <- startPipeline(ctx, branchesRef, cfg, name)
           yield ()
@@ -283,7 +291,9 @@ object FlowTreeActor:
     name: String
   )(using ActorContext[TreeCommand]): IO[Unit] =
     for
-      _ <- branchesRef.update(m => m.updated(name, m(name).copy(state = m(name).state.copy(phase = BranchPhase.Running))))
+      _ <- branchesRef.update(m =>
+        m.updated(name, m(name).copy(state = m(name).state.copy(phase = BranchPhase.Running)))
+      )
       _ <- emit(cfg, "flowStarted", "branchName" -> name.asJson)
       _ <- scheduleReadySteps(ctx, branchesRef, cfg, name)
     yield ()
@@ -297,20 +307,22 @@ object FlowTreeActor:
     for
       branches <- branchesRef.get
       _ <- branches.get(branchName) match
-        case Some(br) => br.state.branchType match
-          case pipeline: BranchType.Pipeline =>
-            val ready = pipeline.steps.filter { step =>
-              br.state.stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-              !br.runningAgents.contains(step.id) &&
-              step.dependsOn.forall(dep => br.state.stepStatus.get(dep).contains(StepStatus.Done.toString))
-            }
-            val slots = (pipeline.maxConcurrency - br.runningAgents.size).max(0)
-            val toStart = ready.take(slots)
-            for
-              _ <- toStart.traverse_(step => spawnPipelineStep(ctx, branchesRef, cfg, branchName, step))
-              _ = if toStart.nonEmpty then logger.info(s"[$branchName] Scheduled: ${toStart.map(_.id).mkString(", ")}")
-            yield ()
-          case _ => IO.unit
+        case Some(br) =>
+          br.state.branchType match
+            case pipeline: BranchType.Pipeline =>
+              val ready = pipeline.steps.filter { step =>
+                br.state.stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
+                !br.runningAgents.contains(step.id) &&
+                step.dependsOn.forall(dep => br.state.stepStatus.get(dep).contains(StepStatus.Done.toString))
+              }
+              val slots = (pipeline.maxConcurrency - br.runningAgents.size).max(0)
+              val toStart = ready.take(slots)
+              for
+                _ <- toStart.traverse_(step => spawnPipelineStep(ctx, branchesRef, cfg, branchName, step))
+                _ =
+                  if toStart.nonEmpty then logger.info(s"[$branchName] Scheduled: ${toStart.map(_.id).mkString(", ")}")
+              yield ()
+            case _ => IO.unit
         case None => IO.unit
     yield ()
 
@@ -376,15 +388,20 @@ object FlowTreeActor:
             )
             _ <- branchesRef.update(m =>
               m.updated(childName, childRuntime)
-               .updated(branchName, m(branchName).copy(
-                 runningAgents = m(branchName).runningAgents + (step.id -> cfg.parentAgentRef), // placeholder ref
-                 state = m(branchName).state.copy(
-                   stepStatus = m(branchName).state.stepStatus + (step.id -> StepStatus.Running.toString)
-                 )
-               ))
+                .updated(
+                  branchName,
+                  m(branchName).copy(
+                    runningAgents = m(branchName).runningAgents + (step.id -> cfg.parentAgentRef), // placeholder ref
+                    state = m(branchName).state.copy(
+                      stepStatus = m(branchName).state.stepStatus + (step.id -> StepStatus.Running.toString)
+                    )
+                  )
+                )
             )
             _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, childName)
-            _ <- emit(cfg, "flowStepStarted",
+            _ <- emit(
+              cfg,
+              "flowStepStarted",
               "branchName" -> branchName.asJson,
               "stepId" -> step.id.asJson,
               "nestedFlow" -> childName.asJson
@@ -396,6 +413,10 @@ object FlowTreeActor:
               case _ => IO.unit
           yield ()
     yield ()
+
+    end for
+
+  end spawnNestedFlow
 
   private def spawnAtomicStep(
     ctx: ActorContext[TreeCommand],
@@ -424,12 +445,15 @@ object FlowTreeActor:
             st <- branchesRef.get
             actualPrompt = buildTeamRoster(cfg, st) + resolved
             _ <- branchesRef.update(m =>
-              m.updated(branchName, m(branchName).copy(
-                state = m(branchName).state.copy(
-                  stepStatus = m(branchName).state.stepStatus + (step.id -> StepStatus.Running.toString)
-                ),
-                runningAgents = m(branchName).runningAgents + (step.id -> null) // placeholder, updated after spawn
-              ))
+              m.updated(
+                branchName,
+                m(branchName).copy(
+                  state = m(branchName).state.copy(
+                    stepStatus = m(branchName).state.stepStatus + (step.id -> StepStatus.Running.toString)
+                  ),
+                  runningAgents = m(branchName).runningAgents + (step.id -> null) // placeholder, updated after spawn
+                )
+              )
             )
             agentRef <- ctx.system.spawn(
               AgentActor(
@@ -453,16 +477,21 @@ object FlowTreeActor:
               s"$agentUid-adapter"
             )
             _ <- branchesRef.update(m =>
-              m.updated(branchName, m(branchName).copy(
-                runningAgents = m(branchName).runningAgents + (step.id -> agentRef),
-                state = m(branchName).state.copy(
-                  retryLeft = m(branchName).state.retryLeft + (step.id -> step.retry)
+              m.updated(
+                branchName,
+                m(branchName).copy(
+                  runningAgents = m(branchName).runningAgents + (step.id -> agentRef),
+                  state = m(branchName).state.copy(
+                    retryLeft = m(branchName).state.retryLeft + (step.id -> step.retry)
+                  )
                 )
-              ))
+              )
             )
             _ <- FlowMembership.join(agentRef.path.toString, branchName)
             _ <- saveTree(branchesRef, cfg)
-            _ <- emit(cfg, "flowStepStarted",
+            _ <- emit(
+              cfg,
+              "flowStepStarted",
               "branchName" -> branchName.asJson,
               "stepId" -> step.id.asJson,
               "agentName" -> agentName.asJson
@@ -470,7 +499,10 @@ object FlowTreeActor:
             _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
             _ = logger.info(s"[$branchName] Spawned '${step.id}' ($agentName, depth=$childDepth)")
           yield ()
+          end for
     yield ()
+    end for
+  end spawnAtomicStep
 
   // ============================================================
   // Step completion / failure
@@ -491,32 +523,35 @@ object FlowTreeActor:
           if stepId == FixId then
             // Fix completed → re-verify
             for
-              _ <- branchesRef.update(m => m.updated(branchName,
-                m(branchName).copy(
-                  state = m(branchName).state.copy(
-                    stepStatus = m(branchName).state.stepStatus + (FixId -> StepStatus.Done.toString),
-                    phase = BranchPhase.Running
-                  ),
-                  runningAgents = m(branchName).runningAgents - FixId
+              _ <- branchesRef.update(m =>
+                m.updated(
+                  branchName,
+                  m(branchName).copy(
+                    state = m(branchName).state.copy(
+                      stepStatus = m(branchName).state.stepStatus + (FixId -> StepStatus.Done.toString),
+                      phase = BranchPhase.Running
+                    ),
+                    runningAgents = m(branchName).runningAgents - FixId
+                  )
                 )
-              ))
+              )
               _ <- runVerify(ctx, branchesRef, cfg, branchName)
             yield ()
           else
             for
-              _ <- branchesRef.update(m => m.updated(branchName,
-                m(branchName).copy(
-                  state = m(branchName).state.copy(
-                    results = m(branchName).state.results + (stepId -> output),
-                    stepStatus = m(branchName).state.stepStatus + (stepId -> StepStatus.Done.toString)
-                  ),
-                  runningAgents = m(branchName).runningAgents - stepId
+              _ <- branchesRef.update(m =>
+                m.updated(
+                  branchName,
+                  m(branchName).copy(
+                    state = m(branchName).state.copy(
+                      results = m(branchName).state.results + (stepId -> output),
+                      stepStatus = m(branchName).state.stepStatus + (stepId -> StepStatus.Done.toString)
+                    ),
+                    runningAgents = m(branchName).runningAgents - stepId
+                  )
                 )
-              ))
-              _ <- emit(cfg, "flowStepCompleted",
-                "branchName" -> branchName.asJson,
-                "stepId" -> stepId.asJson
               )
+              _ <- emit(cfg, "flowStepCompleted", "branchName" -> branchName.asJson, "stepId" -> stepId.asJson)
               _ <- logger.info(s"[$branchName] Step '$stepId' completed (${output.length} chars)")
             yield ()
         case _ => IO.unit // ignore duplicate or unknown
@@ -534,10 +569,8 @@ object FlowTreeActor:
       branches <- branchesRef.get
       _ <- branches.get(branchName) match
         case Some(br) if br.state.stepStatus.get(stepId).contains(StepStatus.Running.toString) =>
-          if stepId == FixId then
-            failPipeline(ctx, branchesRef, cfg, branchName, s"Fix step failed: $error")
-          else if stepId == VerifyId then
-            handleVerifyFail(ctx, branchesRef, cfg, branchName, s"Verify error: $error")
+          if stepId == FixId then failPipeline(ctx, branchesRef, cfg, branchName, s"Fix step failed: $error")
+          else if stepId == VerifyId then handleVerifyFail(ctx, branchesRef, cfg, branchName, s"Verify error: $error")
           else
             // Work step failed — check retries
             val retries = br.state.retryLeft.getOrElse(stepId, 0)
@@ -546,46 +579,58 @@ object FlowTreeActor:
                 case pipeline: BranchType.Pipeline =>
                   val step = pipeline.steps.find(_.id == stepId).getOrElse(pipeline.steps.head)
                   for
-                    _ <- branchesRef.update(m => m.updated(branchName,
-                      m(branchName).copy(
-                        state = m(branchName).state.copy(
-                          retryLeft = m(branchName).state.retryLeft + (stepId -> (retries - 1))
-                        ),
-                        runningAgents = m(branchName).runningAgents - stepId
+                    _ <- branchesRef.update(m =>
+                      m.updated(
+                        branchName,
+                        m(branchName).copy(
+                          state = m(branchName).state.copy(
+                            retryLeft = m(branchName).state.retryLeft + (stepId -> (retries - 1))
+                          ),
+                          runningAgents = m(branchName).runningAgents - stepId
+                        )
                       )
-                    ))
+                    )
                     _ <- logger.info(s"[$branchName] Step '$stepId' failed ($error), retrying (${retries - 1} left)")
                     _ <- spawnPipelineStep(ctx, branchesRef, cfg, branchName, step)
                   yield ()
+                  end for
                 case _ => IO.unit
             else
               // Retries exhausted
               for
-                _ <- branchesRef.update(m => m.updated(branchName,
-                  m(branchName).copy(
-                    state = m(branchName).state.copy(
-                      stepStatus = m(branchName).state.stepStatus + (stepId -> StepStatus.Failed.toString),
-                      failedReasons = m(branchName).state.failedReasons + (stepId -> error)
-                    ),
-                    runningAgents = m(branchName).runningAgents - stepId
+                _ <- branchesRef.update(m =>
+                  m.updated(
+                    branchName,
+                    m(branchName).copy(
+                      state = m(branchName).state.copy(
+                        stepStatus = m(branchName).state.stepStatus + (stepId -> StepStatus.Failed.toString),
+                        failedReasons = m(branchName).state.failedReasons + (stepId -> error)
+                      ),
+                      runningAgents = m(branchName).runningAgents - stepId
+                    )
                   )
-                ))
-                _ <- emit(cfg, "flowStepFailed",
+                )
+                _ <- emit(
+                  cfg,
+                  "flowStepFailed",
                   "branchName" -> branchName.asJson,
                   "stepId" -> stepId.asJson,
                   "error" -> error.asJson
                 )
                 // Check dependents
                 hasDependers = br.state.branchType match
-                  case p: BranchType.Pipeline => p.steps.exists(s =>
-                    s.dependsOn.contains(stepId) &&
-                    br.state.stepStatus.get(s.id).contains(StepStatus.Pending.toString)
-                  )
+                  case p: BranchType.Pipeline =>
+                    p.steps.exists(s =>
+                      s.dependsOn.contains(stepId) &&
+                        br.state.stepStatus.get(s.id).contains(StepStatus.Pending.toString)
+                    )
                   case _ => false
-                _ <- if hasDependers then
-                  failPipeline(ctx, branchesRef, cfg, branchName, s"Step '$stepId' failed, dependents cannot run")
-                else IO.unit
+                _ <-
+                  if hasDependers then
+                    failPipeline(ctx, branchesRef, cfg, branchName, s"Step '$stepId' failed, dependents cannot run")
+                  else IO.unit
               yield ()
+            end if
         case _ => IO.unit
     yield ()
 
@@ -602,17 +647,21 @@ object FlowTreeActor:
           br.state.branchType match
             case pipeline: BranchType.Pipeline =>
               val allDone = pipeline.steps.forall(s =>
-                br.state.stepStatus.get(s.id).exists(x => x == StepStatus.Done.toString || x == StepStatus.Failed.toString)
+                br.state.stepStatus
+                  .get(s.id)
+                  .exists(x => x == StepStatus.Done.toString || x == StepStatus.Failed.toString)
               ) && !br.runningAgents.contains(VerifyId) && !br.runningAgents.contains(FixId)
               if allDone && !br.state.stepStatus.contains(VerifyId) then
                 for
-                  _ <- branchesRef.update(m => m.updated(branchName,
-                    m(branchName).copy(state = m(branchName).state.copy(phase = BranchPhase.Running))
-                  ))
+                  _ <- branchesRef.update(m =>
+                    m.updated(
+                      branchName,
+                      m(branchName).copy(state = m(branchName).state.copy(phase = BranchPhase.Running))
+                    )
+                  )
                   _ <- runVerify(ctx, branchesRef, cfg, branchName)
                 yield ()
-              else
-                scheduleReadySteps(ctx, branchesRef, cfg, branchName)
+              else scheduleReadySteps(ctx, branchesRef, cfg, branchName)
             case _ => IO.unit
         case _ => IO.unit
     yield ()
@@ -629,23 +678,36 @@ object FlowTreeActor:
   )(using ActorContext[TreeCommand]): IO[Unit] =
     for
       branches <- branchesRef.get
-      _ <- branches.get(branchName).flatMap(_.state.branchType match
-        case p: BranchType.Pipeline => Some(p)
-        case _ => None
-      ) match
+      _ <- branches
+        .get(branchName)
+        .flatMap(_.state.branchType match
+          case p: BranchType.Pipeline => Some(p)
+          case _ => None) match
         case Some(pipeline) =>
           val br = branches(branchName)
           val contextBlock = buildVerifyContext(br.state.results, br.state.failedReasons, br.state.stepStatus)
           val prompt = s"$contextBlock\n\n${pipeline.verify.prompt}"
           for
-            _ <- emit(cfg, "flowStepStarted",
+            _ <- emit(
+              cfg,
+              "flowStepStarted",
               "branchName" -> branchName.asJson,
               "stepId" -> VerifyId.asJson,
               "agentName" -> pipeline.verify.agent.asJson
             )
-            _ <- spawnById(ctx, branchesRef, cfg, branchName, pipeline.verify.agent, prompt, VerifyId,
-                           pipeline.verify.timeout, isVerify = true)
+            _ <- spawnById(
+              ctx,
+              branchesRef,
+              cfg,
+              branchName,
+              pipeline.verify.agent,
+              prompt,
+              VerifyId,
+              pipeline.verify.timeout,
+              isVerify = true
+            )
           yield ()
+          end for
         case None => IO.unit
     yield ()
 
@@ -662,25 +724,29 @@ object FlowTreeActor:
       _ <- branches.get(branchName) match
         case Some(br) =>
           for
-            _ <- branchesRef.update(m => m.updated(branchName,
-              m(branchName).copy(
-                state = m(branchName).state.copy(
-                  verifyResult = Some(summary),
-                  stepStatus = m(branchName).state.stepStatus + (VerifyId -> StepStatus.Done.toString)
-                ),
-                runningAgents = m(branchName).runningAgents - VerifyId
+            _ <- branchesRef.update(m =>
+              m.updated(
+                branchName,
+                m(branchName).copy(
+                  state = m(branchName).state.copy(
+                    verifyResult = Some(summary),
+                    stepStatus = m(branchName).state.stepStatus + (VerifyId -> StepStatus.Done.toString)
+                  ),
+                  runningAgents = m(branchName).runningAgents - VerifyId
+                )
               )
-            ))
-            _ <- emit(cfg, "flowVerifyResult",
+            )
+            _ <- emit(
+              cfg,
+              "flowVerifyResult",
               "branchName" -> branchName.asJson,
               "pass" -> passed.asJson,
               "summary" -> summary.take(500).asJson,
               "iteration" -> br.state.iteration.asJson
             )
-            _ <- if passed then
-              completePipeline(ctx, branchesRef, cfg, branchName, summary)
-            else
-              handleVerifyFail(ctx, branchesRef, cfg, branchName, summary)
+            _ <-
+              if passed then completePipeline(ctx, branchesRef, cfg, branchName, summary)
+              else handleVerifyFail(ctx, branchesRef, cfg, branchName, summary)
           yield ()
         case None => IO.unit
     yield ()
@@ -694,36 +760,57 @@ object FlowTreeActor:
   )(using ActorContext[TreeCommand]): IO[Unit] =
     for
       branches <- branchesRef.get
-      _ <- branches.get(branchName).flatMap(_.state.branchType match
-        case p: BranchType.Pipeline => Some(p)
-        case _ => None
-      ) match
+      _ <- branches
+        .get(branchName)
+        .flatMap(_.state.branchType match
+          case p: BranchType.Pipeline => Some(p)
+          case _ => None) match
         case Some(pipeline) =>
           val br = branches(branchName)
           pipeline.loop match
             case Some(loop) if br.state.iteration < loop.maxIterations =>
               for
-                _ <- branchesRef.update(m => m.updated(branchName,
-                  m(branchName).copy(
-                    state = m(branchName).state.copy(
-                      iteration = m(branchName).state.iteration + 1,
-                      stepStatus = m(branchName).state.stepStatus + (FixId -> StepStatus.Pending.toString)
+                _ <- branchesRef.update(m =>
+                  m.updated(
+                    branchName,
+                    m(branchName).copy(
+                      state = m(branchName).state.copy(
+                        iteration = m(branchName).state.iteration + 1,
+                        stepStatus = m(branchName).state.stepStatus + (FixId -> StepStatus.Pending.toString)
+                      )
                     )
                   )
-                ))
-                _ <- emit(cfg, "flowLoopIteration",
+                )
+                _ <- emit(
+                  cfg,
+                  "flowLoopIteration",
                   "branchName" -> branchName.asJson,
                   "iteration" -> (br.state.iteration + 1).asJson,
                   "maxIterations" -> loop.maxIterations.asJson
                 )
                 _ <- logger.info(s"[$branchName] Verify FAIL (iter ${br.state.iteration}), running fix")
                 fixPrompt = resolveTemplate(loop.fix.prompt.getOrElse(""), br.state.results ++ Map("verify" -> reason))
-                _ <- spawnById(ctx, branchesRef, cfg, branchName, loop.fix.agent.getOrElse("Nebula"),
-                               fixPrompt, FixId, loop.fix.timeout, isVerify = false)
+                _ <- spawnById(
+                  ctx,
+                  branchesRef,
+                  cfg,
+                  branchName,
+                  loop.fix.agent.getOrElse("Nebula"),
+                  fixPrompt,
+                  FixId,
+                  loop.fix.timeout,
+                  isVerify = false
+                )
               yield ()
             case _ =>
-              failPipeline(ctx, branchesRef, cfg, branchName,
-                s"Verification failed after ${br.state.iteration} iteration(s): $reason")
+              failPipeline(
+                ctx,
+                branchesRef,
+                cfg,
+                branchName,
+                s"Verification failed after ${br.state.iteration} iteration(s): $reason"
+              )
+          end match
         case None => IO.unit
     yield ()
 
@@ -743,30 +830,34 @@ object FlowTreeActor:
       br <- branches.get(branchName) match
         case Some(b) => IO.pure(b)
         case None => IO.unit *> IO.pure(null.asInstanceOf[BranchRuntime]) // skip
-      _ <- if br == null then IO.unit else
-        for
-          _ <- branchesRef.update(m => m.updated(branchName,
-            m(branchName).copy(state = m(branchName).state.copy(phase = BranchPhase.Completed))
-          ))
-          _ <- saveTree(branchesRef, cfg)
-          _ <- emit(cfg, "flowCompleted",
-            "branchName" -> branchName.asJson,
-            "pass" -> true.asJson,
-            "summary" -> summary.take(500).asJson
-          )
-          _ <- br.parentStep match
-            case Some((parentName, stepId)) =>
-              ctx.self ! TreeCommand.StepCompleted(parentName, stepId, summary)
-              IO.unit
-            case None =>
-              cfg.parentAgentRef ! AgentCommand.ExternalEvent(
-                source = "flow",
-                eventType = "completed",
-                payload = s"[Flow: $branchName] PASS\n$summary",
-                metadata = JsonObject("flowName" -> branchName.asJson)
-              )
-          _ <- logger.info(s"[$branchName] Pipeline COMPLETED")
-        yield ()
+      _ <-
+        if br == null then IO.unit
+        else
+          for
+            _ <- branchesRef.update(m =>
+              m.updated(branchName, m(branchName).copy(state = m(branchName).state.copy(phase = BranchPhase.Completed)))
+            )
+            _ <- saveTree(branchesRef, cfg)
+            _ <- emit(
+              cfg,
+              "flowCompleted",
+              "branchName" -> branchName.asJson,
+              "pass" -> true.asJson,
+              "summary" -> summary.take(500).asJson
+            )
+            _ <- br.parentStep match
+              case Some((parentName, stepId)) =>
+                ctx.self ! TreeCommand.StepCompleted(parentName, stepId, summary)
+                IO.unit
+              case None =>
+                cfg.parentAgentRef ! AgentCommand.ExternalEvent(
+                  source = "flow",
+                  eventType = "completed",
+                  payload = s"[Flow: $branchName] PASS\n$summary",
+                  metadata = JsonObject("flowName" -> branchName.asJson)
+                )
+            _ <- logger.info(s"[$branchName] Pipeline COMPLETED")
+          yield ()
     yield ()
 
   private def failPipeline(
@@ -781,11 +872,13 @@ object FlowTreeActor:
         case None => IO.unit
         case Some(br) =>
           for
-            _ <- branchesRef.update(m => m.updated(branchName,
-              m(branchName).copy(state = m(branchName).state.copy(phase = BranchPhase.Crashed))
-            ))
+            _ <- branchesRef.update(m =>
+              m.updated(branchName, m(branchName).copy(state = m(branchName).state.copy(phase = BranchPhase.Crashed)))
+            )
             _ <- saveTree(branchesRef, cfg)
-            _ <- emit(cfg, "flowCompleted",
+            _ <- emit(
+              cfg,
+              "flowCompleted",
               "branchName" -> branchName.asJson,
               "pass" -> false.asJson,
               "summary" -> reason.take(500).asJson
@@ -819,10 +912,11 @@ object FlowTreeActor:
     for
       branches <- branchesRef.get
       // Find reactors subscribed to this event type
-      reactors = branches.values.filter(_.state.branchType match
-        case r: BranchType.Reactor => r.subscribe.contains(eventType)
-        case _ => false
-      ).toList
+      reactors = branches.values
+        .filter(_.state.branchType match
+          case r: BranchType.Reactor => r.subscribe.contains(eventType)
+          case _ => false)
+        .toList
       _ <- reactors.traverse_ { br =>
         val reactor = br.state.branchType.asInstanceOf[BranchType.Reactor]
         // Check filter
@@ -835,8 +929,17 @@ object FlowTreeActor:
               val resolved = data.toList.foldLeft(prompt) { case (p, (k, v)) =>
                 p.replace(s"$${event.$k}", v.toString)
               }
-              spawnById(ctx, branchesRef, cfg, br.state.name, agent, resolved,
-                        s"reactor-${java.util.UUID.randomUUID().toString.take(8)}", 30.minutes, isVerify = false)
+              spawnById(
+                ctx,
+                branchesRef,
+                cfg,
+                br.state.name,
+                agent,
+                resolved,
+                s"reactor-${java.util.UUID.randomUUID().toString.take(8)}",
+                30.minutes,
+                isVerify = false
+              )
             case ReactorAction.MountFlow(flowName) =>
               FlowDefLoader.load(flowName).flatMap {
                 case Some(defn) =>
@@ -846,6 +949,7 @@ object FlowTreeActor:
                   logger.warn(s"Reactor '${br.state.name}': flow '$flowName' not found")
               }
         else IO.unit
+        end if
       }
     yield ()
 
@@ -891,13 +995,16 @@ object FlowTreeActor:
             actualPrompt =
               if isVerify then VerifyPromptPreamble + prompt
               else prompt
-            _ <- branchesRef.update(m => m.updated(branchName,
-              m(branchName).copy(
-                state = m(branchName).state.copy(
-                  stepStatus = m(branchName).state.stepStatus + (stepId -> StepStatus.Running.toString)
+            _ <- branchesRef.update(m =>
+              m.updated(
+                branchName,
+                m(branchName).copy(
+                  state = m(branchName).state.copy(
+                    stepStatus = m(branchName).state.stepStatus + (stepId -> StepStatus.Running.toString)
+                  )
                 )
               )
-            ))
+            )
             agentRef <- ctx.system.spawn(
               AgentActor(
                 agentDef = actualDef,
@@ -922,14 +1029,18 @@ object FlowTreeActor:
               stepAdapter(ctx.self, branchName, stepId, agentRef, timeout, isVerify, agentRef.path.toString),
               s"$agentUid-adapter"
             )
-            _ <- branchesRef.update(m => m.updated(branchName,
-              m(branchName).copy(runningAgents = m(branchName).runningAgents + (stepId -> agentRef))
-            ))
+            _ <- branchesRef.update(m =>
+              m.updated(
+                branchName,
+                m(branchName).copy(runningAgents = m(branchName).runningAgents + (stepId -> agentRef))
+              )
+            )
             _ <- FlowMembership.join(agentRef.path.toString, branchName)
             _ <- saveTree(branchesRef, cfg)
             _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
             _ = logger.info(s"[$branchName] Spawned '$stepId' ($agentName, depth=$childDepth)")
           yield ()
+          end for
     yield ()
 
   // ============================================================
@@ -948,9 +1059,9 @@ object FlowTreeActor:
       _ <- defOpt match
         case None =>
           // Agent not found — mark as crashed
-          branchesRef.update(m => m.updated(name,
-            m(name).copy(state = m(name).state.copy(phase = BranchPhase.Crashed))
-          ))
+          branchesRef.update(m =>
+            m.updated(name, m(name).copy(state = m(name).state.copy(phase = BranchPhase.Crashed)))
+          )
         case Some(agentDef) =>
           if daemon.persistent then
             // Persistent: spawn AgentActor directly at the daemon's address
@@ -976,18 +1087,23 @@ object FlowTreeActor:
                 ),
                 agentUid
               )
-              _ <- branchesRef.update(m => m.updated(name,
-                m(name).copy(
-                  state = m(name).state.copy(
-                    phase = BranchPhase.Running,
-                    address = agentRef.path.toString
-                  ),
-                  runningAgents = m(name).runningAgents + ("__daemon__" -> agentRef)
+              _ <- branchesRef.update(m =>
+                m.updated(
+                  name,
+                  m(name).copy(
+                    state = m(name).state.copy(
+                      phase = BranchPhase.Running,
+                      address = agentRef.path.toString
+                    ),
+                    runningAgents = m(name).runningAgents + ("__daemon__" -> agentRef)
+                  )
                 )
-              ))
+              )
               _ <- FlowMembership.join(agentRef.path.toString, name)
               _ <- agentRef ! AgentCommand.UserInput(daemon.prompt, None)
-              _ <- emit(cfg, "daemonStarted",
+              _ <- emit(
+                cfg,
+                "daemonStarted",
                 "branchName" -> name.asJson,
                 "mode" -> "persistent".asJson,
                 "address" -> agentRef.path.toString.asJson
@@ -1002,23 +1118,29 @@ object FlowTreeActor:
                 daemonProxy(ctx.self, name, agentDef, daemon.prompt, cfg),
                 daemonName
               )
-              _ <- branchesRef.update(m => m.updated(name,
-                m(name).copy(
-                  state = m(name).state.copy(
-                    phase = BranchPhase.Running,
-                    address = proxyRef.path.toString
-                  ),
-                  runningAgents = m(name).runningAgents + ("__daemon__" -> proxyRef)
+              _ <- branchesRef.update(m =>
+                m.updated(
+                  name,
+                  m(name).copy(
+                    state = m(name).state.copy(
+                      phase = BranchPhase.Running,
+                      address = proxyRef.path.toString
+                    ),
+                    runningAgents = m(name).runningAgents + ("__daemon__" -> proxyRef)
+                  )
                 )
-              ))
+              )
               _ <- FlowMembership.join(proxyRef.path.toString, name)
-              _ <- emit(cfg, "daemonStarted",
+              _ <- emit(
+                cfg,
+                "daemonStarted",
                 "branchName" -> name.asJson,
                 "mode" -> "serverless".asJson,
                 "address" -> proxyRef.path.toString.asJson
               )
               _ = logger.info(s"Daemon '$name' mounted (serverless) at ${proxyRef.path}")
             yield ()
+            end for
     yield ()
 
   /** Serverless daemon proxy: spawns temp agent on each incoming Mail. */
@@ -1092,11 +1214,14 @@ object FlowTreeActor:
                 _ <- done.set(true)
                 _ <-
                   if !alreadyDone then
-                    IO.delay(replyTo.foreach(_ ! AgentEvent.Failed("",
-                      AgentError("", branchName, 1, AgentErrorType.Unknown, "daemon agent crashed"))))
+                    IO.delay(
+                      replyTo.foreach(
+                        _ ! AgentEvent
+                          .Failed("", AgentError("", branchName, 1, AgentErrorType.Unknown, "daemon agent crashed"))
+                      )
+                    )
                   else IO.unit
-              yield Behaviors.stopped[AgentEvent]
-      )
+              yield Behaviors.stopped[AgentEvent])
     }
 
   // ============================================================
@@ -1127,10 +1252,11 @@ object FlowTreeActor:
               ctx.self ! TreeCommand.ReloadDefinition(flowName)
           }
           key.reset()
-      }.void.handleErrorWith(e =>
-        logger.warn(s"File watcher error: ${e.getMessage}").void
-      )
+      }.void
+        .handleErrorWith(e => logger.warn(s"File watcher error: ${e.getMessage}").void)
     )
+
+  end startFileWatcher
 
   private def handleReload(
     ctx: ActorContext[TreeCommand],
@@ -1154,10 +1280,7 @@ object FlowTreeActor:
               for
                 _ <- handleUnmount(ctx, branchesRef, cfg, name)
                 _ <- ctx.self ! TreeCommand.MountBranch(newDef, Some(name), None)
-                _ <- emit(cfg, "treeBranchUpdated",
-                  "name" -> name.asJson,
-                  "flowName" -> flowName.asJson
-                )
+                _ <- emit(cfg, "treeBranchUpdated", "name" -> name.asJson, "flowName" -> flowName.asJson)
                 _ <- logger.info(s"Hot reload: '$name' reloaded from '$flowName'")
               yield ()
             }
@@ -1176,14 +1299,11 @@ object FlowTreeActor:
     source: BranchType.Source
   )(using ActorContext[TreeCommand]): IO[Unit] =
     for
-      _ <- branchesRef.update(m => m.updated(name,
-        m(name).copy(state = m(name).state.copy(phase = BranchPhase.Running))
-      ))
-      _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
-      _ <- emit(cfg, "sourceStarted",
-        "branchName" -> name.asJson,
-        "command" -> source.command.asJson
+      _ <- branchesRef.update(m =>
+        m.updated(name, m(name).copy(state = m(name).state.copy(phase = BranchPhase.Running)))
       )
+      _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
+      _ <- emit(cfg, "sourceStarted", "branchName" -> name.asJson, "command" -> source.command.asJson)
       _ = logger.info(s"Source '$name' started: ${source.command}")
     yield ()
 
@@ -1207,14 +1327,14 @@ object FlowTreeActor:
         val stdout = scala.io.Source.fromInputStream(process.getInputStream)
         val stderr = scala.io.Source.fromInputStream(process.getErrorStream)
         // Consume output in background to prevent pipe blocking
-        val stdoutThread = new Thread(() => {
+        val stdoutThread = new Thread(() =>
           try stdout.getLines().foreach(line => logger.info(s"[$name] stdout: $line"))
           catch case _: Exception => ()
-        })
-        val stderrThread = new Thread(() => {
+        )
+        val stderrThread = new Thread(() =>
           try stderr.getLines().foreach(line => logger.warn(s"[$name] stderr: $line"))
           catch case _: Exception => ()
-        })
+        )
         stdoutThread.setDaemon(true)
         stderrThread.setDaemon(true)
         stdoutThread.start()
@@ -1224,6 +1344,8 @@ object FlowTreeActor:
         ctx.self ! TreeCommand.SourceExited(name, exitCode)
       }.void
     )
+
+  end spawnSourceProcess
 
   private def handleSourceExited(
     ctx: ActorContext[TreeCommand],
@@ -1235,35 +1357,31 @@ object FlowTreeActor:
     for
       branches <- branchesRef.get
       _ <- branches.get(name) match
-        case Some(br) => br.state.branchType match
-          case source: BranchType.Source =>
-            source.restart match
-              case RestartPolicy.Permanent =>
-                for
-                  _ <- logger.info(s"Source '$name' exited (code=$exitCode), restarting (permanent)")
-                  _ <- emit(cfg, "sourceRestarted",
-                    "branchName" -> name.asJson,
-                    "exitCode" -> exitCode.asJson
-                  )
-                  _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
-                yield ()
-              case RestartPolicy.Transient if exitCode != 0 =>
-                for
-                  _ <- logger.info(s"Source '$name' crashed (code=$exitCode), restarting (transient)")
-                  _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
-                yield ()
-              case _ =>
-                for
-                  _ <- branchesRef.update(m => m.updated(name,
-                    m(name).copy(state = m(name).state.copy(phase = BranchPhase.Stopped))
-                  ))
-                  _ <- logger.info(s"Source '$name' exited (code=$exitCode), not restarting")
-                yield ()
-          case _ => IO.unit
+        case Some(br) =>
+          br.state.branchType match
+            case source: BranchType.Source =>
+              source.restart match
+                case RestartPolicy.Permanent =>
+                  for
+                    _ <- logger.info(s"Source '$name' exited (code=$exitCode), restarting (permanent)")
+                    _ <- emit(cfg, "sourceRestarted", "branchName" -> name.asJson, "exitCode" -> exitCode.asJson)
+                    _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
+                  yield ()
+                case RestartPolicy.Transient if exitCode != 0 =>
+                  for
+                    _ <- logger.info(s"Source '$name' crashed (code=$exitCode), restarting (transient)")
+                    _ <- spawnSourceProcess(ctx, branchesRef, cfg, name, source)
+                  yield ()
+                case _ =>
+                  for
+                    _ <- branchesRef.update(m =>
+                      m.updated(name, m(name).copy(state = m(name).state.copy(phase = BranchPhase.Stopped)))
+                    )
+                    _ <- logger.info(s"Source '$name' exited (code=$exitCode), not restarting")
+                  yield ()
+            case _ => IO.unit
         case None => IO.unit
     yield ()
-
-
 
   private def stepAdapter(
     treeRef: ActorRef[TreeCommand],
@@ -1295,32 +1413,37 @@ object FlowTreeActor:
             case AgentEvent.Completed(_, messages) =>
               done.set(true) *>
                 (if isVerify then
-                  for
-                    deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
-                    _ <- FlowVerifyRegistry.remove(verifyAgentPath)
-                    _ = logger.info(
-                      s"stepAdapter: verify Completed received, deferredFound=${deferredOpt.isDefined}, agentPath=$verifyAgentPath"
-                    )
-                    result <- deferredOpt match
-                      case Some(deferred) =>
-                        deferred.tryGet.flatMap {
-                          case Some(vr) =>
-                            logger.info(s"stepAdapter: FlowVerify was called, passed=${vr.pass}") *>
-                              IO.delay(treeRef ! TreeCommand.VerifyCompleted(branchName, vr.pass, vr.summary))
-                          case None =>
-                            logger.warn(s"stepAdapter: verify agent completed WITHOUT calling FlowVerify") *>
-                              IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId,
-                                "Verify agent completed without calling FlowVerify tool"))
-                        }
-                      case None =>
-                        logger.warn(s"stepAdapter: verify Deferred not in registry for $verifyAgentPath") *>
-                          IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId, "Verify registry error"))
-                    _ = result
-                  yield Behaviors.stopped[AgentEvent]
+                   for
+                     deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
+                     _ <- FlowVerifyRegistry.remove(verifyAgentPath)
+                     _ = logger.info(
+                       s"stepAdapter: verify Completed received, deferredFound=${deferredOpt.isDefined}, agentPath=$verifyAgentPath"
+                     )
+                     result <- deferredOpt match
+                       case Some(deferred) =>
+                         deferred.tryGet.flatMap {
+                           case Some(vr) =>
+                             logger.info(s"stepAdapter: FlowVerify was called, passed=${vr.pass}") *>
+                               IO.delay(treeRef ! TreeCommand.VerifyCompleted(branchName, vr.pass, vr.summary))
+                           case None =>
+                             logger.warn(s"stepAdapter: verify agent completed WITHOUT calling FlowVerify") *>
+                               IO.delay(
+                                 treeRef ! TreeCommand.StepFailed(
+                                   branchName,
+                                   stepId,
+                                   "Verify agent completed without calling FlowVerify tool"
+                                 )
+                               )
+                         }
+                       case None =>
+                         logger.warn(s"stepAdapter: verify Deferred not in registry for $verifyAgentPath") *>
+                           IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId, "Verify registry error"))
+                     _ = result
+                   yield Behaviors.stopped[AgentEvent]
                  else
-                  val text = extractLastAssistantText(messages)
-                  for _ <- IO.delay(treeRef ! TreeCommand.StepCompleted(branchName, stepId, text))
-                  yield Behaviors.stopped[AgentEvent])
+                   val text = extractLastAssistantText(messages)
+                   for _ <- IO.delay(treeRef ! TreeCommand.StepCompleted(branchName, stepId, text))
+                   yield Behaviors.stopped[AgentEvent])
 
             case AgentEvent.Failed(_, error) =>
               done.set(true) *>
@@ -1342,8 +1465,7 @@ object FlowTreeActor:
 
         override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
           (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
-            FlowMembership.leaveAll(subagentRef.path.toString)
-      )
+            FlowMembership.leaveAll(subagentRef.path.toString))
     }
 
   // ============================================================
@@ -1368,8 +1490,7 @@ object FlowTreeActor:
       else None
     }.toList
     if lines.isEmpty then ""
-    else
-      s"""## Flow 实例地址表
+    else s"""## Flow 实例地址表
          |
          || 名称 | 地址 |
          |------|------|
@@ -1397,13 +1518,14 @@ object FlowTreeActor:
     sb.append("=== End Results ===\n")
     sb.toString
 
+  end buildVerifyContext
+
   private def buildAddressTable(branches: Map[String, BranchRuntime]): String =
     val lines = branches.values.map { br =>
       s"| ${br.state.name} | ${br.state.branchType.typeName} | ${br.state.address} | ${br.state.phase.toString} |"
     }.toList
     if lines.isEmpty then "（无活跃 Flow 实例）"
-    else
-      s"""## Flow 实例地址表
+    else s"""## Flow 实例地址表
          |
          || 名称 | 类型 | 地址 | 状态 |
          |------|------|------|------|

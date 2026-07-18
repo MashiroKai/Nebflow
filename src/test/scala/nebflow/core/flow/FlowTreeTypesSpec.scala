@@ -15,12 +15,12 @@ class FlowTreeTypesSpec extends FunSuite:
     val json = value.asJson.noSpaces
     decode[A](json) match
       case Right(v) => v
-      case Left(e)  => fail(s"Round-trip decode failed: $e\nJSON: $json")
+      case Left(e) => fail(s"Round-trip decode failed: $e\nJSON: $json")
 
   private def assertFailsLeft[A: Encoder: Decoder](jsonStr: String): Unit =
     decode[A](jsonStr) match
       case Right(_) => fail(s"Should have failed to decode: $jsonStr")
-      case Left(_)  => ()
+      case Left(_) => ()
 
   // ============================================================
   // PipelineStep
@@ -93,8 +93,7 @@ class FlowTreeTypesSpec extends FunSuite:
   test("PipelineStep: atomic JSON omits flow field") {
     val step = PipelineStep(id = "s", agent = Some("Explorer"), prompt = Some("p"))
     val json = step.asJson
-    assert(json.asObject.forall(!_.contains("flow")),
-      "Atomic step JSON should not contain 'flow' field")
+    assert(json.asObject.forall(!_.contains("flow")), "Atomic step JSON should not contain 'flow' field")
   }
 
   test("PipelineStep: nested JSON omits agent and prompt fields") {
@@ -203,11 +202,13 @@ class FlowTreeTypesSpec extends FunSuite:
   }
 
   test("ReactorAction: rejects unknown type discriminator") {
-    val bad = Json.obj(
-      "type" -> "teleport".asJson,
-      "agent" -> "X".asJson,
-      "prompt" -> "Y".asJson
-    ).noSpaces
+    val bad = Json
+      .obj(
+        "type" -> "teleport".asJson,
+        "agent" -> "X".asJson,
+        "prompt" -> "Y".asJson
+      )
+      .noSpaces
     assertFailsLeft[ReactorAction](bad)
   }
 
@@ -238,10 +239,12 @@ class FlowTreeTypesSpec extends FunSuite:
         PipelineStep(id = "s2", agent = Some("Nebula"), prompt = Some("Implement"), dependsOn = Set("s1"))
       ),
       verify = VerifyStep(prompt = "Check all"),
-      loop = Some(LoopConfig(
-        fix = PipelineStep(id = "fix", agent = Some("Nebula"), prompt = Some("Fix")),
-        maxIterations = 5
-      )),
+      loop = Some(
+        LoopConfig(
+          fix = PipelineStep(id = "fix", agent = Some("Nebula"), prompt = Some("Fix")),
+          maxIterations = 5
+        )
+      ),
       maxConcurrency = 3
     )
     val decoded = roundTrip[BranchType](p)
@@ -302,11 +305,15 @@ class FlowTreeTypesSpec extends FunSuite:
       Right("daemon")
     )
     assertEquals(
-      (BranchType.Pipeline(List.empty, VerifyStep(prompt = "x")): BranchType).asJson.hcursor.downField("type").as[String],
+      (BranchType.Pipeline(List.empty, VerifyStep(prompt = "x")): BranchType).asJson.hcursor
+        .downField("type")
+        .as[String],
       Right("pipeline")
     )
     assertEquals(
-      (BranchType.Reactor(Set.empty, action = ReactorAction.MountFlow("x")): BranchType).asJson.hcursor.downField("type").as[String],
+      (BranchType.Reactor(Set.empty, action = ReactorAction.MountFlow("x")): BranchType).asJson.hcursor
+        .downField("type")
+        .as[String],
       Right("reactor")
     )
     assertEquals(
@@ -552,7 +559,9 @@ class FlowTreeTypesSpec extends FunSuite:
             assertEquals(loop.map(_.fix.id), Some("fix"))
             assertEquals(maxConcurrency, 2)
           case other => fail(s"Expected Pipeline, got $other")
+        end match
       case Left(err) => fail(s"Parse should succeed: $err")
+    end match
   }
 
   test("FlowDefLoader: parse pipeline YAML without loop (defaults applied)") {

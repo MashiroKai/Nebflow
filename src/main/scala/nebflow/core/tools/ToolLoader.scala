@@ -17,13 +17,15 @@ object ToolLoader:
       if !os.exists(dir) then Nil
       else os.list(dir).filter(_.last.endsWith(".json")).toList
     }.flatMap { paths =>
-      paths.traverse { p =>
-        IO.blocking(decode[ExternalToolConfig](os.read(p))).flatMap {
-          case Right(config) => IO.pure(Some(config))
-          case Left(err) =>
-            logger.warn(s"Skipping invalid tool config at ${p.last}: ${err.getMessage}").as(None)
+      paths
+        .traverse { p =>
+          IO.blocking(decode[ExternalToolConfig](os.read(p))).flatMap {
+            case Right(config) => IO.pure(Some(config))
+            case Left(err) =>
+              logger.warn(s"Skipping invalid tool config at ${p.last}: ${err.getMessage}").as(None)
+          }
         }
-      }.map(_.flatten.iterator.map(c => c.name -> c).toMap)
+        .map(_.flatten.iterator.map(c => c.name -> c).toMap)
     }
 
   // Load a single tool by name
@@ -43,3 +45,4 @@ object ToolLoader:
   // Load all and create ScriptTool instances ready for registration
   def loadScripts(): IO[List[ScriptTool]] =
     loadAll().map(_.values.map(config => ScriptTool(config)).toList)
+end ToolLoader

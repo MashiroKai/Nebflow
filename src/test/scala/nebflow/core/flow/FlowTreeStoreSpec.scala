@@ -37,10 +37,12 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
         PipelineStep(id = "s2", agent = Some("Nebula"), prompt = Some("build"), dependsOn = Set("s1"))
       ),
       verify = VerifyStep(agent = "Explorer", prompt = "check output"),
-      loop = Some(LoopConfig(
-        fix = PipelineStep(id = "fix", agent = Some("Nebula"), prompt = Some("fix it")),
-        maxIterations = 3
-      )),
+      loop = Some(
+        LoopConfig(
+          fix = PipelineStep(id = "fix", agent = Some("Nebula"), prompt = Some("fix it")),
+          maxIterations = 3
+        )
+      ),
       maxConcurrency = 4
     ),
     phase = BranchPhase.Running,
@@ -59,13 +61,13 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
       sessionId = testSessionId,
       branches = Map(
         "watcher" -> daemonBranch,
-        "build"   -> pipelineBranch
+        "build" -> pipelineBranch
       )
     )
 
     for
-      _        <- FlowTreeStore.save(snapshot)
-      loaded   <- FlowTreeStore.load(testSessionId)
+      _ <- FlowTreeStore.save(snapshot)
+      loaded <- FlowTreeStore.load(testSessionId)
     yield loaded match
       case None => fail("Should have loaded the snapshot")
       case Some(s) =>
@@ -101,6 +103,7 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
             assertEquals(loop.map(_.maxIterations), Some(3))
             assertEquals(maxConcurrency, 4)
           case other => fail(s"Expected Pipeline, got $other")
+    end for
   }
 
   test("FlowTreeStore: load returns None for non-existent session") {
@@ -115,11 +118,11 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
     )
 
     for
-      _      <- FlowTreeStore.save(snapshot)
-      file    = PathUtil.dataRoot / "sessions" / testSessionId / "flow-tree.json"
-      _       = assert(os.exists(file), "File should exist after save")
-      _      <- FlowTreeStore.delete(testSessionId)
-      _       = assert(!os.exists(file), "File should be gone after delete")
+      _ <- FlowTreeStore.save(snapshot)
+      file = PathUtil.dataRoot / "sessions" / testSessionId / "flow-tree.json"
+      _ = assert(os.exists(file), "File should exist after save")
+      _ <- FlowTreeStore.delete(testSessionId)
+      _ = assert(!os.exists(file), "File should be gone after delete")
       loaded <- FlowTreeStore.load(testSessionId)
     yield assert(loaded.isEmpty, "Load should return None after delete")
   }
@@ -135,14 +138,14 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
     )
 
     for
-      _      <- FlowTreeStore.save(snapshotA)
-      _      <- FlowTreeStore.save(snapshotB)
+      _ <- FlowTreeStore.save(snapshotA)
+      _ <- FlowTreeStore.save(snapshotB)
       loaded <- FlowTreeStore.load(testSessionId)
     yield loaded match
       case None => fail("Should have loaded snapshot B")
       case Some(s) =>
         assert(!s.branches.contains("branch-a"), "branch-a from snapshot A should be gone")
-        assert(s.branches.contains("branch-b"),  "branch-b from snapshot B should be present")
+        assert(s.branches.contains("branch-b"), "branch-b from snapshot B should be present")
   }
 
   test("FlowTreeStore: handles empty branches map") {
@@ -152,7 +155,7 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
     )
 
     for
-      _      <- FlowTreeStore.save(snapshot)
+      _ <- FlowTreeStore.save(snapshot)
       loaded <- FlowTreeStore.load("empty-session")
     yield loaded match
       case None => fail("Should have loaded the empty snapshot")

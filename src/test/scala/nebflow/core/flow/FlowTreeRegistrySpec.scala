@@ -56,3 +56,4 @@ class FlowTreeRegistrySpec extends CatsEffectSuite:
     yield
       assert(resultA.exists(_.path.name == "ft-a"), "Session A has correct ref")
       assert(resultB.exists(_.path.name == "ft-b"), "Session B has correct ref")
+end FlowTreeRegistrySpec

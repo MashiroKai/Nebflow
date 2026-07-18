@@ -66,7 +66,8 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
   def summarize(input: JsonObject): String =
     val unmount = input("unmount").flatMap(_.asBoolean).getOrElse(false)
     val retrigger = input("retrigger").flatMap(_.asBoolean).getOrElse(false)
-    val name = input("source").flatMap(_.asString)
+    val name = input("source")
+      .flatMap(_.asString)
       .orElse(input("inline").flatMap(_.asString).map(_.take(30)))
       .getOrElse("?")
     if unmount then s"UnmountFlow($name)"
@@ -80,12 +81,9 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
     val retrigger = input("retrigger").flatMap(_.asBoolean).getOrElse(false)
     val instanceName = input("instanceName").flatMap(_.asString)
 
-    if unmount then
-      doUnmount(input, ctx)
-    else if retrigger then
-      doRetrigger(input, ctx)
-    else
-      doMount(input, ctx, instanceName)
+    if unmount then doUnmount(input, ctx)
+    else if retrigger then doRetrigger(input, ctx)
+    else doMount(input, ctx, instanceName)
 
   // ============================================================
   // Mount
@@ -118,6 +116,10 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
           case Right(defn) => sendMount(defn, instanceName, ctx)
         }
 
+    end match
+
+  end doMount
+
   private def sendMount(
     defn: FlowDef,
     instanceName: Option[String],
@@ -125,12 +127,14 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
   ): IO[Either[ToolError, String]] =
     getOrCreateTreeActor(ctx).flatMap { treeRef =>
       treeRef ! TreeCommand.MountBranch(defn, instanceName, None)
-      logger.info(s"Sent MountBranch for '${defn.name}' (${defn.branchType.typeName})").as(
-        Right(
-          s"""Flow '${defn.name}' (${defn.branchType.typeName}) mounted.
+      logger
+        .info(s"Sent MountBranch for '${defn.name}' (${defn.branchType.typeName})")
+        .as(
+          Right(
+            s"""Flow '${defn.name}' (${defn.branchType.typeName}) mounted.
              |You will receive updates via system messages.""".stripMargin
+          )
         )
-      )
     }
 
   // ============================================================
@@ -138,7 +142,8 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
   // ============================================================
 
   private def doUnmount(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val target = input("source").flatMap(_.asString)
+    val target = input("source")
+      .flatMap(_.asString)
       .orElse(input("instanceName").flatMap(_.asString))
     target match
       case None =>
@@ -154,7 +159,8 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
   // ============================================================
 
   private def doRetrigger(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val target = input("source").flatMap(_.asString)
+    val target = input("source")
+      .flatMap(_.asString)
       .orElse(input("instanceName").flatMap(_.asString))
     target match
       case None =>
@@ -202,5 +208,6 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
               new RuntimeException("MountFlow requires ActorSystem, SharedResources, and agentActorRef")
             )
     }
+  end getOrCreateTreeActor
 
 end MountFlowTool
