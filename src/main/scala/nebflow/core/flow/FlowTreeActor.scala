@@ -84,9 +84,13 @@ object FlowTreeActor:
   ): Behavior[TreeCommand] =
 
     new Behavior[TreeCommand]:
+      override def onError(ctx: ActorContext[TreeCommand], err: Throwable): IO[Behavior[TreeCommand]] =
+        logger.error(s"FlowTreeActor error: ${err.getMessage}\n${err.getStackTrace.take(15).map(_.toString).mkString("\n")}").as(this)
+
       def receive(ctx: ActorContext[TreeCommand], msg: TreeCommand): IO[Behavior[TreeCommand]] =
         given ActorContext[TreeCommand] = ctx
-        msg match
+        logger.debug(s"FlowTreeActor received: ${msg.getClass.getSimpleName}") *>
+        (msg match
           case TreeCommand.MountBranch(defn, instanceName, replyTo) =>
             handleMount(ctx, branchesRef, cfg, defn, instanceName, replyTo).as(this)
 
@@ -132,7 +136,7 @@ object FlowTreeActor:
               }
               _ <- logger.info("FlowTreeActor shutdown complete")
             yield Behaviors.stopped[TreeCommand]
-        end match
+        )
       end receive
 
       override def onStop(ctx: ActorContext[TreeCommand]): IO[Unit] =
@@ -157,7 +161,8 @@ object FlowTreeActor:
     instanceName: Option[String],
     replyTo: Option[ActorRef[MountResult]]
   )(using ActorContext[TreeCommand]): IO[Unit] =
-    for
+    logger.info(s"handleMount: defn=${defn.name}, type=${defn.branchType.typeName}, instanceName=$instanceName") *>
+    (for
       branches <- branchesRef.get
       // Generate unique instance name
       baseName = instanceName.getOrElse(defn.name)
@@ -214,7 +219,7 @@ object FlowTreeActor:
       // Reply
       _ <- replyTo.traverse_(_ ! MountResult.Mounted(name, address, defn.branchType.typeName))
       _ <- logger.info(s"Branch '$name' (${defn.branchType.typeName}) mounted at $address")
-    yield ()
+    yield ())
 
   private def handleUnmount(
     ctx: ActorContext[TreeCommand],
@@ -293,7 +298,18 @@ object FlowTreeActor:
       _ <- branchesRef.update(m =>
         m.updated(name, m(name).copy(state = m(name).state.copy(phase = BranchPhase.Running)))
       )
-      _ <- emit(cfg, "flowStarted", "branchName" -> name.asJson)
+      pipelineDef <- branchesRef.get.map(_.get(name).flatMap(_.state.branchType match
+        case p: BranchType.Pipeline => Some(p)
+        case _ => None))
+      _ <- emit(cfg, "flowStarted",
+        "flowName" -> name.asJson,
+        "branchName" -> name.asJson,
+        "steps" -> pipelineDef.map(p => p.steps.map(s => Json.obj(
+          "id" -> s.id.asJson,
+          "agent" -> s.agent.getOrElse("").asJson,
+          "dependsOn" -> s.dependsOn.toList.asJson
+        ))).getOrElse(Nil).asJson
+      )
       _ <- scheduleReadySteps(ctx, branchesRef, cfg, name)
     yield ()
 
