@@ -2042,11 +2042,9 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
     const mode = state.safetyModes[v.sessionId] || 'confirm-edits';
     const btn = document.getElementById('bypass-toggle');
     if (btn) {
-      const badge = btn.querySelector('.bypass-badge');
-      if (badge) badge.setAttribute('data-mode', mode);
+      btn.setAttribute('data-mode', mode);
       const label = btn.querySelector('.bypass-label');
       if (label) {
-        label.setAttribute('data-mode', mode);
         label.textContent = LABELS[mode] || LABELS['confirm-edits'];
       }
       btn.title = TITLES[mode] || TITLES['confirm-edits'];
