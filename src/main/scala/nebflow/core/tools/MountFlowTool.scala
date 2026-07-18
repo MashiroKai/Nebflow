@@ -126,15 +126,13 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
     getOrCreateTreeActor(ctx).flatMap { treeRef =>
-      treeRef ! TreeCommand.MountBranch(defn, instanceName, None)
-      logger
-        .info(s"Sent MountBranch for '${defn.name}' (${defn.branchType.typeName})")
-        .as(
-          Right(
-            s"""Flow '${defn.name}' (${defn.branchType.typeName}) mounted.
-             |You will receive updates via system messages.""".stripMargin
-          )
-        )
+      for
+        _ <- treeRef ! TreeCommand.MountBranch(defn, instanceName, None)
+        _ <- logger.info(s"Sent MountBranch for '${defn.name}' (${defn.branchType.typeName})")
+      yield Right(
+        s"""Flow '${defn.name}' (${defn.branchType.typeName}) mounted.
+           |You will receive updates via system messages.""".stripMargin
+      )
     }
 
   // ============================================================
@@ -150,8 +148,9 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
         IO.pure(Left(ToolError("Must specify branch name to unmount (via 'source' or 'instanceName')")))
       case Some(name) =>
         getOrCreateTreeActor(ctx).flatMap { treeRef =>
-          treeRef ! TreeCommand.UnmountBranch(name)
-          IO.pure(Right(s"Branch '$name' unmount requested."))
+          for
+            _ <- treeRef ! TreeCommand.UnmountBranch(name)
+          yield Right(s"Branch '$name' unmount requested.")
         }
 
   // ============================================================
@@ -167,8 +166,9 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
         IO.pure(Left(ToolError("Must specify pipeline name to retrigger")))
       case Some(name) =>
         getOrCreateTreeActor(ctx).flatMap { treeRef =>
-          treeRef ! TreeCommand.RetriggerPipeline(name)
-          IO.pure(Right(s"Pipeline '$name' retrigger requested."))
+          for
+            _ <- treeRef ! TreeCommand.RetriggerPipeline(name)
+          yield Right(s"Pipeline '$name' retrigger requested.")
         }
 
   // ============================================================
