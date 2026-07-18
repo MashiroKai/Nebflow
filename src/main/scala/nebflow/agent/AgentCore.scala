@@ -204,6 +204,7 @@ private[agent] trait AgentCore:
             chatWidth = state.session.chatWidth,
             envInfo = Repl.buildEnvInfo(state.session.chatWidth),
             skillCatalog = turnCtx.skillCatalog,
+            memoryBlock = turnCtx.memoryBlock,
             rulesMd = turnCtx.rulesMd
           )
           systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
@@ -225,14 +226,9 @@ private[agent] trait AgentCore:
           modelDescs <- if isCompactTurn then IO.pure(Nil) else resources.providerRegistry.getAllModelsDetailed()
           freshTools =
             if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
-          // Memory auto-read: inject synthetic Read for memory files
-          memoryMsgs = MemoryAutoRead.buildMessages(freshDef.name, stateForLlm.folderId, stateForLlm.sessionId)
-          _ <- stateForLlm.liveFileTracker
-            .traverse_(t => MemoryAutoRead.register(t, freshDef.name, stateForLlm.folderId, stateForLlm.sessionId))
-          // Live file patching: update tool_result content for changed live files
-          baseMessages = memoryMsgs ++ stateForLlm.messages
+          // Memory is injected via system prompt (memoryBlock), not synthetic Read messages
           patchedMessages <- stateForLlm.liveFileTracker
-            .fold(IO.pure(baseMessages))(_.patchMessages(baseMessages))
+            .fold(IO.pure(stateForLlm.messages))(_.patchMessages(stateForLlm.messages))
           request = LlmRequest(
             messages = patchedMessages ++ dynamicMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),

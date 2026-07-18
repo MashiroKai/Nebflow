@@ -52,6 +52,8 @@ object PromptSections:
     deviceInfo: String = "",
     /** Pre-rendered skill catalog (from SkillService.buildSkillCatalog). */
     skillCatalog: String = "",
+    /** Pre-rendered memory block (from ContextRefresher.buildMemoryBlock). */
+    memoryBlock: String = "",
     /** Pre-rendered active-sessions block (from formatAgentSessions). */
     agentSessionsText: String = "",
     /** Inherited project rules text (from folder chain). */
@@ -230,6 +232,11 @@ object PromptSections:
       800,
       condition = _.skillCatalog.nonEmpty,
       renderer = _.skillCatalog
+    ),
+    PromptSection.dynamic(
+      810,
+      condition = _.memoryBlock.nonEmpty,
+      renderer = _.memoryBlock
     ),
 
     // --- Project rules ---
