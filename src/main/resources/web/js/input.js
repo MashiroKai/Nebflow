@@ -594,7 +594,12 @@ export function send() {
     state.inputHistory.push(text);
     if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
     try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {
-      console.warn('[input] history save failed:', e);
+      // Quota exceeded — trim history to 100 entries and retry once
+      if (state.inputHistory.length > 100) {
+        state.inputHistory = state.inputHistory.slice(-100);
+        try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e2) {}
+      }
+      console.debug('[input] history save failed:', e);
     }
   }
   v.historyIndex = -1;
