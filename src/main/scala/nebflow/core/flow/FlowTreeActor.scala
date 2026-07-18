@@ -1298,17 +1298,23 @@ object FlowTreeActor:
                   for
                     deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
                     _ <- FlowVerifyRegistry.remove(verifyAgentPath)
+                    _ = logger.info(
+                      s"stepAdapter: verify Completed received, deferredFound=${deferredOpt.isDefined}, agentPath=$verifyAgentPath"
+                    )
                     result <- deferredOpt match
                       case Some(deferred) =>
                         deferred.tryGet.flatMap {
                           case Some(vr) =>
-                            IO.delay(treeRef ! TreeCommand.VerifyCompleted(branchName, vr.pass, vr.summary))
+                            logger.info(s"stepAdapter: FlowVerify was called, passed=${vr.pass}") *>
+                              IO.delay(treeRef ! TreeCommand.VerifyCompleted(branchName, vr.pass, vr.summary))
                           case None =>
-                            IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId,
-                              "Verify agent completed without calling FlowVerify tool"))
+                            logger.warn(s"stepAdapter: verify agent completed WITHOUT calling FlowVerify") *>
+                              IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId,
+                                "Verify agent completed without calling FlowVerify tool"))
                         }
                       case None =>
-                        IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId, "Verify registry error"))
+                        logger.warn(s"stepAdapter: verify Deferred not in registry for $verifyAgentPath") *>
+                          IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId, "Verify registry error"))
                     _ = result
                   yield Behaviors.stopped[AgentEvent]
                  else

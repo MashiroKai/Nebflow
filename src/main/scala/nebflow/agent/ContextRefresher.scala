@@ -153,7 +153,9 @@ object ContextRefresher:
   ): IO[TurnContext] =
     for
       freshDefOpt <- resources.agentLibrary.get(agentDef.name)
-      freshDef = freshDefOpt.getOrElse(agentDef)
+      // Preserve runtime tools list (e.g., FlowActor injects FlowVerify into verify agents).
+      // Only refresh configuration content (systemPrompt, model, etc.) from disk.
+      freshDef = freshDefOpt.map(_.copy(tools = agentDef.tools)).getOrElse(agentDef)
       systemPrefix <- systemPrefixSource.get
       projectRoot <- resolveProjectRoot(state.folderId, resources, freshDef.name)
       rulesMd = resolveRules(state, resources)
