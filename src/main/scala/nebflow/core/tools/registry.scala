@@ -36,8 +36,8 @@ object ToolRegistry:
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Sub-agent delegation
       "Delegate" -> DelegateTool,
-      // Multi-step workflow orchestration
-      "ExecuteFlow" -> ExecuteFlowTool,
+      // Multi-step workflow orchestration (FlowTree lifecycle management)
+      "MountFlow" -> MountFlowTool,
       // Flow verification tool (used by verify agents)
       "FlowVerify" -> FlowVerifyTool,
       // Inter-agent messaging

@@ -9,7 +9,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
-import nebflow.core.flow.{FlowActor, FlowStore}
+import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
@@ -144,61 +144,44 @@ class WebSocketRoutes(
               }
               .void *>
               rootAgents.update(_ + (sessionId -> ref)) *>
-              restoreFlowsForSession(sessionId, ref, pr).start.as(ref)
+              initFlowTree(sessionId, ref, pr).start.as(ref)
           }
     }
 
-  /** Restore persisted flows for a session after restart (graceful restart). */
-  private def restoreFlowsForSession(
+  /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
+  private def initFlowTree(
     sessionId: String,
     agentRef: nebflow.actor.ActorRef[AgentCommand],
     projectRoot: String
   ): IO[Unit] =
-    FlowStore.listRestorable(sessionId).flatMap { flowIds =>
-      if flowIds.isEmpty then IO.unit
-      else
-        logger.info(s"Restoring ${flowIds.size} flow(s) for session $sessionId") *>
-          flowIds.traverse_ { flowId =>
-            FlowStore.load(sessionId, flowId).flatMap {
-              case Some(snapshot) =>
-                val broadcastWsSend = (json: Json) => wsHub.broadcast(json)
-                val recordingWsSend = makeRecordingWsSend(sessionId, broadcastWsSend)
-                nebulaSystem
-                  .spawn(
-                    FlowActor(
-                      flowDef = snapshot.flowDef,
-                      flowId = snapshot.flowId,
-                      parentAgentRef = agentRef,
-                      wsSend = Some(recordingWsSend),
-                      parentSessionId = Some(sessionId),
-                      parentDepth = 0,
-                      resources = sharedResources,
-                      projectRoot = projectRoot,
-                      bypass = false,
-                      restoreSnapshot = Some(snapshot)
-                    ),
-                    snapshot.flowId
-                  )
-                  .void
-                  .handleErrorWith { e =>
-                    logger.warn(s"Failed to restore flow $flowId: ${e.getMessage}").void
-                  }
-              case None => IO.unit
-            }
-          }
-    }
+    val bypass = false // TODO: get from session
+    val config = FlowTreeActor.TreeConfig(
+      parentAgentRef = agentRef,
+      wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),
+      sessionId = Some(sessionId),
+      resources = sharedResources,
+      projectRoot = projectRoot,
+      bypass = bypass
+    )
+    for
+      treeRef <- nebulaSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
+      _ <- FlowTreeRegistry.register(sessionId, treeRef)
+      // TODO: restore from FlowTreeStore (Phase 5 continued)
+      _ = logger.info(s"FlowTreeActor created for session $sessionId")
+    yield ()
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
-    rootAgents.modify { agents =>
-      agents.get(sessionId) match
-        case Some(ref) =>
-          (
-            agents - sessionId,
-            ref ! AgentCommand.Stop(s"session $sessionId deleted")
-          )
-        case None => (agents, IO.unit)
-    }.flatten
+    FlowTreeRegistry.unregister(sessionId) *>
+      rootAgents.modify { agents =>
+        agents.get(sessionId) match
+          case Some(ref) =>
+            (
+              agents - sessionId,
+              ref ! AgentCommand.Stop(s"session $sessionId deleted")
+            )
+          case None => (agents, IO.unit)
+      }.flatten
 
   /** Route a message to the root agent of a specific session. Discards if sessionId is empty. */
   private def routeToAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
