@@ -13,7 +13,8 @@ case class SessionMeta(
   modelRef: Option[String] = None,
   bridges: Map[String, Json] = Map.empty,
   folderId: Option[String] = None,
-  safetyMode: String = "confirm-edits"
+  safetyMode: String = "confirm-edits",
+  gitBranch: Option[String] = None
 )
 
 object SessionMeta:
@@ -32,7 +33,8 @@ object SessionMeta:
     val withSafety = if m.safetyMode != "confirm-edits" then
       withFolder.deepMerge(Json.obj("safetyMode" -> m.safetyMode.asJson))
     else withFolder
-    if m.bridges.nonEmpty then withSafety.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withSafety
+    val withGit = m.gitBranch.fold(withSafety)(b => withSafety.deepMerge(Json.obj("gitBranch" -> b.asJson)))
+    if m.bridges.nonEmpty then withGit.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withGit
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -56,9 +58,10 @@ object SessionMeta:
       // Migrate: bypass=true → safetyMode=auto-all, bypass=false → confirm-edits
       legacyBypass <- c.downField("bypass").as[Option[Boolean]]
       safetyMode <- c.downField("safetyMode").as[Option[String]]
+      gitBranch <- c.downField("gitBranch").as[Option[String]]
     yield
       val mode = safetyMode.getOrElse(if legacyBypass.getOrElse(false) then "auto-all" else "confirm-edits")
-      SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId, mode)
+      SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId, mode, gitBranch)
   }
 
 end SessionMeta
