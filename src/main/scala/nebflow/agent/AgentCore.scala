@@ -545,17 +545,13 @@ private[agent] trait AgentCore:
       case None => IO.pure(ToolExecResult(s"No such tool available: ${call.name}", isError = true))
 
   protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int = 0): Set[String] =
-    val isMcpTool = (name: String) => name.startsWith("mcp__")
     val base = agentDef.tools match
       case Nil => Set.empty[String]
-      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(isMcpTool).filterNot(InternalTools.contains).toSet
+      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(InternalTools.contains).toSet
       case names => names.toSet
-    // MCP servers are global — all enabled servers available to every agent
-    val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool).toSet
     val depthFiltered =
-      if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "ExecuteFlow" else base
-    val subagentFiltered = if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
-    subagentFiltered ++ mcpTools
+      if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "MountFlow" else base
+    if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
 
   end buildAllowedToolSet
 
