@@ -521,7 +521,8 @@ object AgentState:
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
-    safetyMode: String = "confirm-edits"
+    safetyMode: String = "confirm-edits",
+    gitBranch: Option[String] = None
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -540,6 +541,7 @@ object AgentState:
         folderId = folderId,
         projectRoot = projectRoot,
         rulesMd = rulesMd,
+        gitBranch = gitBranch,
         safetyMode = safetyMode
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
