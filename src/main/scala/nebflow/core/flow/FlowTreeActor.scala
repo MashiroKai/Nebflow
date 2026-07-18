@@ -1519,7 +1519,7 @@ object FlowTreeActor:
 
   end buildVerifyContext
 
-  private def buildAddressTable(branches: Map[String, BranchRuntime]): String =
+  private[flow] def buildAddressTable(branches: Map[String, BranchRuntime]): String =
     val lines = branches.values.map { br =>
       s"| ${br.state.name} | ${br.state.branchType.typeName} | ${br.state.address} | ${br.state.phase.toString} |"
     }.toList
