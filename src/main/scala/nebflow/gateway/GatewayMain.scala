@@ -184,15 +184,9 @@ object GatewayMain extends IOApp.Simple:
             sessionStore.load.flatMap { _ =>
               LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
                 case (handle, registry, healthMonitor, releaseBackend) =>
-                  // Load persisted session model overrides
-                  sessionStore.listSessions.flatMap { sessions =>
-                    val persisted = sessions.flatMap { s =>
-                      s.modelRef match
-                        case Some(ref) => registry.getCandidateForRef(ref).map(_.map(s.id -> _)).unsafeRunSync()
-                        case None => None
-                    }.toMap
-                    sessionModelOverrides.set(persisted)
-                  } *> McpManager.create.flatMap { mcpManager =>
+                  // Clear per-session model overrides on restart so all sessions
+                  // follow the global fallback order from config.
+                  sessionStore.clearAllSessionModels() *> McpManager.create.flatMap { mcpManager =>
                     // --- Fast path: only essential init before server start ---
                     val chatRoutes = new ChatRoutes(handle, token)
                     val isConfigured = config.llm.providers.nonEmpty
