@@ -18,6 +18,10 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
     extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
+  /** Full endpoint URL: use base as-is if it already points to /chat/completions, otherwise append. */
+  private val endpoint =
+    if base.endsWith("/chat/completions") then base else s"$base/chat/completions"
+
   /**
    * Map Anthropic-style budget_tokens to OpenAI reasoning_effort.
    *
@@ -176,7 +180,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
       case _ => bodyWithThinking
 
     val request = basicRequest
-      .post(uri"$base/chat/completions")
+      .post(uri"$endpoint")
       .header("Authorization", s"Bearer $apiKey")
       .header("content-type", "application/json")
       .body(bodyWithMetadata.noSpaces)
@@ -265,7 +269,7 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
 
     Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
       val request = basicRequest
-        .post(uri"$base/chat/completions")
+        .post(uri"$endpoint")
         .header("Authorization", s"Bearer $apiKey")
         .header("content-type", "application/json")
         .body(bodyWithMetadata.noSpaces)
