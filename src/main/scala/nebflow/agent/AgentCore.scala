@@ -189,17 +189,24 @@ private[agent] trait AgentCore:
           turnCtx <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
           freshDef = turnCtx.agentDef
           voiceEnabled <- resources.voiceMutedRef.get.map(!_)
-          hasAskUser = buildAllowedToolSet(freshDef, depth).contains("AskUserQuestion")
-          baseSystemStable = buildSystemPrompt(
-            freshDef,
-            resources,
-            turnCtx.systemPrefix,
-            PromptContext(voiceEnabled = voiceEnabled, hasAskUser = hasAskUser),
-            turnCtx.projectRoot,
-            turnCtx.rulesMd,
-            state.session.chatWidth,
-            turnCtx.skillCatalog
+          allowedTools = buildAllowedToolSet(freshDef, depth)
+          devInfo = deviceInfoBlock
+          sessionsText = formatAgentSessions(stateForLlm.agentSessions)
+          promptCtx = PromptContext(
+            availableTools = allowedTools,
+            depth = depth,
+            voiceEnabled = voiceEnabled,
+            hasDevices = devInfo.nonEmpty,
+            deviceInfo = devInfo,
+            hasActiveSessions = sessionsText.nonEmpty,
+            agentSessionsText = sessionsText,
+            language = stateForLlm.language,
+            chatWidth = state.session.chatWidth,
+            envInfo = Repl.buildEnvInfo(state.session.chatWidth),
+            skillCatalog = turnCtx.skillCatalog,
+            rulesMd = turnCtx.rulesMd
           )
+          systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
           reminders = SystemReminders.collectAll(isUserTurn)
           _ <- turnCtx.branchChange match
@@ -226,13 +233,6 @@ private[agent] trait AgentCore:
           baseMessages = memoryMsgs ++ stateForLlm.messages
           patchedMessages <- stateForLlm.liveFileTracker
             .fold(IO.pure(baseMessages))(_.patchMessages(baseMessages))
-          systemStable = baseSystemStable +
-            stateForLlm.language
-              .map(l =>
-                s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
-              )
-              .getOrElse("") + formatAgentSessions(stateForLlm.agentSessions) +
-            (if deviceInfoBlock.nonEmpty then s"\n\n# Devices\n\n$deviceInfoBlock" else "")
           request = LlmRequest(
             messages = patchedMessages ++ dynamicMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
@@ -683,22 +683,14 @@ private[agent] trait AgentCore:
 
   protected def buildSystemPrompt(
     agentDef: AgentDef,
-    resources: SharedResources,
     systemPrefix: String,
-    promptCtx: PromptContext = PromptContext.default,
-    sessionProjectRoot: Option[String] = None,
-    sessionRulesMd: Option[String] = None,
-    chatWidth: Int = 0,
-    skillCatalog: String = ""
+    ctx: PromptContext
   ): String =
     val rawPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
-    val agentPrompt = PromptSections.stripSection(rawPrompt, "Voice Output")
-    val envInfo = Repl.buildEnvInfo(chatWidth)
-    val voiceBlock = if promptCtx.voiceEnabled then s"\n\n${PromptSections.voiceSection}" else ""
-    val askBlock = if promptCtx.hasAskUser then s"\n\n${PromptSections.askUserSection}" else ""
-    val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
-    val skillsBlock = if skillCatalog.nonEmpty then s"\n\n$skillCatalog" else ""
-    s"$systemPrefix$agentPrompt$voiceBlock$askBlock\n\n$envInfo$rulesBlock$skillsBlock"
+    val cleanedPrompt = PromptSections.stripAllMigrated(rawPrompt)
+    val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
+    val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
+    s"$systemPrefix$cleanedPrompt$separator$conditionalBlocks"
 
   end buildSystemPrompt
 
@@ -708,7 +700,7 @@ private[agent] trait AgentCore:
     else
       val lines = sessions.map: s =>
         s"${s.address} — ${s.agentName}: ${s.taskDescription} (${s.status})"
-      "\n\n# Active Sessions\n\n" + lines.mkString("\n") +
+      "# Active Sessions\n\n" + lines.mkString("\n") +
         "\n\nUse Mail to send follow-up instructions to any session above."
 
   @volatile private var deviceInfoCache: (Long, String) = (0L, "")
