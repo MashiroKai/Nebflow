@@ -3,8 +3,7 @@ package nebflow.core.flow
 import cats.effect.IO
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
  * Persistence layer for FlowTree snapshots.

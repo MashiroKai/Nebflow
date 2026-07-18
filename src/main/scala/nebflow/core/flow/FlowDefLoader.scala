@@ -3,8 +3,7 @@ package nebflow.core.flow
 import cats.effect.IO
 import cats.implicits.*
 import io.circe.yaml.parser as yamlParser
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.core.{NebflowLogger, PathUtil}
 
 /** Loads YAML flow definitions from the flows directory. */
 object FlowDefLoader:
