@@ -3,29 +3,138 @@ package nebflow.agent
 /**
  * Conditional system prompt sections.
  *
- * Each section is a standalone text block that can be independently included or
- * excluded from the system prompt based on runtime conditions (encapsulated in
- * [[PromptContext]]). This allows the prompt to adapt to user preferences
- * without wasting tokens on instructions that don't apply (e.g. voice
- * instructions when voice is muted).
+ * Each section is a self-describing block that knows its own inclusion condition
+ * and sort order. All conditional content in the system prompt — tool guides,
+ * feature-flag instructions, environment info, device/session/language blocks —
+ * lives here as a registered section. The caller builds a [[PromptContext]] from
+ * runtime state, then calls [[buildConditionalBlocks]] to get the concatenated
+ * text. Adding a new section is purely additive: drop it into `all` with an
+ * `order` value and a `condition` — no changes to `buildSystemPrompt` needed.
  *
  * == Adding a new conditional section ==
  *
- * 1. Add a boolean field to [[PromptContext]]
- * 2. Add the section text as a `val` here
- * 3. Add the conditional `if` in [[AgentCore.buildSystemPrompt]]
+ * 1. If the condition depends on a new field, add it to [[PromptContext]]
+ * 2. Add the section to [[PromptSections.all]] with an appropriate order value
+ * 3. That's it — `buildSystemPrompt` picks it up automatically
+ *
+ * == Order ranges ==
+ *
+ *   100-199  — fixed foundational sections (env info)
+ *   400-499  — tool-dependent sections
+ *   500-599  — feature-flag sections (voice)
+ *   600-699  — runtime-state sections (devices, sessions, language)
+ *   800-899  — catalog sections (skills)
+ *   900+     — project rules and fallback
  */
 object PromptSections:
 
-  /** Runtime conditions that determine which sections are included. */
+  // ============================================================
+  // PromptContext — runtime state that determines which sections
+  // are included and provides data for dynamic content.
+  //
+  // Lightweight flags and pre-rendered strings. "Heavy" dynamic content
+  // (device list, agent sessions, env info) is rendered by the caller
+  // *before* constructing the context — sections just read from it.
+  // ============================================================
+
   case class PromptContext(
-    voiceEnabled: Boolean,
-    hasAskUser: Boolean = true
-    // Future conditions go here — e.g. ttsConfigured, verboseTools, etc.
+    availableTools: Set[String] = Set.empty,
+    depth: Int = 0,
+    voiceEnabled: Boolean = true,
+    hasDevices: Boolean = false,
+    hasActiveSessions: Boolean = false,
+    hasSkills: Boolean = false,
+    language: Option[String] = None,
+    chatWidth: Int = 0,
+    /** Pre-rendered environment info table (from Repl.buildEnvInfo). */
+    envInfo: String = "",
+    /** Pre-rendered device info block (from AgentCore.deviceInfoBlock). */
+    deviceInfo: String = "",
+    /** Pre-rendered skill catalog (from SkillService.buildSkillCatalog). */
+    skillCatalog: String = "",
+    /** Pre-rendered active-sessions block (from formatAgentSessions). */
+    agentSessionsText: String = "",
+    /** Inherited project rules text (from folder chain). */
+    rulesMd: Option[String] = None
   )
 
   object PromptContext:
-    val default: PromptContext = PromptContext(voiceEnabled = true)
+    val empty: PromptContext = PromptContext()
+
+  // ============================================================
+  // PromptSection — a self-describing conditional prompt block
+  // ============================================================
+
+  /**
+   * A single section of the system prompt that knows its own inclusion
+   * condition and ordering.
+   *
+   * Static sections override [[content]]. Dynamic sections (whose text
+   * depends on runtime data) override [[render]].
+   */
+  trait PromptSection:
+    /** Sort order in the final prompt (smaller = earlier). */
+    def order: Int
+    /** Whether this section should be included given the current context. */
+    def shouldInclude(ctx: PromptContext): Boolean
+    /** Static content. Override [[render]] for dynamic content. */
+    def content: String = ""
+    /** Render the section text, possibly using runtime context. */
+    def render(ctx: PromptContext): String = content
+
+  object PromptSection:
+    /** Create a static conditional section. */
+    def apply(
+      ord: Int,
+      condition: PromptContext => Boolean,
+      body: String
+    ): PromptSection = new PromptSection:
+      val order = ord
+      def shouldInclude(ctx: PromptContext) = condition(ctx)
+      override val content = body
+
+    /** Create a section that is always included. */
+    def fixed(ord: Int, body: String): PromptSection =
+      apply(ord, _ => true, body)
+
+    /** Create a dynamic section whose text depends on runtime context. */
+    def dynamic(
+      ord: Int,
+      condition: PromptContext => Boolean,
+      renderer: PromptContext => String
+    ): PromptSection = new PromptSection:
+      val order = ord
+      def shouldInclude(ctx: PromptContext) = condition(ctx)
+      override def render(ctx: PromptContext) = renderer(ctx)
+
+  /** Quick helper: condition that requires one or more tools to be available. */
+  def requiresTools(names: String*): PromptContext => Boolean =
+    ctx => names.forall(ctx.availableTools.contains)
+
+  // ============================================================
+  // Section text constants
+  // ============================================================
+
+  /** Teaches the LLM when to use AskUserQuestion tool and dependsOn. */
+  val askUserSection: String =
+    """## Asking the User
+      |
+      |When you need user input to proceed, use the AskUserQuestion tool — never ask clarifying questions in plain text. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question.
+      |
+      |**Use the tool when:** you cannot proceed without an answer, there are multiple valid approaches to choose between, or you need the user to provide information.
+      |
+      |**Don't use the tool when:** you can make a reasonable decision yourself. Just proceed and let the user correct course if needed.
+      |
+      |**Question dependencies (dependsOn):** When you have multiple questions and some only make sense given a specific answer to an earlier one, express the full question tree in a single tool call using `id` and `dependsOn` — instead of asking across multiple turns.
+      |
+      |Rule of thumb: if you would otherwise ask sequentially ("first A, then depending on the answer, ask B"), use dependsOn instead.
+      |
+      |Common scenarios:
+      |- Stack choice: ask "Which language?" (id: lang) and "Which framework?" (dependsOn: lang=Python → Django/FastAPI; lang=Rust → Actix/Axum)
+      |- Deployment: ask "Deploy where?" (id: target) and if Vercel → "Custom domain?", if Docker → "Port mapping?"
+      |- Testing: ask "Test type?" (id: test) and if Unit → "Mock library?", if Integration → "Test database?"
+      |
+      |Independent questions don't need dependsOn — just include them all in one call.""".stripMargin
 
   /** Injected after the agent prompt when voice output is enabled. */
   val voiceSection: String =
@@ -57,26 +166,84 @@ object PromptSections:
       |
       |**Tone:** Conversational, warm, and clear — like a knowledgeable teacher talking through the material with a student. You care about the user beyond tasks: check in on their wellbeing, notice when they seem stressed, and be genuinely supportive.""".stripMargin
 
-  /** Always injected. Teaches the LLM when to use AskUserQuestion tool and dependsOn. */
-  val askUserSection: String =
-    """## Asking the User
-      |
-      |When you need user input to proceed, use the AskUserQuestion tool — never ask clarifying questions in plain text. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question.
-      |
-      |**Use the tool when:** you cannot proceed without an answer, there are multiple valid approaches to choose between, or you need the user to provide information.
-      |
-      |**Don't use the tool when:** you can make a reasonable decision yourself. Just proceed and let the user correct course if needed.
-      |
-      |**Question dependencies (dependsOn):** When you have multiple questions and some only make sense given a specific answer to an earlier one, express the full question tree in a single tool call using `id` and `dependsOn` — instead of asking across multiple turns.
-      |
-      |Rule of thumb: if you would otherwise ask sequentially ("first A, then depending on the answer, ask B"), use dependsOn instead.
-      |
-      |Common scenarios:
-      |- Stack choice: ask "Which language?" (id: lang) and "Which framework?" (dependsOn: lang=Python → Django/FastAPI; lang=Rust → Actix/Axum)
-      |- Deployment: ask "Deploy where?" (id: target) and if Vercel → "Custom domain?", if Docker → "Port mapping?"
-      |- Testing: ask "Test type?" (id: test) and if Unit → "Mock library?", if Integration → "Test database?"
-      |
-      |Independent questions don't need dependsOn — just include them all in one call.""".stripMargin
+  // ============================================================
+  // Section registry
+  // ============================================================
+
+  val all: List[PromptSection] = List(
+    // --- Fixed foundational sections ---
+    PromptSection.dynamic(
+      100,
+      condition = _.envInfo.nonEmpty,
+      renderer = _.envInfo
+    ),
+
+    // --- Tool-dependent sections ---
+    PromptSection(
+      400,
+      condition = requiresTools("AskUserQuestion"),
+      body = askUserSection
+    ),
+
+    // --- Feature-flag sections ---
+    PromptSection(
+      500,
+      condition = _.voiceEnabled,
+      body = voiceSection
+    ),
+
+    // --- Runtime-state sections ---
+    PromptSection.dynamic(
+      600,
+      condition = _.hasDevices,
+      renderer = ctx => s"# Devices\n\n${ctx.deviceInfo}"
+    ),
+    PromptSection.dynamic(
+      610,
+      condition = _.hasActiveSessions,
+      renderer = _.agentSessionsText
+    ),
+    PromptSection.dynamic(
+      620,
+      condition = _.language.isDefined,
+      renderer = ctx => languageBlock(ctx.language.get)
+    ),
+
+    // --- Catalog sections ---
+    PromptSection.dynamic(
+      800,
+      condition = _.skillCatalog.nonEmpty,
+      renderer = _.skillCatalog
+    ),
+
+    // --- Project rules ---
+    PromptSection.dynamic(
+      900,
+      condition = _.rulesMd.isDefined,
+      renderer = ctx => s"## Project Rules\n\n${ctx.rulesMd.get}"
+    )
+  )
+
+  /** Render the language instruction block for the given language. */
+  private def languageBlock(lang: String): String =
+    s"# Language\n" +
+      s"- Respond in $lang.\n" +
+      s"- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $lang.\n" +
+      s"- When writing to memory files (Agent/Session/User memory), all content MUST be in $lang.\n" +
+      s"- All user-visible text must be in $lang."
+
+  /**
+   * Build the conditional blocks string from the registry.
+   * Filters by shouldInclude, sorts by order, renders each section,
+   * and joins with double newlines.
+   */
+  def buildConditionalBlocks(ctx: PromptContext): String =
+    all
+      .filter(_.shouldInclude(ctx))
+      .sortBy(_.order)
+      .map(_.render(ctx))
+      .filter(_.nonEmpty)
+      .mkString("\n\n")
 
   /**
    * Remove a `## Section` block from a prompt string.
@@ -87,5 +254,9 @@ object PromptSections:
   def stripSection(prompt: String, header: String): String =
     val marker = s"## $header"
     prompt.split("(?=\n## )").filterNot(_.trim.startsWith(marker)).mkString
+
+  /** Strip all sections that have been migrated to conditional injection. */
+  def stripAllMigrated(prompt: String): String =
+    stripSection(prompt, "Voice Output")
 
 end PromptSections
