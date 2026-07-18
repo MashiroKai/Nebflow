@@ -190,11 +190,12 @@ private[agent] trait AgentCore:
           freshDef = turnCtx.agentDef
           voiceEnabled <- resources.voiceMutedRef.get.map(!_)
           hasAskUser = buildAllowedToolSet(freshDef, depth).contains("AskUserQuestion")
+          hasRead = buildAllowedToolSet(freshDef, depth).contains("Read")
           baseSystemStable = buildSystemPrompt(
             freshDef,
             resources,
             turnCtx.systemPrefix,
-            PromptContext(voiceEnabled = voiceEnabled, hasAskUser = hasAskUser),
+            PromptContext(voiceEnabled = voiceEnabled, hasAskUser = hasAskUser, hasRead = hasRead),
             turnCtx.projectRoot,
             turnCtx.rulesMd,
             state.session.chatWidth,
@@ -696,9 +697,10 @@ private[agent] trait AgentCore:
     val envInfo = Repl.buildEnvInfo(chatWidth)
     val voiceBlock = if promptCtx.voiceEnabled then s"\n\n${PromptSections.voiceSection}" else ""
     val askBlock = if promptCtx.hasAskUser then s"\n\n${PromptSections.askUserSection}" else ""
+    val readBlock = if promptCtx.hasRead then s"\n\n${PromptSections.readLiveSection}" else ""
     val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
     val skillsBlock = if skillCatalog.nonEmpty then s"\n\n$skillCatalog" else ""
-    s"$systemPrefix$agentPrompt$voiceBlock$askBlock\n\n$envInfo$rulesBlock$skillsBlock"
+    s"$systemPrefix$agentPrompt$voiceBlock$askBlock$readBlock\n\n$envInfo$rulesBlock$skillsBlock"
 
   end buildSystemPrompt
 

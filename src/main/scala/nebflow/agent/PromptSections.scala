@@ -20,8 +20,8 @@ object PromptSections:
   /** Runtime conditions that determine which sections are included. */
   case class PromptContext(
     voiceEnabled: Boolean,
-    hasAskUser: Boolean = true
-    // Future conditions go here — e.g. ttsConfigured, verboseTools, etc.
+    hasAskUser: Boolean = true,
+    hasRead: Boolean = false
   )
 
   object PromptContext:
@@ -77,6 +77,17 @@ object PromptSections:
       |- Testing: ask "Test type?" (id: test) and if Unit → "Mock library?", if Integration → "Test database?"
       |
       |Independent questions don't need dependsOn — just include them all in one call.""".stripMargin
+
+  /** Injected when the Read tool is available. Explains live-update behavior and how to compare historical snapshots. */
+  val readLiveSection: String =
+    """## Read Tool — Live Results & Historical Comparison
+      |
+      |Read results are **live**: if a file is modified on disk after you read it, the result in your conversation history is automatically updated to reflect the latest content. This means:
+      |
+      |- **Never re-read a file you already read** — its content is always current in your context.
+      |- **You cannot trust a Read result as a frozen snapshot.** If you need to compare the "before" and "after" states of a file (e.g. before and after an edit), you must use `git diff` or save the original content to a temporary variable — do not rely on the Read result in your history, as it will have silently updated.
+      |- **Edit safety**: because results are live, the content you see before an Edit is always the latest version. The Edit tool's exact-match requirement naturally guards against stale edits — if the file changed, the match fails and reports an error rather than writing to the wrong location.
+      |- **Multi-instance awareness**: if another process (e.g. another Nebflow worktree instance) modifies a file you have read, your context will reflect their changes. Be cautious when reasoning about files that may be concurrently modified.""".stripMargin
 
   /**
    * Remove a `## Section` block from a prompt string.
