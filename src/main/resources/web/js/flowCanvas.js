@@ -65,13 +65,17 @@ const FLOW_CSS = `
   background: var(--color-text); border-radius: 50%;
   top: -1.5px;
 }
-/* Pending: dots at scattered angles (not all on the same side) */
-.flow-ring-1 .flow-dot { left: 3px; transform: rotate(0deg) translateY(-1.5px); }
-.flow-ring-2 .flow-dot { left: 8px; transform-origin: -4px 1.5px; transform: rotate(120deg); }
-.flow-ring-3 .flow-dot { left: 13px; transform-origin: -11px 1.5px; transform: rotate(240deg); }
+.flow-ring-1 .flow-dot { left: 3px; }
+.flow-ring-2 .flow-dot { left: 8px; }
+.flow-ring-3 .flow-dot { left: 13px; }
+
+/* Pending: scatter dots at different angles via wrap rotation */
+.flow-ring-1 .flow-dot-wrap { transform: rotate(0deg); }
+.flow-ring-2 .flow-dot-wrap { transform: rotate(120deg); }
+.flow-ring-3 .flow-dot-wrap { transform: rotate(240deg); }
 
 /* Running: orbit animation — negative delays scatter starting angles */
-.flow-node.running .flow-dot-wrap {
+.flow-node.running .flow-ring-1 .flow-dot-wrap {
   animation: flow-spin 3s linear infinite;
 }
 .flow-node.running .flow-ring-2 .flow-dot-wrap {
