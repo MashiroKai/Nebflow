@@ -1418,7 +1418,7 @@ object FlowTreeActor:
             case false =>
               ctx.system.stop(subagentRef) *>
                 (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
-                IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId, s"timeout after ${timeout.toSeconds}s"))
+                (treeRef ! TreeCommand.StepFailed(branchName, stepId, s"timeout after ${timeout.toSeconds}s"))
           }
       )
 
@@ -1439,31 +1439,29 @@ object FlowTreeActor:
                          deferred.tryGet.flatMap {
                            case Some(vr) =>
                              logger.info(s"stepAdapter: FlowVerify was called, passed=${vr.pass}") *>
-                               IO.delay(treeRef ! TreeCommand.VerifyCompleted(branchName, vr.pass, vr.summary))
+                               (treeRef ! TreeCommand.VerifyCompleted(branchName, vr.pass, vr.summary))
                            case None =>
                              logger.warn(s"stepAdapter: verify agent completed WITHOUT calling FlowVerify") *>
-                               IO.delay(
-                                 treeRef ! TreeCommand.StepFailed(
-                                   branchName,
-                                   stepId,
-                                   "Verify agent completed without calling FlowVerify tool"
-                                 )
-                               )
+                               (treeRef ! TreeCommand.StepFailed(
+                                 branchName,
+                                 stepId,
+                                 "Verify agent completed without calling FlowVerify tool"
+                               ))
                          }
                        case None =>
                          logger.warn(s"stepAdapter: verify Deferred not in registry for $verifyAgentPath") *>
-                           IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId, "Verify registry error"))
+                           (treeRef ! TreeCommand.StepFailed(branchName, stepId, "Verify registry error"))
                      _ = result
                    yield Behaviors.stopped[AgentEvent]
                  else
                    val text = extractLastAssistantText(messages)
-                   for _ <- IO.delay(treeRef ! TreeCommand.StepCompleted(branchName, stepId, text))
+                   for _ <- treeRef ! TreeCommand.StepCompleted(branchName, stepId, text)
                    yield Behaviors.stopped[AgentEvent])
 
             case AgentEvent.Failed(_, error) =>
               done.set(true) *>
                 (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
-                IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId, error.message)) *>
+                (treeRef ! TreeCommand.StepFailed(branchName, stepId, error.message)) *>
                 IO.pure(Behaviors.stopped[AgentEvent])
 
         override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
@@ -1474,7 +1472,7 @@ object FlowTreeActor:
                 _ <- done.set(true)
                 _ <- if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit
                 _ <-
-                  if !alreadyDone then IO.delay(treeRef ! TreeCommand.StepFailed(branchName, stepId, "agent crashed"))
+                  if !alreadyDone then (treeRef ! TreeCommand.StepFailed(branchName, stepId, "agent crashed"))
                   else IO.unit
               yield Behaviors.stopped[AgentEvent]
 
