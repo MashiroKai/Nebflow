@@ -280,7 +280,7 @@ export default {
   'slash.skillDeleted': '技能「{skill}」已删除',
   'slash.skillDeleteFailed': '删除技能「{skill}」失败：可能不是用户级技能',
   'slash.model': '选择本次会话的模型',
-  'bypass.toggle': '自动放行：跳过当前会话的所有权限审批',
+  'bypass.toggle': '安全模式：点击切换 确认编辑 / 放行编辑 / 全部放行',
 
   // === Voice ===
   'voice.listening': '正在聆听...',

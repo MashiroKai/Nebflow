@@ -154,14 +154,14 @@ class WebSocketRoutes(
     agentRef: nebflow.actor.ActorRef[AgentCommand],
     projectRoot: String
   ): IO[Unit] =
-    val bypass = false // TODO: get from session
+    val safetyMode = "confirm-edits" // TODO: get from session
     val config = FlowTreeActor.TreeConfig(
       parentAgentRef = agentRef,
       wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),
       sessionId = Some(sessionId),
       resources = sharedResources,
       projectRoot = projectRoot,
-      bypass = bypass
+      safetyMode = safetyMode
     )
     for
       treeRef <- nebulaSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
@@ -919,15 +919,33 @@ class WebSocketRoutes(
               }
           else IO.unit
 
+        case "setSafetyMode" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val mode = json.hcursor.downField("safetyMode").as[String].getOrElse("confirm-edits")
+          if sid.nonEmpty then
+            sessionStore
+              .setSafetyMode(sid, mode)
+              .flatMap { _ =>
+                routeToAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
+                  sendAgentSessionList(wsSend, sid)
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
         case "setBypass" =>
+          // Backward compat: old clients send { bypass: Boolean }
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
           val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
+          val mode = if bypass then "auto-all" else "confirm-edits"
           if sid.nonEmpty then
             sessionStore
-              .setBypass(sid, bypass)
+              .setSafetyMode(sid, mode)
               .flatMap { _ =>
-                routeToAgent(sid)(ref => ref ! AgentCommand.SetBypass(bypass)) *>
+                routeToAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
                   sendAgentSessionList(wsSend, sid)
               }
               .handleErrorWith { e =>

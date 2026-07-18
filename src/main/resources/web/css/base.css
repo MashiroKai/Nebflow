@@ -177,15 +177,31 @@ body.sidebar-collapsed #sidebar {
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background 0.15s ease;
+  position: relative;
 }
 .bypass-toggle:hover {
   background: var(--color-surface);
-  color: var(--color-text);
 }
-.bypass-toggle.active {
-  color: #e8923c;
-  background: rgba(232, 146, 60, 0.12);
+/* Dot badge — color indicates safety mode, icon stays neutral */
+.bypass-badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  transition: background 0.2s ease;
+}
+.bypass-badge[data-mode="confirm-edits"] {
+  background: transparent;
+}
+.bypass-badge[data-mode="auto-edits"] {
+  background: #e8923c;
+}
+.bypass-badge[data-mode="auto-all"] {
+  background: #4ad97b;
 }
 .flow-toggle-btn {
   display: inline-flex;

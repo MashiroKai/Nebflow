@@ -13,7 +13,7 @@ case class SessionMeta(
   modelRef: Option[String] = None,
   bridges: Map[String, Json] = Map.empty,
   folderId: Option[String] = None,
-  bypass: Boolean = false
+  safetyMode: String = "confirm-edits"
 )
 
 object SessionMeta:
@@ -29,8 +29,10 @@ object SessionMeta:
     val withAgent = m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
     val withModel = m.modelRef.fold(withAgent)(r => withAgent.deepMerge(Json.obj("modelRef" -> r.asJson)))
     val withFolder = m.folderId.fold(withModel)(f => withModel.deepMerge(Json.obj("folderId" -> f.asJson)))
-    val withBypass = if m.bypass then withFolder.deepMerge(Json.obj("bypass" -> true.asJson)) else withFolder
-    if m.bridges.nonEmpty then withBypass.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withBypass
+    val withSafety = if m.safetyMode != "confirm-edits" then
+      withFolder.deepMerge(Json.obj("safetyMode" -> m.safetyMode.asJson))
+    else withFolder
+    if m.bridges.nonEmpty then withSafety.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withSafety
   }
 
   given Decoder[SessionMeta] = Decoder.instance { c =>
@@ -51,8 +53,12 @@ object SessionMeta:
       modelRef <- c.downField("modelRef").as[Option[String]]
       folderId <- c.downField("folderId").as[Option[String]]
       bridges <- c.downField("bridges").as[Option[Map[String, Json]]].map(_.getOrElse(Map.empty))
-      bypass <- c.downField("bypass").as[Option[Boolean]].map(_.getOrElse(false))
-    yield SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId, bypass)
+      // Migrate: bypass=true → safetyMode=auto-all, bypass=false → confirm-edits
+      legacyBypass <- c.downField("bypass").as[Option[Boolean]]
+      safetyMode <- c.downField("safetyMode").as[Option[String]]
+    yield
+      val mode = safetyMode.getOrElse(if legacyBypass.getOrElse(false) then "auto-all" else "confirm-edits")
+      SessionMeta(id, name, createdAt, updatedAt, hasUnread, agentName, modelRef, bridges, folderId, mode)
   }
 
 end SessionMeta

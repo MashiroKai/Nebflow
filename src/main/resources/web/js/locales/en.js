@@ -280,7 +280,7 @@ export default {
   'slash.skillDeleted': 'Skill "{skill}" deleted',
   'slash.skillDeleteFailed': 'Failed to delete skill "{skill}": not a user-level skill',
   'slash.model': 'Select model for this session',
-  'bypass.toggle': 'Auto-approve: skip all permission prompts for this session',
+  'bypass.toggle': 'Safety mode: click to cycle Confirm Edits / Auto Edits / Auto All',
 
   // === Voice ===
   'voice.listening': 'Listening...',

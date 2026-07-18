@@ -615,15 +615,15 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
-  def setBypass(id: String, bypass: Boolean): IO[Unit] =
+  def setSafetyMode(id: String, mode: String): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
-      val updated = sessions.map(s => if s.id == id then s.copy(bypass = bypass) else s)
+      val updated = sessions.map(s => if s.id == id then s.copy(safetyMode = mode) else s)
       (activeId, updated, folders)
     } *> saveIndex
 
-  def getBypass(id: String): IO[Boolean] =
+  def getSafetyMode(id: String): IO[String] =
     indexRef.get.map { case (_, sessions, _) =>
-      sessions.find(_.id == id).exists(_.bypass)
+      sessions.find(_.id == id).map(_.safetyMode).getOrElse("confirm-edits")
     }
 
   // ===== Folder Management =====
