@@ -33,6 +33,21 @@ src/
 
 ## Development Log
 
+### 2026-07-18: Merge batch — 5 feature branches into main
+
+Merged (in order):
+1. `fix/flow-debug-and-frontend` — FlowTreeActor error exposure + flowName in events + CardTool frontend design protocol
+2. `feature/safety-mode-ui` — Safety mode toggle UI with text label (安全/编辑放行/全放行)
+3. `feature/git-branch-persistence` — gitBranch persisted in SessionMeta across restarts
+4. `feature/hot-reload-tools` — File watcher for external tool configs in ~/.nebflow/tools/ (500ms debounce)
+5. `feature/memory-system` — Unified memory injection into system prompt (replaces MemoryAutoRead synthetic Read) + MaintenanceService (every 10 delegate calls)
+
+**Key architecture change:** Memory injection moved from synthetic Read tool messages (MemoryAutoRead, deleted) to direct system prompt injection via `ContextRefresher.buildMemoryBlock` + `PromptSections` entry 810. Memory is now part of the system prompt, not the message list.
+
+**Conflict resolution:** 3 files had auto-mergeable conflicts (AgentActor.scala, AgentCore.scala, protocol.scala) — both git-branch-persistence and memory-system modified the same files. Git auto-merge preserved both sets of changes correctly.
+
+Version bumped to 1.4.1-beta.34.
+
 ### 2026-07-18: Conditional prompt injection mechanism
 
 **Problem:** System prompt assembly was scattered across `buildSystemPrompt` (inline if/mapping for voice, askUser, envInfo, rules, skills) and `pipeLlmCall` (string concatenation for language, deviceInfo, agentSessions). Adding a new conditional section required touching multiple places.
@@ -58,7 +73,7 @@ src/
 
 ## Key Decisions
 
-- **Prompt cache:** systemStable is sent to Anthropic with `cache_control: ephemeral`. Conditional sections are part of systemStable. Dynamic per-turn content (reminders, memory) goes into the message list, not the system prompt.
-- **Memory injection:** Memory files are NOT in the system prompt. They are injected as synthetic Read tool_use/tool_result message pairs at the start of the conversation.
+- **Prompt cache:** systemStable is sent to Anthropic with `cache_control: ephemeral`. Conditional sections (including memory block) are part of systemStable. Per-turn dynamic content (reminders, maintenance triggers) goes into the message list.
+- **Memory injection:** Memory files are injected into the system prompt every turn via `ContextRefresher.buildMemoryBlock` + `PromptSections` entry 810. Replaces the old `MemoryAutoRead` synthetic Read message approach (deleted 2026-07-18).
 - **Per-turn refresh:** All prompt sources are re-read from disk every turn (mtime-cached so unchanged files cost only a stat() syscall).
 - **Agent system.md:** User-editable. `stripAllMigrated` removes sections that have been moved to conditional injection (currently only "Voice Output").
