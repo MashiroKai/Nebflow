@@ -181,6 +181,67 @@ Follow these strictly. They override any conflicting defaults.
 
 **Never hardcode hex colors.** Always use `var(--color-text)` for body text, `var(--color-bg)`/`var(--color-surface)` for backgrounds. These guarantee maximum contrast in both light and dark mode. Use `var(--color-primary/success/error/warning)` only for status indicators. `var(--color-text-muted)` is for captions only — too low contrast for body text.
 
+### Generated images: SVG inline for dark mode
+
+Images embedded via `<img src="...png">` have **hardcoded colors that CANNOT adapt to dark mode**. A white-background PNG in a dark card looks like a glaring white box. Always use the SVG inline approach instead:
+
+**Workflow:**
+1. Generate output as **SVG format** (not PNG/JPG)
+2. Read the SVG file content, strip `<?xml?>` and `<!DOCTYPE>` declarations
+3. **Paste the SVG directly into the HTML** — do NOT use `<img src="...svg">`
+4. Wrap in a container with a CSS override block
+
+**Tool-specific SVG output commands:**
+- graphviz: `dot -Tsvg -o output.svg input.dot`
+- matplotlib: `plt.savefig('output.svg', format='svg', transparent=True)`
+- mermaid-cli: `mmdc -i input.mmd -o output.svg`
+- plantuml: `plantuml -tsvg input.puml`
+
+**CSS override template — graphviz diagrams:**
+
+```html
+<div class="gv-diagram">
+  <svg>...</svg>
+</div>
+<style>
+.gv-diagram svg { width: 100%; height: auto; }
+/* Hide graphviz white background */
+.gv-diagram svg > g > polygon { fill: transparent !important; }
+/* Text follows theme */
+.gv-diagram text { fill: var(--color-text) !important; }
+/* Node boxes: surface fill, primary border */
+.gv-diagram .node path { fill: var(--color-surface) !important; stroke: var(--color-primary) !important; }
+/* Edges: no fill, muted stroke */
+.gv-diagram .edge path { fill: none !important; stroke: var(--color-text-muted) !important; }
+/* Arrowheads */
+.gv-diagram .edge polygon { fill: var(--color-text-muted) !important; stroke: none !important; }
+</style>
+```
+
+**CSS override template — matplotlib charts:**
+
+```html
+<div class="mpl-chart">
+  <svg>...</svg>
+</div>
+<style>
+.mpl-chart svg { width: 100%; height: auto; }
+/* All text follows theme */
+.mpl-chart text { fill: var(--color-text) !important; }
+/* Override black axis lines, ticks, spines — data lines keep original colors */
+.mpl-chart path[style*="#000000"] { stroke: var(--color-text-muted) !important; }
+.mpl-chart use[style*="#000000"] { stroke: var(--color-text-muted) !important; }
+/* Legend/patch borders */
+.mpl-chart path[style*="fill: #ffffff"], .mpl-chart path[style*="fill: white"] {
+  fill: var(--color-surface) !important;
+}
+</style>
+```
+
+**Key principle:** CSS `!important` in a `<style>` block overrides both SVG presentation attributes and inline `style="..."` on SVG elements — so the theme variables always win.
+
+**When raster (PNG/JPG) is unavoidable** (photos, screenshots, complex renders): wrap in a container with `var(--color-bg)` background and add `border-radius`. Do NOT apply CSS filters (invert etc.) — they distort colors unpredictably.
+
 ### Visual defaults
 
 - **No emoji.** Use typography and spacing for visual interest.
@@ -235,10 +296,12 @@ Card is for **presenting** results, not for drawing them. Always generate images
 - **Embedding generated media**: plots from matplotlib, diagrams from graphviz, 3D models
 
 ### Common mistakes — the right way vs the wrong way:
-- **Charts, curves, spectra**: do NOT draw with ASCII art (│─╔╗ ▲▼) or hand-write SVG. Use matplotlib/gnuplot → save image → embed.
-- **Flowcharts, architecture diagrams**: do NOT approximate with text boxes and arrows. Use graphviz/mermaid → save image → embed.
-- **Circuit schematics, timing diagrams**: do NOT hand-draw with SVG `<path>`. Use schemdraw/wavedrom → save image → embed.
+- **Charts, curves, spectra**: do NOT draw with ASCII art or hand-write SVG. Use matplotlib/gnuplot → output SVG → inline with CSS override.
+- **Flowcharts, architecture diagrams**: do NOT approximate with text boxes and arrows. Use graphviz/mermaid → output SVG → inline with CSS override.
+- **Circuit schematics, timing diagrams**: do NOT hand-draw with SVG `<path>`. Use schemdraw/wavedrom → output SVG → inline with CSS override.
 - **Any content involving data, proportions, or precise shapes**: do NOT guess coordinates in SVG. Use a professional tool — always.
+
+**Important:** Never embed diagrams/charts as PNG via `<img>` — they have hardcoded colors that break dark mode. Always output SVG, inline it, and apply CSS variable overrides. See the design guidelines below for CSS override templates.
 
 ## Professional tool correspondence table
 
@@ -263,8 +326,10 @@ Card is for **presenting** results, not for drawing them. Always generate images
 
 ## Workflow
 
-1. Use Bash to run a tool (matplotlib, graphviz, etc.) → outputs an image file
-2. Use Card to embed that file via `<img src="/absolute/path/to/file.png">` (must be absolute path)
+1. Use Bash to run a tool (matplotlib, graphviz, etc.) → **output as SVG format**
+2. Read the SVG file, strip `<?xml?>` and `<!DOCTYPE>` declarations
+3. Use Card to embed the SVG **inline** (paste content directly, not via `<img>`)
+4. Add a `<style>` block with CSS variable overrides (see templates in design guidelines below)
 
 ## Parameters
 
@@ -273,8 +338,11 @@ Card is for **presenting** results, not for drawing them. Always generate images
 
 Note: When referencing local files (images, videos, etc.) in `src` or `href` attributes, you MUST use absolute paths (e.g. `/Users/you/project/plot.png` or `~/project/plot.png`). The backend will automatically proxy these files. Relative paths will NOT work.
 
-Example (embed tool-generated image):
-{"html":"<div style=\"padding:16px\"><img src=\"/tmp/plot.png\" style=\"width:100%;height:auto;display:block;margin:0 auto\"></div>","title":"My Plot"}
+Example (graphviz SVG inline with dark mode CSS):
+{"html":"<div class=\"gv-diagram\"><svg viewBox=\"0 0 200 100\">...</svg></div><style>.gv-diagram svg{width:100%;height:auto}.gv-diagram text{fill:var(--color-text)!important}.gv-diagram .node path{fill:var(--color-surface)!important;stroke:var(--color-primary)!important}</style>","title":"Architecture"}
+
+Example (matplotlib SVG inline):
+{"html":"<div class=\"mpl-chart\"><svg viewBox=\"0 0 432 216\">...</svg></div><style>.mpl-chart svg{width:100%;height:auto}.mpl-chart text{fill:var(--color-text)!important}.mpl-chart path[style*=\"#000000\"]{stroke:var(--color-text-muted)!important}</style>","title":"My Plot"}
 
 Example (SVG diagram):
 {"html":"<div style=\"font-family:sans-serif;padding:16px\"><svg viewBox=\"0 0 600 200\" style=\"width:100%\"><rect x=\"10\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"70\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Client</text><rect x=\"180\" y=\"60\" width=\"120\" height=\"60\" rx=\"8\" fill=\"var(--color-primary)\"/><text x=\"240\" y=\"96\" text-anchor=\"middle\" fill=\"white\" font-size=\"16\">Server</text></svg></div>","title":"TCP"}
