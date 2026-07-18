@@ -626,6 +626,13 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       sessions.find(_.id == id).map(_.safetyMode).getOrElse("confirm-edits")
     }
 
+  /** Persist git branch change so it survives restarts. */
+  def updateGitBranch(id: String, branch: Option[String]): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      val updated = sessions.map(s => if s.id == id then s.copy(gitBranch = branch) else s)
+      (activeId, updated, folders)
+    } *> saveIndex
+
   // ===== Folder Management =====
 
   def createFolder(name: String, parentId: Option[String] = None, agentName: String = ""): IO[Folder] =
