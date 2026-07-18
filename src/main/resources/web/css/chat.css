@@ -725,11 +725,22 @@
   border-radius: 50%;
   background: var(--color-primary);
   opacity: 0.4;
-  animation: thinkingPulse 1.2s ease-in-out infinite;
+  display: inline-block;
 }
-@keyframes thinkingPulse {
-  0%, 100% { opacity: 0.3; transform: scale(0.85); }
-  50% { opacity: 0.85; transform: scale(1.1); }
+.thinking-dot:nth-child(1) { animation: thinkingPulse1 1.2s ease-in-out infinite; }
+.thinking-dot:nth-child(2) { animation: thinkingPulse2 1.2s ease-in-out infinite; }
+.thinking-dot:nth-child(3) { animation: thinkingPulse3 1.2s ease-in-out infinite; }
+@keyframes thinkingPulse1 {
+  0%, 100% { opacity: 0.3; transform: translateY(-2px) scale(0.85); }
+  50% { opacity: 0.85; transform: translateY(-3px) scale(1.1); }
+}
+@keyframes thinkingPulse2 {
+  0%, 100% { opacity: 0.3; transform: translateY(1px) scale(0.85); }
+  50% { opacity: 0.85; transform: translateY(0px) scale(1.1); }
+}
+@keyframes thinkingPulse3 {
+  0%, 100% { opacity: 0.3; transform: translateY(-1px) scale(0.85); }
+  50% { opacity: 0.85; transform: translateY(-2px) scale(1.1); }
 }
 .thinking-indicator-label {
   font-size: 13px;
