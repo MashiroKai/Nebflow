@@ -97,8 +97,8 @@ object AgentCommand:
    */
   case class ForwardPermission(deferred: cats.effect.Deferred[IO, Boolean], permJson: Json) extends AgentCommand
 
-  /** Frontend → agent: update bypass (auto-approve) status for this session. */
-  case class SetBypass(bypass: Boolean) extends AgentCommand
+  /** Frontend → agent: update safety mode for this session. */
+  case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
 
   // ============================================================
   // Plan mode commands
@@ -409,10 +409,13 @@ case class SessionContext(
   language: Option[String] = None,
   projectRoot: Option[String] = None,
   rulesMd: Option[String] = None,
-  folderId: Option[String] = None,
-  chatWidth: Int = 0,
-  gitBranch: Option[String] = None,
-  bypass: Boolean = false
+    folderId: Option[String] = None,
+    chatWidth: Int = 0,
+    gitBranch: Option[String] = None,
+    safetyMode: String = "confirm-edits",
+  pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
+  pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
+  pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None
 )
 
 case class InteractionState(
@@ -518,7 +521,7 @@ object AgentState:
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
-    bypass: Boolean = false
+    safetyMode: String = "confirm-edits"
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -537,7 +540,7 @@ object AgentState:
         folderId = folderId,
         projectRoot = projectRoot,
         rulesMd = rulesMd,
-        bypass = bypass
+        safetyMode = safetyMode
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -577,7 +580,8 @@ extension (s: AgentState)
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch
-  def bypass: Boolean = s.session.bypass
+  def bypass: Boolean = s.session.safetyMode == "auto-all"
+  def safetyMode: String = s.session.safetyMode
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
@@ -626,7 +630,8 @@ extension (s: AgentState)
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
-  def withBypass(b: Boolean): AgentState = s.copy(session = s.session.copy(bypass = b))
+  def withSafetyMode(mode: String): AgentState =
+    s.copy(session = s.session.copy(safetyMode = mode))
 
   def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
 

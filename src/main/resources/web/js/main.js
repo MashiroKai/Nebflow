@@ -959,8 +959,11 @@ onMessage('sessionList', (msg, view) => {
   const allFolders = msg.folders || [];
   allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
 
-  // Restore bypass state from persisted session metadata
-  state.bypassSessions = new Set(allSessions.filter(s => s.bypass).map(s => s.id));
+  // Restore safety mode from persisted session metadata
+  state.safetyModes = {};
+  allSessions.forEach(s => { if (s.safetyMode) state.safetyModes[s.id] = s.safetyMode; });
+  // Derive bypassSessions (auto-all) for chat.js auto-approve compatibility
+  state.bypassSessions = new Set(allSessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id));
 
   state.folders = allFolders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
@@ -1488,7 +1491,9 @@ onMessage('agentSessionList', (msg, view) => {
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
 
   // Restore bypass state from persisted session metadata
-  state.bypassSessions = new Set(sessions.filter(s => s.bypass).map(s => s.id));
+  state.bypassSessions = new Set(sessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id));
+  state.safetyModes = {};
+  sessions.forEach(s => { if (s.safetyMode) state.safetyModes[s.id] = s.safetyMode; });
 
   // Render sidebar — active highlight shows the current active session
   renderSessionSidebar(sessions, state.activeSessionId);
@@ -2017,18 +2022,30 @@ onMessage('planReady', (msg, view) => planMode.onPlanReady(msg, view));
 onMessage('planEnd', (msg, view) => planMode.onPlanEnd(msg, view));
 onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 
-// ---------- Bypass toggle (per-session auto-approve) ----------
-(function initBypassToggle() {
-  /** Update the toggle button's active state for the given view's session. */
-  state.updateBypassToggle = function(view) {
-    const v = view || activeView;
-    if (!v || !v.sessionId) return;
-    const enabled = state.bypassSessions.has(v.sessionId);
-    const btn = document.getElementById('bypass-toggle');
-    if (btn) btn.classList.toggle('active', enabled);
+// ---------- Safety mode toggle (per-session, three-state cycle) ----------
+(function initSafetyToggle() {
+  const MODES = ['confirm-edits', 'auto-edits', 'auto-all'];
+  const TITLES = {
+    'confirm-edits': '安全模式：确认编辑 (Write/Edit/Bash 需确认)',
+    'auto-edits': '安全模式：放行编辑 (仅 Bash 需确认)',
+    'auto-all': '安全模式：全部放行 (无需确认)',
   };
 
-  // Click handler: toggle bypass for the current session
+  state.updateSafetyToggle = function(view) {
+    const v = view || activeView;
+    if (!v || !v.sessionId) return;
+    const mode = state.safetyModes[v.sessionId] || 'confirm-edits';
+    const btn = document.getElementById('bypass-toggle');
+    if (btn) {
+      const badge = btn.querySelector('.bypass-badge');
+      if (badge) badge.setAttribute('data-mode', mode);
+      btn.title = TITLES[mode] || TITLES['confirm-edits'];
+    }
+  };
+
+  // Keep updateBypassToggle as alias for any external callers
+  state.updateBypassToggle = state.updateSafetyToggle;
+
   {
     const btn = document.getElementById('bypass-toggle');
     if (btn) {
@@ -2036,14 +2053,18 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
       btn.addEventListener('click', () => {
         setActiveView(v);
         if (!v.sessionId) return;
-        const enabled = !state.bypassSessions.has(v.sessionId);
-        if (enabled) {
+        const current = state.safetyModes[v.sessionId] || 'confirm-edits';
+        const idx = MODES.indexOf(current);
+        const next = MODES[(idx + 1) % MODES.length];
+        state.safetyModes[v.sessionId] = next;
+        // Update derived bypassSessions set
+        if (next === 'auto-all') {
           state.bypassSessions.add(v.sessionId);
         } else {
           state.bypassSessions.delete(v.sessionId);
         }
-        state.updateBypassToggle(v);
-        sendWs({ type: 'setBypass', sessionId: v.sessionId, bypass: enabled });
+        state.updateSafetyToggle(v);
+        sendWs({ type: 'setSafetyMode', sessionId: v.sessionId, safetyMode: next });
       });
     }
   }
