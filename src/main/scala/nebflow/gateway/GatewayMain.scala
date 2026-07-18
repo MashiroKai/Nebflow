@@ -142,18 +142,8 @@ object GatewayMain extends IOApp.Simple:
 
   private def loadExternalTools(): IO[Unit] =
     for
-      scripts <- ToolLoader.loadScripts()
-      registered = scripts.filterNot { s =>
-        val conflict = ToolRegistry.TOOL_MAP.contains(s.name)
-        if conflict then logger.warn(s"External tool '${s.name}' conflicts with built-in — skipping")
-        conflict
-      }
-      _ <- IO(registered.foreach(ToolRegistry.registerTool))
-      _ <- logger.info(
-        if registered.nonEmpty then
-          s"Loaded ${registered.size} external tool(s): ${registered.map(_.name).mkString(", ")}"
-        else "No external tools loaded"
-      )
+      _ <- ToolLoader.reload()
+      _ <- ToolLoader.startFileWatcher().start // background fiber — hot reload on file changes
     yield ()
 
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
