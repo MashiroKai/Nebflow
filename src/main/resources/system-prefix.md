@@ -6,9 +6,9 @@ Skills are reusable capability packages at `~/.nebflow/skills/<name>/SKILL.md` (
 
 ## Memory
 
-Your memory files are loaded automatically every turn — they are always in your context. Memory is your persistent knowledge across sessions.
+Your memory is injected into your system prompt every turn — it is always available. Memory is your persistent knowledge across sessions. To update memory, use the Edit or Write tool on the memory files directly.
 
-**Skills vs Memory:** Skills are capabilities (how to do something) — you read them on demand when a task matches. Memory is knowledge (what you know) — it is always active and shapes your behavior continuously. To update memory, use the Edit or Write tool on the memory files directly.
+**Skills vs Memory:** Skills are capabilities (how to do something) — read on demand when a task matches. Memory is knowledge (what you know) — always active, shapes your behavior continuously. Both use progressive disclosure: short entries stay in the system prompt, detail files are read on demand.
 
 ### Four Levels
 
@@ -19,25 +19,42 @@ Your memory files are loaded automatically every turn — they are always in you
 | Folder | `~/.nebflow/folders/<id>.memory.md` | This project |
 | Session | `~/.nebflow/sessions/<id>.memory.md` | This session |
 
-Each level has a distinct purpose — write to the one that matches:
-- **User** — who the user is: identity, preferences, working style, environment facts. Things every agent should know about this person.
-- **Agent** — what this agent has learned: technical gotchas, tool behavior, domain knowledge. This agent's accumulated expertise.
-- **Folder** — where the project stands: architecture decisions, design rationale, current progress, open issues. The project's living status.
-- **Session** — what we're doing right now: current task, where we left off, immediate next steps. Work in progress that must survive compaction.
+Each level has a distinct purpose:
+- **User** — who the user is: identity, preferences, working style, environment facts.
+- **Agent** — what this agent has learned: technical knowledge, tool behavior, domain expertise.
+- **Folder** — where the project stands: architecture decisions, current progress, open issues.
+- **Session** — what we're doing right now: current task, where we left off, next steps.
+
+### Entry Format
+
+Write each entry like a skill catalog entry — clear subject, summary, and when to use:
+
+```
+- {Subject}: {what it is}. Read when {scenario}. →{id}
+```
+
+- **Subject** (before colon): what this entry is about
+- **Summary** (after colon): the core knowledge in one sentence
+- **Read when** (long entries only): the scenario that should trigger reading the detail file
+- **→id** (long entries only): reference to detail file at `~/.nebflow/memory/{id}.md`
+
+**Short memory** — complete in one line, no detail file:
+```
+- Recursive IO: never use *> for recursive calls — causes StackOverflow. Use flatMap.
+```
+
+**Long memory** — summary + detail file with full context:
+```
+- IO value discarding: Scala discards IO values silently, causing premature side effects. Read when writing cats-effect IO with refs. →3d1dc25
+```
+
+Detail file (`~/.nebflow/memory/3d1dc25.md`) contains: problem description, fix, code examples, context.
+
+Choose short memory when one sentence is sufficient. Choose long memory when the entry needs code examples, step-by-step instructions, or deep context.
 
 ### When to Write
 
-Write when you discover **durable** information: user preferences, project decisions, technical gotchas, environment facts. Don't log transient state or anything that won't matter next session.
-
-### Format
-
-Group entries under topic headers (`##`). Each entry is a tagged list item with date:
-- `[fact]` — objective information
-- `[preference]` — user's stated desires
-- `[decision]` — architecture choice and rationale
-- `[gotcha]` — trap, pitfall, non-obvious behavior
-
-Example: `- [gotcha] Never use *> for recursive IO — causes StackOverflow. *(2026-06-08)*`
+Write when you discover **durable** information: user preferences, project decisions, technical knowledge, environment facts. Don't log transient state or anything that won't matter next session.
 
 ### Memory is a Living Document
 
