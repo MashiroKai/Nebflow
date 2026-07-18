@@ -14,7 +14,7 @@ import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
-import nebflow.core.tools.{RemoteExecutor, ToolRegistry}
+import nebflow.core.tools.{RemoteExecutor, ToolLoader, ToolRegistry}
 import nebflow.llm.*
 import nebflow.neblink.*
 import nebflow.service.{ConfigSnapshot, *}
@@ -137,6 +137,23 @@ object GatewayMain extends IOApp.Simple:
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig)
       _ <- logger.info("MCP servers initialized")
+      _ <- loadExternalTools()
+    yield ()
+
+  private def loadExternalTools(): IO[Unit] =
+    for
+      scripts <- ToolLoader.loadScripts()
+      registered = scripts.filterNot { s =>
+        val conflict = ToolRegistry.TOOL_MAP.contains(s.name)
+        if conflict then logger.warn(s"External tool '${s.name}' conflicts with built-in — skipping")
+        conflict
+      }
+      _ <- IO(registered.foreach(ToolRegistry.registerTool))
+      _ <- logger.info(
+        if registered.nonEmpty then
+          s"Loaded ${registered.size} external tool(s): ${registered.map(_.name).mkString(", ")}"
+        else "No external tools loaded"
+      )
     yield ()
 
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(

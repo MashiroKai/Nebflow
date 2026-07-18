@@ -1,47 +1,60 @@
 package nebflow.agent
 
 import cats.effect.unsafe.implicits.global
+import io.circe.syntax.*
+import io.circe.Json
 import munit.CatsEffectSuite
 
 class AgentDefSpec extends CatsEffectSuite:
 
-  test("AgentLibrary.loadAll returns all builtin agents") {
+  test("loadAll returns Nebula even on empty disk (code fallback)"):
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
-    assert(result.keySet.contains("Nebula"), s"Should contain Nebula: ${result.keySet}")
-    assert(result.keySet.size >= 3, s"Should have at least 3 agents: ${result.keySet}")
-  }
+    assert(result.contains("Nebula"), "Nebula must always exist")
+    assert(result("Nebula").tools == List("*"))
 
-  test("AgentLibrary.loadAll populates tools from code") {
+  test("loadAll reads agents from disk agent.json"):
     val tmpDir = os.temp.dir()
+    val customDir = tmpDir / "CustomAgent"
+    os.makeDir.all(customDir)
+    os.write.over(customDir / "agent.json", Json.obj(
+      "name" -> "CustomAgent".asJson,
+      "description" -> "A test agent".asJson,
+      "tools" -> List("Read", "Grep").asJson
+    ).noSpaces)
+    os.write.over(customDir / "system.md", "You are a custom agent.")
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
-    val nebula = result("Nebula")
-    assertEquals(nebula.tools, List("*"))
-  }
+    assert(result.contains("CustomAgent"), "Custom agent should be loaded from disk")
+    assertEquals(result("CustomAgent").tools, List("Read", "Grep"))
+    assertEquals(result("CustomAgent").systemPrompt, "You are a custom agent.")
 
-  test("AgentLibrary.loadAll reads systemPrompt from defaults") {
-    val tmpDir = os.temp.dir()
-    val lib = new AgentLibrary(tmpDir, None)
-    val result = lib.loadAll().unsafeRunSync()
-    val nebula = result("Nebula")
-    assert(nebula.systemPrompt.nonEmpty, "systemPrompt should be populated from defaults")
-  }
-
-  test("AgentLibrary.seedDefaults writes system.md for editing") {
+  test("seedDefaults writes agent.json AND system.md"):
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
     lib.seedDefaults().unsafeRunSync()
-    val nebulaMd = tmpDir / "Nebula" / "system.md"
-    assert(os.exists(nebulaMd), "system.md should be seeded")
-    assert(os.read(nebulaMd).nonEmpty, "system.md should have content")
-    // No agent.json should exist
-    val nebulaJson = tmpDir / "Nebula" / "agent.json"
-    assert(!os.exists(nebulaJson), "agent.json should NOT be seeded")
-  }
+    assert(os.exists(tmpDir / "Nebula" / "agent.json"), "agent.json should be seeded")
+    assert(os.exists(tmpDir / "Nebula" / "system.md"), "system.md should be seeded")
+    assert(os.exists(tmpDir / "Explorer" / "agent.json"), "Explorer agent.json should be seeded")
+    assert(os.exists(tmpDir / "Planner" / "agent.json"), "Planner agent.json should be seeded")
 
-  test("AgentLibrary.seedDefaults is idempotent") {
+  test("seedDefaults does not overwrite existing agent.json"):
+    val tmpDir = os.temp.dir()
+    val lib = new AgentLibrary(tmpDir, None)
+    // First seed
+    lib.seedDefaults().unsafeRunSync()
+    // User customizes agent.json
+    os.write.over(tmpDir / "Nebula" / "agent.json", Json.obj(
+      "name" -> "Nebula".asJson,
+      "tools" -> List("Read").asJson
+    ).noSpaces)
+    // Second seed — should NOT overwrite
+    lib.seedDefaults().unsafeRunSync()
+    val result = lib.loadAll().unsafeRunSync()
+    assertEquals(result("Nebula").tools, List("Read"), "User customization should be preserved")
+
+  test("seedDefaults is idempotent for system.md"):
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
     lib.seedDefaults().unsafeRunSync()
@@ -49,40 +62,48 @@ class AgentDefSpec extends CatsEffectSuite:
     lib.seedDefaults().unsafeRunSync()
     val secondMd = os.read(tmpDir / "Nebula" / "system.md")
     assertEquals(firstMd, secondMd)
-  }
 
-  test("User-edited system.md overrides hardcoded prompt") {
+  test("system.md overrides seeded prompt"):
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
     lib.seedDefaults().unsafeRunSync()
-    // User edits system.md
-    val nebulaDir = tmpDir / "Nebula"
-    os.write.over(nebulaDir / "system.md", "Custom prompt for testing.")
+    os.write.over(tmpDir / "Nebula" / "system.md", "Custom prompt for testing.")
     val result = lib.loadAll().unsafeRunSync()
     assertEquals(result("Nebula").systemPrompt, "Custom prompt for testing.")
-  }
 
-  test("builtinTools map covers all defaults") {
-    val tmpDir = os.temp.dir()
-    val lib = new AgentLibrary(tmpDir, None)
-    val tools = lib.builtinTools
-    assert(tools.contains("Nebula"))
-    assert(tools("Nebula") == List("*"))
-  }
-
-  test("toolsFor returns wildcard for unknown agents") {
-    val tmpDir = os.temp.dir()
-    val lib = new AgentLibrary(tmpDir, None)
-    assertEquals(lib.toolsFor("Nebula"), List("*"))
-    assertEquals(lib.toolsFor("UnknownAgent"), List("*"))
-  }
-
-  test("updateSystemPrompt writes system.md") {
+  test("updateSystemPrompt writes system.md"):
     val tmpDir = os.temp.dir()
     val lib = new AgentLibrary(tmpDir, None)
     lib.updateSystemPrompt("Nebula", "New prompt.").unsafeRunSync()
     val md = os.read(tmpDir / "Nebula" / "system.md")
     assertEquals(md, "New prompt.")
-  }
+
+  test("Nebula fallback when agent.json is corrupted"):
+    val tmpDir = os.temp.dir()
+    val nebulaDir = tmpDir / "Nebula"
+    os.makeDir.all(nebulaDir)
+    os.write.over(nebulaDir / "agent.json", "{invalid json}")
+    os.write.over(nebulaDir / "system.md", "Prompt from disk.")
+    val lib = new AgentLibrary(tmpDir, None)
+    val result = lib.loadAll().unsafeRunSync()
+    assert(result.contains("Nebula"), "Nebula should fall back to code definition")
+    // Corrupted agent.json → skip disk, use code fallback (with code prompt)
+    assert(result("Nebula").systemPrompt.nonEmpty)
+
+  test("multiple custom agents loaded from disk"):
+    val tmpDir = os.temp.dir()
+    for name <- List("AgentA", "AgentB", "AgentC") do
+      val dir = tmpDir / name
+      os.makeDir.all(dir)
+      os.write.over(dir / "agent.json", Json.obj(
+        "name" -> name.asJson,
+        "tools" -> List("Read").asJson
+      ).noSpaces)
+    val lib = new AgentLibrary(tmpDir, None)
+    val result = lib.loadAll().unsafeRunSync()
+    assert(result.contains("AgentA"))
+    assert(result.contains("AgentB"))
+    assert(result.contains("AgentC"))
+    assert(result.contains("Nebula"), "Nebula must coexist with custom agents")
 
 end AgentDefSpec
