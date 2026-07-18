@@ -45,9 +45,14 @@ class NeblinkService private (
   peerDescRef: Ref[IO, Map[String, String]],
   serverPort: Int,
   private val syncQueue: Queue[IO, SyncCommand],
-  private val dispatcher: Dispatcher[IO]
+  private val dispatcher: Dispatcher[IO],
+  private val peerRemovalGracePeriod: FiniteDuration = 15.seconds
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink")
+
+  /** Devices scheduled for removal after grace period. Prevents UI flicker from brief WS disconnects. */
+  private val pendingRemovals: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
 
   /** Callbacks fired when a peer goes online/offline. Wired to WsHub.broadcast by GatewayMain. */
   private val peerChangeCallbacks: Ref[IO, List[IO[Unit]]] =
@@ -139,18 +144,37 @@ class NeblinkService private (
   /** Add or update a single peer. Fires callback only when peer is newly discovered. */
   def upsertPeer(peer: PeerInfo): IO[Unit] =
     for
+      _ <- pendingRemovals.update(_ - peer.deviceId)
       isNew <- peersRef.get.map(!_.contains(peer.deviceId))
       finalPeer <- applyDescOverride(peer)
       _ <- peersRef.update(_ + (peer.deviceId -> finalPeer))
       _ <- if isNew then notifyPeersChanged else IO.unit
     yield ()
 
-  /** Remove a peer when its WS presence connection drops. Fires callback. */
+  /** Schedule peer removal after grace period. If peer reconnects before timeout, removal is cancelled. */
   def removePeer(deviceId: String): IO[Unit] =
-    peersRef.get.flatMap { peers =>
-      if peers.contains(deviceId) then peersRef.update(_ - deviceId) *> notifyPeersChanged
+    for
+      alreadyPending <- pendingRemovals.get.map(_.contains(deviceId))
+      hasPeer <- peersRef.get.map(_.contains(deviceId))
+      _ <- if !alreadyPending && hasPeer then
+        for
+          _ <- pendingRemovals.update(_ + deviceId)
+          _ <- (IO.sleep(peerRemovalGracePeriod) *>
+            pendingRemovals.modify { pending =>
+              if pending.contains(deviceId) then (pending - deviceId, true)
+              else (pending, false)
+            }.flatMap { shouldRemove =>
+              if shouldRemove then
+                peersRef.modify { peers =>
+                  (peers - deviceId, peers.contains(deviceId))
+                }.flatMap { wasPresent =>
+                  if wasPresent then notifyPeersChanged else IO.unit
+                }
+              else IO.unit
+            }).start.void
+        yield ()
       else IO.unit
-    }
+    yield ()
 
   /**
    * Add or update a single peer from an announce push.
@@ -170,6 +194,7 @@ class NeblinkService private (
           capabilities = info.capabilities
         )
         for
+          _ <- pendingRemovals.update(_ - info.deviceId)
           finalPeer <- applyDescOverride(peer)
           _ <- peersRef.update(_ + (info.deviceId -> finalPeer))
           _ <- logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
@@ -199,6 +224,7 @@ class NeblinkService private (
     val address = s"http://$callerIp:$port"
     val peer = PeerInfo(deviceId, deviceName, platform, address, callerSecret)
     for
+      _ <- pendingRemovals.update(_ - deviceId)
       finalPeer <- applyDescOverride(peer)
       _ <- peersRef.update(_ + (deviceId -> finalPeer))
       _ <- logger.info(s"Peer joined: $deviceName at $address")
@@ -323,6 +349,21 @@ object NeblinkService:
     serverPort: Int = 8080,
     dispatcher: Dispatcher[IO]
   ): IO[NeblinkService] =
+    createInternal(serverPort, dispatcher, 15.seconds)
+
+  /** Test-only factory with custom grace period. */
+  private[neblink] def createForTest(
+    serverPort: Int,
+    dispatcher: Dispatcher[IO],
+    gracePeriod: FiniteDuration
+  ): IO[NeblinkService] =
+    createInternal(serverPort, dispatcher, gracePeriod)
+
+  private def createInternal(
+    serverPort: Int,
+    dispatcher: Dispatcher[IO],
+    gracePeriod: FiniteDuration
+  ): IO[NeblinkService] =
     for
       identity <- DeviceIdentity.loadOrCreate
       config <- NeblinkConfig.load
@@ -332,7 +373,7 @@ object NeblinkService:
       peersRef <- Ref.of[IO, Map[String, PeerInfo]](Map.empty)
       descRef <- Ref.of[IO, Map[String, String]](peerDescs)
       syncQueue <- Queue.unbounded[IO, SyncCommand]
-      service = new NeblinkService(idRef, cfgRef, peersRef, descRef, serverPort, syncQueue, dispatcher)
+      service = new NeblinkService(idRef, cfgRef, peersRef, descRef, serverPort, syncQueue, dispatcher, gracePeriod)
       // Start sync loop — Tailscale is the trust boundary, no login needed.
       _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
     yield service
