@@ -428,28 +428,22 @@ export async function addFileAttachment(file, callback, target) {
     renderAttachmentPreview(target);
     if (callback) callback();
   } else {
-    // Non-image: read once as ArrayBuffer, derive both hash and base64
-    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-    if (file.size > MAX_FILE_SIZE) {
-      showAttError('File too large (max 50MB): ' + file.name, target);
-      return;
-    }
+    // Non-image: only send metadata (name + size + hash) — the backend resolves
+    // the local file path by searching the filesystem. No need to transfer file
+    // content over WebSocket. Hash is computed in a streaming fashion to avoid
+    // loading large files entirely into memory.
     try {
-      const buffer = await file.arrayBuffer();
-      // Compute SHA-256 hash from the same buffer (no second file read)
       let hash = '';
       try {
-        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', file.stream());
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
       } catch (e) {
         console.warn('[input] SHA-256 computation failed:', e);
       }
-      // Convert to base64 from the same buffer
-      const base64Data = arrayBufferToBase64(buffer);
       attachments.push({
         type: 'text', mimeType: file.type || 'application/octet-stream',
-        data: base64Data, name: file.name, hash, size: file.size
+        data: '', name: file.name, hash, size: file.size
       });
       renderAttachmentPreview(target);
       if (callback) callback();

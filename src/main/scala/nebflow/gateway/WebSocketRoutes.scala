@@ -1902,8 +1902,11 @@ class WebSocketRoutes(
                     val hash = att.hcursor.downField("hash").as[String].getOrElse("")
                     val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
                     if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
-                    else if data.nonEmpty then
-                      // Try to find the file locally by name + size + hash
+                    else if mimeType.startsWith("image/") then
+                      // Image without data — cannot process
+                      blocks += ContentBlock.Text(s"[image: $name (无数据)]")
+                    else
+                      // Non-image: try to find the file locally by name + size + hash
                       // Search priority: project root → common user dirs → full home
                       val home = os.home.toString
                       val commonDirs = List("Downloads", "Desktop", "Documents")
@@ -1917,8 +1920,8 @@ class WebSocketRoutes(
                           savedPaths(attIdx) = path
                           blocks += ContentBlock.Text(s"[用户附加文件: $path]")
                           logger.info(s"Attachment '$name' resolved to local file: $path")
-                        case None =>
-                          // Fallback: save file to disk, send path reference to LLM
+                        case None if data.nonEmpty =>
+                          // Fallback: save uploaded content to disk, send path reference to LLM
                           val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
                           try
                             os.makeDir.all(uploadDir)
@@ -1940,6 +1943,11 @@ class WebSocketRoutes(
                               logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
                               blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
                           end try
+                        case None =>
+                          // No data and not found locally — tell the LLM the file name so it can
+                          // use Read/Grep tools to locate it.
+                          logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
+                          blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
                       end match
                     end if
                   }
