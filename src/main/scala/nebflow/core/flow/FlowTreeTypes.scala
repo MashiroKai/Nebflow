@@ -14,11 +14,12 @@ enum RestartPolicy:
 
 object RestartPolicy:
   given Encoder[RestartPolicy] = Encoder.encodeString.contramap(_.toString.toLowerCase)
+
   given Decoder[RestartPolicy] = Decoder.decodeString.emap {
-    case "permanent"  => Right(Permanent)
-    case "transient"  => Right(Transient)
-    case "temporary"  => Right(Temporary)
-    case other        => Left(s"Unknown restart policy: $other")
+    case "permanent" => Right(Permanent)
+    case "transient" => Right(Transient)
+    case "temporary" => Right(Temporary)
+    case other => Left(s"Unknown restart policy: $other")
   }
 
 // ============================================================
@@ -28,23 +29,27 @@ object RestartPolicy:
 /** A step in a pipeline. Either an atomic agent task or a nested flow reference. */
 case class PipelineStep(
   id: String,
-  agent: Option[String] = None,        // atomic: agent name
-  prompt: Option[String] = None,       // atomic: task prompt
-  flow: Option[String] = None,         // nested: flow definition name
+  agent: Option[String] = None, // atomic: agent name
+  prompt: Option[String] = None, // atomic: task prompt
+  flow: Option[String] = None, // nested: flow definition name
   dependsOn: Set[String] = Set.empty,
   retry: Int = 2,
   timeoutSeconds: Int = 1800
 ):
+
   require(
     (agent.isDefined && prompt.isDefined && flow.isEmpty) ||
-    (agent.isEmpty && prompt.isEmpty && flow.isDefined),
+      (agent.isEmpty && prompt.isEmpty && flow.isDefined),
     s"Step '$id' must have either (agent + prompt) or flow, not both/neither"
   )
 
   def isNested: Boolean = flow.isDefined
   def timeout: FiniteDuration = timeoutSeconds.seconds
 
+end PipelineStep
+
 object PipelineStep:
+
   given Encoder[PipelineStep] = Encoder.instance { s =>
     val base = Json.obj(
       "id" -> s.id.asJson,
@@ -69,13 +74,17 @@ object PipelineStep:
       timeoutS <- c.downField("timeoutSeconds").as[Option[Int]]
     yield
       val validated = PipelineStep(
-        id, agent, prompt, flow,
+        id,
+        agent,
+        prompt,
+        flow,
         deps.getOrElse(Nil).toSet,
         retry.getOrElse(2),
         timeoutS.getOrElse(1800)
       )
       validated
   }
+end PipelineStep
 
 // ============================================================
 // Verify Step (reused from existing — standalone, no FlowStep dependency)
@@ -89,6 +98,7 @@ case class VerifyStep(
   def timeout: FiniteDuration = timeoutSeconds.seconds
 
 object VerifyStep:
+
   given Encoder[VerifyStep] = Encoder.instance { v =>
     Json.obj(
       "agent" -> v.agent.asJson,
@@ -96,6 +106,7 @@ object VerifyStep:
       "timeoutSeconds" -> v.timeoutSeconds.asJson
     )
   }
+
   given Decoder[VerifyStep] = Decoder.instance { c =>
     for
       agent <- c.downField("agent").as[Option[String]]
@@ -103,6 +114,7 @@ object VerifyStep:
       timeoutS <- c.downField("timeoutSeconds").as[Option[Int]]
     yield VerifyStep(agent.getOrElse("Explorer"), prompt, timeoutS.getOrElse(1800))
   }
+end VerifyStep
 
 // ============================================================
 // Loop Config (replaces LoopDef — uses PipelineStep for fix)
@@ -114,12 +126,14 @@ case class LoopConfig(
 )
 
 object LoopConfig:
+
   given Encoder[LoopConfig] = Encoder.instance { l =>
     Json.obj(
       "fix" -> l.fix.asJson,
       "maxIterations" -> l.maxIterations.asJson
     )
   }
+
   given Decoder[LoopConfig] = Decoder.instance { c =>
     for
       fix <- c.downField("fix").as[PipelineStep]
@@ -138,15 +152,17 @@ object ReactorAction:
   case class MountFlow(flowName: String) extends ReactorAction
 
   given Encoder[ReactorAction] = Encoder.instance {
-    case RunAgent(agent, prompt) => Json.obj(
-      "type" -> "runAgent".asJson,
-      "agent" -> agent.asJson,
-      "prompt" -> prompt.asJson
-    )
-    case MountFlow(flowName) => Json.obj(
-      "type" -> "mountFlow".asJson,
-      "flowName" -> flowName.asJson
-    )
+    case RunAgent(agent, prompt) =>
+      Json.obj(
+        "type" -> "runAgent".asJson,
+        "agent" -> agent.asJson,
+        "prompt" -> prompt.asJson
+      )
+    case MountFlow(flowName) =>
+      Json.obj(
+        "type" -> "mountFlow".asJson,
+        "flowName" -> flowName.asJson
+      )
   }
 
   given Decoder[ReactorAction] = Decoder.instance { c =>
@@ -161,6 +177,7 @@ object ReactorAction:
       case other => Left(io.circe.DecodingFailure(s"Unknown reactor action type: $other", c.history))
     }
   }
+end ReactorAction
 
 // ============================================================
 // Branch Type (discriminated union for the four branch kinds)
@@ -170,6 +187,7 @@ sealed trait BranchType:
   def typeName: String
 
 object BranchType:
+
   case class Daemon(agent: String, prompt: String, persistent: Boolean = false) extends BranchType:
     def typeName = "daemon"
 
@@ -192,30 +210,34 @@ object BranchType:
     def typeName = "source"
 
   given Encoder[BranchType] = Encoder.instance {
-    case d: Daemon => Json.obj(
-      "type" -> "daemon".asJson,
-      "agent" -> d.agent.asJson,
-      "prompt" -> d.prompt.asJson,
-      "persistent" -> d.persistent.asJson
-    )
-    case p: Pipeline => Json.obj(
-      "type" -> "pipeline".asJson,
-      "steps" -> p.steps.asJson,
-      "verify" -> p.verify.asJson,
-      "loop" -> p.loop.asJson,
-      "maxConcurrency" -> p.maxConcurrency.asJson
-    )
-    case r: Reactor => Json.obj(
-      "type" -> "reactor".asJson,
-      "subscribe" -> r.subscribe.toList.asJson,
-      "filter" -> r.filter.asJson,
-      "action" -> r.action.asJson
-    )
-    case s: Source => Json.obj(
-      "type" -> "source".asJson,
-      "command" -> s.command.asJson,
-      "restart" -> s.restart.asJson
-    )
+    case d: Daemon =>
+      Json.obj(
+        "type" -> "daemon".asJson,
+        "agent" -> d.agent.asJson,
+        "prompt" -> d.prompt.asJson,
+        "persistent" -> d.persistent.asJson
+      )
+    case p: Pipeline =>
+      Json.obj(
+        "type" -> "pipeline".asJson,
+        "steps" -> p.steps.asJson,
+        "verify" -> p.verify.asJson,
+        "loop" -> p.loop.asJson,
+        "maxConcurrency" -> p.maxConcurrency.asJson
+      )
+    case r: Reactor =>
+      Json.obj(
+        "type" -> "reactor".asJson,
+        "subscribe" -> r.subscribe.toList.asJson,
+        "filter" -> r.filter.asJson,
+        "action" -> r.action.asJson
+      )
+    case s: Source =>
+      Json.obj(
+        "type" -> "source".asJson,
+        "command" -> s.command.asJson,
+        "restart" -> s.restart.asJson
+      )
   }
 
   given Decoder[BranchType] = Decoder.instance { c =>
@@ -247,6 +269,7 @@ object BranchType:
       case other => Left(io.circe.DecodingFailure(s"Unknown branch type: $other", c.history))
     }
   }
+end BranchType
 
 // ============================================================
 // Flow Definition (top-level YAML definition)
@@ -259,13 +282,14 @@ case class FlowDef(
 )
 
 object FlowDef:
+
   given Encoder[FlowDef] = Encoder.instance { f =>
-    Json.obj(
-      "name" -> f.name.asJson,
-      "maxDepth" -> f.maxDepth.asJson
-    ).deepMerge(f.branchType.asJson.asObject.fold(Json.obj())(jo =>
-      Json.obj("branch" -> jo.toJson)
-    ))
+    Json
+      .obj(
+        "name" -> f.name.asJson,
+        "maxDepth" -> f.maxDepth.asJson
+      )
+      .deepMerge(f.branchType.asJson.asObject.fold(Json.obj())(jo => Json.obj("branch" -> jo.toJson)))
   }
 
   // FlowDef is parsed from YAML, not persisted directly.
@@ -280,29 +304,31 @@ enum BranchPhase:
 
 object BranchPhase:
   given Encoder[BranchPhase] = Encoder.encodeString.contramap(_.toString)
+
   given Decoder[BranchPhase] = Decoder.decodeString.emap { s =>
     BranchPhase.values.find(_.toString == s).toRight(s"Unknown phase: $s")
   }
 
 /** Persistable branch state (excludes runtime ActorRef / Process refs). */
 case class BranchState(
-  name: String,                                    // unique instance name
-  address: String,                                 // ActorRef path for Mail routing
+  name: String, // unique instance name
+  address: String, // ActorRef path for Mail routing
   branchType: BranchType,
   phase: BranchPhase,
   parentBranch: Option[String] = None,
   // Pipeline runtime state
-  stepStatus: Map[String, String] = Map.empty,     // stepId → "Pending"/"Running"/"Done"/"Failed"
-  results: Map[String, String] = Map.empty,        // stepId → output text
+  stepStatus: Map[String, String] = Map.empty, // stepId → "Pending"/"Running"/"Done"/"Failed"
+  results: Map[String, String] = Map.empty, // stepId → output text
   failedReasons: Map[String, String] = Map.empty,
   retryLeft: Map[String, Int] = Map.empty,
   verifyResult: Option[String] = None,
   iteration: Int = 0,
   // Tree structure
-  children: Map[String, String] = Map.empty        // childName → childBranchName
+  children: Map[String, String] = Map.empty // childName → childBranchName
 )
 
 object BranchState:
+
   given Encoder[BranchState] = Encoder.instance { s =>
     Json.obj(
       "name" -> s.name.asJson,
@@ -335,7 +361,11 @@ object BranchState:
       iteration <- c.downField("iteration").as[Option[Int]]
       children <- c.downField("children").as[Option[Map[String, String]]]
     yield BranchState(
-      name, address, branchType, phase, parentBranch,
+      name,
+      address,
+      branchType,
+      phase,
+      parentBranch,
       stepStatus.getOrElse(Map.empty),
       results.getOrElse(Map.empty),
       failedReasons.getOrElse(Map.empty),
@@ -345,6 +375,7 @@ object BranchState:
       children.getOrElse(Map.empty)
     )
   }
+end BranchState
 
 // ============================================================
 // Flow Tree Snapshot (whole-tree persistence)
@@ -356,12 +387,14 @@ case class FlowTreeSnapshot(
 )
 
 object FlowTreeSnapshot:
+
   given Encoder[FlowTreeSnapshot] = Encoder.instance { s =>
     Json.obj(
       "sessionId" -> s.sessionId.asJson,
       "branches" -> s.branches.asJson
     )
   }
+
   given Decoder[FlowTreeSnapshot] = Decoder.instance { c =>
     for
       sessionId <- c.downField("sessionId").as[String]
@@ -388,6 +421,7 @@ object MountResult:
 sealed trait TreeCommand
 
 object TreeCommand:
+
   // Mount management
   case class MountBranch(
     defn: FlowDef,

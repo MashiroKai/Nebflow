@@ -66,8 +66,7 @@ class AgentLibrary(
     val diskAgents = scanDisk()
 
     // Ensure Nebula always exists (system survival guarantee)
-    if diskAgents.contains(Seeds.Nebula.name) then
-      diskAgents
+    if diskAgents.contains(Seeds.Nebula.name) then diskAgents
     else
       logger.warn("Nebula not found on disk — using code fallback")
       diskAgents + (Seeds.Nebula.name -> Seeds.Nebula.toAgentDef)
@@ -100,25 +99,31 @@ class AgentLibrary(
   private def scanDisk(): Map[String, AgentDef] =
     if !os.exists(agentsDir) then Map.empty
     else
-      os.list(agentsDir).filter(os.isDir).flatMap { dir =>
-        val jsonPath = dir / "agent.json"
-        if !os.exists(jsonPath) then None
-        else
-          parseAgentJson(jsonPath) match
-            case Some(j) =>
-              val prompt = readSystemMd(dir / "system.md")
-              Some(j.name -> AgentDef(
-                name = j.name,
-                description = j.description.getOrElse(""),
-                tools = j.tools,
-                systemPrompt = prompt,
-                avatar = j.avatar,
-                displayName = j.displayName
-              ))
-            case None =>
-              logger.warn(s"Skipping invalid or unreadable: ${jsonPath.toString}")
-              None
-      }.toMap
+      os.list(agentsDir)
+        .filter(os.isDir)
+        .flatMap { dir =>
+          val jsonPath = dir / "agent.json"
+          if !os.exists(jsonPath) then None
+          else
+            parseAgentJson(jsonPath) match
+              case Some(j) =>
+                val prompt = readSystemMd(dir / "system.md")
+                Some(
+                  j.name -> AgentDef(
+                    name = j.name,
+                    description = j.description.getOrElse(""),
+                    tools = j.tools,
+                    systemPrompt = prompt,
+                    avatar = j.avatar,
+                    displayName = j.displayName
+                  )
+                )
+              case None =>
+                logger.warn(s"Skipping invalid or unreadable: ${jsonPath.toString}")
+                None
+          end if
+        }
+        .toMap
 
   private def parseAgentJson(path: os.Path): Option[AgentJson] =
     for
@@ -147,6 +152,7 @@ private case class AgentJson(
 )
 
 private object AgentJson:
+
   given Decoder[AgentJson] = Decoder.instance { c =>
     for
       name <- c.downField("name").as[String]
@@ -159,14 +165,17 @@ private object AgentJson:
   }
 
   given Encoder[AgentJson] = Encoder.instance { j =>
-    Json.obj(
-      "name" -> j.name.asJson,
-      "displayName" -> j.displayName.asJson,
-      "description" -> j.description.asJson,
-      "tools" -> j.tools.asJson,
-      "mcpServers" -> j.mcpServers.asJson
-    ).deepMerge(j.avatar.map(a => Json.obj("avatar" -> a.asJson)).getOrElse(Json.obj()))
+    Json
+      .obj(
+        "name" -> j.name.asJson,
+        "displayName" -> j.displayName.asJson,
+        "description" -> j.description.asJson,
+        "tools" -> j.tools.asJson,
+        "mcpServers" -> j.mcpServers.asJson
+      )
+      .deepMerge(j.avatar.map(a => Json.obj("avatar" -> a.asJson)).getOrElse(Json.obj()))
   }
+end AgentJson
 
 // ============================================================
 // Seed definitions (for initial install + Nebula fallback)
@@ -179,6 +188,7 @@ private case class SeedAgent(
   tools: List[String],
   systemPrompt: String
 ):
+
   def toAgentDef: AgentDef = AgentDef(
     name = name,
     description = description,
@@ -191,7 +201,10 @@ private case class SeedAgent(
     val agentJson = AgentJson(name, displayName, Some(description), tools, None, None)
     agentJson.asJson.noSpaces
 
+end SeedAgent
+
 private object Seeds:
+
   val Nebula = SeedAgent(
     "Nebula",
     Some("Nebula"),

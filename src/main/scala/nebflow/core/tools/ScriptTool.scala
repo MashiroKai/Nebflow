@@ -41,7 +41,9 @@ class ScriptTool(config: ExternalToolConfig) extends Tool:
           val stderr = resource(Source.fromInputStream(process.getErrorStream, "UTF-8"))(_.mkString)
           Left(ToolError(stderr))
       }.handleError(e => Left(ToolError(s"Script execution failed: ${e.getMessage}")))
+  end call
 
   def summarize(input: JsonObject): String = s"${config.name}(...)"
 
   def summarizeResult(input: JsonObject, result: String): String = s"${config.name} completed"
+end ScriptTool

@@ -18,11 +18,16 @@ class AgentDefSpec extends CatsEffectSuite:
     val tmpDir = os.temp.dir()
     val customDir = tmpDir / "CustomAgent"
     os.makeDir.all(customDir)
-    os.write.over(customDir / "agent.json", Json.obj(
-      "name" -> "CustomAgent".asJson,
-      "description" -> "A test agent".asJson,
-      "tools" -> List("Read", "Grep").asJson
-    ).noSpaces)
+    os.write.over(
+      customDir / "agent.json",
+      Json
+        .obj(
+          "name" -> "CustomAgent".asJson,
+          "description" -> "A test agent".asJson,
+          "tools" -> List("Read", "Grep").asJson
+        )
+        .noSpaces
+    )
     os.write.over(customDir / "system.md", "You are a custom agent.")
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
@@ -45,10 +50,15 @@ class AgentDefSpec extends CatsEffectSuite:
     // First seed
     lib.seedDefaults().unsafeRunSync()
     // User customizes agent.json
-    os.write.over(tmpDir / "Nebula" / "agent.json", Json.obj(
-      "name" -> "Nebula".asJson,
-      "tools" -> List("Read").asJson
-    ).noSpaces)
+    os.write.over(
+      tmpDir / "Nebula" / "agent.json",
+      Json
+        .obj(
+          "name" -> "Nebula".asJson,
+          "tools" -> List("Read").asJson
+        )
+        .noSpaces
+    )
     // Second seed — should NOT overwrite
     lib.seedDefaults().unsafeRunSync()
     val result = lib.loadAll().unsafeRunSync()
@@ -95,10 +105,15 @@ class AgentDefSpec extends CatsEffectSuite:
     for name <- List("AgentA", "AgentB", "AgentC") do
       val dir = tmpDir / name
       os.makeDir.all(dir)
-      os.write.over(dir / "agent.json", Json.obj(
-        "name" -> name.asJson,
-        "tools" -> List("Read").asJson
-      ).noSpaces)
+      os.write.over(
+        dir / "agent.json",
+        Json
+          .obj(
+            "name" -> name.asJson,
+            "tools" -> List("Read").asJson
+          )
+          .noSpaces
+      )
     val lib = new AgentLibrary(tmpDir, None)
     val result = lib.loadAll().unsafeRunSync()
     assert(result.contains("AgentA"))

@@ -592,9 +592,10 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
-  /** Clear all per-session model overrides. Called at startup so every session
-    * follows the global fallback order after a restart.
-    */
+  /**
+   * Clear all per-session model overrides. Called at startup so every session
+   * follows the global fallback order after a restart.
+   */
   def clearAllSessionModels(): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map(_.copy(modelRef = None))

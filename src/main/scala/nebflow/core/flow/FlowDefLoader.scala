@@ -29,8 +29,7 @@ object FlowDefLoader:
   def loadAll(): IO[Map[String, FlowDef]] =
     for
       files <- IO.blocking {
-        if os.exists(flowsDir) then
-          os.list(flowsDir).toArray.toList.filter(_.last.endsWith(".yaml"))
+        if os.exists(flowsDir) then os.list(flowsDir).toArray.toList.filter(_.last.endsWith(".yaml"))
         else Nil
       }
       results <- files.traverse { file =>
@@ -42,9 +41,9 @@ object FlowDefLoader:
   /** Parse a YAML string into a FlowDef (pure, no I/O). */
   def parse(yaml: String): Either[String, FlowDef] =
     for
-      json       <- yamlParser.parse(yaml).left.map(e => s"YAML parse error: ${e.message}")
-      name       <- json.hcursor.downField("name").as[String].left.map(e => s"Invalid 'name': ${e.message}")
-      maxDepth   <- json.hcursor.downField("maxDepth").as[Option[Int]].left.map(e => s"Invalid 'maxDepth': ${e.message}")
+      json <- yamlParser.parse(yaml).left.map(e => s"YAML parse error: ${e.message}")
+      name <- json.hcursor.downField("name").as[String].left.map(e => s"Invalid 'name': ${e.message}")
+      maxDepth <- json.hcursor.downField("maxDepth").as[Option[Int]].left.map(e => s"Invalid 'maxDepth': ${e.message}")
       branchType <- json.as[BranchType].left.map(e => s"BranchType decode error: ${e.message}")
     yield FlowDef(name, branchType, maxDepth.getOrElse(5))
 

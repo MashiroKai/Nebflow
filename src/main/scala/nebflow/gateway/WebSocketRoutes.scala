@@ -170,6 +170,8 @@ class WebSocketRoutes(
       _ = logger.info(s"FlowTreeActor created for session $sessionId")
     yield ()
 
+  end initFlowTree
+
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
     FlowTreeRegistry.unregister(sessionId) *>
