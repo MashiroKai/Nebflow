@@ -2031,9 +2031,9 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
     'auto-all': '安全模式：全部放行 (无需确认)',
   };
   const LABELS = {
-    'confirm-edits': '安全',
+    'confirm-edits': '需要确认',
     'auto-edits': '编辑放行',
-    'auto-all': '全放行',
+    'auto-all': '全部放行',
   };
 
   state.updateSafetyToggle = function(view) {
