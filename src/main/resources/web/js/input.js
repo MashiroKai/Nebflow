@@ -430,12 +430,12 @@ export async function addFileAttachment(file, callback, target) {
   } else {
     // Non-image: only send metadata (name + size + hash) — the backend resolves
     // the local file path by searching the filesystem. No need to transfer file
-    // content over WebSocket. Hash is computed in a streaming fashion to avoid
-    // loading large files entirely into memory.
+    // content over WebSocket.
     try {
       let hash = '';
       try {
-        const hashBuffer = await crypto.subtle.digest('SHA-256', file.stream());
+        const buffer = await file.arrayBuffer();
+        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
       } catch (e) {
