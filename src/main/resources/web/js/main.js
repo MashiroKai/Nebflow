@@ -2027,8 +2027,13 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
   const MODES = ['confirm-edits', 'auto-edits', 'auto-all'];
   const TITLES = {
     'confirm-edits': '安全模式：确认编辑 (Write/Edit/Bash 需确认)',
-    'auto-edits': '安全模式：放行编辑 (仅 Bash 需确认)',
+    'auto-edits': '安全模式：编辑放行 (仅 Bash 需确认)',
     'auto-all': '安全模式：全部放行 (无需确认)',
+  };
+  const LABELS = {
+    'confirm-edits': '安全',
+    'auto-edits': '编辑放行',
+    'auto-all': '全放行',
   };
 
   state.updateSafetyToggle = function(view) {
@@ -2039,6 +2044,11 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
     if (btn) {
       const badge = btn.querySelector('.bypass-badge');
       if (badge) badge.setAttribute('data-mode', mode);
+      const label = btn.querySelector('.bypass-label');
+      if (label) {
+        label.setAttribute('data-mode', mode);
+        label.textContent = LABELS[mode] || LABELS['confirm-edits'];
+      }
       btn.title = TITLES[mode] || TITLES['confirm-edits'];
     }
   };
