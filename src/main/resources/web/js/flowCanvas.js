@@ -302,7 +302,6 @@ export function startFlow(msg) {
     </div>`);
   showCanvasHeader(false);
   openCanvas('');
-  document.getElementById('flow-toggle-btn')?.classList.remove('hidden');
   document.getElementById('flow-toggle-btn')?.classList.add('active');
 
   // Position nodes
@@ -399,12 +398,25 @@ export function closeFlow() {
   if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
   closeCanvas();
   flowData = null;
-  document.getElementById('flow-toggle-btn')?.classList.add('hidden');
   document.getElementById('flow-toggle-btn')?.classList.remove('active');
 }
 
 export function toggleCanvas() {
-  if (!flowData) return;
+  if (!flowData) {
+    // No flow running — open canvas with empty state
+    setCanvasContent(`${FLOW_CSS}
+      <div class="flow-root">
+        <div class="flow-info">
+          <div>No active flow</div>
+          <div class="sub">Mount a flow to see the visualization</div>
+        </div>
+      </div>`);
+    showCanvasHeader(false);
+    openCanvas('');
+    const btn = document.getElementById('flow-toggle-btn');
+    btn?.classList.add('active');
+    return;
+  }
   const isOpen = document.body.classList.contains('canvas-open');
   const btn = document.getElementById('flow-toggle-btn');
   if (isOpen) {
