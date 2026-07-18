@@ -337,8 +337,8 @@ final class ShellSession private (
 
   private val SleepCommandRe = """\bsleep\s+\d+""".r
 
-  /** Grace period before checking if a quiet process is stuck. */
-  private val StuckDetectionGracePeriod: FiniteDuration = 12.seconds
+  /** Grace period before checking if a quiet background process is stuck. */
+  private val StuckDetectionGracePeriod: FiniteDuration = 30.seconds
 
   /** CPU sampling window to distinguish slow builds from idle prompts. */
   private val CpuSampleInterval: FiniteDuration = 2.seconds
@@ -454,17 +454,20 @@ final class ShellSession private (
         proc.exitValue()
       }
 
-      // ── Stuck process detection ──────────────────────────────────────
-      // If a foreground command produces no output within a grace period,
-      // it MAY be waiting for terminal input (ssh, sudo, telnet…). But it
-      // could also be a slow-starting build tool (sbt, mvn, cargo) that
-      // hasn't printed anything yet. We distinguish the two by checking
-      // CPU activity: a stuck prompt is idle; a building process is not.
+      // ── Stuck process detection (background tasks only) ──────────────
+      // Foreground commands are managed by auto-background (30s threshold):
+      // if still running, they move to background and the agent continues.
+      // No need to kill them — auto-background is the safety net.
+      //
+      // Background tasks have no time limit, so a command waiting for stdin
+      // (ssh, sudo, telnet…) would hang forever. After the grace period
+      // (30s), if the process has zero output AND zero CPU activity, we
+      // kill it with an informative error so the LLM can retry differently.
       //
       // Sleep-like commands are excluded — they legitimately produce no
       // output while their timer runs.
       val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
-      val enableStuckDetection = !isBackground && !isSleepLike && timeout > StuckDetectionGracePeriod
+      val enableStuckDetection = isBackground && !isSleepLike
 
       for
         stuckFlag <- IO.ref(false)
