@@ -388,7 +388,7 @@ class WebSocketRoutes(
       StaticFile.fromResource(s"web/vendor/fonts/$file", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / fileName =>
-      val allowed = Set("style.css", "app.js")
+      val allowed = Set("style.css", "app.js", "favicon.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
       if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
       else NotFound()
 
