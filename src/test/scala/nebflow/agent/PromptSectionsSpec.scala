@@ -22,6 +22,16 @@ class PromptSectionsSpec extends munit.FunSuite:
     val blocks = buildConditionalBlocks(subAgentCtx)
     assert(!blocks.contains("## Asking the User"))
 
+  test("Read live-update section included when Read tool is available"):
+    val ctx = PromptContext(availableTools = Set("Read", "Write"))
+    val blocks = buildConditionalBlocks(ctx)
+    assert(blocks.contains("## Read Tool — Live Results"), "Read section should be included when Read tool is available")
+
+  test("Read live-update section excluded when Read tool is missing"):
+    val ctx = PromptContext(availableTools = Set("Write", "Grep"))
+    val blocks = buildConditionalBlocks(ctx)
+    assert(!blocks.contains("## Read Tool"), "Read section should NOT be included when Read tool is missing")
+
   // ============================================================
   // Feature-flag sections
   // ============================================================
@@ -100,7 +110,7 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   test("sections are ordered correctly"):
     val ctx = PromptContext(
-      availableTools = Set("AskUserQuestion"),
+      availableTools = Set("AskUserQuestion", "Read"),
       voiceEnabled = true,
       envInfo = "## Environment",
       deviceInfo = "device-list",
@@ -114,6 +124,7 @@ class PromptSectionsSpec extends munit.FunSuite:
     val blocks = buildConditionalBlocks(ctx)
     val envIdx = blocks.indexOf("## Environment")
     val askIdx = blocks.indexOf("## Asking the User")
+    val readIdx = blocks.indexOf("## Read Tool")
     val voiceIdx = blocks.indexOf("## Voice Output")
     val devicesIdx = blocks.indexOf("# Devices")
     val sessionsIdx = blocks.indexOf("# Active Sessions")
@@ -122,7 +133,8 @@ class PromptSectionsSpec extends munit.FunSuite:
     val rulesIdx = blocks.indexOf("## Project Rules")
 
     assert(envIdx < askIdx, "Environment should come before AskUser")
-    assert(askIdx < voiceIdx, "AskUser should come before Voice")
+    assert(askIdx < readIdx, "AskUser should come before Read")
+    assert(readIdx < voiceIdx, "Read should come before Voice")
     assert(voiceIdx < devicesIdx, "Voice should come before Devices")
     assert(devicesIdx < sessionsIdx, "Devices should come before Sessions")
     assert(sessionsIdx < langIdx, "Sessions should come before Language")
