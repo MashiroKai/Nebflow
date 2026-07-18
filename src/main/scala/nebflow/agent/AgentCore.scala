@@ -355,7 +355,7 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          (if ToolReversibility.isReversible(call.name, call.input) || state.bypass then executeTool(call, callCtx)
+          (if ToolReversibility.isReversible(call.name, call.input, nebflow.core.SafetyMode.fromString(state.safetyMode)) then executeTool(call, callCtx)
            else askUserPermission(call, state, permissionDeferredRef, callCtx))
             .map(r => (call, r))
             .attempt

@@ -37,7 +37,7 @@ object AgentActor extends AgentCore with AgentSession:
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
-    bypass: Boolean = false
+    safetyMode: String = "confirm-edits"
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       logAgentEvent(
@@ -72,7 +72,7 @@ object AgentActor extends AgentCore with AgentSession:
             projectRoot = projectRoot,
             rulesMd = rulesMd,
             folderId = folderId,
-            bypass = bypass
+            safetyMode = safetyMode
           )
         )(using ctx)
       )
@@ -313,8 +313,8 @@ object AgentActor extends AgentCore with AgentSession:
           state.wsSend(permJson).handleErrorWith(_ => IO.unit) *>
             IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
 
-      case AgentCommand.SetBypass(bypass) =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state.withBypass(bypass)))
+      case AgentCommand.SetSafetyMode(mode) =>
+        IO.pure(idle(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))))
 
       case AgentCommand.StartPlan(task) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-start", s"task=${task.take(60)}")
@@ -531,8 +531,8 @@ object AgentActor extends AgentCore with AgentSession:
         for _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
-      case AgentCommand.SetBypass(bypass) =>
-        IO.pure(planWaiting(agentDef, resources, depth, parentRef, state.withBypass(bypass)))
+      case AgentCommand.SetSafetyMode(mode) =>
+        IO.pure(planWaiting(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))))
 
       // Buffer user messages while planning
       case msg: AgentCommand.UserInput =>
@@ -1054,8 +1054,8 @@ object AgentActor extends AgentCore with AgentSession:
             )
 
       // --- Bypass toggled while processing ---
-      case AgentCommand.SetBypass(bypass) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withBypass(bypass), pending))
+      case AgentCommand.SetSafetyMode(mode) =>
+        IO.pure(processing(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)), pending))
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>

@@ -45,7 +45,7 @@ object FlowTreeActor:
     sessionId: Option[String],
     resources: SharedResources,
     projectRoot: String,
-    bypass: Boolean,
+    safetyMode: String,
     gatewayPort: Int = 8080
   )
 
@@ -467,7 +467,7 @@ object FlowTreeActor:
                 fileHistory = Some(fileHistory),
                 contextWindow = cfg.resources.contextWindow,
                 projectRoot = Some(cfg.projectRoot),
-                bypass = cfg.bypass
+                safetyMode = cfg.safetyMode
               ),
               agentUid
             )
@@ -1017,7 +1017,7 @@ object FlowTreeActor:
                 fileHistory = Some(fileHistory),
                 contextWindow = cfg.resources.contextWindow,
                 projectRoot = Some(cfg.projectRoot),
-                bypass = cfg.bypass
+                safetyMode = cfg.safetyMode
               ),
               agentUid
             )
@@ -1082,7 +1082,7 @@ object FlowTreeActor:
                   fileHistory = Some(fileHistory),
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
-                  bypass = cfg.bypass
+                  safetyMode = cfg.safetyMode
                 ),
                 agentUid
               )
@@ -1171,7 +1171,7 @@ object FlowTreeActor:
                 fileHistory = Some(fileHistory),
                 contextWindow = cfg.resources.contextWindow,
                 projectRoot = Some(cfg.projectRoot),
-                bypass = cfg.bypass
+                safetyMode = cfg.safetyMode
               ),
               agentUid
             )
