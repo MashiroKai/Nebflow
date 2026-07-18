@@ -184,18 +184,18 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
         // Create new FlowTreeActor
         (ctx.actorSystem, ctx.sharedResources, ctx.agentActorRef) match
           case (Some(system), Some(resources), Some(parentRef)) =>
-            val bypassIO = ctx.sessionStore match
-              case Some(store) => store.getBypass(sessionId)
-              case None => IO.pure(false)
+            val safetyModeIO = ctx.sessionStore match
+              case Some(store) => store.getSafetyMode(sessionId)
+              case None => IO.pure("confirm-edits")
 
-            bypassIO.flatMap { bypass =>
+            safetyModeIO.flatMap { safetyMode =>
               val config = FlowTreeActor.TreeConfig(
                 parentAgentRef = parentRef,
                 wsSend = ctx.wsSend,
                 sessionId = ctx.sessionId,
                 resources = resources,
                 projectRoot = ctx.projectRoot,
-                bypass = bypass
+                safetyMode = safetyMode
               )
               for
                 ref <- system.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")

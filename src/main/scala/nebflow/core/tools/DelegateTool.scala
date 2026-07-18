@@ -151,11 +151,11 @@ $prompt"""
             case None =>
               IO.pure(Left(ToolError(s"Agent '$agentName' not found in agent library")))
             case Some(agentDef) =>
-              // Query parent session's bypass status so sub-agent inherits it
-              val bypassIO = (ctx.sessionStore, ctx.sessionId) match
-                case (Some(store), Some(sid)) => store.getBypass(sid)
-                case _ => IO.pure(false)
-              bypassIO.flatMap { bypass =>
+              // Query parent session's safety mode so sub-agent inherits it
+              val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
+                case (Some(store), Some(sid)) => store.getSafetyMode(sid)
+                case _ => IO.pure("confirm-edits")
+              safetyModeIO.flatMap { safetyMode =>
                 if lifecycle == "persistent" then
                   spawnPersistent(
                     agentDef = agentDef,
@@ -171,7 +171,7 @@ $prompt"""
                     wsSend = ctx.wsSend,
                     projectRoot = ctx.projectRoot,
                     parentSessionId = ctx.sessionId,
-                    bypass = bypass
+                    safetyMode = safetyMode
                   )
                 else
                   spawnBackground(
@@ -187,7 +187,7 @@ $prompt"""
                     wsSend = ctx.wsSend,
                     projectRoot = ctx.projectRoot,
                     parentSessionId = ctx.sessionId,
-                    bypass = bypass
+                    safetyMode = safetyMode
                   )
               }
           }
@@ -213,7 +213,7 @@ $prompt"""
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
     parentSessionId: Option[String] = None,
-    bypass: Boolean = false
+    safetyMode: String = "confirm-edits"
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
@@ -235,7 +235,7 @@ $prompt"""
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
           projectRoot = Some(projectRoot),
-          bypass = bypass
+          safetyMode = safetyMode
         ),
         subagentId
       )
@@ -318,7 +318,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
     wsSend: Option[io.circe.Json => IO[Unit]],
     projectRoot: String,
     parentSessionId: Option[String] = None,
-    bypass: Boolean = false
+    safetyMode: String = "confirm-edits"
   ): IO[Either[ToolError, String]] =
     for
       readTracker <- ReadTracker.create
@@ -340,7 +340,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           fileHistory = Some(fileHistory),
           contextWindow = resources.contextWindow,
           projectRoot = Some(projectRoot),
-          bypass = bypass
+          safetyMode = safetyMode
         ),
         subagentId
       )
