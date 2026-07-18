@@ -223,6 +223,11 @@ private[agent] trait AgentCore:
             if isCompactTurn || isAskTurn then Nil
             else if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
             else Nil
+          // Maintenance check: every N delegate/flow calls
+          maintenanceMsg =
+            if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
+              List(MaintenanceService.buildReminder(stateForLlm.delegateCount))
+            else Nil
           modelDescs <- if isCompactTurn then IO.pure(Nil) else resources.providerRegistry.getAllModelsDetailed()
           freshTools =
             if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
@@ -230,7 +235,7 @@ private[agent] trait AgentCore:
           patchedMessages <- stateForLlm.liveFileTracker
             .fold(IO.pure(stateForLlm.messages))(_.patchMessages(stateForLlm.messages))
           request = LlmRequest(
-            messages = patchedMessages ++ dynamicMsg,
+            messages = patchedMessages ++ dynamicMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
@@ -284,7 +289,11 @@ private[agent] trait AgentCore:
           resources,
           depth,
           parentRef,
-          stateForLlm.withLastDispatch(Some(LastDispatch(isToolExecution = false)))
+          // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
+          (if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
+             stateForLlm.withLastMaintenanceDelegateCount(stateForLlm.delegateCount)
+           else stateForLlm)
+            .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
         )
 
   protected def pipeToolExecutions(

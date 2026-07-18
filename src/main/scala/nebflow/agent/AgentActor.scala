@@ -717,10 +717,19 @@ object AgentActor extends AgentCore with AgentSession:
           )
         else Nil
         val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ eventMessages ++ immediateMessages
+        // Increment delegate count for Delegate/MountFlow calls
+        val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "MountFlow")
+        val newDelegateCount = state.delegateCount + delegateIncrement
         val updatedState =
           state.copy(execution =
             state.execution
-              .copy(messages = newMessages, interaction = None, pendingEvents = Nil, pendingImmediateInputs = Nil)
+              .copy(
+                messages = newMessages,
+                interaction = None,
+                pendingEvents = Nil,
+                pendingImmediateInputs = Nil,
+                delegateCount = newDelegateCount
+              )
           )
         for
           _ <- ctx.forkTurn(
