@@ -18,6 +18,10 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
+  /** Full endpoint URL: use base as-is if it already points to /v1/messages, otherwise append. */
+  private val endpoint =
+    if base.endsWith("/v1/messages") then base else s"$base/v1/messages"
+
   // Holds (inputTokens, cacheReadTokens, cacheCreationTokens) from message_start
   private case class Tokens(input: Int, cacheRead: Option[Int], cacheWrite: Option[Int])
 
@@ -171,7 +175,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
       case _ => bodyWithThinking
 
     val request = basicRequest
-      .post(uri"$base/v1/messages")
+      .post(uri"$endpoint")
       .header("x-api-key", apiKey)
       .header("anthropic-version", "2023-06-01")
       .header("content-type", "application/json")
@@ -258,7 +262,7 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
     Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
       Stream.eval(IO.ref(Tokens(0, None, None))).flatMap { tokenRef =>
         val request = basicRequest
-          .post(uri"$base/v1/messages")
+          .post(uri"$endpoint")
           .header("x-api-key", apiKey)
           .header("anthropic-version", "2023-06-01")
           .header("content-type", "application/json")
