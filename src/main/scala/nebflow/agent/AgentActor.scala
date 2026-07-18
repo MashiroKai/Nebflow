@@ -37,7 +37,8 @@ object AgentActor extends AgentCore with AgentSession:
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
-    safetyMode: String = "confirm-edits"
+    safetyMode: String = "confirm-edits",
+    gitBranch: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       logAgentEvent(
@@ -72,7 +73,8 @@ object AgentActor extends AgentCore with AgentSession:
             projectRoot = projectRoot,
             rulesMd = rulesMd,
             folderId = folderId,
-            safetyMode = safetyMode
+            safetyMode = safetyMode,
+            gitBranch = gitBranch
           )
         )(using ctx)
       )

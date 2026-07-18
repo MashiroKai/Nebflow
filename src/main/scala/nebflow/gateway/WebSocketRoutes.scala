@@ -122,13 +122,16 @@ class WebSocketRoutes(
                 contextWindow = contextWindow,
                 projectRoot = effectiveProjectRoot,
                 rulesMd = resolvedRules,
-                folderId = folderId
+                folderId = folderId,
+                safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits"),
+                gitBranch = metaOpt.flatMap(_.gitBranch)
               ),
               s"agent-$sessionId"
             )
             pr = effectiveProjectRoot.getOrElse("")
-          yield (ref, pr)
-          agentIo.flatMap { case (ref, pr) =>
+            safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits")
+          yield (ref, pr, safetyMode)
+          agentIo.flatMap { case (ref, pr, safetyMode) =>
             val hookCtx = nebflow.core.hooks.HookContext(
               sessionId = Some(sessionId),
               projectRoot = pr,
@@ -144,7 +147,7 @@ class WebSocketRoutes(
               }
               .void *>
               rootAgents.update(_ + (sessionId -> ref)) *>
-              initFlowTree(sessionId, ref, pr).start.as(ref)
+              initFlowTree(sessionId, ref, pr, safetyMode).start.as(ref)
           }
     }
 
@@ -152,9 +155,9 @@ class WebSocketRoutes(
   private def initFlowTree(
     sessionId: String,
     agentRef: nebflow.actor.ActorRef[AgentCommand],
-    projectRoot: String
+    projectRoot: String,
+    safetyMode: String = "confirm-edits"
   ): IO[Unit] =
-    val safetyMode = "confirm-edits" // TODO: get from session
     val config = FlowTreeActor.TreeConfig(
       parentAgentRef = agentRef,
       wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),

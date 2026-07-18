@@ -210,7 +210,14 @@ private[agent] trait AgentCore:
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
           reminders = SystemReminders.collectAll(isUserTurn)
           _ <- turnCtx.branchChange match
-            case Some(_) => ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
+            case Some(_) =>
+              ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
+              // Persist git branch change so it survives restarts
+              stateForLlm.sessionId.traverse_(sid =>
+                resources.sessionStore.updateGitBranch(sid, turnCtx.currentBranch)
+                  .handleErrorWith(e =>
+                    IO(NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}")))
+              )
             case None =>
               IO.whenA(turnCtx.currentBranch != stateForLlm.gitBranch)(
                 ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
