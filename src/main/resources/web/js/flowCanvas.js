@@ -406,8 +406,16 @@ export function closeFlow() {
 }
 
 export function toggleCanvas() {
+  const isOpen = document.body.classList.contains('canvas-open');
+  const btn = document.getElementById('flow-toggle-btn');
+
+  if (isOpen) {
+    closeCanvas();
+    btn?.classList.remove('active');
+    return;
+  }
+
   if (!flowData) {
-    // No flow running — open canvas with empty state
     setCanvasContent(`${FLOW_CSS}
       <div class="flow-root">
         <div class="flow-info">
@@ -417,28 +425,20 @@ export function toggleCanvas() {
       </div>`);
     showCanvasHeader(false);
     openCanvas('');
-    const btn = document.getElementById('flow-toggle-btn');
     btn?.classList.add('active');
     return;
   }
-  const isOpen = document.body.classList.contains('canvas-open');
-  const btn = document.getElementById('flow-toggle-btn');
-  if (isOpen) {
-    closeCanvas();
-    btn?.classList.remove('active');
-  } else {
-    // Re-render content and open
-    const nodesHtml = flowData.nodes.map(n =>
-      nodeHtml(n.id, n.label, n.status, n.id === '__root__', n.agent || '')
-    ).join('');
-    const infoHtml = `<div class="flow-info"><div>${flowData.name}</div><div class="sub" id="flow-info-sub"></div></div>`;
-    setCanvasContent(`${FLOW_CSS}<div class="flow-root">${infoHtml}<svg class="flow-svg" xmlns="http://www.w3.org/2000/svg"></svg>${nodesHtml}</div>`);
-    showCanvasHeader(false);
-    openCanvas('');
-    positionNodes();
-    requestAnimationFrame(() => { refreshLines(); updateInfo(); });
-    btn?.classList.add('active');
-  }
+
+  const nodesHtml = flowData.nodes.map(n =>
+    nodeHtml(n.id, n.label, n.status, n.id === '__root__', n.agent || '')
+  ).join('');
+  const infoHtml = `<div class="flow-info"><div>${flowData.name}</div><div class="sub" id="flow-info-sub"></div></div>`;
+  setCanvasContent(`${FLOW_CSS}<div class="flow-root">${infoHtml}<svg class="flow-svg" xmlns="http://www.w3.org/2000/svg"></svg>${nodesHtml}</div>`);
+  showCanvasHeader(false);
+  openCanvas('');
+  positionNodes();
+  requestAnimationFrame(() => { refreshLines(); updateInfo(); });
+  btn?.classList.add('active');
 }
 
 export function onSessionChange(activeSessionId) {
