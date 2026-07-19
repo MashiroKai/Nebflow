@@ -726,20 +726,22 @@ function removeQueuedItem(sessionId, item) {
   refreshQueue(sessionId);
 }
 
-/** Called on 'done' event — send first queued message as normal UserInput. */
+/** Called on 'done' event — send first queued message as normal UserInput.
+ *  Works even when the session isn't currently displayed (view is null):
+ *  DOM operations are skipped, but the WS message is still sent. */
 export function drainMessageQueue(sessionId) {
   const q = state.messageQueue[sessionId];
   if (!q || q.length === 0) return false;
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
   const item = q[0];
   const view = findViewBySessionId(sessionId);
-  if (!view || !state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
 
   // Remove from queue
   q.shift();
   refreshQueue(sessionId);
 
-  // Render in chat (only if this is the active view)
-  if (activeView && activeView.sessionId === sessionId) {
+  // Render in chat (only if this session is the active view)
+  if (view && activeView && activeView.sessionId === sessionId) {
     if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
@@ -753,13 +755,15 @@ export function drainMessageQueue(sessionId) {
     if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
     try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
   }
-  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) });
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
 
   // Send as normal UserInput
-  view.isSending = true;
   if (sessionId) state.turnExpecting[sessionId] = true;
-  view.historyIndex = -1;
-  view.historyDraft = '';
+  if (view) {
+    view.isSending = true;
+    view.historyIndex = -1;
+    view.historyDraft = '';
+  }
 
   if (item.skillName) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
@@ -772,7 +776,7 @@ export function drainMessageQueue(sessionId) {
       })),
       clientMessageId,
       sessionId,
-      chatWidth: view.dom.chat?.clientWidth || 0
+      chatWidth: view?.dom?.chat?.clientWidth || 0
     });
   }
 
@@ -796,18 +800,19 @@ export function drainMessageQueue(sessionId) {
     }
   }, state.streamTimeoutMs + 30000);
 
-  // Clean up thinking placeholders
-  if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-  view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
-    const row = el.closest('.row');
-    if (row) row.remove();
-  });
-  view.stream.currentAiBubble = null;
-  view.stream.aiText = '';
-  view.stream.currentThinkingBubble = null;
-  view.stream.thinkingText = '';
-
-  setTimeout(() => { view.isSending = false; }, 300);
+  // Clean up thinking placeholders (only for displayed sessions)
+  if (view) {
+    if (window.__stopThinkingTimer) window.__stopThinkingTimer();
+    view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+      const row = el.closest('.row');
+      if (row) row.remove();
+    });
+    view.stream.currentAiBubble = null;
+    view.stream.aiText = '';
+    view.stream.currentThinkingBubble = null;
+    view.stream.thinkingText = '';
+    setTimeout(() => { view.isSending = false; }, 300);
+  }
   return true;
 }
 
