@@ -647,6 +647,19 @@ class RestApiRoutes(
               NotFound(Json.obj("error" -> s"No FlowTree for session '$sessionId'".asJson))
           }
       }
+
+    // GET /api/flow/status/:sessionId — return all pipeline states for frontend
+    case GET -> Root / "api" / "flow" / "status" / sessionId =>
+      if sessionId.isEmpty then BadRequest(Json.obj("error" -> "Missing sessionId".asJson))
+      else
+        for
+          states <- nebflow.core.flow.PipelineStateStore.loadAll(sessionId)
+          response = Json.obj(
+            "sessionId" -> sessionId.asJson,
+            "pipelines" -> states.asJson
+          )
+          result <- Ok(response)
+        yield result
   }
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =

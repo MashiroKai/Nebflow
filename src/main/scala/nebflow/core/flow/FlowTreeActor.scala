@@ -177,6 +177,7 @@ object FlowTreeActor:
             _ <- flowNamesRef.update(_ - name)
             _ <- FlowMembership.leave(cfg.parentAgentRef.path.toString, name)
             _ <- persistPipelines(pipelinesRef, flowNamesRef, cfg)
+            _ <- cfg.sessionId.traverse_(sid => PipelineStateStore.delete(sid, name))
             _ <- emit(cfg, "treeBranchUnmounted", "name" -> name.asJson)
             _ <- logger.info(s"Pipeline '$name' unmounted")
           yield ()

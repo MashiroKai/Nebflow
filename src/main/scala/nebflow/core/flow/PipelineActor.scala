@@ -163,22 +163,30 @@ object PipelineActor:
         given ActorContext[PipelineCommand] = ctx
         msg match
           case PipelineCommand.Trigger(input, replyTo) =>
-            handleTrigger(ctx, stateRef, cfg, input, replyTo).as(this)
+            for
+              _ <- handleTrigger(ctx, stateRef, cfg, input, replyTo)
+              _ <- saveState(stateRef, cfg)
+            yield this
 
           case PipelineCommand.StepCompleted(stepId, output) =>
             for
               _ <- handleStepCompleted(ctx, stateRef, cfg, stepId, output)
               _ <- afterStepUpdate(ctx, stateRef, cfg)
+              _ <- saveState(stateRef, cfg)
             yield this
 
           case PipelineCommand.StepFailed(stepId, error) =>
             for
               _ <- handleStepFailed(ctx, stateRef, cfg, stepId, error)
               _ <- afterStepUpdate(ctx, stateRef, cfg)
+              _ <- saveState(stateRef, cfg)
             yield this
 
           case PipelineCommand.VerifyCompleted(passed, summary) =>
-            handleVerifyCompleted(ctx, stateRef, cfg, passed, summary).as(this)
+            for
+              _ <- handleVerifyCompleted(ctx, stateRef, cfg, passed, summary)
+              _ <- saveState(stateRef, cfg)
+            yield this
 
           case PipelineCommand.GetState(replyTo) =>
             for
@@ -821,6 +829,36 @@ object PipelineActor:
     patches match
       case Nil => base
       case _ => json => base(patches.foldLeft(json)((j, p) => j.deepMerge(p)))
+
+  /** Persist current state to disk for frontend status queries. */
+  private def saveState(
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig
+  ): IO[Unit] =
+    cfg.sessionId match
+      case Some(sid) if sid.nonEmpty =>
+        for
+          state <- stateRef.get
+          stepInfos = cfg.pipeline.steps.map { step =>
+            PipelineStateStore.StepInfo(
+              id = step.id,
+              agent = step.agent.getOrElse(""),
+              status = state.stepStatus.getOrElse(step.id, "Pending"),
+              dependsOn = step.dependsOn.toList
+            )
+          }
+          pipelineState = PipelineStateStore.PipelineState(
+            name = cfg.name,
+            flowName = cfg.flowName,
+            phase = state.phase.toString,
+            steps = stepInfos,
+            results = state.results,
+            iteration = state.iteration,
+            verifyResult = state.verifyResult
+          )
+          _ <- PipelineStateStore.save(sid, pipelineState)
+        yield ()
+      case _ => IO.unit
 
   private def emit(
     cfg: PipelineConfig,
