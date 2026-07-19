@@ -423,6 +423,7 @@ object MountResult:
 sealed trait TreeCommand
 
 object TreeCommand:
+
   case class MountBranch(
     defn: FlowDef,
     instanceName: Option[String],
