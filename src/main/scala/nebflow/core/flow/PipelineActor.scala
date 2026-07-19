@@ -7,7 +7,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
-import nebflow.core.tools.{FileHistory, ReadTracker, ToolRegistry}
+import nebflow.core.tools.{FileHistory, ReadTracker}
 import nebflow.shared.{Message, MessageRole}
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -24,13 +24,13 @@ object PipelineActor:
 
   val VerifyPromptPreamble =
     """You are the verification step of this workflow.
-      |
-      |You MUST call the FlowVerify tool to report your result:
+
+      |You MUST call the Mail tool with type="verify" to report your result:
       |  - passed=true if the work meets all requirements
       |  - passed=false if there are issues
-      |  - Include a concise summary of findings
+      |  - Include a concise summary (max 200 chars) of key findings
       |
-      |If you finish without calling FlowVerify, the verification will fail and retry.
+      |If you finish without calling Mail with type="verify", the verification will fail and retry.
       |
       |--- Verification Criteria ---
       |""".stripMargin
@@ -55,7 +55,7 @@ object PipelineActor:
     /** Step agent failed. */
     case class StepFailed(stepId: String, error: String) extends PipelineCommand
 
-    /** Verify agent reported result via FlowVerifyTool. */
+    /** Verify agent reported result via Mail tool. */
     case class VerifyCompleted(passed: Boolean, summary: String) extends PipelineCommand
 
     /** Query current state. */
@@ -585,12 +585,7 @@ object PipelineActor:
         "pass" -> true.asJson,
         "summary" -> summary.take(500).asJson
       )
-      _ <- cfg.parentAgentRef ! AgentCommand.ExternalEvent(
-        source = "flow",
-        eventType = "completed",
-        payload = s"[Flow: ${cfg.name}] PASS\n$summary",
-        metadata = JsonObject("flowName" -> cfg.name.asJson)
-      )
+      // No ExternalEvent — verify agent's Mail(type=verify) already notified Main Agent
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Done(summary)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
       _ = logger.info(s"[${cfg.name}] Pipeline COMPLETED")
@@ -651,12 +646,6 @@ object PipelineActor:
             readTracker <- ReadTracker.create
             fileHistory <- FileHistory.create()
             childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
-            actualDef =
-              if isVerify then
-                agentDef.tools match
-                  case List("*") => agentDef.copy(tools = ToolRegistry.builtinToolNames)
-                  case tools => agentDef.copy(tools = (tools :+ "FlowVerify").distinct)
-              else agentDef
             _ <- stateRef.update(s =>
               s.copy(
                 stepStatus = s.stepStatus + (stepId -> StepStatus.Running.toString)
@@ -664,7 +653,7 @@ object PipelineActor:
             )
             agentRef <- ctx.system.spawn(
               AgentActor(
-                agentDef = actualDef,
+                agentDef = agentDef,
                 resources = cfg.resources,
                 wsSend = childWs,
                 depth = 1,
@@ -735,12 +724,12 @@ object PipelineActor:
                        case Some(deferred) =>
                          deferred.tryGet.flatMap {
                            case Some(vr) =>
-                             logger.info(s"stepAdapter: FlowVerify was called, passed=${vr.pass}") *>
+                             logger.info(s"stepAdapter: Mail(verify) was called, passed=${vr.pass}") *>
                                (pipeRef ! PipelineCommand.VerifyCompleted(vr.pass, vr.summary))
                            case None =>
-                             logger.warn(s"stepAdapter: verify agent completed WITHOUT calling FlowVerify") *>
+                             logger.warn(s"stepAdapter: verify agent completed WITHOUT calling Mail(type=verify)") *>
                                (pipeRef ! PipelineCommand
-                                 .StepFailed(stepId, "Verify agent completed without calling FlowVerify tool"))
+                                 .StepFailed(stepId, "Verify agent completed without calling Mail(type=verify)"))
                          }
                        case None =>
                          logger.warn(s"stepAdapter: verify Deferred not in registry") *>
