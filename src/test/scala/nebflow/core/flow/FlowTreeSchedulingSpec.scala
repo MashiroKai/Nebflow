@@ -127,10 +127,12 @@ class FlowTreeSchedulingSpec extends FunSuite:
     )
     val daemonRt = BranchRuntime(state = daemonState, flowDef = FlowDef("code-reviewer", daemonState.branchType))
     val pipelineRt = BranchRuntime(state = pipelineState, flowDef = FlowDef("deploy-flow", pipelineState.branchType))
-    val table = buildAddressTable(Map(
-      "code-reviewer" -> daemonRt,
-      "deploy-flow" -> pipelineRt
-    ))
+    val table = buildAddressTable(
+      Map(
+        "code-reviewer" -> daemonRt,
+        "deploy-flow" -> pipelineRt
+      )
+    )
     assert(table.contains("code-reviewer"))
     assert(table.contains("deploy-flow"))
     assert(table.contains("daemon"))
@@ -146,8 +148,8 @@ class FlowTreeSchedulingSpec extends FunSuite:
     val stepStatus = Map("a" -> StepStatus.Pending.toString)
     val runningAgents = Map.empty[String, Any]
     val isReady = stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-                  !runningAgents.contains(step.id) &&
-                  step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+      !runningAgents.contains(step.id) &&
+      step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(isReady)
 
   test("step with unmet dependency is not ready"):
@@ -155,8 +157,8 @@ class FlowTreeSchedulingSpec extends FunSuite:
     val stepStatus = Map("a" -> StepStatus.Pending.toString, "b" -> StepStatus.Pending.toString)
     val runningAgents = Map.empty[String, Any]
     val isReady = stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-                  !runningAgents.contains(step.id) &&
-                  step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+      !runningAgents.contains(step.id) &&
+      step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(!isReady)
 
   test("step with met dependency is ready"):
@@ -164,8 +166,8 @@ class FlowTreeSchedulingSpec extends FunSuite:
     val stepStatus = Map("a" -> StepStatus.Done.toString, "b" -> StepStatus.Pending.toString)
     val runningAgents = Map.empty[String, Any]
     val isReady = stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-                  !runningAgents.contains(step.id) &&
-                  step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+      !runningAgents.contains(step.id) &&
+      step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(isReady)
 
   test("step already running is not ready"):
@@ -173,8 +175,8 @@ class FlowTreeSchedulingSpec extends FunSuite:
     val stepStatus = Map("a" -> StepStatus.Running.toString)
     val runningAgents = Map("a" -> "fake-ref")
     val isReady = stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-                  !runningAgents.contains(step.id) &&
-                  step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+      !runningAgents.contains(step.id) &&
+      step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(!isReady)
 
   test("parallel steps with no deps are both ready"):
@@ -183,11 +185,13 @@ class FlowTreeSchedulingSpec extends FunSuite:
     val stepStatus = Map("a" -> StepStatus.Pending.toString, "b" -> StepStatus.Pending.toString)
     val runningAgents = Map.empty[String, Any]
     val readyA = stepStatus.get(stepA.id).contains(StepStatus.Pending.toString) &&
-                 !runningAgents.contains(stepA.id) && stepA.dependsOn.forall(dep =>
-                   stepStatus.get(dep).contains(StepStatus.Done.toString))
+      !runningAgents.contains(stepA.id) && stepA.dependsOn.forall(dep =>
+        stepStatus.get(dep).contains(StepStatus.Done.toString)
+      )
     val readyB = stepStatus.get(stepB.id).contains(StepStatus.Pending.toString) &&
-                 !runningAgents.contains(stepB.id) && stepB.dependsOn.forall(dep =>
-                   stepStatus.get(dep).contains(StepStatus.Done.toString))
+      !runningAgents.contains(stepB.id) && stepB.dependsOn.forall(dep =>
+        stepStatus.get(dep).contains(StepStatus.Done.toString)
+      )
     assert(readyA && readyB)
 
   test("diamond dependency: d depends on b and c, both depend on a"):
@@ -195,11 +199,16 @@ class FlowTreeSchedulingSpec extends FunSuite:
     val stepB = PipelineStep(id = "b", agent = Some("X"), prompt = Some(""), dependsOn = Set("a"))
     val stepC = PipelineStep(id = "c", agent = Some("X"), prompt = Some(""), dependsOn = Set("a"))
     val stepD = PipelineStep(id = "d", agent = Some("X"), prompt = Some(""), dependsOn = Set("b", "c"))
-    val stepStatus = Map("a" -> StepStatus.Done.toString, "b" -> StepStatus.Done.toString, "c" -> StepStatus.Pending.toString, "d" -> StepStatus.Pending.toString)
+    val stepStatus = Map(
+      "a" -> StepStatus.Done.toString,
+      "b" -> StepStatus.Done.toString,
+      "c" -> StepStatus.Pending.toString,
+      "d" -> StepStatus.Pending.toString
+    )
     val runningAgents = Map.empty[String, Any]
     val isDReady = stepStatus.get(stepD.id).contains(StepStatus.Pending.toString) &&
-                   !runningAgents.contains(stepD.id) &&
-                   stepD.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+      !runningAgents.contains(stepD.id) &&
+      stepD.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     // c is not done yet, so d is not ready
     assert(!isDReady)
 

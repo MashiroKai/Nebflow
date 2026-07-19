@@ -11,8 +11,10 @@ object ToolLoader:
 
   private def toolsDir: os.Path = PathUtil.dataRoot / "tools"
 
-  /** Tracks external tool names currently registered in ToolRegistry,
-   * so we can cleanly unregister them before reloading from disk. */
+  /**
+   * Tracks external tool names currently registered in ToolRegistry,
+   * so we can cleanly unregister them before reloading from disk.
+   */
   private val registeredNames = java.util.Collections.newSetFromMap(
     new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
   )
@@ -53,8 +55,7 @@ object ToolLoader:
   def startFileWatcher(): IO[Unit] =
     IO.blocking {
       val dir = toolsDir.toIO.toPath
-      if !java.nio.file.Files.exists(dir) then
-        java.nio.file.Files.createDirectories(dir)
+      if !java.nio.file.Files.exists(dir) then java.nio.file.Files.createDirectories(dir)
       val watcher = java.nio.file.FileSystems.getDefault.newWatchService()
       dir.register(
         watcher,
@@ -74,7 +75,8 @@ object ToolLoader:
           // Debounce: wait for file system to settle, then drain queued events
           Thread.sleep(500)
           var wk = watcher.poll()
-          while wk != null do { wk.pollEvents(); wk.reset(); wk = watcher.poll() }
+          while wk != null do
+            wk.pollEvents(); wk.reset(); wk = watcher.poll()
           try reload().unsafeRunSync()
           catch
             case e: Exception =>

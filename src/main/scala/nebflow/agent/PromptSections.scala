@@ -77,14 +77,18 @@ object PromptSections:
   trait PromptSection:
     /** Sort order in the final prompt (smaller = earlier). */
     def order: Int
+
     /** Whether this section should be included given the current context. */
     def shouldInclude(ctx: PromptContext): Boolean
+
     /** Static content. Override [[render]] for dynamic content. */
     def content: String = ""
+
     /** Render the section text, possibly using runtime context. */
     def render(ctx: PromptContext): String = content
 
   object PromptSection:
+
     /** Create a static conditional section. */
     def apply(
       ord: Int,
@@ -108,6 +112,8 @@ object PromptSections:
       val order = ord
       def shouldInclude(ctx: PromptContext) = condition(ctx)
       override def render(ctx: PromptContext) = renderer(ctx)
+
+  end PromptSection
 
   /** Quick helper: condition that requires one or more tools to be available. */
   def requiresTools(names: String*): PromptContext => Boolean =

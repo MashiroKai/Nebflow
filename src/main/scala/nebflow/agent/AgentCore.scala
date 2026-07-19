@@ -215,9 +215,11 @@ private[agent] trait AgentCore:
               ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
               // Persist git branch change so it survives restarts
               stateForLlm.sessionId.traverse_(sid =>
-                resources.sessionStore.updateGitBranch(sid, turnCtx.currentBranch)
+                resources.sessionStore
+                  .updateGitBranch(sid, turnCtx.currentBranch)
                   .handleErrorWith(e =>
-                    IO(NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}")))
+                    IO(NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}"))
+                  )
               )
             case None =>
               IO.whenA(turnCtx.currentBranch != stateForLlm.gitBranch)(
@@ -303,6 +305,8 @@ private[agent] trait AgentCore:
             .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
         )
 
+        end for
+
   protected def pipeToolExecutions(
     agentDef: AgentDef,
     resources: SharedResources,
@@ -367,7 +371,12 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          (if ToolReversibility.isReversible(call.name, call.input, nebflow.core.SafetyMode.fromString(state.safetyMode)) then executeTool(call, callCtx)
+          (if ToolReversibility.isReversible(
+               call.name,
+               call.input,
+               nebflow.core.SafetyMode.fromString(state.safetyMode)
+             )
+           then executeTool(call, callCtx)
            else askUserPermission(call, state, permissionDeferredRef, callCtx))
             .map(r => (call, r))
             .attempt

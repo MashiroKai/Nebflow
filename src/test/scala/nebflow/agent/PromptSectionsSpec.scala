@@ -25,7 +25,10 @@ class PromptSectionsSpec extends munit.FunSuite:
   test("Read live-update section included when Read tool is available"):
     val ctx = PromptContext(availableTools = Set("Read", "Write"))
     val blocks = buildConditionalBlocks(ctx)
-    assert(blocks.contains("## Read Tool — Live Results"), "Read section should be included when Read tool is available")
+    assert(
+      blocks.contains("## Read Tool — Live Results"),
+      "Read section should be included when Read tool is available"
+    )
 
   test("Read live-update section excluded when Read tool is missing"):
     val ctx = PromptContext(availableTools = Set("Write", "Grep"))
@@ -193,7 +196,7 @@ class PromptSectionsSpec extends munit.FunSuite:
   test("requiresTools checks all required tools"):
     val cond = requiresTools("Read", "Write")
     assert(cond(PromptContext(availableTools = Set("Read", "Write", "Grep"))))
-    assert(!cond(PromptContext(availableTools = Set("Read"))))  // missing Write
+    assert(!cond(PromptContext(availableTools = Set("Read")))) // missing Write
     assert(!cond(PromptContext(availableTools = Set.empty)))
 
 end PromptSectionsSpec

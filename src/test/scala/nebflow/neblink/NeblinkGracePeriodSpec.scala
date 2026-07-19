@@ -38,8 +38,11 @@ class NeblinkGracePeriodSpec extends CatsEffectSuite:
         _ <- svc.upsertPeer(samplePeer)
         _ <- svc.removePeer("dev-001")
         peers <- svc.peers
-      yield assertEquals(peers.exists(_.deviceId == "dev-001"), true,
-        "Peer should still be in list immediately after removePeer (within grace period)")
+      yield assertEquals(
+        peers.exists(_.deviceId == "dev-001"),
+        true,
+        "Peer should still be in list immediately after removePeer (within grace period)"
+      )
     }
   }
 
@@ -51,8 +54,11 @@ class NeblinkGracePeriodSpec extends CatsEffectSuite:
         _ <- svc.upsertPeer(samplePeer) // reconnect within grace period
         _ <- IO.sleep(testGrace + 200.millis) // wait past original grace period
         peers <- svc.peers
-      yield assertEquals(peers.exists(_.deviceId == "dev-001"), true,
-        "Peer should still be present — reconnection cancelled the pending removal")
+      yield assertEquals(
+        peers.exists(_.deviceId == "dev-001"),
+        true,
+        "Peer should still be present — reconnection cancelled the pending removal"
+      )
     }
   }
 
@@ -63,8 +69,11 @@ class NeblinkGracePeriodSpec extends CatsEffectSuite:
         _ <- svc.removePeer("dev-001")
         _ <- IO.sleep(testGrace + 200.millis) // wait past grace period
         peers <- svc.peers
-      yield assertEquals(peers.exists(_.deviceId == "dev-001"), false,
-        "Peer should be removed after grace period expires without reconnect")
+      yield assertEquals(
+        peers.exists(_.deviceId == "dev-001"),
+        false,
+        "Peer should be removed after grace period expires without reconnect"
+      )
     }
   }
 
@@ -77,8 +86,11 @@ class NeblinkGracePeriodSpec extends CatsEffectSuite:
         _ <- svc.upsertPeer(samplePeer) // reconnect
         _ <- IO.sleep(testGrace + 200.millis)
         peers <- svc.peers
-      yield assertEquals(peers.exists(_.deviceId == "dev-001"), true,
-        "Double removePeer + reconnect should keep peer in list")
+      yield assertEquals(
+        peers.exists(_.deviceId == "dev-001"),
+        true,
+        "Double removePeer + reconnect should keep peer in list"
+      )
     }
   }
 
@@ -88,11 +100,11 @@ class NeblinkGracePeriodSpec extends CatsEffectSuite:
         svc <- NeblinkService.createForTest(0, dispatcher, testGrace)
         callCount <- Ref.of[IO, Int](0)
         _ <- svc.addPeerChangeCallback(callCount.update(_ + 1))
-        _ <- svc.upsertPeer(samplePeer)        // +1 (new peer)
+        _ <- svc.upsertPeer(samplePeer) // +1 (new peer)
         count1 <- callCount.get
-        _ <- svc.removePeer("dev-001")         // schedules removal, no immediate callback
+        _ <- svc.removePeer("dev-001") // schedules removal, no immediate callback
         count2 <- callCount.get
-        _ <- IO.sleep(testGrace + 200.millis)  // grace period expires → +1
+        _ <- IO.sleep(testGrace + 200.millis) // grace period expires → +1
         count3 <- callCount.get
       yield
         assertEquals(count1, 1, "upsertPeer should fire callback once for new peer")
@@ -107,13 +119,16 @@ class NeblinkGracePeriodSpec extends CatsEffectSuite:
         svc <- NeblinkService.createForTest(0, dispatcher, testGrace)
         callCount <- Ref.of[IO, Int](0)
         _ <- svc.addPeerChangeCallback(callCount.update(_ + 1))
-        _ <- svc.upsertPeer(samplePeer)        // +1
-        _ <- svc.removePeer("dev-001")         // schedule removal
-        _ <- svc.upsertPeer(samplePeer)        // cancel removal
+        _ <- svc.upsertPeer(samplePeer) // +1
+        _ <- svc.removePeer("dev-001") // schedule removal
+        _ <- svc.upsertPeer(samplePeer) // cancel removal
         _ <- IO.sleep(testGrace + 200.millis)
         count <- callCount.get
-      yield assertEquals(count, 1,
-        "Only the initial upsert should fire callback — no extra fires for disconnect+reconnect within grace")
+      yield assertEquals(
+        count,
+        1,
+        "Only the initial upsert should fire callback — no extra fires for disconnect+reconnect within grace"
+      )
     }
   }
 

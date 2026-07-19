@@ -156,24 +156,29 @@ class NeblinkService private (
     for
       alreadyPending <- pendingRemovals.get.map(_.contains(deviceId))
       hasPeer <- peersRef.get.map(_.contains(deviceId))
-      _ <- if !alreadyPending && hasPeer then
-        for
-          _ <- pendingRemovals.update(_ + deviceId)
-          _ <- (IO.sleep(peerRemovalGracePeriod) *>
-            pendingRemovals.modify { pending =>
-              if pending.contains(deviceId) then (pending - deviceId, true)
-              else (pending, false)
-            }.flatMap { shouldRemove =>
-              if shouldRemove then
-                peersRef.modify { peers =>
-                  (peers - deviceId, peers.contains(deviceId))
-                }.flatMap { wasPresent =>
-                  if wasPresent then notifyPeersChanged else IO.unit
+      _ <-
+        if !alreadyPending && hasPeer then
+          for
+            _ <- pendingRemovals.update(_ + deviceId)
+            _ <- (IO.sleep(peerRemovalGracePeriod) *>
+              pendingRemovals
+                .modify { pending =>
+                  if pending.contains(deviceId) then (pending - deviceId, true)
+                  else (pending, false)
                 }
-              else IO.unit
-            }).start.void
-        yield ()
-      else IO.unit
+                .flatMap { shouldRemove =>
+                  if shouldRemove then
+                    peersRef
+                      .modify { peers =>
+                        (peers - deviceId, peers.contains(deviceId))
+                      }
+                      .flatMap { wasPresent =>
+                        if wasPresent then notifyPeersChanged else IO.unit
+                      }
+                  else IO.unit
+                }).start.void
+          yield ()
+        else IO.unit
     yield ()
 
   /**

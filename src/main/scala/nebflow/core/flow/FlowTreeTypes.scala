@@ -140,6 +140,7 @@ object LoopConfig:
       maxIter <- c.downField("maxIterations").as[Option[Int]]
     yield LoopConfig(fix, maxIter.getOrElse(3))
   }
+end LoopConfig
 
 // ============================================================
 // Reactor Action
@@ -401,6 +402,7 @@ object FlowTreeSnapshot:
       branches <- c.downField("branches").as[Map[String, BranchState]]
     yield FlowTreeSnapshot(sessionId, branches)
   }
+end FlowTreeSnapshot
 
 // ============================================================
 // Mount Result (returned by FlowTreeActor to MountFlowTool)

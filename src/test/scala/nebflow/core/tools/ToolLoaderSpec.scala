@@ -108,3 +108,4 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
     yield assert(map.contains("Read"), "Built-in tools should still be present")
+end ToolLoaderSpec

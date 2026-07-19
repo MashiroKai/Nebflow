@@ -21,9 +21,9 @@ object MaintenanceService:
    */
   def shouldTrigger(state: AgentState, depth: Int, isCompactTurn: Boolean, isAskTurn: Boolean): Boolean =
     !isCompactTurn && !isAskTurn && depth == 0 &&
-    state.delegateCount > 0 &&
-    state.delegateCount % MaintenanceInterval == 0 &&
-    state.delegateCount != state.lastMaintenanceDelegateCount
+      state.delegateCount > 0 &&
+      state.delegateCount % MaintenanceInterval == 0 &&
+      state.delegateCount != state.lastMaintenanceDelegateCount
 
   /** Build the maintenance reminder message. */
   def buildReminder(delegateCount: Int): Message =

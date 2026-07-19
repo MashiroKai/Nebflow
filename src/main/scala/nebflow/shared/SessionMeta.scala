@@ -30,9 +30,9 @@ object SessionMeta:
     val withAgent = m.agentName.fold(base)(n => base.deepMerge(Json.obj("agentName" -> n.asJson)))
     val withModel = m.modelRef.fold(withAgent)(r => withAgent.deepMerge(Json.obj("modelRef" -> r.asJson)))
     val withFolder = m.folderId.fold(withModel)(f => withModel.deepMerge(Json.obj("folderId" -> f.asJson)))
-    val withSafety = if m.safetyMode != "confirm-edits" then
-      withFolder.deepMerge(Json.obj("safetyMode" -> m.safetyMode.asJson))
-    else withFolder
+    val withSafety =
+      if m.safetyMode != "confirm-edits" then withFolder.deepMerge(Json.obj("safetyMode" -> m.safetyMode.asJson))
+      else withFolder
     val withGit = m.gitBranch.fold(withSafety)(b => withSafety.deepMerge(Json.obj("gitBranch" -> b.asJson)))
     if m.bridges.nonEmpty then withGit.deepMerge(Json.obj("bridges" -> m.bridges.asJson)) else withGit
   }
