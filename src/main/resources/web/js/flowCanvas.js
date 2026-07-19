@@ -33,14 +33,8 @@ const FLOW_CSS = `
   pointer-events: none; z-index: 1;
   overflow: visible;
 }
-.flow-svg path { fill: none; stroke: var(--color-border); stroke-width: 1.5; }
-.flow-svg path.active {
-  stroke: var(--color-text-muted);
-  stroke-width: 2;
-  stroke-dasharray: 6 3;
-  animation: flow-dash 1s linear infinite;
-}
-@keyframes flow-dash { to { stroke-dashoffset: -9; } }
+.flow-svg path { fill: none; stroke: var(--color-border); stroke-width: 1; }
+.flow-svg path.active { stroke: var(--color-text-muted); }
 
 /* Node card */
 .flow-node {
