@@ -69,7 +69,9 @@ object FlowTreeActor:
     new Behavior[TreeCommand]:
       override def onError(ctx: ActorContext[TreeCommand], err: Throwable): IO[Behavior[TreeCommand]] =
         logger
-          .error(s"FlowTreeActor error: ${err.getMessage}\n${err.getStackTrace.take(10).map(_.toString).mkString("\n")}")
+          .error(
+            s"FlowTreeActor error: ${err.getMessage}\n${err.getStackTrace.take(10).map(_.toString).mkString("\n")}"
+          )
           .as(this)
 
       def receive(ctx: ActorContext[TreeCommand], msg: TreeCommand): IO[Behavior[TreeCommand]] =
@@ -93,6 +95,7 @@ object FlowTreeActor:
               _ <- pipelines.values.toList.traverse_(ref => ctx.system.stop(ref))
               _ <- logger.info("FlowTreeActor shutdown complete")
             yield Behaviors.stopped[TreeCommand]
+        end match
 
       end receive
 
@@ -136,15 +139,15 @@ object FlowTreeActor:
             safetyMode = cfg.safetyMode,
             gatewayPort = cfg.gatewayPort
           )
-          ref <- ctx.system.spawn(PipelineActor(pipeConfig), s"pipeline-$name-${java.util.UUID.randomUUID().toString.take(8)}")
+          ref <- ctx.system.spawn(
+            PipelineActor(pipeConfig),
+            s"pipeline-$name-${java.util.UUID.randomUUID().toString.take(8)}"
+          )
           _ <- pipelinesRef.update(_ + (name -> ref))
           _ <- flowNamesRef.update(_ + (name -> defn.name))
           _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, name)
           _ <- persistPipelines(pipelinesRef, flowNamesRef, cfg)
-          _ <- emit(cfg, "treeBranchMounted",
-            "name" -> name.asJson,
-            "type" -> "pipeline".asJson
-          )
+          _ <- emit(cfg, "treeBranchMounted", "name" -> name.asJson, "type" -> "pipeline".asJson)
           _ <- replyTo.traverse_(_ ! MountResult.Mounted(name, ref.path.toString, "pipeline"))
           _ <- logger.info(s"Pipeline '$name' mounted (flow: ${defn.name})")
         yield ()
@@ -240,8 +243,10 @@ object FlowTreeActor:
                       gatewayPort = cfg.gatewayPort
                     )
                     for
-                      ref <- ctx.system.spawn(PipelineActor(pipeConfig),
-                        s"pipeline-${entry.name}-${java.util.UUID.randomUUID().toString.take(8)}")
+                      ref <- ctx.system.spawn(
+                        PipelineActor(pipeConfig),
+                        s"pipeline-${entry.name}-${java.util.UUID.randomUUID().toString.take(8)}"
+                      )
                       _ <- pipelinesRef.update(_ + (entry.name -> ref))
                       _ <- flowNamesRef.update(_ + (entry.name -> entry.flowName))
                       _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, entry.name)
@@ -285,6 +290,8 @@ object FlowTreeActor:
         .handleErrorWith(e => logger.warn(s"File watcher error: ${e.getMessage}").void)
     )
 
+  end startFileWatcher
+
   private def handleReload(
     ctx: ActorContext[TreeCommand],
     pipelinesRef: Ref[IO, Map[String, ActorRef[PipelineActor.PipelineCommand]]],
@@ -316,8 +323,10 @@ object FlowTreeActor:
                   safetyMode = cfg.safetyMode,
                   gatewayPort = cfg.gatewayPort
                 )
-                newRef <- ctx.system.spawn(PipelineActor(pipeConfig),
-                  s"pipeline-$name-${java.util.UUID.randomUUID().toString.take(8)}")
+                newRef <- ctx.system.spawn(
+                  PipelineActor(pipeConfig),
+                  s"pipeline-$name-${java.util.UUID.randomUUID().toString.take(8)}"
+                )
                 _ <- pipelinesRef.update(_ + (name -> newRef))
                 _ <- emit(cfg, "treeBranchUpdated", "name" -> name.asJson, "flowName" -> flowName.asJson)
                 _ <- logger.info(s"Hot reload: '$name' reloaded from '$flowName'")
