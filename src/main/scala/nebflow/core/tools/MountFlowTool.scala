@@ -26,13 +26,13 @@ object MountFlowTool extends Tool:
   val description =
     """挂载一个 flow 定义到当前会话的 Flow 树。
 
-支持四种枝条类型：daemon（守护型）、pipeline（管线型 DAG+verify+loop）、reactor（反应型）、source（事件源型）。
+目前支持 pipeline（管线型 DAG+verify+loop）枝条类型。
 
 source 指定名称（从 ~/.nebflow/flows/ 加载），或 inline 提供 YAML 定义。
-unmount=true 卸载指定枝条，retrigger=true 重新执行已完成的 pipeline。
+unmount=true 卸载指定枝条。
+retrigger=true 带上 input 参数重新触发已挂载的 pipeline 执行新任务。
 
-Pipeline 的 step 可以是 agent+prompt（原子操作）或 flow 引用（嵌套子 flow）。
-Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
+Pipeline 的 step prompt 中的 ${stepId} 会被上游 step 的输出替换，${input} 会被 trigger 时的输入替换。
 """
 
   val inputSchema = JsonObject.fromIterable(
@@ -160,13 +160,14 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
     val target = input("source")
       .flatMap(_.asString)
       .orElse(input("instanceName").flatMap(_.asString))
+    val triggerInput = input("input").flatMap(_.asString).getOrElse("")
     target match
       case None =>
         IO.pure(Left(ToolError("Must specify pipeline name to retrigger")))
       case Some(name) =>
         getOrCreateTreeActor(ctx).flatMap { treeRef =>
-          for _ <- treeRef ! TreeCommand.RetriggerPipeline(name)
-          yield Right(s"Pipeline '$name' retrigger requested.")
+          for _ <- treeRef ! TreeCommand.TriggerPipeline(name, triggerInput, None)
+          yield Right(s"Pipeline '$name' triggered with input (${triggerInput.length} chars).")
         }
 
   // ============================================================
