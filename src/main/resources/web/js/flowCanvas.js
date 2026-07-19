@@ -3,17 +3,17 @@
 // Shows ALL mounted pipelines simultaneously as a connected architecture.
 // Each pipeline is a vertical "tree" with its steps, branching from a
 // shared Main Agent node at the top.
+// Lines show message flow direction with arrowheads.
+// Active lines have flowing dash animation to show messages in transit.
 // Theme-aware via CSS variables. Session-bound.
 
 import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader } from './canvas.js';
 
 // ── State ──────────────────────────────────────────────────
-// Map<pipelineName, { name, flowName, phase, steps, positions, nodes, iteration, ... }>
 let pipelines = new Map();
 let resizeObs = null;
-let canvasOpen = false;
 
-// ── CSS (injected once into canvas-content) ────────────────
+// ── CSS ────────────────────────────────────────────────────
 const FLOW_CSS = `
 <style>
 .flow-root {
@@ -26,10 +26,22 @@ const FLOW_CSS = `
   position: absolute; top: 0; left: 0; width: 100%; height: 100%;
   pointer-events: none; z-index: 1;
 }
-.flow-svg path { fill: none; stroke: var(--color-border); stroke-width: 1; }
-.flow-svg path.active { stroke: var(--color-text-muted); }
+.flow-svg path { fill: none; stroke: var(--color-border); stroke-width: 1.5; }
+.flow-svg path.active {
+  stroke: var(--color-primary, #6366f1);
+  stroke-width: 2;
+  stroke-dasharray: 6 3;
+  animation: flow-dash 1s linear infinite;
+}
+.flow-svg path.return {
+  stroke: var(--color-success, #30a46c);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 4;
+  opacity: 0.6;
+}
+@keyframes flow-dash { to { stroke-dashoffset: -9; } }
 
-/* Node card — glassmorphism */
+/* Node card */
 .flow-node {
   position: absolute; transform: translate(-50%, -50%);
   z-index: 2;
@@ -38,14 +50,14 @@ const FLOW_CSS = `
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: 14px;
-  padding: 10px 14px;
+  padding: 12px 16px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
   text-align: center;
-  min-width: 70px;
+  min-width: 80px;
   transition: opacity 0.4s ease;
 }
 .flow-node.root {
-  min-width: 100px;
+  min-width: 110px;
   border-radius: 16px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.08), 0 6px 20px rgba(0,0,0,0.06);
 }
@@ -62,54 +74,36 @@ const FLOW_CSS = `
 .flow-ring-1 { width: 8px; height: 8px; }
 .flow-ring-2 { width: 18px; height: 18px; }
 .flow-ring-3 { width: 28px; height: 28px; }
-
-.flow-dot-wrap {
-  position: absolute; top: 50%; left: 50%; width: 0; height: 0;
-}
+.flow-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
 .flow-dot {
   position: absolute; width: 3px; height: 3px;
-  background: var(--color-text); border-radius: 50%;
-  top: -1.5px;
+  background: var(--color-text); border-radius: 50%; top: -1.5px;
 }
 .flow-ring-1 .flow-dot { left: 3px; }
 .flow-ring-2 .flow-dot { left: 8px; }
 .flow-ring-3 .flow-dot { left: 13px; }
-
 .flow-ring-1 .flow-dot-wrap { transform: rotate(0deg); }
 .flow-ring-2 .flow-dot-wrap { transform: rotate(120deg); }
 .flow-ring-3 .flow-dot-wrap { transform: rotate(240deg); }
-
-.flow-node.running .flow-ring-1 .flow-dot-wrap {
-  animation: flow-spin 3s linear infinite;
-}
-.flow-node.running .flow-ring-2 .flow-dot-wrap {
-  animation: flow-spin 4.5s linear infinite reverse;
-  animation-delay: -3s;
-}
-.flow-node.running .flow-ring-3 .flow-dot-wrap {
-  animation: flow-spin 6s linear infinite;
-  animation-delay: -4s;
-}
+.flow-node.running .flow-ring-1 .flow-dot-wrap { animation: flow-spin 3s linear infinite; }
+.flow-node.running .flow-ring-2 .flow-dot-wrap { animation: flow-spin 4.5s linear infinite reverse; animation-delay: -3s; }
+.flow-node.running .flow-ring-3 .flow-dot-wrap { animation: flow-spin 6s linear infinite; animation-delay: -4s; }
 @keyframes flow-spin { to { transform: rotate(360deg); } }
-
 .flow-node.pending .flow-ring { border-style: dashed; opacity: 0.4; }
 .flow-node.pending .flow-dot { opacity: 0.3; }
 .flow-node.pending .flow-label { opacity: 0.4; }
-
 .flow-node.done .flow-dot-wrap { animation: none; }
 .flow-node.done .flow-label { opacity: 0.6; }
-
 .flow-node.failed .flow-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
 
-/* Pipeline header node — shows pipeline name */
+/* Pipeline header */
 .flow-node.pipeline-header {
-  min-width: 80px;
+  min-width: 90px;
   border-radius: 12px;
   border: 1px solid var(--color-primary, #6366f1);
-  opacity: 0.5;
 }
+.flow-node.pipeline-header.idle { opacity: 0.5; }
 .flow-node.pipeline-header.running {
-  opacity: 1;
   border-color: var(--color-primary, #6366f1);
   box-shadow: 0 0 12px rgba(99, 102, 241, 0.15);
 }
@@ -117,38 +111,29 @@ const FLOW_CSS = `
 /* Labels */
 .flow-label {
   font: 500 10px -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text);
-  white-space: nowrap;
+  color: var(--color-text); white-space: nowrap;
 }
 .flow-agent {
   font: 500 8px -apple-system, sans-serif;
   color: var(--color-primary, #6366f1);
-  margin-top: 1px;
-  white-space: nowrap;
+  margin-top: 1px; white-space: nowrap;
 }
 .flow-status {
   font: 400 7px -apple-system, sans-serif;
   color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-top: 2px;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;
 }
 
-/* Header */
+/* Info bar */
 .flow-info {
   position: sticky; top: 0; left: 0; z-index: 3;
   font: 600 12px -apple-system, sans-serif;
   color: var(--color-text-muted);
-  padding: 12px 16px;
+  padding: 10px 16px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
   border-bottom: 1px solid var(--glass-border);
-}
-.flow-info .sub {
-  font: 400 9px -apple-system, sans-serif;
-  color: var(--color-text-muted); opacity: 0.6;
-  margin-top: 3px;
 }
 .flow-empty {
   display: flex; align-items: center; justify-content: center;
@@ -164,7 +149,6 @@ const FLOW_CSS = `
 // ── Layout ─────────────────────────────────────────────────
 
 function computePipelineLayout(steps, colStart, colWidth) {
-  // Compute dependency depth for each step
   const depthMap = {};
   function getDepth(id) {
     if (id in depthMap) return depthMap[id];
@@ -183,25 +167,25 @@ function computePipelineLayout(steps, colStart, colWidth) {
     levels[d].push(s);
   });
 
-  // Positions within this pipeline's column (x is absolute within full canvas)
   const colCenter = colStart + colWidth / 2;
   const positions = {};
 
-  // Pipeline header node (between root and first step)
-  positions['__header__'] = { x: colCenter, y: 0.15 };
+  // Pipeline header
+  positions['__header__'] = { x: colCenter, y: 0.12 };
 
-  // Work steps
-  const totalRows = maxDepth + 2; // +1 header, +1 verify
+  // Work steps — spread within the column
+  const totalRows = maxDepth + 2;
   for (let lv = 0; lv <= maxDepth; lv++) {
     const group = levels[lv] || [];
-    const y = (lv + 2) / (totalRows + 2.5);
+    const y = 0.22 + (lv / (totalRows + 1)) * 0.6;
     group.forEach((step, i) => {
-      const x = group.length === 1 ? colCenter : colStart + colWidth * ((i + 1) / (group.length + 1));
+      const x = group.length === 1 ? colCenter
+        : colStart + colWidth * 0.15 + colWidth * 0.7 * (i / (group.length - 1));
       positions[step.id] = { x, y };
     });
   }
   // Verify at bottom
-  positions['__verify__'] = { x: colCenter, y: (maxDepth + 2.5) / (totalRows + 2.5) };
+  positions['__verify__'] = { x: colCenter, y: 0.88 };
 
   return { positions, maxDepth };
 }
@@ -210,6 +194,11 @@ function computeGlobalLayout() {
   const names = [...pipelines.keys()];
   const n = names.length;
   if (n === 0) return null;
+
+  // Give each pipeline more room — use min width and allow horizontal scroll
+  const minColWidth = 0.35; // minimum 35% of container per pipeline
+  const colWidth = Math.max(1.0 / n, minColWidth);
+  const totalWidth = colWidth * n;
 
   const rootPos = { x: 0.5, y: 0.05 };
   const allPaths = [];
@@ -220,12 +209,8 @@ function computeGlobalLayout() {
 
   names.forEach((name, idx) => {
     const p = pipelines.get(name);
-    const colWidth = 1.0 / n;
     const colStart = idx * colWidth;
-
     const { positions } = computePipelineLayout(p.steps, colStart, colWidth);
-
-    // Store positions back into pipeline
     p.positions = positions;
 
     // Header node
@@ -251,22 +236,61 @@ function computeGlobalLayout() {
       position: positions['__verify__'],
     });
 
-    // Paths: root → header
-    allPaths.push({ from: rootPos, to: positions['__header__'], active: true });
-    // Paths: header → first-level steps
-    p.steps.filter(s => !s.dependsOn || s.dependsOn.length === 0).forEach(s => {
-      allPaths.push({ from: positions['__header__'], to: positions[s.id], active: s.status === 'Done' || s.status === 'Running' });
+    // ── Paths with direction (message flow) ──
+
+    // 1. Main Agent → Pipeline header (trigger)
+    allPaths.push({
+      from: rootPos, to: positions['__header__'],
+      active: p.phase === 'Running',
+      direction: 'down',
     });
-    // Paths: step → dependent step
+
+    // 2. Header → first-level steps (spawn)
+    p.steps.filter(s => !s.dependsOn || s.dependsOn.length === 0).forEach(s => {
+      allPaths.push({
+        from: positions['__header__'], to: positions[s.id],
+        active: s.status === 'Done' || s.status === 'Running',
+        direction: 'down',
+      });
+    });
+
+    // 3. Step → dependent step (data passing: ${stepId} template substitution)
     p.steps.forEach(s => {
       (s.dependsOn || []).forEach(d => {
         const from = positions[d], to = positions[s.id];
-        if (from && to) allPaths.push({ from, to, active: s.status === 'Done' });
+        if (from && to) allPaths.push({
+          from, to,
+          active: s.status === 'Done' || s.status === 'Running',
+          direction: 'down',
+        });
       });
+    });
+
+    // 4. Last steps → verify (all done → trigger verify)
+    const lastSteps = p.steps.filter(s => {
+      const hasDependers = p.steps.some(o => (o.dependsOn || []).includes(s.id));
+      return !hasDependers;
+    });
+    // If only one step, connect it to verify
+    if (lastSteps.length === 0 && p.steps.length > 0) lastSteps.push(p.steps[0]);
+    lastSteps.forEach(s => {
+      const from = positions[s.id], to = positions['__verify__'];
+      if (from && to) allPaths.push({
+        from, to,
+        active: p.verifyResult !== null,
+        direction: 'down',
+      });
+    });
+
+    // 5. Verify → Main Agent (return result — curved回流 line)
+    allPaths.push({
+      from: positions['__verify__'], to: rootPos,
+      active: p.phase === 'Completed' || p.phase === 'Failed',
+      direction: 'return',
     });
   });
 
-  return { allNodes, allPaths, count: n };
+  return { allNodes, allPaths, count: n, totalWidth };
 }
 
 // ── Rendering ──────────────────────────────────────────────
@@ -286,11 +310,10 @@ function renderAll() {
     return;
   }
 
-  const { allNodes, allPaths, count } = layout;
+  const { allNodes, allPaths, count, totalWidth } = layout;
   const runningCount = allNodes.filter(n => n.status === 'running').length;
   const doneCount = allNodes.filter(n => n.status === 'done' || n.status === 'idle').length;
 
-  // Build node HTML
   const nodesHtml = allNodes.map(n => {
     if (n.isRoot) return nodeHtml(n.id, 'Main Agent', 'done', true);
     if (n.isPipelineHeader) return pipelineHeaderHtml(n.id, n.label, n.status);
@@ -299,14 +322,26 @@ function renderAll() {
 
   const infoHtml = `
     <div class="flow-info">
-      <div>${count} pipeline${count > 1 ? 's' : ''} · ${runningCount} running · ${doneCount} done</div>
+      ${count} pipeline${count > 1 ? 's' : ''} · ${runningCount} running · ${doneCount} done
     </div>`;
 
   setCanvasContent(`${FLOW_CSS}
     <div class="flow-root">
       ${infoHtml}
-      <div class="flow-inner">
-        <svg class="flow-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="flow-inner" style="width:${Math.max(100, totalWidth * 100)}%">
+        <svg class="flow-svg" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-text-muted)" />
+            </marker>
+            <marker id="arrow-active" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-primary, #6366f1)" />
+            </marker>
+            <marker id="arrow-return" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-success, #30a46c)" />
+            </marker>
+          </defs>
+        </svg>
         ${nodesHtml}
       </div>
     </div>`);
@@ -314,11 +349,12 @@ function renderAll() {
   openCanvas('');
   document.getElementById('flow-toggle-btn')?.classList.add('active');
 
-  // Position nodes and draw lines
+  // Position nodes
   const container = document.querySelector('.flow-inner');
   if (container) {
     const w = container.clientWidth;
-    const h = Math.max(container.clientHeight, 400);
+    const h = Math.max(container.clientHeight, 500);
+
     allNodes.forEach(n => {
       const el = container.querySelector(`[data-step-id="${n.id}"]`);
       if (el && n.position) {
@@ -326,20 +362,48 @@ function renderAll() {
         el.style.top = (n.position.y * h) + 'px';
       }
     });
+
     // Draw SVG paths
     const svg = container.querySelector('.flow-svg');
     if (svg) {
       svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-      svg.innerHTML = allPaths.map(p => {
-        const dy = p.to.y * h - p.from.y * h;
-        const cp1y = p.from.y * h + dy * 0.5;
-        const cp2y = p.to.y * h - dy * 0.5;
-        return `<path d="M ${p.from.x * w},${p.from.y * h} C ${p.from.x * w},${cp1y} ${p.to.x * w},${cp2y} ${p.to.x * w},${p.to.y * h}" class="${p.active ? 'active' : ''}"/>`;
+      svg.style.width = w + 'px';
+      svg.style.height = h + 'px';
+
+      const pathsHtml = allPaths.map(p => {
+        const x1 = p.from.x * w, y1 = p.from.y * h;
+        const x2 = p.to.x * w, y2 = p.to.y * h;
+        const dy = y2 - y1;
+
+        let cls = '';
+        let marker = 'arrow';
+
+        if (p.direction === 'return') {
+          // Return line: curve outward (to the side) and back up
+          const midX = (x1 + x2) / 2 + (x1 > x2 ? 60 : -60);
+          const cp1x = x1 + (midX - x1) * 0.5;
+          const cp2x = x2 + (midX - x2) * 0.5;
+          cls = p.active ? 'return' : '';
+          marker = 'arrow-return';
+          return `<path d="M ${x1},${y1} Q ${midX},${(y1+y2)/2} ${x2},${y2}" class="${cls}" marker-end="url(#${marker})" />`;
+        }
+
+        // Normal downward line with cubic bezier
+        if (p.active) { cls = 'active'; marker = 'arrow-active'; }
+        const cp1y = y1 + dy * 0.5;
+        const cp2y = y2 - dy * 0.5;
+        return `<path d="M ${x1},${y1} C ${x1},${cp1y} ${x2},${cp2y} ${x2},${y2}" class="${cls}" marker-end="url(#${marker})" />`;
       }).join('');
+
+      // Keep defs, replace paths
+      const defs = svg.querySelector('defs');
+      svg.innerHTML = '';
+      if (defs) svg.appendChild(defs);
+      svg.insertAdjacentHTML('beforeend', pathsHtml);
     }
   }
 
-  // Watch for resize
+  // Resize observer
   if (container && !resizeObs) {
     resizeObs = new ResizeObserver(() => renderAll());
     resizeObs.observe(container);
@@ -372,7 +436,7 @@ function pipelineHeaderHtml(id, name, status) {
     </div>`;
 }
 
-// ── Public API — Event handlers ────────────────────────────
+// ── Event handlers ─────────────────────────────────────────
 
 export function startFlow(msg) {
   const name = msg.flowName || msg.branchName || msg.name || 'unknown';
@@ -429,7 +493,7 @@ export function updateLoop(msg) {
   const p = pipelines.get(pipeName);
   if (!p) return;
   p.iteration = msg.iteration || p.iteration + 1;
-  p.verifyResult = null; // reset verify for re-check
+  p.verifyResult = null;
   renderAll();
 }
 
@@ -442,7 +506,7 @@ export function completeFlow(msg) {
   renderAll();
 }
 
-// ── Public API — Canvas control ────────────────────────────
+// ── Canvas control ─────────────────────────────────────────
 
 export function closeFlow() {
   if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
@@ -454,13 +518,11 @@ export async function toggleCanvas() {
   const isOpen = document.body.classList.contains('canvas-open');
   const btn = document.getElementById('flow-toggle-btn');
   if (isOpen) { closeCanvas(); btn?.classList.remove('active'); return; }
-
-  // Always re-render (shows current state of all pipelines)
   renderAll();
 }
 
 export function onSessionChange(activeSessionId) {
-  // Could filter by session, but for now keep all visible
+  // Keep all pipelines visible across sessions
 }
 
 // ── Backend restore ────────────────────────────────────────
