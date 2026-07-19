@@ -2012,6 +2012,8 @@ initInput(chatViews.primary);
 initMemory();
 initCanvas();
 document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
+// Auto-restore flow canvas from backend on page load
+setTimeout(() => flowCanvas.autoRestore(), 1000);
 initScheduledTask();
 initNeblink();
 initDropbox();
