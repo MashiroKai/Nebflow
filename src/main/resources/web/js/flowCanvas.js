@@ -522,7 +522,8 @@ export async function toggleCanvas() {
 }
 
 export function onSessionChange(activeSessionId) {
-  // Keep all pipelines visible across sessions
+  // Reload pipelines for the new session
+  autoRestore();
 }
 
 // ── Backend restore ────────────────────────────────────────
