@@ -32,7 +32,7 @@ import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, ent
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
-import { showMemoryButton, handleMemoryData, initMemory, clearMemoryCache } from './memory.js';
+import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
@@ -1939,6 +1939,7 @@ onMessage('skillDeleted', (msg, view) => {
 
 // --- Memory ---
 onMessage('memoryData', (msg, view) => handleMemoryData(msg));
+onMessage('memoryChanged', (msg, view) => handleMemoryChanged(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
 onMessage('memoryStatus', (msg, view) => showMemoryButton());
 

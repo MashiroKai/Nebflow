@@ -722,6 +722,13 @@ object AgentActor extends AgentCore with AgentSession:
         // Increment delegate count for Delegate/MountFlow calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "MountFlow")
         val newDelegateCount = state.delegateCount + delegateIncrement
+        // Record strength reads for SKILL.md / memory detail file reads
+        toolCalls.foreach { call =>
+          if call.name == "Read" then
+            call.input("file_path").flatMap(_.asString).foreach { path =>
+              nebflow.service.StrengthStore.recordReadIfTracked(path, newDelegateCount)
+            }
+        }
         val updatedState =
           state.copy(execution =
             state.execution
