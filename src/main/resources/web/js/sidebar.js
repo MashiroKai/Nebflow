@@ -1435,6 +1435,12 @@ export function resetChatForActiveSession() {
   state.sessionToolCards = {};
   pv.pagination = { offset: 0, total: 0, hasMore: false, loading: false, pendingInitialLoad: true };
   cancelThinkingRAF();
+  // Clear queue bar for the new session and re-render with this session's queue
+  if (pv.dom.queueBar) {
+    pv.dom.queueBar.innerHTML = '';
+    pv.dom.queueBar.classList.remove('visible');
+  }
+  window.dispatchEvent(new CustomEvent('queuebar-refresh', { detail: { sessionId: state.activeSessionId } }));
   pv.dom.chat.innerHTML = '';
   pv.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
 
