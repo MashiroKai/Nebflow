@@ -12,6 +12,7 @@ let viewX = 0, viewY = 0, viewScale = 1;
 let isPanning = false, panStartX = 0, panStartY = 0, panOrigX = 0, panOrigY = 0;
 let pipelines = new Map();
 let resizeObs = null;
+let panZoomReady = false;
 
 // ── CSS ────────────────────────────────────────────────────
 const FLOW_CSS = `
@@ -362,6 +363,7 @@ function renderAll() {
   }
 
   setupPanZoom(layout);
+  bindToolbar(layout); // always re-bind — DOM is rebuilt each render
   fitView(layout);
 }
 
@@ -407,11 +409,30 @@ function fitView(layout) {
   applyTransform();
 }
 
+// Window-level listeners for pan drag — attached ONCE.
+// They just check the isPanning flag set by element-level mousedown.
+function setupWindowListeners() {
+  if (panZoomReady) return;
+  window.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    viewX = panOrigX + (e.clientX - panStartX);
+    viewY = panOrigY + (e.clientY - panStartY);
+    applyTransform();
+  });
+  window.addEventListener('mouseup', () => {
+    if (!isPanning) return;
+    isPanning = false;
+    const r = document.getElementById('flow-root');
+    r?.classList.remove('panning');
+  });
+  panZoomReady = true;
+}
+
+// Element-level listeners — called EVERY render since .flow-root is recreated.
 function setupPanZoom(layout) {
   const root = document.getElementById('flow-root');
   if (!root) return;
 
-  // Pan
   root.addEventListener('mousedown', (e) => {
     if (e.target.closest('.flow-btn')) return;
     isPanning = true;
@@ -421,18 +442,7 @@ function setupPanZoom(layout) {
     panOrigY = viewY;
     root.classList.add('panning');
   });
-  window.addEventListener('mousemove', (e) => {
-    if (!isPanning) return;
-    viewX = panOrigX + (e.clientX - panStartX);
-    viewY = panOrigY + (e.clientY - panStartY);
-    applyTransform();
-  });
-  window.addEventListener('mouseup', () => {
-    isPanning = false;
-    root.classList.remove('panning');
-  });
 
-  // Zoom (wheel)
   root.addEventListener('wheel', (e) => {
     e.preventDefault();
     const rect = root.getBoundingClientRect();
@@ -440,14 +450,16 @@ function setupPanZoom(layout) {
     const mouseY = e.clientY - rect.top;
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
     const newScale = Math.max(0.1, Math.min(5, viewScale * delta));
-    // Zoom toward mouse position
     viewX = mouseX - (mouseX - viewX) * (newScale / viewScale);
     viewY = mouseY - (mouseY - viewY) * (newScale / viewScale);
     viewScale = newScale;
     applyTransform();
   }, { passive: false });
 
-  // Toolbar buttons
+  setupWindowListeners(); // idempotent — only attaches once
+}
+
+function bindToolbar(layout) {
   document.getElementById('flow-zoom-in')?.addEventListener('click', () => {
     viewScale = Math.min(5, viewScale * 1.2);
     applyTransform();
