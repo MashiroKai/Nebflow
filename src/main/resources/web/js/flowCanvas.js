@@ -405,7 +405,7 @@ export function closeFlow() {
   document.getElementById('flow-toggle-btn')?.classList.remove('active');
 }
 
-export function toggleCanvas() {
+export async function toggleCanvas() {
   const isOpen = document.body.classList.contains('canvas-open');
   const btn = document.getElementById('flow-toggle-btn');
 
@@ -415,18 +415,22 @@ export function toggleCanvas() {
     return;
   }
 
+  // No active flow data — try restoring from backend
   if (!flowData) {
-    setCanvasContent(`${FLOW_CSS}
-      <div class="flow-root">
-        <div class="flow-info">
-          <div>No active flow</div>
-          <div class="sub">Mount a flow to see the visualization</div>
-        </div>
-      </div>`);
-    showCanvasHeader(false);
-    openCanvas('');
-    btn?.classList.add('active');
-    return;
+    const restored = await restoreFromBackend();
+    if (!restored) {
+      setCanvasContent(`${FLOW_CSS}
+        <div class="flow-root">
+          <div class="flow-info">
+            <div>No active flow</div>
+            <div class="sub">Mount a flow to see the visualization</div>
+          </div>
+        </div>`);
+      showCanvasHeader(false);
+      openCanvas('');
+      btn?.classList.add('active');
+      return;
+    }
   }
 
   const nodesHtml = flowData.nodes.map(n =>
@@ -439,6 +443,60 @@ export function toggleCanvas() {
   positionNodes();
   requestAnimationFrame(() => { refreshLines(); updateInfo(); });
   btn?.classList.add('active');
+}
+
+/** Fetch pipeline states from backend and restore the first one to canvas. */
+async function restoreFromBackend() {
+  try {
+    const sessionId = document.body.dataset.sessionId || '';
+    if (!sessionId) return false;
+    const resp = await fetch(`/api/flow/status/${sessionId}`);
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    const pipelines = data.pipelines || [];
+    if (pipelines.length === 0) return false;
+
+    // Restore the first pipeline (most recently updated)
+    const p = pipelines.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+    const steps = (p.steps || []).map(s => ({
+      id: s.id,
+      agent: s.agent || '',
+      dependsOn: s.dependsOn || [],
+    }));
+    const { positions } = computeLayout(steps);
+
+    // Map backend phase to display
+    const phaseDisplay = { Idle: 'idle', Running: 'running', Completed: 'done', Failed: 'failed' };
+
+    const nodes = [
+      { id: '__root__', label: 'Main Agent', status: 'done' },
+      ...steps.map(s => ({
+        id: s.id,
+        label: s.id,
+        agent: s.agent,
+        status: (s.status || 'pending').toLowerCase(),
+      })),
+      { id: '__verify__', label: 'verify', agent: p.verifyAgent || 'Explorer',
+        status: p.verifyResult ? 'done' : 'pending' },
+    ];
+
+    flowData = {
+      name: p.name,
+      sessionId: data.sessionId,
+      steps,
+      positions,
+      nodes,
+      iteration: p.iteration || 0,
+      maxIterations: p.maxIterations || 3,
+      completedSteps: nodes.filter(n => n.status === 'done' || n.status === 'failed').length,
+      totalSteps: steps.length,
+    };
+    console.log('[flowCanvas] Restored from backend:', p.name, 'phase:', p.phase);
+    return true;
+  } catch (e) {
+    console.warn('[flowCanvas] Restore failed:', e);
+    return false;
+  }
 }
 
 export function onSessionChange(activeSessionId) {
