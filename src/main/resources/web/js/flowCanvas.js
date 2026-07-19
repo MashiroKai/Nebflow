@@ -164,6 +164,7 @@ function computeLayout() {
   const originX = 0, originY = 0;
 
   const allNodes = [];
+  const allEdges = [];
   const allPaths = [];
 
   // Root at top center
@@ -188,14 +189,6 @@ function computeLayout() {
     }
     p.steps.forEach(s => getDepth(s.id));
     const maxDepth = Math.max(0, ...Object.values(depthMap));
-
-    // Group by depth level
-    const levels = {};
-    p.steps.forEach(s => {
-      const d = depthMap[s.id];
-      if (!levels[d]) levels[d] = [];
-      levels[d].push(s);
-    });
 
     // Layer assignment (Y position by hierarchy from Main Agent):
     // Y1: verify (closest to Main Agent — reports to it)
@@ -228,45 +221,29 @@ function computeLayout() {
       });
     });
 
-    // ── Paths (gray lines showing data flow) ──
+    // ── Edge definitions (store now, draw after spreading) ──
 
     // Main Agent → verify (verify reports to main)
-    allPaths.push({ from: { x: rootX, y: rootY }, to: { x: colCenter, y: verifyY }, active: p.phase === 'Completed' || p.phase === 'Failed' });
+    allEdges.push({ from: '__root__', to: `${name}/__verify__`, active: p.phase === 'Completed' || p.phase === 'Failed' });
 
     // Leaf steps → verify
     leafSteps.forEach(s => {
-      const node = allNodes.find(n => n.id === `${name}/${s.id}`);
-      if (node) allPaths.push({
-        from: { x: node.x, y: node.y }, to: { x: colCenter, y: verifyY },
-        active: p.verifyResult !== null,
-      });
+      allEdges.push({ from: `${name}/${s.id}`, to: `${name}/__verify__`, active: p.verifyResult !== null });
     });
 
-    // Step dependency paths: dependency → dependent
-    // Two sources of edges:
-    //   1. Explicit dependsOn
-    //   2. Implicit serial: consecutive steps with no explicit edge between them
+    // Step dependency edges: dependency → dependent
+    // Two sources: explicit dependsOn + implicit serial
     const hasExplicitEdge = (fromId, toId) =>
       p.steps.some(s => s.id === toId && (s.dependsOn || []).includes(fromId));
 
     p.steps.forEach((s, i) => {
       // Explicit edges
       (s.dependsOn || []).forEach(d => {
-        const fromNode = allNodes.find(n => n.id === `${name}/${d}`);
-        const toNode = allNodes.find(n => n.id === `${name}/${s.id}`);
-        if (fromNode && toNode) allPaths.push({
-          from: { x: fromNode.x, y: fromNode.y }, to: { x: toNode.x, y: toNode.y },
-          active: s.status === 'Done' || s.status === 'Running',
-        });
+        allEdges.push({ from: `${name}/${d}`, to: `${name}/${s.id}`, active: s.status === 'Done' || s.status === 'Running' });
       });
       // Implicit serial edge: previous step → this step (if not already connected)
       if (i > 0 && !(s.dependsOn || []).includes(p.steps[i - 1].id) && !hasExplicitEdge(p.steps[i - 1].id, s.id)) {
-        const fromNode = allNodes.find(n => n.id === `${name}/${p.steps[i - 1].id}`);
-        const toNode = allNodes.find(n => n.id === `${name}/${s.id}`);
-        if (fromNode && toNode) allPaths.push({
-          from: { x: fromNode.x, y: fromNode.y }, to: { x: toNode.x, y: toNode.y },
-          active: s.status === 'Done' || s.status === 'Running',
-        });
+        allEdges.push({ from: `${name}/${p.steps[i - 1].id}`, to: `${name}/${s.id}`, active: s.status === 'Done' || s.status === 'Running' });
       }
     });
 
@@ -284,6 +261,18 @@ function computeLayout() {
           n.x = colX + colWidth * ((i + 1) / (count + 1));
         });
       }
+    });
+  });
+
+  // ── Generate path coordinates from final node positions ──
+  const nodeMap = {};
+  allNodes.forEach(n => { nodeMap[n.id] = n; });
+  allEdges.forEach(e => {
+    const from = nodeMap[e.from], to = nodeMap[e.to];
+    if (from && to) allPaths.push({
+      from: { x: from.x, y: from.y },
+      to: { x: to.x, y: to.y },
+      active: e.active,
     });
   });
 
