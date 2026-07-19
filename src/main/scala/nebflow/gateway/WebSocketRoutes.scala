@@ -169,8 +169,7 @@ class WebSocketRoutes(
     for
       treeRef <- nebulaSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
       _ <- FlowTreeRegistry.register(sessionId, treeRef)
-      // TODO: restore from FlowTreeStore (Phase 5 continued)
-      _ = logger.info(s"FlowTreeActor created for session $sessionId")
+      _ = logger.info(s"FlowTreeActor created for session $sessionId (pipelines auto-restored on startup)")
     yield ()
 
   end initFlowTree

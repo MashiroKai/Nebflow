@@ -405,6 +405,7 @@ object FlowTreeSnapshot:
 end FlowTreeSnapshot
 
 // ============================================================
+// ============================================================
 // Mount Result (returned by FlowTreeActor to MountFlowTool)
 // ============================================================
 
@@ -413,44 +414,32 @@ sealed trait MountResult
 object MountResult:
   case class Mounted(name: String, address: String, typeName: String) extends MountResult
   case class Unmounted(name: String) extends MountResult
-  case class Retriggered(name: String) extends MountResult
   case class Error(message: String) extends MountResult
 
 // ============================================================
-// Tree Commands (messages for FlowTreeActor)
+// Tree Commands (messages for FlowTreeActor — simplified supervisor)
 // ============================================================
 
 sealed trait TreeCommand
 
 object TreeCommand:
-
-  // Mount management
   case class MountBranch(
     defn: FlowDef,
     instanceName: Option[String],
     replyTo: Option[nebflow.actor.ActorRef[MountResult]]
   ) extends TreeCommand
+
   case class UnmountBranch(name: String) extends TreeCommand
-  case class RetriggerPipeline(name: String) extends TreeCommand
 
-  // Pipeline internal messages
-  case class StepCompleted(branchName: String, stepId: String, output: String) extends TreeCommand
-  case class StepFailed(branchName: String, stepId: String, error: String) extends TreeCommand
-  case class VerifyCompleted(branchName: String, passed: Boolean, summary: String) extends TreeCommand
+  /** Trigger a pipeline with input. replyTo receives progress/done/failed events. */
+  case class TriggerPipeline(
+    name: String,
+    input: String = "",
+    replyTo: Option[nebflow.actor.ActorRef[PipelineActor.PipelineEvent]] = None
+  ) extends TreeCommand
 
-  // Daemon mail routing
-  case class MailForBranch(address: String, message: String) extends TreeCommand
-
-  // Event bus (Source external events + system internal events)
-  case class EventFired(eventType: String, data: JsonObject) extends TreeCommand
-
-  // Source script process exited
-  case class SourceExited(branchName: String, exitCode: Int) extends TreeCommand
-
-  // Hot reload
   case class ReloadDefinition(flowName: String) extends TreeCommand
 
-  // Lifecycle
   case object Shutdown extends TreeCommand
 
 end TreeCommand
