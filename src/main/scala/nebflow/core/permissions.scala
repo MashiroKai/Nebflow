@@ -26,18 +26,20 @@ enum SafetyMode:
   case ConfirmEdits, AutoEdits, AutoAll
 
 object SafetyMode:
+
   def fromString(s: String): SafetyMode = s match
-    case "auto-edits"  => AutoEdits
-    case "auto-all"    => AutoAll
-    case _             => ConfirmEdits
+    case "auto-edits" => AutoEdits
+    case "auto-all" => AutoAll
+    case _ => ConfirmEdits
 
   def toString(m: SafetyMode): String = m match
     case ConfirmEdits => "confirm-edits"
-    case AutoEdits    => "auto-edits"
-    case AutoAll      => "auto-all"
+    case AutoEdits => "auto-edits"
+    case AutoAll => "auto-all"
 
   given io.circe.Encoder[SafetyMode] =
     io.circe.Encoder.encodeString.contramap(toString)
+
   given io.circe.Decoder[SafetyMode] =
     io.circe.Decoder.decodeString.map(fromString)
 
@@ -66,14 +68,14 @@ object ToolReversibility:
         if EditTools.contains(toolName) then true
         else if toolName == "Bash" then checkBash(input)
         else if toolName == "Curl" then checkCurl(input)
-        else true  // all other tools (Read, Grep, MCP, ScriptTool, etc.) auto-approved
+        else true // all other tools (Read, Grep, MCP, ScriptTool, etc.) auto-approved
 
       case SafetyMode.ConfirmEdits =>
         // Write/Edit need confirmation, Bash checked, others auto-approved
         if EditTools.contains(toolName) then false
         else if toolName == "Bash" then checkBash(input)
         else if toolName == "Curl" then checkCurl(input)
-        else true  // all other tools auto-approved
+        else true // all other tools auto-approved
 
   private def checkBash(input: JsonObject): Boolean =
     input("command").flatMap(_.asString).forall { cmd =>

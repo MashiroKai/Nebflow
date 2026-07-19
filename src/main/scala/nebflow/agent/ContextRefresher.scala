@@ -153,14 +153,19 @@ object ContextRefresher:
     currentDelegateCount: Int = 0
   ): String =
     val sections = List(
-      MemoryStore.loadUserMemory.map(content => filterByStrength(content, currentDelegateCount))
+      MemoryStore.loadUserMemory
+        .map(content => filterByStrength(content, currentDelegateCount))
         .map(content => s"## User Memory\n\n$content"),
-      MemoryStore.loadAgentMemory(agentName).map(content => filterByStrength(content, currentDelegateCount))
+      MemoryStore
+        .loadAgentMemory(agentName)
+        .map(content => filterByStrength(content, currentDelegateCount))
         .map(content => s"## Agent Memory\n\n$content"),
-      folderId.flatMap(fid => MemoryStore.loadFolderMemory(fid))
+      folderId
+        .flatMap(fid => MemoryStore.loadFolderMemory(fid))
         .map(content => filterByStrength(content, currentDelegateCount))
         .map(content => s"## Folder Memory\n\n$content"),
-      sessionId.flatMap(sid => MemoryStore.loadSessionMemory(sid))
+      sessionId
+        .flatMap(sid => MemoryStore.loadSessionMemory(sid))
         .map(content => filterByStrength(content, currentDelegateCount))
         .map(content => s"## Session Memory\n\n$content")
     ).flatten
@@ -181,15 +186,18 @@ object ContextRefresher:
    */
   private def filterByStrength(content: String, currentDelegateCount: Int): String =
     val detailRefPattern = "→([a-zA-Z0-9]{4,12})".r
-    content.split("\n").filter { line =>
-      if line.trim.startsWith("- ") then
-        detailRefPattern.findFirstMatchIn(line) match
-          case Some(m) =>
-            val id = m.group(1)
-            StrengthStore.shouldInclude(s"memory.$id", currentDelegateCount)
-          case None => true  // Short memory, always keep
-      else true  // Non-entry lines (headers, blank lines), always keep
-    }.mkString("\n")
+    content
+      .split("\n")
+      .filter { line =>
+        if line.trim.startsWith("- ") then
+          detailRefPattern.findFirstMatchIn(line) match
+            case Some(m) =>
+              val id = m.group(1)
+              StrengthStore.shouldInclude(s"memory.$id", currentDelegateCount)
+            case None => true // Short memory, always keep
+        else true // Non-entry lines (headers, blank lines), always keep
+      }
+      .mkString("\n")
   end filterByStrength
 
   // ============================================================

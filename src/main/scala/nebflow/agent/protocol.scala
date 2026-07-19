@@ -410,10 +410,10 @@ case class SessionContext(
   language: Option[String] = None,
   projectRoot: Option[String] = None,
   rulesMd: Option[String] = None,
-    folderId: Option[String] = None,
-    chatWidth: Int = 0,
-    gitBranch: Option[String] = None,
-    safetyMode: String = "confirm-edits",
+  folderId: Option[String] = None,
+  chatWidth: Int = 0,
+  gitBranch: Option[String] = None,
+  safetyMode: String = "confirm-edits",
   pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
   pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None
@@ -635,6 +635,7 @@ extension (s: AgentState)
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
+
   def withSafetyMode(mode: String): AgentState =
     s.copy(session = s.session.copy(safetyMode = mode))
 
@@ -642,8 +643,10 @@ extension (s: AgentState)
 
   def delegateCount: Int = s.execution.delegateCount
   def lastMaintenanceDelegateCount: Int = s.execution.lastMaintenanceDelegateCount
+
   def withDelegateCount(count: Int): AgentState =
     s.copy(execution = s.execution.copy(delegateCount = count))
+
   def withLastMaintenanceDelegateCount(count: Int): AgentState =
     s.copy(execution = s.execution.copy(lastMaintenanceDelegateCount = count))
 

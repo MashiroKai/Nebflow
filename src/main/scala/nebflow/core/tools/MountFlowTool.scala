@@ -148,8 +148,7 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
         IO.pure(Left(ToolError("Must specify branch name to unmount (via 'source' or 'instanceName')")))
       case Some(name) =>
         getOrCreateTreeActor(ctx).flatMap { treeRef =>
-          for
-            _ <- treeRef ! TreeCommand.UnmountBranch(name)
+          for _ <- treeRef ! TreeCommand.UnmountBranch(name)
           yield Right(s"Branch '$name' unmount requested.")
         }
 
@@ -166,8 +165,7 @@ Step prompt 中的 ${stepId} 会被上游 step 的输出替换。
         IO.pure(Left(ToolError("Must specify pipeline name to retrigger")))
       case Some(name) =>
         getOrCreateTreeActor(ctx).flatMap { treeRef =>
-          for
-            _ <- treeRef ! TreeCommand.RetriggerPipeline(name)
+          for _ <- treeRef ! TreeCommand.RetriggerPipeline(name)
           yield Right(s"Pipeline '$name' retrigger requested.")
         }
 

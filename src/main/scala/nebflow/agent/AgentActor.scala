@@ -316,7 +316,9 @@ object AgentActor extends AgentCore with AgentSession:
             IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
 
       case AgentCommand.SetSafetyMode(mode) =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))))
+        IO.pure(
+          idle(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)))
+        )
 
       case AgentCommand.StartPlan(task) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-start", s"task=${task.take(60)}")
@@ -534,7 +536,15 @@ object AgentActor extends AgentCore with AgentSession:
         yield Behaviors.stopped
 
       case AgentCommand.SetSafetyMode(mode) =>
-        IO.pure(planWaiting(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))))
+        IO.pure(
+          planWaiting(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))
+          )
+        )
 
       // Buffer user messages while planning
       case msg: AgentCommand.UserInput =>
@@ -1073,7 +1083,16 @@ object AgentActor extends AgentCore with AgentSession:
 
       // --- Bypass toggled while processing ---
       case AgentCommand.SetSafetyMode(mode) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)), pending))
+        IO.pure(
+          processing(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)),
+            pending
+          )
+        )
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>

@@ -28,8 +28,8 @@ object StrengthStore:
 
   val MaxStrength: Double = 100.0
   val ReadIncrement: Double = 30.0
-  val HalfLife: Double = 20.0       // delegate/flow events for strength to halve
-  val Threshold: Double = 25.0      // minimum effective strength to stay in catalog
+  val HalfLife: Double = 20.0 // delegate/flow events for strength to halve
+  val Threshold: Double = 25.0 // minimum effective strength to stay in catalog
 
   private var statsCache: Map[String, Entry] = Map.empty
   private var statsCacheLoaded: Boolean = false
@@ -47,8 +47,7 @@ object StrengthStore:
           try
             val raw = os.read(statsPath)
             io.circe.parser.decode[Map[String, Entry]](raw).getOrElse(Map.empty)
-          catch
-            case _: Exception => Map.empty
+          catch case _: Exception => Map.empty
       statsCacheLoaded = true
       statsCacheMtime = mtime
       statsCache
@@ -75,9 +74,7 @@ object StrengthStore:
     val stats = loadStats()
     stats.getOrElse(key, Entry(MaxStrength, 0, currentDelegate))
 
-  /**
-   * Record a read event: apply decay, add increment, cap at MAX_STRENGTH.
-   */
+  /** Record a read event: apply decay, add increment, cap at MAX_STRENGTH. */
   def recordRead(key: String, currentDelegate: Int): Unit =
     val stats = loadStats()
     val entry = stats.getOrElse(key, Entry(MaxStrength, 0, currentDelegate))
@@ -111,7 +108,6 @@ object StrengthStore:
     // Memory detail: ~/.nebflow/memory/<id>.md
     else if filePath.contains("/memory/") && filePath.endsWith(".md") then
       val fileName = filePath.split("/").last.replace(".md", "")
-      if fileName.matches("[a-zA-Z0-9]{4,12}") then
-        recordRead(s"memory.$fileName", currentDelegate)
+      if fileName.matches("[a-zA-Z0-9]{4,12}") then recordRead(s"memory.$fileName", currentDelegate)
 
 end StrengthStore

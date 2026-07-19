@@ -85,58 +85,61 @@ object FlowTreeActor:
 
     new Behavior[TreeCommand]:
       override def onError(ctx: ActorContext[TreeCommand], err: Throwable): IO[Behavior[TreeCommand]] =
-        logger.error(s"FlowTreeActor error: ${err.getMessage}\n${err.getStackTrace.take(15).map(_.toString).mkString("\n")}").as(this)
+        logger
+          .error(
+            s"FlowTreeActor error: ${err.getMessage}\n${err.getStackTrace.take(15).map(_.toString).mkString("\n")}"
+          )
+          .as(this)
 
       def receive(ctx: ActorContext[TreeCommand], msg: TreeCommand): IO[Behavior[TreeCommand]] =
         given ActorContext[TreeCommand] = ctx
         logger.debug(s"FlowTreeActor received: ${msg.getClass.getSimpleName}") *>
-        (msg match
-          case TreeCommand.MountBranch(defn, instanceName, replyTo) =>
-            handleMount(ctx, branchesRef, cfg, defn, instanceName, replyTo).as(this)
+          (msg match
+            case TreeCommand.MountBranch(defn, instanceName, replyTo) =>
+              handleMount(ctx, branchesRef, cfg, defn, instanceName, replyTo).as(this)
 
-          case TreeCommand.UnmountBranch(name) =>
-            handleUnmount(ctx, branchesRef, cfg, name).as(this)
+            case TreeCommand.UnmountBranch(name) =>
+              handleUnmount(ctx, branchesRef, cfg, name).as(this)
 
-          case TreeCommand.RetriggerPipeline(name) =>
-            handleRetrigger(ctx, branchesRef, cfg, name).as(this)
+            case TreeCommand.RetriggerPipeline(name) =>
+              handleRetrigger(ctx, branchesRef, cfg, name).as(this)
 
-          case TreeCommand.StepCompleted(branchName, stepId, output) =>
-            for
-              _ <- handleStepCompleted(ctx, branchesRef, cfg, branchName, stepId, output)
-              _ <- afterStepUpdate(ctx, branchesRef, cfg, branchName)
-            yield this
+            case TreeCommand.StepCompleted(branchName, stepId, output) =>
+              for
+                _ <- handleStepCompleted(ctx, branchesRef, cfg, branchName, stepId, output)
+                _ <- afterStepUpdate(ctx, branchesRef, cfg, branchName)
+              yield this
 
-          case TreeCommand.StepFailed(branchName, stepId, error) =>
-            for
-              _ <- handleStepFailed(ctx, branchesRef, cfg, branchName, stepId, error)
-              _ <- afterStepUpdate(ctx, branchesRef, cfg, branchName)
-            yield this
+            case TreeCommand.StepFailed(branchName, stepId, error) =>
+              for
+                _ <- handleStepFailed(ctx, branchesRef, cfg, branchName, stepId, error)
+                _ <- afterStepUpdate(ctx, branchesRef, cfg, branchName)
+              yield this
 
-          case TreeCommand.VerifyCompleted(branchName, passed, summary) =>
-            handleVerifyCompleted(ctx, branchesRef, cfg, branchName, passed, summary).as(this)
+            case TreeCommand.VerifyCompleted(branchName, passed, summary) =>
+              handleVerifyCompleted(ctx, branchesRef, cfg, branchName, passed, summary).as(this)
 
-          case TreeCommand.EventFired(eventType, data) =>
-            handleEvent(ctx, branchesRef, cfg, eventType, data).as(this)
+            case TreeCommand.EventFired(eventType, data) =>
+              handleEvent(ctx, branchesRef, cfg, eventType, data).as(this)
 
-          case TreeCommand.SourceExited(branchName, exitCode) =>
-            handleSourceExited(ctx, branchesRef, cfg, branchName, exitCode).as(this)
+            case TreeCommand.SourceExited(branchName, exitCode) =>
+              handleSourceExited(ctx, branchesRef, cfg, branchName, exitCode).as(this)
 
-          case TreeCommand.MailForBranch(address, message) =>
-            // Mail routing for serverless daemons is handled by the proxy actor directly
-            logger.info(s"Mail for $address").as(this)
+            case TreeCommand.MailForBranch(address, message) =>
+              // Mail routing for serverless daemons is handled by the proxy actor directly
+              logger.info(s"Mail for $address").as(this)
 
-          case TreeCommand.ReloadDefinition(flowName) =>
-            handleReload(ctx, branchesRef, cfg, flowName).as(this)
+            case TreeCommand.ReloadDefinition(flowName) =>
+              handleReload(ctx, branchesRef, cfg, flowName).as(this)
 
-          case TreeCommand.Shutdown =>
-            for
-              branches <- branchesRef.get
-              _ <- branches.values.toList.traverse_ { br =>
-                br.runningAgents.values.toList.traverse_(ref => ctx.system.stop(ref))
-              }
-              _ <- logger.info("FlowTreeActor shutdown complete")
-            yield Behaviors.stopped[TreeCommand]
-        )
+            case TreeCommand.Shutdown =>
+              for
+                branches <- branchesRef.get
+                _ <- branches.values.toList.traverse_ { br =>
+                  br.runningAgents.values.toList.traverse_(ref => ctx.system.stop(ref))
+                }
+                _ <- logger.info("FlowTreeActor shutdown complete")
+              yield Behaviors.stopped[TreeCommand])
       end receive
 
       override def onStop(ctx: ActorContext[TreeCommand]): IO[Unit] =
@@ -162,64 +165,63 @@ object FlowTreeActor:
     replyTo: Option[ActorRef[MountResult]]
   )(using ActorContext[TreeCommand]): IO[Unit] =
     logger.info(s"handleMount: defn=${defn.name}, type=${defn.branchType.typeName}, instanceName=$instanceName") *>
-    (for
-      branches <- branchesRef.get
-      // Generate unique instance name
-      baseName = instanceName.getOrElse(defn.name)
-      name = makeUniqueName(branches.keys.toSet, baseName)
-      address = s"nebflow://local/branch-$name-${java.util.UUID.randomUUID().toString.take(8)}"
-      // Create initial branch state
-      initialState = defn.branchType match
-        case p: BranchType.Pipeline =>
-          BranchState(
-            name = name,
-            address = address,
-            branchType = defn.branchType,
-            phase = BranchPhase.Starting,
-            stepStatus = p.steps.map(s => s.id -> StepStatus.Pending.toString).toMap
-          )
-        case _ =>
-          BranchState(
-            name = name,
-            address = address,
-            branchType = defn.branchType,
-            phase = BranchPhase.Starting
-          )
-      runtime = BranchRuntime(state = initialState, flowDef = defn, depth = 0)
-      // Insert
-      _ <- branchesRef.update(_ + (name -> runtime))
-      _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, name)
-      _ <- emit(
-        cfg,
-        "treeBranchMounted",
-        "name" -> name.asJson,
-        "type" -> defn.branchType.typeName.asJson,
-        "address" -> address.asJson
-      )
-      // Start branch based on type
-      _ <- defn.branchType match
-        case _: BranchType.Pipeline =>
-          startPipeline(ctx, branchesRef, cfg, name)
-        case daemon: BranchType.Daemon =>
-          startDaemon(ctx, branchesRef, cfg, name, daemon)
-        case _: BranchType.Reactor =>
-          // Reactor: just mark as Running — it listens via handleEvent
-          for
-            _ <- branchesRef.update(s =>
-              s.updated(name, s(name).copy(state = s(name).state.copy(phase = BranchPhase.Running)))
+      (for
+        branches <- branchesRef.get
+        // Generate unique instance name
+        baseName = instanceName.getOrElse(defn.name)
+        name = makeUniqueName(branches.keys.toSet, baseName)
+        address = s"nebflow://local/branch-$name-${java.util.UUID.randomUUID().toString.take(8)}"
+        // Create initial branch state
+        initialState = defn.branchType match
+          case p: BranchType.Pipeline =>
+            BranchState(
+              name = name,
+              address = address,
+              branchType = defn.branchType,
+              phase = BranchPhase.Starting,
+              stepStatus = p.steps.map(s => s.id -> StepStatus.Pending.toString).toMap
             )
-            _ <- logger.info(s"Reactor '$name' mounted and listening")
-          yield ()
-        case source: BranchType.Source =>
-          startSource(ctx, branchesRef, cfg, name, source)
-      // Inject address table to main agent
-      _ <- injectAddressTable(branchesRef, cfg)
-      // Persist
-      _ <- saveTree(branchesRef, cfg)
-      // Reply
-      _ <- replyTo.traverse_(_ ! MountResult.Mounted(name, address, defn.branchType.typeName))
-      _ <- logger.info(s"Branch '$name' (${defn.branchType.typeName}) mounted at $address")
-    yield ())
+          case _ =>
+            BranchState(
+              name = name,
+              address = address,
+              branchType = defn.branchType,
+              phase = BranchPhase.Starting
+            )
+        runtime = BranchRuntime(state = initialState, flowDef = defn, depth = 0)
+        // Insert
+        _ <- branchesRef.update(_ + (name -> runtime))
+        _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, name)
+        _ <- emit(
+          cfg,
+          "treeBranchMounted",
+          "name" -> name.asJson,
+          "type" -> defn.branchType.typeName.asJson,
+          "address" -> address.asJson
+        )
+        // Start branch based on type
+        _ <- defn.branchType match
+          case _: BranchType.Pipeline =>
+            startPipeline(ctx, branchesRef, cfg, name)
+          case daemon: BranchType.Daemon =>
+            startDaemon(ctx, branchesRef, cfg, name, daemon)
+          case _: BranchType.Reactor =>
+            // Reactor: just mark as Running — it listens via handleEvent
+            for
+              _ <- branchesRef
+                .update(s => s.updated(name, s(name).copy(state = s(name).state.copy(phase = BranchPhase.Running))))
+              _ <- logger.info(s"Reactor '$name' mounted and listening")
+            yield ()
+          case source: BranchType.Source =>
+            startSource(ctx, branchesRef, cfg, name, source)
+        // Inject address table to main agent
+        _ <- injectAddressTable(branchesRef, cfg)
+        // Persist
+        _ <- saveTree(branchesRef, cfg)
+        // Reply
+        _ <- replyTo.traverse_(_ ! MountResult.Mounted(name, address, defn.branchType.typeName))
+        _ <- logger.info(s"Branch '$name' (${defn.branchType.typeName}) mounted at $address")
+      yield ())
 
   private def handleUnmount(
     ctx: ActorContext[TreeCommand],
@@ -301,14 +303,23 @@ object FlowTreeActor:
       pipelineDef <- branchesRef.get.map(_.get(name).flatMap(_.state.branchType match
         case p: BranchType.Pipeline => Some(p)
         case _ => None))
-      _ <- emit(cfg, "flowStarted",
+      _ <- emit(
+        cfg,
+        "flowStarted",
         "flowName" -> name.asJson,
         "branchName" -> name.asJson,
-        "steps" -> pipelineDef.map(p => p.steps.map(s => Json.obj(
-          "id" -> s.id.asJson,
-          "agent" -> s.agent.getOrElse("").asJson,
-          "dependsOn" -> s.dependsOn.toList.asJson
-        ))).getOrElse(Nil).asJson
+        "steps" -> pipelineDef
+          .map(p =>
+            p.steps.map(s =>
+              Json.obj(
+                "id" -> s.id.asJson,
+                "agent" -> s.agent.getOrElse("").asJson,
+                "dependsOn" -> s.dependsOn.toList.asJson
+              )
+            )
+          )
+          .getOrElse(Nil)
+          .asJson
       )
       _ <- scheduleReadySteps(ctx, branchesRef, cfg, name)
     yield ()
