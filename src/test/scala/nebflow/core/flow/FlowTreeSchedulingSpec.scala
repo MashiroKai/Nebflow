@@ -3,15 +3,12 @@ package nebflow.core.flow
 import munit.FunSuite
 
 /**
- * Tests for FlowTreeActor's pure scheduling logic — no IO, no actors, no LLM.
- * These test the core algorithms that drive the state machine.
+ * Tests for pipeline pure scheduling logic — no IO, no actors, no LLM.
+ * These test the core algorithms that drive the pipeline state machine.
  */
 class FlowTreeSchedulingSpec extends FunSuite:
 
-  import FlowTreeActor.{resolveTemplate, buildVerifyContext, buildAddressTable, BranchRuntime, TreeConfig}
-  import nebflow.actor.{ActorPath, ActorRef}
-  import nebflow.agent.SharedResources
-  import nebflow.core.flow.BranchPhase.*
+  import PipelineActor.{resolveTemplate, buildVerifyContext}
   import nebflow.core.flow.StepStatus.*
 
   // ============================================================
@@ -87,56 +84,6 @@ class FlowTreeSchedulingSpec extends FunSuite:
     val ctx = buildVerifyContext(Map.empty, Map.empty, Map.empty)
     assert(ctx.contains("=== Step Results ==="))
     assert(ctx.contains("=== End Results ==="))
-
-  // ============================================================
-  // buildAddressTable — address table for main agent injection
-  // ============================================================
-
-  test("buildAddressTable shows empty message when no branches"):
-    val table = buildAddressTable(Map.empty)
-    assert(table.contains("无"), "Should show empty message in Chinese")
-
-  test("buildAddressTable includes branch info"):
-    val state = BranchState(
-      name = "test-pipeline",
-      address = "nebflow://local/branch-test-pipeline-abc123",
-      branchType = BranchType.Pipeline(
-        steps = Nil,
-        verify = VerifyStep(prompt = "test")
-      ),
-      phase = BranchPhase.Running
-    )
-    val runtime = BranchRuntime(state = state, flowDef = FlowDef("test", state.branchType))
-    val table = buildAddressTable(Map("test-pipeline" -> runtime))
-    assert(table.contains("test-pipeline"))
-    assert(table.contains("pipeline"))
-    assert(table.contains("Running"))
-
-  test("buildAddressTable shows multiple branches"):
-    val daemonState = BranchState(
-      name = "code-reviewer",
-      address = "nebflow://local/daemon-code-reviewer-xyz",
-      branchType = BranchType.Daemon("Explorer", "review"),
-      phase = BranchPhase.Running
-    )
-    val pipelineState = BranchState(
-      name = "deploy-flow",
-      address = "nebflow://local/pipeline-deploy-flow-def",
-      branchType = BranchType.Pipeline(Nil, VerifyStep(prompt = "check")),
-      phase = BranchPhase.Completed
-    )
-    val daemonRt = BranchRuntime(state = daemonState, flowDef = FlowDef("code-reviewer", daemonState.branchType))
-    val pipelineRt = BranchRuntime(state = pipelineState, flowDef = FlowDef("deploy-flow", pipelineState.branchType))
-    val table = buildAddressTable(
-      Map(
-        "code-reviewer" -> daemonRt,
-        "deploy-flow" -> pipelineRt
-      )
-    )
-    assert(table.contains("code-reviewer"))
-    assert(table.contains("deploy-flow"))
-    assert(table.contains("daemon"))
-    assert(table.contains("Completed"))
 
   // ============================================================
   // DAG readiness logic — which steps are ready to run

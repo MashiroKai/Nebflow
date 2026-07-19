@@ -771,7 +771,7 @@ object PipelineActor:
 
   private val MaxStepOutputChars = 8000
 
-  private def resolveTemplate(prompt: String, results: Map[String, String]): String =
+  private[flow] def resolveTemplate(prompt: String, results: Map[String, String]): String =
     results.foldLeft(prompt) { case (p, (id, output)) =>
       val truncated =
         if output.length > MaxStepOutputChars
@@ -780,7 +780,7 @@ object PipelineActor:
       p.replace("${" + id + "}", truncated)
     }
 
-  private def buildVerifyContext(
+  private[flow] def buildVerifyContext(
     results: Map[String, String],
     failedReasons: Map[String, String],
     stepStatus: Map[String, String]
