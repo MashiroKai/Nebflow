@@ -1,15 +1,15 @@
-// flowCanvas.js — Flow architecture visualization on the canvas panel.
+// flowCanvas.js — Flow architecture visualization on an infinite canvas.
 //
 // Shows ALL mounted pipelines simultaneously as a connected architecture.
-// Each pipeline is a vertical "tree" with its steps, branching from a
-// shared Main Agent node at the top.
-// Lines show message flow direction with arrowheads.
-// Active lines have flowing dash animation to show messages in transit.
-// Theme-aware via CSS variables. Session-bound.
+// Infinite pan/zoom canvas with CAD-like controls.
+// Nodes positioned by hierarchy depth from Main Agent.
+// Gray lines show data flow direction.
 
 import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader } from './canvas.js';
 
-// ── State ──────────────────────────────────────────────────
+// ── View state (pan/zoom) ──────────────────────────────────
+let viewX = 0, viewY = 0, viewScale = 1;
+let isPanning = false, panStartX = 0, panStartY = 0, panOrigX = 0, panOrigY = 0;
 let pipelines = new Map();
 let resizeObs = null;
 
@@ -17,27 +17,27 @@ let resizeObs = null;
 const FLOW_CSS = `
 <style>
 .flow-root {
-  width: 100%; height: 100%; position: relative; overflow: auto;
+  width: 100%; height: 100%; position: relative; overflow: hidden;
+  cursor: grab;
+  background: var(--color-bg);
 }
-.flow-inner {
-  position: relative; min-width: 100%; min-height: 100%;
+.flow-root.panning { cursor: grabbing; }
+.flow-viewport {
+  position: absolute; top: 0; left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 .flow-svg {
-  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  position: absolute; top: 0; left: 0;
   pointer-events: none; z-index: 1;
+  overflow: visible;
 }
 .flow-svg path { fill: none; stroke: var(--color-border); stroke-width: 1.5; }
 .flow-svg path.active {
-  stroke: var(--color-primary, #6366f1);
+  stroke: var(--color-text-muted);
   stroke-width: 2;
   stroke-dasharray: 6 3;
   animation: flow-dash 1s linear infinite;
-}
-.flow-svg path.return {
-  stroke: var(--color-success, #30a46c);
-  stroke-width: 1.5;
-  stroke-dasharray: 4 4;
-  opacity: 0.6;
 }
 @keyframes flow-dash { to { stroke-dashoffset: -9; } }
 
@@ -63,9 +63,7 @@ const FLOW_CSS = `
 }
 
 /* Solar system orbit */
-.flow-orbit {
-  position: relative; width: 36px; height: 36px; margin: 0 auto 6px;
-}
+.flow-orbit { position: relative; width: 36px; height: 36px; margin: 0 auto 6px; }
 .flow-ring {
   position: absolute; top: 50%; left: 50%;
   border: 1px solid var(--color-border);
@@ -96,18 +94,6 @@ const FLOW_CSS = `
 .flow-node.done .flow-label { opacity: 0.6; }
 .flow-node.failed .flow-ring { border-color: var(--color-error, #e5484d); opacity: 0.5; }
 
-/* Pipeline header */
-.flow-node.pipeline-header {
-  min-width: 90px;
-  border-radius: 12px;
-  border: 1px solid var(--color-primary, #6366f1);
-}
-.flow-node.pipeline-header.idle { opacity: 0.5; }
-.flow-node.pipeline-header.running {
-  border-color: var(--color-primary, #6366f1);
-  box-shadow: 0 0 12px rgba(99, 102, 241, 0.15);
-}
-
 /* Labels */
 .flow-label {
   font: 500 10px -apple-system, BlinkMacSystemFont, sans-serif;
@@ -124,16 +110,37 @@ const FLOW_CSS = `
   text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;
 }
 
+/* Toolbar */
+.flow-toolbar {
+  position: absolute; bottom: 16px; right: 16px; z-index: 10;
+  display: flex; gap: 6px;
+}
+.flow-btn {
+  width: 32px; height: 32px; border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  font: 600 14px -apple-system, sans-serif;
+  color: var(--color-text);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: opacity 0.2s;
+}
+.flow-btn:hover { opacity: 0.8; }
+.flow-btn:active { opacity: 0.6; }
+
 /* Info bar */
 .flow-info {
-  position: sticky; top: 0; left: 0; z-index: 3;
-  font: 600 12px -apple-system, sans-serif;
+  position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+  font: 600 11px -apple-system, sans-serif;
   color: var(--color-text-muted);
-  padding: 10px 16px;
+  padding: 8px 16px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur));
   backdrop-filter: blur(var(--glass-blur));
   border-bottom: 1px solid var(--glass-border);
+  pointer-events: none;
 }
 .flow-empty {
   display: flex; align-items: center; justify-content: center;
@@ -146,157 +153,144 @@ const FLOW_CSS = `
 </style>
 `;
 
-// ── Layout ─────────────────────────────────────────────────
+// ── Layout: hierarchy by report depth ──────────────────────
+// Layer 0: Main Agent
+// Layer 1: Verify (reports directly to Main Agent)
+// Layer 2: Last steps (feed into verify)
+// Layer 3+: Earlier steps by reverse depth
 
-function computePipelineLayout(steps, colStart, colWidth) {
-  const depthMap = {};
-  function getDepth(id) {
-    if (id in depthMap) return depthMap[id];
-    const step = steps.find(s => s.id === id);
-    if (!step || !step.dependsOn || step.dependsOn.length === 0) { depthMap[id] = 0; return 0; }
-    const d = Math.max(...step.dependsOn.map(getDepth)) + 1;
-    depthMap[id] = d;
-    return d;
-  }
-  steps.forEach(s => getDepth(s.id));
-  const maxDepth = Math.max(0, ...Object.values(depthMap));
-  const levels = {};
-  steps.forEach(s => {
-    const d = depthMap[s.id];
-    if (!levels[d]) levels[d] = [];
-    levels[d].push(s);
-  });
-
-  const colCenter = colStart + colWidth / 2;
-  const positions = {};
-
-  // Pipeline header
-  positions['__header__'] = { x: colCenter, y: 0.12 };
-
-  // Work steps — spread within the column
-  const totalRows = maxDepth + 2;
-  for (let lv = 0; lv <= maxDepth; lv++) {
-    const group = levels[lv] || [];
-    const y = 0.22 + (lv / (totalRows + 1)) * 0.6;
-    group.forEach((step, i) => {
-      const x = group.length === 1 ? colCenter
-        : colStart + colWidth * 0.15 + colWidth * 0.7 * (i / (group.length - 1));
-      positions[step.id] = { x, y };
-    });
-  }
-  // Verify at bottom
-  positions['__verify__'] = { x: colCenter, y: 0.88 };
-
-  return { positions, maxDepth };
-}
-
-function computeGlobalLayout() {
+function computeLayout() {
   const names = [...pipelines.keys()];
-  const n = names.length;
-  if (n === 0) return null;
+  if (names.length === 0) return null;
 
-  // Give each pipeline more room — use min width and allow horizontal scroll
-  const minColWidth = 0.35; // minimum 35% of container per pipeline
-  const colWidth = Math.max(1.0 / n, minColWidth);
-  const totalWidth = colWidth * n;
+  const colWidth = 200;
+  const colSpacing = 60;
+  const rowHeight = 90;
+  const originX = 0, originY = 0;
 
-  const rootPos = { x: 0.5, y: 0.05 };
+  const allNodes = [];
   const allPaths = [];
-  const allNodes = [
-    { id: '__root__', label: 'Main Agent', status: 'done', isRoot: true,
-      position: rootPos, pipeline: null }
-  ];
+
+  // Root at top center
+  const totalWidth = names.length * colWidth + (names.length - 1) * colSpacing;
+  const rootX = totalWidth / 2;
+  const rootY = 0;
+  allNodes.push({ id: '__root__', label: 'Main Agent', status: 'done', isRoot: true, x: rootX, y: rootY });
 
   names.forEach((name, idx) => {
     const p = pipelines.get(name);
-    const colStart = idx * colWidth;
-    const { positions } = computePipelineLayout(p.steps, colStart, colWidth);
-    p.positions = positions;
+    const colX = idx * (colWidth + colSpacing);
 
-    // Header node
-    allNodes.push({
-      id: `pipe-${name}`, label: name, status: p.phase.toLowerCase(),
-      isPipelineHeader: true, agent: '', pipeline: name,
-      position: positions['__header__'],
-    });
+    // Compute step depths (forward dependency depth)
+    const depthMap = {};
+    function getDepth(id) {
+      if (id in depthMap) return depthMap[id];
+      const step = p.steps.find(s => s.id === id);
+      if (!step || !step.dependsOn || step.dependsOn.length === 0) { depthMap[id] = 0; return 0; }
+      const d = Math.max(...step.dependsOn.map(getDepth)) + 1;
+      depthMap[id] = d;
+      return d;
+    }
+    p.steps.forEach(s => getDepth(s.id));
+    const maxDepth = Math.max(0, ...Object.values(depthMap));
 
-    // Step nodes
+    // Group by depth level
+    const levels = {};
     p.steps.forEach(s => {
-      const pos = positions[s.id];
-      if (pos) allNodes.push({
-        id: `${name}/${s.id}`, label: s.id, status: (s.status || 'pending').toLowerCase(),
-        agent: s.agent || '', pipeline: name, stepId: s.id, position: pos,
-      });
+      const d = depthMap[s.id];
+      if (!levels[d]) levels[d] = [];
+      levels[d].push(s);
     });
 
-    // Verify node
+    // Layer assignment (Y position by hierarchy from Main Agent):
+    // Y1: verify (closest to Main Agent — reports to it)
+    // Y2: leaf steps (last in chain, feed verify)
+    // Y3+: earlier steps by reverse depth
+    const colCenter = colX + colWidth / 2;
+
+    // Verify at Y=rowHeight*1
+    const verifyY = rowHeight * 1;
     allNodes.push({
       id: `${name}/__verify__`, label: 'verify', status: p.verifyResult ? 'done' : 'pending',
       agent: p.verifyAgent || 'Explorer', pipeline: name, isVerify: true,
-      position: positions['__verify__'],
+      x: colCenter, y: verifyY,
     });
 
-    // ── Paths with direction (message flow) ──
+    // Leaf steps (no dependers) at Y=rowHeight*2
+    const leafSteps = p.steps.filter(s => !p.steps.some(o => (o.dependsOn || []).includes(s.id)));
+    if (leafSteps.length === 0 && p.steps.length > 0) leafSteps.push(...p.steps);
 
-    // 1. Main Agent → Pipeline header (trigger)
-    allPaths.push({
-      from: rootPos, to: positions['__header__'],
-      active: p.phase === 'Running',
-      direction: 'down',
-    });
-
-    // 2. Header → first-level steps (spawn)
-    p.steps.filter(s => !s.dependsOn || s.dependsOn.length === 0).forEach(s => {
-      allPaths.push({
-        from: positions['__header__'], to: positions[s.id],
-        active: s.status === 'Done' || s.status === 'Running',
-        direction: 'down',
+    // Assign Y by reverse depth: deeper dependency chain = lower Y
+    // Step at maxDepth = closest to verify (Y=2), step at depth 0 = furthest
+    p.steps.forEach(s => {
+      const d = depthMap[s.id];
+      const stepsFromLeaf = maxDepth - d; // 0 for leaf, increases for earlier steps
+      const y = rowHeight * (2 + stepsFromLeaf);
+      allNodes.push({
+        id: `${name}/${s.id}`, label: s.id, status: (s.status || 'pending').toLowerCase(),
+        agent: s.agent || '', pipeline: name, stepId: s.id,
+        x: colCenter, y,
       });
     });
 
-    // 3. Step → dependent step (data passing: ${stepId} template substitution)
+    // ── Paths (gray lines showing data flow) ──
+
+    // Main Agent → verify (verify reports to main)
+    allPaths.push({ from: { x: rootX, y: rootY }, to: { x: colCenter, y: verifyY }, active: p.phase === 'Completed' || p.phase === 'Failed' });
+
+    // Leaf steps → verify
+    leafSteps.forEach(s => {
+      const node = allNodes.find(n => n.id === `${name}/${s.id}`);
+      if (node) allPaths.push({
+        from: { x: node.x, y: node.y }, to: { x: colCenter, y: verifyY },
+        active: p.verifyResult !== null,
+      });
+    });
+
+    // Step dependency paths: dependency → dependent
     p.steps.forEach(s => {
       (s.dependsOn || []).forEach(d => {
-        const from = positions[d], to = positions[s.id];
-        if (from && to) allPaths.push({
-          from, to,
+        const fromNode = allNodes.find(n => n.id === `${name}/${d}`);
+        const toNode = allNodes.find(n => n.id === `${name}/${s.id}`);
+        if (fromNode && toNode) allPaths.push({
+          from: { x: fromNode.x, y: fromNode.y }, to: { x: toNode.x, y: toNode.y },
           active: s.status === 'Done' || s.status === 'Running',
-          direction: 'down',
         });
       });
     });
 
-    // 4. Last steps → verify (all done → trigger verify)
-    const lastSteps = p.steps.filter(s => {
-      const hasDependers = p.steps.some(o => (o.dependsOn || []).includes(s.id));
-      return !hasDependers;
+    // Spread nodes horizontally within same Y level
+    const yGroups = {};
+    allNodes.filter(n => n.pipeline === name && !n.isVerify && !n.isRoot).forEach(n => {
+      const yKey = n.y;
+      if (!yGroups[yKey]) yGroups[yKey] = [];
+      yGroups[yKey].push(n);
     });
-    // If only one step, connect it to verify
-    if (lastSteps.length === 0 && p.steps.length > 0) lastSteps.push(p.steps[0]);
-    lastSteps.forEach(s => {
-      const from = positions[s.id], to = positions['__verify__'];
-      if (from && to) allPaths.push({
-        from, to,
-        active: p.verifyResult !== null,
-        direction: 'down',
-      });
-    });
-
-    // 5. Verify → Main Agent (return result — curved回流 line)
-    allPaths.push({
-      from: positions['__verify__'], to: rootPos,
-      active: p.phase === 'Completed' || p.phase === 'Failed',
-      direction: 'return',
+    Object.values(yGroups).forEach(group => {
+      const count = group.length;
+      if (count > 1) {
+        group.forEach((n, i) => {
+          n.x = colX + colWidth * ((i + 1) / (count + 1));
+        });
+      }
     });
   });
 
-  return { allNodes, allPaths, count: n, totalWidth };
+  // Compute bounding box
+  const xs = allNodes.map(n => n.x);
+  const ys = allNodes.map(n => n.y);
+  const minX = Math.min(...xs) - 60;
+  const maxX = Math.max(...xs) + 60;
+  const minY = Math.min(...ys) - 60;
+  const maxY = Math.max(...ys) + 60;
+
+  return { allNodes, allPaths, count: names.length, minX, minY, maxX, maxY };
 }
 
 // ── Rendering ──────────────────────────────────────────────
 
 function renderAll() {
-  const layout = computeGlobalLayout();
+  const layout = computeLayout();
   if (!layout) {
     setCanvasContent(`${FLOW_CSS}
       <div class="flow-root">
@@ -310,92 +304,56 @@ function renderAll() {
     return;
   }
 
-  const { allNodes, allPaths, count, totalWidth } = layout;
+  const { allNodes, allPaths, count } = layout;
   const runningCount = allNodes.filter(n => n.status === 'running').length;
-  const doneCount = allNodes.filter(n => n.status === 'done' || n.status === 'idle').length;
 
-  const nodesHtml = allNodes.map(n => {
-    if (n.isRoot) return nodeHtml(n.id, 'Main Agent', 'done', true);
-    if (n.isPipelineHeader) return pipelineHeaderHtml(n.id, n.label, n.status);
-    return nodeHtml(n.id, n.label, n.status, false, n.agent || '');
-  }).join('');
+  const nodesHtml = allNodes.map(n => nodeHtml(n.id, n.label, n.status, !!n.isRoot, n.agent || '')).join('');
 
-  const infoHtml = `
-    <div class="flow-info">
-      ${count} pipeline${count > 1 ? 's' : ''} · ${runningCount} running · ${doneCount} done
+  const infoHtml = `<div class="flow-info">${count} pipeline${count > 1 ? 's' : ''} · ${runningCount} running</div>`;
+  const toolbarHtml = `
+    <div class="flow-toolbar">
+      <button class="flow-btn" id="flow-zoom-in" title="Zoom in">+</button>
+      <button class="flow-btn" id="flow-zoom-out" title="Zoom out">−</button>
+      <button class="flow-btn" id="flow-fit" title="Fit all">⊡</button>
     </div>`;
 
   setCanvasContent(`${FLOW_CSS}
-    <div class="flow-root">
+    <div class="flow-root" id="flow-root">
       ${infoHtml}
-      <div class="flow-inner" style="width:${Math.max(100, totalWidth * 100)}%">
-        <svg class="flow-svg" xmlns="http://www.w3.org/2000/svg">
+      <div class="flow-viewport" id="flow-viewport">
+        <svg class="flow-svg" id="flow-svg" xmlns="http://www.w3.org/2000/svg">
           <defs>
-            <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-text-muted)" />
-            </marker>
-            <marker id="arrow-active" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-primary, #6366f1)" />
-            </marker>
-            <marker id="arrow-return" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-success, #30a46c)" />
+            <marker id="flow-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-text-muted)" opacity="0.5" />
             </marker>
           </defs>
         </svg>
         ${nodesHtml}
       </div>
+      ${toolbarHtml}
     </div>`);
   showCanvasHeader(false);
   openCanvas('');
   document.getElementById('flow-toggle-btn')?.classList.add('active');
 
-  // Position nodes
-  const container = document.querySelector('.flow-inner');
-  if (container) {
-    const w = container.clientWidth;
-    const h = Math.max(container.clientHeight, 500);
-
+  // Position nodes absolutely in viewport
+  const viewport = document.getElementById('flow-viewport');
+  if (viewport) {
     allNodes.forEach(n => {
-      const el = container.querySelector(`[data-step-id="${n.id}"]`);
-      if (el && n.position) {
-        el.style.left = (n.position.x * w) + 'px';
-        el.style.top = (n.position.y * h) + 'px';
+      const el = viewport.querySelector(`[data-step-id="${n.id}"]`);
+      if (el) {
+        el.style.left = n.x + 'px';
+        el.style.top = n.y + 'px';
       }
     });
 
     // Draw SVG paths
-    const svg = container.querySelector('.flow-svg');
+    const svg = document.getElementById('flow-svg');
     if (svg) {
-      svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
-      svg.style.width = w + 'px';
-      svg.style.height = h + 'px';
-
       const pathsHtml = allPaths.map(p => {
-        const x1 = p.from.x * w, y1 = p.from.y * h;
-        const x2 = p.to.x * w, y2 = p.to.y * h;
-        const dy = y2 - y1;
-
-        let cls = '';
-        let marker = 'arrow';
-
-        if (p.direction === 'return') {
-          // Return line: curve outward (to the side) and back up
-          const midX = (x1 + x2) / 2 + (x1 > x2 ? 60 : -60);
-          const cp1x = x1 + (midX - x1) * 0.5;
-          const cp2x = x2 + (midX - x2) * 0.5;
-          cls = p.active ? 'return' : '';
-          marker = 'arrow-return';
-          return `<path d="M ${x1},${y1} Q ${midX},${(y1+y2)/2} ${x2},${y2}" class="${cls}" marker-end="url(#${marker})" />`;
-        }
-
-        // Normal downward line with cubic bezier
-        if (p.active) { cls = 'active'; marker = 'arrow-active'; }
-        const cp1y = y1 + dy * 0.5;
-        const cp2y = y2 - dy * 0.5;
-        return `<path d="M ${x1},${y1} C ${x1},${cp1y} ${x2},${cp2y} ${x2},${y2}" class="${cls}" marker-end="url(#${marker})" />`;
+        return `<path d="M ${p.from.x},${p.from.y} C ${p.from.x},${(p.from.y + p.to.y) / 2} ${p.to.x},${(p.from.y + p.to.y) / 2} ${p.to.x},${p.to.y}" class="${p.active ? 'active' : ''}" marker-end="url(#flow-arrow)" />`;
       }).join('');
 
-      // Keep defs, replace paths
       const defs = svg.querySelector('defs');
       svg.innerHTML = '';
       if (defs) svg.appendChild(defs);
@@ -403,11 +361,8 @@ function renderAll() {
     }
   }
 
-  // Resize observer
-  if (container && !resizeObs) {
-    resizeObs = new ResizeObserver(() => renderAll());
-    resizeObs.observe(container);
-  }
+  setupPanZoom(layout);
+  fitView(layout);
 }
 
 function nodeHtml(id, label, status, isRoot = false, agent = '') {
@@ -428,39 +383,99 @@ function nodeHtml(id, label, status, isRoot = false, agent = '') {
     </div>`;
 }
 
-function pipelineHeaderHtml(id, name, status) {
-  return `
-    <div class="flow-node pipeline-header ${status}" data-step-id="${id}">
-      <div class="flow-label">${name}</div>
-      <div class="flow-status">${status}</div>
-    </div>`;
+// ── Pan / Zoom ─────────────────────────────────────────────
+
+function applyTransform() {
+  const vp = document.getElementById('flow-viewport');
+  if (vp) vp.style.transform = `translate(${viewX}px, ${viewY}px) scale(${viewScale})`;
+}
+
+function fitView(layout) {
+  if (!layout) return;
+  const root = document.getElementById('flow-root');
+  if (!root) return;
+  const cw = root.clientWidth;
+  const ch = root.clientHeight;
+  const lw = layout.maxX - layout.minX;
+  const lh = layout.maxY - layout.minY;
+  const padding = 80;
+  const scaleX = (cw - padding * 2) / lw;
+  const scaleY = (ch - padding * 2) / lh;
+  viewScale = Math.min(scaleX, scaleY, 1.5); // don't zoom in too much
+  viewX = (cw - lw * viewScale) / 2 - layout.minX * viewScale;
+  viewY = padding - layout.minY * viewScale + 20; // offset for info bar
+  applyTransform();
+}
+
+function setupPanZoom(layout) {
+  const root = document.getElementById('flow-root');
+  if (!root) return;
+
+  // Pan
+  root.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.flow-btn')) return;
+    isPanning = true;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    panOrigX = viewX;
+    panOrigY = viewY;
+    root.classList.add('panning');
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!isPanning) return;
+    viewX = panOrigX + (e.clientX - panStartX);
+    viewY = panOrigY + (e.clientY - panStartY);
+    applyTransform();
+  });
+  window.addEventListener('mouseup', () => {
+    isPanning = false;
+    root.classList.remove('panning');
+  });
+
+  // Zoom (wheel)
+  root.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const rect = root.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const newScale = Math.max(0.1, Math.min(5, viewScale * delta));
+    // Zoom toward mouse position
+    viewX = mouseX - (mouseX - viewX) * (newScale / viewScale);
+    viewY = mouseY - (mouseY - viewY) * (newScale / viewScale);
+    viewScale = newScale;
+    applyTransform();
+  }, { passive: false });
+
+  // Toolbar buttons
+  document.getElementById('flow-zoom-in')?.addEventListener('click', () => {
+    viewScale = Math.min(5, viewScale * 1.2);
+    applyTransform();
+  });
+  document.getElementById('flow-zoom-out')?.addEventListener('click', () => {
+    viewScale = Math.max(0.1, viewScale * 0.8);
+    applyTransform();
+  });
+  document.getElementById('flow-fit')?.addEventListener('click', () => {
+    fitView(layout);
+  });
 }
 
 // ── Event handlers ─────────────────────────────────────────
 
 export function startFlow(msg) {
   const name = msg.flowName || msg.branchName || msg.name || 'unknown';
-  console.log('[flowCanvas] flowStarted:', name, 'steps:', msg.steps?.length);
-
   const steps = (msg.steps || []).map(s => ({
     id: s.id || s.stepId,
     agent: s.agent || s.agentName || '',
     dependsOn: s.dependsOn || [],
     status: 'Pending',
   }));
-
   pipelines.set(name, {
-    name,
-    flowName: msg.flowName || name,
-    phase: 'Running',
-    steps,
-    iteration: 0,
-    maxIterations: msg.maxIterations || 3,
-    verifyResult: null,
-    verifyAgent: msg.verifyAgent || 'Explorer',
-    positions: {},
+    name, flowName: msg.flowName || name, phase: 'Running',
+    steps, iteration: 0, maxIterations: msg.maxIterations || 3,
+    verifyResult: null, verifyAgent: msg.verifyAgent || 'Explorer',
   });
-
   renderAll();
 }
 
@@ -468,15 +483,11 @@ export function updateStep(msg) {
   const pipeName = msg.branchName || msg.flowName;
   const p = pipelines.get(pipeName);
   if (!p) return;
-
   const step = p.steps.find(s => s.id === msg.stepId);
   if (!step) return;
-
   step.status = msg.status === 'running' ? 'Running'
     : msg.status === 'done' ? 'Done'
-    : msg.status === 'failed' ? 'Failed'
-    : step.status;
-
+    : msg.status === 'failed' ? 'Failed' : step.status;
   renderAll();
 }
 
@@ -522,7 +533,6 @@ export async function toggleCanvas() {
 }
 
 export function onSessionChange(activeSessionId) {
-  // Reload pipelines for the new session
   autoRestore(activeSessionId);
 }
 
@@ -538,30 +548,19 @@ export async function autoRestore(sessionIdArg) {
     const pipeStates = data.pipelines || [];
 
     pipelines.clear();
-    if (pipeStates.length === 0) {
-      renderAll(); // show empty state
-      return;
-    }
+    if (pipeStates.length === 0) { renderAll(); return; }
 
     for (const p of pipeStates) {
       pipelines.set(p.name, {
-        name: p.name,
-        flowName: p.flowName,
-        phase: p.phase,
+        name: p.name, flowName: p.flowName, phase: p.phase,
         steps: (p.steps || []).map(s => ({
-          id: s.id,
-          agent: s.agent || '',
-          dependsOn: s.dependsOn || [],
-          status: s.status || 'Pending',
+          id: s.id, agent: s.agent || '',
+          dependsOn: s.dependsOn || [], status: s.status || 'Pending',
         })),
-        iteration: p.iteration || 0,
-        maxIterations: 3,
-        verifyResult: p.verifyResult || null,
-        verifyAgent: 'Explorer',
-        positions: {},
+        iteration: p.iteration || 0, maxIterations: 3,
+        verifyResult: p.verifyResult || null, verifyAgent: 'Explorer',
       });
     }
-    console.log('[flowCanvas] Restored', pipelines.size, 'pipeline(s) for session', sessionId);
     renderAll();
   } catch (e) {
     console.warn('[flowCanvas] Restore failed:', e);
