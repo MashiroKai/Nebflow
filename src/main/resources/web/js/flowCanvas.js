@@ -324,7 +324,7 @@ function renderAll() {
         <svg class="flow-svg" id="flow-svg" xmlns="http://www.w3.org/2000/svg">
           <defs>
             <marker id="flow-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 Z" fill="var(--color-text-muted)" opacity="0.5" />
+              <path d="M0,0 L6,3 L0,6 Z" fill="context-stroke" />
             </marker>
           </defs>
         </svg>
