@@ -11,6 +11,7 @@ import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.tools.AskUserQuestionTool
 import nebflow.llm.FallbackExhaustedError
+import nebflow.service.StrengthStore
 import nebflow.shared.*
 import nebflow.shared.given
 
@@ -736,7 +737,7 @@ object AgentActor extends AgentCore with AgentSession:
         toolCalls.foreach { call =>
           if call.name == "Read" then
             call.input("file_path").flatMap(_.asString).foreach { path =>
-              nebflow.service.StrengthStore.recordReadIfTracked(path, newDelegateCount)
+              StrengthStore.recordReadIfTracked(path, newDelegateCount)
             }
         }
         val updatedState =

@@ -28,6 +28,8 @@ object ContextRefresher:
     systemPrefixSource
   )
 
+  private val detailRefPattern = "→([a-zA-Z0-9]{4,12})".r
+
   /** System prefix: ~/.nebflow/system-prefix.md with JAR fallback. */
   val systemPrefixSource: FileInjectionSource =
     val jarFallback =
@@ -185,7 +187,6 @@ object ContextRefresher:
    * Lines without →id (short memory) are always kept.
    */
   private def filterByStrength(content: String, currentDelegateCount: Int): String =
-    val detailRefPattern = "→([a-zA-Z0-9]{4,12})".r
     content
       .split("\n")
       .filter { line =>
