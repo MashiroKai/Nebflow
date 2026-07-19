@@ -37,7 +37,7 @@ object StrengthStore:
 
   private def statsPath = PathUtil.dataRoot / ".stats.json"
 
-  private def loadStats(): Map[String, Entry] =
+  private def loadStats(): Map[String, Entry] = synchronized:
     val mtime = if os.exists(statsPath) then os.mtime(statsPath) else -1
     if statsCacheLoaded && mtime == statsCacheMtime then statsCache
     else
@@ -47,12 +47,17 @@ object StrengthStore:
           try
             val raw = os.read(statsPath)
             io.circe.parser.decode[Map[String, Entry]](raw).getOrElse(Map.empty)
-          catch case _: Exception => Map.empty
+          catch
+            case e: Exception =>
+              System.err.println(s"[StrengthStore] Failed to read .stats.json: ${e.getMessage}")
+              Map.empty
       statsCacheLoaded = true
       statsCacheMtime = mtime
       statsCache
 
-  private def saveStats(stats: Map[String, Entry]): Unit =
+    end if
+
+  private def saveStats(stats: Map[String, Entry]): Unit = synchronized:
     os.write.over(statsPath, stats.asJson.noSpaces, createFolders = true)
     statsCache = stats
     statsCacheLoaded = true

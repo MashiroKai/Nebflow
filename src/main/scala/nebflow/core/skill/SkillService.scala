@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Encoder, Json}
 import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.service.StrengthStore
 
 // --- Data models ---
 
@@ -187,7 +188,7 @@ object SkillService:
       listSkills().map { skills =>
         val visible = skills
           .filter(s => s.modelInvocable && s.description.nonEmpty)
-          .filter(s => nebflow.service.StrengthStore.shouldInclude(s"skills.${s.name}", currentDelegateCount))
+          .filter(s => StrengthStore.shouldInclude(s"skills.${s.name}", currentDelegateCount))
         val catalog =
           if visible.isEmpty then ""
           else
