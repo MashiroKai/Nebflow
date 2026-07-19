@@ -51,7 +51,7 @@ const FLOW_CSS = `
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: 14px;
-  padding: 12px 16px;
+  padding: 14px 20px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
   text-align: center;
   min-width: 80px;
@@ -64,23 +64,23 @@ const FLOW_CSS = `
 }
 
 /* Solar system orbit */
-.flow-orbit { position: relative; width: 36px; height: 36px; margin: 0 auto 6px; }
+.flow-orbit { position: relative; width: 44px; height: 44px; margin: 0 auto 8px; }
 .flow-ring {
   position: absolute; top: 50%; left: 50%;
   border: 1px solid var(--color-border);
   border-radius: 50%; transform: translate(-50%, -50%);
 }
-.flow-ring-1 { width: 8px; height: 8px; }
-.flow-ring-2 { width: 18px; height: 18px; }
-.flow-ring-3 { width: 28px; height: 28px; }
+.flow-ring-1 { width: 10px; height: 10px; }
+.flow-ring-2 { width: 22px; height: 22px; }
+.flow-ring-3 { width: 34px; height: 34px; }
 .flow-dot-wrap { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
 .flow-dot {
-  position: absolute; width: 3px; height: 3px;
-  background: var(--color-text); border-radius: 50%; top: -1.5px;
+  position: absolute; width: 4px; height: 4px;
+  background: var(--color-text); border-radius: 50%; top: -2px;
 }
 .flow-ring-1 .flow-dot { left: 3px; }
-.flow-ring-2 .flow-dot { left: 8px; }
-.flow-ring-3 .flow-dot { left: 13px; }
+.flow-ring-2 .flow-dot { left: 9px; }
+.flow-ring-3 .flow-dot { left: 15px; }
 .flow-ring-1 .flow-dot-wrap { transform: rotate(0deg); }
 .flow-ring-2 .flow-dot-wrap { transform: rotate(120deg); }
 .flow-ring-3 .flow-dot-wrap { transform: rotate(240deg); }
@@ -97,18 +97,18 @@ const FLOW_CSS = `
 
 /* Labels */
 .flow-label {
-  font: 500 10px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); white-space: nowrap;
 }
 .flow-agent {
-  font: 500 8px -apple-system, sans-serif;
+  font: 500 9px -apple-system, sans-serif;
   color: var(--color-primary, #6366f1);
-  margin-top: 1px; white-space: nowrap;
+  margin-top: 2px; white-space: nowrap;
 }
 .flow-status {
-  font: 400 7px -apple-system, sans-serif;
+  font: 400 8px -apple-system, sans-serif;
   color: var(--color-text-muted);
-  text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px;
+  text-transform: uppercase; letter-spacing: 0.5px; margin-top: 3px;
 }
 
 /* Toolbar */
@@ -164,9 +164,9 @@ function computeLayout() {
   const names = [...pipelines.keys()];
   if (names.length === 0) return null;
 
-  const colWidth = 200;
-  const colSpacing = 60;
-  const rowHeight = 90;
+  const colWidth = 280;
+  const colSpacing = 120;
+  const rowHeight = 140;
   const originX = 0, originY = 0;
 
   const allNodes = [];
@@ -249,7 +249,14 @@ function computeLayout() {
     });
 
     // Step dependency paths: dependency → dependent
-    p.steps.forEach(s => {
+    // Two sources of edges:
+    //   1. Explicit dependsOn
+    //   2. Implicit serial: consecutive steps with no explicit edge between them
+    const hasExplicitEdge = (fromId, toId) =>
+      p.steps.some(s => s.id === toId && (s.dependsOn || []).includes(fromId));
+
+    p.steps.forEach((s, i) => {
+      // Explicit edges
       (s.dependsOn || []).forEach(d => {
         const fromNode = allNodes.find(n => n.id === `${name}/${d}`);
         const toNode = allNodes.find(n => n.id === `${name}/${s.id}`);
@@ -258,6 +265,15 @@ function computeLayout() {
           active: s.status === 'Done' || s.status === 'Running',
         });
       });
+      // Implicit serial edge: previous step → this step (if not already connected)
+      if (i > 0 && !(s.dependsOn || []).includes(p.steps[i - 1].id) && !hasExplicitEdge(p.steps[i - 1].id, s.id)) {
+        const fromNode = allNodes.find(n => n.id === `${name}/${p.steps[i - 1].id}`);
+        const toNode = allNodes.find(n => n.id === `${name}/${s.id}`);
+        if (fromNode && toNode) allPaths.push({
+          from: { x: fromNode.x, y: fromNode.y }, to: { x: toNode.x, y: toNode.y },
+          active: s.status === 'Done' || s.status === 'Running',
+        });
+      }
     });
 
     // Spread nodes horizontally within same Y level
