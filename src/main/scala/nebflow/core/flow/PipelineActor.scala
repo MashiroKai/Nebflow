@@ -137,7 +137,9 @@ object PipelineActor:
 
       val stateRef = Ref.unsafe[IO, RunState](RunState(RunPhase.Idle))
 
-      for _ <- logger.info(s"PipelineActor '${config.name}' created (flow: ${config.flowName})")
+      for
+        _ <- logger.info(s"PipelineActor '${config.name}' created (flow: ${config.flowName})")
+        _ <- saveState(stateRef, config)  // persist initial idle state
       yield running(ctx, stateRef, config)
     }
 
