@@ -523,22 +523,26 @@ export async function toggleCanvas() {
 
 export function onSessionChange(activeSessionId) {
   // Reload pipelines for the new session
-  autoRestore();
+  autoRestore(activeSessionId);
 }
 
 // ── Backend restore ────────────────────────────────────────
 
-export async function autoRestore() {
+export async function autoRestore(sessionIdArg) {
   try {
-    const sessionId = window.Nebflow?.activeSessionId || '';
+    const sessionId = sessionIdArg || window.Nebflow?.activeSessionId || '';
     if (!sessionId) return;
     const resp = await fetch(`/api/flow/status/${sessionId}`);
     if (!resp.ok) return;
     const data = await resp.json();
     const pipeStates = data.pipelines || [];
-    if (pipeStates.length === 0) return;
 
     pipelines.clear();
+    if (pipeStates.length === 0) {
+      renderAll(); // show empty state
+      return;
+    }
+
     for (const p of pipeStates) {
       pipelines.set(p.name, {
         name: p.name,
@@ -557,7 +561,7 @@ export async function autoRestore() {
         positions: {},
       });
     }
-    console.log('[flowCanvas] Restored', pipelines.size, 'pipeline(s) from backend');
+    console.log('[flowCanvas] Restored', pipelines.size, 'pipeline(s) for session', sessionId);
     renderAll();
   } catch (e) {
     console.warn('[flowCanvas] Restore failed:', e);
