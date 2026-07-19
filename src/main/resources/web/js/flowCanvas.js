@@ -395,7 +395,9 @@ export function completeFlow(msg) {
   const v = flowData.nodes.find(n => n.id === '__verify__');
   if (v) { v.status = msg.pass ? 'done' : 'failed'; updateNodeDom('__verify__', v.status); }
   refreshLines();
-  setTimeout(() => closeFlow(), 5000);
+  updateInfo();
+  // Don't auto-close — pipeline stays visible so user can see its state.
+  // It will return to idle and can be re-triggered.
 }
 
 export function closeFlow() {
