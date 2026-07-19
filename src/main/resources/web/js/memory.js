@@ -76,6 +76,26 @@ export function handleMemoryData(data) {
   }
 }
 
+/**
+ * Handle memoryChanged push notification — invalidate cache and refresh
+ * the active tab if the modal is open (so the user sees agent edits in real-time).
+ */
+export function handleMemoryChanged(data) {
+  const path = data.path || '';
+  let changedScope = null;
+  if (path.endsWith('NEBFLOW.md')) changedScope = 'user';
+  else if (path.endsWith('memory.md')) changedScope = 'agent';
+  else if (path.endsWith('.memory.md')) changedScope = 'folder';
+
+  if (changedScope) {
+    cache[changedScope] = null;
+    const modal = document.getElementById('memory-modal');
+    if (modal && modal.classList.contains('show') && changedScope === activeScope) {
+      loadTab(activeScope);
+    }
+  }
+}
+
 /** Save the current tab's content. */
 export function saveMemory() {
   const content = document.getElementById('memory-content-input').value;
