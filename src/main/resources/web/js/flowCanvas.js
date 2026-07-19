@@ -531,7 +531,7 @@ export async function autoRestore() {
   try {
     const sessionId = window.Nebflow?.activeSessionId || '';
     if (!sessionId) return;
-    const resp = await fetch(`/flow/status/${sessionId}`);
+    const resp = await fetch(`/api/flow/status/${sessionId}`);
     if (!resp.ok) return;
     const data = await resp.json();
     const pipeStates = data.pipelines || [];
