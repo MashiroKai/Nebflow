@@ -180,12 +180,14 @@ object SkillService:
    * The catalog tells the agent what skills exist and where to find them;
    * the agent reads the full skill file when it decides a skill is relevant.
    */
-  def buildSkillCatalog(): IO[String] =
+  def buildSkillCatalog(currentDelegateCount: Int): IO[String] =
     val now = System.currentTimeMillis()
     if now - catalogCache._1 < CatalogTtlMs then IO.pure(catalogCache._2)
     else
       listSkills().map { skills =>
-        val visible = skills.filter(s => s.modelInvocable && s.description.nonEmpty)
+        val visible = skills
+          .filter(s => s.modelInvocable && s.description.nonEmpty)
+          .filter(s => nebflow.service.StrengthStore.shouldInclude(s"skills.${s.name}", currentDelegateCount))
         val catalog =
           if visible.isEmpty then ""
           else
