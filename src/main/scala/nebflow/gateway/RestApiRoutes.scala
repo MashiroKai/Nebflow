@@ -648,8 +648,8 @@ class RestApiRoutes(
           }
       }
 
-    // GET /api/flow/status/:sessionId — return all pipeline states for frontend
-    case GET -> Root / "api" / "flow" / "status" / sessionId =>
+    // GET /flow/status/:sessionId — return all pipeline states for frontend
+    case GET -> Root / "flow" / "status" / sessionId =>
       if sessionId.isEmpty then BadRequest(Json.obj("error" -> "Missing sessionId".asJson))
       else
         for
