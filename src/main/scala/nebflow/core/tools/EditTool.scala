@@ -140,7 +140,8 @@ Edit patterns:
           lockedEdit.flatMap {
             case Right(result) =>
               val record = ctx.readTracker.traverse_(_.recordRead(filePath)) *>
-                ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString))
+                ctx.fileChangeTracker.traverse_(_.recordAgentModification(filePath.toString)) *>
+                MemoryChangeNotifier.notifyIfMemoryFile(filePath.toString, ctx)
               record.as(Right(result))
             case left => IO.pure(left)
           }
