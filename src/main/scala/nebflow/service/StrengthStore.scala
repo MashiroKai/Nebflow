@@ -1,9 +1,9 @@
 package nebflow.service
 
-import nebflow.shared.*
-import nebflow.core.PathUtil
-import io.circe.syntax.*
 import io.circe.generic.semiauto.*
+import io.circe.syntax.*
+import nebflow.core.PathUtil
+import nebflow.shared.*
 
 /**
  * Unified strength tracking for skills and memory detail files.

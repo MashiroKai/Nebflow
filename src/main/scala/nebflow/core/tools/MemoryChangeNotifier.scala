@@ -1,8 +1,8 @@
 package nebflow.core.tools
 
 import cats.effect.IO
-import io.circe.syntax.*
 import io.circe.Json
+import io.circe.syntax.*
 
 /**
  * Detects when agent modifies memory files via Write/Edit and pushes a
