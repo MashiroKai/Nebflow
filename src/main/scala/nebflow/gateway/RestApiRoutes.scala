@@ -7,7 +7,7 @@ import fs2.{Pipe, Stream}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.SharedResources
-import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
+import nebflow.core.flow.FlowTreeRegistry
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.NeblinkService
 import nebflow.service.ConfigService
@@ -640,8 +640,8 @@ class RestApiRoutes(
           BadRequest(Json.obj("error" -> "Missing 'sessionId' or 'type'".asJson))
         else
           FlowTreeRegistry.get(sessionId).flatMap {
-            case Some(treeRef) =>
-              treeRef ! TreeCommand.EventFired(eventType, data)
+            case Some(_) =>
+              // EventFired removed — pipelines don't subscribe to external events
               Ok(Json.obj("status" -> "ok".asJson, "event" -> eventType.asJson))
             case None =>
               NotFound(Json.obj("error" -> s"No FlowTree for session '$sessionId'".asJson))
