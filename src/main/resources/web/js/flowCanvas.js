@@ -448,7 +448,7 @@ export async function toggleCanvas() {
 /** Fetch pipeline states from backend and restore the first one to canvas. */
 async function restoreFromBackend() {
   try {
-    const sessionId = document.body.dataset.sessionId || '';
+    const sessionId = window.Nebflow?.activeSessionId || '';
     if (!sessionId) return false;
     const resp = await fetch(`/api/flow/status/${sessionId}`);
     if (!resp.ok) return false;
@@ -502,6 +502,23 @@ async function restoreFromBackend() {
 export function onSessionChange(activeSessionId) {
   if (flowData && flowData.sessionId && flowData.sessionId !== activeSessionId) {
     closeFlow();
+  }
+}
+
+/** Auto-restore flow canvas on page load if pipelines exist. */
+export async function autoRestore() {
+  const restored = await restoreFromBackend();
+  if (restored) {
+    const nodesHtml = flowData.nodes.map(n =>
+      nodeHtml(n.id, n.label, n.status, n.id === '__root__', n.agent || '')
+    ).join('');
+    const infoHtml = `<div class="flow-info"><div>${flowData.name}</div><div class="sub" id="flow-info-sub"></div></div>`;
+    setCanvasContent(`${FLOW_CSS}<div class="flow-root">${infoHtml}<svg class="flow-svg" xmlns="http://www.w3.org/2000/svg"></svg>${nodesHtml}</div>`);
+    showCanvasHeader(false);
+    openCanvas('');
+    document.getElementById('flow-toggle-btn')?.classList.add('active');
+    positionNodes();
+    requestAnimationFrame(() => { refreshLines(); updateInfo(); });
   }
 }
 
