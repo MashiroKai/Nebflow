@@ -976,6 +976,8 @@ onMessage('sessionList', (msg, view) => {
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
   if (!restoredSessionId && activeId) {
     restoredSessionId = activeId;
+    // Restore flow canvas now that we have a valid session ID
+    flowCanvas.autoRestore();
   }
   migrateLegacyIfNeeded();
   // Request agent list on first connect (no tab to trigger it now)
@@ -2012,8 +2014,7 @@ initInput(chatViews.primary);
 initMemory();
 initCanvas();
 document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
-// Auto-restore flow canvas from backend on page load
-setTimeout(() => flowCanvas.autoRestore(), 1000);
+// Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initNeblink();
 initDropbox();
