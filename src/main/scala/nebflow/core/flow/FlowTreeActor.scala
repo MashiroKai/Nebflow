@@ -34,7 +34,8 @@ object FlowTreeActor:
     resources: SharedResources,
     projectRoot: String,
     safetyMode: String,
-    gatewayPort: Int = 8080
+    gatewayPort: Int = 8080,
+    disableFileWatcher: Boolean = false
   )
 
   // ============================================================
@@ -51,7 +52,7 @@ object FlowTreeActor:
       for
         _ <- logger.info(s"FlowTreeActor started for session ${config.sessionId}")
         _ <- restorePipelines(ctx, pipelinesRef, flowNamesRef, config)
-        _ <- startFileWatcher(ctx, config)
+        _ <- if !config.disableFileWatcher then startFileWatcher(ctx, config) else IO.unit
       yield running(ctx, pipelinesRef, flowNamesRef, config)
     }
 
