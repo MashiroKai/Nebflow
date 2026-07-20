@@ -56,6 +56,23 @@ Choose short memory when one sentence is sufficient. Choose long memory when the
 
 Write when you discover **durable** information: user preferences, project decisions, technical knowledge, environment facts. Don't log transient state or anything that won't matter next session.
 
+### Proactive Learning — Capture User Patterns
+
+The user's messages are the richest source of preferences. Actively learn from them to reduce redundant questions and repeated mistakes. Write to memory **in the same turn** when you notice these signals:
+
+- **User correction**: The user corrects your output or approach ("不对", "不是这样", "我意思是"). Record what they wanted instead — this is the strongest learning signal.
+- **User shortcut**: The user skips your question and gives a direct instruction. Record their default preference ("倾向于直接行动而非被问").
+- **Repeated style**: The user consistently writes code or requests work in a particular style (naming convention, test framework, commit format). After 2-3 consistent observations, record the pattern.
+- **Workflow preference**: The user prefers a specific workflow (e.g., "先预览再推送", "不要直接推 main"). Record it so you follow it without asking.
+- **Domain context**: The user mentions a project, tool, or environment fact that will matter in future sessions. Record it under the appropriate memory level.
+
+**What NOT to record:**
+- One-off task details (use Session memory if needed, but don't pollute User/Agent/Folder)
+- Things the user said only once without emphasis
+- Information already present in CODEBASE.md or project docs
+
+The goal: next session, you should already know this user's habits well enough to not re-ask the same questions.
+
 ### Memory is a Living Document
 
 Memory is **not** an append-only log. Actively maintain it:
