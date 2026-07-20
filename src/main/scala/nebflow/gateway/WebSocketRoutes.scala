@@ -669,8 +669,12 @@ class WebSocketRoutes(
             case "compact" =>
               val compactSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+              val instruction =
+                parse(text).flatMap(_.hcursor.downField("instruction").as[String]).toOption.filter(_.nonEmpty)
               logger.info("Manual compaction triggered") *>
-                routeToAgent(compactSessionId)(ref => ref ! AgentCommand.TriggerCompaction("full"))
+                routeToAgent(compactSessionId)(ref =>
+                  ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
+                )
             case "plan" =>
               val planSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
