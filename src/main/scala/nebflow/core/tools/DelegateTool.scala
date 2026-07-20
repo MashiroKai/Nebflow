@@ -57,8 +57,8 @@ By default the sub-agent runs in the background — the tool returns immediately
 
 Available sub-agents (pass as agentName):
 - "Explorer" — Code exploration and research. Use for: searching codebases, understanding architecture, finding relevant files, running git/test commands for investigation. Cannot modify files.
-- "Planner" — Analyze requirements and create implementation plans. Use for: breaking down complex tasks, studying code before implementation, running git/test commands for analysis. Cannot modify files.
-- "Nebula" — Full tool access (default). Use for: implementation tasks that require writing code.
+- "Coder" — Deep coding specialist. Use for: implementation, debugging, refactoring, testing. Full edit tools.
+- "Nebula" — Full tool access (default). Use for: general tasks that require orchestration.
 
 Use Delegate when:
 - A task can be broken into independent parts that benefit from focused context
