@@ -92,6 +92,42 @@ final class FlowTestKit(
   val actorSystem: ActorSystem
 ):
 
+  /** Spawn a FlowTreeActor — the full mount/trigger path. */
+  def spawnTreeActor(parentAgentRef: ActorRef[AgentCommand]): IO[ActorRef[TreeCommand]] =
+    val treeConfig = FlowTreeActor.TreeConfig(
+      parentAgentRef = parentAgentRef,
+      wsSend = None,
+      sessionId = Some("test-session"),
+      resources = resources,
+      projectRoot = tempDir.toString,
+      safetyMode = "yolo",
+      disableFileWatcher = true
+    )
+    actorSystem.spawn(
+      FlowTreeActor(treeConfig),
+      s"flow-tree-${java.util.UUID.randomUUID().toString.take(8)}"
+    )
+
+  /** Write a flow YAML definition to the temp flows directory. */
+  def writeFlowYaml(flowName: String, yaml: String): IO[Unit] =
+    IO.blocking {
+      val dir = tempDir / "flows"
+      if !os.exists(dir) then os.makeDir.all(dir)
+      os.write.over(dir / s"$flowName.yaml", yaml)
+    }.void
+
+  /** Mount a flow through FlowTreeActor (E2E path). Returns the pipeline name. */
+  def mountFlow(treeRef: ActorRef[TreeCommand], flowName: String): IO[Unit] =
+    FlowDefLoader.load(flowName).flatMap {
+      case Some(defn) => treeRef ! TreeCommand.MountBranch(defn, None, None)
+      case None => IO.raiseError(new RuntimeException(s"Flow '$flowName' not found"))
+    }
+
+  /** Trigger a mounted flow through FlowTreeActor (E2E path). */
+  def triggerFlow(treeRef: ActorRef[TreeCommand], name: String, input: String): IO[Unit] =
+    treeRef ! TreeCommand.TriggerPipeline(name, input, None)
+
+  /** Spawn a PipelineActor directly (for low-level tests). */
   def spawnPipeline(
     name: String,
     pipeline: BranchType.Pipeline,
@@ -118,6 +154,10 @@ final class FlowTestKit(
   def readMemory(flowName: String): IO[String] =
     FlowMemoryStore.load(flowName)
 
+  /** Read all pipeline states for this session. */
+  def pipelineStates: IO[List[PipelineStateStore.PipelineState]] =
+    PipelineStateStore.loadAll("test-session")
+
   def cleanup(): IO[Unit] =
     actorSystem.stopAll *> IO.blocking(os.remove.all(tempDir)).void
 
@@ -138,48 +178,53 @@ object FakeLlm:
   private def resp(reply: String, agentId: String) =
     LlmResponse(reply, Nil, None, meta(agentId))
 
+  private def streamFrom(reply: String, agentId: String): fs2.Stream[IO, StreamChunk] =
+    fs2.Stream(
+      StreamChunk.TextDelta(reply),
+      StreamChunk.Done(Some("stop"), None, Some(meta(agentId)))
+    )
+
   /** All steps reply briefly, verify outputs VERDICT: PASS, reflect returns memory. */
   val passing: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
-      val msg = req.messages.lastOption.map(_.textContent).getOrElse("")
+      val allText = req.messages.map(_.textContent).mkString("\n")
+      val isVerify = allText.contains("VERDICT") || allText.contains("Verification Criteria")
+      val isReflect = allText.contains("updated memory")
+      IO {
+        println(s"[FakeLlm.passing] agentId=${req.agentId} msgCount=${req.messages.size} isVerify=$isVerify isReflect=$isReflect first200=${allText.take(200)}")
+      } *>
       IO.pure(
-        if msg.contains("VERDICT") || msg.contains("Verification Criteria") then
+        if isVerify then
           resp("Analysis complete.\nVERDICT: PASS", req.agentId)
-        else if msg.contains("updated memory") then
+        else if isReflect then
           resp("# Flow Memory: test\n\n## Patterns\n- Test pattern learned.\n", req.agentId)
         else
           resp("Task completed.", req.agentId)
       )
     def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): fs2.Stream[IO, StreamChunk] =
-      fs2.Stream.eval(send(req)).flatMap { r =>
-        fs2.Stream(StreamChunk.TextDelta(r.reply), StreamChunk.Done(None, None, Some(meta(req.agentId))))
-      }
+      fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
   /** Verify always outputs VERDICT: FAIL. */
   val failing: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
-      val msg = req.messages.lastOption.map(_.textContent).getOrElse("")
+      val allText = req.messages.map(_.textContent).mkString("\n")
       IO.pure(
-        if msg.contains("VERDICT") || msg.contains("Verification Criteria") then
+        if allText.contains("VERDICT") || allText.contains("Verification Criteria") then
           resp("Issues found.\nVERDICT: FAIL: output too brief", req.agentId)
-        else if msg.contains("updated memory") then
+        else if allText.contains("updated memory") then
           resp("# Flow Memory: test\n\n## Pitfalls\n- Brief outputs fail.\n", req.agentId)
         else
           resp("ok", req.agentId)
       )
     def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): fs2.Stream[IO, StreamChunk] =
-      fs2.Stream.eval(send(req)).flatMap { r =>
-        fs2.Stream(StreamChunk.TextDelta(r.reply), StreamChunk.Done(None, None, Some(meta(req.agentId))))
-      }
+      fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
   /** Never outputs VERDICT — simulates agent ignoring instructions. */
   val noVerdict: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.pure(resp("Found some interesting patterns in the code.", req.agentId))
     def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): fs2.Stream[IO, StreamChunk] =
-      fs2.Stream.eval(send(req)).flatMap { r =>
-        fs2.Stream(StreamChunk.TextDelta(r.reply), StreamChunk.Done(None, None, Some(meta(req.agentId))))
-      }
+      fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
 end FakeLlm
 
