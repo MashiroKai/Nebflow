@@ -8,7 +8,7 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.{FileHistory, ReadTracker}
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.{LlmRequest, Message, MessageRole}
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
@@ -23,13 +23,15 @@ object PipelineActor:
   private val FixId = "__fix__"
 
   val VerifyPromptPreamble =
-    """IMPORTANT: Before finishing, you MUST call the Mail tool with type="verify" to report your result.
+    """You are the verification step of this workflow. Analyze the step results against the verification criteria below.
 
-Example call:
-  Mail: {"type": "verify", "passed": true, "summary": "All checks passed."}
+At the END of your response, you MUST include a verdict line in exactly this format:
+  VERDICT: PASS
+or
+  VERDICT: FAIL: <one-line reason>
 
-If passed=false, describe what failed in the summary (max 200 chars).
-If you do NOT call Mail with type="verify", your work is discarded and verification retries.
+The verdict line is how the pipeline detects your result — without it, verification fails.
+Do NOT call any tools to report the result. Just output the verdict line at the end of your analysis.
 
 --- Verification Criteria ---
 """.stripMargin
@@ -123,6 +125,7 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
     resources: SharedResources,
     projectRoot: String,
     safetyMode: String,
+    flowMemory: String = "",
     gatewayPort: Int = 8080
   )
 
@@ -307,7 +310,7 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
             fileHistory <- FileHistory.create()
             childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(step.id))
             st <- stateRef.get
-            actualPrompt = resolvedPrompt
+            actualPrompt = withMemory(resolvedPrompt, cfg)
             _ <- stateRef.update(s =>
               s.copy(
                 stepStatus = s.stepStatus + (step.id -> StepStatus.Running.toString),
@@ -486,7 +489,7 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
         stateRef,
         cfg,
         cfg.pipeline.verify.agent,
-        VerifyPromptPreamble + prompt,
+        VerifyPromptPreamble + withMemory(prompt, cfg),
         VerifyId,
         cfg.pipeline.verify.timeout,
         isVerify = true
@@ -554,7 +557,7 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
                   stateRef,
                   cfg,
                   loop.fix.agent.getOrElse("Nebula"),
-                  fixPrompt,
+                  withMemory(fixPrompt, cfg),
                   FixId,
                   loop.fix.timeout,
                   isVerify = false
@@ -587,6 +590,8 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
       // No ExternalEvent — verify agent's Mail(type=verify) already notified Main Agent
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Done(summary)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
+      // Launch reflect in background — non-blocking, fire-and-forget
+      _ <- runReflect(stateRef, cfg, summary, passed = true)
       _ = logger.info(s"[${cfg.name}] Pipeline COMPLETED")
     yield ()
 
@@ -613,6 +618,8 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
       )
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Failed(reason)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
+      // Learn from failures too — reflect in background
+      _ <- runReflect(stateRef, cfg, reason, passed = false)
       _ = logger.warn(s"[${cfg.name}] Pipeline FAILED: $reason")
     yield ()
 
@@ -639,9 +646,6 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
         case Some(agentDef) =>
           val agentUid = s"pipe-${cfg.name.take(20)}-$stepId-${java.util.UUID.randomUUID().toString.take(8)}"
           for
-            verifyDeferred <-
-              if isVerify then Deferred[IO, VerifyResult].map(Some(_))
-              else IO.pure(None)
             readTracker <- ReadTracker.create
             fileHistory <- FileHistory.create()
             childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
@@ -667,9 +671,7 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
               ),
               agentUid
             )
-            _ <- verifyDeferred match
-              case Some(d) => FlowVerifyRegistry.register(agentRef.path.toString, d)
-              case None => IO.unit
+            _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
             adapterRef <- ctx.spawn(
               stepAdapter(ctx.self, cfg.name, stepId, agentRef, timeout, isVerify, agentRef.path.toString),
               s"$agentUid-adapter"
@@ -704,7 +706,6 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
             case true => IO.unit
             case false =>
               ctx.system.stop(subagentRef) *>
-                (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
                 (pipeRef ! PipelineCommand.StepFailed(stepId, s"timeout after ${timeout.toSeconds}s"))
           }
       )
@@ -715,25 +716,11 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
             case AgentEvent.Completed(_, messages) =>
               done.set(true) *>
                 (if isVerify then
+                   val text = extractLastAssistantText(messages)
+                   val verdict = parseVerdict(text)
                    for
-                     deferredOpt <- FlowVerifyRegistry.tryGet(verifyAgentPath)
-                     _ <- FlowVerifyRegistry.remove(verifyAgentPath)
-                     _ = logger.info(s"stepAdapter: verify Completed, deferredFound=${deferredOpt.isDefined}")
-                     result <- deferredOpt match
-                       case Some(deferred) =>
-                         deferred.tryGet.flatMap {
-                           case Some(vr) =>
-                             logger.info(s"stepAdapter: Mail(verify) was called, passed=${vr.pass}") *>
-                               (pipeRef ! PipelineCommand.VerifyCompleted(vr.pass, vr.summary))
-                           case None =>
-                             logger.warn(s"stepAdapter: verify agent completed WITHOUT calling Mail(type=verify)") *>
-                               (pipeRef ! PipelineCommand
-                                 .StepFailed(stepId, "Verify agent completed without calling Mail(type=verify)"))
-                         }
-                       case None =>
-                         logger.warn(s"stepAdapter: verify Deferred not in registry") *>
-                           (pipeRef ! PipelineCommand.StepFailed(stepId, "Verify registry error"))
-                     _ = result
+                     _ <- logger.info(s"stepAdapter: verify verdict=$verdict")
+                     _ <- pipeRef ! PipelineCommand.VerifyCompleted(verdict.pass, verdict.summary)
                    yield Behaviors.stopped[AgentEvent]
                  else
                    val text = extractLastAssistantText(messages)
@@ -742,7 +729,6 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
 
             case AgentEvent.Failed(_, error) =>
               done.set(true) *>
-                (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
                 (pipeRef ! PipelineCommand.StepFailed(stepId, error.message)) *>
                 IO.pure(Behaviors.stopped[AgentEvent])
 
@@ -752,15 +738,14 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
               for
                 alreadyDone <- done.get
                 _ <- done.set(true)
-                _ <- if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit
                 _ <-
                   if !alreadyDone then (pipeRef ! PipelineCommand.StepFailed(stepId, "agent crashed"))
                   else IO.unit
               yield Behaviors.stopped[AgentEvent]
 
         override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
-          (if isVerify then FlowVerifyRegistry.remove(verifyAgentPath) else IO.unit) *>
-            FlowMembership.leaveAll(subagentRef.path.toString))
+          FlowMembership.leaveAll(subagentRef.path.toString)
+      )
     }
 
   // ============================================================
@@ -768,6 +753,106 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
   // ============================================================
 
   private val MaxStepOutputChars = 8000
+
+  private val MaxMemoryChars = 4000
+
+  /** Inject flow memory as a context prefix to a prompt. */
+  private def withMemory(prompt: String, cfg: PipelineConfig): String =
+    if cfg.flowMemory.isBlank then prompt
+    else
+      val mem = if cfg.flowMemory.length > MaxMemoryChars
+        then cfg.flowMemory.take(MaxMemoryChars) + "\n... (truncated)"
+        else cfg.flowMemory
+      s"=== Flow Memory (accumulated from past runs) ===\n$mem\n=== End Memory ===\n\n$prompt"
+
+  // ============================================================
+  // Reflect — learning loop after pipeline completion
+  // ============================================================
+
+  private val ReflectSystemPrompt =
+    """You are the learning component of a workflow system. Your job is to analyze a completed pipeline run and produce an updated memory file that captures reusable knowledge for future runs.
+
+Rules:
+- Output ONLY the updated memory content in Markdown. No explanations, no wrapping.
+- Keep it concise — under 3000 chars total. This is accumulated knowledge, not a log.
+- Merge with existing memory: keep what's still valid, add new insights, update stale entries.
+- Structure with clear sections (## headings) such as: User Preferences, Verification Patterns, Common Pitfalls, Effective Approaches.
+- Each entry should be a single actionable line. No dates, no run-specific details.
+- If there is nothing new to learn from this run, output the existing memory unchanged."""
+
+  private def runReflect(
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig,
+    summary: String,
+    passed: Boolean
+  )(using ctx: ActorContext[?]): IO[Unit] =
+    for
+      _ <- logger.info(s"[${cfg.name}] Reflect starting (passed=$passed)")
+      state <- stateRef.get
+      stepSummary = buildStepSummary(state.results, state.failedReasons, state.stepStatus)
+      reflectPrompt = buildReflectPrompt(cfg.flowName, state.triggerInput, stepSummary, summary, passed, cfg.flowMemory)
+      request = LlmRequest(
+        messages = List(Message(MessageRole.User, Left(reflectPrompt))),
+        sessionId = cfg.sessionId.getOrElse("flow-reflect"),
+        agentId = s"flow-reflect-${cfg.name}",
+        systemStable = Some(ReflectSystemPrompt)
+      )
+      _ <- ctx.forkTurn(
+        cfg.resources.llm
+          .send(request)
+          .flatMap { resp =>
+            val newMemory = resp.reply.trim
+            if newMemory.nonEmpty then
+              FlowMemoryStore.save(cfg.flowName, newMemory) *>
+                logger.info(s"[${cfg.name}] Flow memory updated (${newMemory.length} chars)")
+            else logger.warn(s"[${cfg.name}] Reflect returned empty memory, skipping save")
+          }
+          .handleErrorWith(e =>
+            logger.warn(s"[${cfg.name}] Reflect failed: ${e.getMessage}").void
+          )
+      )
+    yield ()
+
+  private def buildReflectPrompt(
+    flowName: String,
+    input: String,
+    stepSummary: String,
+    verifySummary: String,
+    passed: Boolean,
+    currentMemory: String
+  ): String =
+    val status = if passed then "PASS" else "FAIL"
+    val memBlock = if currentMemory.isBlank then "(empty — first run)" else currentMemory
+    s"""Analyze this pipeline run and update the flow memory.
+
+Flow: $flowName
+Input: ${input.take(2000)}
+Result: $status — $verifySummary
+
+$stepSummary
+
+=== Current Flow Memory ===
+$memBlock
+=== End Memory ===
+
+Produce the updated memory file:"""
+
+  private def buildStepSummary(
+    results: Map[String, String],
+    failedReasons: Map[String, String],
+    stepStatus: Map[String, String]
+  ): String =
+    val sb = new StringBuilder("=== Step Results ===\n")
+    val allIds = (results.keys ++ failedReasons.keys).toSeq.sorted
+    allIds.foreach { id =>
+      stepStatus.get(id) match
+        case Some(s) if s == StepStatus.Failed.toString =>
+          sb.append(s"[$id] FAILED: ${failedReasons.getOrElse(id, "unknown").take(500)}\n")
+        case _ =>
+          val output = results.getOrElse(id, "")
+          sb.append(s"[$id] ${output.take(800)}\n")
+    }
+    sb.toString
 
   private[flow] def resolveTemplate(prompt: String, results: Map[String, String]): String =
     results.foldLeft(prompt) { case (p, (id, output)) =>
@@ -805,6 +890,23 @@ If you do NOT call Mail with type="verify", your work is discarded and verificat
       .collectFirst { case msg if msg.role == MessageRole.Assistant => msg.textContent }
       .filter(_.nonEmpty)
       .getOrElse("")
+
+  /** Parse VERDICT line from verify agent output to determine pass/fail. */
+  private val VerdictRegex = "(?i)VERDICT:\\s*(PASS|FAIL)\\s*:?\\s*(.*)".r
+
+  private def parseVerdict(text: String): VerifyResult =
+    text.linesIterator
+      .collect {
+        case VerdictRegex(status, reason) =>
+          val passed = status.equalsIgnoreCase("PASS")
+          val summary = reason.trim match
+            case "" => if passed then "Verification passed." else "Verification failed."
+            case r => r
+          VerifyResult(passed, summary)
+      }
+      .toList
+      .lastOption
+      .getOrElse(VerifyResult(false, "No VERDICT line found in verify agent output."))
 
   private def routeWsSend(
     wsSend: Option[Json => IO[Unit]],
