@@ -26,6 +26,19 @@ import nebflow.shared.{Message, MessageRole}
 object PlanAgent:
   private val logger = NebflowLogger.forName("nebflow.agent.plan")
 
+  /** Planning prompt prepended to the planning agent's system prompt. */
+  val PlanningPrompt: String =
+    """## Planning Mode
+      |
+      |You are in planning mode. Your job is to analyze the task and produce a clear implementation plan.
+      |
+      |- Read and understand the relevant code before planning.
+      |- Use Read, Grep, Glob, Bash (read-only) to investigate.
+      |- Do NOT modify any files — you have no write tools.
+      |- Break down the task into clear, ordered steps with specific file paths.
+      |- For each step: what to do, which files to touch, potential risks.
+      |- End with a structured plan that can be directly executed.""".stripMargin
+
   /**
    * Spawn a plan agent and its adapter.
    *
