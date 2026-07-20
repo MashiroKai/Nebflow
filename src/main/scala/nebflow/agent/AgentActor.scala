@@ -207,7 +207,7 @@ object AgentActor extends AgentCore with AgentSession:
             .withRecentMessageIds(Nil)
           idle(agentDef, resources, depth, parentRef, resetState)
 
-      case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
+      case AgentCommand.TriggerCompaction(mode, replyDeferred, postCompactInstruction) =>
         handleTriggerCompaction(
           agentDef,
           resources,
@@ -216,7 +216,8 @@ object AgentActor extends AgentCore with AgentSession:
           state,
           mode,
           replyDeferred,
-          resumeAfterCompact = false
+          resumeAfterCompact = postCompactInstruction.isDefined,
+          postCompactInstruction = postCompactInstruction
         )
 
       case AgentCommand.UpdateContextWindow(window) =>
@@ -901,13 +902,17 @@ object AgentActor extends AgentCore with AgentSession:
                 .withEmptyResponseRetries(0)
                 .withLatestUsage(None)
               if compactionPending.exists(_.resumeAfterCompact) then
+                val stateWithInstruction = compactionPending.flatMap(_.postCompactInstruction) match
+                  case Some(instruction) =>
+                    compactedState.withMessages(compactedState.messages :+ Message(MessageRole.User, Left(instruction)))
+                  case None => compactedState
                 ctx.forkTurn(compactEmitIO) *>
                   pipeLlmCall(
                     agentDef,
                     resources,
                     depth,
                     parentRef,
-                    compactedState,
+                    stateWithInstruction,
                     compactionPending.flatMap(_.replyTo)
                   )
               else
@@ -1641,7 +1646,8 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     mode: String,
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]],
-    resumeAfterCompact: Boolean = true
+    resumeAfterCompact: Boolean = true,
+    postCompactInstruction: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val config = CompactConfig()
     if state.pendingCompaction.isDefined then
@@ -1689,11 +1695,10 @@ object AgentActor extends AgentCore with AgentSession:
           state,
           None,
           (ad, r, d, p, s) => processing(ad, r, d, p, s),
-          mode
+          mode,
+          resumeAfterCompact,
+          postCompactInstruction
         )
-      end if
-    end if
-  end handleTriggerCompaction
 
   // ============================================================
   // Empty response handler
