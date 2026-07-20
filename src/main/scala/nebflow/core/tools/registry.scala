@@ -38,9 +38,7 @@ object ToolRegistry:
       "Delegate" -> DelegateTool,
       // Multi-step workflow orchestration (FlowTree lifecycle management)
       "MountFlow" -> MountFlowTool,
-      // Flow verification tool (used by verify agents)
-      "FlowVerify" -> FlowVerifyTool,
-      // Inter-agent messaging
+      // Unified agent communication (message + verify modes)
       "Mail" -> MailTool,
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool

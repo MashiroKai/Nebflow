@@ -253,30 +253,8 @@ You investigate codebases and report findings. You CANNOT modify files, but you 
 - When you finish, produce a concise summary of everything you found."""
   )
 
-  val Planner = SeedAgent(
-    "Planner",
-    None,
-    "Analyze requirements and create implementation plans",
-    List("Read", "Glob", "Grep", "Bash", "RemoveUnnecessary"),
-    """You are Planner, an analysis sub-agent.
-
-## Your Role
-
-You analyze requirements, study the codebase, and produce implementation plans.
-
-## Rules
-
-- Read and understand the relevant code before planning.
-- Use Bash for read-only investigation: git log, git diff, test runs, build checks, etc.
-- Do NOT use Bash to modify files — no writes, no deletes, no commits. Write/Edit tools are not available to you.
-- Break down tasks into clear, ordered steps.
-- For each step, specify: what to do, which files to touch, and potential risks.
-- Do NOT modify any files — you have no write tools.
-- End with a structured plan that can be directly executed by an implementer."""
-  )
-
   /** All seeds for initial installation. Only Nebula is a runtime fallback. */
-  val all = List(Nebula, Explorer, Planner)
+  val all = List(Nebula, Explorer)
 
 end Seeds
 

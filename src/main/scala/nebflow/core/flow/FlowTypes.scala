@@ -4,7 +4,7 @@ import cats.effect.{Deferred, IO, Ref}
 import nebflow.core.NebflowLogger
 
 // ============================================================
-// VerifyResult — used by FlowVerifyRegistry + FlowVerifyTool
+// VerifyResult — used by FlowVerifyRegistry + MailTool
 // ============================================================
 
 case class VerifyResult(pass: Boolean, summary: String)
@@ -17,13 +17,13 @@ enum StepStatus:
   case Pending, Running, Done, Failed
 
 // ============================================================
-// FlowVerifyRegistry — bridges FlowVerifyTool ↔ pipeline verify
+// FlowVerifyRegistry — bridges MailTool(type=verify) ↔ pipeline
 // ============================================================
 
 /**
  * Global registry mapping verify agent paths to their pending Deferred.
- * The pipeline orchestrator registers a Deferred before spawning a verify agent.
- * FlowVerifyTool completes it when the verify agent calls the tool.
+ * PipelineActor registers a Deferred before spawning a verify agent.
+ * MailTool completes it when the verify agent calls Mail(type=verify).
  */
 object FlowVerifyRegistry:
   private val logger = NebflowLogger(getClass)

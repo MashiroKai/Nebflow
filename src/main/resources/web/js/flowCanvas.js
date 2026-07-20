@@ -199,7 +199,7 @@ function computeLayout() {
     // Verify at Y=rowHeight*1
     const verifyY = rowHeight * 1;
     allNodes.push({
-      id: `${name}/__verify__`, label: 'verify', status: p.verifyResult ? 'done' : 'pending',
+      id: `${name}/__verify__`, label: 'verify', status: p.verifyStatus || (p.verifyResult ? 'done' : 'pending'),
       agent: p.verifyAgent || 'Explorer', pipeline: name, isVerify: true,
       x: colCenter, y: verifyY,
     });
@@ -486,6 +486,7 @@ export function startFlow(msg) {
     name, flowName: msg.flowName || name, phase: 'Running',
     steps, iteration: 0, maxIterations: msg.maxIterations || 3,
     verifyResult: null, verifyAgent: msg.verifyAgent || 'Explorer',
+    verifyStatus: 'pending',
   });
   renderAll();
 }
@@ -494,6 +495,14 @@ export function updateStep(msg) {
   const pipeName = msg.branchName || msg.flowName;
   const p = pipelines.get(pipeName);
   if (!p) return;
+  // Handle verify step (not in p.steps — tracked separately)
+  if (msg.stepId === '__verify__') {
+    p.verifyStatus = msg.status === 'running' ? 'running'
+      : msg.status === 'done' ? 'done'
+      : msg.status === 'failed' ? 'failed' : p.verifyStatus;
+    renderAll();
+    return;
+  }
   const step = p.steps.find(s => s.id === msg.stepId);
   if (!step) return;
   step.status = msg.status === 'running' ? 'Running'
@@ -507,6 +516,7 @@ export function updateVerify(msg) {
   const p = pipelines.get(pipeName);
   if (!p) return;
   p.verifyResult = msg.pass ? 'passed' : 'failed';
+  p.verifyStatus = msg.pass ? 'done' : 'failed';
   renderAll();
 }
 
@@ -516,6 +526,7 @@ export function updateLoop(msg) {
   if (!p) return;
   p.iteration = msg.iteration || p.iteration + 1;
   p.verifyResult = null;
+  p.verifyStatus = 'pending';
   renderAll();
 }
 
@@ -562,6 +573,10 @@ export async function autoRestore(sessionIdArg) {
     if (pipeStates.length === 0) { renderAll(); return; }
 
     for (const p of pipeStates) {
+      const verifyStatus = p.phase === 'Verifying' ? 'running'
+        : p.verifyResult === true ? 'done'
+        : p.verifyResult === false ? 'failed'
+        : 'pending';
       pipelines.set(p.name, {
         name: p.name, flowName: p.flowName, phase: p.phase,
         steps: (p.steps || []).map(s => ({
@@ -569,7 +584,8 @@ export async function autoRestore(sessionIdArg) {
           dependsOn: s.dependsOn || [], status: s.status || 'Pending',
         })),
         iteration: p.iteration || 0, maxIterations: 3,
-        verifyResult: p.verifyResult || null, verifyAgent: 'Explorer',
+        verifyResult: p.verifyResult ?? null, verifyAgent: 'Explorer',
+        verifyStatus,
       });
     }
     renderAll();

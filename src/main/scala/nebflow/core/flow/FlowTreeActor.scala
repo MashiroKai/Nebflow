@@ -34,7 +34,8 @@ object FlowTreeActor:
     resources: SharedResources,
     projectRoot: String,
     safetyMode: String,
-    gatewayPort: Int = 8080
+    gatewayPort: Int = 8080,
+    disableFileWatcher: Boolean = false
   )
 
   // ============================================================
@@ -51,7 +52,7 @@ object FlowTreeActor:
       for
         _ <- logger.info(s"FlowTreeActor started for session ${config.sessionId}")
         _ <- restorePipelines(ctx, pipelinesRef, flowNamesRef, config)
-        _ <- startFileWatcher(ctx, config)
+        _ <- if !config.disableFileWatcher then startFileWatcher(ctx, config) else IO.unit
       yield running(ctx, pipelinesRef, flowNamesRef, config)
     }
 
@@ -127,6 +128,7 @@ object FlowTreeActor:
           pipelines <- pipelinesRef.get
           baseName = instanceName.getOrElse(defn.name)
           name = makeUniqueName(pipelines.keys.toSet, baseName)
+          memory <- FlowMemoryStore.load(defn.name)
           pipeConfig = PipelineActor.PipelineConfig(
             name = name,
             flowName = defn.name,
@@ -137,6 +139,7 @@ object FlowTreeActor:
             resources = cfg.resources,
             projectRoot = cfg.projectRoot,
             safetyMode = cfg.safetyMode,
+            flowMemory = memory,
             gatewayPort = cfg.gatewayPort
           )
           ref <- ctx.system.spawn(
@@ -231,19 +234,21 @@ object FlowTreeActor:
               case Some(defn) =>
                 defn.branchType match
                   case pipeline: BranchType.Pipeline =>
-                    val pipeConfig = PipelineActor.PipelineConfig(
-                      name = entry.name,
-                      flowName = entry.flowName,
-                      pipeline = pipeline,
-                      parentAgentRef = cfg.parentAgentRef,
-                      wsSend = cfg.wsSend,
-                      sessionId = cfg.sessionId,
-                      resources = cfg.resources,
-                      projectRoot = cfg.projectRoot,
-                      safetyMode = cfg.safetyMode,
-                      gatewayPort = cfg.gatewayPort
-                    )
                     for
+                      memory <- FlowMemoryStore.load(entry.flowName)
+                      pipeConfig = PipelineActor.PipelineConfig(
+                        name = entry.name,
+                        flowName = entry.flowName,
+                        pipeline = pipeline,
+                        parentAgentRef = cfg.parentAgentRef,
+                        wsSend = cfg.wsSend,
+                        sessionId = cfg.sessionId,
+                        resources = cfg.resources,
+                        projectRoot = cfg.projectRoot,
+                        safetyMode = cfg.safetyMode,
+                        flowMemory = memory,
+                        gatewayPort = cfg.gatewayPort
+                      )
                       ref <- ctx.system.spawn(
                         PipelineActor(pipeConfig),
                         s"pipeline-${entry.name}-${java.util.UUID.randomUUID().toString.take(8)}"
@@ -285,6 +290,9 @@ object FlowTreeActor:
             if fileName.endsWith(".yaml") then
               val flowName = fileName.stripSuffix(".yaml")
               ctx.self ! TreeCommand.ReloadDefinition(flowName)
+            else if fileName.endsWith(".memory.md") then
+              val flowName = fileName.stripSuffix(".memory.md")
+              ctx.self ! TreeCommand.ReloadDefinition(flowName)
           }
           key.reset()
       }.void
@@ -312,6 +320,7 @@ object FlowTreeActor:
                 oldRef <- pipelinesRef.get.map(_(name))
                 _ <- ctx.system.stop(oldRef)
                 _ <- FlowMembership.leaveAll(oldRef.path.toString)
+                memory <- FlowMemoryStore.load(flowName)
                 pipeConfig = PipelineActor.PipelineConfig(
                   name = name,
                   flowName = flowName,
@@ -322,6 +331,7 @@ object FlowTreeActor:
                   resources = cfg.resources,
                   projectRoot = cfg.projectRoot,
                   safetyMode = cfg.safetyMode,
+                  flowMemory = memory,
                   gatewayPort = cfg.gatewayPort
                 )
                 newRef <- ctx.system.spawn(

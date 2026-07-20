@@ -5,56 +5,118 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.flow.FlowMembership
+import nebflow.core.flow.{FlowMembership, FlowVerifyRegistry, VerifyResult}
 import nebflow.shared.{Message, MessageRole}
 
 /**
- * General-purpose actor messaging tool.
+ * Unified agent communication tool.
  *
- * Sends a message to any agent by its actor address (e.g. nebflow://local/delegate-Nebula-abc12345).
- * Uses ActorSystem.resolve to look up the actor by path string, then sends UserInput.
- *
- * For persistent sub-agents, spawns a temporary reply adapter that forwards the
- * sub-agent's completion event back to the parent agent via ExternalEvent.
- *
- * Modes:
- *   - "queue" (default): message enters the recipient's mailbox, processed after current work
- *   - "immediate": sends Interrupt first, then UserInput — recipient handles it right away
+ * Two modes:
+ *   - type=message (default): Send a message to another agent by address.
+ *   - type=verify: Report flow verification result. Auto-routes to the main agent.
+ *     Replaces the old FlowVerify tool — one tool for all communication.
  */
 object MailTool extends Tool:
   val name: String = "Mail"
 
   val description: String =
-    "Send a message to an agent by its actor address. The address format is nebflow://device/name (e.g. nebflow://local/delegate-Nebula-abc12345). Use this to send follow-up instructions to persistent sub-agents listed in your Active Sessions. The message will be delivered to the agent's mailbox."
+    """Unified communication tool for agent-to-agent and agent-to-main messaging.
+
+Modes:
+  type=message (default): Send a message to another agent by address.
+    Required: address, message
+    Optional: mode ("queue" or "immediate")
+
+  type=verify: Report verification result from a flow verify step.
+    Required: passed (boolean), summary (string, keep under 200 chars — key findings only)
+    No address needed — auto-routes to the main agent.
+    Only use this if you are a flow verify agent."""
 
   val inputSchema: JsonObject = JsonObject(
-    "type" -> "object".asJson,
-    "properties" -> JsonObject(
-      "address" -> JsonObject(
-        "type" -> "string".asJson,
-        "description" -> "The actor address (e.g. nebflow://local/delegate-Nebula-abc12345)".asJson
-      ).asJson,
-      "message" -> JsonObject(
-        "type" -> "string".asJson,
-        "description" -> "The message or instruction to send".asJson
-      ).asJson,
-      "mode" -> JsonObject(
-        "type" -> "string".asJson,
-        "enum" -> List("queue", "immediate").asJson,
-        "description" -> "queue: message waits in mailbox (default). immediate: interrupts current work first.".asJson
-      ).asJson
+    "type" -> JsonObject(
+      "type" -> "string".asJson,
+      "enum" -> List("message", "verify").asJson,
+      "description" -> "message: send to another agent. verify: report flow verification result.".asJson
     ).asJson,
-    "required" -> List("address", "message").asJson
+    "address" -> JsonObject(
+      "type" -> "string".asJson,
+      "description" -> "(type=message) Recipient address, e.g. nebflow://local/delegate-Nebula-abc12345".asJson
+    ).asJson,
+    "message" -> JsonObject(
+      "type" -> "string".asJson,
+      "description" -> "(type=message) The message or instruction to send".asJson
+    ).asJson,
+    "passed" -> JsonObject(
+      "type" -> "boolean".asJson,
+      "description" -> "(type=verify) true if verification passed, false if issues found".asJson
+    ).asJson,
+    "summary" -> JsonObject(
+      "type" -> "string".asJson,
+      "description" -> "(type=verify) Concise result summary. Key findings only, no process details. Max 200 chars.".asJson
+    ).asJson,
+    "mode" -> JsonObject(
+      "type" -> "string".asJson,
+      "enum" -> List("queue", "immediate").asJson,
+      "description" -> "(type=message) queue: message waits in mailbox (default). immediate: interrupts current work first.".asJson
+    ).asJson
   )
 
   def summarize(input: JsonObject): String =
-    val addr = input("address").flatMap(_.asString).getOrElse("?")
-    val mode = input("mode").flatMap(_.asString).getOrElse("queue")
-    s"Mail(→${addr.takeRight(20)}, $mode)"
+    input("type").flatMap(_.asString) match
+      case Some("verify") =>
+        val passed = input("passed").flatMap(_.asBoolean).getOrElse(false)
+        s"Mail(verify: ${if passed then "PASS" else "FAIL"})"
+      case _ =>
+        val addr = input("address").flatMap(_.asString).getOrElse("?")
+        val mode = input("mode").flatMap(_.asString).getOrElse("queue")
+        s"Mail(→${addr.takeRight(20)}, $mode)"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val msgType = input("type").flatMap(_.asString).getOrElse("message")
+    msgType match
+      case "verify" => handleVerify(input, ctx)
+      case _        => handleMessage(input, ctx)
+
+  // ── type=verify: report flow verification result ──────────
+
+  private def handleVerify(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val passedOpt = input("passed").flatMap(_.asBoolean)
+    val summary = input("summary").flatMap(_.asString).getOrElse("")
+    val agentPath = ctx.agentActorRef.map(_.path.toString).getOrElse("")
+
+    passedOpt match
+      case None =>
+        IO.pure(Left(ToolError("Missing required parameter: passed (boolean)")))
+      case Some(passed) =>
+        if agentPath.isBlank then
+          IO.pure(Left(ToolError("Cannot determine agent identity for verify report.")))
+        else
+          val concise = summary.take(200)
+          for
+            // 1. Complete Deferred — signals PipelineActor for scheduling (fix loop / complete)
+            deferredCompleted <- FlowVerifyRegistry.complete(agentPath, VerifyResult(passed, concise))
+            // 2. Notify Main Agent via ExternalEvent — replaces old ExternalEvent from PipelineActor
+            _ <- ctx.parentRef match
+              case Some(parent) =>
+                    val flowName = ctx.sessionName.getOrElse("flow")
+                    val status = if passed then "PASS" else "FAIL"
+                    parent ! AgentCommand.ExternalEvent(
+                      source = "flow",
+                      eventType = if passed then "completed" else "verify-failed",
+                      payload = s"[Flow: $flowName] $status\n$concise"
+                    )
+              case None => IO.unit
+          yield
+            if deferredCompleted then
+              Right(if passed then "Verification PASSED." else s"Verification FAILED: $concise")
+            else
+              Left(ToolError("No pending flow verification for this agent. This type=verify is only for flow verify steps."))
+
+  // ── type=message: standard agent-to-agent messaging ───────
+
+  private def handleMessage(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val address = input("address").flatMap(_.asString).getOrElse("")
     val message = input("message").flatMap(_.asString).getOrElse("")
     val mode = input("mode").flatMap(_.asString).getOrElse("queue")
@@ -99,7 +161,6 @@ object MailTool extends Tool:
           yield result
           end for
     end if
-  end call
 
   /** Temporary adapter: forwards the sub-agent's completion event to the parent, then stops. */
   private def replyAdapter(
