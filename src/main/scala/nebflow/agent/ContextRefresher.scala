@@ -226,6 +226,7 @@ object ContextRefresher:
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
       skillCatalog <- SkillService.buildSkillCatalog(state.execution.delegateCount)
+      flowCatalog <- nebflow.core.flow.FlowDefLoader.buildFlowCatalog()
       memoryBlock = buildMemoryBlock(freshDef.name, state.folderId, state.sessionId, state.execution.delegateCount)
     yield TurnContext(
       freshDef,
@@ -236,6 +237,7 @@ object ContextRefresher:
       branchReminder,
       currentBranch,
       skillCatalog,
+      flowCatalog,
       memoryBlock
     )
 

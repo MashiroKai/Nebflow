@@ -393,6 +393,7 @@ case class TurnContext(
   branchChange: Option[SystemReminder] = None,
   currentBranch: Option[String] = None,
   skillCatalog: String = "",
+  flowCatalog: String = "",
   memoryBlock: String = ""
 )
 
