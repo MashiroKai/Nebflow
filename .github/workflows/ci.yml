@@ -8,6 +8,7 @@ on:
 
 env:
   SBT_OPTS: "-Xms512m -Xmx2g"
+  COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
   compile:
@@ -23,10 +24,11 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          cache: sbt
       - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
           printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
@@ -46,10 +48,11 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          cache: sbt
       - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
           printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
@@ -67,10 +70,11 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+          cache: sbt
       - name: Setup sbt
         shell: bash
         run: |
-          curl -fL "https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
           printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
