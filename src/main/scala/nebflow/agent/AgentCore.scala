@@ -204,6 +204,7 @@ private[agent] trait AgentCore:
             chatWidth = state.session.chatWidth,
             envInfo = Repl.buildEnvInfo(state.session.chatWidth),
             skillCatalog = turnCtx.skillCatalog,
+            flowCatalog = turnCtx.flowCatalog,
             memoryBlock = turnCtx.memoryBlock,
             rulesMd = turnCtx.rulesMd
           )

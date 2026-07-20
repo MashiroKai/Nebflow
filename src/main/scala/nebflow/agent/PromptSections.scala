@@ -52,6 +52,8 @@ object PromptSections:
     deviceInfo: String = "",
     /** Pre-rendered skill catalog (from SkillService.buildSkillCatalog). */
     skillCatalog: String = "",
+    /** Pre-rendered flow catalog (from FlowDefLoader.buildFlowCatalog). */
+    flowCatalog: String = "",
     /** Pre-rendered memory block (from ContextRefresher.buildMemoryBlock). */
     memoryBlock: String = "",
     /** Pre-rendered active-sessions block (from formatAgentSessions). */
@@ -238,6 +240,11 @@ object PromptSections:
       800,
       condition = _.skillCatalog.nonEmpty,
       renderer = _.skillCatalog
+    ),
+    PromptSection.dynamic(
+      815,
+      condition = _.flowCatalog.nonEmpty,
+      renderer = _.flowCatalog
     ),
     PromptSection.dynamic(
       810,
