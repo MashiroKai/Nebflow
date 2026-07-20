@@ -65,7 +65,8 @@ object AgentCommand:
 
   case class TriggerCompaction(
     mode: String,
-    replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None
+    replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
+    postCompactInstruction: Option[String] = None
   ) extends AgentCommand
 
   case class Retry(reason: String) extends AgentCommand
@@ -381,7 +382,8 @@ case class CompactionJob(
   mode: String,
   replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
   replyTo: Option[ActorRef[AgentEvent]] = None,
-  resumeAfterCompact: Boolean = true
+  resumeAfterCompact: Boolean = true,
+  postCompactInstruction: Option[String] = None
 )
 
 case class TurnContext(

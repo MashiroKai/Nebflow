@@ -41,9 +41,12 @@ const slashCommands = {
   },
   '/compact': {
     desc: () => t('slash.compact'),
-    run: () => {
-      sendWs({type:'command', command:'compact', sessionId: activeView.sessionId});
-      renderSystemBubble(t('slash.compactDone'));
+    run: (text) => {
+      const instruction = text.slice('/compact'.length).trim();
+      sendWs({type:'command', command:'compact', sessionId: activeView.sessionId, instruction: instruction || undefined});
+      renderSystemBubble(instruction
+        ? t('slash.compactDone') + ' — ' + instruction
+        : t('slash.compactDone'));
     }
   },
   '/fork': {

@@ -123,10 +123,12 @@ private[agent] trait AgentCore:
     state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]],
     processing: ProcessingFn,
-    mode: String
+    mode: String,
+    resumeAfterCompact: Boolean = true,
+    postCompactInstruction: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
-    val pending = CompactionJob(jobId, mode, None, replyTo)
+    val pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
     val compactState = state
       .withPendingCompaction(Some(pending))
       .withMessages(state.messages :+ CompactService.buildCompactReminder())
