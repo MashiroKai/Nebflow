@@ -811,6 +811,21 @@ Rules:
             logger.warn(s"[${cfg.name}] Reflect failed: ${e.getMessage}").void
           )
       )
+      // Trigger evolution: analyze flow definition for improvements
+      _ <- ctx.forkTurn(
+        FlowEvolver.runEvolution(
+          cfg.flowName,
+          cfg.resources.llm,
+          cfg.sessionId,
+          cfg.name,
+          stepSummary,
+          passed,
+          state.iteration,
+          cfg.flowMemory
+        ).handleErrorWith(e =>
+          logger.warn(s"[${cfg.name}] Evolution failed: ${e.getMessage}").void
+        )
+      )
     yield ()
 
   private def buildReflectPrompt(

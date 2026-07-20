@@ -190,14 +190,22 @@ object FakeLlm:
       val allText = req.messages.map(_.textContent).mkString("\n")
       val isVerify = allText.contains("VERDICT") || allText.contains("Verification Criteria")
       val isReflect = allText.contains("updated memory")
+      val isEvolve = allText.contains("flow optimization") || allText.contains("propose specific improvements")
       IO {
-        println(s"[FakeLlm.passing] agentId=${req.agentId} msgCount=${req.messages.size} isVerify=$isVerify isReflect=$isReflect first200=${allText.take(200)}")
+        println(s"[FakeLlm.passing] agentId=${req.agentId} msgCount=${req.messages.size} isVerify=$isVerify isReflect=$isReflect isEvolve=$isEvolve first200=${allText.take(200)}")
       } *>
       IO.pure(
         if isVerify then
           resp("Analysis complete.\nVERDICT: PASS", req.agentId)
         else if isReflect then
           resp("# Flow Memory: test\n\n## Patterns\n- Test pattern learned.\n", req.agentId)
+        else if isEvolve then
+          // Return the YAML unchanged (extract from prompt)
+          val yamlStart = allText.indexOf("=== Current Flow Definition ===")
+          val yamlEnd = allText.indexOf("=== End Definition ===")
+          if yamlStart >= 0 && yamlEnd > yamlStart then
+            resp(allText.substring(yamlStart + 31, yamlEnd).trim, req.agentId)
+          else resp("NO_CHANGE", req.agentId)
         else
           resp("Task completed.", req.agentId)
       )
