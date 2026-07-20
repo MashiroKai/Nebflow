@@ -103,6 +103,14 @@ docs/
 
 ## Development Log
 
+### 2026-07-19: Proactive learning instructions in system-prefix.md
+
+**Problem:** Nebflow stores all user input in session files, but this data was never used to learn user preferences. The 4-level memory system existed but relied entirely on the agent's own initiative to write — without explicit guidance on what signals to capture.
+
+**Change:** Added "Proactive Learning — Capture User Patterns" section to `system-prefix.md`, between "When to Write" and "Memory is a Living Document". Specifies 5 concrete signal types (user correction, user shortcut, repeated style, workflow preference, domain context) and a "what NOT to record" list to prevent memory pollution.
+
+**Rationale:** Zero-code-cost approach — leverages existing memory infrastructure (MemoryStore, ContextRefresher, PromptSections) by guiding the LLM to actively identify and persist user patterns during normal conversation. No new analysis pipeline, no extra LLM calls.
+
 ### 2026-07-18: Merge batch — 5 feature branches into main
 
 Merged (in order):
