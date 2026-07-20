@@ -26,8 +26,8 @@ private[agent] trait AgentCore:
    */
   private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
 
-  /** Internal tools excluded from List("*") wildcard expansion. Only injected explicitly by pipeline verify. */
-  private val InternalTools = Set("FlowVerify")
+  /** Internal tools excluded from List("*") wildcard expansion. */
+  private val InternalTools = Set.empty[String]
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
@@ -206,6 +206,7 @@ private[agent] trait AgentCore:
             chatWidth = state.session.chatWidth,
             envInfo = Repl.buildEnvInfo(state.session.chatWidth),
             skillCatalog = turnCtx.skillCatalog,
+            flowCatalog = turnCtx.flowCatalog,
             memoryBlock = turnCtx.memoryBlock,
             rulesMd = turnCtx.rulesMd
           )

@@ -218,8 +218,7 @@ object ContextRefresher:
   ): IO[TurnContext] =
     for
       freshDefOpt <- resources.agentLibrary.get(agentDef.name)
-      // Preserve runtime tools list (e.g., FlowActor injects FlowVerify into verify agents).
-      // Only refresh configuration content (systemPrompt, model, etc.) from disk.
+      // Preserve runtime tools list — only refresh configuration content from disk.
       freshDef = freshDefOpt.map(_.copy(tools = agentDef.tools)).getOrElse(agentDef)
       systemPrefix <- systemPrefixSource.get
       projectRoot <- resolveProjectRoot(state.folderId, resources, freshDef.name)
@@ -227,6 +226,7 @@ object ContextRefresher:
       thinkingConfig <- resources.thinkingConfigRef.get
       (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
       skillCatalog <- SkillService.buildSkillCatalog(state.execution.delegateCount)
+      flowCatalog <- nebflow.core.flow.FlowDefLoader.buildFlowCatalog()
       memoryBlock = buildMemoryBlock(freshDef.name, state.folderId, state.sessionId, state.execution.delegateCount)
     yield TurnContext(
       freshDef,
@@ -237,6 +237,7 @@ object ContextRefresher:
       branchReminder,
       currentBranch,
       skillCatalog,
+      flowCatalog,
       memoryBlock
     )
 
