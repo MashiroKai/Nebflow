@@ -23,17 +23,16 @@ object PipelineActor:
   private val FixId = "__fix__"
 
   val VerifyPromptPreamble =
-    """You are the verification step of this workflow.
+    """IMPORTANT: Before finishing, you MUST call the Mail tool with type="verify" to report your result.
 
-      |You MUST call the Mail tool with type="verify" to report your result:
-      |  - passed=true if the work meets all requirements
-      |  - passed=false if there are issues
-      |  - Include a concise summary (max 200 chars) of key findings
-      |
-      |If you finish without calling Mail with type="verify", the verification will fail and retry.
-      |
-      |--- Verification Criteria ---
-      |""".stripMargin
+Example call:
+  Mail: {"type": "verify", "passed": true, "summary": "All checks passed."}
+
+If passed=false, describe what failed in the summary (max 200 chars).
+If you do NOT call Mail with type="verify", your work is discarded and verification retries.
+
+--- Verification Criteria ---
+""".stripMargin
 
   // ============================================================
   // Messages
