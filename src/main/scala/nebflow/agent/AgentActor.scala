@@ -324,11 +324,15 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.StartPlan(task) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-start", s"task=${task.take(60)}")
         val projectRootStr = state.projectRoot.getOrElse(resources.projectRoot.toString)
-        resources.agentLibrary.get("Planner").flatMap {
-          case Some(plannerDef) =>
+        // Plan mode is Nebula's own capability — uses Explorer (read-only) for safe planning.
+        resources.agentLibrary.get("Explorer").flatMap {
+          case Some(explorerDef) =>
+            val planningDef = explorerDef.copy(
+              systemPrompt = PlanAgent.PlanningPrompt + "\n\n" + explorerDef.systemPrompt
+            )
             PlanAgent
               .spawn(
-                agentDef = plannerDef,
+                agentDef = planningDef,
                 task = task,
                 mainAgentRef = ctx.self,
                 system = ctx.system,
@@ -350,7 +354,7 @@ object AgentActor extends AgentCore with AgentSession:
                     Json.obj(
                       "type" -> "error".asJson,
                       "sessionId" -> state.sessionId.asJson,
-                      "message" -> "Planner agent not found in agent library".asJson
+                      "message" -> "Explorer agent not found — cannot start plan mode".asJson
                     )
                   )
                   .handleErrorWith(_ => IO.unit)
