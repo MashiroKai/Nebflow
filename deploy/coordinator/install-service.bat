@@ -71,10 +71,20 @@ nssm set %SERVICE_NAME% AppDirectory "%~dp0" >nul
 nssm set %SERVICE_NAME% DisplayName "Nebflow Coordinator Server" >nul
 nssm set %SERVICE_NAME% Description "Nebflow device discovery and coordination service (port 9090)" >nul
 nssm set %SERVICE_NAME% Start SERVICE_AUTO_START >nul
+
+REM Log rotation (10MB per file)
 nssm set %SERVICE_NAME% AppStdout "%LOG_DIR%\stdout.log" >nul
 nssm set %SERVICE_NAME% AppStderr "%LOG_DIR%\stderr.log" >nul
 nssm set %SERVICE_NAME% AppRotateFiles 1 >nul
 nssm set %SERVICE_NAME% AppRotateBytes 10485760 >nul
+
+REM Crash recovery: auto-restart on any exit, 5s delay
+nssm set %SERVICE_NAME% AppExit Default Restart >nul
+nssm set %SERVICE_NAME% AppRestartDelay 5000 >nul
+REM Graceful shutdown: 10s to drain connections before force-kill
+nssm set %SERVICE_NAME% AppStopMethodConsole 10000 >nul
+REM Throttle: if 3 rapid restarts in 10s, pause to avoid crash loop
+nssm set %SERVICE_NAME% AppThrottle 10000 >nul
 
 REM Start
 echo Starting service...
@@ -89,6 +99,7 @@ echo  Port:     9090
 echo  Binary:   %EXE_PATH%
 echo  Logs:     %LOG_DIR%\^*.log
 echo  Auto-start on boot: YES
+echo  Crash recovery:     AUTO-RESTART (5s delay)
 echo  Memory:   ~5 MB (no JVM!)
 echo.
 echo  Verify:   curl http://localhost:9090/api/health
