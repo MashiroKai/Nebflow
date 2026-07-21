@@ -41,12 +41,8 @@ const slashCommands = {
   },
   '/compact': {
     desc: () => t('slash.compact'),
-    run: (text) => {
-      const instruction = text.slice('/compact'.length).trim();
-      sendWs({type:'command', command:'compact', sessionId: activeView.sessionId, instruction: instruction || undefined});
-      renderSystemBubble(instruction
-        ? t('slash.compactDone') + ' — ' + instruction
-        : t('slash.compactDone'));
+    run: () => {
+      enterCompactMode();
     }
   },
   '/fork': {
@@ -247,13 +243,15 @@ function updateInputIndicator() {
   const askEl = document.getElementById('ask-indicator');
   const skillEl = document.getElementById('skill-indicator');
   const skillLabel = document.getElementById('skill-indicator-label');
+  const compactEl = document.getElementById('compact-indicator');
   const planEl = document.getElementById('plan-indicator');
   const input = activeView.dom.input;
-  // Plan/Ask mode take priority over skill mode
+  // Plan/Ask/Skill/Compact mode — all mutually exclusive
   if (activeView.stream.planMode) {
     if (planEl) planEl.classList.add('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.remove('show');
     input.style.paddingLeft = '';
     if (planEl) {
       const w = planEl.offsetWidth + 12;
@@ -263,6 +261,7 @@ function updateInputIndicator() {
     if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.add('show');
     if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.remove('show');
     input.style.paddingLeft = '';
     if (askEl) {
       const w = askEl.offsetWidth + 12;
@@ -279,10 +278,20 @@ function updateInputIndicator() {
     } else {
       input.style.paddingLeft = '';
     }
+    if (compactEl) compactEl.classList.remove('show');
+  } else if (activeView.compactMode) {
+    if (planEl) planEl.classList.remove('show');
+    if (askEl) askEl.classList.remove('show');
+    if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.add('show');
+    input.style.paddingLeft = '';
+    const w = compactEl.offsetWidth + 12;
+    input.style.paddingLeft = Math.max(w, 48) + 'px';
   } else {
     if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.remove('show');
     input.style.paddingLeft = '';
   }
 }
@@ -311,6 +320,26 @@ export function cancelSkillMode() {
   activeView.skillModeName = '';
   activeView.skillModeDesc = '';
   activeView.skillModeArgHint = '';
+  updateInputIndicator();
+  activeView.dom.input.placeholder = t('input.placeholder');
+}
+
+// ---------- Compact Mode ----------
+export function enterCompactMode() {
+  if (activeView.compactMode) return;
+  // Cancel other modes if active
+  if (activeView.stream.askMode) cancelAskMode();
+  if (activeView.skillMode) cancelSkillMode();
+  if (activeView.stream.planMode) cancelPlanMode();
+  activeView.compactMode = true;
+  updateInputIndicator();
+  activeView.dom.input.placeholder = t('input.compactPlaceholder');
+  activeView.dom.input.focus();
+}
+
+export function cancelCompactMode() {
+  if (!activeView.compactMode) return;
+  activeView.compactMode = false;
   updateInputIndicator();
   activeView.dom.input.placeholder = t('input.placeholder');
 }
@@ -530,6 +559,24 @@ export function send() {
     sendWs({ type: 'ask', question: text, sessionId: v.sessionId });
     state.sessionAskBuffers[v.sessionId] = { question: text, answer: '' };
     renderAskBubble(text);
+    input.value = '';
+    input.style.height = 'auto';
+    saveInputDraft(v.sessionId);
+    setTimeout(() => { v.isSending = false; }, 300);
+    return;
+  }
+  // If in compact mode, send as compact command (empty input is OK — triggers default compact)
+  if (v.compactMode) {
+    cancelCompactMode();
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      v.isSending = false;
+      return;
+    }
+    v.isSending = true;
+    sendWs({type:'command', command:'compact', sessionId: v.sessionId, instruction: text || undefined});
+    renderSystemBubble(text
+      ? t('slash.compactDone') + ' — ' + text
+      : t('slash.compactDone'));
     input.value = '';
     input.style.height = 'auto';
     saveInputDraft(v.sessionId);
@@ -959,7 +1006,7 @@ export function initInput(view) {
   // Keydown handler — slash autocomplete navigation, input history navigation, Enter-to-send
   input.onkeydown = (e) => {
     setActiveView(view);
-    // Escape cancels ask mode or skill mode
+    // Escape cancels ask/skill/compact mode
     if (e.key === 'Escape') {
       if (view.stream.askMode) {
         e.preventDefault();
@@ -971,8 +1018,13 @@ export function initInput(view) {
         cancelSkillMode();
         return;
       }
+      if (view.compactMode) {
+        e.preventDefault();
+        cancelCompactMode();
+        return;
+      }
     }
-    // Backspace/Delete on empty input cancels ask/skill mode (like removing a tag)
+    // Backspace/Delete on empty input cancels ask/skill/compact mode (like removing a tag)
     if ((e.key === 'Backspace' || e.key === 'Delete') && input.value.trim() === '') {
       if (view.stream.askMode) {
         e.preventDefault();
@@ -982,6 +1034,11 @@ export function initInput(view) {
       if (view.skillMode) {
         e.preventDefault();
         cancelSkillMode();
+        return;
+      }
+      if (view.compactMode) {
+        e.preventDefault();
+        cancelCompactMode();
         return;
       }
     }
@@ -1278,6 +1335,15 @@ export function initInput(view) {
         e.stopPropagation();
         setActiveView(view);
         cancelSkillMode();
+        input.focus();
+      });
+    }
+    const compactCancel = document.getElementById('compact-indicator-cancel');
+    if (compactCancel) {
+      compactCancel.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setActiveView(view);
+        cancelCompactMode();
         input.focus();
       });
     }

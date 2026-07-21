@@ -19,6 +19,7 @@ export default {
   'input.placeholder': 'Type a message...',
   'input.askPlaceholder': 'Ask a question...',
   'input.skillPlaceholder': 'Provide input for skill...',
+  'input.compactPlaceholder': 'Optional compaction instruction — press Enter to compact...',
   'input.voiceListening': 'Listening...',
   'input.voiceHint': 'Release to send',
   'input.voiceError': 'Voice input not supported in this browser. Try Chrome.',
