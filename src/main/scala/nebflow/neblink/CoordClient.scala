@@ -12,25 +12,25 @@ import java.net.{NetworkInterface, URI}
 
 import scala.jdk.CollectionConverters.*
 
-/** Coordinator server configuration. */
-case class CoordinatorConfig(
+/** NebLink server configuration. */
+case class NebLinkServerConfig(
   server: String, // e.g. "http://192.168.1.200:9090"
   networkId: String,
   secret: String
 )
 
-object CoordinatorConfig:
-  given Encoder[CoordinatorConfig] = deriveEncoder
+object NebLinkServerConfig:
+  given Encoder[NebLinkServerConfig] = deriveEncoder
 
-  given Decoder[CoordinatorConfig] = Decoder.instance { c =>
+  given Decoder[NebLinkServerConfig] = Decoder.instance { c =>
     for
       server <- c.downField("server").as[String]
       networkId <- c.downField("networkId").as[String]
       secret <- c.downField("secret").as[String]
-    yield CoordinatorConfig(server, networkId, secret)
+    yield NebLinkServerConfig(server, networkId, secret)
   }
 
-// ===== Internal types (matching coordinator's JSON response format) =====
+// ===== Internal types (matching NebLink server's JSON response format) =====
 
 private[neblink] case class CoordEndpoint(address: String, port: Int, kind: String, label: String = "")
 
@@ -85,11 +85,11 @@ end CoordCodecs
 import CoordCodecs.{given, *}
 
 /**
- * Client for the Nebflow coordination server.
+ * Client for the NebLink server.
  * Handles device login, periodic heartbeat, and peer discovery.
- * Replaces Tailscale-based discovery when a coordinator is configured.
+ * Replaces Tailscale-based discovery when a NebLink server is configured.
  */
-class CoordClient(config: CoordinatorConfig, serverPort: Int):
+class CoordClient(config: NebLinkServerConfig, serverPort: Int):
   private val logger = NebflowLogger.forName("nebflow.neblink.coordclient")
 
   // HTTP client that bypasses system proxy (direct LAN/WAN access)
@@ -100,7 +100,7 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
 
   @volatile private var sessionToken: Option[String] = None
 
-  /** Detect local IPv4 addresses for endpoint reporting to the coordinator. */
+  /** Detect local IPv4 addresses for endpoint reporting to the NebLink server. */
   def detectLocalEndpoints: IO[List[CoordEndpoint]] = IO.blocking {
     try
       NetworkInterface.getNetworkInterfaces.asScala.toList
@@ -112,7 +112,7 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
     catch case _: Exception => Nil
   }
 
-  /** Login to coordinator. Stores session token. Returns initial peer list. */
+  /** Login to NebLink server. Stores session token. Returns initial peer list. */
   def login(
     deviceId: String,
     deviceName: String,
@@ -142,10 +142,10 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
           decode[LoginResponse](respBody) match
             case Right(login) =>
               IO { sessionToken = Some(login.token) } *>
-                logger.info(s"Logged into coordinator: ${login.peers.size} peer(s)").as(Right(login.peers))
+                logger.info(s"Logged into NebLink server: ${login.peers.size} peer(s)").as(Right(login.peers))
             case Left(err) =>
               logger
-                .warn(s"Coordinator login decode error: ${err.getMessage}")
+                .warn(s"NebLink server login decode error: ${err.getMessage}")
                 .as(Left(s"Decode error: ${err.getMessage}"))
         case Left(err) => IO.pure(Left(err))
       }
@@ -185,7 +185,7 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
               login(deviceId, deviceName, platform, endpoints)
         }
 
-  /** Logout from coordinator. */
+  /** Logout from NebLink server. */
   def logout: IO[Unit] =
     sessionToken match
       case None => IO.unit
@@ -194,7 +194,7 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
           .handleErrorWith(_ => IO.unit)
           *> IO { sessionToken = None }
 
-  /** Convert coordinator peers to neblink PeerInfo. Picks first endpoint as address. */
+  /** Convert NebLink server peers to neblink PeerInfo. Picks first endpoint as address. */
   def toNeblinkPeers(coordPeers: List[CoordPeerInfo]): List[PeerInfo] =
     coordPeers.filter(_.endpoints.nonEmpty).map { p =>
       val ep = p.endpoints.head
@@ -206,7 +206,7 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
       )
     }
 
-  /** Extract all peer IP addresses from coordinator peer list. */
+  /** Extract all peer IP addresses from NebLink server peer list. */
   def peerAddresses(coordPeers: List[CoordPeerInfo]): Set[String] =
     coordPeers.flatMap(_.endpoints.map(_.address)).toSet
 
