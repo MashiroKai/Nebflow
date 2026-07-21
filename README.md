@@ -30,7 +30,7 @@ Nebflow is a self-hosted AI coding assistant that runs entirely on your machine.
 - **Context Management** — Automatic and manual context compaction for long sessions
 - **Permission System** — Ask-before-execute for destructive operations; auto-approve for read-only tools
 - **Hooks** — Pre/post-execution callbacks triggered by tool patterns
-- **Cross-Platform** — macOS, Linux, and Windows with automatic Java and ripgrep installation
+- **Cross-Platform** — macOS, Linux, and Windows with automatic Java, Git for Windows, and ripgrep installation
 
 ## Quick Start
 
@@ -48,7 +48,7 @@ Open PowerShell and run:
 irm https://nebflow.space/install.ps1 | iex
 ```
 
-The installer automatically detects and installs Java 17+ and ripgrep if they are not already available.
+The installer automatically detects and installs Java 17+, Git for Windows (on Windows), and ripgrep if they are not already available.
 
 ### Uninstall
 
