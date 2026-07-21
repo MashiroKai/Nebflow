@@ -1,6 +1,11 @@
 .PHONY: compile run assembly clean install \
   lint fmt fix fmt-check check quality-gate
 
+# Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
+# Only runs when COURSIER_REPOSITORIES is not already set by the user
+MIRROR := $(if $(COURSIER_REPOSITORIES),,$(shell scripts/detect-mirror.sh))
+export COURSIER_REPOSITORIES := $(MIRROR)
+
 compile:
 	sbt compile
 
