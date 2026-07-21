@@ -1,22 +1,21 @@
 @echo off
 REM ============================================================
-REM Nebflow Coordinator - Windows Service Installation
+REM Nebflow Coordinator - Windows Service Installation (Rust)
 REM
 REM Prerequisites:
-REM   - Java 17+ in PATH
+REM   - nebflow-coordinator.exe in the same directory
 REM   - NSSM (auto-installed via Chocolatey if missing)
-REM   - nebflow.jar in the same directory as this script
 REM
 REM Usage:
-REM   1. Build JAR: sbt assembly
-REM   2. Copy target/scala-3.5.2/nebflow.jar here
+REM   1. Build: cargo build --release (on any machine with Rust)
+REM   2. Copy target\release\nebflow-coordinator.exe here
 REM   3. Run this script as Administrator
 REM ============================================================
 
 setlocal
 
 set SERVICE_NAME=NebflowCoordinator
-set JAR_PATH=%~dp0nebflow.jar
+set EXE_PATH=%~dp0nebflow-coordinator.exe
 set LOG_DIR=%~dp0logs
 
 REM Check admin privileges
@@ -26,18 +25,11 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-REM Check Java
-where java >nul 2>nul
-if %errorlevel% neq 0 (
-    echo ERROR: Java not found in PATH. Install Java 17+.
-    exit /b 1
-)
-
-REM Check JAR exists
-if not exist "%JAR_PATH%" (
-    echo ERROR: nebflow.jar not found in %~dp0
-    echo Build it with: sbt assembly
-    echo Then copy target\scala-3.5.2\nebflow.jar here.
+REM Check EXE exists
+if not exist "%EXE_PATH%" (
+    echo ERROR: nebflow-coordinator.exe not found in %~dp0
+    echo Build with: cargo build --release
+    echo Or download a pre-built release.
     exit /b 1
 )
 
@@ -72,7 +64,7 @@ if %errorlevel% equ 0 (
 
 REM Install service
 echo Installing %SERVICE_NAME%...
-nssm install %SERVICE_NAME% java -cp "%JAR_PATH%" nebflow.coordinator.CoordinatorMain
+nssm install %SERVICE_NAME% "%EXE_PATH%"
 
 REM Configure
 nssm set %SERVICE_NAME% AppDirectory "%~dp0" >nul
@@ -94,9 +86,10 @@ echo  Nebflow Coordinator installed successfully!
 echo ===============================================
 echo  Service:  %SERVICE_NAME%
 echo  Port:     9090
-echo  JAR:      %JAR_PATH%
+echo  Binary:   %EXE_PATH%
 echo  Logs:     %LOG_DIR%\^*.log
 echo  Auto-start on boot: YES
+echo  Memory:   ~5 MB (no JVM!)
 echo.
 echo  Verify:   curl http://localhost:9090/api/health
 echo  Stop:     nssm stop %SERVICE_NAME%
