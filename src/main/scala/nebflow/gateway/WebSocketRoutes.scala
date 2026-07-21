@@ -9,9 +9,9 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
+import nebflow.core.flow.{FlowDefLoader, FlowTreeActor, FlowTreeRegistry}
 import nebflow.core.mcp.McpManager
-import nebflow.core.skill.SkillService
+import nebflow.core.skill.{SkillInfo, SkillService}
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.core.{PathUtil, *}
@@ -977,14 +977,19 @@ class WebSocketRoutes(
           else IO.unit
 
         case "getSkills" =>
-          SkillService.listSkills().flatMap { skills =>
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "skillList".asJson,
-                "skills" -> skills.asJson
-              )
+          for {
+            skills <- SkillService.listSkills()
+            flows <- FlowDefLoader.loadAll()
+            flowEntries = flows.toList.sortBy(_._1).map { case (name, fd) =>
+              SkillInfo(name = name, description = fd.description, filePath = "", source = "flow")
+            }
+            allItems = skills ++ flowEntries
+          } yield wsSend(
+            io.circe.Json.obj(
+              "type" -> "skillList".asJson,
+              "skills" -> allItems.asJson
             )
-          }
+          )
 
         case "skill" =>
           val skillJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -2523,38 +2528,56 @@ class WebSocketRoutes(
     sessionId: String,
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
-    // Scan skills to find the matching skill file, then load its content
-    SkillService.listSkills().flatMap { skills =>
-      skills.find(_.name == skillName) match
-        case Some(skillInfo) =>
-          SkillService.loadSkill(skillInfo.filePath).flatMap {
-            case Some(content) =>
-              routeToAgent(sessionId) { ref =>
-                ref ! AgentCommand.SkillActivate(
-                  skillName,
-                  input,
-                  sessionId,
-                  content.content,
-                  content.baseDir
-                )
+    // Check if it's a flow first — if so, instruct agent to use MountFlow
+    FlowDefLoader.load(skillName).flatMap {
+      case Some(_) =>
+        val safeInput = input.replace("\"", "\\\"").replace("\n", " ")
+        routeToAgent(sessionId) { ref =>
+          ref ! AgentCommand.SkillActivate(
+            skillName,
+            input,
+            sessionId,
+            s"""Trigger the "$skillName" flow pipeline. Use the MountFlow tool:
+               |1. Mount: {"source": "$skillName"}
+               |2. Trigger: {"source": "$skillName", "retrigger": true, "input": "$safeInput"}
+               |Wait for flow completion and report the results.""".stripMargin,
+            ""
+          )
+        }
+      case None =>
+        // Not a flow — try skill file
+        SkillService.listSkills().flatMap { skills =>
+          skills.find(_.name == skillName) match
+            case Some(skillInfo) =>
+              SkillService.loadSkill(skillInfo.filePath).flatMap {
+                case Some(content) =>
+                  routeToAgent(sessionId) { ref =>
+                    ref ! AgentCommand.SkillActivate(
+                      skillName,
+                      input,
+                      sessionId,
+                      content.content,
+                      content.baseDir
+                    )
+                  }
+                case None =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "skillError".asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "message" -> s"Skill '$skillName' content not found".asJson
+                    )
+                  )
               }
             case None =>
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "skillError".asJson,
                   "sessionId" -> sessionId.asJson,
-                  "message" -> s"Skill '$skillName' content not found".asJson
+                  "message" -> s"Skill '$skillName' not found".asJson
                 )
               )
-          }
-        case None =>
-          wsSend(
-            io.circe.Json.obj(
-              "type" -> "skillError".asJson,
-              "sessionId" -> sessionId.asJson,
-              "message" -> s"Skill '$skillName' not found".asJson
-            )
-          )
+        }
     }
 
   // ============================================================
