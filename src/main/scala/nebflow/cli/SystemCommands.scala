@@ -89,7 +89,7 @@ object UpdateCommand extends CliCommand:
                 val available = peers.map(_.hcursor.downField("deviceName").as[String].getOrElse("?"))
                 IO.pure(
                   CliResult.Error(
-                    if peers.isEmpty then s"No peer devices discovered. Ensure Tailscale is running on both machines."
+                    if peers.isEmpty then s"No peer devices discovered. Ensure NebLink Server is configured on both machines."
                     else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
                   )
                 )
@@ -98,7 +98,7 @@ object UpdateCommand extends CliCommand:
                 if address.isEmpty then IO.pure(CliResult.Error(s"Device '$deviceName' has no address"))
                 else
                   IO.blocking {
-                    // POST to remote device's /api/neblink/update (Tailscale IP auth — no token needed)
+                    // POST to remote device's /api/neblink/update (peer IP auth — no token needed)
                     import sttp.client4.*
                     val backend = DefaultSyncBackend()
                     val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces

@@ -12,60 +12,63 @@ import java.net.{NetworkInterface, URI}
 
 import scala.jdk.CollectionConverters.*
 
-/** NebLink server configuration. */
-case class NebLinkServerConfig(
-  server: String, // e.g. "http://192.168.1.200:9090"
+/** NebLink Server configuration. */
+case class NeblinkServerConfig(
+  url: String, // e.g. "http://192.168.1.200:9090"
   networkId: String,
   secret: String
 )
 
-object NebLinkServerConfig:
-  given Encoder[NebLinkServerConfig] = deriveEncoder
+object NeblinkServerConfig:
+  given Encoder[NeblinkServerConfig] = deriveEncoder
 
-  given Decoder[NebLinkServerConfig] = Decoder.instance { c =>
+  given Decoder[NeblinkServerConfig] = Decoder.instance { c =>
     for
-      server <- c.downField("server").as[String]
+      url <- c.downField("url").as[Option[String]].flatMap {
+        case Some(u) => Right(u)
+        case None => c.downField("server").as[String] // backward compat
+      }
       networkId <- c.downField("networkId").as[String]
       secret <- c.downField("secret").as[String]
-    yield NebLinkServerConfig(server, networkId, secret)
+    yield NeblinkServerConfig(url, networkId, secret)
   }
 
-// ===== Internal types (matching NebLink server's JSON response format) =====
+// ===== Internal types (matching NebLink Server's JSON response format) =====
 
-private[neblink] case class CoordEndpoint(address: String, port: Int, kind: String, label: String = "")
+private[neblink] case class NeblinkEndpoint(address: String, port: Int, kind: String, label: String = "")
 
-private[neblink] case class CoordPeerInfo(
+private[neblink] case class NeblinkPeerInfo(
   deviceId: String,
   deviceName: String,
   platform: String,
-  endpoints: List[CoordEndpoint],
+  endpoints: List[NeblinkEndpoint],
   online: Boolean
 )
 
-private case class LoginResponse(token: String, networkId: String, deviceId: String, peers: List[CoordPeerInfo])
-private case class HeartbeatResponse(peers: List[CoordPeerInfo])
+private case class LoginResponse(token: String, networkId: String, deviceId: String, peers: List[NeblinkPeerInfo])
+private case class HeartbeatResponse(peers: List[NeblinkPeerInfo])
 
 // ===== Circe Decoders =====
 
-object CoordCodecs:
+object NeblinkCodecs:
 
-  given Decoder[CoordEndpoint] = Decoder.instance { c =>
+  given Decoder[NeblinkEndpoint] = Decoder.instance { c =>
     for
       address <- c.downField("address").as[String]
       port <- c.downField("port").as[Int]
       kind <- c.downField("kind").as[String]
       label <- c.downField("label").as[Option[String]].map(_.getOrElse(""))
-    yield CoordEndpoint(address, port, kind, label)
+    yield NeblinkEndpoint(address, port, kind, label)
   }
 
-  given Decoder[CoordPeerInfo] = Decoder.instance { c =>
+  given Decoder[NeblinkPeerInfo] = Decoder.instance { c =>
     for
       deviceId <- c.downField("deviceId").as[String]
       deviceName <- c.downField("deviceName").as[String]
       platform <- c.downField("platform").as[String]
-      endpoints <- c.downField("endpoints").as[Option[List[CoordEndpoint]]].map(_.getOrElse(Nil))
+      endpoints <- c.downField("endpoints").as[Option[List[NeblinkEndpoint]]].map(_.getOrElse(Nil))
       online <- c.downField("online").as[Option[Boolean]].map(_.getOrElse(true))
-    yield CoordPeerInfo(deviceId, deviceName, platform, endpoints, online)
+    yield NeblinkPeerInfo(deviceId, deviceName, platform, endpoints, online)
   }
 
   given Decoder[LoginResponse] = Decoder.instance { c =>
@@ -73,24 +76,24 @@ object CoordCodecs:
       token <- c.downField("token").as[String]
       networkId <- c.downField("networkId").as[String]
       deviceId <- c.downField("deviceId").as[String]
-      peers <- c.downField("peers").as[Option[List[CoordPeerInfo]]].map(_.getOrElse(Nil))
+      peers <- c.downField("peers").as[Option[List[NeblinkPeerInfo]]].map(_.getOrElse(Nil))
     yield LoginResponse(token, networkId, deviceId, peers)
   }
 
   given Decoder[HeartbeatResponse] = Decoder.instance { c =>
-    c.downField("peers").as[Option[List[CoordPeerInfo]]].map(_.getOrElse(Nil)).map(HeartbeatResponse.apply)
+    c.downField("peers").as[Option[List[NeblinkPeerInfo]]].map(_.getOrElse(Nil)).map(HeartbeatResponse.apply)
   }
-end CoordCodecs
+end NeblinkCodecs
 
-import CoordCodecs.{given, *}
+import NeblinkCodecs.{given, *}
 
 /**
- * Client for the NebLink server.
+ * Client for the NebLink Server.
  * Handles device login, periodic heartbeat, and peer discovery.
- * Replaces Tailscale-based discovery when a NebLink server is configured.
+ * NebLink Server is the discovery mechanism.
  */
-class CoordClient(config: NebLinkServerConfig, serverPort: Int):
-  private val logger = NebflowLogger.forName("nebflow.neblink.coordclient")
+class NeblinkClient(config: NeblinkServerConfig, serverPort: Int):
+  private val logger = NebflowLogger.forName("nebflow.neblink.client")
 
   // HTTP client that bypasses system proxy (direct LAN/WAN access)
   private val httpClient = HttpClient
@@ -100,25 +103,25 @@ class CoordClient(config: NebLinkServerConfig, serverPort: Int):
 
   @volatile private var sessionToken: Option[String] = None
 
-  /** Detect local IPv4 addresses for endpoint reporting to the NebLink server. */
-  def detectLocalEndpoints: IO[List[CoordEndpoint]] = IO.blocking {
+  /** Detect local IPv4 addresses for endpoint reporting to the NebLink Server. */
+  def detectLocalEndpoints: IO[List[NeblinkEndpoint]] = IO.blocking {
     try
       NetworkInterface.getNetworkInterfaces.asScala.toList
         .filter(_.isUp)
         .filterNot(_.isLoopback)
         .flatMap(_.getInetAddresses.asScala)
         .filter(_.isInstanceOf[java.net.Inet4Address])
-        .map(addr => CoordEndpoint(addr.getHostAddress, serverPort, "lan", ""))
+        .map(addr => NeblinkEndpoint(addr.getHostAddress, serverPort, "lan", ""))
     catch case _: Exception => Nil
   }
 
-  /** Login to NebLink server. Stores session token. Returns initial peer list. */
+  /** Login to NebLink Server. Stores session token. Returns initial peer list. */
   def login(
     deviceId: String,
     deviceName: String,
     platform: String,
-    endpoints: List[CoordEndpoint]
-  ): IO[Either[String, List[CoordPeerInfo]]] =
+    endpoints: List[NeblinkEndpoint]
+  ): IO[Either[String, List[NeblinkPeerInfo]]] =
     for
       localEndpoints <- if endpoints.isEmpty then detectLocalEndpoints else IO.pure(endpoints)
       body = Json
@@ -137,26 +140,26 @@ class CoordClient(config: NebLinkServerConfig, serverPort: Int):
           }.asJson
         )
         .noSpaces
-      result <- sendRequest("POST", s"${config.server}/api/device/login", body, None).flatMap {
+      result <- sendRequest("POST", s"${config.url}/api/device/login", body, None).flatMap {
         case Right(respBody) =>
           decode[LoginResponse](respBody) match
             case Right(login) =>
               IO { sessionToken = Some(login.token) } *>
-                logger.info(s"Logged into NebLink server: ${login.peers.size} peer(s)").as(Right(login.peers))
+                logger.info(s"Logged into NebLink Server: ${login.peers.size} peer(s)").as(Right(login.peers))
             case Left(err) =>
               logger
-                .warn(s"NebLink server login decode error: ${err.getMessage}")
+                .warn(s"NebLink Server login decode error: ${err.getMessage}")
                 .as(Left(s"Decode error: ${err.getMessage}"))
         case Left(err) => IO.pure(Left(err))
       }
     yield result
 
   /** Send heartbeat and get updated peer list. Requires prior login. */
-  def heartbeat: IO[Either[String, List[CoordPeerInfo]]] =
+  def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] =
     sessionToken match
       case None => IO.pure(Left("Not logged in"))
       case Some(token) =>
-        sendRequest("POST", s"${config.server}/api/device/heartbeat", "", Some(token)).flatMap {
+        sendRequest("POST", s"${config.url}/api/device/heartbeat", "", Some(token)).flatMap {
           case Right(respBody) =>
             decode[HeartbeatResponse](respBody) match
               case Right(hb) => IO.pure(Right(hb.peers))
@@ -172,8 +175,8 @@ class CoordClient(config: NebLinkServerConfig, serverPort: Int):
     deviceId: String,
     deviceName: String,
     platform: String,
-    endpoints: List[CoordEndpoint]
-  ): IO[Either[String, List[CoordPeerInfo]]] =
+    endpoints: List[NeblinkEndpoint]
+  ): IO[Either[String, List[NeblinkPeerInfo]]] =
     sessionToken match
       case None => login(deviceId, deviceName, platform, endpoints)
       case Some(_) =>
@@ -185,18 +188,18 @@ class CoordClient(config: NebLinkServerConfig, serverPort: Int):
               login(deviceId, deviceName, platform, endpoints)
         }
 
-  /** Logout from NebLink server. */
+  /** Logout from NebLink Server. */
   def logout: IO[Unit] =
     sessionToken match
       case None => IO.unit
       case Some(token) =>
-        sendRequest("DELETE", s"${config.server}/api/device/logout", "", Some(token))
+        sendRequest("DELETE", s"${config.url}/api/device/logout", "", Some(token))
           .handleErrorWith(_ => IO.unit)
           *> IO { sessionToken = None }
 
-  /** Convert NebLink server peers to neblink PeerInfo. Picks first endpoint as address. */
-  def toNeblinkPeers(coordPeers: List[CoordPeerInfo]): List[PeerInfo] =
-    coordPeers.filter(_.endpoints.nonEmpty).map { p =>
+  /** Convert NebLink Server peers to neblink PeerInfo. Picks first endpoint as address. */
+  def toNeblinkPeers(serverPeers: List[NeblinkPeerInfo]): List[PeerInfo] =
+    serverPeers.filter(_.endpoints.nonEmpty).map { p =>
       val ep = p.endpoints.head
       PeerInfo(
         deviceId = p.deviceId,
@@ -206,9 +209,9 @@ class CoordClient(config: NebLinkServerConfig, serverPort: Int):
       )
     }
 
-  /** Extract all peer IP addresses from NebLink server peer list. */
-  def peerAddresses(coordPeers: List[CoordPeerInfo]): Set[String] =
-    coordPeers.flatMap(_.endpoints.map(_.address)).toSet
+  /** Extract all peer IP addresses from NebLink Server peer list. */
+  def peerAddresses(serverPeers: List[NeblinkPeerInfo]): Set[String] =
+    serverPeers.flatMap(_.endpoints.map(_.address)).toSet
 
   // ===== Private helpers =====
 
@@ -238,4 +241,4 @@ class CoordClient(config: NebLinkServerConfig, serverPort: Int):
       catch case e: Exception => Left(e.getMessage)
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
-end CoordClient
+end NeblinkClient

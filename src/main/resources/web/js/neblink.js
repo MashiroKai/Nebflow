@@ -1,6 +1,6 @@
 /**
- * NebLink — Tailscale P2P device discovery.
- * No login, no relay server. Tailscale is the trust boundary.
+ * NebLink — P2P device discovery via NebLink Server.
+ * No login, no relay server. NebLink Server is the trust boundary.
  */
 import state from './state.js';
 import { escapeHtml } from './utils.js';
@@ -109,7 +109,7 @@ export function neblinkSettingsHTML() {
   }).join('');
 
   const peerHint = peers.length === 0
-    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure Tailscale is running on both device.'}</div>`
+    ? `<div class="cfg-hint" style="margin-top:6px">${t('neblink.noPeersHint') || 'No other devices found. Ensure NebLink Server is configured on both devices.'}</div>`
     : '';
 
   return `

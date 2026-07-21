@@ -6,14 +6,14 @@ Single binary, ~5MB RAM, no runtime dependencies.
 ## Build
 
 ```bash
-cd coordinator
+cd neblink-server
 cargo build --release
 # Output: target/release/neblink-server (or .exe on Windows)
 ```
 
 ## Deploy on Windows (as a Service)
 
-1. Copy `neblink-server.exe` to `deploy/coordinator/`
+1. Copy `neblink-server.exe` to `deploy/neblink-server/`
 2. Run `install-service.bat` as Administrator
 3. Auto-starts on boot, ~5MB RAM, no Java needed
 
@@ -47,8 +47,9 @@ curl -X POST http://localhost:9090/api/network/create \
 # Configure Nebflow devices in ~/.nebflow/neblink/config.json:
 # {
 #   "enabled": true,
-#   "coordinator": {
-#     "server": "http://<server-ip>:9090",
+#   "syncIntervalSec": 60,
+#   "neblinkServer": {
+#     "url": "http://<server-ip>:9090",
 #     "networkId": "...",
 #     "secret": "..."
 #   }

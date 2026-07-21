@@ -152,15 +152,15 @@ object GatewayMain extends IOApp.Simple:
    * Runs as a fire-and-forget fiber via `.start`.
    */
   private def startHeartbeatLoop(
-    client: nebflow.neblink.CoordClient,
+    client: nebflow.neblink.NeblinkClient,
     neblinkService: NeblinkService
   ): IO[Unit] =
     val hbLogger = NebflowLogger.forName("nebflow.neblink.heartbeat")
     def loop: IO[Unit] =
       IO.sleep(30.seconds) *> client.heartbeat.flatMap {
-        case Right(coordPeers) =>
-          val neblinkPeers = client.toNeblinkPeers(coordPeers)
-          val peerIps = client.peerAddresses(coordPeers)
+        case Right(serverPeers) =>
+          val neblinkPeers = client.toNeblinkPeers(serverPeers)
+          val peerIps = client.peerAddresses(serverPeers)
           neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
             neblinkService.updateTrustedIps(peerIps) *>
             neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
@@ -327,18 +327,18 @@ object GatewayMain extends IOApp.Simple:
                                         new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
                                           dispatcher
                                         )
-                                      // Check if NebLink server is configured; if so, create client for NebLink-based discovery
-                                      val coordClient: Option[nebflow.neblink.CoordClient] =
+                                      // Check if NebLink Server is configured; if so, create client for NebLink-based discovery
+                                      val neblinkClient: Option[nebflow.neblink.NeblinkClient] =
                                         neblinkService.neblinkConfig.unsafeRunSync() match
-                                          case nc if nc.coordinator.isDefined =>
-                                            Some(new nebflow.neblink.CoordClient(nc.coordinator.get, cfg.port.value))
+                                          case nc if nc.neblinkServer.isDefined =>
+                                            Some(new nebflow.neblink.NeblinkClient(nc.neblinkServer.get, cfg.port.value))
                                           case _ => None
-                                      // Discovery service — uses NebLink server if configured, otherwise Tailscale
+                                      // Discovery service — uses NebLink Server for discovery
                                       val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
                                         neblinkService,
                                         cfg.port.value,
                                         presenceService,
-                                        coordClient
+                                        neblinkClient
                                       )
                                       neblinkService.setDiscoveryHook(
                                         tsDiscovery.discoverCycle
@@ -354,9 +354,9 @@ object GatewayMain extends IOApp.Simple:
                                         ) *>
                                         // Trigger an immediate discovery cycle now that the hook is wired.
                                         neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
-                                        // Start NebLink server heartbeat loop (if configured) — maintains
+                                        // Start NebLink Server heartbeat loop (if configured) — maintains
                                         // session liveness and updates peer list every 30 seconds.
-                                        coordClient
+                                        neblinkClient
                                           .traverse_(client => startHeartbeatLoop(client, neblinkService).start.void) *>
                                         // Create Dropbox service (cross-device messaging & file transfer)
                                         nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
@@ -490,7 +490,7 @@ object GatewayMain extends IOApp.Simple:
                                                 }
                                                 .guarantee(
                                                   logger.info("shutting down...") *>
-                                                    coordClient.traverse_(_.logout) *>
+                                                    neblinkClient.traverse_(_.logout) *>
                                                     telemetry.fold(IO.unit)(_.shutdown) *>
                                                     mcpManager.stopAll() *>
                                                     releaseBackend
