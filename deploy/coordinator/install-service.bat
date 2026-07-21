@@ -1,21 +1,21 @@
 @echo off
 REM ============================================================
-REM Nebflow Coordinator - Windows Service Installation (Rust)
+REM NebLink Server - Windows Service Installation (Rust)
 REM
 REM Prerequisites:
-REM   - nebflow-coordinator.exe in the same directory
+REM   - neblink-server.exe in the same directory
 REM   - NSSM (auto-installed via Chocolatey if missing)
 REM
 REM Usage:
 REM   1. Build: cargo build --release (on any machine with Rust)
-REM   2. Copy target\release\nebflow-coordinator.exe here
+REM   2. Copy target\release\neblink-server.exe here
 REM   3. Run this script as Administrator
 REM ============================================================
 
 setlocal
 
-set SERVICE_NAME=NebflowCoordinator
-set EXE_PATH=%~dp0nebflow-coordinator.exe
+set SERVICE_NAME=NebLinkServer
+set EXE_PATH=%~dp0neblink-server.exe
 set LOG_DIR=%~dp0logs
 
 REM Check admin privileges
@@ -27,7 +27,7 @@ if %errorlevel% neq 0 (
 
 REM Check EXE exists
 if not exist "%EXE_PATH%" (
-    echo ERROR: nebflow-coordinator.exe not found in %~dp0
+    echo ERROR: neblink-server.exe not found in %~dp0
     echo Build with: cargo build --release
     echo Or download a pre-built release.
     exit /b 1
@@ -68,8 +68,8 @@ nssm install %SERVICE_NAME% "%EXE_PATH%"
 
 REM Configure
 nssm set %SERVICE_NAME% AppDirectory "%~dp0" >nul
-nssm set %SERVICE_NAME% DisplayName "Nebflow Coordinator Server" >nul
-nssm set %SERVICE_NAME% Description "Nebflow device discovery and coordination service (port 9090)" >nul
+nssm set %SERVICE_NAME% DisplayName "NebLink Server" >nul
+nssm set %SERVICE_NAME% Description "Nebflow device discovery and NebLink server (port 9090)" >nul
 nssm set %SERVICE_NAME% Start SERVICE_AUTO_START >nul
 
 REM Log rotation (10MB per file)
@@ -92,7 +92,7 @@ nssm start %SERVICE_NAME%
 
 echo.
 echo ===============================================
-echo  Nebflow Coordinator installed successfully!
+echo  NebLink Server installed successfully!
 echo ===============================================
 echo  Service:  %SERVICE_NAME%
 echo  Port:     9090

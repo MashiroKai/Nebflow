@@ -138,7 +138,7 @@ end PeerInfo
 case class NeblinkConfig(
   enabled: Boolean = false,
   syncIntervalSec: Int = 300,
-  coordinator: Option[CoordinatorConfig] = None
+  coordinator: Option[NebLinkServerConfig] = None
 )
 
 object NeblinkConfig:
@@ -148,7 +148,7 @@ object NeblinkConfig:
     for
       enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(false))
       syncIntervalSec <- c.downField("syncIntervalSec").as[Option[Int]].map(_.getOrElse(300))
-      coordinator <- c.downField("coordinator").as[Option[CoordinatorConfig]]
+      coordinator <- c.downField("coordinator").as[Option[NebLinkServerConfig]]
     yield NeblinkConfig(enabled, syncIntervalSec, coordinator)
   }
 

@@ -1,4 +1,4 @@
-# Nebflow Coordinator (Rust)
+# NebLink Server (Rust)
 
 Lightweight coordination server for Nebflow device discovery.
 Single binary, ~5MB RAM, no runtime dependencies.
@@ -8,19 +8,19 @@ Single binary, ~5MB RAM, no runtime dependencies.
 ```bash
 cd coordinator
 cargo build --release
-# Output: target/release/nebflow-coordinator (or .exe on Windows)
+# Output: target/release/neblink-server (or .exe on Windows)
 ```
 
 ## Deploy on Windows (as a Service)
 
-1. Copy `nebflow-coordinator.exe` to `deploy/coordinator/`
+1. Copy `neblink-server.exe` to `deploy/coordinator/`
 2. Run `install-service.bat` as Administrator
 3. Auto-starts on boot, ~5MB RAM, no Java needed
 
 ## Run (any platform)
 
 ```bash
-./nebflow-coordinator    # starts on port 9090
+./neblink-server    # starts on port 9090
 ```
 
 ## API
@@ -42,7 +42,7 @@ cargo build --release
 curl -X POST http://localhost:9090/api/network/create \
   -H "Content-Type: application/json" \
   -d '{"name":"My Devices"}'
-# → {"networkId":"...","secret":"..."}
+# -> {"networkId":"...","secret":"..."}
 
 # Configure Nebflow devices in ~/.nebflow/neblink/config.json:
 # {

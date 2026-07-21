@@ -1,10 +1,10 @@
 @echo off
 REM ============================================================
-REM Nebflow Coordinator - Remove Windows Service
+REM NebLink Server - Remove Windows Service
 REM ============================================================
 
 setlocal
-set SERVICE_NAME=NebflowCoordinator
+set SERVICE_NAME=NebLinkServer
 
 net session >nul 2>&1
 if %errorlevel% neq 0 (
@@ -19,7 +19,7 @@ echo Removing service registration...
 nssm remove %SERVICE_NAME% confirm
 
 echo.
-echo Service removed. JAR and log files were NOT deleted.
+echo Service removed. Binary and log files were NOT deleted.
 echo To reinstall: install-service.bat
 
 endlocal
