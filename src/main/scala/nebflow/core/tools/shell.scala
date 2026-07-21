@@ -416,15 +416,15 @@ final class ShellSession private (
   ): IO[ProcessResult] =
     IO.blocking {
       try buildProcessBuilder(command, cwd).start()
-      catch case e: java.io.IOException =>
-        throw new java.io.IOException(
-          if isWindows then
-            "bash.exe not found. The Bash tool requires Git for Windows.\n" +
-            "Install it from https://git-scm.com/download/win or re-run the Nebflow installer."
-          else
-            "bash not found in PATH. Please install bash (e.g. apt install bash).",
-          e
-        )
+      catch
+        case e: java.io.IOException =>
+          throw new java.io.IOException(
+            if isWindows then
+              "bash.exe not found. The Bash tool requires Git for Windows.\n" +
+                "Install it from https://git-scm.com/download/win or re-run the Nebflow installer."
+            else "bash not found in PATH. Please install bash (e.g. apt install bash).",
+            e
+          )
     }.bracket { proc =>
       val h = health.getOrElse(new JobHealth())
       val storeProc = IO(h.processRef.set(proc))
