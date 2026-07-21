@@ -12,8 +12,8 @@ set -euo pipefail
 TIMEOUT=3   # seconds
 THRESHOLD=2.0  # seconds — above this, consider Maven Central "slow"
 
-# Test Maven Central latency
-maven_time=$(curl -s -o /dev/null -w '%{time_total}' \
+# Test Maven Central latency via HEAD (no body download)
+maven_time=$(curl -sI -o /dev/null -w '%{time_total}' \
   --max-time "$TIMEOUT" \
   'https://repo1.maven.org/maven2/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar' \
   2>/dev/null || echo "$TIMEOUT")
