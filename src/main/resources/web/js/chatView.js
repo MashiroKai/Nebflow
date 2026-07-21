@@ -62,6 +62,9 @@ export class ChatView {
     this.skillModeDesc = '';
     this.skillModeArgHint = '';
 
+    // ── Compact mode ──
+    this.compactMode = false;
+
     // ── Slash autocomplete ──
     this.slashMatches = [];
     this.slashSelectedIndex = -1;
@@ -115,24 +118,25 @@ export class ChatView {
     };
   }
 
-  /** Reset input mode state (skill mode, ask mode). */
+  /** Reset input mode state (skill mode, ask mode, compact mode). */
   resetInputModes() {
     this.skillMode = false;
     this.skillModeName = '';
     this.skillModeDesc = '';
     this.skillModeArgHint = '';
+    this.compactMode = false;
     this.stream.askMode = false;
     // Reset DOM state — paddingLeft and indicator visibility from a previous
-    // session's ask/skill mode must not persist into the new session.
-    // Without this, a large paddingLeft (from a long skill name) can make the
-    // textarea content area nearly zero-width, truncating the placeholder.
+    // session's ask/skill/compact mode must not persist into the new session.
     if (this.dom.input) {
       this.dom.input.style.paddingLeft = '';
     }
     const askEl = document.getElementById('ask-indicator');
     const skillEl = document.getElementById('skill-indicator');
+    const compactEl = document.getElementById('compact-indicator');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.remove('show');
   }
 
   /** Reset all view state for a fresh session load. */
