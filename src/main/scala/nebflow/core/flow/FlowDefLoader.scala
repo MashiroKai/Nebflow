@@ -50,15 +50,20 @@ object FlowDefLoader:
               case p: BranchType.Pipeline =>
                 val stepCount = p.steps.size
                 val agents = p.steps.flatMap(_.agent).distinct.mkString("+")
-                s"- $name: ${stepCount} step(s), agents: $agents"
+                val meta = s"${stepCount} step(s), agents: $agents"
+                fd.description match
+                  case desc if desc.nonEmpty => s"- $name: $desc ($meta)"
+                  case _ => s"- $name: $meta"
               case other => s"- $name: ${other.typeName}"
           }
           .mkString("\n")
         s"""# Flows
            |
-           |Flows are reusable, self-improving pipelines in ~/.nebflow/flows/. Each flow runs
-           |multi-step agents with automatic verification and learning. Use MountFlow to mount
-           |and trigger flows.
+           |Flows are reusable, self-improving pipelines. Each flow runs multi-step agents with
+           |automatic verification (verify-fix loop) and learns from past runs. Mount once, then
+           |trigger with different inputs. Check the catalog below — if a flow matches your task,
+           |prefer it over manual delegation: it handles orchestration, parallelism, and quality
+           |gates for you.
            |
            |$entries""".stripMargin
       end if
@@ -69,9 +74,10 @@ object FlowDefLoader:
     for
       json <- yamlParser.parse(yaml).left.map(e => s"YAML parse error: ${e.message}")
       name <- json.hcursor.downField("name").as[String].left.map(e => s"Invalid 'name': ${e.message}")
+      desc <- json.hcursor.downField("description").as[Option[String]].left.map(e => s"Invalid 'description': ${e.message}")
       maxDepth <- json.hcursor.downField("maxDepth").as[Option[Int]].left.map(e => s"Invalid 'maxDepth': ${e.message}")
       branchType <- json.as[BranchType].left.map(e => s"BranchType decode error: ${e.message}")
-    yield FlowDef(name, branchType, maxDepth.getOrElse(5))
+    yield FlowDef(name, branchType, desc.getOrElse(""), maxDepth.getOrElse(5))
 
   /** Parse inline YAML and return FlowDef (for MountFlow inline definitions). */
   def parseInline(yaml: String): IO[Either[String, FlowDef]] =

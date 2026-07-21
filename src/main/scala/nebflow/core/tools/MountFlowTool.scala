@@ -27,6 +27,7 @@ object MountFlowTool extends Tool:
     """管理 pipeline flow 的挂载和触发。
 
 Pipeline 是一个持久的流水线：mount 一次后一直存在，可以反复用不同的 input 触发执行。
+适合需要多步 agent 协作、自动验证、反复执行的复杂任务。
 
 ## 三种操作
 
@@ -38,7 +39,7 @@ mount 后 pipeline 处于 idle 状态，需要用 retrigger 触发才会执行�
   {"source": "code-review"}
 
 也可以用 inline YAML 直接定义：
-  {"inline": "name: my-flow\\nbranch:\\n  type: pipeline\\n  steps:\\n    - id: analyze\\n      agent: Explorer\\n      prompt: \\"分析代码\\"\\n  verify:\\n    agent: Explorer\\n    prompt: \\"检查结果\\""}
+  {"inline": "name: my-flow\\ntype: pipeline\\nsteps:\\n  - id: analyze\\n    agent: Explorer\\n    prompt: \\"分析代码\\"\\nverify:\\n  agent: Explorer\\n  prompt: \\"检查结果\\""}
 
 ### 2. 触发已挂载的 pipeline（retrigger=true）
 给已挂载的 pipeline 发送输入，开始执行。执行完成后 pipeline 回到 idle，可以再次触发。
@@ -63,24 +64,24 @@ mount 后 pipeline 处于 idle 状态，需要用 retrigger 触发才会执行�
 ## YAML 格式
 定义文件放在 ~/.nebflow/flows/<name>.yaml，格式：
   name: <flow名称>
-  branch:
-    type: pipeline
-    steps:
-      - id: <步骤ID>
-        agent: <agent名称>
-        prompt: <提示词，可用 ${input} 和 ${上游步骤ID}>
-        dependsOn: [上游步骤ID]
-        retry: 2
-        timeoutSeconds: 1800
-    verify:
-      agent: <验证agent>
-      prompt: <验证提示词>
-    loop:
-      fix:
-        agent: <修复agent>
-        prompt: <修复提示词>
-      maxIterations: 3
-    maxConcurrency: 5
+  description: <一句话描述，会展示在系统提示词的 flow catalog 中>
+  type: pipeline
+  steps:
+    - id: <步骤ID>
+      agent: <agent名称>
+      prompt: <提示词，可用 ${input} 和 ${上游步骤ID}>
+      dependsOn: [上游步骤ID]
+      retry: 2
+      timeoutSeconds: 1800
+  verify:
+    agent: <验证agent>
+    prompt: <验证提示词>
+  loop:
+    fix:
+      agent: <修复agent>
+      prompt: <修复提示词>
+    maxIterations: 3
+  maxConcurrency: 5
 """
 
   val inputSchema = JsonObject.fromIterable(
