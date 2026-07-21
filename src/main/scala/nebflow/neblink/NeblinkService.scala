@@ -214,14 +214,15 @@ class NeblinkService private (
 
   /** Check if an IP is trusted — Tailscale CGNAT range or coordinator-discovered peers. */
   def isTailscalePeer(remoteAddr: String): Boolean =
-    val isCgnat = try
-      val parts = remoteAddr.split("\\.")
-      if parts.length == 4 then
-        val first = parts(0).toInt
-        val second = parts(1).toInt
-        first == 100 && second >= 64 && second <= 127
-      else false
-    catch case _: Exception => false
+    val isCgnat =
+      try
+        val parts = remoteAddr.split("\\.")
+        if parts.length == 4 then
+          val first = parts(0).toInt
+          val second = parts(1).toInt
+          first == 100 && second >= 64 && second <= 127
+        else false
+      catch case _: Exception => false
     isCgnat || trustedPeerIps.contains(remoteAddr)
 
   /** Handle an incoming handshake from a peer. Called by the REST endpoint. */
