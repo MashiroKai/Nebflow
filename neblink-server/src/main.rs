@@ -6,6 +6,7 @@ mod store;
 use axum::{routing::{delete, get, post}, Router};
 use std::time::Duration;
 use tower_http::catch_panic::CatchPanicLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -42,6 +43,23 @@ async fn main() {
         });
     }
 
+    // CORS: allow nebflow.space dashboard to make cross-origin requests
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            origin.as_bytes() == b"https://nebflow.space"
+                || origin.as_bytes() == b"http://localhost:3000"
+        }))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::DELETE,
+            axum::http::Method::PATCH,
+        ])
+        .allow_headers([
+            axum::http::header::CONTENT_TYPE,
+            axum::http::header::AUTHORIZATION,
+        ]);
+
     let app = Router::new()
         // ===== User auth =====
         .route("/api/user/me", get(routes::user_me))
@@ -68,7 +86,7 @@ async fn main() {
         .route("/", get(web_ui))
         // Catch panics in handlers — return 500 instead of crashing the connection
         .layer(CatchPanicLayer::new())
-        // Request tracing — logs each request with method, path, status, latency
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(store);
 

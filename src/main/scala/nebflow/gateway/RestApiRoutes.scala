@@ -209,7 +209,7 @@ class RestApiRoutes(
 
     // ===== NebLink P2P Discovery (no gateway auth — used by other Nebflow instances) =====
 
-    // Return local device info for Tailscale discovery probes
+    // Return local device info for NebLink discovery probes
     case GET -> Root / "neblink" / "discover" =>
       neblinkService match
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
@@ -231,7 +231,7 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          if !ms.isTrustedPeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
           else
             req.as[Json].flatMap { body =>
               io.circe.parser.decode[nebflow.neblink.DeviceDiscoveryInfo](body.noSpaces) match
@@ -245,7 +245,7 @@ class RestApiRoutes(
 
     // ===== NebLink API (gateway auth required — for frontend) =====
 
-    // NebLink scan — trigger Tailscale discovery immediately, return updated peers
+    // NebLink scan — trigger NebLink discovery immediately, return updated peers
     case req @ POST -> Root / "neblink" / "scan" =>
       withNeblink(req) { ms =>
         ms.scanNow.flatMap { peersList =>
@@ -302,13 +302,13 @@ class RestApiRoutes(
       }
 
     // Handshake — called by a discovered peer to establish trust and exchange device secrets.
-    // Guarded by Tailscale IP check (same as /neblink/announce) — only tailnet members can reach this.
+    // Guarded by peer IP check (same as /neblink/announce) — only network members can reach this.
     case req @ POST -> Root / "neblink" / "handshake" =>
       neblinkService match
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val callerIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTailscalePeer(callerIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          if !ms.isTrustedPeer(callerIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
           else
             // Bearer format: deviceId:callerDeviceSecret
             val bearer = req.headers
@@ -429,7 +429,7 @@ class RestApiRoutes(
 
     // ===== Remote Update (P2P — triggered by another Nebflow instance) =====
     // Downloads and installs the latest JAR, then restarts Nebflow.
-    // The caller must be a Tailscale peer (verified by IP).
+    // The caller must be a trusted peer (verified by IP).
     case req @ POST -> Root / "neblink" / "update" =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
@@ -477,7 +477,7 @@ class RestApiRoutes(
           }
       }
 
-    // ===== NebLink File Transfer (P2P — Tailscale IP auth) =====
+    // ===== NebLink File Transfer (P2P — peer IP auth) =====
 
     // Push a file to this device
     case req @ POST -> Root / "neblink" / "transfer" =>
@@ -534,7 +534,7 @@ class RestApiRoutes(
             }
       }
 
-    // Peer pushes a file via HTTP (Tailscale IP auth)
+    // Peer pushes a file via HTTP (peer IP auth)
     case req @ POST -> Root / "neblink" / "dropbox" / "transfer" / transferId =>
       verifyPeerAccess(req).flatMap {
         case Left(resp) => IO.pure(resp)
@@ -557,7 +557,7 @@ class RestApiRoutes(
   // ===== WebSocket Presence Server Endpoint =====
 
   /**
-   * Accepts incoming WS presence connections from Tailscale peers.
+   * Accepts incoming WS presence connections from NebLink peers.
    *
    * The peer's device info arrives as query params on the WS upgrade request.
    * Once the WS is established:
@@ -574,7 +574,7 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
         case Some(ms) =>
           val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-          if !ms.isTailscalePeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a Tailscale peer".asJson))
+          if !ms.isTrustedPeer(remoteIp) then Forbidden(Json.obj("error" -> "Not a trusted peer".asJson))
           else
             val peerDeviceId = req.params.getOrElse("deviceId", "")
             if peerDeviceId.isEmpty then BadRequest(Json.obj("error" -> "Missing deviceId".asJson))
@@ -676,9 +676,9 @@ class RestApiRoutes(
         case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
 
   /**
-   * Verify peer-to-peer access via Tailscale IP check.
-   * Only requests from the Tailscale CGNAT range (100.64.0.0/10) are accepted.
-   * Tailscale itself is the trust boundary — devices must be on the same tailnet.
+   * Verify peer-to-peer access via peer IP check.
+   * Only requests from trusted peer IPs (discovered via NebLink Server) are accepted.
+   * NebLink Server is the trust boundary — devices must be on the same network.
    */
   private def verifyPeerAccess(req: Request[IO]): IO[Either[Response[IO], NeblinkService]] =
     neblinkService match
@@ -686,12 +686,12 @@ class RestApiRoutes(
         IO.pure(Left(Response[IO](Status.NotFound).withEntity(Json.obj("error" -> "NebLink not enabled".asJson))))
       case Some(ms) =>
         val remoteIp = req.remoteAddr.fold("")(a => a.toString)
-        if ms.isTailscalePeer(remoteIp) then IO.pure(Right(ms))
+        if ms.isTrustedPeer(remoteIp) then IO.pure(Right(ms))
         else
           IO.pure(
             Left(
               Response[IO](Status.Forbidden)
-                .withEntity(Json.obj("error" -> s"Not a Tailscale peer (from $remoteIp)".asJson))
+                .withEntity(Json.obj("error" -> s"Not a trusted peer (from $remoteIp)".asJson))
             )
           )
 
