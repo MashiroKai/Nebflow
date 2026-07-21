@@ -43,7 +43,6 @@ object PromptSections:
     voiceEnabled: Boolean = true,
     hasDevices: Boolean = false,
     hasActiveSessions: Boolean = false,
-    hasSkills: Boolean = false,
     language: Option[String] = None,
     chatWidth: Int = 0,
     /** Pre-rendered environment info table (from Repl.buildEnvInfo). */

@@ -221,8 +221,11 @@ mount 后 pipeline 处于 idle 状态，需要用 retrigger 触发才会执行�
       case Some(name) =>
         getOrCreateTreeActor(ctx).flatMap { treeRef =>
           for _ <- treeRef ! TreeCommand.TriggerPipeline(name, triggerInput, None)
-          yield Right(s"Pipeline '$name' triggered with input (${triggerInput.length} chars). You will receive progress updates and a completion message.")
+          yield Right(
+            s"Pipeline '$name' triggered with input (${triggerInput.length} chars). You will receive progress updates and a completion message."
+          )
         }
+  end doRetrigger
 
   // ============================================================
   // Find or create FlowTreeActor

@@ -470,6 +470,8 @@ final class ShellSession private (
       val enableStuckDetection = isBackground && !isSleepLike
 
       for
+        _ <- storeProc
+        _ <- writeStdin
         stuckFlag <- IO.ref(false)
 
         // Stuck detector fiber: after the grace period, if the process is
