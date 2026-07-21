@@ -1703,6 +1703,9 @@ object AgentActor extends AgentCore with AgentSession:
           resumeAfterCompact,
           postCompactInstruction
         )
+      end if
+    end if
+  end handleTriggerCompaction
 
   // ============================================================
   // Empty response handler

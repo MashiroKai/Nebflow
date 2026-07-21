@@ -19,7 +19,7 @@ class PipelineActorSpec extends CatsEffectSuite:
 
   import PipelineActor.*
   import PipelineActor.PipelineCommand.{GetState, Trigger as TriggerCmd}
-  import BranchType.{Pipeline as PipelineConfig}
+  import BranchType.Pipeline as PipelineConfig
 
   private val simplePipeline = PipelineConfig(
     steps = List(
@@ -48,14 +48,16 @@ class PipelineActorSpec extends CatsEffectSuite:
       agent = "Explorer",
       prompt = "Check the greeting."
     ),
-    loop = Some(LoopConfig(
-      fix = PipelineStep(
-        id = "fix-greet",
-        agent = Some("Explorer"),
-        prompt = Some("Fix the greeting.")
-      ),
-      maxIterations = 2
-    )),
+    loop = Some(
+      LoopConfig(
+        fix = PipelineStep(
+          id = "fix-greet",
+          agent = Some("Explorer"),
+          prompt = Some("Fix the greeting.")
+        ),
+        maxIterations = 2
+      )
+    ),
     maxConcurrency = 3
   )
 
@@ -80,10 +82,14 @@ class PipelineActorSpec extends CatsEffectSuite:
     fs2.Stream.eval(IO.sleep(1.second)).compile.drain *>
       poll.flatMap {
         case Some(s) if s.phase == targetPhase => IO.pure(s)
-        case other => IO.raiseError(new RuntimeException(
-          s"Expected phase $targetPhase, got ${other.map(_.phase)}"
-        ))
+        case other =>
+          IO.raiseError(
+            new RuntimeException(
+              s"Expected phase $targetPhase, got ${other.map(_.phase)}"
+            )
+          )
       }
+  end waitForState
 
   // ============================================================
   // Tests
@@ -97,8 +103,8 @@ class PipelineActorSpec extends CatsEffectSuite:
         _ <- pipeRef ! TriggerCmd("test input", None)
         snapshot <- waitForState(pipeRef, "Idle")
       yield
-        assertEquals(snapshot.phase, "Idle")
-        // After completion, pipeline goes back to Idle (Completed is transient)
+      assertEquals(snapshot.phase, "Idle")
+      // After completion, pipeline goes back to Idle (Completed is transient)
     }
   }
 
@@ -111,8 +117,7 @@ class PipelineActorSpec extends CatsEffectSuite:
         snapshot <- waitForState(pipeRef, "Idle")
       yield
         assertEquals(snapshot.phase, "Idle")
-        assert(snapshot.verifyResult.isDefined,
-          s"verifyResult should be set: ${snapshot.verifyResult}")
+        assert(snapshot.verifyResult.isDefined, s"verifyResult should be set: ${snapshot.verifyResult}")
     }
   }
 
@@ -125,8 +130,13 @@ class PipelineActorSpec extends CatsEffectSuite:
         snapshot <- waitForState(pipeRef, "Idle")
       yield
         assertEquals(snapshot.phase, "Idle")
-        assert(snapshot.verifyResult.exists(_.contains("No VERDICT") || snapshot.verifyResult.contains("fail") || snapshot.verifyResult.exists(_.contains("FAIL"))),
-          s"verifyResult should indicate failure: ${snapshot.verifyResult}")
+        assert(
+          snapshot.verifyResult.exists(
+            _.contains("No VERDICT") || snapshot.verifyResult.contains("fail") || snapshot.verifyResult
+              .exists(_.contains("FAIL"))
+          ),
+          s"verifyResult should indicate failure: ${snapshot.verifyResult}"
+        )
     }
   }
 
@@ -163,3 +173,4 @@ class PipelineActorSpec extends CatsEffectSuite:
   // ============================================================
 
   // CatsEffectSuite handles Resource cleanup automatically via .use {}
+end PipelineActorSpec

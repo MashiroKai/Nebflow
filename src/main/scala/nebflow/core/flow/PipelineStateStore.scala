@@ -1,8 +1,8 @@
 package nebflow.core.flow
 
 import cats.effect.IO
+import io.circe.*
 import io.circe.syntax.*
-import io.circe.{Decoder, Encoder, Json, parser}
 import nebflow.core.{NebflowLogger, PathUtil}
 
 /**
@@ -76,7 +76,9 @@ object PipelineStateStore:
       verifyResult <- c.downField("verifyResult").as[Option[String]]
       updatedAt <- c.downField("updatedAt").as[Option[Long]]
     yield PipelineState(
-      name, flowName, phase,
+      name,
+      flowName,
+      phase,
       steps.getOrElse(Nil),
       results.getOrElse(Map.empty),
       iteration.getOrElse(0),
@@ -119,7 +121,9 @@ object PipelineStateStore:
     IO.blocking {
       if !os.exists(dir) then Nil
       else
-        os.list(dir).toArray.toList
+        os.list(dir)
+          .toArray
+          .toList
           .filter(_.last.endsWith(".json"))
           .flatMap { file =>
             val content = os.read(file)
@@ -130,6 +134,8 @@ object PipelineStateStore:
                 None
           }
     }
+
+  end loadAll
 
   /** Delete all state files for a session. */
   def deleteAll(sessionId: String): IO[Unit] =

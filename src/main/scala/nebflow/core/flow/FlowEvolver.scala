@@ -60,14 +60,19 @@ object FlowEvolver:
       _ <- ensureGitRepo()
       currentYaml <- readFlowYaml(flowName)
       proposedYaml <- analyzeAndPropose(
-        flowName, llm, sessionId, pipelineName,
-        currentYaml, runAnalysis, passed, iterations, memory
+        flowName,
+        llm,
+        sessionId,
+        pipelineName,
+        currentYaml,
+        runAnalysis,
+        passed,
+        iterations,
+        memory
       )
       _ <-
-        if proposedYaml != currentYaml then
-          applyAndCommit(flowName, currentYaml, proposedYaml, passed, iterations)
-        else
-          logger.info(s"[Evolve:$flowName] No changes proposed")
+        if proposedYaml != currentYaml then applyAndCommit(flowName, currentYaml, proposedYaml, passed, iterations)
+        else logger.info(s"[Evolve:$flowName] No changes proposed")
     yield ()
 
   /** Read the current flow YAML from disk. */
@@ -149,12 +154,15 @@ Rules:
       val status = if passed then "pass" else "fail"
       val msg = s"evolve: $flowName ($status, iter=$iterations)"
       Process(Seq("git", "commit", "-m", msg, "--allow-empty"), dir).!
-    }.void.flatMap { _ =>
-      logger.info(s"[Evolve:$flowName] Applied evolution (git committed)")
-    }.handleErrorWith { e =>
-      // If git fails, revert the file change
-      IO.blocking { os.write.over(file, oldYaml) }.void *>
-        logger.warn(s"[Evolve:$flowName] Git commit failed, reverted: ${e.getMessage}")
-    }
+    }.void
+      .flatMap { _ =>
+        logger.info(s"[Evolve:$flowName] Applied evolution (git committed)")
+      }
+      .handleErrorWith { e =>
+        // If git fails, revert the file change
+        IO.blocking { os.write.over(file, oldYaml) }.void *>
+          logger.warn(s"[Evolve:$flowName] Git commit failed, reverted: ${e.getMessage}")
+      }
+  end applyAndCommit
 
 end FlowEvolver

@@ -43,14 +43,17 @@ object FlowDefLoader:
       val visible = flows.filter { case (_, fd) => fd.branchType.isInstanceOf[BranchType.Pipeline] }
       if visible.isEmpty then ""
       else
-        val entries = visible.toList.sortBy(_._1).map { case (name, fd) =>
-          fd.branchType match
-            case p: BranchType.Pipeline =>
-              val stepCount = p.steps.size
-              val agents = p.steps.flatMap(_.agent).distinct.mkString("+")
-              s"- $name: ${stepCount} step(s), agents: $agents"
-            case other => s"- $name: ${other.typeName}"
-        }.mkString("\n")
+        val entries = visible.toList
+          .sortBy(_._1)
+          .map { case (name, fd) =>
+            fd.branchType match
+              case p: BranchType.Pipeline =>
+                val stepCount = p.steps.size
+                val agents = p.steps.flatMap(_.agent).distinct.mkString("+")
+                s"- $name: ${stepCount} step(s), agents: $agents"
+              case other => s"- $name: ${other.typeName}"
+          }
+          .mkString("\n")
         s"""# Flows
            |
            |Flows are reusable, self-improving pipelines in ~/.nebflow/flows/. Each flow runs
@@ -58,6 +61,7 @@ object FlowDefLoader:
            |and trigger flows.
            |
            |$entries""".stripMargin
+      end if
     }
 
   /** Parse a YAML string into a FlowDef (pure, no I/O). */

@@ -42,7 +42,7 @@ class AgentDefSpec extends CatsEffectSuite:
     assert(os.exists(tmpDir / "Nebula" / "agent.json"), "agent.json should be seeded")
     assert(os.exists(tmpDir / "Nebula" / "system.md"), "system.md should be seeded")
     assert(os.exists(tmpDir / "Explorer" / "agent.json"), "Explorer agent.json should be seeded")
-    assert(os.exists(tmpDir / "Planner" / "agent.json"), "Planner agent.json should be seeded")
+    assert(os.exists(tmpDir / "Coder" / "agent.json"), "Coder agent.json should be seeded")
 
   test("seedDefaults does not overwrite existing agent.json"):
     val tmpDir = os.temp.dir()
