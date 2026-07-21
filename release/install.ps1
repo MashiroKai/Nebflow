@@ -73,7 +73,7 @@ Write-Host "  Nebflow v$Version Installer ($Channel)" -ForegroundColor DarkGray
 Write-Host ""
 
 # --- Check Java ---
-Write-Host "[1/4] Checking Java..." -ForegroundColor Yellow
+Write-Host "[1/5] Checking Java..." -ForegroundColor Yellow
 
 function Test-Java {
     $savedEAP = $ErrorActionPreference
@@ -179,8 +179,122 @@ if ($javaVer -ge 17) {
     Write-Host "       JDK 17 installed." -ForegroundColor Green
 }
 
+# --- Check Git for Windows (provides bash.exe for Bash tool) ---
+Write-Host "[2/5] Checking Git for Windows..." -ForegroundColor Yellow
+
+function Test-GitBash {
+    $candidates = @(
+        "$env:ProgramFiles\Git\bin\bash.exe",
+        "${env:ProgramFiles(x86)}\Git\bin\bash.exe"
+    )
+    if ($env:LOCALAPPDATA) {
+        $candidates += "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe"
+    }
+    foreach ($path in $candidates) {
+        if (Test-Path $path) { return $true }
+    }
+    # Check PATH but exclude WSL's bash (C:\Windows\System32\bash.exe)
+    $bashCmd = Get-Command bash -ErrorAction SilentlyContinue
+    if ($bashCmd -and $bashCmd.Source -notlike "*\System32\bash.exe") {
+        return $true
+    }
+    return $false
+}
+
+if (Test-GitBash) {
+    Write-Host "       OK: Git Bash found" -ForegroundColor Green
+} else {
+    Write-Host "       Git Bash not found. Installing Git for Windows..." -ForegroundColor Yellow
+
+    $gitInstalled = $false
+
+    # Method 1: Try winget (cleanest if available)
+    $wingetCmd = Get-Command winget -ErrorAction SilentlyContinue
+    if ($wingetCmd) {
+        Write-Host "       Trying winget..." -ForegroundColor DarkGray
+        try {
+            $proc = Start-Process winget -ArgumentList @(
+                "install", "--id", "Git.Git", "-e", "--source", "winget",
+                "--silent", "--accept-package-agreements", "--accept-source-agreements"
+            ) -Wait -PassThru -NoNewWindow 2>&1
+            if ($LASTEXITCODE -eq 0 -and (Test-GitBash)) {
+                $gitInstalled = $true
+            }
+        } catch {}
+    }
+
+    # Method 2: Direct download with region-aware source selection
+    if (-not $gitInstalled) {
+        # Determine region (timezone-based, instant — reused by JAR download later)
+        if (-not $Region) {
+            $tz = [TimeZoneInfo]::Local.Id
+            if ($tz -match "China|Shanghai|Chongqing|Hong_Kong|Taipei|Macau|Urumqi") {
+                $Region = "cn"
+            } elseif ($env:LANG -match "zh_CN|zh_TW|zh_HK" -or $env:LC_ALL -match "zh_CN|zh_TW|zh_HK") {
+                $Region = "cn"
+            } else {
+                $Region = "global"
+            }
+        }
+
+        $gitVer = "2.55.0.3"
+        $gitTag = "v2.55.0.windows.3"
+        $gitInstaller = "Git-$gitVer-64-bit.exe"
+        $gitPath = "$env:TEMP\$gitInstaller"
+
+        if ($Region -eq "cn") {
+            # China: domestic mirrors first, GitHub fallback
+            $gitMirrors = @(
+                "https://registry.npmmirror.com/-/binary/git-for-windows/$gitTag/$gitInstaller",
+                "https://ghproxy.net/https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller",
+                "https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller"
+            )
+        } else {
+            # Global: GitHub first, domestic mirror fallback
+            $gitMirrors = @(
+                "https://github.com/git-for-windows/git/releases/download/$gitTag/$gitInstaller",
+                "https://registry.npmmirror.com/-/binary/git-for-windows/$gitTag/$gitInstaller"
+            )
+        }
+
+        foreach ($url in $gitMirrors) {
+            Write-Host "       Downloading Git for Windows..." -ForegroundColor DarkGray
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $gitPath -UseBasicParsing -TimeoutSec 300
+                if (Test-Path $gitPath) {
+                    $size = (Get-Item $gitPath).Length
+                    if ($size -gt 50000000) { break }
+                }
+            } catch {
+                Remove-Item $gitPath -Force -ErrorAction SilentlyContinue
+                Write-Host "       Mirror failed, trying next..." -ForegroundColor DarkGray
+            }
+        }
+
+        if (Test-Path $gitPath -and (Get-Item $gitPath).Length -gt 50000000) {
+            Write-Host "       Installing Git for Windows..." -ForegroundColor DarkGray
+            $proc = Start-Process $gitPath -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS" -Wait -PassThru
+            Remove-Item $gitPath -Force -ErrorAction SilentlyContinue
+
+            # Refresh PATH so subsequent checks find bash
+            $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+
+            if ($proc.ExitCode -eq 0 -and (Test-GitBash)) {
+                Write-Host "       Git for Windows installed." -ForegroundColor Green
+            } else {
+                Write-Host "       Git install may have failed (exit $($proc.ExitCode))." -ForegroundColor Red
+                Write-Host "       Please install manually: https://git-scm.com/download/win" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "       Git download failed from all mirrors." -ForegroundColor Red
+            Write-Host "       Please install manually: https://git-scm.com/download/win" -ForegroundColor Yellow
+            Write-Host "       (Bash tool requires Git for Windows)" -ForegroundColor Yellow
+        }
+    }
+}
+
 # --- Download Nebflow ---
-Write-Host "[2/4] Downloading Nebflow v$Version..." -ForegroundColor Yellow
+Write-Host "[3/5] Downloading Nebflow v$Version..." -ForegroundColor Yellow
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $jarPath = Join-Path $InstallDir $JarName
@@ -246,7 +360,7 @@ if (Test-Path $jarPath) {
 }
 
 # --- Install ripgrep (rg) for search support ---
-Write-Host "[3/4] Installing ripgrep (rg)..." -ForegroundColor Yellow
+Write-Host "[4/5] Installing ripgrep (rg)..." -ForegroundColor Yellow
 if (Get-Command "rg" -ErrorAction SilentlyContinue) {
     Write-Host "       rg already available in PATH." -ForegroundColor Green
 } elseif (Test-Path (Join-Path $InstallDir "rg.exe")) {
@@ -281,7 +395,7 @@ if (Get-Command "rg" -ErrorAction SilentlyContinue) {
 }
 
 # --- Create wrapper scripts ---
-Write-Host "[4/4] Creating launcher..." -ForegroundColor Yellow
+Write-Host "[5/5] Creating launcher..." -ForegroundColor Yellow
 
 # PowerShell wrapper
 $wrapperPath = Join-Path $InstallDir "nebflow.ps1"
@@ -317,7 +431,7 @@ if ($userPath -notlike "*$InstallDir*") {
 }
 
 # --- Config ---
-Write-Host "[4/4] Setting up config..." -ForegroundColor Yellow
+Write-Host "[5/5] Setting up config..." -ForegroundColor Yellow
 
 $configDir = Join-Path $env:USERPROFILE ".nebflow"
 $configFile = Join-Path $configDir "nebflow.json"
