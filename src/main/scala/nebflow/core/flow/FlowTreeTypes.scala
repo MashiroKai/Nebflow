@@ -279,6 +279,7 @@ end BranchType
 case class FlowDef(
   name: String,
   branchType: BranchType,
+  description: String = "",
   maxDepth: Int = 5
 )
 
@@ -288,6 +289,7 @@ object FlowDef:
     Json
       .obj(
         "name" -> f.name.asJson,
+        "description" -> f.description.asJson,
         "maxDepth" -> f.maxDepth.asJson
       )
       .deepMerge(f.branchType.asJson.asObject.fold(Json.obj())(jo => Json.obj("branch" -> jo.toJson)))
