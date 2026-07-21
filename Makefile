@@ -2,9 +2,11 @@
   lint fmt fix fmt-check check quality-gate
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
-# Only runs when COURSIER_REPOSITORIES is not already set by the user
-MIRROR := $(if $(COURSIER_REPOSITORIES),,$(shell scripts/detect-mirror.sh))
-export COURSIER_REPOSITORIES := $(MIRROR)
+# Respects user-set COURSIER_REPOSITORIES; only runs detection if unset
+ifndef COURSIER_REPOSITORIES
+  COURSIER_REPOSITORIES := $(shell scripts/detect-mirror.sh)
+endif
+export COURSIER_REPOSITORIES
 
 compile:
 	sbt compile
