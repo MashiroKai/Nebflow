@@ -20,6 +20,11 @@ private[agent] trait AgentCore:
 
   protected val MaxDepth = 5
 
+  /** Timeout for permission confirmation. Prevents indefinite session lockup
+    * when the user doesn't respond (popup missed, WS issue, away from keyboard).
+    */
+  private val PermissionTimeout = 5.minutes
+
   /**
    * Tools removed from sub-agents (depth > 0): user-interaction tools that
    * don't make sense in an autonomous sub-agent context.
@@ -477,10 +482,26 @@ private[agent] trait AgentCore:
               else (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *> state.wsSend(permJson)
             for
               _ <- sendPermission
-              approved <- deferred.get
-              result <-
-                if approved then executeTool(call, toolCtx)
-                else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+              approvedOpt <- deferred.get
+                .map(Some(_))
+                .timeoutTo(PermissionTimeout, IO.pure(None))
+              _ <- permissionDeferredRef.set(None)
+              result <- approvedOpt match
+                case Some(approved) =>
+                  if approved then executeTool(call, toolCtx)
+                  else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+                case None =>
+                  // Timeout — dismiss the permission popup on the frontend
+                  state.wsSend(
+                    Json.obj(
+                      "type" -> "permissionExpired".asJson,
+                      "sessionId" -> state.sessionId.asJson
+                    )
+                  ).handleErrorWith(_ => IO.unit) *>
+                    IO.pure(ToolExecResult(
+                      s"Permission timed out — no response within ${PermissionTimeout.toMinutes} min, auto-denied. Re-issue the command if needed.",
+                      isError = true
+                    ))
             yield result
           }
         )

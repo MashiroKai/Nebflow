@@ -951,6 +951,21 @@ onMessage('askPermission', (msg, view) => {
   }
 });
 
+onMessage('permissionExpired', (msg, view) => {
+  const sid = msg.sessionId;
+  if (!sid) return;
+  // Mark as answered so the prompt isn't re-created on session switch
+  state.answeredPermissions.add(sid);
+  // Remove the permission prompt row from DOM
+  if (view) {
+    view.dom.chat.querySelectorAll('.row.ai').forEach(row => {
+      if (row.querySelector('.permission-pending-box')) row.remove();
+    });
+  }
+  // Clear attention indicator
+  setSessionAttention(sid, false);
+});
+
 // --- Session list (global) ---
 let restoredSessionId = null;
 onMessage('sessionList', (msg, view) => {
