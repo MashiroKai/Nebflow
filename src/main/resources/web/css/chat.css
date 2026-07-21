@@ -1498,6 +1498,41 @@
   opacity: 1;
 }
 
+/* ===== Compact mode input indicator ===== */
+#compact-indicator {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 5;
+  pointer-events: none;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  opacity: 0.5;
+  color: var(--color-text, #666);
+  white-space: nowrap;
+  user-select: none;
+}
+#compact-indicator.show {
+  display: flex;
+}
+#compact-indicator-cancel {
+  cursor: pointer;
+  pointer-events: auto;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.6;
+  padding: 0 2px;
+}
+#compact-indicator-cancel:hover {
+  opacity: 1;
+}
+
 /* ===== HTML Card styles ===== */
 .row.card-content {
   margin-top: 0;  /* sits right below the tool card */

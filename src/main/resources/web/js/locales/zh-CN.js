@@ -19,6 +19,7 @@ export default {
   'input.placeholder': '输入消息...',
   'input.askPlaceholder': '输入你的问题...',
   'input.skillPlaceholder': '输入指令补充...',
+  'input.compactPlaceholder': '输入压缩指令（可选），直接回车开始压缩...',
   'input.voiceListening': '正在聆听...',
   'input.voiceHint': '松开发送',
   'input.voiceError': '语音输入不可用，请使用 Chrome 浏览器',
