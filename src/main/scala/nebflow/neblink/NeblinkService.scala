@@ -50,6 +50,12 @@ class NeblinkService private (
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink")
 
+  /** IPs of peers discovered via coordinator (non-Tailscale). Trusted for incoming connections. */
+  @volatile private var trustedPeerIps: Set[String] = Set.empty
+
+  /** Update trusted peer IPs (from coordinator discovery). */
+  def updateTrustedIps(ips: Set[String]): IO[Unit] = IO { trustedPeerIps = ips }
+
   /** Devices scheduled for removal after grace period. Prevents UI flicker from brief WS disconnects. */
   private val pendingRemovals: Ref[IO, Set[String]] =
     Ref.unsafe[IO, Set[String]](Set.empty)
@@ -206,9 +212,9 @@ class NeblinkService private (
         yield ()
     }
 
-  /** Check if an IP belongs to the Tailscale CGNAT range (100.64.0.0/10). */
+  /** Check if an IP is trusted — Tailscale CGNAT range or coordinator-discovered peers. */
   def isTailscalePeer(remoteAddr: String): Boolean =
-    try
+    val isCgnat = try
       val parts = remoteAddr.split("\\.")
       if parts.length == 4 then
         val first = parts(0).toInt
@@ -216,6 +222,7 @@ class NeblinkService private (
         first == 100 && second >= 64 && second <= 127
       else false
     catch case _: Exception => false
+    isCgnat || trustedPeerIps.contains(remoteAddr)
 
   /** Handle an incoming handshake from a peer. Called by the REST endpoint. */
   def handleHandshake(
