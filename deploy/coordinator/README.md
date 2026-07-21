@@ -1,77 +1,56 @@
-# Nebflow Coordinator Deployment
+# Nebflow Coordinator (Rust)
 
-The coordination server is a standalone service for device discovery,
-replacing the Tailscale dependency.
+Lightweight coordination server for Nebflow device discovery.
+Single binary, ~5MB RAM, no runtime dependencies.
 
-## Quick Start
-
-### Build
+## Build
 
 ```bash
-# From project root
-sbt assembly
-# Output: target/scala-3.5.2/nebflow.jar
+cd coordinator
+cargo build --release
+# Output: target/release/nebflow-coordinator (or .exe on Windows)
 ```
 
-### Deploy on Windows (as a Service)
+## Deploy on Windows (as a Service)
 
-1. Copy `nebflow.jar` to this directory (or to the target machine)
+1. Copy `nebflow-coordinator.exe` to `deploy/coordinator/`
 2. Run `install-service.bat` as Administrator
-3. The service starts immediately and auto-starts on boot
+3. Auto-starts on boot, ~5MB RAM, no Java needed
 
-```bat
-REM On the target Windows machine
-install-service.bat
-REM Verify
-curl http://localhost:9090/api/health
-```
-
-Management:
-```bat
-nssm stop NebflowCoordinator    REM Stop
-nssm start NebflowCoordinator   REM Start
-nssm status NebflowCoordinator  REM Check status
-uninstall-service.bat           REM Remove service
-```
-
-### Run on macOS/Linux (foreground, for dev)
+## Run (any platform)
 
 ```bash
-./run.sh
-# Or directly:
-java -cp nebflow.jar nebflow.coordinator.CoordinatorMain
+./nebflow-coordinator    # starts on port 9090
 ```
 
-## Configuration
+## API
 
-The coordinator runs on port **9090** with in-memory storage.
-All state (networks, devices) is lost on restart — devices reconnect automatically.
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/api/network/create` | POST | - | Create a network, returns secret |
+| `/api/device/login` | POST | - | Login device, returns token + peers |
+| `/api/device/heartbeat` | POST | Bearer | Refresh session, get updated peers |
+| `/api/device/peers` | GET | Bearer | List peers in network |
+| `/api/device/endpoints` | POST | Bearer | Update device endpoints |
+| `/api/device/logout` | DELETE | Bearer | Remove session |
+| `/api/health` | GET | - | Health check |
 
-### Create a Network
+### Quick Start
 
 ```bash
-curl -X POST http://<server-ip>:9090/api/network/create \
+# Create network
+curl -X POST http://localhost:9090/api/network/create \
   -H "Content-Type: application/json" \
   -d '{"name":"My Devices"}'
-# Returns: {"networkId":"...", "secret":"..."}
+# → {"networkId":"...","secret":"..."}
+
+# Configure Nebflow devices in ~/.nebflow/neblink/config.json:
+# {
+#   "enabled": true,
+#   "coordinator": {
+#     "server": "http://<server-ip>:9090",
+#     "networkId": "...",
+#     "secret": "..."
+#   }
+# }
 ```
-
-### Configure Nebflow Devices
-
-Add to `~/.nebflow/neblink/config.json`:
-
-```json
-{
-  "enabled": true,
-  "coordinator": {
-    "server": "http://<server-ip>:9090",
-    "networkId": "<from step above>",
-    "secret": "<from step above>"
-  }
-}
-```
-
-## Requirements
-
-- Java 17+
-- NSSM (for Windows Service — auto-installed via Chocolatey)
