@@ -146,6 +146,31 @@ object GatewayMain extends IOApp.Simple:
       _ <- ToolLoader.startFileWatcher().start // background fiber — hot reload on file changes
     yield ()
 
+  /**
+   * Background heartbeat loop for coordinator mode.
+   * Every 30 seconds: send heartbeat, update peer list + trusted IPs.
+   * Runs as a fire-and-forget fiber via `.start`.
+   */
+  private def startHeartbeatLoop(
+    client: nebflow.neblink.CoordClient,
+    neblinkService: NeblinkService
+  ): IO[Unit] =
+    val hbLogger = NebflowLogger.forName("nebflow.neblink.heartbeat")
+    def loop: IO[Unit] =
+      IO.sleep(30.seconds) *> client.heartbeat.flatMap {
+        case Right(coordPeers) =>
+          val neblinkPeers = client.toNeblinkPeers(coordPeers)
+          val peerIps = client.peerAddresses(coordPeers)
+          neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
+            neblinkService.updateTrustedIps(peerIps) *>
+            neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+        case Left(err) =>
+          hbLogger.warn(s"Heartbeat failed: $err")
+      } *> IO.defer(loop)
+    loop
+
+  end startHeartbeatLoop
+
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
     llm = ServiceLlmConfig(
       providers = Map.empty,
@@ -302,17 +327,22 @@ object GatewayMain extends IOApp.Simple:
                                         new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
                                           dispatcher
                                         )
-                                      // Wire Tailscale discovery — replaces cloud relay entirely.
-                                      // Sync actor calls discoverCycle periodically; WS presence connections maintain liveness.
+                                      // Check if coordinator is configured; if so, create client for coordinator-based discovery
+                                      val coordClient: Option[nebflow.neblink.CoordClient] =
+                                        neblinkService.neblinkConfig.unsafeRunSync() match
+                                          case nc if nc.coordinator.isDefined =>
+                                            Some(new nebflow.neblink.CoordClient(nc.coordinator.get, cfg.port.value))
+                                          case _ => None
+                                      // Discovery service — uses coordinator if configured, otherwise Tailscale
                                       val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
                                         neblinkService,
                                         cfg.port.value,
-                                        presenceService
+                                        presenceService,
+                                        coordClient
                                       )
                                       neblinkService.setDiscoveryHook(
-                                        tsDiscovery.discoverCycle.handleErrorWith(e =>
-                                          logger.debug(s"Tailscale discovery: ${e.getMessage}").void
-                                        )
+                                        tsDiscovery.discoverCycle
+                                          .handleErrorWith(e => logger.debug(s"Discovery error: ${e.getMessage}").void)
                                       ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
                                         neblinkService.addPeerChangeCallback(
                                           wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
@@ -322,11 +352,12 @@ object GatewayMain extends IOApp.Simple:
                                         neblinkService.setSendDataFn((deviceId, channel, payload) =>
                                           presenceService.sendData(deviceId, channel, payload)
                                         ) *>
-                                        // Trigger an immediate discovery cycle now that the Tailscale hook is wired.
-                                        // Without this, the sync loop's first meaningful cycle is delayed by
-                                        // syncIntervalSec (default 300s) because the very first cycle runs before
-                                        // the hook is set (race with NeblinkService.create's unsafeRunAndForget).
+                                        // Trigger an immediate discovery cycle now that the hook is wired.
                                         neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+                                        // Start coordinator heartbeat loop (if configured) — maintains
+                                        // session liveness and updates peer list every 30 seconds.
+                                        coordClient
+                                          .traverse_(client => startHeartbeatLoop(client, neblinkService).start.void) *>
                                         // Create Dropbox service (cross-device messaging & file transfer)
                                         nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
                                           dropboxService =>
@@ -459,6 +490,7 @@ object GatewayMain extends IOApp.Simple:
                                                 }
                                                 .guarantee(
                                                   logger.info("shutting down...") *>
+                                                    coordClient.traverse_(_.logout) *>
                                                     telemetry.fold(IO.unit)(_.shutdown) *>
                                                     mcpManager.stopAll() *>
                                                     releaseBackend
