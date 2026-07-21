@@ -15,7 +15,6 @@ class AgentActorCompactionSpec extends FunSuite:
       messages = Nil,
       status = AgentStatus.Idle,
       depth = 0,
-      activeStreamFiber = None,
       sessionId = Some("test-session"),
       pendingCompaction = None,
       compactionFailures = compactionFailures,

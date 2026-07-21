@@ -9,6 +9,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
+import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
@@ -41,7 +42,7 @@ class WebSocketRoutes(
   mcpManager: McpManager
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
-  private val nebulaSystem = NebulaActorSystem("local")
+  private val nebulaSystem = sharedResources.actorSystem
 
   /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
   private val rootAgents: Ref[IO, Map[String, nebflow.actor.ActorRef[AgentCommand]]] =
@@ -76,6 +77,7 @@ class WebSocketRoutes(
                 }
             readTracker <- nebflow.core.tools.ReadTracker.create
             fileHistory <- nebflow.core.tools.FileHistory.create()
+            liveFileTracker <- nebflow.core.tools.LiveFileTracker.create
             modelOverrides <- sharedResources.sessionModelOverrides.get
             contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
             // Resolve folder-level projectRoot and inherited rules
@@ -105,46 +107,31 @@ class WebSocketRoutes(
               )
             }.flatten
             ref <- nebulaSystem.spawn(
-              if agentDef.name == "Jarvis" then
-                JarvisActor(
-                  agentDef,
-                  sharedResources,
-                  recordingWsSend,
-                  depth = 0,
-                  parentRef = None,
-                  sessionId = Some(sessionId),
-                  sessionName = metaOpt.map(_.name),
-                  initialMessages = history,
-                  readTracker = Some(readTracker),
-                  fileHistory = Some(fileHistory),
-                  contextWindow = contextWindow,
-                  projectRoot = effectiveProjectRoot,
-                  rulesMd = resolvedRules,
-                  folderId = folderId
-                )
-              else
-                AgentActor(
-                  agentDef,
-                  sharedResources,
-                  recordingWsSend,
-                  depth = 0,
-                  parentRef = None,
-                  sessionId = Some(sessionId),
-                  sessionName = metaOpt.map(_.name),
-                  initialMessages = history,
-                  readTracker = Some(readTracker),
-                  fileHistory = Some(fileHistory),
-                  contextWindow = contextWindow,
-                  projectRoot = effectiveProjectRoot,
-                  rulesMd = resolvedRules,
-                  folderId = folderId
-                )
-              ,
+              AgentActor(
+                agentDef,
+                sharedResources,
+                recordingWsSend,
+                depth = 0,
+                parentRef = None,
+                sessionId = Some(sessionId),
+                sessionName = metaOpt.map(_.name),
+                initialMessages = history,
+                readTracker = Some(readTracker),
+                fileHistory = Some(fileHistory),
+                liveFileTracker = Some(liveFileTracker),
+                contextWindow = contextWindow,
+                projectRoot = effectiveProjectRoot,
+                rulesMd = resolvedRules,
+                folderId = folderId,
+                safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits"),
+                gitBranch = metaOpt.flatMap(_.gitBranch)
+              ),
               s"agent-$sessionId"
             )
             pr = effectiveProjectRoot.getOrElse("")
-          yield (ref, pr)
-          agentIo.flatMap { case (ref, pr) =>
+            safetyMode = metaOpt.map(_.safetyMode).getOrElse("confirm-edits")
+          yield (ref, pr, safetyMode)
+          agentIo.flatMap { case (ref, pr, safetyMode) =>
             val hookCtx = nebflow.core.hooks.HookContext(
               sessionId = Some(sessionId),
               projectRoot = pr,
@@ -159,21 +146,46 @@ class WebSocketRoutes(
                   .as(nebflow.core.hooks.HookResult.allow)
               }
               .void *>
-              rootAgents.update(_ + (sessionId -> ref)).as(ref)
+              rootAgents.update(_ + (sessionId -> ref)) *>
+              initFlowTree(sessionId, ref, pr, safetyMode).start.as(ref)
           }
     }
 
+  /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
+  private def initFlowTree(
+    sessionId: String,
+    agentRef: nebflow.actor.ActorRef[AgentCommand],
+    projectRoot: String,
+    safetyMode: String = "confirm-edits"
+  ): IO[Unit] =
+    val config = FlowTreeActor.TreeConfig(
+      parentAgentRef = agentRef,
+      wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),
+      sessionId = Some(sessionId),
+      resources = sharedResources,
+      projectRoot = projectRoot,
+      safetyMode = safetyMode
+    )
+    for
+      treeRef <- nebulaSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
+      _ <- FlowTreeRegistry.register(sessionId, treeRef)
+      _ = logger.info(s"FlowTreeActor created for session $sessionId (pipelines auto-restored on startup)")
+    yield ()
+
+  end initFlowTree
+
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
-    rootAgents.modify { agents =>
-      agents.get(sessionId) match
-        case Some(ref) =>
-          (
-            agents - sessionId,
-            ref ! AgentCommand.Stop(s"session $sessionId deleted")
-          )
-        case None => (agents, IO.unit)
-    }.flatten
+    FlowTreeRegistry.unregister(sessionId) *>
+      rootAgents.modify { agents =>
+        agents.get(sessionId) match
+          case Some(ref) =>
+            (
+              agents - sessionId,
+              ref ! AgentCommand.Stop(s"session $sessionId deleted")
+            )
+          case None => (agents, IO.unit)
+      }.flatten
 
   /** Route a message to the root agent of a specific session. Discards if sessionId is empty. */
   private def routeToAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
@@ -198,7 +210,7 @@ class WebSocketRoutes(
           logger.info(s"Bridge message for session $sessionId: ${content.take(60)}... $source") *>
             // Record as UiMessage
             sharedResources.sessionStore
-              .appendUiMessages(sessionId, List(UiMessage.User(content, Nil)))
+              .appendUiMessages(sessionId, List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis())))
               .handleErrorWith(e => IO(logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}"))) *>
             // Push to frontend in real-time so it shows without switching sessions
             wsHub.broadcast(
@@ -282,12 +294,6 @@ class WebSocketRoutes(
             )
           )
           activeMeta <- sessionStore.getActiveMeta
-          // Ensure the singleton Jarvis session exists on connect so the main window
-          // has something to show immediately, not only after the user clicks the tab.
-          _ <- sessionStore.ensureAgentSession("Jarvis").flatMap { case (meta, created) =>
-            logger.info(s"[connect] ensureAgentSession(Jarvis): meta=${meta.id.take(8)} created=$created")
-            IO.pure(meta -> created)
-          }
           agentName = activeMeta.flatMap(_.agentName).getOrElse("Nebula")
           _ <- sessionService.sendSessionList(perConnWsSend, agentName)
           ws <- wsb.build(sendStream, receivePipe)
@@ -384,7 +390,7 @@ class WebSocketRoutes(
       StaticFile.fromResource(s"web/vendor/fonts/$file", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / fileName =>
-      val allowed = Set("style.css", "app.js")
+      val allowed = Set("style.css", "app.js", "favicon.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
       if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
       else NotFound()
 
@@ -590,7 +596,10 @@ class WebSocketRoutes(
           (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
             case (Right(answers), Right(askSessionId)) =>
               val answerText = answers.mkString("\n")
-              sessionStore.appendUiMessages(askSessionId, List(UiMessage.User(answerText))) *>
+              sessionStore.appendUiMessages(
+                askSessionId,
+                List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
+              ) *>
                 routeToAgent(askSessionId)(ref => ref ! AgentCommand.UserAnswered(answers))
             case _ => IO.unit
 
@@ -599,6 +608,25 @@ class WebSocketRoutes(
           val permSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
           logger.info(s"Permission answer: ${if approved then "approved" else "denied"}") *>
             routeToAgent(permSessionId)(ref => ref ! AgentCommand.PermissionAnswered(approved))
+
+        case "planApprove" =>
+          val planSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+          logger.info(s"Plan approved for session $planSessionId") *>
+            routeToAgent(planSessionId)(ref => ref ! AgentCommand.PlanApproved)
+
+        case "planFeedback" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val fbSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val fbText = json.hcursor.downField("text").as[String].getOrElse("")
+          if fbSessionId.nonEmpty && fbText.nonEmpty then
+            logger.info(s"Plan feedback for session $fbSessionId: ${fbText.take(60)}") *>
+              routeToAgent(fbSessionId)(ref => ref ! AgentCommand.PlanFeedback(fbText))
+          else IO.unit
+
+        case "planCancel" =>
+          val cancelSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+          logger.info(s"Plan cancelled for session $cancelSessionId") *>
+            routeToAgent(cancelSessionId)(ref => ref ! AgentCommand.PlanCancelled)
 
         case "interrupt" =>
           val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
@@ -610,7 +638,10 @@ class WebSocketRoutes(
           val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
           if immSessionId.nonEmpty && immContent.nonEmpty then
             logger.info(s"Immediate input for session $immSessionId (${immContent.length} chars)") *>
-              sessionStore.appendUiMessages(immSessionId, List(UiMessage.User(immContent, Nil))) *>
+              sessionStore.appendUiMessages(
+                immSessionId,
+                List(UiMessage.User(immContent, Nil, timestamp = System.currentTimeMillis()))
+              ) *>
               routeToAgent(immSessionId)(ref => ref ! AgentCommand.ImmediateInput(immContent))
           else IO.unit
 
@@ -638,8 +669,20 @@ class WebSocketRoutes(
             case "compact" =>
               val compactSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+              val instruction =
+                parse(text).flatMap(_.hcursor.downField("instruction").as[String]).toOption.filter(_.nonEmpty)
               logger.info("Manual compaction triggered") *>
-                routeToAgent(compactSessionId)(ref => ref ! AgentCommand.TriggerCompaction("full"))
+                routeToAgent(compactSessionId)(ref =>
+                  ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
+                )
+            case "plan" =>
+              val planSessionId =
+                parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+              val planTask = parse(text).flatMap(_.hcursor.downField("task").as[String]).toOption.getOrElse("")
+              if planSessionId.nonEmpty && planTask.nonEmpty then
+                logger.info(s"Plan mode started: ${planTask.take(60)}") *>
+                  routeToAgent(planSessionId)(ref => ref ! AgentCommand.StartPlan(planTask))
+              else IO.unit
             case "fork" =>
               val forkSessionId =
                 parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
@@ -686,6 +729,12 @@ class WebSocketRoutes(
             sharedResources.thinkingConfigRef.set(tc) *>
             persistThinkingConfig(tc) *>
             broadcastServerConfig
+
+        case "setVoiceMuted" =>
+          val muted = parse(text).toOption
+            .flatMap(_.hcursor.downField("muted").as[Boolean].toOption)
+            .getOrElse(false)
+          sharedResources.voiceMutedRef.set(muted)
 
         case "setLlmLog" =>
           val enabled = parse(text).toOption
@@ -876,15 +925,33 @@ class WebSocketRoutes(
               }
           else IO.unit
 
+        case "setSafetyMode" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val mode = json.hcursor.downField("safetyMode").as[String].getOrElse("confirm-edits")
+          if sid.nonEmpty then
+            sessionStore
+              .setSafetyMode(sid, mode)
+              .flatMap { _ =>
+                routeToAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
+                  sendAgentSessionList(wsSend, sid)
+              }
+              .handleErrorWith { e =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
+              }
+          else IO.unit
+
         case "setBypass" =>
+          // Backward compat: old clients send { bypass: Boolean }
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
           val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
+          val mode = if bypass then "auto-all" else "confirm-edits"
           if sid.nonEmpty then
             sessionStore
-              .setBypass(sid, bypass)
+              .setSafetyMode(sid, mode)
               .flatMap { _ =>
-                routeToAgent(sid)(ref => ref ! AgentCommand.SetBypass(bypass)) *>
+                routeToAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
                   sendAgentSessionList(wsSend, sid)
               }
               .handleErrorWith { e =>
@@ -930,7 +997,7 @@ class WebSocketRoutes(
             sharedResources.sessionStore.appendUiMessages(
               skillSessionId,
               List(
-                UiMessage.User(skillInput),
+                UiMessage.User(skillInput, timestamp = System.currentTimeMillis()),
                 UiMessage.System(
                   s"Using skill: $skillName",
                   Some("slash.skillActivated"),
@@ -948,6 +1015,30 @@ class WebSocketRoutes(
                   )
                 )
               }
+          else IO.unit
+          end if
+
+        case "deleteSkill" =>
+          val delJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val delName = delJson.hcursor.downField("name").as[String].getOrElse("")
+          if delName.nonEmpty then
+            SkillService.deleteSkill(delName).flatMap { success =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "skillDeleted".asJson,
+                  "name" -> delName.asJson,
+                  "success" -> success.asJson
+                )
+              ) *>
+                SkillService.listSkills().flatMap { skills =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "skillList".asJson,
+                      "skills" -> skills.asJson
+                    )
+                  )
+                }
+            }
           else IO.unit
           end if
 
@@ -1158,20 +1249,17 @@ class WebSocketRoutes(
         case "listAgentSessions" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            // Ensure Jarvis session exists (atomically — no race even under concurrent calls).
-            val ensureJarvis = sessionStore.ensureAgentSession("Jarvis").void
             // Return ALL sessions and folders (unified list)
-            ensureJarvis *>
-              (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "agentSessionList".asJson,
-                    "agentName" -> agentName.asJson,
-                    "sessions" -> sessions.asJson,
-                    "folders" -> folders.asJson
-                  )
+            (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "agentSessionList".asJson,
+                  "agentName" -> agentName.asJson,
+                  "sessions" -> sessions.asJson,
+                  "folders" -> folders.asJson
                 )
-              }
+              )
+            }
           else IO.unit
           end if
 
@@ -1829,16 +1917,20 @@ class WebSocketRoutes(
                   val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
                   if content.nonEmpty then blocks += ContentBlock.Text(content)
 
-                  val savedPaths = scala.collection.mutable.ListBuffer.empty[String]
-                  attachments.foreach { att =>
+                  // Map attachment index → saved/local path (only non-image files get entries)
+                  val savedPaths = scala.collection.mutable.Map.empty[Int, String]
+                  attachments.zipWithIndex.foreach { case (att, attIdx) =>
                     val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
                     val data = att.hcursor.downField("data").as[String].getOrElse("")
                     val name = att.hcursor.downField("name").as[String].getOrElse("")
                     val hash = att.hcursor.downField("hash").as[String].getOrElse("")
                     val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
                     if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
-                    else if data.nonEmpty then
-                      // Try to find the file locally by name + size + hash
+                    else if mimeType.startsWith("image/") then
+                      // Image without data — cannot process
+                      blocks += ContentBlock.Text(s"[image: $name (无数据)]")
+                    else
+                      // Non-image: try to find the file locally by name + size + hash
                       // Search priority: project root → common user dirs → full home
                       val home = os.home.toString
                       val commonDirs = List("Downloads", "Desktop", "Documents")
@@ -1849,24 +1941,24 @@ class WebSocketRoutes(
                         if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
                       localPath match
                         case Some(path) =>
-                          savedPaths += path
+                          savedPaths(attIdx) = path
                           blocks += ContentBlock.Text(s"[用户附加文件: $path]")
                           logger.info(s"Attachment '$name' resolved to local file: $path")
-                        case None =>
-                          // Fallback: save file to disk, send path reference to LLM
+                        case None if data.nonEmpty =>
+                          // Fallback: save uploaded content to disk, send path reference to LLM
                           val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
                           try
                             os.makeDir.all(uploadDir)
                             val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
                             val fileName = s"${System.nanoTime()}_$safeName"
                             val filePath = uploadDir / fileName
-                            os.write.over(filePath, java.util.Base64.getDecoder.decode(data))
+                            val decoded = java.util.Base64.getDecoder.decode(data)
+                            os.write.over(filePath, decoded)
                             val absPath = filePath.toString
-                            val decodedSize = java.util.Base64.getDecoder.decode(data).length
                             if absPath.startsWith(uploadDir.toString) then
-                              savedPaths += absPath
+                              savedPaths(attIdx) = absPath
                               blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                              logger.info(s"Saved attachment '$name' to $absPath ($decodedSize bytes)")
+                              logger.info(s"Saved attachment '$name' to $absPath (${decoded.length} bytes)")
                             else
                               logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
                               blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
@@ -1875,6 +1967,11 @@ class WebSocketRoutes(
                               logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
                               blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
                           end try
+                        case None =>
+                          // No data and not found locally — tell the LLM the file name so it can
+                          // use Read/Grep tools to locate it.
+                          logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
+                          blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
                       end match
                     end if
                   }
@@ -1888,8 +1985,7 @@ class WebSocketRoutes(
                        val attJson = attachments.zipWithIndex.map { case (att, idx) =>
                          val name = att.hcursor.downField("name").as[String].getOrElse("")
                          val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                         val savedPath =
-                           if !mimeType.startsWith("image/") && idx < savedPaths.length then savedPaths(idx) else ""
+                         val savedPath = savedPaths.getOrElse(idx, "")
                          io.circe.Json.obj(
                            "name" -> name.asJson,
                            "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
@@ -1898,7 +1994,10 @@ class WebSocketRoutes(
                        }
                        val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
                        sharedResources.sessionStore
-                         .appendUiMessages(msgSessionId, List(UiMessage.User(content, attJson, injected)))
+                         .appendUiMessages(
+                           msgSessionId,
+                           List(UiMessage.User(content, attJson, injected, timestamp = System.currentTimeMillis()))
+                         )
                          .handleErrorWith(e => IO(logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")))
                      else IO.unit) *> {
                       // Track turn count + session start time for telemetry
@@ -2221,7 +2320,10 @@ class WebSocketRoutes(
                   .flatMap { thinking =>
                     sharedResources.sessionStore.appendUiMessages(
                       sessionId,
-                      List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking)))
+                      List(
+                        UiMessage
+                          .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis())
+                      )
                     )
                   }
               else
@@ -2247,7 +2349,10 @@ class WebSocketRoutes(
                 .flatMap { thinking =>
                   sharedResources.sessionStore.appendUiMessages(
                     sessionId,
-                    List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking)))
+                    List(
+                      UiMessage
+                        .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis())
+                    )
                   )
                 }
             else
@@ -2298,9 +2403,19 @@ class WebSocketRoutes(
                       if text.nonEmpty || thinkingOpt.isDefined then
                         sharedResources.sessionStore.appendUiMessages(
                           sessionId,
-                          List(UiMessage.Ai(text, durationMs, model, thinkingOpt))
+                          List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis()))
+                        )
+                      else if durationMs.isDefined then
+                        // No text to flush (already flushed at roundComplete/toolStart),
+                        // but we have a duration — backfill onto the last saved Ai message.
+                        sharedResources.sessionStore.updateLastAiMeta(
+                          sessionId,
+                          durationMs,
+                          model,
+                          System.currentTimeMillis()
                         )
                       else IO.unit
+                      end if
                     }
                 }
           }

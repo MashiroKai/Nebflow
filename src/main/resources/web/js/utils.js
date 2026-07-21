@@ -29,7 +29,7 @@ export const spinnerJson = {
 const _spinners = {};
 
 export function initSpinner() {
-  for (const id of ['lottie-spinner', 'secondary-spinner']) {
+  for (const id of ['lottie-spinner']) {
     const el = document.getElementById(id);
     if (el) {
       _spinners[id] = lottie.loadAnimation({

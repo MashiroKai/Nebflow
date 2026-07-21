@@ -36,10 +36,10 @@ object ToolRegistry:
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Sub-agent delegation
       "Delegate" -> DelegateTool,
-      // Inter-agent messaging
+      // Multi-step workflow orchestration (FlowTree lifecycle management)
+      "MountFlow" -> MountFlowTool,
+      // Unified agent communication (message + verify modes)
       "Mail" -> MailTool,
-      // Memory
-      "WriteMemory" -> WriteMemoryTool,
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool
     )
@@ -62,6 +62,10 @@ object ToolRegistry:
 
   def registerTools(newTools: List[Tool]): Unit =
     newTools.foreach(t => tools.put(t.name, t))
+
+  /** Unregister a single tool by name. */
+  def unregisterTool(name: String): Unit =
+    tools.remove(name)
 
   /** Unregister all tools whose name starts with the given prefix (e.g. "mcp__zai__"). */
   def unregisterToolsByPrefix(prefix: String): Unit =

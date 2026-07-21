@@ -2,35 +2,37 @@
 
 # Nebflow
 
-Self-hosted AI coding assistant with inline HTML card rendering.
+Self-hosted AI coding assistant with multi-agent orchestration and cross-device collaboration.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![GitHub Release](https://img.shields.io/github/v/release/MashiroKai/Nebflow?label=stable)](https://github.com/MashiroKai/Nebflow/releases/latest)
+[![Scala](https://img.shields.io/badge/Scala-3.5.2-red.svg)](https://www.scala-lang.org/)
 
 </div>
 
 ---
 
-Nebflow is a self-hosted AI coding assistant that runs entirely on your machine. It features a browser-based chat interface with streaming responses, native HTML card rendering, multi-provider LLM support, and a built-in agent system — all in a single JAR with no external dependencies beyond Java.
+Nebflow is a self-hosted AI coding assistant that runs entirely on your machine. It features a browser-based chat interface with streaming responses, native HTML card rendering, multi-agent orchestration, and cross-device collaboration — all in a single JAR with no external dependencies beyond Java.
 
 ## Features
 
 - **Inline Card Rendering** — Agents render rich HTML cards (diagrams, charts, tables, animations) directly in the chat, not just text
 - **Web UI & CLI** — Browser-based interface with streaming, syntax highlighting, and file editing; plus a terminal REPL mode
-- **Multi-Provider LLM** — 智谱 GLM、通义千问、DeepSeek、百川，以及所有 OpenAI/Anthropic 兼容 API，支持自动 fallback 链
-- **17 Built-in Tools** — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Curl, Card, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, WriteMemory, ClearStaging, RemoveUnnecessary
-- **Agent System** — Multiple named agents with per-agent system prompts, tool whitelists, and isolated project workspaces
+- **Multi-Provider LLM** — Zhipu GLM, DeepSeek, Qwen, Baichuan, and all OpenAI/Anthropic-compatible APIs, with automatic fallback chains
+- **19 Built-in Tools** — Read, Write, Edit, Bash, Grep, Glob, WebSearch, WebFetch, Curl, Card, Delegate, ExecuteFlow, Mail, TransferFile, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, RemoveUnnecessary
+- **Multi-Agent System** — Named agents with per-agent system prompts, tool whitelists, isolated project workspaces, and inter-agent delegation
+- **NebLink** — Connect multiple devices (macOS, Linux, Windows) over a synchronized mesh; execute commands and transfer files across devices
+- **Skills** — Reusable prompt templates with YAML frontmatter; compatible with Claude Code, Codex, and OpenClaw ecosystems
+- **Plan Mode** — Structured planning with canvas approval flow before execution
+- **Flow Engine** — Multi-step workflow orchestration with DAG dependencies, verification, and retry loops
 - **MCP Support** — Connect external tools and data sources via Model Context Protocol
-- **Three-Tier Memory** — Persistent memory at user, agent, and project (folder) scope across conversations
+- **Three-Tier Memory** — Persistent memory at user, agent, and project scope across conversations
 - **Context Management** — Automatic and manual context compaction for long sessions
 - **Permission System** — Ask-before-execute for destructive operations; auto-approve for read-only tools
-- **Cross-Platform** — macOS, Linux, and Windows with automatic ripgrep installation
+- **Hooks** — Pre/post-execution callbacks triggered by tool patterns
+- **Cross-Platform** — macOS, Linux, and Windows with automatic Java, Git for Windows, and ripgrep installation
 
 ## Quick Start
-
-### Prerequisites
-
-- Java 17+
 
 ### Install (macOS / Linux)
 
@@ -44,6 +46,18 @@ Open PowerShell and run:
 
 ```powershell
 irm https://nebflow.space/install.ps1 | iex
+```
+
+The installer automatically detects and installs Java 17+, Git for Windows (on Windows), and ripgrep if they are not already available.
+
+### Uninstall
+
+```bash
+# macOS / Linux
+curl -fsSL https://nebflow.space/uninstall.sh | sh
+
+# Windows PowerShell
+irm https://nebflow.space/uninstall.ps1 | iex
 ```
 
 ## Usage
@@ -89,7 +103,7 @@ Nebflow stores all data in `~/.nebflow/`. Configuration lives at `~/.nebflow/neb
       }
     },
     "model": {
-      "default": "zhipu/glm-5.1"
+      "default": "zhipu/glm-4.5"
     }
   },
   "mcpServers": {}
@@ -118,12 +132,28 @@ The assembled JAR is output to `target/scala-3.5.2/`.
 ## Architecture
 
 ```
-nebflow/
-├── agent/          # Agent actor system, definitions, session routing
-├── core/           # Tools, permissions, REPL, LLM client, file history
-├── gateway/        # HTTP server, WebSocket routes, web UI serving
-├── service/        # Session store, config, runtime preferences
-└── shared/         # Shared types, defaults, HTTP utilities
+src/main/scala/nebflow/
+├── actor/        # Actor system (ActorRef, ActorSystem, Behavior)
+├── agent/        # Agent lifecycle, session routing, multi-agent delegation
+├── bridge/       // Device bridge plugins for NebLink
+├── cli/          # CLI commands, REPL, TUI
+├── core/         # Tools, permissions, LLM client, context compaction
+│   ├── ask/      # Ask-user interaction service
+│   ├── compact/  # Context compaction engine
+│   ├── flow/     # Flow engine for multi-step workflows
+│   ├── hooks/    # Pre/post tool execution hooks
+│   ├── mcp/      # Model Context Protocol integration
+│   ├── scheduler/ # Scheduled and recurring tasks
+│   ├── skill/    # Skill loading and management
+│   ├── task/     # Task list state management
+│   ├── telemetry/ # Response time and usage tracking
+│   └── tools/    # 19 built-in tools
+├── dropbox/      # File dropbox for drag-and-drop uploads
+├── gateway/      # HTTP server, WebSocket routes, static resource serving
+├── llm/          # LLM client abstraction and provider implementations
+├── neblink/      # Cross-device synchronization protocol
+├── service/      # Session store, configuration, runtime preferences
+└── shared/       # Shared types, defaults, HTTP utilities
 ```
 
 Built with **Scala 3**, **Cats Effect 3**, and **Pekko Actors**. The web UI is served from embedded resources — no separate frontend build step required.

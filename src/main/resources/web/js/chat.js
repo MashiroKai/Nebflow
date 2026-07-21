@@ -6,6 +6,24 @@ import { activeView, setActiveView } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
+import { sendWs } from './ws.js';
+
+// ---------- Time format preference (12h / 24h toggle) ----------
+const TIME_FORMAT_KEY = 'nebflow:timeFormat';
+let _timeFormat = localStorage.getItem(TIME_FORMAT_KEY) || '24h';
+
+function refreshAllTimestamps() {
+  document.querySelectorAll('[data-ts]').forEach(el => {
+    const ts = parseInt(el.getAttribute('data-ts'), 10);
+    if (ts) el.textContent = formatHm(ts);
+  });
+}
+
+export function toggleTimeFormat() {
+  _timeFormat = _timeFormat === '24h' ? '12h' : '24h';
+  localStorage.setItem(TIME_FORMAT_KEY, _timeFormat);
+  refreshAllTimestamps();
+}
 
 // ---------- Voice TTS player ----------
 // Module-level singleton. Manages sequential playback of <voice> blocks:
@@ -110,6 +128,7 @@ const VoicePlayer = {
     this.muted = !this.muted;
     localStorage.setItem('voiceMuted', String(this.muted));
     if (this.muted) this._cancel();
+    sendWs({ type: 'setVoiceMuted', muted: this.muted });
     return this.muted;
   },
 };
@@ -207,7 +226,7 @@ export function clearBusy(sessionId) {
 }
 
 // ---------- User bubble ----------
-export function renderUserBubble(text, attachments) {
+export function renderUserBubble(text, attachments, timestamp) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row user';
@@ -222,24 +241,52 @@ export function renderUserBubble(text, attachments) {
     row.appendChild(bubble);
   }
 
-  // Attachment bubbles (small gray, below text)
+  // Attachment bubbles (below text)
   (attachments || []).forEach(att => {
     const bubble = document.createElement('div');
     bubble.className = 'bubble user att-bubble';
-    const tag = document.createElement('span');
-    tag.className = 'att-file-tag';
-    if (att.type === 'image') {
-      tag.textContent = '[image' + (att.name ? ': ' + att.name : '') + ']';
+    if (att.type === 'image' && att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:')) {
+      const img = document.createElement('img');
+      img.className = 'att-img';
+      img.src = att.preview;
+      img.title = att.name || '';
+      img.onerror = () => { img.style.display = 'none'; };
+      bubble.appendChild(img);
     } else {
-      tag.textContent = '[file' + (att.name ? ': ' + att.name : '') + ']';
+      const tag = document.createElement('span');
+      tag.className = 'att-file-tag';
+      tag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span style="margin-left:2px">' + escapeHtml(att.name || 'file') + '</span>';
+      bubble.appendChild(tag);
     }
-    bubble.appendChild(tag);
     row.appendChild(bubble);
   });
+
+  // Timestamp below bubble
+  const ts = timestamp || Date.now();
+  const timeEl = document.createElement('div');
+  timeEl.className = 'msg-time';
+  timeEl.setAttribute('data-ts', ts);
+  timeEl.textContent = formatHm(ts);
+  timeEl.title = '点击切换 12/24 小时制';
+  timeEl.addEventListener('click', toggleTimeFormat);
+  row.appendChild(timeEl);
 
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
   return { type: 'user', text, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
+}
+
+/** Format epoch millis as HH:MM (24h) or h:MM AM/PM (12h), respecting user preference */
+export function formatHm(ms) {
+  const d = new Date(ms);
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (_timeFormat === '12h') {
+    let h = d.getHours();
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12 || 12;
+    return h + ':' + mm + ' ' + ampm;
+  }
+  return String(d.getHours()).padStart(2, '0') + ':' + mm;
 }
 
 // ---------- AI text streaming ----------
@@ -277,13 +324,6 @@ export function appendAiText(text) {
 
 export function finishAi(durationMs, model) {
   if (activeView.stream.currentAiBubble) {
-    // Diagnostic: warn if finishAi is called while streaming is active.
-    // This helps catch any code path that prematurely resets the bubble.
-    const sinceActivity = Date.now() - (state.lastStreamActivity || 0);
-    if (sinceActivity < 15000 && activeView.stream.aiText) {
-      console.warn('[finishAi] Called during active streaming'
-        + ` (${sinceActivity}ms since last delta, textLen=${activeView.stream.aiText.length})`);
-    }
     if (!activeView.stream.aiText || !activeView.stream.aiText.trim()) {
       const row = activeView.stream.currentAiBubble.closest('.row');
       if (row) row.remove();
@@ -296,9 +336,10 @@ export function finishAi(durationMs, model) {
     const bubble = activeView.stream.currentAiBubble;
     bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
     if (askBox) bubble.appendChild(askBox);
+    const ts = Date.now();
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(bubble, durationMs, model, seed);
+      renderDurationBadge(bubble, durationMs, model, seed, ts);
     }
     // Trigger voice TTS: enqueue all <voice> blocks for sequential playback,
     // and attach click-to-replay handlers on the green text.
@@ -306,7 +347,7 @@ export function finishAi(durationMs, model) {
       el.addEventListener('click', () => VoicePlayer.replay(el));
       VoicePlayer.enqueue(el.textContent, el);
     });
-    const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model };
+    const result = { type: 'ai', text: activeView.stream.aiText, durationMs, model, timestamp: ts };
     activeView.stream.currentAiBubble = null;
     activeView.stream.aiText = '';
     return result;
@@ -365,13 +406,14 @@ export function pickThinkingPhrase(durationMs, seed) {
 
 /**
  * Create a duration badge DOM element (pill style).
- * Shows the full phrase with duration embedded, plus optional model tag.
+ * Shows the full phrase with duration embedded, plus optional model tag and timestamp.
  * @param {number} durationMs
  * @param {string} [model]
  * @param {number} [seed]
+ * @param {number} [timestamp] - epoch millis for display
  * @returns {HTMLElement}
  */
-export function createDurationBadgeElement(durationMs, model, seed) {
+export function createDurationBadgeElement(durationMs, model, seed, timestamp) {
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
 
@@ -390,17 +432,30 @@ export function createDurationBadgeElement(durationMs, model, seed) {
     badge.appendChild(modelSpan);
   }
 
+  if (timestamp) {
+    const div = document.createElement('span');
+    div.className = 'duration-badge-divider';
+    badge.appendChild(div);
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'duration-badge-time';
+    timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.textContent = formatHm(timestamp);
+    timeSpan.title = '点击切换 12/24 小时制';
+    timeSpan.addEventListener('click', toggleTimeFormat);
+    badge.appendChild(timeSpan);
+  }
+
   return badge;
 }
 
 /**
  * Render a subtle duration badge below an AI bubble.
  */
-export function renderDurationBadge(bubble, durationMs, model, seed) {
+export function renderDurationBadge(bubble, durationMs, model, seed, timestamp) {
   if (!bubble) return;
   const row = bubble.closest('.row');
   if (!row) return;
-  const badge = createDurationBadgeElement(durationMs, model, seed);
+  const badge = createDurationBadgeElement(durationMs, model, seed, timestamp);
   row.appendChild(badge);
 }
 
@@ -653,7 +708,6 @@ const TOOL_PRIMARY_FIELDS = {
   'Curl': 'body',
   'WebSearch': 'query',
   'WebFetch': 'url',
-  'WriteMemory': 'content',
   'TaskCreate': 'description',
   'TaskUpdate': 'description',
   'RemoveUnnecessary': 'summary',
@@ -729,6 +783,7 @@ export function appendToolStreamDelta(toolName, delta) {
   _toolStreamRafTarget = {
     row: pendingRow,
     chat: activeView.dom.chat,
+    snapped: activeView.stream.scrollSnapped,
     toolName: toolName,
     rawText: activeView.stream.toolStreamText,
   };
@@ -773,9 +828,9 @@ export function appendToolStreamDelta(toolName, delta) {
         bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
       }
 
-      // Auto-scroll
+      // Auto-scroll — snapped captured at schedule time to match smartScroll()'s logic
       const threshold = 60;
-      if (target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+      if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
         target.chat.scrollTop = target.chat.scrollHeight;
       }
     });
@@ -1235,11 +1290,11 @@ export function renderAttachmentPreview(target) {
     } else {
       const wrap = document.createElement('div');
       wrap.className = 'att-file';
-      wrap.innerHTML = '<span>[f]</span><span>' + escapeHtml(att.name) + '</span>';
-      const rm = document.createElement('span');
-      rm.textContent = ' x';
-      rm.style.cursor = 'pointer';
-      rm.style.color = '#f44336';
+      wrap.style.position = 'relative';
+      wrap.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px">' + escapeHtml(att.name) + '</span>';
+      const rm = document.createElement('div');
+      rm.className = 'att-remove';
+      rm.textContent = 'x';
       rm.onclick = () => {
         attachments.splice(idx, 1);
         renderAttachmentPreview(target);
@@ -1320,7 +1375,7 @@ export function finishAskAnswer(durationMs, model) {
     }
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed);
+      renderDurationBadge(activeView.stream.currentAskBubble, durationMs, model, seed, Date.now());
     }
     activeView.stream.currentAskBubble = null;
     activeView.stream.askAnswerText = '';
@@ -1345,8 +1400,6 @@ export function renderAskError(msg) {
 // lag when user tries to interact (e.g. switching agents).
 let _pendingThinkingRAF = null;
 // Capture the bubble + chat at schedule time so the rAF renders into the correct
-// window. For the secondary view, ws.js push/pull restores global state to primary
-// before the rAF fires — reading state.* at fire time would target the wrong window.
 let _thinkingRafTarget = null;
 export function appendThinkingDelta(delta) {
   // NOTE: always accumulate thinking text for saveMsg even if we skip DOM creation
@@ -1380,7 +1433,7 @@ export function appendThinkingDelta(delta) {
   // Capture the render target synchronously (correct during ws.js push/pull window).
   // Store accumulated text on the bubble node so the rAF reads it regardless of
   // which view global state points to at fire time.
-  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat };
+  _thinkingRafTarget = { bubble: activeView.stream.currentThinkingBubble, chat: activeView.dom.chat, snapped: activeView.stream.scrollSnapped };
   _thinkingRafTarget.bubble._nfText = activeView.stream.thinkingText;
   // Schedule a rAF render if one isn't already pending — caps re-render rate
   // and coalesces multiple deltas into a single DOM update.
@@ -1395,9 +1448,10 @@ export function appendThinkingDelta(delta) {
         contentEl.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '') + '<span class="cursor"></span>';
       }
       // Scroll the correct chat element directly — smartScroll() reads state.dom
-      // at rAF time which may be the wrong window.
+      // at rAF time which may be the wrong window. Capture snapped at schedule
+      // time to match smartScroll()'s snapped || near-bottom logic.
       const threshold = 60;
-      if (target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
+      if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
         target.chat.scrollTop = target.chat.scrollHeight;
       }
     });

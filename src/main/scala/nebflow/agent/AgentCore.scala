@@ -6,6 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.AgentCommand.*
+import nebflow.agent.PromptSections.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
@@ -18,6 +19,12 @@ import scala.concurrent.duration.*
 private[agent] trait AgentCore:
 
   protected val MaxDepth = 5
+
+  /**
+   * Timeout for permission confirmation. Prevents indefinite session lockup
+   * when the user doesn't respond (popup missed, WS issue, away from keyboard).
+   */
+  private val PermissionTimeout = 5.minutes
 
   /**
    * Tools removed from sub-agents (depth > 0): user-interaction tools that
@@ -119,10 +126,12 @@ private[agent] trait AgentCore:
     state: AgentState,
     replyTo: Option[ActorRef[AgentEvent]],
     processing: ProcessingFn,
-    mode: String
+    mode: String,
+    resumeAfterCompact: Boolean = true,
+    postCompactInstruction: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
-    val pending = CompactionJob(jobId, mode, None, replyTo)
+    val pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
     val compactState = state
       .withPendingCompaction(Some(pending))
       .withMessages(state.messages :+ CompactService.buildCompactReminder())
@@ -165,7 +174,7 @@ private[agent] trait AgentCore:
         val sessionIdOpt = state.sessionId
         val onAttemptCb: FallbackAttempt => IO[Unit] = attempt =>
           val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
-          emitStreamIO(state.wsSend, AgentStreamEvent.RetryStatus(msg), isSubagent, sessionIdOpt)
+          state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
         val turnId = state.currentTurnId + 1
         val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
@@ -182,24 +191,42 @@ private[agent] trait AgentCore:
           case None => state.withCurrentTurnId(turnId)
 
         val llmIo = for
-          (turnCtx, newLifecycle) <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
-          _ <- newLifecycle match
-            case Some(lc) => ctx.self ! AgentCommand.UpdateLifecycle(lc)
-            case None => IO.unit
+          turnCtx <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
           freshDef = turnCtx.agentDef
-          baseSystemStable = buildSystemPrompt(
-            freshDef,
-            resources,
-            turnCtx.systemPrefix,
-            turnCtx.projectRoot,
-            turnCtx.rulesMd,
-            state.session.chatWidth
+          voiceEnabled <- resources.voiceMutedRef.get.map(!_)
+          allowedTools = buildAllowedToolSet(freshDef, depth)
+          devInfo = deviceInfoBlock
+          sessionsText = formatAgentSessions(stateForLlm.agentSessions)
+          promptCtx = PromptContext(
+            availableTools = allowedTools,
+            depth = depth,
+            voiceEnabled = voiceEnabled,
+            hasDevices = devInfo.nonEmpty,
+            deviceInfo = devInfo,
+            hasActiveSessions = sessionsText.nonEmpty,
+            agentSessionsText = sessionsText,
+            language = stateForLlm.language,
+            chatWidth = state.session.chatWidth,
+            envInfo = Repl.buildEnvInfo(state.session.chatWidth),
+            skillCatalog = turnCtx.skillCatalog,
+            flowCatalog = turnCtx.flowCatalog,
+            memoryBlock = turnCtx.memoryBlock,
+            rulesMd = turnCtx.rulesMd
           )
+          systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
-          timeReminders = SystemReminders.collectAll(isUserTurn)
-          reminders = timeReminders ++ deviceReminder.toList
+          reminders = SystemReminders.collectAll(isUserTurn)
           _ <- turnCtx.branchChange match
-            case Some(_) => ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
+            case Some(_) =>
+              ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
+              // Persist git branch change so it survives restarts
+              stateForLlm.sessionId.traverse_(sid =>
+                resources.sessionStore
+                  .updateGitBranch(sid, turnCtx.currentBranch)
+                  .handleErrorWith(e =>
+                    IO(NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}"))
+                  )
+              )
             case None =>
               IO.whenA(turnCtx.currentBranch != stateForLlm.gitBranch)(
                 ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
@@ -211,18 +238,19 @@ private[agent] trait AgentCore:
             if isCompactTurn || isAskTurn then Nil
             else if remindersText.nonEmpty then List(Message(MessageRole.User, Left(remindersText)))
             else Nil
+          // Maintenance check: every N delegate/flow calls
+          maintenanceMsg =
+            if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
+              List(MaintenanceService.buildReminder(stateForLlm.delegateCount))
+            else Nil
           modelDescs <- if isCompactTurn then IO.pure(Nil) else resources.providerRegistry.getAllModelsDetailed()
           freshTools =
             if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
-          systemStable = baseSystemStable +
-            (if turnCtx.memoryBlock.nonEmpty then s"\n\n${turnCtx.memoryBlock}" else "") +
-            stateForLlm.language
-              .map(l =>
-                s"\n\n# Language\n- Respond in $l.\n- When creating tasks (TaskCreate), the `subject` and `activeForm` fields MUST be in $l.\n- When writing to memory files (Agent/Session/User memory), all content MUST be in $l.\n- All user-visible text must be in $l."
-              )
-              .getOrElse("") + formatAgentSessions(stateForLlm.agentSessions)
+          // Memory is injected via system prompt (memoryBlock), not synthetic Read messages
+          patchedMessages <- stateForLlm.liveFileTracker
+            .fold(IO.pure(stateForLlm.messages))(_.patchMessages(stateForLlm.messages))
           request = LlmRequest(
-            messages = stateForLlm.messages ++ dynamicMsg,
+            messages = patchedMessages ++ dynamicMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
@@ -271,7 +299,19 @@ private[agent] trait AgentCore:
             IO.delay(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}"))
               .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
           })
-        yield processing(agentDef, resources, depth, parentRef, stateForLlm)
+        yield processing(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
+          (if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
+             stateForLlm.withLastMaintenanceDelegateCount(stateForLlm.delegateCount)
+           else stateForLlm)
+            .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
+        )
+
+        end for
 
   protected def pipeToolExecutions(
     agentDef: AgentDef,
@@ -321,13 +361,14 @@ private[agent] trait AgentCore:
           HookContext(sessionId = state.sessionId, projectRoot = effectiveProjectRoot, cwd = effectiveProjectRoot),
         folderId = state.folderId,
         mailboxAddress = state.session.sessionId,
-        dreamSchedulerRef = resources.dreamSchedulerRef,
         sharedResources = Some(resources),
         actorSystem = Some(ctx.system),
-        messages = state.messages
+        messages = state.messages,
+        liveFileTracker = state.liveFileTracker
       )
       freshResults <- filteredCalls.parTraverse { call =>
         val skipStreaming = call.name == "AskUserQuestion"
+        val callCtx = toolCtx.copy(toolCallId = call.id)
         (if !skipStreaming then
            emitStreamIO(
              state.wsSend,
@@ -336,8 +377,13 @@ private[agent] trait AgentCore:
              sessionIdOpt
            )
          else IO.unit) *>
-          (if ToolReversibility.isReversible(call.name, call.input) || state.bypass then executeTool(call, toolCtx)
-           else askUserPermission(call, state, permissionDeferredRef, toolCtx))
+          (if ToolReversibility.isReversible(
+               call.name,
+               call.input,
+               nebflow.core.SafetyMode.fromString(state.safetyMode)
+             )
+           then executeTool(call, callCtx)
+           else askUserPermission(call, state, permissionDeferredRef, callCtx))
             .map(r => (call, r))
             .attempt
             .map {
@@ -384,13 +430,15 @@ private[agent] trait AgentCore:
         val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
         NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg")
         ctx.self ! LlmFailed(
-          new RuntimeException(s"Tool execution pipeline failed: $msg"),
+          ToolPipelineError(s"Tool execution pipeline failed: $msg"),
           replyTo,
           state.currentTurnId
         )
       })
     yield
-      val updatedState = state.copy(execution = state.execution.copy(turnIdx = nextTurnIdx))
+      val updatedState = state
+        .copy(execution = state.execution.copy(turnIdx = nextTurnIdx))
+        .withLastDispatch(Some(LastDispatch(isToolExecution = true, Some(result))))
       processing(agentDef, resources, depth, parentRef, updatedState)
 
   end pipeToolExecutions
@@ -435,11 +483,32 @@ private[agent] trait AgentCore:
               else (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *> state.wsSend(permJson)
             for
               _ <- sendPermission
-              approved <- deferred.get
-              result <-
-                if approved then executeTool(call, toolCtx)
-                else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+              approvedOpt <- deferred.get
+                .map(Some(_))
+                .timeoutTo(PermissionTimeout, IO.pure(None))
+              _ <- permissionDeferredRef.set(None)
+              result <- approvedOpt match
+                case Some(approved) =>
+                  if approved then executeTool(call, toolCtx)
+                  else IO.pure(ToolExecResult("Permission denied by user", isError = true))
+                case None =>
+                  // Timeout — dismiss the permission popup on the frontend
+                  state
+                    .wsSend(
+                      Json.obj(
+                        "type" -> "permissionExpired".asJson,
+                        "sessionId" -> state.sessionId.asJson
+                      )
+                    )
+                    .handleErrorWith(_ => IO.unit) *>
+                    IO.pure(
+                      ToolExecResult(
+                        s"Permission timed out — no response within ${PermissionTimeout.toMinutes} min, auto-denied. Re-issue the command if needed.",
+                        isError = true
+                      )
+                    )
             yield result
+            end for
           }
         )
     }.flatten
@@ -526,16 +595,13 @@ private[agent] trait AgentCore:
       case None => IO.pure(ToolExecResult(s"No such tool available: ${call.name}", isError = true))
 
   protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int = 0): Set[String] =
-    val isMcpTool = (name: String) => name.startsWith("mcp__")
     val base = agentDef.tools match
       case Nil => Set.empty[String]
-      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(isMcpTool).toSet
+      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
-    // MCP servers are global — all enabled servers available to every agent
-    val mcpTools = ToolRegistry.ALL_TOOLS.map(_.name).filter(isMcpTool).toSet
-    val depthFiltered = if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" else base
-    val subagentFiltered = if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
-    subagentFiltered ++ mcpTools
+    val depthFiltered =
+      if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "MountFlow" else base
+    if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
 
   end buildAllowedToolSet
 
@@ -576,6 +642,10 @@ private[agent] trait AgentCore:
       )
     )
 
+  /**
+   * Direct wsSend for use inside Fiber context (pipeLlmCall, pipeToolExecutions).
+   * Do NOT call from receive handlers — use emitStream instead (non-blocking forkTurn wrapper).
+   */
   protected def emitStreamIO(
     wsSend: io.circe.Json => IO[Unit],
     event: AgentStreamEvent,
@@ -661,16 +731,16 @@ private[agent] trait AgentCore:
 
   protected def buildSystemPrompt(
     agentDef: AgentDef,
-    resources: SharedResources,
     systemPrefix: String,
-    sessionProjectRoot: Option[String] = None,
-    sessionRulesMd: Option[String] = None,
-    chatWidth: Int = 0
+    ctx: PromptContext
   ): String =
-    val agentPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
-    val envInfo = Repl.buildEnvInfo(chatWidth)
-    val rulesBlock = sessionRulesMd.map(r => s"\n## Project Rules\n\n$r").getOrElse("")
-    s"$systemPrefix$agentPrompt\n\n$envInfo$rulesBlock"
+    val rawPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
+    val cleanedPrompt = PromptSections.stripAllMigrated(rawPrompt)
+    val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
+    val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
+    s"$systemPrefix$cleanedPrompt$separator$conditionalBlocks"
+
+  end buildSystemPrompt
 
   /** Format active persistent sub-agent sessions for system prompt injection. */
   protected def formatAgentSessions(sessions: List[AgentSessionInfo]): String =
@@ -678,51 +748,45 @@ private[agent] trait AgentCore:
     else
       val lines = sessions.map: s =>
         s"${s.address} — ${s.agentName}: ${s.taskDescription} (${s.status})"
-      "\n\n# Active Sessions\n\n" + lines.mkString("\n") +
+      "# Active Sessions\n\n" + lines.mkString("\n") +
         "\n\nUse Mail to send follow-up instructions to any session above."
 
-  @volatile private var deviceReminderCache: (Long, Option[SystemReminder]) = (0L, None)
+  @volatile private var deviceInfoCache: (Long, String) = (0L, "")
 
-  private def deviceReminder: Option[SystemReminder] =
+  private def deviceInfoBlock: String =
     val now = System.currentTimeMillis()
-    val (lastUpdate, cached) = deviceReminderCache
-    if now - lastUpdate < 30000 then cached
+    val (lastUpdate, cached) = deviceInfoCache
+    if now - lastUpdate < 30000 && cached.nonEmpty then cached
     else
-      val refreshed = RemoteExecutor.current.flatMap(_.neblinkServiceOpt).flatMap { ms =>
-        try
-          import cats.effect.unsafe.implicits.global
-          val id = ms.identity.unsafeRunSync()
-          val peersList = ms.peers.unsafeRunSync()
-          val localParts = List.newBuilder[String]
-          localParts += s"local (${id.deviceName})"
-          val localCaps = id.capabilities.keys.toList.sorted
-          if localCaps.nonEmpty then localParts += s"[${localCaps.mkString(", ")}]"
-          if id.userDescription.nonEmpty then localParts += s"-${id.userDescription}"
-          val localStr = localParts.result.mkString(" ")
-          val peerStrs =
-            peersList
-              .map { p =>
-                val caps = p.capabilities.keys.filterNot(_ == "os").toList.sorted
-                val desc = p.userDescription
-                List(p.deviceName) ++
-                  (if caps.nonEmpty then List(s"[${caps.mkString(", ")}]") else Nil) ++
-                  (if desc.nonEmpty then List(s"-$desc") else Nil)
+      val refreshed = RemoteExecutor.current
+        .flatMap(_.neblinkServiceOpt)
+        .flatMap { ms =>
+          try
+            import cats.effect.unsafe.implicits.global
+            val id = ms.identity.unsafeRunSync()
+            val peersList = ms.peers.unsafeRunSync()
+            val localStr =
+              s"local (${id.deviceName})" +
+                (if id.userDescription.nonEmpty then s" -${id.userDescription}" else "")
+            val peerStrs =
+              peersList.map { p =>
+                p.deviceName + (if p.userDescription.nonEmpty then s" -${p.userDescription}" else "")
               }
-              .map(_.mkString(" "))
-          val allDevices = (localStr :: peerStrs).mkString("; ")
-          val deviceHint =
-            if peersList.nonEmpty then
-              "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
-            else ""
-          Some(SystemReminder("devices", s"Devices: $allDevices$deviceHint"))
-        catch case _: Exception => None
-      }
-      deviceReminderCache = (now, refreshed)
+            val allDevices = (localStr :: peerStrs).mkString("; ")
+            val deviceHint =
+              if peersList.nonEmpty then
+                "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
+              else ""
+            Some(s"$allDevices$deviceHint")
+          catch case _: Exception => None
+        }
+        .getOrElse("")
+      deviceInfoCache = (now, refreshed)
       refreshed
 
     end if
 
-  end deviceReminder
+  end deviceInfoBlock
 
   protected def summarizeToolResult(call: ToolCall, result: String): String =
     nebflow.core.summarizeToolResult(call, result)

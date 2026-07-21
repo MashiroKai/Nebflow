@@ -11,20 +11,16 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters.*
 
 /**
- * Three-level memory store backed by Markdown files.
+ * Four-level memory store backed by Markdown files.
  *
  * Levels:
  *   - User:    ~/.nebflow/NEBFLOW.md                    (global, all agents)
  *   - Agent:   ~/.nebflow/agents/{name}/memory.md       (per agent)
  *   - Folder:  ~/.nebflow/folders/{fid}.memory.md       (per folder)
+ *   - Session: ~/.nebflow/sessions/{sid}.memory.md      (per session)
  *
- * Detail files: ~/.nebflow/memory/{hash}.md
- *   - When an entry has detail content, MemoryAgent stores it in a separate file
- *     named by the SHA-256 hash of the entry content (first 12 hex chars).
- *   - The index entry carries a →hash reference so agents can find it.
- *
- * Write flow:
- *   WriteMemoryTool → Dream actor mailbox → MemoryAgent processes → final memory files
+ * Memory files are injected into the system prompt every turn by
+ * ContextRefresher.buildMemoryBlock. Agents update them directly using Edit/Write.
  *
  * All reads use mtime-based caching.
  */
@@ -40,25 +36,14 @@ object MemoryStore:
   def folderMemoryPath(folderId: String): os.Path =
     PathUtil.dataRoot / "folders" / s"$folderId.memory.md"
 
-  /** Directory for detail files. */
-  def detailDir: os.Path = PathUtil.dataRoot / "memory"
-
-  /** Path for a detail file given its hash. */
-  def detailPath(hash: String): os.Path = detailDir / s"$hash.md"
+  def sessionMemoryPath(sessionId: String): os.Path =
+    PathUtil.dataRoot / "sessions" / s"$sessionId.memory.md"
 
   /** List all folder memory files that exist on disk. */
   def allFolderMemoryPaths: Seq[os.Path] =
     val dir = PathUtil.dataRoot / "folders"
     if !os.exists(dir) then Seq.empty
     else os.list(dir).filter(_.last.endsWith(".memory.md")).toSeq
-
-  // --- Hash utility ---
-
-  /** Compute a 12-char hex hash from content. */
-  def contentHash(content: String): String =
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
-    digest.update(content.getBytes("UTF-8"))
-    digest.digest().take(6).map(b => String.format("%02x", b)).mkString
 
   // --- Mtime-cached file reads ---
 
@@ -72,11 +57,16 @@ object MemoryStore:
 
   private val folderCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
 
+  private val sessionCaches = new ConcurrentHashMap[String, MtimeFileCache[Option[String]]]()
+
   private def getAgentCache(agentName: String): MtimeFileCache[Option[String]] =
     agentCaches.asScala.getOrElseUpdate(agentName, MtimeCache.file(agentMemoryPath(agentName), parseMemory))
 
   private def getFolderCache(folderId: String): MtimeFileCache[Option[String]] =
     folderCaches.asScala.getOrElseUpdate(folderId, MtimeCache.file(folderMemoryPath(folderId), parseMemory))
+
+  private def getSessionCache(sessionId: String): MtimeFileCache[Option[String]] =
+    sessionCaches.asScala.getOrElseUpdate(sessionId, MtimeCache.file(sessionMemoryPath(sessionId), parseMemory))
 
   // --- Load (mtime-cached) — injected into system prompts ---
 
@@ -89,7 +79,10 @@ object MemoryStore:
   def loadFolderMemory(folderId: String): Option[String] =
     getFolderCache(folderId).get.unsafeRunSync().flatten
 
-  // --- Save (called from WS routes / Dream agent, invalidates cache) ---
+  def loadSessionMemory(sessionId: String): Option[String] =
+    getSessionCache(sessionId).get.unsafeRunSync().flatten
+
+  // --- Save (called from WS routes / Edit-Write tools, invalidates cache) ---
 
   private def saveFile(path: os.Path, content: String, invalidateCache: () => IO[Unit]): IO[Unit] =
     IO.blocking(os.write.over(path, content, createFolders = true)) *> invalidateCache()
@@ -103,13 +96,8 @@ object MemoryStore:
   def saveFolderMemory(folderId: String, content: String): IO[Unit] =
     saveFile(folderMemoryPath(folderId), content, () => getFolderCache(folderId).invalidate)
 
-  // --- Detail files (called by Dream agent via Write tool) ---
-
-  /** Write a detail file to ~/.nebflow/memory/{hash}.md. */
-  def writeDetailFile(hash: String, content: String): IO[Unit] =
-    IO.blocking {
-      os.write.over(detailPath(hash), content, createFolders = true)
-    }
+  def saveSessionMemory(sessionId: String, content: String): IO[Unit] =
+    saveFile(sessionMemoryPath(sessionId), content, () => getSessionCache(sessionId).invalidate)
 
   // --- Cache invalidation ---
 
@@ -121,6 +109,9 @@ object MemoryStore:
 
   def invalidateFolderCache(folderId: String): Unit =
     getFolderCache(folderId).invalidate.unsafeRunSync()
+
+  def invalidateSessionCache(sessionId: String): Unit =
+    getSessionCache(sessionId).invalidate.unsafeRunSync()
 
   // --- Preview (first non-heading, non-empty line, max 80 chars) ---
 

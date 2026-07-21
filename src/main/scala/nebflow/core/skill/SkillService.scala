@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Encoder, Json}
 import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.service.StrengthStore
 
 // --- Data models ---
 
@@ -16,6 +17,7 @@ final case class SkillInfo(
   argumentHint: Option[String] = None,
   argumentNames: List[String] = Nil,
   userInvocable: Boolean = true,
+  modelInvocable: Boolean = true,
   version: Option[String] = None,
   /** Where this skill was loaded from: "user" | "project" | "commands" */
   source: String = "user"
@@ -33,6 +35,7 @@ object SkillInfo:
       "argumentHint" -> s.argumentHint.asJson,
       "argumentNames" -> s.argumentNames.asJson,
       "userInvocable" -> s.userInvocable.asJson,
+      "modelInvocable" -> s.modelInvocable.asJson,
       "version" -> s.version.asJson,
       "source" -> s.source.asJson
     )
@@ -49,14 +52,19 @@ object SkillService:
   private def userSkillsDir: os.Path =
     PathUtil.dataRoot / "skills"
 
-  /** Create user-level skills directory and a starter template on first run. */
+  /** Create user-level skills directory and built-in skills on first run. */
   def ensureDefaults(): IO[Unit] = IO.delay {
     if !os.isDir(userSkillsDir) then
       os.makeDir.all(userSkillsDir)
-      val exampleDir = userSkillsDir / "_example"
-      val exampleFile = exampleDir / "skill.md"
-      if !os.isFile(exampleFile) then os.write(exampleFile, exampleSkillMd, createFolders = true)
-      logger.info(s"Created skills directory at $userSkillsDir with starter template")
+      logger.info(s"Created skills directory at $userSkillsDir")
+    // Starter template
+    val exampleFile = userSkillsDir / "_example" / "SKILL.md"
+    if !os.isFile(exampleFile) then os.write(exampleFile, exampleSkillMd, createFolders = true)
+    // Built-in skill-creator
+    val creatorFile = userSkillsDir / "skill-creator" / "SKILL.md"
+    if !os.isFile(creatorFile) then
+      os.write(creatorFile, skillCreatorMd, createFolders = true)
+      logger.info("Created built-in skill-creator skill")
   }
 
   private val exampleSkillMd: String =
@@ -90,6 +98,116 @@ object SkillService:
       |Describe the expected output format.
       |""".stripMargin
 
+  private val skillCreatorMd: String =
+    """---
+      |name: skill-creator
+      |description: Create and update Nebflow skills — directory structure, frontmatter fields, scripts, and best practices. Use when the user asks to create, modify, or learn about skills.
+      |language: zh
+      |---
+      |
+      |# Skill Creator
+      |
+      |You are creating or updating a Nebflow skill. A skill is a reusable capability package that combines prompt instructions with bundled resources (scripts, references, assets).
+      |
+      |## Standard Directory Structure
+      |
+      |```
+      |skill-name/
+      |├── SKILL.md              # Required — frontmatter + instructions
+      |├── scripts/              # Optional — executable code (Python, Bash, etc.)
+      |├── references/           # Optional — docs loaded into context on demand
+      |└── assets/               # Optional — output files (templates, icons, fonts, etc.)
+      |```
+      |
+      |Skills live at `~/.nebflow/skills/<skill-name>/`. The `name` field in frontmatter must match the directory name.
+      |
+      |## Frontmatter (YAML)
+      |
+      |Only `name` and `description` are required. The description is the sole text the agent sees in its skill catalog — it must explain both **what** the skill does and **when** to use it.
+      |
+      || Field | Required | Default | Description |
+      ||-------|----------|---------|-------------|
+      || `name` | Yes | dir name | Skill identifier, must match directory name |
+      || `description` | Yes | — | One-line summary shown in agent catalog. Determines whether the agent recognizes the skill as relevant |
+      || `language` | No | — | Preferred response language (zh, en) |
+      || `user-invocable` | No | true | Whether users can invoke via `/skill-name` slash command |
+      || `disable-model-invocation` | No | false | When true, skill is hidden from agent catalog (slash-command only) |
+      || `version` | No | — | Semantic version string |
+      || `when_to_use` | No | — | Additional context for when to use this skill |
+      || `allowed-tools` | No | all | Comma-separated tool allowlist |
+      || `arguments` | No | — | Argument names (YAML block list or comma-separated) |
+      |
+      |## ${SKILL_DIR} Variable
+      |
+      |`${SKILL_DIR}` is replaced with the skill's absolute directory path at load time. Use it to reference bundled resources:
+      |
+      |```bash
+      |python ${SKILL_DIR}/scripts/analyze.py --input data.csv
+      |cat ${SKILL_DIR}/references/spec.md
+      |cp ${SKILL_DIR}/assets/template.tex output/
+      |```
+      |
+      |## Progressive Disclosure
+      |
+      |1. **Catalog (always in system prompt)**: Agent sees `name` + `description` every turn.
+      |2. **Full content (on demand)**: Agent reads `SKILL.md` when it decides the skill is relevant, getting instructions plus access to bundled scripts and resources.
+      |
+      |## How to Create a Skill
+      |
+      |1. Choose a kebab-case name (e.g., `code-reviewer`, `api-tester`)
+      |2. Create `~/.nebflow/skills/<name>/SKILL.md` with frontmatter + instructions
+      |3. Add `scripts/`, `references/`, or `assets/` subdirectories as needed
+      |4. Test: ask the agent to use it, or invoke via `/<name>`
+      |
+      |## Best Practices
+      |
+      |- **Description is critical** — it is the only signal for the agent to decide relevance. Be specific about what AND when.
+      |- **Scripts do real work** — bundle executable scripts in `scripts/` rather than describing steps in prose.
+      |- **References for deep context** — put large docs in `references/` that the agent can Read on demand, keeping SKILL.md concise.
+      |- **One skill = one purpose** — don't combine unrelated workflows.
+      |""".stripMargin
+
+  // ============================================================
+  // Skill Catalog (for progressive disclosure)
+  // ============================================================
+
+  /** Simple TTL cache to avoid rebuilding the catalog every turn. */
+  @volatile private var catalogCache: (Long, String) = (0L, "")
+  private val CatalogTtlMs = 3000L
+
+  /**
+   * Build a compact skill catalog string for system prompt injection.
+   * Only skills with `modelInvocable = true` and a non-empty description are included.
+   * The catalog tells the agent what skills exist and where to find them;
+   * the agent reads the full skill file when it decides a skill is relevant.
+   */
+  def buildSkillCatalog(currentDelegateCount: Int): IO[String] =
+    val now = System.currentTimeMillis()
+    if now - catalogCache._1 < CatalogTtlMs then IO.pure(catalogCache._2)
+    else
+      listSkills().map { skills =>
+        val visible = skills
+          .filter(s => s.modelInvocable && s.description.nonEmpty)
+          .filter(s => StrengthStore.shouldInclude(s"skills.${s.name}", currentDelegateCount))
+        val catalog =
+          if visible.isEmpty then ""
+          else
+            val entries = visible
+              .map { s =>
+                s"- ${s.name}: ${s.description.take(200)}"
+              }
+              .mkString("\n")
+            s"""# Skills
+               |
+               |Skills live at ~/.nebflow/skills/<name>/SKILL.md. When a task matches a skill, read its file for detailed instructions, scripts, and resources.
+               |
+               |$entries""".stripMargin
+        catalogCache = (now, catalog)
+        catalog
+      }
+    end if
+  end buildSkillCatalog
+
   // ============================================================
   // Public API
   // ============================================================
@@ -111,6 +229,23 @@ object SkillService:
       else
         seen.add(skill.name); true
     }
+  }
+
+  /**
+   * Delete a user-level skill by name.
+   * Only skills under ~/.nebflow/skills/ can be deleted (source = "user").
+   * Project-level and legacy command skills are managed via version control.
+   * Returns true if the skill was found and deleted, false otherwise.
+   */
+  def deleteSkill(name: String): IO[Boolean] = IO.delay {
+    val skillDir = userSkillsDir / name
+    if os.isDir(skillDir) then
+      os.remove.all(skillDir)
+      logger.info(s"Deleted skill '$name' from $skillDir")
+      true
+    else
+      logger.warn(s"Cannot delete skill '$name': directory $skillDir not found or not a user-level skill")
+      false
   }
 
   /** Load full skill content from a skill file path. */
@@ -214,7 +349,10 @@ object SkillService:
     val argumentHint = extractField(fm, "argument-hint")
     val version = extractField(fm, "version")
     val userInvocable = extractField(fm, "user-invocable")
-      .map(v => v == "true" || v == "true")
+      .map(v => v.equalsIgnoreCase("true"))
+      .getOrElse(true)
+    val modelInvocable = extractField(fm, "disable-model-invocation")
+      .map(v => !v.equalsIgnoreCase("true"))
       .getOrElse(true)
 
     val allowedTools = extractListField(fm, "allowed-tools")
@@ -229,6 +367,7 @@ object SkillService:
       argumentHint = argumentHint,
       argumentNames = argumentNames,
       userInvocable = userInvocable,
+      modelInvocable = modelInvocable,
       version = version,
       source = source
     )

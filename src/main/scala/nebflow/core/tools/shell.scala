@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import nebflow.core.NebflowLogger
 import nebflow.shared.Defaults
 
-import java.io.*
+import java.io.File
 import java.lang.Process
 import java.nio.ByteBuffer
 import java.nio.charset.*
@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.*
 
 import scala.concurrent.TimeoutException
 import scala.concurrent.duration.*
+import scala.jdk.StreamConverters.*
 import scala.util.Using
 
 /** Tracks process health for heartbeat / progress detection. Thread-safe via atomics. */
@@ -87,11 +88,16 @@ final class ShellSession private (
    * Execute a command synchronously, updating cwd afterwards via pwd.
    *  If pwd fails (e.g. old cwd was deleted), currentDir is left unchanged.
    */
-  def execute(command: String, timeout: FiniteDuration, health: Option[JobHealth] = None): IO[ProcessResult] =
+  def execute(
+    command: String,
+    timeout: FiniteDuration,
+    health: Option[JobHealth] = None,
+    isBackground: Boolean = false
+  ): IO[ProcessResult] =
     for
       _ <- checkAlive *> touch
       cwd <- currentDir.get
-      result <- runProcess(command, cwd, timeout, health)
+      result <- runProcess(command, cwd, timeout, health, isBackground)
       // On Windows (Git Bash), pwd -W returns Windows-style paths (C:/Users/...)
       // which Java's File and Paths APIs accept. Plain pwd would return MSYS2
       // paths (/c/Users/...) which are unusable for Read/Write/Edit tools.
@@ -105,7 +111,6 @@ final class ShellSession private (
   /** Start a background job and return its job ID */
   def executeBackground(
     command: String,
-    timeout: FiniteDuration,
     description: Option[String] = None,
     on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None,
     on_heartbeat: Option[(String, JobHealth) => IO[Unit]] = None,
@@ -117,7 +122,7 @@ final class ShellSession private (
         jobId <- jobIdOverride.fold(IO.randomUUID.map(_.toString.take(8)))(IO.pure)
         deferred <- Deferred[IO, Either[Throwable, ProcessResult]]
         health = new JobHealth()
-        fiber <- backgroundExecute(command, timeout, deferred, health, on_complete).start
+        fiber <- backgroundExecute(command, deferred, health, on_complete).start
         hbFiber <- on_heartbeat match
           case Some(cb) => startHeartbeat(jobId, deferred, health, cb)
           case None => IO.pure(None)
@@ -330,16 +335,99 @@ final class ShellSession private (
 
   end buildProcessBuilder
 
+  private val SleepCommandRe = """\bsleep\s+\d+""".r
+
+  /** Grace period before checking if a quiet background process is stuck. */
+  private val StuckDetectionGracePeriod: FiniteDuration = 30.seconds
+
+  /** CPU sampling window to distinguish slow builds from idle prompts. */
+  private val CpuSampleInterval: FiniteDuration = 2.seconds
+
+  /**
+   * Minimum CPU delta (nanos) during sampling to consider a process "active".
+   * 10ms of CPU work in 2s means the process is computing, not waiting for input.
+   */
+  private val CpuActiveThresholdNanos: Long = 10_000_000L
+
+  /** Sum total CPU duration (nanos) of a process and all its descendants. */
+  private def sampleProcessCpuTime(proc: Process): Long =
+    val handle = proc.toHandle
+    def cpuNanos(ph: ProcessHandle): Long =
+      val opt = ph.info().totalCpuDuration()
+      if opt.isPresent then opt.get().toNanos else 0L
+    // Method 1: ProcessHandle descendants API
+    val viaHandle = cpuNanos(handle) + handle.descendants().toScala(List).map(cpuNanos).sum
+    // Method 2: ps-based enumeration (more reliable for deep trees on macOS, e.g. sbt → sh → java)
+    val viaPs = if !isWindows then sampleCpuTimeViaPs(proc.pid) else 0L
+    math.max(viaHandle, viaPs)
+
+  /**
+   * Enumerate all descendant PIDs via `ps` and sum their CPU time through
+   * the ProcessHandle API (nanosecond precision). More reliable than
+   * `ProcessHandle.descendants()` which may miss deeply nested processes.
+   */
+  private def sampleCpuTimeViaPs(rootPid: Long): Long =
+    try
+      val pb = new ProcessBuilder("ps", "-A", "-o", "pid=,ppid=")
+      pb.redirectInput(new File("/dev/null"))
+      pb.redirectOutput(ProcessBuilder.Redirect.PIPE)
+      pb.redirectErrorStream(true)
+      val psProc = pb.start()
+      val ok = psProc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+      if !ok then
+        psProc.destroyForcibly()
+        0L
+      else
+        val output = new String(psProc.getInputStream.readAllBytes(), StandardCharsets.UTF_8)
+        psProc.getInputStream.close()
+        sumCpuTimeFromProcessTree(output, rootPid)
+    catch case _: Exception => 0L
+
+  /** Parse `ps` output, build process tree, and sum CPU time of root + all descendants. */
+  private def sumCpuTimeFromProcessTree(psOutput: String, rootPid: Long): Long =
+    val childrenMap = scala.collection.mutable.Map.empty[Long, List[Long]]
+    for line <- psOutput.linesIterator do
+      val parts = line.trim.split("\\s+")
+      if parts.length >= 2 then
+        parts(0).toLongOption.foreach { pid =>
+          parts(1).toLongOption.foreach { ppid =>
+            childrenMap(ppid) = pid :: childrenMap.getOrElse(ppid, Nil)
+          }
+        }
+    def collect(pid: Long): List[Long] =
+      childrenMap.getOrElse(pid, Nil).flatMap(child => child :: collect(child))
+    val allPids = rootPid :: collect(rootPid)
+    allPids.map { pid =>
+      val phOpt = ProcessHandle.of(pid)
+      if phOpt.isPresent then
+        val cpuOpt = phOpt.get().info().totalCpuDuration()
+        if cpuOpt.isPresent then cpuOpt.get().toNanos else 0L
+      else 0L
+    }.sum
+
+  end sumCpuTimeFromProcessTree
+
   private def runProcess(
     command: String,
     cwd: String,
     timeout: FiniteDuration,
-    health: Option[JobHealth] = None
+    health: Option[JobHealth] = None,
+    isBackground: Boolean = false
   ): IO[ProcessResult] =
     IO.blocking {
-      buildProcessBuilder(command, cwd).start()
+      try buildProcessBuilder(command, cwd).start()
+      catch
+        case e: java.io.IOException =>
+          throw new java.io.IOException(
+            if isWindows then
+              "bash.exe not found. The Bash tool requires Git for Windows.\n" +
+                "Install it from https://git-scm.com/download/win or re-run the Nebflow installer."
+            else "bash not found in PATH. Please install bash (e.g. apt install bash).",
+            e
+          )
     }.bracket { proc =>
-      val storeProc = health.fold(IO.unit)(h => IO(h.processRef.set(proc)))
+      val h = health.getOrElse(new JobHealth())
+      val storeProc = IO(h.processRef.set(proc))
       // On Windows, write the command to bash's stdin (bash -s mode), then
       // close stdin to signal EOF. This avoids Java ProcessBuilder's Windows
       // argument quoting which mangles double quotes and special characters.
@@ -355,23 +443,109 @@ final class ShellSession private (
         readStream(
           proc.getInputStream,
           line =>
-            health.foreach { h =>
-              h.lastActivityMs.set(System.currentTimeMillis())
-              h.outputLineCount.incrementAndGet()
-            }
+            // Health tracking uses the local health tracker (h), not the
+            // outer health — ensures stuck detection works even when caller
+            // passed health = None.
+            h.lastActivityMs.set(System.currentTimeMillis())
+            h.outputLineCount.incrementAndGet()
         )
       )
-      val stderrIO = IO.blocking(readStream(proc.getErrorStream))
+      val stderrIO = IO.blocking(
+        readStream(
+          proc.getErrorStream,
+          line =>
+            h.lastActivityMs.set(System.currentTimeMillis())
+            h.outputLineCount.incrementAndGet()
+        )
+      )
       val waitIO = IO.blocking {
         proc.waitFor()
         proc.exitValue()
       }
 
-      storeProc *> writeStdin *> (stdoutIO, stderrIO, waitIO)
-        .parMapN { (out, err, code) =>
-          ProcessResult(out, err, code, cwd)
-        }
-        .timeout(timeout)
+      // ── Stuck process detection (background tasks only) ──────────────
+      // Foreground commands are managed by auto-background (30s threshold):
+      // if still running, they move to background and the agent continues.
+      // No need to kill them — auto-background is the safety net.
+      //
+      // Background tasks have no time limit, so a command waiting for stdin
+      // (ssh, sudo, telnet…) would hang forever. After the grace period
+      // (30s), if the process has zero output AND zero CPU activity, we
+      // kill it with an informative error so the LLM can retry differently.
+      //
+      // Sleep-like commands are excluded — they legitimately produce no
+      // output while their timer runs.
+      val isSleepLike = SleepCommandRe.findFirstIn(command).isDefined
+      val enableStuckDetection = isBackground && !isSleepLike
+
+      for
+        _ <- storeProc
+        _ <- writeStdin
+        stuckFlag <- IO.ref(false)
+
+        // Stuck detector fiber: after the grace period, if the process is
+        // quiet, sample CPU over a short window before deciding to kill.
+        stuckFiber <- (
+          if enableStuckDetection then
+            IO.sleep(StuckDetectionGracePeriod) *>
+              IO {
+                val alive = proc.isAlive()
+                val hasOutput = h.outputLineCount.get() > 0
+                alive && !hasOutput
+              }.flatMap { possiblyStuck =>
+                if !possiblyStuck then IO.unit
+                else
+                  // Quiet but alive — sample CPU to distinguish slow builds
+                  // from interactive prompts waiting for input.
+                  for
+                    cpu1 <- IO(sampleProcessCpuTime(proc))
+                    _ <- IO.sleep(CpuSampleInterval)
+                    cpu2 <- IO(sampleProcessCpuTime(proc))
+                    cpuActive = (cpu2 - cpu1) >= CpuActiveThresholdNanos
+                    _ <-
+                      if !cpuActive then
+                        IO(proc.isAlive()).flatMap { stillAlive =>
+                          if stillAlive then
+                            stuckFlag.set(true) *>
+                              IO.blocking {
+                                proc.destroyForcibly()
+                                try proc.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                                catch case _: InterruptedException => ()
+                                ()
+                              }
+                          else IO.unit
+                        }
+                      else IO.unit
+                  yield ()
+              }
+          else IO.unit
+        ).start
+
+        // Main execution: read stdout/stderr and wait for process completion
+        result <- (stdoutIO, stderrIO, waitIO)
+          .parMapN { (out, err, code) =>
+            ProcessResult(out, err, code, cwd)
+          }
+          .timeout(timeout)
+
+        // Cleanup: cancel the stuck detector fiber
+        _ <- stuckFiber.cancel
+
+        // Check if the process was killed by the stuck detector
+        wasStuck <- stuckFlag.get
+        finalResult <-
+          if wasStuck then
+            IO.raiseError(
+              new TimeoutException(
+                "Command produced no output within " + StuckDetectionGracePeriod.toSeconds +
+                  " seconds and no CPU activity was detected. This command likely requires " +
+                  "interactive terminal input. Use a non-interactive alternative, or run it " +
+                  "manually in your terminal."
+              )
+            )
+          else IO.pure(result)
+      yield finalResult
+      end for
     } { proc =>
       IO.blocking {
         proc.destroyForcibly()
@@ -382,13 +556,12 @@ final class ShellSession private (
 
   private def backgroundExecute(
     command: String,
-    timeout: FiniteDuration,
     deferred: Deferred[IO, Either[Throwable, ProcessResult]],
     health: JobHealth,
     on_complete: Option[Either[Throwable, ProcessResult] => IO[Unit]] = None
   ): IO[Unit] =
     // Background jobs have no timeout — they run until completion or cancellation
-    execute(command, 365.days, Some(health)).attempt.flatMap { result =>
+    execute(command, 365.days, Some(health), isBackground = true).attempt.flatMap { result =>
       deferred.complete(result).void *>
         on_complete.fold(IO.unit) { cb =>
           // IO.delay catches exceptions thrown during IO construction
@@ -504,7 +677,7 @@ final class ShellSession private (
       if isWindows then probeCharset(is)
       else (is, StandardCharsets.UTF_8)
 
-    Using.resource(new BufferedReader(new InputStreamReader(stream, charset))) { reader =>
+    Using.resource(new java.io.BufferedReader(new java.io.InputStreamReader(stream, charset))) { reader =>
       val sb = new StringBuilder
       var line: String = null
       val truncationMarker = "\n[Output truncated due to size limit]\n"
@@ -541,7 +714,7 @@ final class ShellSession private (
    */
   private def probeCharset(is: java.io.InputStream): (java.io.InputStream, Charset) =
     val ProbeSize = 4096
-    val pushback = new PushbackInputStream(is, ProbeSize)
+    val pushback = new java.io.PushbackInputStream(is, ProbeSize)
     val probe = new Array[Byte](ProbeSize)
     val n = pushback.read(probe)
     if n <= 0 then (pushback, StandardCharsets.UTF_8)

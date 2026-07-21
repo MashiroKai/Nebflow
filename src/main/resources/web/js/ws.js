@@ -15,7 +15,7 @@ const GLOBAL_MSG_TYPES = new Set([
   'sessionList', 'serverConfig', 'agentList', 'agentSessionList',
   'agentSystemPrompt', 'agentSystemPromptSaved',
   'mcpServersUpdate', 'configData', 'configUpdated', 'modelOptions',
-  'memoryData', 'memorySaved', 'memoryStatus',
+  'memoryData', 'memorySaved', 'memoryStatus', 'memoryChanged',
   'cardDesignData', 'cardDesignSaved',
   'rulesData', 'rulesSaved', 'rulesDeleted', 'rulesStatus',
   'browseResult',
@@ -37,7 +37,9 @@ const STREAM_MSG_TYPES = new Set([
   'roundComplete',
   'agentStart', 'agentTextDelta', 'agentToolCallDetected',
   'agentToolStart', 'agentToolEnd', 'agentEnd',
-  'agentThinking', 'agentRetryStatus', 'agentDone'
+  'agentThinking', 'agentRetryStatus', 'agentDone',
+  'flowStarted', 'flowStepStarted', 'flowStepCompleted', 'flowStepFailed',
+  'flowVerifyResult', 'flowLoopIteration', 'flowCompleted'
 ]);
 
 export function onMessage(type, handler) {
@@ -111,6 +113,7 @@ export function connect() {
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
+    sendWs({type: 'setVoiceMuted', muted: localStorage.getItem('voiceMuted') === 'true'});
     sendWs({type: 'getSkills'});
     sendWs({type: 'memoryStatus'});
     sendWs({type: 'getLlmLog'});
@@ -147,7 +150,6 @@ export function connect() {
       // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
       // lookup and to avoid per-message allocation.
       if (state.activeSessionId && msg.sessionId && msg.sessionId !== state.activeSessionId &&
-          msg.sessionId !== state.secondarySessionId &&
           !GLOBAL_MSG_TYPES.has(msg.type) && !TERMINAL_MSG_TYPES.has(msg.type) &&
           !STREAM_MSG_TYPES.has(msg.type)) {
         return;
@@ -164,6 +166,17 @@ export function connect() {
         view = chatViews.primary || null;
       }
       setActiveView(view || null);
+
+      // ── Plan mode: intercept only agentTextDelta ───────────────────
+      // We accumulate plan text for the card, but let all other plan agent
+      // events (agentStart, agentToolStart, agentDone, etc.) flow through
+      // normal dispatch so the plan agent shows as a sub-agent with its
+      // delegate indicator and tool activity.
+      if (msg.agentId && state.planAgentId === msg.agentId && msg.type === 'agentTextDelta') {
+        const planList = handlers['_planAgent'];
+        if (planList) for (const h of planList) h(msg);
+        return;
+      }
 
       // Dispatch to handlers
       const list = handlers[msg.type];

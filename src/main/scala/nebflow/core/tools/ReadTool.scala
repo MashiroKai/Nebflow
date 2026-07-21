@@ -16,17 +16,24 @@ object ReadTool extends Tool:
   /** Read controls its own output via the limit parameter — exempt from guard. */
   override val maxResultSizeChars: Int = Int.MaxValue
 
-  val description = """Reads a file from the local filesystem. You can access any file directly by using this tool.
-Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. It is okay to read a file that does not exist; an error will be returned.
+  val description =
+    """Reads a file from the local filesystem. All read results are live: if the file is modified on disk, the tool result in your conversation history is automatically updated to reflect the latest content. You never need to re-read a file you have already read — its content is always current.
 
-Usage:
-- The file_path parameter must be an absolute path, not a relative path.
-- By default, it reads up to 2000 lines starting from the beginning of the file.
-- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file when the file is of reasonable size.
-- Use the filter parameter to extract matching lines from large files (e.g. logs). Only lines matching the regex are returned, with their original line numbers preserved. offset/limit then paginate the filtered results.
-- Results are returned using cat -n format, with line numbers starting at 1.
-- ALWAYS use Read (not Bash with cat/head/tail) to read files.
-- Always read a file before editing it."""
+You can access any file on the machine. If the user provides a path, assume it is valid. Reading a non-existent file returns an error, which is fine.
+
+Parameters:
+- file_path (required): Absolute path to the file.
+- offset: Line number to start reading from (1-based). Defaults to 1.
+- limit: Number of lines to read. Defaults to 2000 (the whole file if smaller).
+- filter: Regex pattern to extract matching lines from large files (e.g. logs). Only matching lines are returned with their original line numbers preserved. offset/limit paginate the filtered results.
+
+Output format: cat -n style, with line numbers starting at 1, followed by a tab, then the line content.
+
+Guidelines:
+- Always read a file before editing it.
+- For reasonably sized files, read the whole file rather than partial sections.
+- Use filter for large log files instead of reading the entire file.
+- Prefer Read over Bash (cat/head/tail) for all file reading."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -134,7 +141,12 @@ Usage:
           catch case e: Exception => Left(ToolError(s"Error reading file: ${e.getMessage}"))
       }.flatMap {
         case Right((output, isPartialView)) =>
-          ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView)).as(Right(output))
+          for
+            _ <- ctx.readTracker.traverse_(_.recordRead(filePath, isPartialView))
+            _ <-
+              if ctx.toolCallId.nonEmpty then ctx.liveFileTracker.traverse_(_.register(filePathStr, ctx.toolCallId))
+              else IO.unit
+          yield Right(output)
         case Left(err) => IO.pure(Left(err))
       }
     end if

@@ -115,92 +115,51 @@ function showPanel(tab) {
   if (panel) panel.classList.add('active');
 }
 
-function closeSecondaryPanel() {
-  if (state.secondarySessionId && chatViews.secondary) {
-    chatViews.secondary.saveDraft(state.secondarySessionId);
-    saveInputDraft(state.secondarySessionId, chatViews.secondary);
-  }
-  state.secondarySessionId = null;
-  if (chatViews.secondary) {
-    chatViews.secondary.mounted = false;
-    chatViews.secondary.sessionId = null;
-  }
-  document.body.classList.remove('split-view');
-  const panel = document.getElementById('secondary-panel');
-  if (panel) {
-    panel.classList.remove('visible');
-    panel.classList.add('hidden');
-  }
-  renderSessionSidebar(state.sessions, state.activeSessionId);
-}
+// ---------- Session Switching ----------
 
-/** Load a session into the secondary view — replaces the old loadSecondary. */
-function loadSecondaryView(sessionId) {
-  const view = chatViews.secondary;
-  if (!view) return;
-  // setSession resets stream + pagination + drafts, clears chat DOM
-  view.setSession(sessionId);
-  // Also restore from localStorage if no in-memory draft exists for this session
-  if (!view.inputDrafts[sessionId] && state.sessionInputDrafts[sessionId]) {
-    restoreInputDraft(sessionId, view);
+/** Switch the main panel to display a different session. */
+function switchToSession(sessionId) {
+  if (!sessionId) return;
+
+  // Same-session: just clear unread and scroll to bottom
+  if (sessionId === state.activeSessionId) {
+    state.unreadSessions.delete(sessionId);
+    state.markedUnreadSessions.delete(sessionId);
+    persistUnread();
+    persistMarkedUnread();
+    updateSessionStatus(sessionId);
+    renderSessionSidebar(state.sessions, state.activeSessionId);
+    if (chatViews.primary?.dom?.chat) {
+      chatViews.primary.dom.chat.scrollTop = chatViews.primary.dom.chat.scrollHeight;
+    }
+    return;
   }
-  // Chat is already cleared by setSession — no need for a loading placeholder
-  // Sync busy button state
-  const sendBtn = document.getElementById('secondary-send-btn');
-  const stopBtn = document.getElementById('secondary-stop-btn');
-  if (sendBtn) sendBtn.style.display = state.busySessionIds.has(sessionId) ? 'none' : 'flex';
-  if (stopBtn) stopBtn.style.display = state.busySessionIds.has(sessionId) ? 'flex' : 'none';
-  // Render task list
-  renderTaskList(state.sessionTasks[sessionId] || [], document.getElementById('secondary-task-list'));
-  // Refresh header indicators by briefly activating the secondary view
-  const saved = activeView;
-  setActiveView(view);
+
+  // Different session: save draft, switch, reset
+  const prevId = state.activeSessionId;
+  state.activeSessionId = sessionId;
+  window.dispatchEvent(new CustomEvent('nebflow-session-change', { detail: { sessionId } }));
+  setActiveView(chatViews.primary);
+  saveInputDraft(prevId);
+  resetChatForActiveSession();
+  restoreInputDraft(sessionId);
+  clearMemoryCache();
+
+  // Clear unread for the newly active session
+  state.unreadSessions.delete(sessionId);
+  state.markedUnreadSessions.delete(sessionId);
+  persistUnread();
+  persistMarkedUnread();
+  updateSessionStatus(sessionId);
+
+  renderSessionSidebar(state.sessions, sessionId);
+  // Sync header indicators
   if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateDelegateIndicator === 'function') state.updateDelegateIndicator();
-  if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(view);
-  setActiveView(saved);
-  // Request history
-  sendWs({ type: 'getHistory', sessionId, limit: 50 });
-}
-
-function openInSecondary(session) {
-  // Same-session guard: if this session is already displayed in the secondary
-  // view, skip everything. Without this, repeated clicks send redundant
-  // getHistory requests, and since setSession no-ops for the same session,
-  // pagination state isn't reset — causing duplicate messages.
-  if (state.secondarySessionId === session.id && chatViews.secondary?.mounted) return;
-
-  if (state.secondarySessionId && state.secondarySessionId !== session.id && chatViews.secondary) {
-    chatViews.secondary.saveDraft(state.secondarySessionId);
-    saveInputDraft(state.secondarySessionId, chatViews.secondary);
-  }
-  state.secondarySessionId = session.id;
-  if (chatViews.secondary) {
-    chatViews.secondary.mounted = true;
-    // Don't set sessionId here — loadSecondaryView→setSession handles it.
-    // Setting it early causes setSession's early-return guard to skip resetAll(),
-    // leaving stale messages and breaking scroll-to-bottom on session switch.
-  }
-  state.unreadSessions.delete(session.id);
-  state.markedUnreadSessions.delete(session.id);
-  persistUnread();
-  persistMarkedUnread();
-  updateSessionStatus(session.id);
-  document.body.classList.add('split-view');
-  const panel = document.getElementById('secondary-panel');
-  panel.classList.remove('hidden');
-  panel.classList.add('visible');
-  const nameEl = document.getElementById('secondary-session-name');
-  if (nameEl) nameEl.textContent = session.name;
-  const badge = document.getElementById('secondary-agent-badge');
-  if (badge) {
-    const agentName = session.agentName || 'Nebula';
-    const agent = state.agentsData.find(a => a.name === agentName);
-    badge.textContent = agent ? (agent.displayName || agent.name) : agentName;
-  }
-  loadSecondaryView(session.id);
-  renderSessionSidebar(state.sessions, state.activeSessionId);
+  if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
+  // Close plan canvas if bound to a different session
+  if (typeof state.onPlanSessionChange === 'function') state.onPlanSessionChange(sessionId);
 }
 
 export function initNavTabs() {
@@ -221,30 +180,7 @@ export function initNavTabs() {
     });
   }
 
-  // Secondary panel close button
-  const secondaryCloseBtn = document.getElementById('secondary-close-btn');
-  if (secondaryCloseBtn) {
-    secondaryCloseBtn.addEventListener('click', () => {
-      closeSecondaryPanel();
-    });
-  }
-
-  // Jarvis main window hide/show — toggles body.jarvis-hidden.
-  // The ChatView is NOT unmounted and activeSessionId is unchanged, so Jarvis
-  // streaming keeps accumulating into the hidden DOM and reappears on reopen.
-  // When #main is hidden, the secondary panel (if visible) expands via flex:1.
-  const mainCloseBtn = document.getElementById('main-close-btn');
-  if (mainCloseBtn) {
-    mainCloseBtn.addEventListener('click', () => {
-      document.body.classList.add('jarvis-hidden');
-    });
-  }
-  const jarvisToggleBtn = document.getElementById('jarvis-toggle-btn');
-  if (jarvisToggleBtn) {
-    jarvisToggleBtn.addEventListener('click', () => {
-      document.body.classList.toggle('jarvis-hidden');
-    });
-  }
+  // Secondary panel close button — removed (canvas panel has its own close)
 }
 
 // ---------- Agent icons in Nav Bar ----------
@@ -369,8 +305,7 @@ export function selectAgent(agentName) {
     }
     return;
   }
-  // Agent tab switches only filter the sidebar list — the main window stays
-  // locked to Jarvis regardless. No draft saving / session switching needed.
+  // Agent tab switches only filter the sidebar list.
   state.selectedAgent = agentName;
   // Clear unread count for this agent
   const prevCount = state.agentUnreadCounts[agentName] || 0;
@@ -674,6 +609,8 @@ function bindSettingsEvents(content, cfg, allModels) {
       if (!confirm(t('provider.removeConfirm', { name }))) return;
       // Use null instead of delete — backend mergeConfig treats null as explicit deletion
       state.parsedConfig.llm.providers[name] = null;
+      // Clean up model chain references to the removed provider
+      cleanModelChainForProvider(name);
       state.configDirty = true;
       flushConfigToServer();
       renderSettings();
@@ -684,6 +621,8 @@ function bindSettingsEvents(content, cfg, allModels) {
         if (newName !== name) {
           // Use null to signal explicit deletion of old name
           state.parsedConfig.llm.providers[name] = null;
+          // Update model chain references from old name to new name
+          renameProviderInModelChain(name, newName);
         }
         state.parsedConfig.llm.providers[newName] = data;
         state.configDirty = true;
@@ -815,6 +754,53 @@ function bindSettingsEvents(content, cfg, allModels) {
   document.getElementById('btn-dismiss-update')?.addEventListener('click', () => {
     document.getElementById('update-action').style.display = 'none';
   });
+}
+
+/** Remove all references to a provider from the model chain (default + fallbacks).
+ *  Must be called when a provider is deleted, otherwise backend validation fails
+ *  because fallbacks point to a provider that no longer exists. */
+function cleanModelChainForProvider(providerName) {
+  if (!state.parsedConfig?.llm?.model) return;
+  const model = state.parsedConfig.llm.model;
+  const prefix = providerName + '/';
+
+  // Clear default if it points to the removed provider
+  if (model.default && model.default.startsWith(prefix)) {
+    model.default = '';
+  }
+
+  // Remove all fallbacks that reference the removed provider
+  if (model.fallbacks) {
+    model.fallbacks = model.fallbacks.filter(f => !f.startsWith(prefix));
+  }
+
+  // Auto-set a new default if possible
+  if (!model.default) {
+    const remainingProviders = state.parsedConfig.llm.providers || {};
+    const firstProvider = Object.entries(remainingProviders).find(([_, p]) => p && p.models?.length > 0);
+    if (firstProvider) {
+      const [pName, pData] = firstProvider;
+      model.default = `${pName}/${pData.models[0].id}`;
+    }
+  }
+}
+
+/** Update model chain references when a provider is renamed (default + fallbacks). */
+function renameProviderInModelChain(oldName, newName) {
+  if (!state.parsedConfig?.llm?.model) return;
+  const model = state.parsedConfig.llm.model;
+  const oldPrefix = oldName + '/';
+  const newPrefix = newName + '/';
+
+  if (model.default && model.default.startsWith(oldPrefix)) {
+    model.default = newPrefix + model.default.slice(oldPrefix.length);
+  }
+
+  if (model.fallbacks) {
+    model.fallbacks = model.fallbacks.map(f =>
+      f.startsWith(oldPrefix) ? newPrefix + f.slice(oldPrefix.length) : f
+    );
+  }
 }
 
 function flushConfigToServer() {
@@ -1003,7 +989,7 @@ function renderOneSessionItem(s, container, opts = {}) {
   const isSelected = state.selectedSessionIds.has(s.id);
   item.className = 'session-item'
     + (inFolder ? ' in-folder' : '')
-    + (s.id === state.activeSessionId || s.id === state.secondarySessionId ? ' active' : '')
+    + (s.id === state.activeSessionId ? ' active' : '')
     + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
     + (isSelected ? ' selected' : '');
   item.dataset.id = s.id;
@@ -1097,27 +1083,13 @@ function renderOneSessionItem(s, container, opts = {}) {
         // do nothing, keep selection
       } else {
         exitBatchMode();
-        // Main window is locked to Jarvis — non-Jarvis sessions open in secondary.
-        openInSecondary(s);
+        // Unified: any session switches the main panel
+        switchToSession(s.id);
       }
     } else {
       clearActiveFolder();
-      const isJarvis = (s.agentName || 'Nebula') === 'Jarvis';
-      if (isJarvis) {
-        // Main window is locked to Jarvis — clicking the Jarvis session just
-        // clears unread and scrolls to top. No session switch needed.
-        state.unreadSessions.delete(s.id);
-        state.markedUnreadSessions.delete(s.id);
-        persistUnread();
-        persistMarkedUnread();
-        updateSessionStatus(s.id);
-        renderSessionSidebar(state.sessions, state.activeSessionId);
-        // Scroll main chat to bottom
-        if (chatViews.primary?.dom?.chat) chatViews.primary.dom.chat.scrollTop = chatViews.primary.dom.chat.scrollHeight;
-      } else {
-        // Non-Jarvis session → secondary panel (画板)
-        openInSecondary(s);
-      }
+      // Unified session switching — all agents display in the main panel
+      switchToSession(s.id);
     }
   };
   item.addEventListener('contextmenu', (e) => {
@@ -1153,7 +1125,10 @@ function updateHeaderSessionName() {
 export function renderSessionSidebar(sessionData, activeId) {
   state.sessions = sessionData || [];
   const prevActiveId = state.activeSessionId;
-  if (activeId) state.activeSessionId = activeId;
+  if (activeId) {
+    state.activeSessionId = activeId;
+    window.dispatchEvent(new CustomEvent('nebflow-session-change', { detail: { sessionId: activeId } }));
+  }
   // If active session changed (new session, agent session, delete active), reset chat area
   if (activeId && activeId !== prevActiveId) {
     setActiveView(chatViews.primary);
@@ -1180,6 +1155,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     '|expanded:' + [...(state.expandedFolders || [])].sort().join(',') +
     '|pinned:' + [...(state.pinnedSessions || [])].sort().join(',') +
     '|selected:' + [...state.selectedSessionIds].sort().join(',') +
+    '|rules:' + [...(state.foldersWithRules || [])].sort().join(',') +
     '|locale:' + getLocale();
   const sessionList = state.dom.sessionList;
   if (sessionList && sessionList._lastFingerprint === fingerprint) {
@@ -1263,12 +1239,7 @@ export function renderSessionSidebar(sessionData, activeId) {
     agentGroups[agent].folders.push(f);
   });
 
-  // Skip Jarvis sessions — Jarvis is always in the main view, not in the sidebar
-  if (agentGroups['Jarvis']) {
-    delete agentGroups['Jarvis'];
-  }
-
-  // Sort remaining agent groups alphabetically
+  // Sort agent groups alphabetically
   const agentOrder = Object.keys(agentGroups).sort((a, b) => a.localeCompare(b));
 
   // Render each agent group
@@ -1464,6 +1435,12 @@ export function resetChatForActiveSession() {
   state.sessionToolCards = {};
   pv.pagination = { offset: 0, total: 0, hasMore: false, loading: false, pendingInitialLoad: true };
   cancelThinkingRAF();
+  // Clear queue bar for the new session and re-render with this session's queue
+  if (pv.dom.queueBar) {
+    pv.dom.queueBar.innerHTML = '';
+    pv.dom.queueBar.classList.remove('visible');
+  }
+  window.dispatchEvent(new CustomEvent('queuebar-refresh', { detail: { sessionId: state.activeSessionId } }));
   pv.dom.chat.innerHTML = '';
   pv.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
 
@@ -2046,31 +2023,20 @@ export function getTargetAgent() {
   // 1. Active folder context
   if (state.activeFolderId) {
     const folder = (state.folders || []).find(f => f.id === state.activeFolderId);
-    if (folder?.agentName && folder.agentName !== 'Jarvis') return folder.agentName;
+    if (folder?.agentName) return folder.agentName;
   }
-  // 2. Secondary view session (the session the user is currently looking at)
-  if (state.secondarySessionId) {
-    const sec = (state.sessions || []).find(s => s.id === state.secondarySessionId);
-    if (sec?.agentName && sec.agentName !== 'Jarvis') return sec.agentName;
-  }
-  // 3. Active session — but never Jarvis (it's a singleton locked to main view,
-  //    and Jarvis sessions are hidden from the sidebar)
+  // 2. Active session
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
-  if (active?.agentName && active.agentName !== 'Jarvis') return active.agentName;
+  if (active?.agentName) return active.agentName;
   return 'Nebula';
 }
 
 /** Resolve the target folder ID for creating new sessions/folders, based on context.
- *  Priority: explicitly selected folder → secondary session's folder → active session's folder. */
+ *  Priority: explicitly selected folder → active session's folder. */
 export function getCurrentFolderId() {
   // 1. Active folder context (user clicked on a folder in the sidebar)
   if (state.activeFolderId) return state.activeFolderId;
-  // 2. Secondary view session (the session the user is currently looking at)
-  if (state.secondarySessionId) {
-    const sec = (state.sessions || []).find(s => s.id === state.secondarySessionId);
-    if (sec?.folderId) return sec.folderId;
-  }
-  // 3. Main view session
+  // 2. Active session
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
   return active?.folderId || null;
 }

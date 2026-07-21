@@ -223,7 +223,9 @@ class DelegateToolSpec extends CatsEffectSuite:
   test("Delegate is auto-approved (reversible)") {
     assert(DelegateTool.name == "Delegate")
     // Delegate is in the AlwaysReversible set in ToolReversibility
-    assert(nebflow.core.ToolReversibility.isReversible("Delegate", JsonObject.empty))
+    assert(
+      nebflow.core.ToolReversibility.isReversible("Delegate", JsonObject.empty, nebflow.core.SafetyMode.ConfirmEdits)
+    )
   }
 
   // --- ToolRegistry integration ---

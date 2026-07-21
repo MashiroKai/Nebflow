@@ -11,6 +11,7 @@ import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.tools.AskUserQuestionTool
 import nebflow.llm.FallbackExhaustedError
+import nebflow.service.StrengthStore
 import nebflow.shared.*
 import nebflow.shared.given
 
@@ -32,11 +33,13 @@ object AgentActor extends AgentCore with AgentSession:
     initialMessages: List[Message] = Nil,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
+    liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
     contextWindow: Int = Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
-    bypass: Boolean = false
+    safetyMode: String = "confirm-edits",
+    gitBranch: Option[String] = None
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       logAgentEvent(
@@ -57,7 +60,6 @@ object AgentActor extends AgentCore with AgentSession:
             messages = initialMessages,
             status = AgentStatus.Idle,
             depth = depth,
-            activeStreamFiber = None,
             sessionId = sessionId,
             sessionName = sessionName,
             pendingCompaction = None,
@@ -67,11 +69,13 @@ object AgentActor extends AgentCore with AgentSession:
             wsSend = wsSend,
             readTracker = readTracker,
             fileHistory = fileHistory,
+            liveFileTracker = liveFileTracker,
             contextWindow = contextWindow,
             projectRoot = projectRoot,
             rulesMd = rulesMd,
             folderId = folderId,
-            bypass = bypass
+            safetyMode = safetyMode,
+            gitBranch = gitBranch
           )
         )(using ctx)
       )
@@ -129,9 +133,7 @@ object AgentActor extends AgentCore with AgentSession:
           val newMessages = stateWithWidth.messages :+ userMsg
           val sessionBusyIO =
             if depth == 0 then
-              stateWithWidth.sessionId.fold(IO.unit)(sid =>
-                ctx.forkTurn(emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
-              )
+              stateWithWidth.sessionId.fold(IO.unit)(sid => emitSessionBusy(stateWithWidth.wsSend, sid, busy = true))
             else IO.unit
           for
             _ <- sessionBusyIO
@@ -169,8 +171,7 @@ object AgentActor extends AgentCore with AgentSession:
           .withMessages(state.messages :+ Message(MessageRole.User, Left(combinedText)))
           .withStatus(AgentStatus.Processing)
         val sessionBusyIO2 =
-          if depth == 0 then
-            state.sessionId.fold(IO.unit)(sid => ctx.forkTurn(emitSessionBusy(state.wsSend, sid, busy = true)))
+          if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
           else IO.unit
         for
           _ <- sessionBusyIO2
@@ -183,19 +184,19 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.Stop(_) =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
       case AgentCommand.ClearReadTracker =>
-        state.readTracker.fold(IO.unit)(t => ctx.forkTurn(t.clear())) *>
+        state.readTracker.fold(IO.unit)(t => t.clear()) *>
           IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case AgentCommand.ResetSession =>
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
-          _ <- state.readTracker.fold(IO.unit)(t => ctx.forkTurn(t.clear()))
+
+          _ <- state.readTracker.fold(IO.unit)(t => t.clear())
         yield
           val resetState = state
             .withMessages(Nil)
@@ -204,10 +205,9 @@ object AgentActor extends AgentCore with AgentSession:
             .withCompactionFailures(0)
             .withLastCompactionFailureAt(0L)
             .withRecentMessageIds(Nil)
-            .withLifecycleCleared
           idle(agentDef, resources, depth, parentRef, resetState)
 
-      case AgentCommand.TriggerCompaction(mode, replyDeferred) =>
+      case AgentCommand.TriggerCompaction(mode, replyDeferred, postCompactInstruction) =>
         handleTriggerCompaction(
           agentDef,
           resources,
@@ -216,11 +216,12 @@ object AgentActor extends AgentCore with AgentSession:
           state,
           mode,
           replyDeferred,
-          resumeAfterCompact = false
+          resumeAfterCompact = postCompactInstruction.isDefined,
+          postCompactInstruction = postCompactInstruction
         )
 
       case AgentCommand.UpdateContextWindow(window) =>
-        val newState = state.withContextWindow(window).withLifecycleCleared
+        val newState = state.withContextWindow(window)
         val estimatedTokens = TokenEstimator.estimate(newState.messages)
         val config = CompactConfig()
         val threshold = window - config.bufferForWindow(window)
@@ -303,24 +304,67 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.PermissionAnswered(approved) =>
         state.pendingPermission match
           case Some(deferred) =>
-            ctx.forkTurn(deferred.complete(approved).void.handleErrorWith(_ => IO.unit)) *>
+            deferred.complete(approved).void.handleErrorWith(_ => IO.unit) *>
               IO.pure(idle(agentDef, resources, depth, parentRef, state))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       case AgentCommand.ForwardPermission(deferred, permJson) =>
         // Sub-agent forwarded a permission request — store deferred and ask frontend
         if state.pendingPermission.isDefined then
-          ctx.forkTurn(deferred.complete(false).void.handleErrorWith(_ => IO.unit)) *>
+          deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
             IO.pure(idle(agentDef, resources, depth, parentRef, state))
         else
-          ctx.forkTurn(state.wsSend(permJson).handleErrorWith(_ => IO.unit)) *>
+          state.wsSend(permJson).handleErrorWith(_ => IO.unit) *>
             IO.pure(idle(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred))))
 
-      case AgentCommand.SetBypass(bypass) =>
-        IO.pure(idle(agentDef, resources, depth, parentRef, state.withBypass(bypass)))
+      case AgentCommand.SetSafetyMode(mode) =>
+        IO.pure(
+          idle(agentDef, resources, depth, parentRef, state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)))
+        )
 
-      case _: AgentCommand.StreamFiberStarted | _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed |
-          _: AgentCommand.ToolsComplete | _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
+      case AgentCommand.StartPlan(task) =>
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-start", s"task=${task.take(60)}")
+        val projectRootStr = state.projectRoot.getOrElse(resources.projectRoot.toString)
+        // Plan mode is Nebula's own capability — uses Explorer (read-only) for safe planning.
+        resources.agentLibrary.get("Explorer").flatMap {
+          case Some(explorerDef) =>
+            val planningDef = explorerDef.copy(
+              systemPrompt = PlanAgent.PlanningPrompt + "\n\n" + explorerDef.systemPrompt
+            )
+            PlanAgent
+              .spawn(
+                agentDef = planningDef,
+                task = task,
+                mainAgentRef = ctx.self,
+                system = ctx.system,
+                resources = resources,
+                parentDepth = depth,
+                wsSend = state.wsSend,
+                projectRoot = projectRootStr,
+                parentSessionId = state.sessionId
+              )
+              .map { planAgentRef =>
+                val planState = PlanModeState(planAgentRef = planAgentRef, taskDescription = task)
+                planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(Some(planState)))
+              }
+          case None =>
+            ctx
+              .forkTurn(
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "error".asJson,
+                      "sessionId" -> state.sessionId.asJson,
+                      "message" -> "Explorer agent not found — cannot start plan mode".asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+              )
+              .as(idle(agentDef, resources, depth, parentRef, state))
+        }
+
+      case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
+          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
           _: AgentCommand.UpdateGitBranch =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
@@ -333,6 +377,190 @@ object AgentActor extends AgentCore with AgentSession:
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
   end idle
   // ============================================================
+  // Plan waiting state — main agent blocked while plan agent works
+  // ============================================================
+
+  private def planWaiting(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState
+  )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
+    Behaviors.receiveMessage:
+
+      case AgentCommand.PlanTurnComplete(planText) =>
+        val updatedPlanState = state.planMode.map(_.copy(currentPlanText = planText))
+        for _ <- ctx.forkTurn(
+            state
+              .wsSend(
+                Json.obj(
+                  "type" -> "planReady".asJson,
+                  "sessionId" -> state.sessionId.asJson
+                )
+              )
+              .handleErrorWith(_ => IO.unit)
+          )
+        yield planWaiting(agentDef, resources, depth, parentRef, state.withPlanMode(updatedPlanState))
+
+      case AgentCommand.PlanFeedback(text) =>
+        state.planMode match
+          case Some(pm) =>
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "plan-feedback",
+              s"text=${text.take(60)}"
+            )
+            (pm.planAgentRef ! AgentCommand.UserInput(text)) *>
+              IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
+          case None =>
+            IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
+
+      case AgentCommand.PlanApproved =>
+        state.planMode match
+          case Some(pm) =>
+            logAgentEvent(
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
+              "plan-approved",
+              s"textLen=${pm.currentPlanText.length}"
+            )
+            for
+              _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
+              _ <- ctx.forkTurn(
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "planEnd".asJson,
+                      "sessionId" -> state.sessionId.asJson,
+                      "reason" -> "approved".asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+              )
+              // Inject approved plan as user message so the main agent executes it
+              planMsg = Message(
+                MessageRole.User,
+                Left(
+                  s"User requested planning for: ${pm.taskDescription}\n\n" +
+                    s"The plan below has been approved by the user. Execute it now.\n\n" +
+                    s"## Approved Plan\n\n${pm.currentPlanText}\n\n" +
+                    s"Start by creating tasks with TaskCreate to track progress, then execute each step."
+                )
+              )
+              newMessages = state.messages :+ planMsg
+              sessionBusyIO = state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
+              result <- sessionBusyIO *> pipeLlmCall(
+                agentDef,
+                resources,
+                depth,
+                parentRef,
+                state.withMessages(newMessages).withPlanMode(None),
+                None
+              )
+            yield result
+            end for
+          case None =>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state))
+
+      case AgentCommand.PlanCancelled =>
+        state.planMode match
+          case Some(pm) =>
+            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-cancelled", "")
+            for
+              _ <- ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit)
+              _ <- ctx.forkTurn(
+                state
+                  .wsSend(
+                    Json.obj(
+                      "type" -> "planEnd".asJson,
+                      "sessionId" -> state.sessionId.asJson,
+                      "reason" -> "cancelled".asJson
+                    )
+                  )
+                  .handleErrorWith(_ => IO.unit)
+              )
+            yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
+          case None =>
+            IO.pure(idle(agentDef, resources, depth, parentRef, state))
+
+      case AgentCommand.PlanFailed(error) =>
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-failed", s"err=${error.take(80)}")
+        state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
+        for
+          _ <- ctx.forkTurn(
+            state
+              .wsSend(
+                Json.obj(
+                  "type" -> "planEnd".asJson,
+                  "sessionId" -> state.sessionId.asJson,
+                  "reason" -> "failed".asJson,
+                  "error" -> error.asJson
+                )
+              )
+              .handleErrorWith(_ => IO.unit)
+          )
+          _ <- ctx.forkTurn(
+            state.sessionId.fold(IO.unit)(sid =>
+              state
+                .wsSend(
+                  Json.obj(
+                    "type" -> "error".asJson,
+                    "sessionId" -> sid.asJson,
+                    "message" -> s"Plan agent failed: $error".asJson
+                  )
+                )
+                .handleErrorWith(_ => IO.unit)
+            )
+          )
+        yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
+        end for
+
+      case AgentCommand.Interrupt() =>
+        state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
+        for _ <- ctx.forkTurn(
+            state
+              .wsSend(
+                Json.obj(
+                  "type" -> "planEnd".asJson,
+                  "sessionId" -> state.sessionId.asJson,
+                  "reason" -> "cancelled".asJson
+                )
+              )
+              .handleErrorWith(_ => IO.unit)
+          )
+        yield idle(agentDef, resources, depth, parentRef, state.withPlanMode(None))
+
+      case AgentCommand.Stop(_) =>
+        state.planMode.foreach(pm => ctx.system.stop(pm.planAgentRef).handleErrorWith(_ => IO.unit))
+        for _ <- fireLifecycleStopHooks(resources, state)
+        yield Behaviors.stopped
+
+      case AgentCommand.SetSafetyMode(mode) =>
+        IO.pure(
+          planWaiting(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withSafetyMode(nebflow.core.SafetyMode.toString(mode))
+          )
+        )
+
+      // Buffer user messages while planning
+      case msg: AgentCommand.UserInput =>
+        IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
+
+      case _ =>
+        IO.pure(planWaiting(agentDef, resources, depth, parentRef, state))
+
+  end planWaiting
+  // ============================================================
   // Processing state
   // ============================================================
 
@@ -344,13 +572,7 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     pending: List[AgentCommand] = Nil
   )(using ctx: ActorContext[AgentCommand]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage:
-
-      case AgentCommand.StreamFiberStarted(fiber) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withActiveStreamFiber(Some(fiber)), pending))
-
-      case AgentCommand.UpdateLifecycle(lc) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withLifecycle(lc), pending))
+    val base = Behaviors.receiveMessage[AgentCommand]:
 
       case AgentCommand.UpdateGitBranch(branch) =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state.withGitBranch(branch), pending))
@@ -412,7 +634,7 @@ object AgentActor extends AgentCore with AgentSession:
           )
           IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
-          val cleanedState = state.withActiveStreamFiber(None)
+          val cleanedState = state
           logAgentEvent(
             agentDef,
             depth,
@@ -432,13 +654,15 @@ object AgentActor extends AgentCore with AgentSession:
                 }
                 .mkString("; ")
               s"All providers failed: $attempts"
+            case e: ToolPipelineError =>
+              e.message
             case _ =>
               Option(error.getMessage)
                 .filter(_.nonEmpty)
                 .map(m => s"LLM request failed: ${m.take(200)}")
                 .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
           for
-            _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
             _ <- cleanedState.sessionId.fold(IO.unit) { sid =>
               val doneEvent = AgentStreamEvent.Done(None)
               val doneJson = doneEvent.toJson(ctx.self.path.name, false, cleanedState.sessionId)
@@ -511,10 +735,26 @@ object AgentActor extends AgentCore with AgentSession:
           )
         else Nil
         val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ eventMessages ++ immediateMessages
+        // Increment delegate count for Delegate/MountFlow calls
+        val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "MountFlow")
+        val newDelegateCount = state.delegateCount + delegateIncrement
+        // Record strength reads for SKILL.md / memory detail file reads
+        toolCalls.foreach { call =>
+          if call.name == "Read" then
+            call.input("file_path").flatMap(_.asString).foreach { path =>
+              StrengthStore.recordReadIfTracked(path, newDelegateCount)
+            }
+        }
         val updatedState =
           state.copy(execution =
             state.execution
-              .copy(messages = newMessages, interaction = None, pendingEvents = Nil, pendingImmediateInputs = Nil)
+              .copy(
+                messages = newMessages,
+                interaction = None,
+                pendingEvents = Nil,
+                pendingImmediateInputs = Nil,
+                delegateCount = newDelegateCount
+              )
           )
         for
           _ <- ctx.forkTurn(
@@ -531,32 +771,64 @@ object AgentActor extends AgentCore with AgentSession:
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "interrupt", "reason=user")
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+
+          _ <- state.pendingCompaction
+            .flatMap(_.replyDeferred)
+            .traverse_(d => d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
         yield
-          state.pendingCompaction.flatMap(_.replyDeferred).foreach { d =>
-            ctx.forkTurn(d.complete(Left("Interrupted by user")).void.handleErrorWith(_ => IO.unit))
-          }
           val interruptedState = state.resetForInterrupt.withPendingCompaction(None)
           idle(agentDef, resources, depth, parentRef, interruptedState)
+
+      // --- Retry: cancel current work, re-dispatch from last checkpoint ---
+      case AgentCommand.Retry(reason) =>
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "retry", s"reason=$reason")
+        ctx.cancelCurrentTurn() *> (state.lastDispatch match
+          case Some(LastDispatch(false, _)) =>
+            // Re-dispatch LLM call with same messages
+            pipeLlmCall(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state,
+              None,
+              (ad, r, d, p, s) => processing(ad, r, d, p, s)
+            )
+          case Some(LastDispatch(true, Some(cr))) =>
+            // Re-dispatch tool execution with same LLM result
+            pipeToolExecutions(
+              agentDef,
+              resources,
+              depth,
+              parentRef,
+              state,
+              cr,
+              None,
+              (ad, r, d, p, s) => processing(ad, r, d, p, s)
+            )
+          case _ =>
+            // No checkpoint — go to idle
+            IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
 
       // --- Stop ---
       case AgentCommand.Stop(_) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
         for
           _ <- ctx.cancelCurrentTurn()
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
+
           _ <- fireLifecycleStopHooks(resources, state)
         yield Behaviors.stopped
 
       case AgentCommand.ClearReadTracker =>
-        state.readTracker.fold(IO.unit)(t => ctx.forkTurn(t.clear())) *>
+        state.readTracker.fold(IO.unit)(t => t.clear()) *>
           IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       case AgentCommand.ResetSession =>
         for
-          _ <- state.activeStreamFiber.fold(IO.unit)(f => ctx.forkTurn(f.cancel.handleErrorWith(_ => IO.unit)))
-          _ <- state.readTracker.fold(IO.unit)(t => ctx.forkTurn(t.clear()))
+
+          _ <- state.readTracker.fold(IO.unit)(t => t.clear())
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
         yield
           val resetState = state
@@ -566,7 +838,6 @@ object AgentActor extends AgentCore with AgentSession:
             .withCompactionFailures(0)
             .withLastCompactionFailureAt(0L)
             .withRecentMessageIds(Nil)
-            .withLifecycleCleared
             .resetToIdle(Nil)
           idle(agentDef, resources, depth, parentRef, resetState)
 
@@ -574,10 +845,10 @@ object AgentActor extends AgentCore with AgentSession:
       case AgentCommand.ReplaceToolResults(rounds, summary, replyTo) =>
         replaceToolResults(state.messages, rounds, summary) match
           case Right((updatedMessages, count)) =>
-            ctx.forkTurn(replyTo.complete(Right(count)).void.handleErrorWith(_ => IO.unit)) *>
+            replyTo.complete(Right(count)).void.handleErrorWith(_ => IO.unit) *>
               IO.pure(processing(agentDef, resources, depth, parentRef, state.withMessages(updatedMessages), pending))
           case Left(err) =>
-            ctx.forkTurn(replyTo.complete(Left(err)).void.handleErrorWith(_ => IO.unit)) *>
+            replyTo.complete(Left(err)).void.handleErrorWith(_ => IO.unit) *>
               IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       // --- Compaction completed ---
@@ -634,15 +905,18 @@ object AgentActor extends AgentCore with AgentSession:
                 .withCompactionFailures(0)
                 .withEmptyResponseRetries(0)
                 .withLatestUsage(None)
-                .withLifecycleCleared
               if compactionPending.exists(_.resumeAfterCompact) then
+                val stateWithInstruction = compactionPending.flatMap(_.postCompactInstruction) match
+                  case Some(instruction) =>
+                    compactedState.withMessages(compactedState.messages :+ Message(MessageRole.User, Left(instruction)))
+                  case None => compactedState
                 ctx.forkTurn(compactEmitIO) *>
                   pipeLlmCall(
                     agentDef,
                     resources,
                     depth,
                     parentRef,
-                    compactedState,
+                    stateWithInstruction,
                     compactionPending.flatMap(_.replyTo)
                   )
               else
@@ -680,7 +954,7 @@ object AgentActor extends AgentCore with AgentSession:
                 )
                 _ <- compactionPending
                   .flatMap(_.replyDeferred)
-                  .fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
+                  .fold(IO.unit)(d => d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))
               yield ()
               compactionPending.flatMap(_.replyTo) match
                 case Some(replyTo) =>
@@ -764,7 +1038,7 @@ object AgentActor extends AgentCore with AgentSession:
         ctx.forkTurn(
           (roundCompleteJson.map(state.wsSend).getOrElse(IO.unit)).handleErrorWith(_ => IO.unit) *>
             state.wsSend(askJson).handleErrorWith { e =>
-              replyToOpt.foreach(replyTo => ctx.forkTurn(replyTo ! Nil))
+              replyToOpt.foreach(replyTo => (replyTo ! Nil))
               IO.unit
             }
         ) *> IO.pure(processing(agentDef, resources, depth, parentRef, updatedState, pending))
@@ -798,7 +1072,7 @@ object AgentActor extends AgentCore with AgentSession:
               "permission-answered-in-processing",
               s"approved=$approved"
             )
-            ctx.forkTurn(deferred.complete(approved).void.handleErrorWith(_ => IO.unit)) *>
+            deferred.complete(approved).void.handleErrorWith(_ => IO.unit) *>
               IO.pure(processing(agentDef, resources, depth, parentRef, state.withPendingPermission(None), pending))
           case None => IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
@@ -809,17 +1083,26 @@ object AgentActor extends AgentCore with AgentSession:
       // --- Sub-agent forwarded a permission request while processing ---
       case AgentCommand.ForwardPermission(deferred, permJson) =>
         if state.pendingPermission.isDefined then
-          ctx.forkTurn(deferred.complete(false).void.handleErrorWith(_ => IO.unit)) *>
+          deferred.complete(false).void.handleErrorWith(_ => IO.unit) *>
             IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
-          ctx.forkTurn(state.wsSend(permJson).handleErrorWith(_ => IO.unit)) *>
+          state.wsSend(permJson).handleErrorWith(_ => IO.unit) *>
             IO.pure(
               processing(agentDef, resources, depth, parentRef, state.withPendingPermission(Some(deferred)), pending)
             )
 
       // --- Bypass toggled while processing ---
-      case AgentCommand.SetBypass(bypass) =>
-        IO.pure(processing(agentDef, resources, depth, parentRef, state.withBypass(bypass), pending))
+      case AgentCommand.SetSafetyMode(mode) =>
+        IO.pure(
+          processing(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withSafetyMode(nebflow.core.SafetyMode.toString(mode)),
+            pending
+          )
+        )
 
       // --- Session model switched ---
       case AgentCommand.UpdateContextWindow(window) =>
@@ -829,7 +1112,7 @@ object AgentActor extends AgentCore with AgentSession:
             resources,
             depth,
             parentRef,
-            state.withContextWindow(window).withLifecycleCleared,
+            state.withContextWindow(window),
             pending
           )
         )
@@ -879,6 +1162,15 @@ object AgentActor extends AgentCore with AgentSession:
 
       case _ =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+
+    // Supervision: on unhandled error, return to idle with safe state
+    new Behavior[AgentCommand]:
+      def receive(c: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
+        base.receive(c, msg)
+      override def onError(c: ActorContext[AgentCommand], err: Throwable): IO[Behavior[AgentCommand]] =
+        c.log
+          .error(s"Agent error in processing, returning to idle: ${err.getMessage}")
+          .as(idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Idle).withInteraction(None)))
   end processing
   // ============================================================
   // LlmComplete branch selector
@@ -1196,7 +1488,6 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     responseText: String
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val pending = state.pendingCompaction
     val sessionId = state.sessionId.getOrElse(ctx.self.path.name)
     val readPathsIO = state.readTracker
       .map(_.recentFiles(CompactConfig().postCompactMaxFiles).map(_.map(_.toString)))
@@ -1259,7 +1550,7 @@ object AgentActor extends AgentCore with AgentSession:
       )
       _ <- pending
         .flatMap(_.replyDeferred)
-        .fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
+        .fold(IO.unit)(d => d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))
       result <- pending.flatMap(_.replyTo) match
         case Some(replyTo) =>
           finishTurn(
@@ -1359,13 +1650,14 @@ object AgentActor extends AgentCore with AgentSession:
     state: AgentState,
     mode: String,
     replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]],
-    resumeAfterCompact: Boolean = true
+    resumeAfterCompact: Boolean = true,
+    postCompactInstruction: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val config = CompactConfig()
     if state.pendingCompaction.isDefined then
       val reason = "Compaction already in progress"
       for
-        _ <- replyDeferred.fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(reason)).void.handleErrorWith(_ => IO.unit)))
+        _ <- replyDeferred.fold(IO.unit)(d => d.complete(Left(reason)).void.handleErrorWith(_ => IO.unit))
         _ <- ctx.forkTurn(
           emitStreamIO(
             state.wsSend,
@@ -1383,12 +1675,12 @@ object AgentActor extends AgentCore with AgentSession:
           config.isBackoffSatisfied(state.compactionFailures, elapsed)
       if !backoffOk then
         val err = s"Compaction retry backed off (${state.compactionFailures} failures)"
-        replyDeferred.fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))) *>
+        replyDeferred.fold(IO.unit)(d => d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)) *>
           IO.pure(idle(agentDef, resources, depth, parentRef, state))
       else if state.compactionFailures >= config.circuitBreakerMax then
         val err = s"Compaction circuit breaker open after ${state.compactionFailures} attempts"
         for
-          _ <- replyDeferred.fold(IO.unit)(d => ctx.forkTurn(d.complete(Left(err)).void.handleErrorWith(_ => IO.unit)))
+          _ <- replyDeferred.fold(IO.unit)(d => d.complete(Left(err)).void.handleErrorWith(_ => IO.unit))
           _ <- ctx.forkTurn(
             emitStreamIO(
               state.wsSend,
@@ -1407,7 +1699,9 @@ object AgentActor extends AgentCore with AgentSession:
           state,
           None,
           (ad, r, d, p, s) => processing(ad, r, d, p, s),
-          mode
+          mode,
+          resumeAfterCompact,
+          postCompactInstruction
         )
       end if
     end if

@@ -27,20 +27,6 @@ object DeviceIdentity:
 
   private val devicePath = PathUtil.dataRoot / "device.json"
 
-  /** Tools to auto-detect on startup. Key = display name, value = command to check. */
-  private val detectionTargets = List(
-    "python" -> "python3",
-    "node" -> "node",
-    "git" -> "git",
-    "java" -> "java",
-    "vivado" -> "vivado",
-    "quartus" -> "quartus_sh",
-    "sbt" -> "sbt",
-    "rust" -> "cargo",
-    "go" -> "go",
-    "docker" -> "docker"
-  )
-
   private def detectPlatform: String =
     val osName = System.getProperty("os.name", "unknown").toLowerCase
     if osName.contains("mac") then "macos"
@@ -57,28 +43,6 @@ object DeviceIdentity:
       )
       .map(_.stripSuffix(".local")) // macOS mDNS returns "hostname.local"
       .getOrElse("Unknown")
-
-  /** Detect available tools by running `which`/`where`. Returns map of name → path. */
-  def detectCapabilities: IO[Map[String, String]] =
-    val whichCmd = detectPlatform match
-      case "windows" => "where"
-      case _ => "which"
-    IO.blocking {
-      val results = scala.collection.mutable.Map.empty[String, String]
-      for (name, binary) <- detectionTargets do
-        try
-          val proc = new ProcessBuilder(whichCmd, binary).redirectErrorStream(true).start()
-          val exited = proc.waitFor()
-          if exited == 0 then
-            val output = scala.io.Source.fromInputStream(proc.getInputStream).mkString.trim
-            val firstLine = output.linesIterator.nextOption().getOrElse("")
-            if firstLine.nonEmpty then results(name) = firstLine
-          proc.getInputStream.close()
-        catch case _: Exception => ()
-      results.toMap
-    }
-
-  end detectCapabilities
 
   def loadOrCreate: IO[DeviceIdentity] =
     IO.blocking {
@@ -173,12 +137,20 @@ end PeerInfo
 
 case class NeblinkConfig(
   enabled: Boolean = false,
-  syncIntervalSec: Int = 300
+  syncIntervalSec: Int = 300,
+  coordinator: Option[NebLinkServerConfig] = None
 )
 
 object NeblinkConfig:
   given Encoder[NeblinkConfig] = deriveEncoder
-  given Decoder[NeblinkConfig] = deriveDecoder
+
+  given Decoder[NeblinkConfig] = Decoder.instance { c =>
+    for
+      enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(false))
+      syncIntervalSec <- c.downField("syncIntervalSec").as[Option[Int]].map(_.getOrElse(300))
+      coordinator <- c.downField("coordinator").as[Option[NebLinkServerConfig]]
+    yield NeblinkConfig(enabled, syncIntervalSec, coordinator)
+  }
 
   private val configPath = PathUtil.dataRoot / "neblink" / "config.json"
 
@@ -196,3 +168,20 @@ object NeblinkConfig:
       os.write.over(configPath, config.asJson.spaces2, createFolders = true)
     }
 end NeblinkConfig
+
+// ===== Peer Description Store =====
+
+/** Persists user-set peer descriptions across restarts. Stored in ~/.nebflow/peer-descriptions.json. */
+object PeerDescriptionStore:
+  private val path = PathUtil.dataRoot / "peer-descriptions.json"
+
+  def load: IO[Map[String, String]] =
+    IO.blocking {
+      if os.exists(path) then decode[Map[String, String]](os.read(path)).getOrElse(Map.empty)
+      else Map.empty
+    }
+
+  def save(descs: Map[String, String]): IO[Unit] =
+    IO.blocking {
+      os.write.over(path, descs.asJson.spaces2, createFolders = true)
+    }

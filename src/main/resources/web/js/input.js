@@ -4,7 +4,7 @@
 import state, { LS_HISTORY_KEY } from './state.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
 import { sendWs } from './ws.js';
-import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble } from './chat.js';
+import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF } from './chat.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
@@ -18,17 +18,31 @@ const slashCommands = {
   '/clear': {
     desc: () => t('slash.clear'),
     run: () => {
-      sendWs({type:'command', command:'clear', sessionId: activeView.sessionId});
-      delete state.sessionTasks[activeView.sessionId];
+      const v = activeView;
+      sendWs({type:'command', command:'clear', sessionId: v.sessionId});
+      delete state.sessionTasks[v.sessionId];
       renderTaskList([]);
+      // Clean up stream state — remove orphaned thinking placeholders and
+      // reset stream variables so the next message starts fresh.
+      if (window.__stopThinkingTimer) window.__stopThinkingTimer();
+      cancelToolStreamRAF();
+      v.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+        const row = el.closest('.row');
+        if (row) row.remove();
+      });
+      v.stream.currentAiBubble = null;
+      v.stream.aiText = '';
+      v.stream.currentThinkingBubble = null;
+      v.stream.thinkingText = '';
+      v.stream.toolStreamText = '';
+      v.stream.toolStreamToolName = '';
       renderSystemBubble(t('slash.clearDone'));
     }
   },
   '/compact': {
     desc: () => t('slash.compact'),
     run: () => {
-      sendWs({type:'command', command:'compact', sessionId: activeView.sessionId});
-      renderSystemBubble(t('slash.compactDone'));
+      enterCompactMode();
     }
   },
   '/fork': {
@@ -36,6 +50,12 @@ const slashCommands = {
     run: () => {
       sendWs({type:'command', command:'fork', sessionId: activeView.sessionId});
       renderSystemBubble(t('slash.forkPending'));
+    }
+  },
+  '/plan': {
+    desc: () => 'Enter plan mode — analyze and plan before executing',
+    run: () => {
+      enterPlanMode();
     }
   },
   '/ask': {
@@ -66,6 +86,8 @@ export function registerSkillCommands(skills) {
     if (!slashCommands[cmd] || slashCommands[cmd]._skill) {
       slashCommands[cmd] = {
         _skill: true,
+        _source: skill.source,
+        _skillName: skill.name,
         desc: () => skill.description || t('slash.skillDefault'),
         whenToUse: skill.whenToUse || '',
         argumentHint: skill.argumentHint || '',
@@ -79,7 +101,7 @@ export function registerSkillCommands(skills) {
 export function handleSlash(text) {
   const cmd = text.trim().split(/\s/)[0];
   if (slashCommands[cmd] && slashCommands[cmd].run) {
-    slashCommands[cmd].run();
+    slashCommands[cmd].run(text);
     return true;
   }
   return false;
@@ -96,7 +118,7 @@ function updateSlashDropdown() {
   const query = text.slice(1).toLowerCase();
   activeView.slashMatches = Object.entries(slashCommands)
     .filter(([cmd]) => cmd.slice(1).toLowerCase().startsWith(query))
-    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, whenToUse: info.whenToUse || '', isSkill: !!info._skill }));
+    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, whenToUse: info.whenToUse || '', isSkill: !!info._skill, source: info._source || '', skillName: info._skillName || '' }));
   if (activeView.slashMatches.length === 0) {
     closeSlashDropdown();
     return;
@@ -108,9 +130,21 @@ function updateSlashDropdown() {
     div.className = 'slash-item' + (i === 0 ? ' active' : '');
     const badge = item.isSkill ? '<span class="slash-badge skill">' + escapeHtml(t('slash.skillBadge')) + '</span>' : '';
     const whenToUseHtml = item.whenToUse ? '<span class="slash-when">' + escapeHtml(item.whenToUse) + '</span>' : '';
-      div.innerHTML = '<div style="display:flex;align-items:center"><span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge + '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>' + whenToUseHtml;
+    const deleteHtml = (item.isSkill && item.source === 'user')
+      ? '<span class="slash-delete" title="' + escapeHtml(t('slash.deleteSkill')) + '" data-skill="' + escapeHtml(item.skillName) + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>'
+      : '';
+    div.innerHTML = '<div style="display:flex;align-items:center"><span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge + '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>' + whenToUseHtml + deleteHtml;
     div.onclick = () => { pickSlashCommand(i); };
     div.onmouseenter = () => { setSlashHighlight(i); };
+    if (deleteHtml) {
+      const delBtn = div.querySelector('.slash-delete');
+      if (delBtn) {
+        delBtn.onclick = (e) => {
+          e.stopPropagation();
+          handleDeleteSkill(item.skillName);
+        };
+      }
+    }
     slashDropdown.appendChild(div);
   });
   activeView.slashSelectedIndex = 0;
@@ -154,9 +188,19 @@ function pickSlashCommand(index) {
   if (index < 0 || index >= activeView.slashMatches.length) return;
   const cmd = activeView.slashMatches[index].cmd;
   activeView.dom.input.value = '';
+  activeView.dom.input.style.height = 'auto';
   closeSlashDropdown();
   activeView.dom.input.focus();
   if (slashCommands[cmd] && slashCommands[cmd].run) slashCommands[cmd].run();
+}
+
+/** Delete a user-level skill after confirmation. */
+function handleDeleteSkill(skillName) {
+  const msg = t('slash.confirmDelete').replace('{skill}', skillName);
+  if (confirm(msg)) {
+    sendWs({ type: 'deleteSkill', name: skillName });
+    closeSlashDropdown();
+  }
 }
 
 // ---------- Ask Mode ----------
@@ -175,41 +219,79 @@ export function cancelAskMode() {
   activeView.dom.input.placeholder = t('input.placeholder');
 }
 
+// ---------- Plan Mode ----------
+export function enterPlanMode() {
+  if (activeView.stream.planMode) return;
+  activeView.stream.planMode = true;
+  updateInputIndicator();
+  activeView.dom.input.placeholder = 'Describe the task to plan...';
+  activeView.dom.input.focus();
+}
+
+export function cancelPlanMode() {
+  if (!activeView.stream.planMode) return;
+  activeView.stream.planMode = false;
+  updateInputIndicator();
+  activeView.dom.input.placeholder = t('input.placeholder');
+}
+
 function updateAskIndicator() {
   updateInputIndicator();
 }
 
 function updateInputIndicator() {
-  const prefix = activeView.id === 'secondary' ? 'secondary-' : '';
-  const askEl = document.getElementById(prefix + 'ask-indicator');
-  const skillEl = document.getElementById(prefix + 'skill-indicator');
-  const skillLabel = document.getElementById(prefix + 'skill-indicator-label');
+  const askEl = document.getElementById('ask-indicator');
+  const skillEl = document.getElementById('skill-indicator');
+  const skillLabel = document.getElementById('skill-indicator-label');
+  const compactEl = document.getElementById('compact-indicator');
+  const planEl = document.getElementById('plan-indicator');
   const input = activeView.dom.input;
-  // Ask mode takes priority over skill mode
-  if (activeView.stream.askMode) {
+  // Plan/Ask/Skill/Compact mode — all mutually exclusive
+  if (activeView.stream.planMode) {
+    if (planEl) planEl.classList.add('show');
+    if (askEl) askEl.classList.remove('show');
+    if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.remove('show');
+    input.style.paddingLeft = '';
+    if (planEl) {
+      const w = planEl.offsetWidth + 12;
+      input.style.paddingLeft = Math.max(w, 48) + 'px';
+    }
+  } else if (activeView.stream.askMode) {
+    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.add('show');
     if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.remove('show');
     input.style.paddingLeft = '';
     if (askEl) {
-      askEl.classList.add('show');
-      // Measure ask indicator width after layout
       const w = askEl.offsetWidth + 12;
       input.style.paddingLeft = Math.max(w, 48) + 'px';
     }
   } else if (activeView.skillMode) {
+    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) {
       if (skillLabel) skillLabel.textContent = activeView.skillModeName || 'SKILL';
       skillEl.classList.add('show');
-      // Measure skill indicator width after layout
       const w = skillEl.offsetWidth + 12;
       input.style.paddingLeft = Math.max(w, 56) + 'px';
     } else {
       input.style.paddingLeft = '';
     }
-  } else {
+    if (compactEl) compactEl.classList.remove('show');
+  } else if (activeView.compactMode) {
+    if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.add('show');
+    input.style.paddingLeft = '';
+    const w = compactEl.offsetWidth + 12;
+    input.style.paddingLeft = Math.max(w, 48) + 'px';
+  } else {
+    if (planEl) planEl.classList.remove('show');
+    if (askEl) askEl.classList.remove('show');
+    if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.remove('show');
     input.style.paddingLeft = '';
   }
 }
@@ -238,6 +320,26 @@ export function cancelSkillMode() {
   activeView.skillModeName = '';
   activeView.skillModeDesc = '';
   activeView.skillModeArgHint = '';
+  updateInputIndicator();
+  activeView.dom.input.placeholder = t('input.placeholder');
+}
+
+// ---------- Compact Mode ----------
+export function enterCompactMode() {
+  if (activeView.compactMode) return;
+  // Cancel other modes if active
+  if (activeView.stream.askMode) cancelAskMode();
+  if (activeView.skillMode) cancelSkillMode();
+  if (activeView.stream.planMode) cancelPlanMode();
+  activeView.compactMode = true;
+  updateInputIndicator();
+  activeView.dom.input.placeholder = t('input.compactPlaceholder');
+  activeView.dom.input.focus();
+}
+
+export function cancelCompactMode() {
+  if (!activeView.compactMode) return;
+  activeView.compactMode = false;
   updateInputIndicator();
   activeView.dom.input.placeholder = t('input.placeholder');
 }
@@ -298,13 +400,42 @@ function compressImage(file, opts = {}) {
 }
 
 // ---------- File Attachment ----------
+
+/** Show an inline error in the attachment preview area (no alert popup). */
+function showAttError(msg, target) {
+  const attPreview = (target && target.attPreviewEl) || (activeView && activeView.dom && activeView.dom.attPreview);
+  if (!attPreview) { console.warn(msg); return; }
+  const err = document.createElement('div');
+  err.className = 'att-error';
+  err.textContent = msg;
+  attPreview.appendChild(err);
+  setTimeout(() => { err.classList.add('att-error-fade'); setTimeout(() => err.remove(), 300); }, 2500);
+}
+
+/** Convert ArrayBuffer to base64 in chunks (avoids reading file twice). */
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 export async function addFileAttachment(file, callback, target) {
-  // target: optional { attPreviewEl, attachments } for non-primary windows.
-  // Defaults to primary window's pendingAttachments.
-  const attachments = (target && target.attachments) || activeView.pendingAttachments;
+  // Capture the view at entry — activeView is a live module binding that ws.js
+  // changes on every incoming message. Without capturing, the await points below
+  // would read a stale/changed activeView, causing renderAttachmentPreview to
+  // target the wrong DOM element (or crash on null).
+  if (!target && activeView) {
+    target = { attPreviewEl: activeView.dom.attPreview, attachments: activeView.pendingAttachments };
+  }
+  const attachments = (target && target.attachments) || (activeView && activeView.pendingAttachments);
+  if (!attachments) { console.error('[input] addFileAttachment: no attachments array'); return; }
   if (file.type.startsWith('image/')) {
     if (file.size > 10 * 1024 * 1024) {
-      alert('Image too large (max 10MB): ' + file.name);
+      showAttError('Image too large (max 10MB): ' + file.name, target);
       return;
     }
     try {
@@ -316,35 +447,29 @@ export async function addFileAttachment(file, callback, target) {
       });
     } catch (e) {
       console.warn('[input] image compression failed, using original:', e);
-      // Fallback to original
-      const reader = new FileReader();
-      reader.onload = () => {
+      // Fallback: read once as ArrayBuffer, derive both base64 and preview
+      try {
+        const buffer = await file.arrayBuffer();
+        const base64Data = arrayBufferToBase64(buffer);
+        const mimeType = file.type || 'image/jpeg';
+        const preview = 'data:' + mimeType + ';base64,' + base64Data;
         attachments.push({
-          type: 'image', mimeType: 'image/jpeg',
-          data: reader.result.split(',')[1],
-          name: file.name, preview: reader.result
+          type: 'image', mimeType,
+          data: base64Data, name: file.name, preview
         });
-        renderAttachmentPreview(target);
-        if (callback) callback();
-      };
-      reader.readAsDataURL(file);
-      return;
+      } catch (e2) {
+        console.warn('[input] image fallback read failed:', e2);
+        showAttError('Failed to read image: ' + file.name, target);
+        return;
+      }
     }
     renderAttachmentPreview(target);
     if (callback) callback();
   } else {
-    // Non-image: compute SHA-256 hash for local file search, also keep data as fallback
-    const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
-    if (file.size > MAX_FILE_SIZE) {
-      alert('File too large (max 50MB): ' + file.name);
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const resultStr = reader.result;
-      const commaIdx = resultStr.indexOf(',');
-      const base64Data = commaIdx >= 0 ? resultStr.substring(commaIdx + 1) : resultStr;
-      // Compute SHA-256 hash from the file ArrayBuffer
+    // Non-image: only send metadata (name + size + hash) — the backend resolves
+    // the local file path by searching the filesystem. No need to transfer file
+    // content over WebSocket.
+    try {
       let hash = '';
       try {
         const buffer = await file.arrayBuffer();
@@ -356,15 +481,14 @@ export async function addFileAttachment(file, callback, target) {
       }
       attachments.push({
         type: 'text', mimeType: file.type || 'application/octet-stream',
-        data: base64Data, name: file.name, hash, size: file.size
+        data: '', name: file.name, hash, size: file.size
       });
       renderAttachmentPreview(target);
       if (callback) callback();
-    };
-    reader.onerror = () => {
-      console.warn('[input] file read failed:', reader.error);
-    };
-    reader.readAsDataURL(file);
+    } catch (e) {
+      console.warn('[input] file read failed:', e);
+      showAttError('Failed to read file: ' + file.name, target);
+    }
   }
 }
 
@@ -407,6 +531,22 @@ export function send() {
     setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
+  // If in plan mode, send as plan command
+  if (v.stream.planMode) {
+    cancelPlanMode();
+    if (!text || !state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      v.isSending = false;
+      return;
+    }
+    v.isSending = true;
+    sendWs({type:'command', command:'plan', sessionId: v.sessionId, task: text});
+    renderSystemBubble('Plan mode started — analyzing...');
+    input.value = '';
+    input.style.height = 'auto';
+    saveInputDraft(v.sessionId);
+    setTimeout(() => { v.isSending = false; }, 300);
+    return;
+  }
   // If in ask mode, send as ask question
   if (v.stream.askMode) {
     cancelAskMode();
@@ -425,11 +565,30 @@ export function send() {
     setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
+  // If in compact mode, send as compact command (empty input is OK — triggers default compact)
+  if (v.compactMode) {
+    cancelCompactMode();
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      v.isSending = false;
+      return;
+    }
+    v.isSending = true;
+    sendWs({type:'command', command:'compact', sessionId: v.sessionId, instruction: text || undefined});
+    renderSystemBubble(text
+      ? t('slash.compactDone') + ' — ' + text
+      : t('slash.compactDone'));
+    input.value = '';
+    input.style.height = 'auto';
+    saveInputDraft(v.sessionId);
+    setTimeout(() => { v.isSending = false; }, 300);
+    return;
+  }
   // Allow slash commands (except /ask <question> which sends to the agent)
   // even when the session is busy — they are UI/meta operations.
   if (text.startsWith('/') && !text.startsWith('/ask ')) {
     if (handleSlash(text)) {
       input.value = '';
+      input.style.height = 'auto';
       saveInputDraft(v.sessionId);
       setTimeout(() => { v.isSending = false; }, 300);
       return;
@@ -472,6 +631,7 @@ export function send() {
   }
   if (handleSlash(text)) {
     input.value = '';
+    input.style.height = 'auto';
     saveInputDraft(v.sessionId);
     // Debounce: keep lock briefly to prevent accidental double-trigger of slash commands
     setTimeout(() => { v.isSending = false; }, 300);
@@ -484,7 +644,12 @@ export function send() {
     state.inputHistory.push(text);
     if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
     try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {
-      console.warn('[input] history save failed:', e);
+      // Quota exceeded — trim history to 100 entries and retry once
+      if (state.inputHistory.length > 100) {
+        state.inputHistory = state.inputHistory.slice(-100);
+        try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e2) {}
+      }
+      console.debug('[input] history save failed:', e);
     }
   }
   v.historyIndex = -1;
@@ -617,20 +782,22 @@ function removeQueuedItem(sessionId, item) {
   refreshQueue(sessionId);
 }
 
-/** Called on 'done' event — send first queued message as normal UserInput. */
+/** Called on 'done' event — send first queued message as normal UserInput.
+ *  Works even when the session isn't currently displayed (view is null):
+ *  DOM operations are skipped, but the WS message is still sent. */
 export function drainMessageQueue(sessionId) {
   const q = state.messageQueue[sessionId];
   if (!q || q.length === 0) return false;
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
   const item = q[0];
   const view = findViewBySessionId(sessionId);
-  if (!view || !state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
 
   // Remove from queue
   q.shift();
   refreshQueue(sessionId);
 
-  // Render in chat (only if this is the active view)
-  if (activeView && activeView.sessionId === sessionId) {
+  // Render in chat (only if this session is the active view)
+  if (view && activeView && activeView.sessionId === sessionId) {
     if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
@@ -644,13 +811,15 @@ export function drainMessageQueue(sessionId) {
     if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
     try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
   }
-  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) });
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) }, sessionId);
 
   // Send as normal UserInput
-  view.isSending = true;
   if (sessionId) state.turnExpecting[sessionId] = true;
-  view.historyIndex = -1;
-  view.historyDraft = '';
+  if (view) {
+    view.isSending = true;
+    view.historyIndex = -1;
+    view.historyDraft = '';
+  }
 
   if (item.skillName) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
@@ -663,7 +832,7 @@ export function drainMessageQueue(sessionId) {
       })),
       clientMessageId,
       sessionId,
-      chatWidth: view.dom.chat?.clientWidth || 0
+      chatWidth: view?.dom?.chat?.clientWidth || 0
     });
   }
 
@@ -687,18 +856,19 @@ export function drainMessageQueue(sessionId) {
     }
   }, state.streamTimeoutMs + 30000);
 
-  // Clean up thinking placeholders
-  if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-  view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
-    const row = el.closest('.row');
-    if (row) row.remove();
-  });
-  view.stream.currentAiBubble = null;
-  view.stream.aiText = '';
-  view.stream.currentThinkingBubble = null;
-  view.stream.thinkingText = '';
-
-  setTimeout(() => { view.isSending = false; }, 300);
+  // Clean up thinking placeholders (only for displayed sessions)
+  if (view) {
+    if (window.__stopThinkingTimer) window.__stopThinkingTimer();
+    view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+      const row = el.closest('.row');
+      if (row) row.remove();
+    });
+    view.stream.currentAiBubble = null;
+    view.stream.aiText = '';
+    view.stream.currentThinkingBubble = null;
+    view.stream.thinkingText = '';
+    setTimeout(() => { view.isSending = false; }, 300);
+  }
   return true;
 }
 
@@ -829,13 +999,14 @@ export function initInput(view) {
     }
     if (files.length === 0) return; // normal text paste, let browser handle it
     e.preventDefault();
+    e.stopPropagation(); // prevent document-level paste from double-processing
     files.forEach(file => addFileAttachment(file));
   });
 
   // Keydown handler — slash autocomplete navigation, input history navigation, Enter-to-send
   input.onkeydown = (e) => {
     setActiveView(view);
-    // Escape cancels ask mode or skill mode
+    // Escape cancels ask/skill/compact mode
     if (e.key === 'Escape') {
       if (view.stream.askMode) {
         e.preventDefault();
@@ -847,8 +1018,13 @@ export function initInput(view) {
         cancelSkillMode();
         return;
       }
+      if (view.compactMode) {
+        e.preventDefault();
+        cancelCompactMode();
+        return;
+      }
     }
-    // Backspace/Delete on empty input cancels ask/skill mode (like removing a tag)
+    // Backspace/Delete on empty input cancels ask/skill/compact mode (like removing a tag)
     if ((e.key === 'Backspace' || e.key === 'Delete') && input.value.trim() === '') {
       if (view.stream.askMode) {
         e.preventDefault();
@@ -858,6 +1034,11 @@ export function initInput(view) {
       if (view.skillMode) {
         e.preventDefault();
         cancelSkillMode();
+        return;
+      }
+      if (view.compactMode) {
+        e.preventDefault();
+        cancelCompactMode();
         return;
       }
     }
@@ -925,35 +1106,68 @@ export function initInput(view) {
     }
   };
 
-  // Attach button — hidden file input trigger
+  // Attach button — hidden file input trigger (supports multiple files)
   attachBtn.onclick = () => {
     setActiveView(view);
     const f = document.createElement('input');
     f.type = 'file';
+    f.multiple = true;
     f.style.display = 'none';
     document.body.appendChild(f);
     f.onchange = (e) => {
-      const file = e.target.files[0];
-      if (file) addFileAttachment(file);
+      const files = Array.from(e.target.files);
+      files.forEach(file => addFileAttachment(file));
       f.remove();
     };
     f.click();
   };
 
-  // Drag & drop on document.body — only register once (primary view)
+  // Drag & drop + paste on document.body — only register once (primary view)
   if (view.id === 'primary') {
+    let dragCounter = 0;
+    document.body.addEventListener('dragenter', (e) => {
+      if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        dragCounter++;
+        document.body.classList.add('drag-over');
+      }
+    });
     document.body.addEventListener('dragover', (e) => {
       e.preventDefault();
       e.stopPropagation();
     });
+    document.body.addEventListener('dragleave', (e) => {
+      if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          document.body.classList.remove('drag-over');
+        }
+      }
+    });
     document.body.addEventListener('drop', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      dragCounter = 0;
+      document.body.classList.remove('drag-over');
       const files = [];
       if (e.dataTransfer.files) {
         for (const f of e.dataTransfer.files) files.push(f);
       }
       files.forEach(f => addFileAttachment(f));
+    });
+    // Paste image support (Cmd/Ctrl+V)
+    document.addEventListener('paste', (e) => {
+      const items = e.clipboardData && e.clipboardData.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type && item.type.startsWith('image/')) {
+          const f = item.getAsFile();
+          if (f) {
+            e.preventDefault();
+            addFileAttachment(f);
+          }
+        }
+      }
     });
   }
 
@@ -1104,10 +1318,9 @@ export function initInput(view) {
     }
   });
 
-  // Ask/skill indicator cancel buttons (view-specific element IDs)
+  // Ask/skill indicator cancel buttons
   {
-    const prefix = view.id === 'primary' ? '' : 'secondary-';
-    const askCancel = document.getElementById(prefix + 'ask-indicator-cancel');
+    const askCancel = document.getElementById('ask-indicator-cancel');
     if (askCancel) {
       askCancel.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -1116,12 +1329,30 @@ export function initInput(view) {
         input.focus();
       });
     }
-    const skillCancel = document.getElementById(prefix + 'skill-indicator-cancel');
+    const skillCancel = document.getElementById('skill-indicator-cancel');
     if (skillCancel) {
       skillCancel.addEventListener('click', (e) => {
         e.stopPropagation();
         setActiveView(view);
         cancelSkillMode();
+        input.focus();
+      });
+    }
+    const compactCancel = document.getElementById('compact-indicator-cancel');
+    if (compactCancel) {
+      compactCancel.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setActiveView(view);
+        cancelCompactMode();
+        input.focus();
+      });
+    }
+    const planCancel = document.getElementById('plan-indicator-cancel');
+    if (planCancel) {
+      planCancel.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setActiveView(view);
+        cancelPlanMode();
         input.focus();
       });
     }

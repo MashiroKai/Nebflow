@@ -5,8 +5,9 @@ import cats.effect.std.Queue
 import cats.syntax.all.*
 import fs2.{Pipe, Stream}
 import io.circe.syntax.*
-import io.circe.{Json, parser}
+import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.SharedResources
+import nebflow.core.flow.FlowTreeRegistry
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.NeblinkService
 import nebflow.service.ConfigService
@@ -411,7 +412,8 @@ class RestApiRoutes(
               case Some(tool) =>
                 val projectRoot = hc.downField("projectRoot").as[String].getOrElse(System.getProperty("user.dir", "."))
                 val ctx = nebflow.core.tools.ToolContext(
-                  projectRoot = projectRoot
+                  projectRoot = projectRoot,
+                  isRemoteExec = true
                 )
                 tool.call(params, ctx).attempt.flatMap {
                   case Right(Right(result)) => Ok(Json.obj("output" -> result.asJson))
@@ -421,6 +423,7 @@ class RestApiRoutes(
                 }
               case None =>
                 BadRequest(Json.obj("error" -> s"Unknown tool: $action".asJson))
+            end match
           }
       }
 
@@ -625,6 +628,39 @@ class RestApiRoutes(
               }
             end if
           end if
+
+    // POST /api/flow/event — Source scripts inject external events (no auth, local only)
+    case req @ POST -> Root / "flow" / "event" =>
+      req.as[Json].flatMap { body =>
+        val sessionId = body.hcursor.downField("sessionId").as[String].getOrElse("")
+        val eventType = body.hcursor.downField("type").as[String].getOrElse("")
+        val data = body.hcursor.downField("data").as[JsonObject].getOrElse(JsonObject.empty)
+
+        if sessionId.isEmpty || eventType.isEmpty then
+          BadRequest(Json.obj("error" -> "Missing 'sessionId' or 'type'".asJson))
+        else
+          FlowTreeRegistry.get(sessionId).flatMap {
+            case Some(_) =>
+              // EventFired removed — pipelines don't subscribe to external events
+              Ok(Json.obj("status" -> "ok".asJson, "event" -> eventType.asJson))
+            case None =>
+              NotFound(Json.obj("error" -> s"No FlowTree for session '$sessionId'".asJson))
+          }
+      }
+
+    // GET /flow/status/:sessionId — return all pipeline states for frontend
+    // NOTE: Router mounts this under /api prefix, so full path is /api/flow/status/:sessionId
+    case GET -> Root / "flow" / "status" / sessionId =>
+      if sessionId.isEmpty then BadRequest(Json.obj("error" -> "Missing sessionId".asJson))
+      else
+        for
+          states <- nebflow.core.flow.PipelineStateStore.loadAll(sessionId)
+          response = Json.obj(
+            "sessionId" -> sessionId.asJson,
+            "pipelines" -> states.asJson
+          )
+          result <- Ok(response)
+        yield result
   }
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =

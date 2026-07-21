@@ -14,7 +14,7 @@ import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
 import nebflow.core.telemetry.TelemetryReporter
-import nebflow.core.tools.{RemoteExecutor, ToolRegistry}
+import nebflow.core.tools.{RemoteExecutor, ToolLoader, ToolRegistry}
 import nebflow.llm.*
 import nebflow.neblink.*
 import nebflow.service.{ConfigSnapshot, *}
@@ -137,7 +137,39 @@ object GatewayMain extends IOApp.Simple:
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig)
       _ <- logger.info("MCP servers initialized")
+      _ <- loadExternalTools()
     yield ()
+
+  private def loadExternalTools(): IO[Unit] =
+    for
+      _ <- ToolLoader.reload()
+      _ <- ToolLoader.startFileWatcher().start // background fiber — hot reload on file changes
+    yield ()
+
+  /**
+   * Background heartbeat loop for NebLink server mode.
+   * Every 30 seconds: send heartbeat, update peer list + trusted IPs.
+   * Runs as a fire-and-forget fiber via `.start`.
+   */
+  private def startHeartbeatLoop(
+    client: nebflow.neblink.CoordClient,
+    neblinkService: NeblinkService
+  ): IO[Unit] =
+    val hbLogger = NebflowLogger.forName("nebflow.neblink.heartbeat")
+    def loop: IO[Unit] =
+      IO.sleep(30.seconds) *> client.heartbeat.flatMap {
+        case Right(coordPeers) =>
+          val neblinkPeers = client.toNeblinkPeers(coordPeers)
+          val peerIps = client.peerAddresses(coordPeers)
+          neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
+            neblinkService.updateTrustedIps(peerIps) *>
+            neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+        case Left(err) =>
+          hbLogger.warn(s"Heartbeat failed: $err")
+      } *> IO.defer(loop)
+    loop
+
+  end startHeartbeatLoop
 
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
     llm = ServiceLlmConfig(
@@ -184,15 +216,9 @@ object GatewayMain extends IOApp.Simple:
             sessionStore.load.flatMap { _ =>
               LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
                 case (handle, registry, healthMonitor, releaseBackend) =>
-                  // Load persisted session model overrides
-                  sessionStore.listSessions.flatMap { sessions =>
-                    val persisted = sessions.flatMap { s =>
-                      s.modelRef match
-                        case Some(ref) => registry.getCandidateForRef(ref).map(_.map(s.id -> _)).unsafeRunSync()
-                        case None => None
-                    }.toMap
-                    sessionModelOverrides.set(persisted)
-                  } *> McpManager.create.flatMap { mcpManager =>
+                  // Clear per-session model overrides on restart so all sessions
+                  // follow the global fallback order from config.
+                  sessionStore.clearAllSessionModels() *> McpManager.create.flatMap { mcpManager =>
                     // --- Fast path: only essential init before server start ---
                     val chatRoutes = new ChatRoutes(handle, token)
                     val isConfigured = config.llm.providers.nonEmpty
@@ -226,6 +252,8 @@ object GatewayMain extends IOApp.Simple:
                               nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
                                 val hooksConfig = HooksConfigLoader.load(os.pwd)
                                 val hookEngine = HookEngine(hooksConfig)
+                                val actorSystem = nebflow.actor.ActorSystem("local")
+                                val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
                                 val sharedResources = SharedResources(
                                   llm = handle,
                                   dispatcher = dispatcher,
@@ -243,7 +271,9 @@ object GatewayMain extends IOApp.Simple:
                                   sessionModelOverrides = sessionModelOverrides,
                                   providerRegistry = registry,
                                   healthMonitor = healthMonitor,
-                                  hookEngine = hookEngine
+                                  actorSystem = actorSystem,
+                                  hookEngine = hookEngine,
+                                  voiceMutedRef = voiceMutedRef
                                 )
                                 // Initialize telemetry (opt-out aware, fire-and-forget on failure)
                                 val telemetryIO = TelemetryReporter.create().handleErrorWith { e =>
@@ -256,18 +286,6 @@ object GatewayMain extends IOApp.Simple:
                                   val configService = ConfigService
 
                                   val wsHub = new WsHub()
-
-                                  // Dream scheduler: event-driven memory consolidation + pattern extraction
-                                  val memoryAgentManager = new MemoryAgentManager(
-                                    dispatcher,
-                                    sessionStore
-                                  )
-                                  // Wire dreamScheduler into SharedResources (created after SharedResources init)
-                                  val sharedResourcesWithDream = sharedResourcesWithTelemetry.copy(
-                                    dreamSchedulerRef = Some(memoryAgentManager.dreamScheduler)
-                                  )
-                                  memoryAgentManager.setSharedResources(sharedResourcesWithDream)
-                                  memoryAgentManager.setWsHub(wsHub)
 
                                   // --- Bridge Manager (plugins: telegram, etc.) ---
                                   val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
@@ -309,17 +327,22 @@ object GatewayMain extends IOApp.Simple:
                                         new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
                                           dispatcher
                                         )
-                                      // Wire Tailscale discovery — replaces cloud relay entirely.
-                                      // Sync actor calls discoverCycle periodically; WS presence connections maintain liveness.
+                                      // Check if NebLink server is configured; if so, create client for NebLink-based discovery
+                                      val coordClient: Option[nebflow.neblink.CoordClient] =
+                                        neblinkService.neblinkConfig.unsafeRunSync() match
+                                          case nc if nc.coordinator.isDefined =>
+                                            Some(new nebflow.neblink.CoordClient(nc.coordinator.get, cfg.port.value))
+                                          case _ => None
+                                      // Discovery service — uses NebLink server if configured, otherwise Tailscale
                                       val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
                                         neblinkService,
                                         cfg.port.value,
-                                        presenceService
+                                        presenceService,
+                                        coordClient
                                       )
                                       neblinkService.setDiscoveryHook(
-                                        tsDiscovery.discoverCycle.handleErrorWith(e =>
-                                          logger.debug(s"Tailscale discovery: ${e.getMessage}").void
-                                        )
+                                        tsDiscovery.discoverCycle
+                                          .handleErrorWith(e => logger.debug(s"Discovery error: ${e.getMessage}").void)
                                       ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
                                         neblinkService.addPeerChangeCallback(
                                           wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
@@ -329,16 +352,17 @@ object GatewayMain extends IOApp.Simple:
                                         neblinkService.setSendDataFn((deviceId, channel, payload) =>
                                           presenceService.sendData(deviceId, channel, payload)
                                         ) *>
-                                        // Trigger an immediate discovery cycle now that the Tailscale hook is wired.
-                                        // Without this, the sync loop's first meaningful cycle is delayed by
-                                        // syncIntervalSec (default 300s) because the very first cycle runs before
-                                        // the hook is set (race with NeblinkService.create's unsafeRunAndForget).
+                                        // Trigger an immediate discovery cycle now that the hook is wired.
                                         neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+                                        // Start NebLink server heartbeat loop (if configured) — maintains
+                                        // session liveness and updates peer list every 30 seconds.
+                                        coordClient
+                                          .traverse_(client => startHeartbeatLoop(client, neblinkService).start.void) *>
                                         // Create Dropbox service (cross-device messaging & file transfer)
                                         nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
                                           dropboxService =>
                                             val sharedResourcesWithBridge =
-                                              sharedResourcesWithDream.copy(
+                                              sharedResourcesWithTelemetry.copy(
                                                 bridgeManager = Some(bridgeManager),
                                                 neblinkService = Some(neblinkService),
                                                 dropboxService = Some(dropboxService)
@@ -466,6 +490,7 @@ object GatewayMain extends IOApp.Simple:
                                                 }
                                                 .guarantee(
                                                   logger.info("shutting down...") *>
+                                                    coordClient.traverse_(_.logout) *>
                                                     telemetry.fold(IO.unit)(_.shutdown) *>
                                                     mcpManager.stopAll() *>
                                                     releaseBackend
