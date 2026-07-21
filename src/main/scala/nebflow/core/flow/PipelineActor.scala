@@ -141,7 +141,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
 
       for
         _ <- logger.info(s"PipelineActor '${config.name}' created (flow: ${config.flowName})")
-        _ <- saveState(stateRef, config)  // persist initial idle state
+        _ <- saveState(stateRef, config) // persist initial idle state
       yield running(ctx, stateRef, config)
     }
 
@@ -301,8 +301,11 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
       defOpt <- cfg.resources.agentLibrary.get(agentName)
       _ <- defOpt match
         case None =>
-          ctx.self ! PipelineCommand.StepFailed(step.id, s"Agent '$agentName' not found")
-          IO.unit
+          // Mark as Running so handleStepFailed processes the failure
+          // (otherwise the step stays Pending and the pipeline hangs forever)
+          stateRef.update(s => s.copy(stepStatus = s.stepStatus + (step.id -> StepStatus.Running.toString))) *> IO(
+            ctx.self ! PipelineCommand.StepFailed(step.id, s"Agent '$agentName' not found")
+          )
         case Some(agentDef) =>
           val agentUid = s"pipe-${cfg.name.take(20)}-${step.id}-${java.util.UUID.randomUUID().toString.take(8)}"
           for
@@ -676,7 +679,6 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               stepAdapter(ctx.self, cfg.name, stepId, agentRef, timeout, isVerify, agentRef.path.toString),
               s"$agentUid-adapter"
             )
-            _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
             _ <- agentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
             _ = logger.info(s"[${cfg.name}] Spawned '$stepId' ($agentName)")
           yield ()
@@ -744,8 +746,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               yield Behaviors.stopped[AgentEvent]
 
         override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
-          FlowMembership.leaveAll(subagentRef.path.toString)
-      )
+          FlowMembership.leaveAll(subagentRef.path.toString))
     }
 
   // ============================================================
@@ -760,7 +761,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
   private def withMemory(prompt: String, cfg: PipelineConfig): String =
     if cfg.flowMemory.isBlank then prompt
     else
-      val mem = if cfg.flowMemory.length > MaxMemoryChars
+      val mem =
+        if cfg.flowMemory.length > MaxMemoryChars
         then cfg.flowMemory.take(MaxMemoryChars) + "\n... (truncated)"
         else cfg.flowMemory
       s"=== Flow Memory (accumulated from past runs) ===\n$mem\n=== End Memory ===\n\n$prompt"
@@ -807,24 +809,22 @@ Rules:
                 logger.info(s"[${cfg.name}] Flow memory updated (${newMemory.length} chars)")
             else logger.warn(s"[${cfg.name}] Reflect returned empty memory, skipping save")
           }
-          .handleErrorWith(e =>
-            logger.warn(s"[${cfg.name}] Reflect failed: ${e.getMessage}").void
-          )
+          .handleErrorWith(e => logger.warn(s"[${cfg.name}] Reflect failed: ${e.getMessage}").void)
       )
       // Trigger evolution: analyze flow definition for improvements
       _ <- ctx.forkTurn(
-        FlowEvolver.runEvolution(
-          cfg.flowName,
-          cfg.resources.llm,
-          cfg.sessionId,
-          cfg.name,
-          stepSummary,
-          passed,
-          state.iteration,
-          cfg.flowMemory
-        ).handleErrorWith(e =>
-          logger.warn(s"[${cfg.name}] Evolution failed: ${e.getMessage}").void
-        )
+        FlowEvolver
+          .runEvolution(
+            cfg.flowName,
+            cfg.resources.llm,
+            cfg.sessionId,
+            cfg.name,
+            stepSummary,
+            passed,
+            state.iteration,
+            cfg.flowMemory
+          )
+          .handleErrorWith(e => logger.warn(s"[${cfg.name}] Evolution failed: ${e.getMessage}").void)
       )
     yield ()
 
@@ -852,6 +852,8 @@ $memBlock
 
 Produce the updated memory file:"""
 
+  end buildReflectPrompt
+
   private def buildStepSummary(
     results: Map[String, String],
     failedReasons: Map[String, String],
@@ -868,6 +870,8 @@ Produce the updated memory file:"""
           sb.append(s"[$id] ${output.take(800)}\n")
     }
     sb.toString
+
+  end buildStepSummary
 
   private[flow] def resolveTemplate(prompt: String, results: Map[String, String]): String =
     results.foldLeft(prompt) { case (p, (id, output)) =>
@@ -911,13 +915,12 @@ Produce the updated memory file:"""
 
   private def parseVerdict(text: String): VerifyResult =
     text.linesIterator
-      .collect {
-        case VerdictRegex(status, reason) =>
-          val passed = status.equalsIgnoreCase("PASS")
-          val summary = reason.trim match
-            case "" => if passed then "Verification passed." else "Verification failed."
-            case r => r
-          VerifyResult(passed, summary)
+      .collect { case VerdictRegex(status, reason) =>
+        val passed = status.equalsIgnoreCase("PASS")
+        val summary = reason.trim match
+          case "" => if passed then "Verification passed." else "Verification failed."
+          case r => r
+        VerifyResult(passed, summary)
       }
       .toList
       .lastOption

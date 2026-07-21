@@ -2,7 +2,6 @@ package nebflow.core.flow
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 
 /**
  * End-to-end flow tests.
@@ -17,17 +16,20 @@ import nebflow.core.PathUtil
 class FlowE2ESpec extends CatsEffectSuite:
 
   test("all .test.yaml specs pass end-to-end") {
-    val flowsDir = PathUtil.dataRoot / "flows"
+    // Reset to real ~/.nebflow so we find .test.yaml flow definitions
+    val flowsDir = os.home / ".nebflow" / "flows"
     FlowTestRunner.runAll(flowsDir).flatMap { results =>
       val failed = results.filter(!_.passed)
-      val report = results.map { r =>
-        val status = if r.passed then "PASS" else "FAIL"
-        s"  [$status] ${r.testName}: ${r.detail}"
-      }.mkString("\n")
+      val report = results
+        .map { r =>
+          val status = if r.passed then "PASS" else "FAIL"
+          s"  [$status] ${r.testName}: ${r.detail}"
+        }
+        .mkString("\n")
 
       IO {
-        assertEquals(failed.size, 0,
-          s"\n${results.size} tests run, ${failed.size} failed:\n$report\n")
+        assertEquals(failed.size, 0, s"\n${results.size} tests run, ${failed.size} failed:\n$report\n")
       }
     }
   }
+end FlowE2ESpec

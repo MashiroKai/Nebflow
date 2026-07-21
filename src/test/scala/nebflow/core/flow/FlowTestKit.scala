@@ -14,7 +14,15 @@ import nebflow.core.task.{Task, TaskCreateInput, TaskStore, TaskUpdateInput}
 import nebflow.gateway.{RateLimiter, SessionStore}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
-import nebflow.llm.{ThinkingConfig, NebflowServiceConfig, ServiceLlmConfig, ModelChainConfig, ModelCandidate, ProviderRegistry, ProviderHealthMonitor}
+import nebflow.llm.{
+  ThinkingConfig,
+  NebflowServiceConfig,
+  ServiceLlmConfig,
+  ModelChainConfig,
+  ModelCandidate,
+  ProviderRegistry,
+  ProviderHealthMonitor
+}
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
@@ -65,11 +73,24 @@ object FlowTestKit:
             )
             val healthMonitor = ProviderHealthMonitor(providerRegistry)
             val resources = SharedResources(
-              llm, dispatcher, sessionStore, tempDir, thinkingRef,
-              rateLimiter, fileChangeTracker, Defaults.ContextWindow,
-              agentLibrary, askSemaphore, taskStore, historyArchiver,
-              fileLockManager, modelOverrides, providerRegistry,
-              healthMonitor, actorSystem, voiceMutedRef = voiceMuted
+              llm,
+              dispatcher,
+              sessionStore,
+              tempDir,
+              thinkingRef,
+              rateLimiter,
+              fileChangeTracker,
+              Defaults.ContextWindow,
+              agentLibrary,
+              askSemaphore,
+              taskStore,
+              historyArchiver,
+              fileLockManager,
+              modelOverrides,
+              providerRegistry,
+              healthMonitor,
+              actorSystem,
+              voiceMutedRef = voiceMuted
             )
             FlowTestKit(tempDir, resources, actorSystem)
         }
@@ -79,8 +100,7 @@ object FlowTestKit:
   private def writeAgentJson(root: os.Path, name: String, tools: List[String]): IO[Unit] =
     IO.blocking {
       val dir = root / "agents" / name
-      os.write.over(dir / "agent.json",
-        Json.obj("name" -> name.asJson, "tools" -> tools.asJson).noSpaces)
+      os.write.over(dir / "agent.json", Json.obj("name" -> name.asJson, "tools" -> tools.asJson).noSpaces)
       os.write.over(dir / "system.md", s"You are $name. Follow instructions precisely.")
     }.void
 
@@ -134,12 +154,19 @@ final class FlowTestKit(
     parentAgentRef: ActorRef[AgentCommand]
   ): IO[ActorRef[PipelineActor.PipelineCommand]] =
     actorSystem.spawn(
-      PipelineActor(PipelineActor.PipelineConfig(
-        name = name, flowName = name, pipeline = pipeline,
-        parentAgentRef = parentAgentRef, wsSend = None,
-        sessionId = Some("test-session"), resources = resources,
-        projectRoot = tempDir.toString, safetyMode = "yolo"
-      )),
+      PipelineActor(
+        PipelineActor.PipelineConfig(
+          name = name,
+          flowName = name,
+          pipeline = pipeline,
+          parentAgentRef = parentAgentRef,
+          wsSend = None,
+          sessionId = Some("test-session"),
+          resources = resources,
+          projectRoot = tempDir.toString,
+          safetyMode = "yolo"
+        )
+      ),
       s"pipe-$name-${java.util.UUID.randomUUID().toString.take(8)}"
     )
 
@@ -170,9 +197,13 @@ end FlowTestKit
 object FakeLlm:
 
   private def meta(agentId: String) = LlmMeta(
-    sessionId = "test", agentId = agentId,
-    providerId = "test", model = "test/model",
-    durationMs = 0, fallbackChain = None, contextWindow = Some(Defaults.ContextWindow)
+    sessionId = "test",
+    agentId = agentId,
+    providerId = "test",
+    model = "test/model",
+    durationMs = 0,
+    fallbackChain = None,
+    contextWindow = Some(Defaults.ContextWindow)
   )
 
   private def resp(reply: String, agentId: String) =
@@ -192,24 +223,27 @@ object FakeLlm:
       val isReflect = allText.contains("updated memory")
       val isEvolve = allText.contains("flow optimization") || allText.contains("propose specific improvements")
       IO {
-        println(s"[FakeLlm.passing] agentId=${req.agentId} msgCount=${req.messages.size} isVerify=$isVerify isReflect=$isReflect isEvolve=$isEvolve first200=${allText.take(200)}")
+        println(
+          s"[FakeLlm.passing] agentId=${req.agentId} msgCount=${req.messages.size} isVerify=$isVerify isReflect=$isReflect isEvolve=$isEvolve first200=${allText.take(200)}"
+        )
       } *>
-      IO.pure(
-        if isVerify then
-          resp("Analysis complete.\nVERDICT: PASS", req.agentId)
-        else if isReflect then
-          resp("# Flow Memory: test\n\n## Patterns\n- Test pattern learned.\n", req.agentId)
-        else if isEvolve then
-          // Return the YAML unchanged (extract from prompt)
-          val yamlStart = allText.indexOf("=== Current Flow Definition ===")
-          val yamlEnd = allText.indexOf("=== End Definition ===")
-          if yamlStart >= 0 && yamlEnd > yamlStart then
-            resp(allText.substring(yamlStart + 31, yamlEnd).trim, req.agentId)
-          else resp("NO_CHANGE", req.agentId)
-        else
-          resp("Task completed.", req.agentId)
-      )
-    def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): fs2.Stream[IO, StreamChunk] =
+        IO.pure(
+          if isVerify then resp("Analysis complete.\nVERDICT: PASS", req.agentId)
+          else if isReflect then resp("# Flow Memory: test\n\n## Patterns\n- Test pattern learned.\n", req.agentId)
+          else if isEvolve then
+            // Return the YAML unchanged (extract from prompt)
+            val yamlStart = allText.indexOf("=== Current Flow Definition ===")
+            val yamlEnd = allText.indexOf("=== End Definition ===")
+            if yamlStart >= 0 && yamlEnd > yamlStart then
+              resp(allText.substring(yamlStart + 31, yamlEnd).trim, req.agentId)
+            else resp("NO_CHANGE", req.agentId)
+          else resp("Task completed.", req.agentId)
+        )
+    end send
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
   /** Verify always outputs VERDICT: FAIL. */
@@ -221,17 +255,22 @@ object FakeLlm:
           resp("Issues found.\nVERDICT: FAIL: output too brief", req.agentId)
         else if allText.contains("updated memory") then
           resp("# Flow Memory: test\n\n## Pitfalls\n- Brief outputs fail.\n", req.agentId)
-        else
-          resp("ok", req.agentId)
+        else resp("ok", req.agentId)
       )
-    def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): fs2.Stream[IO, StreamChunk] =
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
   /** Never outputs VERDICT — simulates agent ignoring instructions. */
   val noVerdict: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.pure(resp("Found some interesting patterns in the code.", req.agentId))
-    def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): fs2.Stream[IO, StreamChunk] =
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
 end FakeLlm
