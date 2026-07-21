@@ -166,8 +166,10 @@ object GatewayMain extends IOApp.Simple:
             neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
         case Left(err) =>
           hbLogger.warn(s"Heartbeat failed: $err")
-      } *> loop
+      } *> IO.defer(loop)
     loop
+
+  end startHeartbeatLoop
 
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
     llm = ServiceLlmConfig(
@@ -339,9 +341,8 @@ object GatewayMain extends IOApp.Simple:
                                         coordClient
                                       )
                                       neblinkService.setDiscoveryHook(
-                                        tsDiscovery.discoverCycle.handleErrorWith(e =>
-                                          logger.debug(s"Discovery error: ${e.getMessage}").void
-                                        )
+                                        tsDiscovery.discoverCycle
+                                          .handleErrorWith(e => logger.debug(s"Discovery error: ${e.getMessage}").void)
                                       ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
                                         neblinkService.addPeerChangeCallback(
                                           wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
@@ -355,7 +356,8 @@ object GatewayMain extends IOApp.Simple:
                                         neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
                                         // Start coordinator heartbeat loop (if configured) — maintains
                                         // session liveness and updates peer list every 30 seconds.
-                                        coordClient.traverse_(client => startHeartbeatLoop(client, neblinkService).start.void) *>
+                                        coordClient
+                                          .traverse_(client => startHeartbeatLoop(client, neblinkService).start.void) *>
                                         // Create Dropbox service (cross-device messaging & file transfer)
                                         nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
                                           dropboxService =>

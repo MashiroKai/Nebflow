@@ -143,6 +143,7 @@ case class NeblinkConfig(
 
 object NeblinkConfig:
   given Encoder[NeblinkConfig] = deriveEncoder
+
   given Decoder[NeblinkConfig] = Decoder.instance { c =>
     for
       enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(false))

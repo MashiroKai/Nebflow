@@ -1,24 +1,27 @@
 package nebflow.neblink
 
 import cats.effect.IO
-import io.circe.syntax.*
-import io.circe.parser.decode
-import io.circe.{Decoder, Encoder, Json}
 import io.circe.generic.semiauto.*
+import io.circe.parser.decode
+import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.NebflowLogger
 
-import java.net.{NetworkInterface, URI}
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
+import java.net.{NetworkInterface, URI}
+
 import scala.jdk.CollectionConverters.*
 
 /** Coordinator server configuration. */
 case class CoordinatorConfig(
-  server: String,       // e.g. "http://192.168.1.200:9090"
+  server: String, // e.g. "http://192.168.1.200:9090"
   networkId: String,
   secret: String
 )
+
 object CoordinatorConfig:
   given Encoder[CoordinatorConfig] = deriveEncoder
+
   given Decoder[CoordinatorConfig] = Decoder.instance { c =>
     for
       server <- c.downField("server").as[String]
@@ -30,6 +33,7 @@ object CoordinatorConfig:
 // ===== Internal types (matching coordinator's JSON response format) =====
 
 private[neblink] case class CoordEndpoint(address: String, port: Int, kind: String, label: String = "")
+
 private[neblink] case class CoordPeerInfo(
   deviceId: String,
   deviceName: String,
@@ -44,6 +48,7 @@ private case class HeartbeatResponse(peers: List[CoordPeerInfo])
 // ===== Circe Decoders =====
 
 object CoordCodecs:
+
   given Decoder[CoordEndpoint] = Decoder.instance { c =>
     for
       address <- c.downField("address").as[String]
@@ -88,7 +93,8 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
   private val logger = NebflowLogger.forName("nebflow.neblink.coordclient")
 
   // HTTP client that bypasses system proxy (direct LAN/WAN access)
-  private val httpClient = HttpClient.newBuilder()
+  private val httpClient = HttpClient
+    .newBuilder()
     .proxy(java.net.ProxySelector.of(null))
     .build()
 
@@ -103,8 +109,7 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
         .flatMap(_.getInetAddresses.asScala)
         .filter(_.isInstanceOf[java.net.Inet4Address])
         .map(addr => CoordEndpoint(addr.getHostAddress, serverPort, "lan", ""))
-    catch
-      case _: Exception => Nil
+    catch case _: Exception => Nil
   }
 
   /** Login to coordinator. Stores session token. Returns initial peer list. */
@@ -116,20 +121,22 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
   ): IO[Either[String, List[CoordPeerInfo]]] =
     for
       localEndpoints <- if endpoints.isEmpty then detectLocalEndpoints else IO.pure(endpoints)
-      body = Json.obj(
-        "networkId" -> config.networkId.asJson,
-        "secret" -> config.secret.asJson,
-        "deviceId" -> deviceId.asJson,
-        "deviceName" -> deviceName.asJson,
-        "platform" -> platform.asJson,
-        "endpoints" -> localEndpoints.map { e =>
-          Json.obj(
-            "address" -> e.address.asJson,
-            "port" -> e.port.asJson,
-            "kind" -> e.kind.asJson
-          )
-        }.asJson
-      ).noSpaces
+      body = Json
+        .obj(
+          "networkId" -> config.networkId.asJson,
+          "secret" -> config.secret.asJson,
+          "deviceId" -> deviceId.asJson,
+          "deviceName" -> deviceName.asJson,
+          "platform" -> platform.asJson,
+          "endpoints" -> localEndpoints.map { e =>
+            Json.obj(
+              "address" -> e.address.asJson,
+              "port" -> e.port.asJson,
+              "kind" -> e.kind.asJson
+            )
+          }.asJson
+        )
+        .noSpaces
       result <- sendRequest("POST", s"${config.server}/api/device/login", body, None).flatMap {
         case Right(respBody) =>
           decode[LoginResponse](respBody) match
@@ -137,7 +144,8 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
               IO { sessionToken = Some(login.token) } *>
                 logger.info(s"Logged into coordinator: ${login.peers.size} peer(s)").as(Right(login.peers))
             case Left(err) =>
-              logger.warn(s"Coordinator login decode error: ${err.getMessage}")
+              logger
+                .warn(s"Coordinator login decode error: ${err.getMessage}")
                 .as(Left(s"Decode error: ${err.getMessage}"))
         case Left(err) => IO.pure(Left(err))
       }
@@ -212,7 +220,8 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
   ): IO[Either[String, String]] =
     IO.blocking {
       try
-        val builder = HttpRequest.newBuilder()
+        val builder = HttpRequest
+          .newBuilder()
           .uri(URI.create(url))
           .timeout(java.time.Duration.ofSeconds(10))
         token.foreach(t => builder.header("Authorization", s"Bearer $t"))
@@ -220,18 +229,13 @@ class CoordClient(config: CoordinatorConfig, serverPort: Int):
           builder.header("Content-Type", "application/json")
           if body.nonEmpty then builder.POST(HttpRequest.BodyPublishers.ofString(body))
           else builder.POST(HttpRequest.BodyPublishers.noBody())
-        else if method == "DELETE" then
-          builder.DELETE()
-        else
-          builder.GET()
+        else if method == "DELETE" then builder.DELETE()
+        else builder.GET()
         val request = builder.build()
         val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-        if response.statusCode() >= 200 && response.statusCode() < 300 then
-          Right(response.body())
-        else
-          Left(s"HTTP ${response.statusCode()}: ${response.body()}")
-      catch
-        case e: Exception => Left(e.getMessage)
+        if response.statusCode() >= 200 && response.statusCode() < 300 then Right(response.body())
+        else Left(s"HTTP ${response.statusCode()}: ${response.body()}")
+      catch case e: Exception => Left(e.getMessage)
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 
 end CoordClient
