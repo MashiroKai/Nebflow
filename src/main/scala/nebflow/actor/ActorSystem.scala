@@ -8,11 +8,12 @@ import nebflow.core.NebflowLogger
 import scala.concurrent.duration.FiniteDuration
 
 /**
- * The actor system — registry + message routing.
+ * The actor system — registry + message routing + death watch.
  *
  * spawn creates local actors (Queue + Fiber + Behavior loop).
  * resolve looks up actors by path (local registry lookup).
  * stop cancels an actor's fiber, releasing all resources.
+ * watch / unwatch manage death watch subscriptions.
  */
 trait ActorSystem:
   def localDevice: String
@@ -20,6 +21,9 @@ trait ActorSystem:
   def resolve[Msg](path: String): IO[ActorRef[Msg]]
   def stop(ref: ActorRef[?]): IO[Unit]
   def stopAll: IO[Unit]
+  def watch(watcher: ActorPath, target: ActorPath): IO[Unit]
+  def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit]
+end ActorSystem
 
 object ActorSystem:
 
@@ -29,7 +33,7 @@ object ActorSystem:
 
   /** Create an actor system from a given device name, as a Resource. */
   def resource(deviceName: String): cats.effect.Resource[IO, ActorSystem] =
-    cats.effect.Resource.eval(IO(apply(deviceName)))
+    cats.effect.Resource.make(IO(apply(deviceName)))(_.stopAll)
 
 end ActorSystem
 
@@ -39,10 +43,14 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
 
   private case class RegistryEntry(
     ref: ActorRef[?],
-    fiber: Fiber[IO, Throwable, Unit]
+    fiber: Fiber[IO, Throwable, Unit],
+    systemQueue: Queue[IO, SystemSignal]
   )
 
   private val registry: Ref[IO, Map[String, RegistryEntry]] = Ref.unsafe(Map.empty)
+
+  /** Death watch: target path → set of watcher paths. */
+  private val watchers: Ref[IO, Map[String, Set[String]]] = Ref.unsafe(Map.empty)
 
   def spawn[Msg](
     behavior: Behavior[Msg],
@@ -53,16 +61,17 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
     val ctxLog = NebflowLogger.forName(s"nebflow.actor.$name")
     for
       queue <- Queue.unbounded[IO, Msg]
-      turnRef <- Ref.of[IO, Option[Fiber[IO, Throwable, Unit]]](None)
+      sysQueue <- Queue.unbounded[IO, SystemSignal]
+      turnFibersRef <- Ref.of[IO, Map[String, Fiber[IO, Throwable, Unit]]](Map.empty)
       childrenRef <- Ref.of[IO, List[ActorRef[?]]](Nil)
       fiberPromise <- cats.effect.Deferred[IO, Fiber[IO, Throwable, Unit]]
-      ref = new LocalActorRef[Msg](path, queue, fiberPromise)
-      ctx = new LocalActorContext[Msg](ref, this, ctxLog, turnRef, childrenRef)
+      ref = new LocalActorRef[Msg](path, queue, sysQueue, fiberPromise)
+      ctx = new LocalActorContext[Msg](ref, this, ctxLog, turnFibersRef, childrenRef)
       initBehavior <- behavior.onStart(ctx)
       behaviorRef <- Ref.of[IO, Behavior[Msg]](initBehavior)
-      fiber <- actorLoop(path, ctx, queue, behaviorRef, ttl, childrenRef).start
+      fiber <- actorLoop(path, ctx, queue, sysQueue, behaviorRef, ttl, childrenRef).start
       _ <- fiberPromise.complete(fiber)
-      _ <- registry.update(_.updated(path.toString, RegistryEntry(ref, fiber)))
+      _ <- registry.update(_.updated(path.toString, RegistryEntry(ref, fiber, sysQueue)))
     yield ref
 
   end spawn
@@ -96,53 +105,106 @@ final class LocalActorSystem(val localDevice: String) extends ActorSystem:
     }
 
   // ============================================================
-  // Actor message loop
+  // Death watch
+  // ============================================================
+
+  def watch(watcher: ActorPath, target: ActorPath): IO[Unit] =
+    watchers.update(_.updatedWith(target.toString) {
+      case Some(set) => Some(set + watcher.toString)
+      case None => Some(Set(watcher.toString))
+    })
+
+  def unwatch(watcher: ActorPath, target: ActorPath): IO[Unit] =
+    watchers.update(_.updatedWith(target.toString) {
+      case Some(set) =>
+        val next = set - watcher.toString
+        if next.isEmpty then None else Some(next)
+      case None => None
+    })
+
+  /** Deliver Terminated signal to all watchers of the given path. */
+  private def notifyWatchers(deadPath: String, deadRef: ActorRef[?]): IO[Unit] =
+    watchers.get
+      .flatMap { watchersMap =>
+        val watcherPaths = watchersMap.getOrElse(deadPath, Set.empty)
+        // Clean up: remove dead actor from watchers map
+        watchers.update(_ - deadPath) *>
+          registry.get.flatMap { entries =>
+            watcherPaths.toList.traverse_ { wp =>
+              entries.get(wp) match
+                case Some(entry) => entry.systemQueue.offer(SystemSignal.Terminated(deadRef))
+                case None => IO.unit
+            }
+          }
+      }
+      .handleErrorWith(e => log.warn(s"notifyWatchers failed: ${e.getMessage}").void)
+
+  // ============================================================
+  // Actor message loop — dual queue (messages + system signals)
   // ============================================================
 
   private def actorLoop[Msg](
     path: ActorPath,
     ctx: LocalActorContext[Msg],
     queue: Queue[IO, Msg],
+    sysQueue: Queue[IO, SystemSignal],
     behaviorRef: Ref[IO, Behavior[Msg]],
     ttl: Option[FiniteDuration],
     childrenRef: Ref[IO, List[ActorRef[?]]]
   ): IO[Unit] =
-    val take: IO[Option[Msg]] = ttl match
+
+    // Three-way race: message vs system signal vs TTL
+    val take: IO[Either[Option[Msg], SystemSignal]] = ttl match
       case Some(duration) =>
-        IO.race(queue.take, IO.sleep(duration)).map {
-          case Left(msg) => Some(msg)
-          case Right(_) => None
-        }
+        IO.race(
+          IO.race(queue.take.map(msg => Some(msg): Option[Msg]), IO.sleep(duration).as(None: Option[Msg])).map(_.merge),
+          sysQueue.take
+        )
       case None =>
-        queue.take.map(Some(_))
+        IO.race(queue.take.map(Some(_)), sysQueue.take)
+
+    def processMessageOrSignal(
+      current: Behavior[Msg],
+      action: IO[Behavior[Msg]]
+    ): IO[Unit] =
+      action
+        .handleErrorWith(err => current.onError(ctx, err))
+        .flatMap { next =>
+          behaviorRef.set(next) *>
+            (if next.isStopped then current.onStop(ctx) else loop)
+        }
 
     def loop: IO[Unit] =
       take.flatMap {
-        case None =>
+        case Left(None) =>
           // TTL expired
           ctx.log.info(s"Actor $path TTL expired, stopping")
-          cleanupChildren(childrenRef)
-        case Some(msg) =>
-          (for
+          IO.unit // exit loop — guarantee handles cleanup
+        case Left(Some(msg)) =>
+          for
             current <- behaviorRef.get
-            next <- current
-              .receive(ctx, msg)
-              .handleErrorWith { err =>
-                ctx.log.error(s"Actor $path error in message processing: ${err.getMessage}")
-                IO.pure(current) // supervision: resume with same behavior
-              }
-            _ <- behaviorRef.set(next)
-          yield next).flatMap {
-            case b if b.isStopped =>
-              ctx.log.info(s"Actor $path stopped")
-              // Cancel any in-flight turn + stop children
-              ctx.cancelCurrentTurn() *> cleanupChildren(childrenRef)
-            case _ =>
-              loop
-          }
+            _ <- processMessageOrSignal(current, current.receive(ctx, msg))
+          yield ()
+        case Right(signal) =>
+          for
+            current <- behaviorRef.get
+            _ <- processMessageOrSignal(current, current.onSignal(ctx, signal))
+          yield ()
       }
 
-    loop
+    // Guarantee: always runs when loop ends (normal stop, crash, cancel)
+    loop.guarantee {
+      for
+        _ <- ctx
+          .cancelCurrentTurn()
+          .handleErrorWith(e => ctx.log.warn(s"cancelCurrentTurn during cleanup failed: ${e.getMessage}").void)
+        _ <- cleanupChildren(childrenRef)
+        _ <- behaviorRef.get
+          .flatMap(_.onStop(ctx))
+          .handleErrorWith(e => ctx.log.error(s"onStop failed: ${e.getMessage}").void)
+        _ <- notifyWatchers(path.toString, ctx.self)
+      yield ()
+    }
   end actorLoop
 
   private def cleanupChildren(childrenRef: Ref[IO, List[ActorRef[?]]]): IO[Unit] =

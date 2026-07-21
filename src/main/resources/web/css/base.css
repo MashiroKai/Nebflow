@@ -164,8 +164,45 @@ body.sidebar-collapsed #sidebar {
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
-/* ===== Bypass Toggle ===== */
+/* ===== Safety Mode Toggle ===== */
 .bypass-toggle {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.2s ease;
+  position: relative;
+}
+.bypass-toggle:hover {
+  background: var(--color-surface);
+}
+/* Shield icon color changes with safety mode */
+.bypass-toggle[data-mode="confirm-edits"] {
+  color: var(--color-frame-text-muted);
+}
+.bypass-toggle[data-mode="auto-edits"] {
+  color: #e8923c;
+}
+.bypass-toggle[data-mode="auto-all"] {
+  color: var(--color-error);
+}
+/* Text label below icon — always muted, does not change with mode */
+.bypass-label {
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--color-frame-text-muted);
+}
+.flow-toggle-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -179,11 +216,10 @@ body.sidebar-collapsed #sidebar {
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.bypass-toggle:hover {
+.flow-toggle-btn:hover {
   background: var(--color-surface);
   color: var(--color-text);
 }
-.bypass-toggle.active {
-  color: #e8923c;
-  background: rgba(232, 146, 60, 0.12);
+.flow-toggle-btn.active {
+  color: var(--color-text);
 }

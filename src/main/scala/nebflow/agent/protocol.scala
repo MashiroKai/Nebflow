@@ -31,15 +31,6 @@ object AgentCommand:
     replyTo: Option[ActorRef[List[String]]] = None
   ) extends AgentCommand
 
-  case class AskPermission(
-    requestId: String,
-    toolName: String,
-    summary: String,
-    replyTo: ActorRef[Boolean]
-  ) extends AgentCommand
-
-  case class StreamFiberStarted(fiber: cats.effect.Fiber[IO, Throwable, Unit]) extends AgentCommand
-
   case class LlmComplete(
     result: ConsumeResult,
     replyTo: Option[ActorRef[AgentEvent]],
@@ -67,8 +58,11 @@ object AgentCommand:
 
   case class TriggerCompaction(
     mode: String,
-    replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None
+    replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
+    postCompactInstruction: Option[String] = None
   ) extends AgentCommand
+
+  case class Retry(reason: String) extends AgentCommand
 
   case class AskQuestion(question: String, sessionId: String) extends AgentCommand
 
@@ -97,14 +91,35 @@ object AgentCommand:
    */
   case class ForwardPermission(deferred: cats.effect.Deferred[IO, Boolean], permJson: Json) extends AgentCommand
 
-  /** Frontend → agent: update bypass (auto-approve) status for this session. */
-  case class SetBypass(bypass: Boolean) extends AgentCommand
+  /** Frontend → agent: update safety mode for this session. */
+  case class SetSafetyMode(mode: nebflow.core.SafetyMode) extends AgentCommand
+
+  // ============================================================
+  // Plan mode commands
+  // ============================================================
+
+  /** WebSocketRoutes → agent: start plan mode with the given task. */
+  case class StartPlan(task: String) extends AgentCommand
+
+  /** Plan adapter → agent: plan agent completed a turn, carrying the plan text. */
+  case class PlanTurnComplete(planText: String) extends AgentCommand
+
+  /** Plan adapter → agent: plan agent failed or terminated. */
+  case class PlanFailed(error: String) extends AgentCommand
+
+  /** Frontend → agent: user approved the plan. */
+  case object PlanApproved extends AgentCommand
+
+  /** Frontend → agent: user sent feedback to adjust the plan. */
+  case class PlanFeedback(text: String) extends AgentCommand
+
+  /** Frontend → agent: user cancelled plan mode. */
+  case object PlanCancelled extends AgentCommand
 
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
 
-  case class UpdateLifecycle(lc: LifecycleContext) extends AgentCommand
   case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
 
   case class BackgroundTaskNotification(
@@ -152,6 +167,12 @@ object AgentCommand:
   case class SessionClosed(address: String) extends AgentCommand
   case class SessionUpdate(address: String, status: String) extends AgentCommand
 end AgentCommand
+
+/**
+ * Tool/compaction pipeline error — distinct from LLM failures.
+ * Carried via LlmFailed but pattern-matched to show correct message to user.
+ */
+case class ToolPipelineError(message: String) extends RuntimeException(message)
 
 sealed trait AgentEvent
 
@@ -354,7 +375,8 @@ case class CompactionJob(
   mode: String,
   replyDeferred: Option[cats.effect.Deferred[IO, Either[String, CompactionResult]]] = None,
   replyTo: Option[ActorRef[AgentEvent]] = None,
-  resumeAfterCompact: Boolean = true
+  resumeAfterCompact: Boolean = true,
+  postCompactInstruction: Option[String] = None
 )
 
 case class TurnContext(
@@ -362,18 +384,12 @@ case class TurnContext(
   systemPrefix: String,
   projectRoot: Option[String],
   rulesMd: Option[String],
-  memoryBlock: String,
   thinkingConfig: nebflow.llm.ThinkingConfig,
   branchChange: Option[SystemReminder] = None,
-  currentBranch: Option[String] = None
-)
-
-case class LifecycleContext(
-  systemPrefix: String,
-  agentDef: AgentDef,
-  memoryBlock: String,
-  rulesMd: Option[String],
-  projectRoot: Option[String]
+  currentBranch: Option[String] = None,
+  skillCatalog: String = "",
+  flowCatalog: String = "",
+  memoryBlock: String = ""
 )
 
 case class SessionContext(
@@ -384,16 +400,19 @@ case class SessionContext(
   depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None,
   fileHistory: Option[nebflow.core.tools.FileHistory] = None,
+  liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
   askMode: Option[String] = None,
   language: Option[String] = None,
   projectRoot: Option[String] = None,
   rulesMd: Option[String] = None,
   folderId: Option[String] = None,
-  lifecycle: Option[LifecycleContext] = None,
   chatWidth: Int = 0,
   gitBranch: Option[String] = None,
-  bypass: Boolean = false
+  safetyMode: String = "confirm-edits",
+  pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
+  pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
+  pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None
 )
 
 case class InteractionState(
@@ -402,16 +421,24 @@ case class InteractionState(
   pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None
 )
 
+/** Tracks what was last dispatched (LLM call or tool execution) for Retry. */
+case class LastDispatch(
+  isToolExecution: Boolean,
+  llmResult: Option[ConsumeResult] = None
+)
+
 case class ExecutionContext(
   messages: List[Message] = Nil,
   status: AgentStatus = AgentStatus.Idle,
   turnIdx: Int = 0,
   currentTurnId: Long = 0L,
-  activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
   interaction: Option[InteractionState] = None,
   pendingEvents: List[AgentCommand.ExternalEvent] = Nil,
   pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
-  emptyResponseRetries: Int = 0
+  emptyResponseRetries: Int = 0,
+  lastDispatch: Option[LastDispatch] = None,
+  delegateCount: Int = 0,
+  lastMaintenanceDelegateCount: Int = 0
 )
 
 object ExecutionContext:
@@ -422,7 +449,6 @@ object ExecutionContext:
       status = AgentStatus.Idle,
       turnIdx = turnIdx,
       currentTurnId = currentTurnId,
-      activeStreamFiber = None,
       interaction = None,
       pendingEvents = Nil,
       pendingImmediateInputs = Nil,
@@ -446,11 +472,29 @@ case class AgentSessionInfo(
   createdAt: Long = System.currentTimeMillis()
 )
 
+// ============================================================
+// Plan mode
+// ============================================================
+
+/**
+ * Tracks active plan mode state on the main agent.
+ *
+ * @param planAgentRef   ref to the plan sub-agent (for forwarding feedback)
+ * @param currentPlanText  latest plan text from the plan agent's last turn
+ * @param taskDescription  the original user task, for context injection on approve
+ */
+case class PlanModeState(
+  planAgentRef: ActorRef[AgentCommand],
+  currentPlanText: String = "",
+  taskDescription: String = ""
+)
+
 case class AgentState(
   session: SessionContext,
   execution: ExecutionContext,
   compaction: CompactionState,
-  agentSessions: List[AgentSessionInfo]
+  agentSessions: List[AgentSessionInfo],
+  planMode: Option[PlanModeState]
 )
 
 object AgentState:
@@ -459,7 +503,6 @@ object AgentState:
     messages: List[Message] = Nil,
     status: AgentStatus = AgentStatus.Idle,
     depth: Int = 0,
-    activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = None,
     sessionId: Option[String] = None,
     sessionName: Option[String] = None,
     pendingCompaction: Option[CompactionJob] = None,
@@ -471,12 +514,14 @@ object AgentState:
     wsSend: Json => IO[Unit] = _ => IO.unit,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
+    liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
     recentMessageIds: List[String] = Nil,
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
-    bypass: Boolean = false
+    safetyMode: String = "confirm-edits",
+    gitBranch: Option[String] = None
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -490,15 +535,18 @@ object AgentState:
         depth = depth,
         readTracker = readTracker,
         fileHistory = fileHistory,
+        liveFileTracker = liveFileTracker,
         contextWindow = contextWindow,
         folderId = folderId,
         projectRoot = projectRoot,
         rulesMd = rulesMd,
-        bypass = bypass
+        gitBranch = gitBranch,
+        safetyMode = safetyMode
       ),
-      ExecutionContext(messages, status, turnIdx, 0L, activeStreamFiber, interaction),
+      ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
-      Nil
+      Nil,
+      None
     )
   end apply
 end AgentState
@@ -512,7 +560,6 @@ extension (s: AgentState)
   def depth: Int = s.session.depth
   def turnIdx: Int = s.execution.turnIdx
   def currentTurnId: Long = s.execution.currentTurnId
-  def activeStreamFiber: Option[cats.effect.Fiber[IO, Throwable, Unit]] = s.execution.activeStreamFiber
   def recentMessageIds: List[String] = s.session.recentMessageIds
   def pendingCompaction: Option[CompactionJob] = s.compaction.pendingJob
   def compactionFailures: Int = s.compaction.compactionFailures
@@ -526,15 +573,15 @@ extension (s: AgentState)
     s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
   def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
+  def liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = s.session.liveFileTracker
   def contextWindow: Int = s.session.contextWindow
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
   def projectRoot: Option[String] = s.session.projectRoot
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
-  def lifecycle: Option[LifecycleContext] = s.session.lifecycle
   def gitBranch: Option[String] = s.session.gitBranch
-  def bypass: Boolean = s.session.bypass
+  def safetyMode: String = s.session.safetyMode
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
@@ -545,11 +592,13 @@ extension (s: AgentState)
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
   def withCurrentTurnId(id: Long): AgentState = s.copy(execution = s.execution.copy(currentTurnId = id))
 
-  def withActiveStreamFiber(fiber: Option[cats.effect.Fiber[IO, Throwable, Unit]]): AgentState =
-    s.copy(execution = s.execution.copy(activeStreamFiber = fiber))
-
   def withInteraction(interaction: Option[InteractionState]): AgentState =
     s.copy(execution = s.execution.copy(interaction = interaction))
+
+  def withLastDispatch(d: Option[LastDispatch]): AgentState =
+    s.copy(execution = s.execution.copy(lastDispatch = d))
+
+  def lastDispatch: Option[LastDispatch] = s.execution.lastDispatch
 
   def withPendingAskUser(d: Option[cats.effect.Deferred[IO, List[String]]]): AgentState =
     s.copy(execution =
@@ -580,10 +629,21 @@ extension (s: AgentState)
 
   def withEmptyResponseRetries(count: Int): AgentState =
     s.copy(execution = s.execution.copy(emptyResponseRetries = count))
-  def withLifecycle(lc: LifecycleContext): AgentState = s.copy(session = s.session.copy(lifecycle = Some(lc)))
-  def withLifecycleCleared: AgentState = s.copy(session = s.session.copy(lifecycle = None))
   def withGitBranch(branch: Option[String]): AgentState = s.copy(session = s.session.copy(gitBranch = branch))
-  def withBypass(b: Boolean): AgentState = s.copy(session = s.session.copy(bypass = b))
+
+  def withSafetyMode(mode: String): AgentState =
+    s.copy(session = s.session.copy(safetyMode = mode))
+
+  def withPlanMode(pm: Option[PlanModeState]): AgentState = s.copy(planMode = pm)
+
+  def delegateCount: Int = s.execution.delegateCount
+  def lastMaintenanceDelegateCount: Int = s.execution.lastMaintenanceDelegateCount
+
+  def withDelegateCount(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(delegateCount = count))
+
+  def withLastMaintenanceDelegateCount(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(lastMaintenanceDelegateCount = count))
 
   def withLatestUsage(usage: Option[TokenUsage]): AgentState =
     s.copy(compaction = s.compaction.copy(latestUsage = usage))

@@ -24,7 +24,7 @@ export function getActiveView() { return activeView; }
 
 export class ChatView {
   /**
-   * @param {string} id  — 'primary' | 'secondary' | ...
+   * @param {string} id  — 'primary' (future: additional view IDs for multi-instance)
    * @param {object} dom — pre-resolved DOM refs for this window's chat subtree
    */
   constructor(id, dom) {
@@ -61,6 +61,9 @@ export class ChatView {
     this.skillModeName = '';
     this.skillModeDesc = '';
     this.skillModeArgHint = '';
+
+    // ── Compact mode ──
+    this.compactMode = false;
 
     // ── Slash autocomplete ──
     this.slashMatches = [];
@@ -115,25 +118,25 @@ export class ChatView {
     };
   }
 
-  /** Reset input mode state (skill mode, ask mode). */
+  /** Reset input mode state (skill mode, ask mode, compact mode). */
   resetInputModes() {
     this.skillMode = false;
     this.skillModeName = '';
     this.skillModeDesc = '';
     this.skillModeArgHint = '';
+    this.compactMode = false;
     this.stream.askMode = false;
     // Reset DOM state — paddingLeft and indicator visibility from a previous
-    // session's ask/skill mode must not persist into the new session.
-    // Without this, a large paddingLeft (from a long skill name) can make the
-    // textarea content area nearly zero-width, truncating the placeholder.
+    // session's ask/skill/compact mode must not persist into the new session.
     if (this.dom.input) {
       this.dom.input.style.paddingLeft = '';
     }
-    const prefix = this.id === 'secondary' ? 'secondary-' : '';
-    const askEl = document.getElementById(prefix + 'ask-indicator');
-    const skillEl = document.getElementById(prefix + 'skill-indicator');
+    const askEl = document.getElementById('ask-indicator');
+    const skillEl = document.getElementById('skill-indicator');
+    const compactEl = document.getElementById('compact-indicator');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) skillEl.classList.remove('show');
+    if (compactEl) compactEl.classList.remove('show');
   }
 
   /** Reset all view state for a fresh session load. */
@@ -205,6 +208,14 @@ export class ChatView {
       this.pendingAttachments = [];
     }
     this.dom.input.style.height = 'auto';
+    // Render attachment preview for restored image/file attachments
+    if (this.dom.attPreview) this.dom.attPreview.innerHTML = '';
+    if (this.pendingAttachments.length > 0) {
+      import('./chat.js').then(({ renderAttachmentPreview }) => {
+        setActiveView(this);
+        renderAttachmentPreview();
+      });
+    }
   }
 }
 
@@ -226,11 +237,12 @@ export function findViewBySessionId(sessionId) {
 }
 
 /**
- * Initialize both ChatView instances and register them.
+ * Initialize the primary ChatView instance and register it.
  * Called from main.js after DOM is ready.
+ *
+ * The chatViews registry supports future multi-view expansion —
+ * additional views can be registered via chatViews.<id> = new ChatView(...).
  */
-export function initChatViews(primaryDom, secondaryDom) {
+export function initChatView(primaryDom) {
   chatViews.primary = new ChatView('primary', primaryDom);
-  chatViews.secondary = new ChatView('secondary', secondaryDom);
-  chatViews.secondary.mounted = false;
 }

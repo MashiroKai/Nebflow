@@ -64,60 +64,121 @@ echo ""
 echo "  Nebflow v${VERSION} Installer (${CHANNEL})"
 echo ""
 
-# Check Java version
+# Check Java version — auto-install if missing or too old
 check_java() {
-    if ! command -v java &> /dev/null; then
-        echo "ERROR: Java not found. JDK 17+ is required."
-        echo ""
-        echo "Install Java for your platform:"
-        echo ""
-        detect_os
-        case "$OS_FAMILY" in
-            mac)
-                echo "  macOS (choose one):"
-                echo "    brew install openjdk"
-                echo "    https://adoptium.net/temurin/releases/?version=21&os=mac"
-                ;;
-            linux)
-                echo "  Linux (choose one):"
-                if command -v apt-get &> /dev/null; then
-                    echo "    sudo apt install openjdk-21-jdk"
-                elif command -v dnf &> /dev/null; then
-                    echo "    sudo dnf install java-21-openjdk-devel"
-                elif command -v yum &> /dev/null; then
-                    echo "    sudo yum install java-21-openjdk-devel"
-                else
-                    echo "    Use your package manager to install JDK 17+"
+    _java_ok() {
+        command -v java &> /dev/null || return 1
+        local v
+        v=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
+        [ "$v" = "1" ] && v=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)
+        [ "$v" -ge 17 ] 2>/dev/null
+    }
+
+    if _java_ok; then
+        echo "    Java: $(java -version 2>&1 | head -n1)"
+        return 0
+    fi
+
+    detect_os
+    echo "==> Java 17+ not found. Installing automatically..."
+
+    case "$OS_FAMILY" in
+        mac)
+            if command -v brew &> /dev/null; then
+                echo "    Installing OpenJDK 21 via Homebrew..."
+                brew install --quiet openjdk@21 2>&1 || {
+                    echo "ERROR: brew install failed. Please install JDK 17+ manually:"
+                    echo "  https://adoptium.net/temurin/releases/?version=21&os=mac"
+                    exit 1
+                }
+                # brew openjdk@21 needs symlink on macOS
+                if [ -d "/opt/homebrew/opt/openjdk@21" ]; then
+                    sudo ln -sfn /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk 2>/dev/null || true
+                    export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
+                elif [ -d "/usr/local/opt/openjdk@21" ]; then
+                    sudo ln -sfn /usr/local/opt/openjdk@21/libexec/openjdk.jdk /Library/Java/JavaVirtualMachines/openjdk-21.jdk 2>/dev/null || true
+                    export PATH="/usr/local/opt/openjdk@21/bin:$PATH"
                 fi
-                echo "    https://adoptium.net/temurin/releases/?version=21&os=linux"
-                ;;
-            windows)
-                echo "  Windows:"
-                echo "    winget install EclipseAdoptium.Temurin.21.JDK"
-                echo "    https://adoptium.net/temurin/releases/?version=21&os=windows"
-                ;;
-            *)
-                echo "  https://adoptium.net/temurin/releases/?version=21"
-                ;;
-        esac
-        echo ""
-        echo "After installing Java, re-run this script."
+            else
+                echo "    Homebrew not found. Installing Homebrew first..."
+                /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" 2>&1 || {
+                    echo "ERROR: Could not install Homebrew. Please install JDK 17+ manually:"
+                    echo "  https://adoptium.net/temurin/releases/?version=21&os=mac"
+                    exit 1
+                }
+                echo "    Installing OpenJDK 21 via Homebrew..."
+                brew install --quiet openjdk@21 2>&1 || {
+                    echo "ERROR: brew install failed. Please install JDK 17+ manually."
+                    exit 1
+                }
+                if [ -d "/opt/homebrew/opt/openjdk@21" ]; then
+                    export PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH"
+                elif [ -d "/usr/local/opt/openjdk@21" ]; then
+                    export PATH="/usr/local/opt/openjdk@21/bin:$PATH"
+                fi
+            fi
+            ;;
+        linux)
+            local installed=false
+            if command -v apt-get &> /dev/null; then
+                echo "    Installing OpenJDK 21 via apt..."
+                sudo apt-get update -qq && sudo apt-get install -y openjdk-21-jdk-headless 2>&1 || true
+                installed=true
+            elif command -v dnf &> /dev/null; then
+                echo "    Installing OpenJDK 21 via dnf..."
+                sudo dnf install -y java-21-openjdk-devel 2>&1 || true
+                installed=true
+            elif command -v yum &> /dev/null; then
+                echo "    Installing OpenJDK 21 via yum..."
+                sudo yum install -y java-21-openjdk-devel 2>&1 || true
+                installed=true
+            elif command -v apk &> /dev/null; then
+                echo "    Installing OpenJDK 21 via apk..."
+                sudo apk add --no-cache openjdk21 2>&1 || true
+                installed=true
+            fi
+
+            if [ "$installed" = false ] || ! _java_ok; then
+                # Fallback: portable Adoptium Tarball
+                echo "    Package manager unavailable or failed. Downloading Temurin JDK 21..."
+                local arch=$(uname -m)
+                local jdk_arch="x64"
+                case "$arch" in
+                    aarch64|arm64) jdk_arch="aarch64" ;;
+                esac
+                local jdk_url="https://api.adoptium.net/v3/binary/latest/21/ga/linux/${jdk_arch}/jdk/hotspot/normal/eclipse"
+                local jdk_dir="${HOME}/.nebflow/jdk-21"
+                mkdir -p "${HOME}/.nebflow"
+                local tmp_tar=$(mktemp /tmp/nebflow-jdk-XXXXXX.tar.gz)
+                if curl -fsSL --connect-timeout 10 --max-time 120 "$jdk_url" -o "$tmp_tar"; then
+                    tar xzf "$tmp_tar" -C "${HOME}/.nebflow" 2>/dev/null
+                    rm -f "$tmp_tar"
+                    local extracted=$(ls -d "${HOME}"/.nebflow/jdk-21* 2>/dev/null | head -1)
+                    if [ -n "$extracted" ]; then
+                        mv "$extracted" "$jdk_dir" 2>/dev/null || true
+                        export PATH="$jdk_dir/bin:$PATH"
+                        export JAVA_HOME="$jdk_dir"
+                    fi
+                else
+                    rm -f "$tmp_tar"
+                fi
+            fi
+            ;;
+        *)
+            echo "ERROR: Cannot auto-install Java on this platform."
+            echo "  Please install JDK 17+ manually: https://adoptium.net/"
+            exit 1
+            ;;
+    esac
+
+    # Verify installation succeeded
+    if _java_ok; then
+        echo "    Java installed: $(java -version 2>&1 | head -n1)"
+    else
+        echo "ERROR: Java auto-install did not succeed."
+        echo "  Please install JDK 17+ manually: https://adoptium.net/"
         exit 1
     fi
-    local java_version
-    java_version=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
-    if [ "$java_version" = "1" ]; then
-        java_version=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f2)
-    fi
-    if [ "$java_version" -lt 17 ]; then
-        echo "ERROR: Java ${java_version} detected, but JDK 17+ is required."
-        echo ""
-        echo "Upgrade Java:"
-        echo "  https://adoptium.net/temurin/releases/?version=21"
-        echo ""
-        exit 1
-    fi
-    echo "    Java: $(java -version 2>&1 | head -n1)"
 }
 
 detect_os() {

@@ -439,7 +439,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
 
   /**
    * Get an existing session by ID, or create one with that exact ID.
-   * Used by MemoryAgentManager to maintain persistent sessions across restarts.
+   * Used to maintain persistent sessions across restarts.
    * Returns (meta, wasCreated).
    */
   def getOrCreateSession(
@@ -497,7 +497,7 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    * mutation happen in a single `indexRef.modify`, so two concurrent invocations can
    * never both observe "missing" and both create.
    *
-   * Used to guarantee Jarvis has exactly one persistent session. Returns (meta, wasCreated).
+   * Used to guarantee a singleton agent has exactly one persistent session. Returns (meta, wasCreated).
    */
   def ensureAgentSession(agentName: String): IO[(SessionMeta, Boolean)] =
     // modify is an atomic read-modify-write: the decide-to-create and the state
@@ -592,6 +592,16 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
+  /**
+   * Clear all per-session model overrides. Called at startup so every session
+   * follows the global fallback order after a restart.
+   */
+  def clearAllSessionModels(): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      val updated = sessions.map(_.copy(modelRef = None))
+      (activeId, updated, folders)
+    } *> saveIndex
+
   def updateSessionBridge(id: String, platform: String, config: Option[Json]): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
       val updated = sessions.map { s =>
@@ -605,16 +615,23 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       (activeId, updated, folders)
     } *> saveIndex
 
-  def setBypass(id: String, bypass: Boolean): IO[Unit] =
+  def setSafetyMode(id: String, mode: String): IO[Unit] =
     indexRef.update { case (activeId, sessions, folders) =>
-      val updated = sessions.map(s => if s.id == id then s.copy(bypass = bypass) else s)
+      val updated = sessions.map(s => if s.id == id then s.copy(safetyMode = mode) else s)
       (activeId, updated, folders)
     } *> saveIndex
 
-  def getBypass(id: String): IO[Boolean] =
+  def getSafetyMode(id: String): IO[String] =
     indexRef.get.map { case (_, sessions, _) =>
-      sessions.find(_.id == id).exists(_.bypass)
+      sessions.find(_.id == id).map(_.safetyMode).getOrElse("confirm-edits")
     }
+
+  /** Persist git branch change so it survives restarts. */
+  def updateGitBranch(id: String, branch: Option[String]): IO[Unit] =
+    indexRef.update { case (activeId, sessions, folders) =>
+      val updated = sessions.map(s => if s.id == id then s.copy(gitBranch = branch) else s)
+      (activeId, updated, folders)
+    } *> saveIndex
 
   // ===== Folder Management =====
 
@@ -956,6 +973,35 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           }
         }
       }
+
+  /**
+   * Backfill `durationMs`, `model`, and `timestamp` onto the last saved Ai message.
+   *
+   * In multi-round tool conversations, intermediate text segments are flushed
+   * by `flushText()` (which saves Ai without meta). When `done` fires with an
+   * empty text buffer, the computed duration has nowhere to go. This method
+   * finds the last Ai message in the cache and updates its meta fields.
+   */
+  def updateLastAiMeta(sessionId: String, durationMs: Option[Long], model: Option[String], timestamp: Long): IO[Unit] =
+    getAppendSemaphore(sessionId).flatMap { sem =>
+      sem.permit.use { _ =>
+        loadUiMessages(sessionId).flatMap { existing =>
+          existing.lastIndexWhere {
+            case _: UiMessage.Ai => true
+            case _ => false
+          } match
+            case -1 => IO.unit
+            case idx =>
+              val (before, rest) = existing.splitAt(idx)
+              rest.headOption match
+                case Some(ai: UiMessage.Ai) =>
+                  val updatedAi = ai.copy(durationMs = durationMs, model = model, timestamp = timestamp)
+                  val updated = before ++ (updatedAi :: rest.tail)
+                  updateUiCache(sessionId, updated) *> markDirty(sessionId)
+                case _ => IO.unit
+        }
+      }
+    }
 
   /**
    * Keep only the newest `MaxStoredUiMessages`. The LLM's full history is

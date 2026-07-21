@@ -2,7 +2,7 @@ package nebflow.agent
 
 import cats.effect.std.{Dispatcher, Semaphore}
 import cats.effect.{IO, Ref}
-import nebflow.actor.ActorRef
+import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.bridge.BridgeManager
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.hooks.{HookEngine, HooksConfig}
@@ -40,12 +40,13 @@ case class SharedResources(
   sessionModelOverrides: cats.effect.Ref[IO, Map[String, ModelCandidate]],
   providerRegistry: ProviderRegistry,
   healthMonitor: ProviderHealthMonitor,
+  actorSystem: ActorSystem,
   hookEngine: HookEngine = HookEngine.noop,
   bridgeManager: Option[BridgeManager] = None,
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
   telemetry: Option[TelemetryReporter] = None,
   neblinkService: Option[NeblinkService] = None,
   dropboxService: Option[DropboxService] = None,
-  dreamSchedulerRef: Option[DreamScheduler] = None,
-  scheduledTaskService: Option[ScheduledTaskService] = None
+  scheduledTaskService: Option[ScheduledTaskService] = None,
+  voiceMutedRef: Ref[IO, Boolean]
 )

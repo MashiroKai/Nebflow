@@ -13,14 +13,12 @@ const cache = { user: null, agent: null, folder: null };
 /** The session whose memory is being viewed. Set when the modal opens. */
 let memorySessionId = null;
 
-/** Show the Memory button in header (both windows). */
+/** Show the Memory button in header. */
 export function showMemoryButton() {
-  for (const id of ['memory-btn', 'secondary-memory-btn']) {
-    const btn = document.getElementById(id);
-    if (btn) {
-      btn.style.display = '';
-      btn.textContent = t('header.memory');
-    }
+  const btn = document.getElementById('memory-btn');
+  if (btn) {
+    btn.style.display = '';
+    btn.textContent = t('header.memory');
   }
 }
 
@@ -36,14 +34,7 @@ export function clearMemoryCache() {
 
 /** Open the memory modal, fetch active tab content. */
 export function openMemoryEditor(event) {
-  // Determine which session's memory to show based on which button was clicked.
-  const btnId = event?.currentTarget?.id;
-  if (btnId === 'secondary-memory-btn' && state.secondarySessionId) {
-    memorySessionId = state.secondarySessionId;
-  } else {
-    memorySessionId = state.activeSessionId;
-  }
-  // Clear cache so switching between primary/secondary always fetches fresh data.
+  memorySessionId = state.activeSessionId;
   clearMemoryCache();
   document.getElementById('memory-modal').classList.add('show');
   document.getElementById('memory-overlay').classList.add('on');
@@ -85,6 +76,26 @@ export function handleMemoryData(data) {
   }
 }
 
+/**
+ * Handle memoryChanged push notification — invalidate cache and refresh
+ * the active tab if the modal is open (so the user sees agent edits in real-time).
+ */
+export function handleMemoryChanged(data) {
+  const path = data.path || '';
+  let changedScope = null;
+  if (path.endsWith('NEBFLOW.md')) changedScope = 'user';
+  else if (path.endsWith('memory.md')) changedScope = 'agent';
+  else if (path.endsWith('.memory.md')) changedScope = 'folder';
+
+  if (changedScope) {
+    cache[changedScope] = null;
+    const modal = document.getElementById('memory-modal');
+    if (modal && modal.classList.contains('show') && changedScope === activeScope) {
+      loadTab(activeScope);
+    }
+  }
+}
+
 /** Save the current tab's content. */
 export function saveMemory() {
   const content = document.getElementById('memory-content-input').value;
@@ -94,9 +105,7 @@ export function saveMemory() {
 
 /** Initialize memory UI — bind button, tabs, modal buttons, overlay dismiss. */
 export function initMemory() {
-  for (const id of ['memory-btn', 'secondary-memory-btn']) {
-    document.getElementById(id)?.addEventListener('click', openMemoryEditor);
-  }
+  document.getElementById('memory-btn')?.addEventListener('click', openMemoryEditor);
   document.querySelectorAll('.memory-tab').forEach(tab => {
     tab.addEventListener('click', () => switchTab(tab.dataset.scope));
   });

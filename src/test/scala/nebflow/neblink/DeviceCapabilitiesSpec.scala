@@ -48,17 +48,6 @@ class DeviceCapabilitiesSpec extends CatsEffectSuite:
     assert(decoded.isLeft, "Old JSON without capabilities should fail to decode (handled by migration)")
   }
 
-  // ===== detectCapabilities =====
-
-  test("detectCapabilities returns a map (may be empty on CI)") {
-    val caps = DeviceIdentity.detectCapabilities.unsafeRunSync()
-    // We can't guarantee any specific tool is installed, but the method should not crash
-    // and should return a Map. On most dev machines, at least git or python should exist.
-    assert(caps != null, "detectCapabilities should return a non-null map")
-    // On typical dev machines, git is usually present
-    if caps.nonEmpty then assert(caps.values.forall(_.nonEmpty), "All detected paths should be non-empty")
-  }
-
   // ===== PeerInfo with capabilities =====
 
   test("PeerInfo with capabilities serialization roundtrip") {

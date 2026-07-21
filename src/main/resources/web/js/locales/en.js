@@ -19,6 +19,7 @@ export default {
   'input.placeholder': 'Type a message...',
   'input.askPlaceholder': 'Ask a question...',
   'input.skillPlaceholder': 'Provide input for skill...',
+  'input.compactPlaceholder': 'Optional compaction instruction — press Enter to compact...',
   'input.voiceListening': 'Listening...',
   'input.voiceHint': 'Release to send',
   'input.voiceError': 'Voice input not supported in this browser. Try Chrome.',
@@ -275,8 +276,12 @@ export default {
   'slash.skillDefault': 'Run a skill',
   'slash.skillActivated': 'Using skill: {skill}',
   'slash.skillBadge': 'skill',
+  'slash.deleteSkill': 'Delete skill',
+  'slash.confirmDelete': 'Delete skill "{skill}"? This cannot be undone.',
+  'slash.skillDeleted': 'Skill "{skill}" deleted',
+  'slash.skillDeleteFailed': 'Failed to delete skill "{skill}": not a user-level skill',
   'slash.model': 'Select model for this session',
-  'bypass.toggle': 'Auto-approve: skip all permission prompts for this session',
+  'bypass.toggle': 'Safety mode: click to cycle Confirm Edits / Auto Edits / Auto All',
 
   // === Voice ===
   'voice.listening': 'Listening...',

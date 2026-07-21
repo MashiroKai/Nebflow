@@ -226,14 +226,16 @@ sealed trait UiMessage:
 
 object UiMessage:
 
-  case class User(text: String, attachments: List[Json] = Nil, injected: Boolean = false) extends UiMessage:
+  case class User(text: String, attachments: List[Json] = Nil, injected: Boolean = false, timestamp: Long = 0L)
+      extends UiMessage:
     val typeName = "user"
 
   case class Ai(
     text: String,
     durationMs: Option[Long] = None,
     model: Option[String] = None,
-    thinking: Option[String] = None
+    thinking: Option[String] = None,
+    timestamp: Long = 0L
   ) extends UiMessage:
     val typeName = "ai"
 
@@ -265,12 +267,14 @@ object UiMessage:
   given Encoder[UiMessage] = Encoder.instance {
     case m: User =>
       val base = Json.obj("type" -> "user".asJson, "text" -> m.text.asJson, "attachments" -> m.attachments.asJson)
-      if m.injected then base.deepMerge(Json.obj("injected" -> true.asJson)) else base
+      val withTs = if m.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else base
+      if m.injected then withTs.deepMerge(Json.obj("injected" -> true.asJson)) else withTs
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
-      m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
+      val withThinking = m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
+      if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
     case m: Tool =>
       Json.obj(
         "type" -> "tool".asJson,
@@ -306,14 +310,16 @@ object UiMessage:
           text <- cursor.downField("text").as[String]
           atts <- cursor.downField("attachments").as[Option[List[Json]]]
           injected <- cursor.downField("injected").as[Option[Boolean]]
-        yield User(text, atts.getOrElse(Nil), injected.getOrElse(false))
+          timestamp <- cursor.downField("timestamp").as[Option[Long]]
+        yield User(text, atts.getOrElse(Nil), injected.getOrElse(false), timestamp.getOrElse(0L))
       case "ai" =>
         for
           text <- cursor.downField("text").as[String]
           durationMs <- cursor.downField("durationMs").as[Option[Long]]
           model <- cursor.downField("model").as[Option[String]]
           thinking <- cursor.downField("thinking").as[Option[String]]
-        yield Ai(text, durationMs, model, thinking)
+          timestamp <- cursor.downField("timestamp").as[Option[Long]]
+        yield Ai(text, durationMs, model, thinking, timestamp.getOrElse(0L))
       case "tool" =>
         for
           label <- cursor.downField("label").as[String]

@@ -7,7 +7,7 @@ import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
-import { createDurationBadgeElement } from './chat.js';
+import { createDurationBadgeElement, formatHm, toggleTimeFormat } from './chat.js';
 
 // ---------- Duration formatting (mirrors chat.js formatDuration) ----------
 function formatDurationPersisted(ms) {
@@ -25,10 +25,22 @@ function formatDurationPersisted(ms) {
 function safeSetItem(key, value) {
   try {
     localStorage.setItem(key, value);
+    return true;
   } catch (e) {
     // Quota exceeded — just drop the cache silently; backend is the source of truth
-    console.warn('[persistence] localStorage quota exceeded, dropping cache');
+    console.debug('[persistence] localStorage quota exceeded, dropping cache');
+    return false;
   }
+}
+
+// ---------- Prune old sessions from the cache and retry writing once ----------
+// Removes roughly half of the non-active sessions to free space. Returns true on success.
+function pruneAndRetrySetSessions(all, keepSid) {
+  const otherSids = Object.keys(all).filter(k => k !== keepSid);
+  if (otherSids.length === 0) return false; // nothing to prune
+  const removeCount = Math.ceil(otherSids.length / 2);
+  for (let i = 0; i < removeCount; i++) delete all[otherSids[i]];
+  return safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
 }
 
 // ---------- Safe JSON parse from localStorage ----------
@@ -45,7 +57,10 @@ export function saveMsg(entry, sessionId) {
     const arr = all[sid] || [];
     arr.push(entry);
     all[sid] = arr;
-    safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
+    if (!safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) {
+      // Quota exceeded — prune old sessions and retry once
+      pruneAndRetrySetSessions(all, sid);
+    }
   } catch (e) {
     // Silently ignore — backend is the source of truth
   }
@@ -154,7 +169,7 @@ export function restoreFromStorage() {
         bubble.innerHTML = renderMarkdownWithMath(m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           row.appendChild(badge);
         }
         chat.appendChild(row);
@@ -308,7 +323,7 @@ export function restoreFromStorage() {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           aRow.appendChild(badge);
         }
         chat.appendChild(aRow);
@@ -424,6 +439,16 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       });
+      // Timestamp
+      if (m.timestamp && m.timestamp > 0) {
+        const timeEl = document.createElement('div');
+        timeEl.className = 'msg-time';
+        timeEl.setAttribute('data-ts', m.timestamp);
+        timeEl.textContent = formatHm(m.timestamp);
+        timeEl.title = '点击切换 12/24 小时制';
+        timeEl.addEventListener('click', toggleTimeFormat);
+        row.appendChild(timeEl);
+      }
       fragment.appendChild(row);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
@@ -463,7 +488,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         deferMd(bubble, m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           row.appendChild(badge);
         }
         fragment.appendChild(row);
@@ -623,7 +648,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         aBubble.appendChild(aContent);
         aRow.appendChild(aBubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           aRow.appendChild(badge);
         }
         fragment.appendChild(aRow);
@@ -706,7 +731,9 @@ export function migrateLegacyIfNeeded() {
     const oldMsgs = safeGetJSON(LS_KEY, []);
     if (Array.isArray(oldMsgs) && oldMsgs.length > 0) {
       all[state.activeSessionId] = oldMsgs;
-      safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all));
+      if (!safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) {
+        pruneAndRetrySetSessions(all, state.activeSessionId);
+      }
       // Re-render chat with the migrated data
       if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
       restoreFromStorage();

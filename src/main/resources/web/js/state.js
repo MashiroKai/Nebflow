@@ -19,7 +19,6 @@ export default {
 
   // Session
   activeSessionId: null,
-  secondarySessionId: null,
   activeFolderId: null,
   sessions: [],
   folders: [],
@@ -37,8 +36,8 @@ export default {
   answeredPermissions: new Set(),
   legacyMigrated: false,
 
-  // Per-session bypass: sessions whose permission requests are auto-approved
-  bypassSessions: new Set(),
+  // Per-session safety mode: "confirm-edits" | "auto-edits" | "auto-all"
+  safetyModes: {},  // sessionId → mode string
 
   // Chat streaming (per-session status sets — view-level state lives on ChatView)
   busySessionIds: new Set(),
@@ -149,10 +148,16 @@ export default {
   sessionModelInfo: safeParse(localStorage.getItem('nebflow_model_info'), {}),
   updateHeaderModelInfo: null,
   updateBypassToggle: null,
+  updateSafetyToggle: null,
   COMPACT_THRESHOLD: 0.90,
 
   // Card design prompt
   cardDesignPrompt: '',
+
+  // Plan mode: agentId of the active plan agent (null when not in plan mode)
+  planAgentId: null,
+  // Plan mode: sessionId that triggered plan mode
+  planSessionId: null,
 
   // Persistent notifications (survive session switches)
   notifications: [],

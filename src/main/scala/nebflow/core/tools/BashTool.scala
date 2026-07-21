@@ -16,10 +16,10 @@ object BashTool extends Tool:
   /** Bash output can be very large — persist early. */
   override val maxResultSizeChars: Int = 30_000
 
-  val DEFAULT_TIMEOUT = 120_000L // 2 minutes
+  val DEFAULT_TIMEOUT = 30_000L // 30s — fallback for synchronous remote-exec only
   val MAX_TIMEOUT = Defaults.BashMaxTimeoutMs // 60 minutes
   /** Foreground commands running longer than this are automatically moved to background. */
-  val AutoBackgroundThresholdMs = 120_000L
+  val AutoBackgroundThresholdMs = 30_000L
 
   val name = "Bash"
 
@@ -28,7 +28,7 @@ object BashTool extends Tool:
 Usage:
 - The working directory persists between commands, but shell state does not persist across Nebflow restarts.
 - Try to maintain your current working directory throughout the session by using absolute paths and avoiding usage of cd.
-- You may specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). By default, your command will timeout after 120000ms (2 minutes).
+- You may specify an optional timeout in milliseconds (max 3600000) to set a hard deadline. If not specified, commands that exceed 30 seconds are automatically moved to background.
 - Dangerous commands (rm -rf, force push, etc.) are blocked for safety.
 - For git commands: Prefer to create a new commit rather than amending an existing commit.
 - Only create commits when requested by the user.
@@ -38,7 +38,7 @@ Background execution (run_in_background):
 - **Use `run_in_background: true`, never `&` or `nohup`.** Shell backgrounding (`&`) bypasses Nebflow's task tracking — you won't be notified when it finishes, and the frontend won't show the background indicator.
 - You will be automatically notified when the job finishes. DO NOT poll or use sleep loops.
 - After starting a background job, continue with other work or finish your turn.
-- If a foreground command exceeds 2 minutes, it is automatically moved to background — same rules apply.
+- If a foreground command exceeds 30 seconds, it is automatically moved to background — same rules apply.
 
 Querying background jobs (background_job_id):
 - Only query when you receive a "stuck" notification or the user asks about a job's status.
@@ -72,7 +72,10 @@ Git safety:
           "description" -> "The bash command to run. Required unless background_job_id is provided.".asJson
         ),
         "timeout" -> io.circe.Json
-          .obj("type" -> "number".asJson, "description" -> "Optional timeout in milliseconds (max 600000)".asJson),
+          .obj(
+            "type" -> "number".asJson,
+            "description" -> "Optional timeout in milliseconds (max 3600000). If exceeded, the command is killed.".asJson
+          ),
         "description" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Clear, concise description of what this command does".asJson
@@ -142,17 +145,54 @@ Git safety:
   // Interactive command patterns: commands that require terminal interaction.
   // These cannot work in this environment because stdin is /dev/null and there is no tty.
   private val InteractivePatterns = List(
-    ("""^\s*top\b(?!.*-b)""".r, "`top` is interactive. Use `top -b -n 1` for batch output."),
-    ("""^\s*(htop|btop|atop)\b""".r, "Interactive system monitor. Use `ps aux` or `top -b -n 1` instead."),
+    // Pagers & editors
     ("""^\s*(less|more)\b""".r, "Interactive pager. Use Read tool, `cat`, `head`, or `tail` instead."),
     ("""^\s*(vim?|nano|emacs|pico)\b""".r, "Interactive text editor. Use Edit or Write tool instead."),
+    ("""^\s*crontab\s+-e\b""".r, "`crontab -e` opens an editor. Use `crontab <file>` instead."),
+    // System monitors
+    ("""^\s*top\b(?!.*-b)""".r, "`top` is interactive. Use `top -b -n 1` for batch output."),
+    ("""^\s*(htop|btop|atop)\b""".r, "Interactive system monitor. Use `ps aux` or `top -b -n 1` instead."),
+    // Terminal multiplexers & debuggers
     ("""^\s*(tmux|screen)\b""".r, "Terminal multiplexer. Run this command manually in your terminal."),
     ("""^\s*(gdb|lldb)\b""".r, "Interactive debugger. Run this command manually in your terminal."),
+    // Password / authentication
     ("""^\s*passwd\b""".r, "`passwd` requires interactive terminal. Run manually in your terminal."),
-    ("""^\s*su\b""".r, "`su` requires interactive terminal. Run manually in your terminal."),
-    ("""crontab\s+-e\b""".r, "`crontab -e` opens an editor. Use `crontab <file>` instead."),
+    ("""^\s*(su|sudo)\b(\s|$)""".r, "`su`/`sudo` requires interactive terminal. Run manually in your terminal."),
+    (
+      """^\s*ssh\b(?!.*-o\s+BatchMode)""".r,
+      "`ssh` without `-o BatchMode=yes` (or without a remote command) is interactive. Use `ssh -o BatchMode=yes host 'command'` instead."
+    ),
+    ("""^\s*(telnet|ftp|sftp)\b""".r, "Interactive network command. Run this command manually in your terminal."),
+    ("""^\s*expect\b""".r, "`expect` is interactive scripting. Not supported in this environment."),
+    ("""^\s*script\b""".r, "`script` records terminal sessions. Not supported in this environment."),
+    // Interactive interpreters / REPLs
+    ("""^\s*(python|python3|ipython)\s*$""".r, "Interactive interpreter. Use `python -c '...'` to execute code."),
+    ("""^\s*(node)\s*$""".r, "Interactive interpreter. Use `node -e '...'` to execute code."),
+    ("""^\s*(irb|pry)\b""".r, "Interactive Ruby interpreter. Use `ruby -e '...'` instead."),
+    // Database clients (interactive mode)
+    (
+      """^\s*mysql\b(?!.*-e\b)(?!.*--execute\b)""".r,
+      "MySQL client without `-e` is interactive. Use `mysql -e 'query'` or provide SQL inline."
+    ),
+    ("""^\s*psql\b(?!.*-c\b)(?!.*--command\b)""".r, "psql without `-c` is interactive. Use `psql -c 'query'` instead."),
+    (
+      """^\s*sqlite3\b(?!.*\.dump|\..*\.mode)""".r,
+      "SQLite interactive shell. Use `sqlite3 db 'query'` or provide commands on stdin."
+    ),
+    (
+      """^\s*redis-cli\b(?!.*--raw\b)""".r,
+      "Redis CLI is interactive without a command. Use `redis-cli <command>` instead."
+    ),
+    // Git interactive commands
     ("""git\s+rebase\s+-i\b""".r, "Interactive rebase. Use non-interactive git commands."),
-    ("""git\s+add\s+-i\b""".r, "Interactive staging. Use `git add <file>` instead.")
+    ("""git\s+add\s+-i\b""".r, "Interactive staging. Use `git add <file>` instead."),
+    // Login/publish commands
+    ("""^\s*(npm|pnpm|yarn)\s+login\b""".r, "Login command is interactive. Use a `.npmrc` token or env var instead."),
+    ("""^\s*cargo\s+login\b""".r, "Login command is interactive. Use `cargo login --token TOKEN` or env var instead."),
+    (
+      """^\s*gh\s+auth\s+login\b""".r,
+      "GitHub CLI login is interactive. Use `gh auth login --with-token < token.txt` instead."
+    )
   )
 
   // Injection patterns: gated by ToolReversibility — requires user confirmation
@@ -237,21 +277,42 @@ Git safety:
       else if lines.length == 1 then lines.head
       else s"${lines.length} lines of output"
 
+  // ── Pipe truncation handling ──────────────────────────────────────────
+  // `cmd | tail -N` causes tail to buffer ALL output until EOF, so the stuck
+  // detector sees zero output lines even though the real command is printing.
+  // We strip the trailing `| tail -N` and apply truncation in Java instead.
+
+  private val TrailingTailRe = """\|\s*tail\s+(?:-n\s+)?(\d+)\s*$""".r
+
+  /** Extract trailing `| tail -N`, returning (command without pipe, N). */
+  private def extractTailTruncation(command: String): (String, Option[Int]) =
+    TrailingTailRe.findFirstMatchIn(command) match
+      case Some(m) =>
+        val stripped = command.substring(0, m.start).trim
+        if stripped.nonEmpty then (stripped, Some(m.group(1).toInt))
+        else (command, None)
+      case None => (command, None)
+
+  /** Take the last N lines of output. */
+  private def applyTailTruncation(stdout: String, n: Int): String =
+    val lines = stdout.split("\n")
+    if lines.length <= n then stdout
+    else lines.takeRight(n).mkString("\n")
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val timeout = input("timeout")
+    val explicitTimeoutMs: Option[Long] = input("timeout")
       .flatMap(_.asNumber)
       .flatMap(_.toLong)
       .map(t => t.max(1L).min(MAX_TIMEOUT))
-      .getOrElse(DEFAULT_TIMEOUT)
     val commandOpt = input("command").flatMap(_.asString)
     val command = commandOpt.getOrElse("")
+    val (actualCommand, tailN) = extractTailTruncation(command)
     val background = input("run_in_background").flatMap(_.asBoolean).getOrElse(false)
     val desc = input("description").flatMap(_.asString)
     val bgJobId = input("background_job_id").flatMap(_.asString)
     val cancelBg = input("cancel_background_job").flatMap(_.asBoolean).getOrElse(false)
 
     val sessionId = ctx.sessionId.getOrElse("default")
-    val timeoutDuration = timeout.millis
 
     // If background_job_id is provided, enter query/cancel mode
     bgJobId match
@@ -313,13 +374,29 @@ Git safety:
                 val bgDescription = desc.getOrElse(firstLine)
                 for
                   jobId <- IO.randomUUID.map(_.toString.take(8))
-                  onComplete = makeNotifyCallback(command, desc, ctx, jobId)
-                  _ <- shell.executeBackground(command, timeoutDuration, desc, onComplete, onHeartbeat, Some(jobId))
+                  onComplete = makeNotifyCallback(command, desc, ctx, jobId, tailN)
+                  _ <- shell.executeBackground(actualCommand, desc, onComplete, onHeartbeat, Some(jobId))
                   _ <- emitBgTaskStarted(ctx, jobId, bgDescription)
                 yield Right(
                   s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
                 )
-              else executeForegroundWithAutoBackground(shell, command, timeoutDuration, desc, ctx)
+              else if ctx.isRemoteExec then
+                // Remote-exec: run synchronously without auto-background.
+                // The caller (another Nebflow instance via HTTP) manages the
+                // lifecycle — auto-background here would return a useless
+                // "[moved to background]" message instead of the real output.
+                val remoteTimeout = explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT).millis
+                shell
+                  .execute(actualCommand, remoteTimeout)
+                  .attempt
+                  .map {
+                    case Right(pr) => formatResult(pr, desc, tailN)
+                    case Left(_: TimeoutException) =>
+                      Left(ToolError(s"[Command timed out after ${remoteTimeout.toMillis}ms]"))
+                    case Left(e) =>
+                      Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
+                  }
+              else executeForegroundWithAutoBackground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
             }
           end if
     end match
@@ -334,11 +411,16 @@ Git safety:
   private def executeForegroundWithAutoBackground(
     shell: ShellSession,
     command: String,
-    timeout: FiniteDuration,
+    explicitTimeoutMs: Option[Long],
     desc: Option[String],
-    ctx: ToolContext
+    ctx: ToolContext,
+    tailN: Option[Int] = None
   ): IO[Either[ToolError, String]] =
     val threshold = AutoBackgroundThresholdMs.millis
+    // When no explicit timeout, use a duration long enough that .timeout() never fires.
+    // The process is managed by auto-background (30s) for foreground commands,
+    // and stuck detection (30s no output + no CPU) for background tasks.
+    val processTimeout = explicitTimeoutMs.map(_.millis).getOrElse(365.days)
     val health = new JobHealth()
     for
       // Ref to store command result when it finishes
@@ -351,7 +433,7 @@ Git safety:
 
       // Start the actual command — runs to completion, never cancelled
       commandFiber <- (for
-        r <- shell.execute(command, timeout, Some(health)).attempt
+        r <- shell.execute(command, processTimeout, Some(health)).attempt
         _ <- resultRef.set(Some(r))
         _ <- signal.complete(()).void // no-op if threshold already completed it
       yield ()).start
@@ -370,7 +452,7 @@ Git safety:
       // If threshold won, start a background fiber that waits for command completion and notifies agent
       _ <-
         if didThresholdWin then
-          val onComplete = makeNotifyCallback(command, desc, ctx, autoBgJobId)
+          val onComplete = makeNotifyCallback(command, desc, ctx, autoBgJobId, tailN)
           val onHeartbeat = makeHeartbeatCallback(command, desc, ctx)
           val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
           val bgDescription = desc.getOrElse(firstLine)
@@ -395,8 +477,9 @@ Git safety:
     yield
       if !didThresholdWin then
         resultOpt match
-          case Some(Right(pr)) => formatResult(pr, desc)
-          case Some(Left(_: TimeoutException)) => Left(ToolError(s"[Command timed out after ${timeout.toMillis}ms]"))
+          case Some(Right(pr)) => formatResult(pr, desc, tailN)
+          case Some(Left(e: TimeoutException)) =>
+            Left(ToolError(Option(e.getMessage).getOrElse("[Command timed out]")))
           case Some(Left(e)) => Left(ToolError(s"Error: ${e.getMessage}"))
           case None => Left(ToolError("[Unexpected: no result from foreground command]"))
       else
@@ -409,18 +492,24 @@ Git safety:
 
   private def formatResult(
     result: ProcessResult,
-    desc: Option[String]
+    desc: Option[String],
+    tailN: Option[Int] = None
   ): Either[ToolError, String] =
     val prefix = desc.map(d => s"[$d]\n").getOrElse("")
     val dirLine = s"(cwd: ${result.cwd})\n"
     val exitLine = if result.exitCode != 0 then s"(exit ${result.exitCode})\n" else ""
-    val cleanedOut = cleanOutput(sanitizeCardOutput(result.stdout))
+    val rawOut = tailN match
+      case Some(n) => applyTailTruncation(result.stdout, n)
+      case None => result.stdout
+    val cleanedOut = cleanOutput(sanitizeCardOutput(rawOut))
     val cleanedErr = cleanOutput(result.stderr)
     val errLine = if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else ""
     val output = cleanedOut + errLine
     val full = prefix + dirLine + exitLine + output
     if full.trim.isEmpty then Right("[Command executed successfully with no output]")
     else Right(full)
+
+  end formatResult
 
   /**
    * Best-effort repair of shell-damaged card JSON output.
@@ -474,14 +563,18 @@ Git safety:
     command: String,
     desc: Option[String],
     ctx: ToolContext,
-    jobId: String
+    jobId: String,
+    tailN: Option[Int] = None
   ): Option[Either[Throwable, ProcessResult] => IO[Unit]] =
     ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       val description = desc.getOrElse(firstLine)
       val (eventType, payload, metadata, exitInfo) = result match
         case Right(pr) =>
-          val out = cleanOutput(sanitizeCardOutput(pr.stdout))
+          val rawOut = tailN match
+            case Some(n) => applyTailTruncation(pr.stdout, n)
+            case None => pr.stdout
+          val out = cleanOutput(sanitizeCardOutput(rawOut))
           val cleanedErr = cleanOutput(pr.stderr)
           val output = out + (if cleanedErr.nonEmpty then s"\n[stderr]:\n$cleanedErr" else "")
           val exitTxt = if pr.exitCode != 0 then s" (exit ${pr.exitCode})" else ""

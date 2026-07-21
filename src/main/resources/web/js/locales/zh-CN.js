@@ -19,6 +19,7 @@ export default {
   'input.placeholder': '输入消息...',
   'input.askPlaceholder': '输入你的问题...',
   'input.skillPlaceholder': '输入指令补充...',
+  'input.compactPlaceholder': '输入压缩指令（可选），直接回车开始压缩...',
   'input.voiceListening': '正在聆听...',
   'input.voiceHint': '松开发送',
   'input.voiceError': '语音输入不可用，请使用 Chrome 浏览器',
@@ -275,8 +276,12 @@ export default {
   'slash.skillDefault': '运行技能',
   'slash.skillActivated': '使用技能: {skill}',
   'slash.skillBadge': '技能',
+  'slash.deleteSkill': '删除技能',
+  'slash.confirmDelete': '确定要删除技能「{skill}」吗？此操作不可撤销。',
+  'slash.skillDeleted': '技能「{skill}」已删除',
+  'slash.skillDeleteFailed': '删除技能「{skill}」失败：可能不是用户级技能',
   'slash.model': '选择本次会话的模型',
-  'bypass.toggle': '自动放行：跳过当前会话的所有权限审批',
+  'bypass.toggle': '安全模式：点击切换 确认编辑 / 放行编辑 / 全部放行',
 
   // === Voice ===
   'voice.listening': '正在聆听...',

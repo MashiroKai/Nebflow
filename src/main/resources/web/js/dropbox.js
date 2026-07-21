@@ -276,6 +276,23 @@ function renderMessages(deviceId) {
 
   const msgs = dropboxMessages[deviceId] || [];
   container.innerHTML = msgs.map(m => renderMessage(m)).join('');
+
+  // Copy button delegation (re-bound each render since innerHTML replaces children)
+  container.querySelectorAll('.dropbox-msg-copy').forEach(btn => {
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(btn.dataset.text);
+        const origSvg = btn.innerHTML;
+        btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.innerHTML = origSvg; btn.classList.remove('copied'); }, 1500);
+      } catch (err) {
+        console.error('[dropbox] Copy failed:', err);
+      }
+    };
+  });
+
   // Auto-scroll to bottom
   container.scrollTop = container.scrollHeight;
 }
@@ -288,7 +305,12 @@ function renderMessage(m) {
     return `
       <div class="dropbox-msg ${isOut ? 'out' : 'in'}">
         <div class="dropbox-msg-bubble">${escapeHtml(m.text)}</div>
-        <div class="dropbox-msg-time">${time}</div>
+        <div class="dropbox-msg-meta">
+          <span class="dropbox-msg-time">${time}</span>
+          <button class="dropbox-msg-copy" data-text="${escapeHtml(m.text)}" title="${t('chat.copy')}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
       </div>`;
   }
 

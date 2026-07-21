@@ -2,31 +2,24 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.core.skill.SkillService
 import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
-import nebflow.service.{MemoryStore, RulesStore}
+import nebflow.service.{MemoryStore, RulesStore, StrengthStore}
 
 /**
  * Unified context refresh for session-scoped resources.
  *
- * == Lifecycle sources (resolved once, cached until reset) ==
+ * All sources are re-resolved every turn (EveryTurn). MtimeCache ensures
+ * unchanged files cost only a stat() syscall — no re-read, no rebuild.
+ *
+ * Sources:
  *   • system-prefix  — FileInjectionSource with mtime cache
- *   • agentDef       — AgentLibrary.get (mtime-cached directory)
- *   • memoryBlock    — 3-level index files → MemoryStore (mtime-cached)
+ *   • agentDef       — AgentLibrary.get (reads system.md from disk)
  *   • rulesMd        — folder chain → RulesStore.resolveInheritedRules (mtime-cached)
  *   • projectRoot    — folder chain → SessionStore.resolveProjectRoot
- *
- * == EveryTurn sources (re-resolved every turn) ==
  *   • thinkingConfig — global Ref[IO, ThinkingConfig]
- *   • fileChanges    — FileChangeTracker (5s debounce)
  *   • gitBranch      — git rev-parse --abbrev-ref HEAD
- *
- * == Lifecycle reset triggers ==
- *   • /clear (ResetSession) — clears messages + lifecycle
- *   • Compaction complete   — lifecycle re-resolved on next turn
- *   • Model switch          — lifecycle re-resolved on next turn
- *
- * Memory injection uses progressive disclosure: only the index layer is injected.
- * Agents can Read the full file on demand to access the detail layer.
+ *   • memory files   — built into memoryBlock string, injected into system prompt
  */
 object ContextRefresher:
 
@@ -35,10 +28,9 @@ object ContextRefresher:
     systemPrefixSource
   )
 
-  /**
-   * System prefix: ~/.nebflow/system-prefix.md with JAR fallback.
-   *  Lifecycle source — resolved once, changes only on lifecycle reset.
-   */
+  private val detailRefPattern = "→([a-zA-Z0-9]{4,12})".r
+
+  /** System prefix: ~/.nebflow/system-prefix.md with JAR fallback. */
   val systemPrefixSource: FileInjectionSource =
     val jarFallback =
       val is = getClass.getResourceAsStream("/system-prefix.md")
@@ -48,25 +40,13 @@ object ContextRefresher:
       else ""
     new FileInjectionSource(
       "system-prefix",
-      InjectionMode.Lifecycle,
       PathUtil.dataRoot / "system-prefix.md",
       fallback = if jarFallback.nonEmpty then jarFallback + "\n\n" else ""
     )
 
   // ============================================================
-  // Lifecycle resolution (first turn or after reset)
+  // Resolution helpers
   // ============================================================
-
-  /** Build memory block from index layers. Uses mtime-cached reads. */
-  private def buildMemoryBlock(agentDef: AgentDef, folderId: Option[String]): String =
-    val userMemory = MemoryStore.loadUserMemory
-    val agentMemory = MemoryStore.loadAgentMemory(agentDef.name)
-    val folderMemory = folderId.flatMap(MemoryStore.loadFolderMemory)
-    List(
-      folderMemory.map(c => s"# Memory — Folder\n$c"),
-      agentMemory.map(c => s"# Memory — Agent\n$c"),
-      userMemory.map(c => s"# Memory — User\n$c")
-    ).flatten.mkString("\n\n")
 
   /** Resolve inherited rules.md from folder chain. Pure — mtime-cached per file. */
   private def resolveRules(state: AgentState, resources: SharedResources): Option[String] =
@@ -96,23 +76,8 @@ object ContextRefresher:
         yield effectiveRoot
       case None => IO.pure(None)
 
-  /** Resolve all Lifecycle sources from disk. Called once per session lifecycle. */
-  private def resolveLifecycle(
-    state: AgentState,
-    resources: SharedResources,
-    agentDef: AgentDef
-  ): IO[LifecycleContext] =
-    for
-      freshDefOpt <- resources.agentLibrary.get(agentDef.name)
-      freshDef = freshDefOpt.getOrElse(agentDef)
-      systemPrefix <- systemPrefixSource.get
-      projectRoot <- resolveProjectRoot(state.folderId, resources, freshDef.name)
-      rulesMd = resolveRules(state, resources)
-      memoryBlock = buildMemoryBlock(freshDef, state.folderId)
-    yield LifecycleContext(systemPrefix, freshDef, memoryBlock, rulesMd, projectRoot)
-
   // ============================================================
-  // Git branch detection (EveryTurn source)
+  // Git branch detection
   // ============================================================
 
   /**
@@ -173,75 +138,115 @@ object ContextRefresher:
     }
 
   // ============================================================
+  // Memory block builder
+  // ============================================================
+
+  /**
+   * Build a memory block string for system prompt injection.
+   *
+   * Reads all four memory levels (User, Agent, Folder, Session) and formats
+   * them into a single Markdown block. Only levels that exist on disk are
+   * included. This replaces the old MemoryAutoRead synthetic Read messages.
+   */
+  def buildMemoryBlock(
+    agentName: String,
+    folderId: Option[String],
+    sessionId: Option[String],
+    currentDelegateCount: Int = 0
+  ): String =
+    val sections = List(
+      MemoryStore.loadUserMemory
+        .map(content => filterByStrength(content, currentDelegateCount))
+        .map(content => s"## User Memory\n\n$content"),
+      MemoryStore
+        .loadAgentMemory(agentName)
+        .map(content => filterByStrength(content, currentDelegateCount))
+        .map(content => s"## Agent Memory\n\n$content"),
+      folderId
+        .flatMap(fid => MemoryStore.loadFolderMemory(fid))
+        .map(content => filterByStrength(content, currentDelegateCount))
+        .map(content => s"## Folder Memory\n\n$content"),
+      sessionId
+        .flatMap(sid => MemoryStore.loadSessionMemory(sid))
+        .map(content => filterByStrength(content, currentDelegateCount))
+        .map(content => s"## Session Memory\n\n$content")
+    ).flatten
+
+    if sections.isEmpty then ""
+    else
+      s"""# Memory
+         |
+         |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches.
+         |
+         |${sections.mkString("\n\n")}""".stripMargin
+  end buildMemoryBlock
+
+  /**
+   * Filter memory content by strength. Lines with →id references are checked
+   * against StrengthStore — entries below threshold are removed.
+   * Lines without →id (short memory) are always kept.
+   */
+  private def filterByStrength(content: String, currentDelegateCount: Int): String =
+    content
+      .split("\n")
+      .filter { line =>
+        if line.trim.startsWith("- ") then
+          detailRefPattern.findFirstMatchIn(line) match
+            case Some(m) =>
+              val id = m.group(1)
+              StrengthStore.shouldInclude(s"memory.$id", currentDelegateCount)
+            case None => true // Short memory, always keep
+        else true // Non-entry lines (headers, blank lines), always keep
+      }
+      .mkString("\n")
+  end filterByStrength
+
+  // ============================================================
   // Main entry point
   // ============================================================
 
   /**
    * Refresh context for the current turn.
    *
-   * Returns (TurnContext, Option[LifecycleContext]):
-   *   - TurnContext always contains current values.
-   *   - Option[LifecycleContext] is Some only on first turn (to be cached by caller).
-   *
-   * Lifecycle sources use SessionContext.lifecycle if cached.
-   * EveryTurn sources (thinkingConfig, fileChanges) are always fresh.
+   * All sources are resolved fresh from disk (mtime-cached so unchanged
+   * files cost only a stat() syscall). Returns TurnContext with current values.
    */
   def refreshTurn(
     state: AgentState,
     resources: SharedResources,
     agentDef: AgentDef
-  ): IO[(TurnContext, Option[LifecycleContext])] =
+  ): IO[TurnContext] =
+    for
+      freshDefOpt <- resources.agentLibrary.get(agentDef.name)
+      // Preserve runtime tools list — only refresh configuration content from disk.
+      freshDef = freshDefOpt.map(_.copy(tools = agentDef.tools)).getOrElse(agentDef)
+      systemPrefix <- systemPrefixSource.get
+      projectRoot <- resolveProjectRoot(state.folderId, resources, freshDef.name)
+      rulesMd = resolveRules(state, resources)
+      thinkingConfig <- resources.thinkingConfigRef.get
+      (branchReminder, currentBranch) <- checkBranchChange(projectRoot, state.gitBranch)
+      skillCatalog <- SkillService.buildSkillCatalog(state.execution.delegateCount)
+      flowCatalog <- nebflow.core.flow.FlowDefLoader.buildFlowCatalog()
+      memoryBlock = buildMemoryBlock(freshDef.name, state.folderId, state.sessionId, state.execution.delegateCount)
+    yield TurnContext(
+      freshDef,
+      systemPrefix,
+      projectRoot,
+      rulesMd,
+      thinkingConfig,
+      branchReminder,
+      currentBranch,
+      skillCatalog,
+      flowCatalog,
+      memoryBlock
+    )
 
-    state.lifecycle match
-      case Some(lc) =>
-        for
-          thinkingConfig <- resources.thinkingConfigRef.get
-          (branchReminder, currentBranch) <- checkBranchChange(lc.projectRoot, state.gitBranch)
-        yield (
-          TurnContext(
-            lc.agentDef,
-            lc.systemPrefix,
-            lc.projectRoot,
-            lc.rulesMd,
-            lc.memoryBlock,
-            thinkingConfig,
-            branchReminder,
-            currentBranch
-          ),
-          None
-        )
-
-      case None =>
-        for
-          lc <- resolveLifecycle(state, resources, agentDef)
-          thinkingConfig <- resources.thinkingConfigRef.get
-          (branchReminder, currentBranch) <- checkBranchChange(lc.projectRoot, state.gitBranch)
-        yield (
-          TurnContext(
-            lc.agentDef,
-            lc.systemPrefix,
-            lc.projectRoot,
-            lc.rulesMd,
-            lc.memoryBlock,
-            thinkingConfig,
-            branchReminder,
-            currentBranch
-          ),
-          Some(lc)
-        )
-  end refreshTurn
-
-  /**
-   * Resolve projectRoot for ToolContext (called from buildToolContext).
-   * Uses cached LifecycleContext if available, otherwise resolves from disk.
-   */
+  /** Resolve projectRoot for ToolContext (called from buildToolContext). */
   def resolveProjectRootForTool(
     state: AgentState,
     resources: SharedResources,
     agentDef: AgentDef
   ): IO[Option[String]] =
-    state.lifecycle match
-      case Some(lc) => IO.pure(lc.projectRoot)
-      case None => resolveProjectRoot(state.folderId, resources, agentDef.name)
+    resolveProjectRoot(state.folderId, resources, agentDef.name)
 
 end ContextRefresher
