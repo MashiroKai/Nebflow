@@ -24,12 +24,38 @@ import scala.concurrent.duration.*
 final class NeblinkDiscovery(
   neblinkService: NeblinkService,
   serverPort: Int,
-  presenceService: NeblinkPresenceService
+  presenceService: NeblinkPresenceService,
+  coordClient: Option[CoordClient] = None
 ):
-  private val logger = NebflowLogger.forName("nebflow.neblink.tailscale")
+  private val logger = NebflowLogger.forName("nebflow.neblink.discovery")
 
-  /** Discovery cycle — full tailnet scan + WS presence sync + announce. */
+  /** Discovery cycle — use coordinator if configured, otherwise fall back to Tailscale. */
   def discoverCycle: IO[Unit] =
+    coordClient match
+      case Some(client) => discoverViaCoordinator(client)
+      case None => discoverViaTailscale
+
+  /** Discovery via coordination server: login/heartbeat → upsert peers → sync presence. */
+  private def discoverViaCoordinator(client: CoordClient): IO[Unit] =
+    for
+      identity <- neblinkService.identity
+      result <- client.discover(identity.deviceId, identity.deviceName, identity.platform, Nil)
+      _ <- result match
+        case Right(coordPeers) =>
+          val neblinkPeers = client.toNeblinkPeers(coordPeers)
+          val peerIps = client.peerAddresses(coordPeers)
+          for
+            _ <- neblinkPeers.traverse_(p => neblinkService.upsertPeer(p))
+            _ <- neblinkService.updateTrustedIps(peerIps)
+            _ <- presenceService.syncPeers(neblinkPeers)
+            _ <- logger.debug(s"Coordinator discovery: ${neblinkPeers.size} peer(s)")
+          yield ()
+        case Left(err) =>
+          logger.warn(s"Coordinator discovery failed: $err")
+    yield ()
+
+  /** Original Tailscale-based discovery. */
+  private def discoverViaTailscale: IO[Unit] =
     for
       peers <- scanTailnet
       _ <- presenceService.syncPeers(peers)
