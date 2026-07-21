@@ -1,11 +1,13 @@
 package nebflow.coordinator
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import io.circe.parser.decode
 import nebflow.core.NebflowLogger
 import org.http4s.*
-import org.http4s.circe.CirceEntityCodec.*
+import org.http4s.circe.CirceEntityEncoder.*
 import org.http4s.dsl.Http4sDsl
 import org.http4s.headers.Authorization
 import org.http4s.server.Router
@@ -22,19 +24,32 @@ class CoordinatorRoutes(service: CoordinatorService) extends Http4sDsl[IO]:
 
     // POST /api/network/create
     case req @ POST -> Root / "network" / "create" =>
-      req.as[CreateNetworkRequest].flatMap { body =>
-        service.createNetwork(body.name).flatMap { resp =>
-          Ok(resp.asJson)
-        }
+      req.bodyText.compile.string.flatMap { raw =>
+        decode[CreateNetworkRequest](raw) match
+          case Right(body) =>
+            service.createNetwork(body.name).flatMap { resp =>
+              Ok(resp.asJson)
+            }
+          case Left(err) =>
+            BadRequest(ErrorResponse(s"Invalid request: ${err.getMessage}").asJson)
       }
 
     // POST /api/device/login
     case req @ POST -> Root / "device" / "login" =>
-      req.as[LoginRequest].flatMap { body =>
-        service.loginDevice(body).flatMap {
-          case Right(resp) => Ok(resp.asJson)
-          case Left(err)   => Forbidden(ErrorResponse(err).asJson)
-        }
+      req.bodyText.compile.string.flatMap { raw =>
+        decode[LoginRequest](raw) match
+          case Right(body) =>
+            service.loginDevice(body).flatMap {
+              case Right(resp) => Ok(resp.asJson)
+              case Left(err)   => Forbidden(ErrorResponse(err).asJson)
+            }
+          case Left(err) =>
+            logger.warn(s"Login decode error: ${err.getMessage}")
+            BadRequest(ErrorResponse(s"Invalid request body: ${err.getMessage}").asJson)
+      }.handleErrorWith { e =>
+        logger.error(s"Login unexpected error: ${e.getMessage}").flatMap(_ =>
+          InternalServerError(ErrorResponse(s"Internal error: ${e.getMessage}").asJson)
+        )
       }
 
     // POST /api/device/heartbeat (Bearer token required)
@@ -61,11 +76,15 @@ class CoordinatorRoutes(service: CoordinatorService) extends Http4sDsl[IO]:
     case req @ POST -> Root / "device" / "endpoints" =>
       extractToken(req) match
         case Some(token) =>
-          req.as[UpdateEndpointsRequest].flatMap { body =>
-            service.updateEndpoints(token, body).flatMap {
-              case Right(_)   => Ok(Json.obj("ok" -> Json.fromBoolean(true)))
-              case Left(err)  => Forbidden(ErrorResponse(err).asJson)
-            }
+          req.bodyText.compile.string.flatMap { raw =>
+            decode[UpdateEndpointsRequest](raw) match
+              case Right(body) =>
+                service.updateEndpoints(token, body).flatMap {
+                  case Right(_)   => Ok(Json.obj("ok" -> Json.fromBoolean(true)))
+                  case Left(err)  => Forbidden(ErrorResponse(err).asJson)
+                }
+              case Left(err) =>
+                BadRequest(ErrorResponse(s"Invalid request: ${err.getMessage}").asJson)
           }
         case None => Forbidden(ErrorResponse("Missing token").asJson)
 

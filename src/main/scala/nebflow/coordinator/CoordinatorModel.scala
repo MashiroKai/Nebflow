@@ -14,7 +14,14 @@ case class DeviceEndpoint(
 )
 object DeviceEndpoint:
   given Encoder[DeviceEndpoint] = deriveEncoder
-  given Decoder[DeviceEndpoint] = deriveDecoder
+  given Decoder[DeviceEndpoint] = Decoder.instance { c =>
+    for
+      address <- c.downField("address").as[String]
+      port <- c.downField("port").as[Int]
+      kind <- c.downField("kind").as[String]
+      label <- c.downField("label").as[Option[String]].map(_.getOrElse(""))
+    yield DeviceEndpoint(address, port, kind, label)
+  }
 
 /** Peer info returned to clients (never contains session tokens). */
 case class PeerInfo(
