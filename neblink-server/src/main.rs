@@ -1,3 +1,4 @@
+mod auth;
 mod model;
 mod routes;
 mod store;
@@ -19,7 +20,7 @@ async fn main() {
         )
         .init();
 
-    let port: u16 = std::env::var("COORDINATOR_PORT")
+    let port: u16 = std::env::var("NEBLINK_SERVER_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(9090);
@@ -42,14 +43,29 @@ async fn main() {
     }
 
     let app = Router::new()
+        // ===== User auth =====
+        .route("/api/user/me", get(routes::user_me))
+        // ===== Network management (requires user JWT) =====
         .route("/api/network/create", post(routes::create_network))
+        .route("/api/network/list", get(routes::list_networks))
+        .route("/api/network/{network_id}", delete(routes::delete_network))
+        .route("/api/network/{network_id}/rotate", post(routes::rotate_secret))
+        .route("/api/network/{network_id}/devices", get(routes::list_devices))
+        .route(
+            "/api/network/{network_id}/devices/{device_id}",
+            delete(routes::revoke_device),
+        )
+        // ===== Device session endpoints =====
         .route("/api/device/login", post(routes::login))
         .route("/api/device/heartbeat", post(routes::heartbeat))
         .route("/api/device/peers", get(routes::get_peers))
         .route("/api/device/endpoints", post(routes::update_endpoints))
         .route("/api/device/logout", delete(routes::logout))
+        // ===== Health =====
         .route("/api/health", get(routes::health))
         .route("/api/info", get(info))
+        // ===== Web UI =====
+        .route("/", get(web_ui))
         // Catch panics in handlers — return 500 instead of crashing the connection
         .layer(CatchPanicLayer::new())
         // Request tracing — logs each request with method, path, status, latency
@@ -101,6 +117,11 @@ async fn info() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
         "name": "neblink-server",
         "version": VERSION,
-        "port": std::env::var("COORDINATOR_PORT").unwrap_or_else(|_| "9090".to_string()),
+        "port": std::env::var("NEBLINK_SERVER_PORT").unwrap_or_else(|_| "9090".to_string()),
     }))
+}
+
+/// Serve the web UI (embedded in binary at compile time).
+async fn web_ui() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../static/index.html"))
 }

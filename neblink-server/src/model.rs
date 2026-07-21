@@ -22,6 +22,35 @@ pub struct PeerInfo {
     pub online: bool,
 }
 
+// ===== User types =====
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserInfo {
+    pub user_id: String,
+    pub email: String,
+}
+
+// ===== Network management types =====
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkInfo {
+    pub network_id: String,
+    pub name: String,
+    pub online_devices: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceInfo {
+    pub device_id: String,
+    pub device_name: String,
+    pub platform: String,
+    pub online: bool,
+    pub last_seen: i64,
+}
+
 // ===== Request / Response types =====
 
 #[derive(Deserialize)]
@@ -81,13 +110,6 @@ impl ErrorResponse {
 }
 
 // ===== Internal models =====
-
-#[derive(Clone)]
-pub struct Network {
-    pub network_id: String,
-    pub name: String,
-    pub secret_hash: String,
-}
 
 #[derive(Clone)]
 pub struct RegisteredDevice {
