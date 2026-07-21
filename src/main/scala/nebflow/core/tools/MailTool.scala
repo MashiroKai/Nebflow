@@ -77,7 +77,7 @@ Modes:
     val msgType = input("type").flatMap(_.asString).getOrElse("message")
     msgType match
       case "verify" => handleVerify(input, ctx)
-      case _        => handleMessage(input, ctx)
+      case _ => handleMessage(input, ctx)
 
   // ── type=verify: report flow verification result ──────────
 
@@ -90,8 +90,7 @@ Modes:
       case None =>
         IO.pure(Left(ToolError("Missing required parameter: passed (boolean)")))
       case Some(passed) =>
-        if agentPath.isBlank then
-          IO.pure(Left(ToolError("Cannot determine agent identity for verify report.")))
+        if agentPath.isBlank then IO.pure(Left(ToolError("Cannot determine agent identity for verify report.")))
         else
           val concise = summary.take(200)
           for
@@ -100,19 +99,25 @@ Modes:
             // 2. Notify Main Agent via ExternalEvent — replaces old ExternalEvent from PipelineActor
             _ <- ctx.parentRef match
               case Some(parent) =>
-                    val flowName = ctx.sessionName.getOrElse("flow")
-                    val status = if passed then "PASS" else "FAIL"
-                    parent ! AgentCommand.ExternalEvent(
-                      source = "flow",
-                      eventType = if passed then "completed" else "verify-failed",
-                      payload = s"[Flow: $flowName] $status\n$concise"
-                    )
+                val flowName = ctx.sessionName.getOrElse("flow")
+                val status = if passed then "PASS" else "FAIL"
+                parent ! AgentCommand.ExternalEvent(
+                  source = "flow",
+                  eventType = if passed then "completed" else "verify-failed",
+                  payload = s"[Flow: $flowName] $status\n$concise"
+                )
               case None => IO.unit
           yield
-            if deferredCompleted then
-              Right(if passed then "Verification PASSED." else s"Verification FAILED: $concise")
+            if deferredCompleted then Right(if passed then "Verification PASSED." else s"Verification FAILED: $concise")
             else
-              Left(ToolError("No pending flow verification for this agent. This type=verify is only for flow verify steps."))
+              Left(
+                ToolError(
+                  "No pending flow verification for this agent. This type=verify is only for flow verify steps."
+                )
+              )
+          end for
+    end match
+  end handleVerify
 
   // ── type=message: standard agent-to-agent messaging ───────
 
@@ -161,6 +166,8 @@ Modes:
           yield result
           end for
     end if
+
+  end handleMessage
 
   /** Temporary adapter: forwards the sub-agent's completion event to the parent, then stops. */
   private def replyAdapter(

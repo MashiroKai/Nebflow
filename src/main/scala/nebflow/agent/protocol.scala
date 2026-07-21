@@ -31,13 +31,6 @@ object AgentCommand:
     replyTo: Option[ActorRef[List[String]]] = None
   ) extends AgentCommand
 
-  case class AskPermission(
-    requestId: String,
-    toolName: String,
-    summary: String,
-    replyTo: ActorRef[Boolean]
-  ) extends AgentCommand
-
   case class LlmComplete(
     result: ConsumeResult,
     replyTo: Option[ActorRef[AgentEvent]],
@@ -588,7 +581,6 @@ extension (s: AgentState)
   def rulesMd: Option[String] = s.session.rulesMd
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch
-  def bypass: Boolean = s.session.safetyMode == "auto-all"
   def safetyMode: String = s.session.safetyMode
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)

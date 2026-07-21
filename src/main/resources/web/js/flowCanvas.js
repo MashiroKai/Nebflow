@@ -5,7 +5,7 @@
 // Nodes positioned by hierarchy depth from Main Agent.
 // Gray lines show data flow direction.
 
-import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader } from './canvas.js';
+import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader, isCanvasOpen } from './canvas.js';
 
 // ── View state (pan/zoom) ──────────────────────────────────
 let viewX = 0, viewY = 0, viewScale = 1;
@@ -290,6 +290,10 @@ function computeLayout() {
 // ── Rendering ──────────────────────────────────────────────
 
 function renderAll() {
+  // Only render content when the canvas is already open.
+  // Data (pipelines map) is always updated by event handlers regardless.
+  if (!isCanvasOpen()) return;
+
   const layout = computeLayout();
   if (!layout) {
     setCanvasContent(`${FLOW_CSS}
@@ -300,7 +304,6 @@ function renderAll() {
         </div>
       </div>`);
     showCanvasHeader(false);
-    openCanvas('');
     return;
   }
 
@@ -333,8 +336,6 @@ function renderAll() {
       ${toolbarHtml}
     </div>`);
   showCanvasHeader(false);
-  openCanvas('');
-  document.getElementById('flow-toggle-btn')?.classList.add('active');
 
   // Position nodes absolutely in viewport
   const viewport = document.getElementById('flow-viewport');
@@ -551,6 +552,8 @@ export async function toggleCanvas() {
   const isOpen = document.body.classList.contains('canvas-open');
   const btn = document.getElementById('flow-toggle-btn');
   if (isOpen) { closeCanvas(); btn?.classList.remove('active'); return; }
+  btn?.classList.add('active');
+  openCanvas('');
   renderAll();
 }
 

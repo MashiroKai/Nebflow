@@ -349,7 +349,7 @@ object SkillService:
     val argumentHint = extractField(fm, "argument-hint")
     val version = extractField(fm, "version")
     val userInvocable = extractField(fm, "user-invocable")
-      .map(v => v == "true" || v == "true")
+      .map(v => v.equalsIgnoreCase("true"))
       .getOrElse(true)
     val modelInvocable = extractField(fm, "disable-model-invocation")
       .map(v => !v.equalsIgnoreCase("true"))

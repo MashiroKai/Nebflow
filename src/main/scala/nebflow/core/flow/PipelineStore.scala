@@ -55,13 +55,23 @@ object PipelineStore:
     IO.blocking {
       if os.exists(file) then
         val content = os.read(file)
-        parser.decode[List[PipelineEntry]](content) match
-          case Right(entries) => entries
-          case Left(e) =>
-            logger.warn(s"Failed to decode pipelines.json for session $sessionId: ${e.getMessage}")
-            Nil
+        // Try wrapped format: {"pipelines": [...]}
+        parser
+          .decode[Map[String, List[PipelineEntry]]](content)
+          .toOption
+          .flatMap(_.get("pipelines"))
+          .filter(_.nonEmpty)
+          .getOrElse:
+            // Fallback: try bare list (pre-fix format or manual edit)
+            parser.decode[List[PipelineEntry]](content) match
+              case Right(entries) => entries
+              case Left(e) =>
+                logger.warn(s"Failed to decode pipelines.json for session $sessionId: ${e.getMessage}")
+                Nil
       else Nil
     }
+
+  end load
 
   /** Delete the store file (used when session is deleted). */
   def delete(sessionId: String): IO[Unit] =

@@ -26,9 +26,6 @@ private[agent] trait AgentCore:
    */
   private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
 
-  /** Internal tools excluded from List("*") wildcard expansion. */
-  private val InternalTools = Set.empty[String]
-
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
   private[agent] type ProcessingFn =
@@ -573,7 +570,7 @@ private[agent] trait AgentCore:
   protected def buildAllowedToolSet(agentDef: AgentDef, depth: Int = 0): Set[String] =
     val base = agentDef.tools match
       case Nil => Set.empty[String]
-      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).filterNot(InternalTools.contains).toSet
+      case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
     val depthFiltered =
       if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "MountFlow" else base

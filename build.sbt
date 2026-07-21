@@ -64,6 +64,9 @@ lazy val root = (project in file("."))
     run / fork := true,
     run / connectInput := true,
 
+    // Tests share PathUtil global state — sequential execution prevents interference
+    Test / parallelExecution := false,
+
     // Java options
     javaOptions ++= Seq(
       "--add-opens", "java.base/java.lang=ALL-UNNAMED",

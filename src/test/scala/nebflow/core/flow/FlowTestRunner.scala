@@ -41,16 +41,17 @@ object FlowTestRunner:
   case class FlowTestCase(
     name: String,
     input: String,
-    llm: String,           // "passing" | "failing" | "noVerdict"
+    llm: String, // "passing" | "failing" | "noVerdict"
     expect: FlowTestExpect
   )
 
   case class FlowTestExpect(
-    outcome: String,        // "completed" | "failed"
+    outcome: String, // "completed" | "failed"
     memoryUpdated: Boolean
   )
 
   object FlowTestSpec:
+
     given Decoder[FlowTestSpec] = Decoder.instance { c =>
       for
         flow <- c.downField("flow").as[String]
@@ -59,6 +60,7 @@ object FlowTestRunner:
     }
 
   object FlowTestCase:
+
     given Decoder[FlowTestCase] = Decoder.instance { c =>
       for
         name <- c.downField("name").as[Option[String]]
@@ -74,6 +76,7 @@ object FlowTestRunner:
     }
 
   object FlowTestExpect:
+
     given Decoder[FlowTestExpect] = Decoder.instance { c =>
       for
         outcome <- c.downField("outcome").as[Option[String]]
@@ -100,7 +103,9 @@ object FlowTestRunner:
           .filter(_.last.endsWith(".test.yaml"))
           .flatMap { file =>
             val yaml = os.read(file)
-            yamlParser.parse(yaml).toOption
+            yamlParser
+              .parse(yaml)
+              .toOption
               .flatMap(_.as[FlowTestSpec].toOption)
           }
           .toList
@@ -116,9 +121,9 @@ object FlowTestRunner:
   /** Run one test case end-to-end. */
   private def runTestCase(flowName: String, tc: FlowTestCase, flowYaml: String): IO[TestResult] =
     val fakeLlm = tc.llm match
-      case "failing"  => FakeLlm.failing
+      case "failing" => FakeLlm.failing
       case "noVerdict" => FakeLlm.noVerdict
-      case _          => FakeLlm.passing
+      case _ => FakeLlm.passing
 
     Resource.eval(FlowTestKit.create(fakeLlm)).use { kit =>
       for
@@ -166,21 +171,29 @@ object FlowTestRunner:
         memResult <-
           if !tc.expect.memoryUpdated then IO.pure(true)
           else kit.readMemory(flowName).map(_.nonEmpty)
-      yield TestResult(flowName, tc.name, outcomeOk && memResult,
-        s"$detail memory=${if memResult then "updated" else "empty"}")
+      yield TestResult(
+        flowName,
+        tc.name,
+        outcomeOk && memResult,
+        s"$detail memory=${if memResult then "updated" else "empty"}"
+      )
     }
+
+  end runTestCase
 
   /** Run all specs from a directory and return combined results. */
   def runAll(flowsDir: os.Path): IO[List[TestResult]] =
     for
       specs <- loadSpecs(flowsDir)
       // Pre-load all flow YAML content before any temp dir setup
-      flowYamls <- specs.traverse { spec =>
-        IO.blocking {
-          val file = flowsDir / s"${spec.flow}.yaml"
-          spec.flow -> os.read(file)
+      flowYamls <- specs
+        .traverse { spec =>
+          IO.blocking {
+            val file = flowsDir / s"${spec.flow}.yaml"
+            spec.flow -> os.read(file)
+          }
         }
-      }.map(_.toMap)
+        .map(_.toMap)
       _ <- logger.info(s"Loaded ${specs.size} test specs, ${flowYamls.size} flow definitions")
       results <- specs.traverse(spec => runSpec(spec, flowYamls))
     yield results.flatten
