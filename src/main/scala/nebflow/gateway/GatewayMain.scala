@@ -147,7 +147,7 @@ object GatewayMain extends IOApp.Simple:
     yield ()
 
   /**
-   * Background heartbeat loop for coordinator mode.
+   * Background heartbeat loop for NebLink server mode.
    * Every 30 seconds: send heartbeat, update peer list + trusted IPs.
    * Runs as a fire-and-forget fiber via `.start`.
    */
@@ -327,13 +327,13 @@ object GatewayMain extends IOApp.Simple:
                                         new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
                                           dispatcher
                                         )
-                                      // Check if coordinator is configured; if so, create client for coordinator-based discovery
+                                      // Check if NebLink server is configured; if so, create client for NebLink-based discovery
                                       val coordClient: Option[nebflow.neblink.CoordClient] =
                                         neblinkService.neblinkConfig.unsafeRunSync() match
                                           case nc if nc.coordinator.isDefined =>
                                             Some(new nebflow.neblink.CoordClient(nc.coordinator.get, cfg.port.value))
                                           case _ => None
-                                      // Discovery service — uses coordinator if configured, otherwise Tailscale
+                                      // Discovery service — uses NebLink server if configured, otherwise Tailscale
                                       val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
                                         neblinkService,
                                         cfg.port.value,
@@ -354,7 +354,7 @@ object GatewayMain extends IOApp.Simple:
                                         ) *>
                                         // Trigger an immediate discovery cycle now that the hook is wired.
                                         neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
-                                        // Start coordinator heartbeat loop (if configured) — maintains
+                                        // Start NebLink server heartbeat loop (if configured) — maintains
                                         // session liveness and updates peer list every 30 seconds.
                                         coordClient
                                           .traverse_(client => startHeartbeatLoop(client, neblinkService).start.void) *>

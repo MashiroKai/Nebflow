@@ -65,7 +65,7 @@ async fn main() {
         }
     };
 
-    tracing::info!("Nebflow Coordinator v{VERSION} started on :{port}");
+    tracing::info!("NebLink Server v{VERSION} started on :{port}");
 
     // Graceful shutdown: handle Ctrl+C / SIGTERM / service stop
     // NSSM sends Ctrl+Break on Windows; tokio::signal::ctrl_c handles Ctrl+C
@@ -99,7 +99,7 @@ async fn main() {
 /// Returns version and configuration info.
 async fn info() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({
-        "name": "nebflow-coordinator",
+        "name": "neblink-server",
         "version": VERSION,
         "port": std::env::var("COORDINATOR_PORT").unwrap_or_else(|_| "9090".to_string()),
     }))

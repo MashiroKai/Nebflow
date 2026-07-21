@@ -29,7 +29,7 @@ final class NeblinkDiscovery(
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.discovery")
 
-  /** Discovery cycle — use coordinator if configured, otherwise fall back to Tailscale. */
+  /** Discovery cycle — use NebLink server if configured, otherwise fall back to Tailscale. */
   def discoverCycle: IO[Unit] =
     coordClient match
       case Some(client) => discoverViaCoordinator(client)
@@ -48,10 +48,10 @@ final class NeblinkDiscovery(
             _ <- neblinkPeers.traverse_(p => neblinkService.upsertPeer(p))
             _ <- neblinkService.updateTrustedIps(peerIps)
             _ <- presenceService.syncPeers(neblinkPeers)
-            _ <- logger.debug(s"Coordinator discovery: ${neblinkPeers.size} peer(s)")
+            _ <- logger.debug(s"NebLink server discovery: ${neblinkPeers.size} peer(s)")
           yield ()
         case Left(err) =>
-          logger.warn(s"Coordinator discovery failed: $err")
+          logger.warn(s"NebLink server discovery failed: $err")
     yield ()
 
   /** Original Tailscale-based discovery. */
