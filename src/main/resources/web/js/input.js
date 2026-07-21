@@ -374,7 +374,7 @@ function compressImage(file, opts = {}) {
 
 /** Show an inline error in the attachment preview area (no alert popup). */
 function showAttError(msg, target) {
-  const attPreview = (target && target.attPreviewEl) || activeView.dom.attPreview;
+  const attPreview = (target && target.attPreviewEl) || (activeView && activeView.dom && activeView.dom.attPreview);
   if (!attPreview) { console.warn(msg); return; }
   const err = document.createElement('div');
   err.className = 'att-error';
@@ -395,9 +395,15 @@ function arrayBufferToBase64(buffer) {
 }
 
 export async function addFileAttachment(file, callback, target) {
-  // target: optional { attPreviewEl, attachments } for non-primary windows.
-  // Defaults to primary window's pendingAttachments.
-  const attachments = (target && target.attachments) || activeView.pendingAttachments;
+  // Capture the view at entry — activeView is a live module binding that ws.js
+  // changes on every incoming message. Without capturing, the await points below
+  // would read a stale/changed activeView, causing renderAttachmentPreview to
+  // target the wrong DOM element (or crash on null).
+  if (!target && activeView) {
+    target = { attPreviewEl: activeView.dom.attPreview, attachments: activeView.pendingAttachments };
+  }
+  const attachments = (target && target.attachments) || (activeView && activeView.pendingAttachments);
+  if (!attachments) { console.error('[input] addFileAttachment: no attachments array'); return; }
   if (file.type.startsWith('image/')) {
     if (file.size > 10 * 1024 * 1024) {
       showAttError('Image too large (max 10MB): ' + file.name, target);
@@ -946,6 +952,7 @@ export function initInput(view) {
     }
     if (files.length === 0) return; // normal text paste, let browser handle it
     e.preventDefault();
+    e.stopPropagation(); // prevent document-level paste from double-processing
     files.forEach(file => addFileAttachment(file));
   });
 
@@ -1071,11 +1078,13 @@ export function initInput(view) {
       e.preventDefault();
       e.stopPropagation();
     });
-    document.body.addEventListener('dragleave', () => {
-      dragCounter--;
-      if (dragCounter <= 0) {
-        dragCounter = 0;
-        document.body.classList.remove('drag-over');
+    document.body.addEventListener('dragleave', (e) => {
+      if (e.dataTransfer && e.dataTransfer.types && Array.from(e.dataTransfer.types).includes('Files')) {
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          document.body.classList.remove('drag-over');
+        }
       }
     });
     document.body.addEventListener('drop', (e) => {
