@@ -25,13 +25,19 @@ object PipelineActor:
   val VerifyPromptPreamble =
     """You are the verification step of this workflow. Analyze the step results against the verification criteria below.
 
-At the END of your response, you MUST include a verdict line in exactly this format:
-  VERDICT: PASS
-or
-  VERDICT: FAIL: <one-line reason>
+Report your verdict using Mail(type=verify, passed=..., summary="..."):
+  - passed=true if the work meets all criteria.
+  - passed=false if issues remain AFTER you have mailed specific feedback to the relevant agent and given them a chance to fix it.
 
-The verdict line is how the pipeline detects your result — without it, verification fails.
-Do NOT call any tools to report the result. Just output the verdict line at the end of your analysis.
+Workflow for failing verification:
+  1. Mail(type=message) the peer whose work needs fixing, with specific, actionable feedback.
+  2. Wait for their response.
+  3. Re-evaluate. If now acceptable, Mail(type=verify, passed=true).
+  4. If still not acceptable after reasonable attempts, Mail(type=verify, passed=false, summary="...").
+
+If Mail is unavailable, include a fallback verdict line at the END of your response:
+  VERDICT: PASS
+  VERDICT: FAIL: <one-line reason>
 
 --- Verification Criteria ---
 """.stripMargin
@@ -67,6 +73,9 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
 
     /** Verify agent reported verdict via Mail(type=verify). */
     case class VerifyReceived(stepId: String, result: VerifyResult) extends PipelineCommand
+
+    /** Global flow timeout fired. */
+    case object FlowTimeout extends PipelineCommand
 
     /** Shutdown the pipeline actor. */
     case object Stop extends PipelineCommand
@@ -203,6 +212,13 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               _ <- saveState(stateRef, cfg)
             yield this
 
+          case PipelineCommand.FlowTimeout =>
+            stateRef.get.flatMap { state =>
+              if state.phase == RunPhase.Running then
+                failPipeline(ctx, stateRef, cfg, s"Flow timed out after $MaxFlowDuration")
+              else IO.unit
+            }.as(this)
+
           case PipelineCommand.GetState(replyTo) =>
             for
               state <- stateRef.get
@@ -272,6 +288,14 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
             _ <- logger.info(s"[${cfg.name}] Triggered with input (${input.length} chars)")
             _ <- FlowMembership.registerFlow(cfg.name, cfg.flowDef.nodes)
             _ <- scheduleReadySteps(ctx, stateRef, cfg)
+            // Start global flow timeout
+            _ <- ctx.forkTurn(
+              IO.sleep(MaxFlowDuration) *>
+                stateRef.get.flatMap { s =>
+                  if s.phase == RunPhase.Running then IO(ctx.self ! PipelineCommand.FlowTimeout)
+                  else IO.unit
+                }
+            )
           yield ()
           end for
     yield ()
@@ -350,7 +374,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               readTracker <- ReadTracker.create
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id))
-              peerInfo = buildPeerInfo(node.id, state.agentPaths, cfg.name)
+              peerInfo = buildPeerInfo(node.id, state.agentPaths, cfg.name, neighborsOf(cfg.flowDef.nodes, node.id))
               actualPrompt = withMemory(peerInfo + promptWithPreamble, cfg)
               agentRef <- ctx.system.spawn(
                 AgentActor(
@@ -442,11 +466,6 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
             _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
             _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", result.summary))
             _ = logger.info(s"[${cfg.name}] Verify '$stepId' via Mail: ${if result.pass then "PASS" else "FAIL"}")
-            // Retry / loop-back logic
-            _ <- cfg.flowDef.nodes.find(_.id == stepId).flatMap(_.retry) match
-              case Some(RetryTarget(target, maxIter)) =>
-                handleRetry(ctx, stateRef, cfg, stepId, target, maxIter)
-              case None => IO.unit
           yield ()
         else
           logger.debug(s"[${cfg.name}] VerifyReceived for '$stepId' ignored (status: ${state.stepStatus.getOrElse(stepId, "?")})")
@@ -866,6 +885,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
 
   private val MaxStepOutputChars = 8000
   private val MaxMemoryChars = 4000
+  private val MaxFlowDuration = 3600.seconds // 1 hour global flow timeout
 
   /** Inject flow memory as a context prefix to a prompt. */
   private def withMemory(prompt: String, cfg: PipelineConfig): String =
@@ -890,9 +910,25 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
       }
     result
 
-  /** Build peer address info block for agent prompt injection. */
-  private def buildPeerInfo(nodeId: String, agentPaths: Map[String, String], flowName: String): String =
-    val peers = agentPaths.filter { (id, _) => id != nodeId }
+  /** Compute the set of node IDs that have a DAG edge with the given node. */
+  private def neighborsOf(nodes: List[FlowNode], nodeId: String): Set[String] =
+    nodes.find(_.id == nodeId) match
+      case None => Set.empty
+      case Some(node) =>
+        val upstream = node.dependsOn
+        val downstream = nodes.filter(_.dependsOn.contains(nodeId)).map(_.id).toSet
+        val retryTargets = node.retry.map(_.target).toSet
+        val retrySources = nodes.filter(_.retry.exists(_.target == nodeId)).map(_.id).toSet
+        upstream ++ downstream ++ retryTargets ++ retrySources
+
+  /** Build peer address info block for agent prompt injection (filtered by DAG edges). */
+  private def buildPeerInfo(
+    nodeId: String,
+    agentPaths: Map[String, String],
+    flowName: String,
+    neighbors: Set[String]
+  ): String =
+    val peers = agentPaths.filter { (id, _) => id != nodeId && neighbors.contains(id) }
     if peers.isEmpty then ""
     else
       val lines = peers.map { (id, path) => s"- $id: $path" }.mkString("\n")
