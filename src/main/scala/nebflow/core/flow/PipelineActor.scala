@@ -376,6 +376,10 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id))
               peerInfo = buildPeerInfo(node.id, state.agentPaths, cfg.name, neighborsOf(cfg.flowDef.nodes, node.id))
               actualPrompt = withMemory(peerInfo + promptWithPreamble, cfg)
+              // Only require Mail if the node has reachable peers already spawned
+              nodeNeighbors = neighborsOf(cfg.flowDef.nodes, node.id)
+              hasReachablePeers = nodeNeighbors.exists(id => state.agentPaths.contains(id))
+              effectiveExpectsMail = cfg.expectsMail && hasReachablePeers
               agentRef <- ctx.system.spawn(
                 AgentActor(
                   agentDef = agentDef,
@@ -390,7 +394,7 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
                   safetyMode = cfg.safetyMode,
-                  expectsMail = cfg.expectsMail
+                  expectsMail = effectiveExpectsMail
                 ),
                 agentUid
               )
@@ -802,7 +806,7 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
                   safetyMode = cfg.safetyMode,
-                  expectsMail = cfg.expectsMail
+                  expectsMail = false // manager/verify-summary has no peers to Mail
                 ),
                 agentUid
               )
