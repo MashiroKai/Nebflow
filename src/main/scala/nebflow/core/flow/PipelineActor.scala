@@ -110,6 +110,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     verdicts: Map[String, Boolean] = Map.empty,
     nodeExecCount: Map[String, Int] = Map.empty,
     agentPaths: Map[String, String] = Map.empty,
+    agentRefs: Map[String, ActorRef[AgentCommand]] = Map.empty,
     verifyResult: Option[String] = None,
     iteration: Int = 0,
     triggerInput: String = "",
@@ -269,6 +270,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                 .asJson
             )
             _ <- logger.info(s"[${cfg.name}] Triggered with input (${input.length} chars)")
+            _ <- FlowMembership.registerFlow(cfg.name, cfg.flowDef.nodes)
             _ <- scheduleReadySteps(ctx, stateRef, cfg)
           yield ()
           end for
@@ -372,15 +374,15 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                 s.copy(
                   stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString),
                   nodeExecCount = s.nodeExecCount.updatedWith(node.id)(v => Some(v.getOrElse(0) + 1)),
-                  agentPaths = s.agentPaths + (node.id -> agentRef.path.toString)
+                  agentPaths = s.agentPaths + (node.id -> agentRef.path.toString),
+                  agentRefs = s.agentRefs + (node.id -> agentRef)
                 )
               )
               adapterRef <- ctx.spawn(
                 stepAdapter(ctx.self, node.id, agentRef, node.timeout),
                 s"$agentUid-adapter"
               )
-              _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
-              // For verdict nodes: register Deferred so Mail(type=verify) can signal completion
+              _ <- FlowMembership.join(agentRef.path.toString, cfg.name, node.id)
               _ <-
                 if node.verdict then
                   for
@@ -681,6 +683,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
       )
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Done(summary)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
+      // Stop all persistent agents and clean up flow membership
+      _ <- cleanupAgents(stateRef, cfg)
       // Launch reflect in background — non-blocking, fire-and-forget
       _ <- runReflect(stateRef, cfg, summary, passed = true)
       _ = logger.info(s"[${cfg.name}] Pipeline COMPLETED")
@@ -709,9 +713,28 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
       )
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Failed(reason)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
+      // Stop all persistent agents and clean up flow membership
+      _ <- cleanupAgents(stateRef, cfg)
       // Learn from failures too — reflect in background
       _ <- runReflect(stateRef, cfg, reason, passed = false)
       _ = logger.warn(s"[${cfg.name}] Pipeline FAILED: $reason")
+    yield ()
+
+  /** Stop all persistent agents and clean up flow membership on pipeline end. */
+  private def cleanupAgents(
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig
+  )(using ctx: ActorContext[?]): IO[Unit] =
+    for
+      state <- stateRef.get
+      _ <- state.agentRefs.values.toList.traverse_(ref =>
+        IO(ctx.system.stop(ref)).handleErrorWith(e =>
+          logger.warn(s"[${cfg.name}] Failed to stop agent ${ref.path}: ${e.getMessage}")
+        )
+      )
+      _ <- state.agentPaths.values.toList.traverse_(path => FlowMembership.leaveAll(path))
+      _ <- FlowMembership.unregisterFlow(cfg.name)
+      _ = logger.info(s"[${cfg.name}] Cleaned up ${state.agentRefs.size} agents")
     yield ()
 
   // ============================================================
@@ -746,9 +769,6 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               readTracker <- ReadTracker.create
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
-              _ <- stateRef.update(s =>
-                s.copy(stepStatus = s.stepStatus + (stepId -> StepStatus.Running.toString))
-              )
               agentRef <- ctx.system.spawn(
                 AgentActor(
                   agentDef = agentDef,
@@ -767,7 +787,13 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                 ),
                 agentUid
               )
-              _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
+              _ <- stateRef.update(s =>
+                s.copy(
+                  stepStatus = s.stepStatus + (stepId -> StepStatus.Running.toString),
+                  agentRefs = s.agentRefs + (stepId -> agentRef)
+                )
+              )
+              _ <- FlowMembership.join(agentRef.path.toString, cfg.name, stepId)
               adapterRef <- ctx.spawn(
                 stepAdapter(ctx.self, stepId, agentRef, timeout),
                 s"$agentUid-adapter"
@@ -828,8 +854,9 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               yield Behaviors.stopped[AgentEvent]
 
         override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
-          FlowMembership.leaveAll(subagentRef.path.toString) *>
-            FlowVerifyRegistry.remove(subagentRef.path.toString)
+          // Only clean up Deferred; leave FlowMembership intact so persistent
+          // agents can still receive Mail until PipelineActor cleans up on completion.
+          FlowVerifyRegistry.remove(subagentRef.path.toString)
       )
     }
 
@@ -874,7 +901,9 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
          |$lines
          |
          |When you complete your work, use Mail(type=message) to send your result to relevant peers.
-         |If you are a verify node, use Mail(type=verify, passed=..., summary=...) to report the verdict.
+         |If you are a verify node:
+         |  - If verification fails, Mail(type=message) the peer with specific feedback before declaring failure.
+         |  - After rework or if satisfied, use Mail(type=verify, passed=..., summary=...) to report the final verdict.
          |=== End Communication ===
          |
          |""".stripMargin
