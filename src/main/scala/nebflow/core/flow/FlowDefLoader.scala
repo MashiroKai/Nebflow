@@ -3,7 +3,8 @@ package nebflow.core.flow
 import cats.effect.IO
 import cats.implicits.*
 import io.circe.yaml.parser as yamlParser
-import nebflow.core.{NebflowLogger, PathUtil}
+import io.circe.syntax.*
+import nebflow.core.{NebflowLogger, PathUtil, Whitelist}
 
 /** Loads YAML flow definitions from the flows directory. */
 object FlowDefLoader:
@@ -37,28 +38,29 @@ object FlowDefLoader:
       }
     yield results.collect { case (name, Some(fd)) => name -> fd }.toMap
 
-  /** Build a compact flow catalog for system prompt injection. */
-  def buildFlowCatalog(): IO[String] =
+  /**
+   * Build a compact flow catalog for system prompt injection.
+   * @param flowFilter whitelist from the current agent's `flows` field.
+   */
+  def buildFlowCatalog(flowFilter: List[String] = List("*")): IO[String] =
     loadAll().map { flows =>
-      val visible = flows.filter { case (_, fd) => fd.branchType.isInstanceOf[BranchType.Pipeline] }
+      val visible = flows.filter { case (name, _) => Whitelist.passes(name, flowFilter) }
       if visible.isEmpty then ""
       else
         val entries = visible.toList
           .sortBy(_._1)
           .map { case (name, fd) =>
-            fd.branchType match
-              case p: BranchType.Pipeline =>
-                val stepCount = p.steps.size
-                val agents = p.steps.flatMap(_.agent).distinct.mkString("+")
-                s"- $name: ${stepCount} step(s), agents: $agents"
-              case other => s"- $name: ${other.typeName}"
+            val nodeCount = fd.nodes.size
+            val agents = fd.nodes.flatMap(_.agent).distinct.mkString("+")
+            val mgr = fd.manager.getOrElse("-")
+            s"- $name: ${nodeCount} node(s), manager: $mgr, agents: $agents"
           }
           .mkString("\n")
         s"""# Flows
            |
            |Flows are reusable, self-improving pipelines in ~/.nebflow/flows/. Each flow runs
-           |multi-step agents with automatic verification and learning. Use MountFlow to mount
-           |and trigger flows.
+           |multi-step agents with automatic verification and learning. Use ExecuteFlow to
+           |mount and trigger flows.
            |
            |$entries""".stripMargin
       end if
@@ -69,11 +71,12 @@ object FlowDefLoader:
     for
       json <- yamlParser.parse(yaml).left.map(e => s"YAML parse error: ${e.message}")
       name <- json.hcursor.downField("name").as[String].left.map(e => s"Invalid 'name': ${e.message}")
+      manager <- json.hcursor.downField("manager").as[Option[String]].left.map(e => s"Invalid 'manager': ${e.message}")
       maxDepth <- json.hcursor.downField("maxDepth").as[Option[Int]].left.map(e => s"Invalid 'maxDepth': ${e.message}")
-      branchType <- json.as[BranchType].left.map(e => s"BranchType decode error: ${e.message}")
-    yield FlowDef(name, branchType, maxDepth.getOrElse(5))
+      nodes <- json.hcursor.downField("nodes").as[Option[List[FlowNode]]].left.map(e => s"Invalid 'nodes': ${e.message}")
+    yield FlowDef(name, manager, nodes.getOrElse(Nil), maxDepth.getOrElse(5))
 
-  /** Parse inline YAML and return FlowDef (for MountFlow inline definitions). */
+  /** Parse inline YAML and return FlowDef (for ExecuteFlow inline definitions). */
   def parseInline(yaml: String): IO[Either[String, FlowDef]] =
     parse(yaml) match
       case Left(e) =>
