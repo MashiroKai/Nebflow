@@ -68,6 +68,7 @@ async fn main() {
         .route("/api/network/list", get(routes::list_networks))
         .route("/api/network/{network_id}", delete(routes::delete_network))
         .route("/api/network/{network_id}/rotate", post(routes::rotate_secret))
+        .route("/api/network/{network_id}/secret", get(routes::get_network_secret))
         .route("/api/network/{network_id}/devices", get(routes::list_devices))
         .route(
             "/api/network/{network_id}/devices/{device_id}",

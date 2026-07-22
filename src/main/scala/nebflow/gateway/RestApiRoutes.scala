@@ -9,7 +9,7 @@ import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.SharedResources
 import nebflow.core.flow.FlowTreeRegistry
 import nebflow.llm.NebflowServiceConfig
-import nebflow.neblink.NeblinkService
+import nebflow.neblink.{NeblinkConfig, NeblinkServerConfig, NeblinkService}
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -363,6 +363,27 @@ class RestApiRoutes(
           } *> Ok(Json.obj("ok" -> true.asJson))
         }
       }
+
+    // Pair device — save NebLink Server config received from nebflow.space/connect redirect
+    case req @ POST -> Root / "neblink" / "pair" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          val serverOpt = body.hcursor.downField("server").as[Option[String]].toOption.flatten
+          val networkIdOpt = body.hcursor.downField("networkId").as[Option[String]].toOption.flatten
+          val secretOpt = body.hcursor.downField("secret").as[Option[String]].toOption.flatten
+          (serverOpt, networkIdOpt, secretOpt) match
+            case (Some(server), Some(networkId), Some(secret)) =>
+              val newConfig = NeblinkServerConfig(url = server, networkId = networkId, secret = secret)
+              for
+                current <- NeblinkConfig.load
+                updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
+                _ <- NeblinkConfig.save(updated)
+                resp <- Ok(Json.obj("ok" -> true.asJson, "message" -> "Configuration saved. Please restart Nebflow to apply.".asJson))
+              yield resp
+            case _ =>
+              BadRequest(Json.obj("error" -> "Missing server, networkId, or secret".asJson))
+        }
 
     // Cloud session sync toggle — removed (session sync deleted)
 
