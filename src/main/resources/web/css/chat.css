@@ -487,6 +487,32 @@
 }
 .msg-time:hover { opacity: 0.6; }
 
+/* ---------- Message copy button ---------- */
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+  padding: 0 4px;
+}
+.msg-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  color: var(--color-text);
+  padding: 2px;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+.msg-copy:hover { opacity: 0.6; }
+.msg-copy.copied { color: #34c759; opacity: 1; }
+.row:hover .msg-copy { opacity: 0.35; }
+.row:hover .msg-copy:hover { opacity: 0.6; }
+
 .bubble {
   max-width: 100%;
   padding: 10px 14px;
