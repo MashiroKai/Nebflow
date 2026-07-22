@@ -6,7 +6,7 @@ enum FailoverReason:
     EmptyStream, Unknown
 
 enum ErrorPermanence:
-  case Transient, Permanent
+  case Transient, Permanent, Fatal
 
 case class ErrorClassification(
   reason: FailoverReason,

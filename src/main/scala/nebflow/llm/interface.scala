@@ -291,10 +291,9 @@ object LlmInterface:
                                 )
                                 .drain).handleErrorWith { err =>
                               val classification = Fallback.classifyError(err)
-                              // Inactivity timeout is a transient error — always allow fallback
-                              // even when lockedRef is true (provider sent partial content then hung).
-                              // For other errors, if content was already streamed (locked), propagate
-                              // upward to avoid duplicating partial output.
+                              // Timeout needs special handling: even if partial content was
+                              // streamed (locked), we allow fallback to try the next provider.
+                              // Other errors with locked=true are propagated to avoid duplication.
                               val isTimeout = classification.reason == FailoverReason.Timeout
                               fs2.Stream.eval(lockedRef.get).flatMap { locked =>
                                 if locked && !isTimeout then fs2.Stream.eval(IO.raiseError(err))
@@ -315,7 +314,16 @@ object LlmInterface:
                                     .orElse(Option(err.getMessage))
                                     .getOrElse(classification.reason.toString)
 
-                                  if classification.permanence == ErrorPermanence.Permanent then
+                                  if classification.permanence == ErrorPermanence.Fatal then
+                                    // Error affects all providers — abort entire stream
+                                    fs2.Stream.eval(
+                                      resetLock *> logger.warn(
+                                        s"Stream fatal: ${candidate.providerId}/${candidate.model} ${classification.reason} — aborting"
+                                      )
+                                        *> failureRef.update(_ :+ attempt)
+                                        *> notify
+                                    ) *> fs2.Stream.raiseError(new FallbackExhaustedError(List(attempt)))
+                                  else if classification.permanence == ErrorPermanence.Permanent then
                                     fs2.Stream.eval(
                                       resetLock *>
                                         logger.warn(
