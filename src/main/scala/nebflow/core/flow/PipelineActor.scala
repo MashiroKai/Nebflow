@@ -130,7 +130,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     projectRoot: String,
     safetyMode: String,
     flowMemory: String = "",
-    gatewayPort: Int = 8080
+    gatewayPort: Int = 8080,
+    expectsMail: Boolean = true
   )
 
   // ============================================================
@@ -357,7 +358,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
                   safetyMode = cfg.safetyMode,
-                  expectsMail = true
+                  expectsMail = cfg.expectsMail
                 ),
                 agentUid
               )
@@ -694,7 +695,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
                   safetyMode = cfg.safetyMode,
-                  expectsMail = true
+                  expectsMail = cfg.expectsMail
                 ),
                 agentUid
               )
