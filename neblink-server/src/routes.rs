@@ -97,6 +97,19 @@ pub async fn rotate_secret(
     }
 }
 
+/// Get network secret (for device pairing). Requires JWT + ownership.
+pub async fn get_network_secret(
+    State(store): State<AppState>,
+    headers: HeaderMap,
+    Path(network_id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let (user_id, _) = require_user(&headers, &store)?;
+    match store.get_network_secret(&network_id, &user_id) {
+        Some(secret) => Ok(Json(serde_json::json!({"secret": secret}))),
+        None => Err(bad_request("Network not found or secret not available")),
+    }
+}
+
 pub async fn list_devices(
     State(store): State<AppState>,
     headers: HeaderMap,
