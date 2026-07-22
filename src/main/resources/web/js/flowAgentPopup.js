@@ -1,22 +1,19 @@
 // flowAgentPopup.js — Mini session viewer for flow step agents.
 //
-// Creates a real ChatView instance pointing to a DOM container inside the
-// popup modal. ws.js routes flowStepId-tagged events to this view, so all
-// existing rendering (streaming text, tool cards, markdown) works as-is.
+// Each flowStepId gets its own hidden ChatView instance that renders in
+// real-time. When the user clicks a node, the pre-rendered DOM is moved
+// into the popup modal — so all history is preserved.
 
 import { ChatView, setActiveView, activeView } from './chatView.js';
 
-// ── Registry: flowStepId → popup ChatView ─────────────────
-const popupViews = new Map(); // flowStepId → ChatView
+// ── Per-step state ────────────────────────────────────────
+// flowStepId → { view: ChatView, container: div, meta: {} }
+const stepViews = new Map();
 let currentStepId = null;
 let popupOverlay = null;
 
-export function getPopupView(flowStepId) {
-  return popupViews.get(flowStepId) || null;
-}
-
-export function isPopupOpen(flowStepId) {
-  return currentStepId === flowStepId && popupOverlay !== null;
+export function getStepView(flowStepId) {
+  return stepViews.get(flowStepId) || null;
 }
 
 // ── CSS ───────────────────────────────────────────────────
@@ -28,7 +25,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   z-index: 320;
   animation: fa-fade-in 0.2s ease;
 }
-/* When inside canvas panel, scope overlay to that panel only */
 .flow-agent-overlay.in-canvas {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;
@@ -94,55 +90,44 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-chat .tool-card {
   font-size: 11px;
 }
+
+/* Hidden containers for background rendering */
+.flow-agent-hidden {
+  position: absolute;
+  width: 0; height: 0; overflow: hidden;
+  opacity: 0; pointer-events: none;
+  left: -9999px;
+}
 </style>`;
 
-// Inject CSS once
 if (!document.getElementById('flow-agent-popup-css')) {
   document.head.insertAdjacentHTML('beforeend', POPUP_CSS);
 }
 
-// ── Open popup ────────────────────────────────────────────
+// ── Hidden container for background rendering ─────────────
+let hiddenRoot = null;
+function getHiddenRoot() {
+  if (!hiddenRoot) {
+    hiddenRoot = document.createElement('div');
+    hiddenRoot.className = 'flow-agent-hidden';
+    document.body.appendChild(hiddenRoot);
+  }
+  return hiddenRoot;
+}
 
-export function openStepPopup(flowStepId, nodeLabel, agentName, flowName) {
-  // Remove existing popup
-  closeStepPopup();
-  currentStepId = flowStepId;
+// ── Ensure a ChatView exists for a flowStepId ─────────────
 
-  // Create overlay
-  popupOverlay = document.createElement('div');
-  popupOverlay.className = 'flow-agent-overlay';
+function ensureStepView(flowStepId) {
+  if (stepViews.has(flowStepId)) return stepViews.get(flowStepId);
 
-  // Mount inside canvas-panel if visible, otherwise body
-  const canvasPanel = document.getElementById('canvas-panel');
-  const mountEl = (canvasPanel && canvasPanel.classList.contains('visible')) ? canvasPanel : document.body;
-  if (mountEl === canvasPanel) popupOverlay.classList.add('in-canvas');
+  // Create hidden DOM container
+  const container = document.createElement('div');
+  container.className = 'flow-agent-chat';
+  getHiddenRoot().appendChild(container);
 
-  popupOverlay.innerHTML = `
-    <div class="flow-agent-modal">
-      <div class="flow-agent-header">
-        <span class="flow-agent-node">${esc(nodeLabel)}</span>
-        <span class="flow-agent-divider">·</span>
-        <span class="flow-agent-name">${esc(agentName || '')}</span>
-        <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
-        <div class="flow-agent-close" id="flow-agent-close">✕</div>
-      </div>
-      <div class="flow-agent-chat" id="flow-agent-chat-${esc(flowStepId)}"></div>
-    </div>
-  `;
-
-  mountEl.appendChild(popupOverlay);
-
-  // Close handlers
-  popupOverlay.addEventListener('click', (e) => {
-    if (e.target === popupOverlay || e.target.id === 'flow-agent-close') closeStepPopup();
-  });
-
-  // Create a ChatView targeting the popup's chat container.
-  // Minimal DOM refs — only `chat` is needed for rendering. Others are
-  // stubbed to prevent errors when rendering code touches them.
-  const chatEl = popupOverlay.querySelector('.flow-agent-chat');
+  // Create ChatView pointing to this container
   const fakeDom = {
-    chat: chatEl,
+    chat: container,
     input: null, sendBtn: null, stopBtn: null, attachBtn: null,
     statusWrap: null, statusText: null, lottieSpinnerEl: null,
     attPreview: null, slashDropdown: null, queueBar: null,
@@ -152,50 +137,102 @@ export function openStepPopup(flowStepId, nodeLabel, agentName, flowName) {
     delegateIndicatorEl: null, delegateDropdownEl: null, delegateDropdownListEl: null,
     sessionNameEl: null,
   };
-  const view = new ChatView('flow-popup-' + flowStepId, fakeDom);
+  const view = new ChatView('flow-' + flowStepId, fakeDom);
   view.mounted = true;
-  // Use the parent session's ID so ws.js filter passes these events through.
-  // The view won't conflict with the primary view because ws.js routes by
-  // flowStepId match first (see intercept below).
-  view.sessionId = window.Nebflow?.activeSessionId || '';
-  popupViews.set(flowStepId, view);
+  view.sessionId = '';
+
+  const entry = { view, container, meta: { agentName: '', task: '' } };
+  stepViews.set(flowStepId, entry);
+  return entry;
+}
+
+// ── Open popup ────────────────────────────────────────────
+
+export function openStepPopup(flowStepId, nodeLabel, agentName, flowName) {
+  closeStepPopup();
+  currentStepId = flowStepId;
+
+  // Ensure view exists (in case no events arrived yet)
+  const entry = ensureStepView(flowStepId);
+
+  popupOverlay = document.createElement('div');
+  popupOverlay.className = 'flow-agent-overlay';
+
+  const canvasPanel = document.getElementById('canvas-panel');
+  const mountEl = (canvasPanel && canvasPanel.classList.contains('visible')) ? canvasPanel : document.body;
+  if (mountEl === canvasPanel) popupOverlay.classList.add('in-canvas');
+
+  popupOverlay.innerHTML = `
+    <div class="flow-agent-modal">
+      <div class="flow-agent-header">
+        <span class="flow-agent-node">${esc(nodeLabel)}</span>
+        <span class="flow-agent-divider">·</span>
+        <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || '')}</span>
+        <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
+        <div class="flow-agent-close" id="flow-agent-close">✕</div>
+      </div>
+    </div>
+  `;
+
+  mountEl.appendChild(popupOverlay);
+
+  // Move the pre-rendered container from hidden root into the modal
+  const modal = popupOverlay.querySelector('.flow-agent-modal');
+  modal.appendChild(entry.container);
+
+  popupOverlay.addEventListener('click', (e) => {
+    if (e.target === popupOverlay || e.target.id === 'flow-agent-close') closeStepPopup();
+  });
 
   // Auto-scroll
-  chatEl.addEventListener('scroll', () => {
-    const atBottom = chatEl.scrollTop + chatEl.clientHeight >= chatEl.scrollHeight - 40;
-    view.stream.scrollSnapped = atBottom;
+  entry.container.addEventListener('scroll', () => {
+    const atBottom = entry.container.scrollTop + entry.container.clientHeight >= entry.container.scrollHeight - 40;
+    entry.view.stream.scrollSnapped = atBottom;
   });
 }
 
 export function closeStepPopup() {
-  if (popupOverlay) {
-    popupOverlay.remove();
-    popupOverlay = null;
+  if (!popupOverlay) return;
+  // Move container back to hidden root
+  if (currentStepId) {
+    const entry = stepViews.get(currentStepId);
+    if (entry) getHiddenRoot().appendChild(entry.container);
   }
+  popupOverlay.remove();
+  popupOverlay = null;
   currentStepId = null;
-  // Keep popupViews entries so reopening shows history.
-  // They're cleaned up when the flow completes.
 }
 
-export function removePopupView(flowStepId) {
-  popupViews.delete(flowStepId);
+export function removeStepView(flowStepId) {
+  const entry = stepViews.get(flowStepId);
+  if (entry) {
+    entry.container.remove();
+    stepViews.delete(flowStepId);
+  }
 }
 
 // ── WS event interception ────────────────────────────────
 // Called from ws.js BEFORE handler dispatch.
-// If the message has flowStepId and a popup is open for it,
-// set activeView to the popup's ChatView so rendering targets the popup.
+// Ensures a hidden ChatView exists, then sets activeView to it.
 
 export function interceptFlowStep(msg) {
   if (!msg.flowStepId) return false;
-  const view = popupViews.get(msg.flowStepId);
-  if (!view || !popupOverlay) return false;
-  // Redirect rendering to popup view
-  setActiveView(view);
-  // Auto-scroll
-  const chatEl = view.dom.chat;
-  if (chatEl && view.stream.scrollSnapped) {
-    requestAnimationFrame(() => { chatEl.scrollTop = chatEl.scrollHeight; });
+  const entry = ensureStepView(msg.flowStepId);
+
+  // Capture meta from agentStart
+  if (msg.type === 'agentStart') {
+    entry.meta.agentName = msg.name || '';
+    entry.meta.task = msg.taskDescription || '';
+  }
+
+  // Set activeView so chat.js rendering targets this view's container
+  setActiveView(entry.view);
+
+  // Auto-scroll if popup is showing this step
+  if (currentStepId === msg.flowStepId) {
+    requestAnimationFrame(() => {
+      entry.container.scrollTop = entry.container.scrollHeight;
+    });
   }
   return true;
 }
@@ -203,6 +240,6 @@ export function interceptFlowStep(msg) {
 // ── Utils ────────────────────────────────────────────────
 function esc(str) {
   if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }

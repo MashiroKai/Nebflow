@@ -168,11 +168,11 @@ export function connect() {
       }
       setActiveView(view || null);
 
-      // ── Flow step popup: redirect events to popup ChatView ────────
-      // If a popup is open for this flowStepId, set activeView to it so
-      // all rendering (streaming text, tool cards, etc.) targets the popup.
+      // ── Flow step popup: always intercept flowStepId events ──────
+      // Events render into a hidden ChatView immediately. If popup is
+      // open, the container is visible inside it. Either way, events
+      // must NOT render into the primary chat view.
       if (msg.flowStepId && interceptFlowStep(msg)) {
-        // Still dispatch handlers — they'll render into the popup view
         const list = handlers[msg.type];
         if (list) for (const h of list) h(msg, activeView);
         return;
