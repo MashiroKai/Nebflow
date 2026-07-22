@@ -6,9 +6,7 @@
 // Gray lines show data flow direction.
 
 import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader, isCanvasOpen } from './canvas.js';
-import { openStepPopup, closeStepPopup, onAgentEvent } from './flowAgentPopup.js';
-
-export { onAgentEvent };
+import { openStepPopup, closeStepPopup } from './flowAgentPopup.js';
 
 // ── View state (pan/zoom) ──────────────────────────────────
 let viewX = 0, viewY = 0, viewScale = 1;
@@ -20,10 +18,10 @@ let panZoomReady = false;
 // ── CSS ────────────────────────────────────────────────────
 const FLOW_CSS = `
 <style>
-/* Card wrapper — matches canvas-header glass style */
+/* Card wrapper — matches #header / #input-area glass card style */
 .flow-card {
   position: absolute;
-  top: 12px; left: 12px; right: 12px; bottom: 12px;
+  top: 8px; left: 8px; right: 8px; bottom: 8px;
   border-radius: 20px;
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
