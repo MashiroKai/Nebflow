@@ -16,41 +16,24 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
 
   // --- helpers ---
 
-  private def daemonBranch: BranchState = BranchState(
+  private def simpleBranch: BranchState = BranchState(
     name = "watcher",
-    address = "nebflow://local/daemon-watcher",
-    branchType = BranchType.Daemon(
-      agent = "Explorer",
-      prompt = "Watch for changes",
-      persistent = true
-    ),
+    address = "nebflow://local/watcher",
+    flowName = "watch-flow",
     phase = BranchPhase.Running,
     children = Map("child-a" -> "child-a")
   )
 
   private def pipelineBranch: BranchState = BranchState(
     name = "build",
-    address = "nebflow://local/pipeline-build",
-    branchType = BranchType.Pipeline(
-      steps = List(
-        PipelineStep(id = "s1", agent = Some("Explorer"), prompt = Some("explore")),
-        PipelineStep(id = "s2", agent = Some("Nebula"), prompt = Some("build"), dependsOn = Set("s1"))
-      ),
-      verify = VerifyStep(agent = "Explorer", prompt = "check output"),
-      loop = Some(
-        LoopConfig(
-          fix = PipelineStep(id = "fix", agent = Some("Nebula"), prompt = Some("fix it")),
-          maxIterations = 3
-        )
-      ),
-      maxConcurrency = 4
-    ),
+    address = "nebflow://local/build",
+    flowName = "ci-pipeline",
     phase = BranchPhase.Running,
     stepStatus = Map("s1" -> "Done", "s2" -> "Running"),
     results = Map("s1" -> "found 3 files"),
     failedReasons = Map("s2" -> "timeout"),
     retryLeft = Map("s2" -> 1),
-    verifyResult = None,
+    verdicts = Map("verify" -> true),
     iteration = 0
   )
 
@@ -60,7 +43,7 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
     val snapshot = FlowTreeSnapshot(
       sessionId = testSessionId,
       branches = Map(
-        "watcher" -> daemonBranch,
+        "watcher" -> simpleBranch,
         "build" -> pipelineBranch
       )
     )
@@ -74,35 +57,24 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
         assertEquals(s.sessionId, testSessionId)
         assertEquals(s.branches.size, 2)
 
-        // daemon branch
+        // simple branch
         val d = s.branches("watcher")
         assertEquals(d.name, "watcher")
-        assertEquals(d.address, "nebflow://local/daemon-watcher")
+        assertEquals(d.address, "nebflow://local/watcher")
+        assertEquals(d.flowName, "watch-flow")
         assertEquals(d.phase, BranchPhase.Running)
         assertEquals(d.children("child-a"), "child-a")
-        d.branchType match
-          case BranchType.Daemon(agent, prompt, persistent) =>
-            assertEquals(agent, "Explorer")
-            assertEquals(prompt, "Watch for changes")
-            assertEquals(persistent, true)
-          case other => fail(s"Expected Daemon, got $other")
 
         // pipeline branch
         val p = s.branches("build")
         assertEquals(p.name, "build")
+        assertEquals(p.flowName, "ci-pipeline")
         assertEquals(p.stepStatus("s1"), "Done")
         assertEquals(p.stepStatus("s2"), "Running")
         assertEquals(p.results("s1"), "found 3 files")
         assertEquals(p.failedReasons("s2"), "timeout")
         assertEquals(p.retryLeft("s2"), 1)
-        p.branchType match
-          case BranchType.Pipeline(steps, verify, loop, maxConcurrency) =>
-            assertEquals(steps.length, 2)
-            assertEquals(steps(1).dependsOn, Set("s1"))
-            assertEquals(verify.agent, "Explorer")
-            assertEquals(loop.map(_.maxIterations), Some(3))
-            assertEquals(maxConcurrency, 4)
-          case other => fail(s"Expected Pipeline, got $other")
+        assertEquals(p.verdicts("verify"), true)
     end for
   }
 
@@ -114,7 +86,7 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
   test("FlowTreeStore: delete removes the file") {
     val snapshot = FlowTreeSnapshot(
       sessionId = testSessionId,
-      branches = Map("temp" -> daemonBranch)
+      branches = Map("temp" -> simpleBranch)
     )
 
     for
@@ -130,7 +102,7 @@ class FlowTreeStoreSpec extends CatsEffectSuite:
   test("FlowTreeStore: save overwrites existing snapshot") {
     val snapshotA = FlowTreeSnapshot(
       sessionId = testSessionId,
-      branches = Map("branch-a" -> daemonBranch)
+      branches = Map("branch-a" -> simpleBranch)
     )
     val snapshotB = FlowTreeSnapshot(
       sessionId = testSessionId,

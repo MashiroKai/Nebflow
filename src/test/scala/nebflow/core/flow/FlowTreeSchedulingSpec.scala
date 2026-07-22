@@ -8,7 +8,7 @@ import munit.FunSuite
  */
 class FlowTreeSchedulingSpec extends FunSuite:
 
-  import PipelineActor.{resolveTemplate, buildVerifyContext}
+  import PipelineActor.{resolveTemplate, buildNodeResultsContext}
   import nebflow.core.flow.StepStatus.*
 
   // ============================================================
@@ -46,137 +46,122 @@ class FlowTreeSchedulingSpec extends FunSuite:
     assertEquals(result, "line1\nline2\ttab")
 
   // ============================================================
-  // buildVerifyContext — context block for verify agent
+  // buildNodeResultsContext — context block for manager/verify
   // ============================================================
 
-  test("buildVerifyContext includes completed step results"):
+  test("buildNodeResultsContext includes completed step results"):
     val results = Map("explore" -> "Found src/ and test/")
     val failedReasons = Map.empty[String, String]
     val stepStatus = Map("explore" -> Done.toString)
-    val ctx = buildVerifyContext(results, failedReasons, stepStatus)
+    val ctx = buildNodeResultsContext(results, failedReasons, stepStatus)
     assert(ctx.contains("[explore]"), "Should include step id")
     assert(ctx.contains("Found src/ and test/"), "Should include step output")
     assert(ctx.contains("=== Step Results ==="), "Should have header")
 
-  test("buildVerifyContext includes failed step reasons"):
+  test("buildNodeResultsContext includes failed step reasons"):
     val results = Map.empty[String, String]
     val failedReasons = Map("build" -> "Compilation error")
     val stepStatus = Map("build" -> Failed.toString)
-    val ctx = buildVerifyContext(results, failedReasons, stepStatus)
+    val ctx = buildNodeResultsContext(results, failedReasons, stepStatus)
     assert(ctx.contains("[build] [FAILED]"), "Should mark as failed")
     assert(ctx.contains("Compilation error"), "Should include failure reason")
 
-  test("buildVerifyContext handles mixed success and failure"):
+  test("buildNodeResultsContext handles mixed success and failure"):
     val results = Map("explore" -> "OK")
     val failedReasons = Map("build" -> "Error")
     val stepStatus = Map("explore" -> Done.toString, "build" -> Failed.toString)
-    val ctx = buildVerifyContext(results, failedReasons, stepStatus)
+    val ctx = buildNodeResultsContext(results, failedReasons, stepStatus)
     assert(ctx.contains("[explore]"))
     assert(ctx.contains("[build] [FAILED]"))
 
-  test("buildVerifyContext truncates long step output"):
+  test("buildNodeResultsContext truncates long step output"):
     val longOutput = "y" * 5000
     val results = Map("step1" -> longOutput)
-    val ctx = buildVerifyContext(results, Map.empty, Map("step1" -> Done.toString))
-    assert(ctx.contains("truncated"), "Should truncate long output in verify context")
+    val ctx = buildNodeResultsContext(results, Map.empty, Map("step1" -> Done.toString))
+    assert(ctx.contains("truncated"), "Should truncate long output in context")
 
-  test("buildVerifyContext handles empty results"):
-    val ctx = buildVerifyContext(Map.empty, Map.empty, Map.empty)
+  test("buildNodeResultsContext handles empty results"):
+    val ctx = buildNodeResultsContext(Map.empty, Map.empty, Map.empty)
     assert(ctx.contains("=== Step Results ==="))
     assert(ctx.contains("=== End Results ==="))
 
   // ============================================================
-  // DAG readiness logic — which steps are ready to run
+  // DAG readiness logic — which nodes are ready to run
   // ============================================================
 
-  test("step with no dependencies is ready when Pending"):
-    val step = PipelineStep(id = "a", agent = Some("Explorer"), prompt = Some("do a"))
+  test("node with no dependencies is ready when Pending"):
+    val node = FlowNode(id = "a", agent = Some("Explorer"), prompt = Some("do a"))
     // Simulate the filter condition from scheduleReadySteps
     val stepStatus = Map("a" -> StepStatus.Pending.toString)
-    val runningAgents = Map.empty[String, Any]
-    val isReady = stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-      !runningAgents.contains(step.id) &&
-      step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+    val isReady = stepStatus.get(node.id).contains(StepStatus.Pending.toString) &&
+      node.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(isReady)
 
-  test("step with unmet dependency is not ready"):
-    val step = PipelineStep(id = "b", agent = Some("Explorer"), prompt = Some("do b"), dependsOn = Set("a"))
+  test("node with unmet dependency is not ready"):
+    val node = FlowNode(id = "b", agent = Some("Explorer"), prompt = Some("do b"), dependsOn = Set("a"))
     val stepStatus = Map("a" -> StepStatus.Pending.toString, "b" -> StepStatus.Pending.toString)
-    val runningAgents = Map.empty[String, Any]
-    val isReady = stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-      !runningAgents.contains(step.id) &&
-      step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+    val isReady = stepStatus.get(node.id).contains(StepStatus.Pending.toString) &&
+      node.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(!isReady)
 
-  test("step with met dependency is ready"):
-    val step = PipelineStep(id = "b", agent = Some("Explorer"), prompt = Some("do b"), dependsOn = Set("a"))
+  test("node with met dependency is ready"):
+    val node = FlowNode(id = "b", agent = Some("Explorer"), prompt = Some("do b"), dependsOn = Set("a"))
     val stepStatus = Map("a" -> StepStatus.Done.toString, "b" -> StepStatus.Pending.toString)
-    val runningAgents = Map.empty[String, Any]
-    val isReady = stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-      !runningAgents.contains(step.id) &&
-      step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+    val isReady = stepStatus.get(node.id).contains(StepStatus.Pending.toString) &&
+      node.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(isReady)
 
-  test("step already running is not ready"):
-    val step = PipelineStep(id = "a", agent = Some("Explorer"), prompt = Some("do a"))
+  test("node already running is not ready"):
+    val node = FlowNode(id = "a", agent = Some("Explorer"), prompt = Some("do a"))
     val stepStatus = Map("a" -> StepStatus.Running.toString)
-    val runningAgents = Map("a" -> "fake-ref")
-    val isReady = stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-      !runningAgents.contains(step.id) &&
-      step.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+    val isReady = stepStatus.get(node.id).contains(StepStatus.Pending.toString) &&
+      node.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(!isReady)
 
-  test("parallel steps with no deps are both ready"):
-    val stepA = PipelineStep(id = "a", agent = Some("Explorer"), prompt = Some("do a"))
-    val stepB = PipelineStep(id = "b", agent = Some("Explorer"), prompt = Some("do b"))
+  test("parallel nodes with no deps are both ready"):
+    val nodeA = FlowNode(id = "a", agent = Some("Explorer"), prompt = Some("do a"))
+    val nodeB = FlowNode(id = "b", agent = Some("Explorer"), prompt = Some("do b"))
     val stepStatus = Map("a" -> StepStatus.Pending.toString, "b" -> StepStatus.Pending.toString)
-    val runningAgents = Map.empty[String, Any]
-    val readyA = stepStatus.get(stepA.id).contains(StepStatus.Pending.toString) &&
-      !runningAgents.contains(stepA.id) && stepA.dependsOn.forall(dep =>
-        stepStatus.get(dep).contains(StepStatus.Done.toString)
-      )
-    val readyB = stepStatus.get(stepB.id).contains(StepStatus.Pending.toString) &&
-      !runningAgents.contains(stepB.id) && stepB.dependsOn.forall(dep =>
-        stepStatus.get(dep).contains(StepStatus.Done.toString)
-      )
+    val readyA = stepStatus.get(nodeA.id).contains(StepStatus.Pending.toString) &&
+      nodeA.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+    val readyB = stepStatus.get(nodeB.id).contains(StepStatus.Pending.toString) &&
+      nodeB.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     assert(readyA && readyB)
 
   test("diamond dependency: d depends on b and c, both depend on a"):
-    val stepA = PipelineStep(id = "a", agent = Some("X"), prompt = Some(""))
-    val stepB = PipelineStep(id = "b", agent = Some("X"), prompt = Some(""), dependsOn = Set("a"))
-    val stepC = PipelineStep(id = "c", agent = Some("X"), prompt = Some(""), dependsOn = Set("a"))
-    val stepD = PipelineStep(id = "d", agent = Some("X"), prompt = Some(""), dependsOn = Set("b", "c"))
+    val nodeA = FlowNode(id = "a", agent = Some("X"), prompt = Some(""))
+    val nodeB = FlowNode(id = "b", agent = Some("X"), prompt = Some(""), dependsOn = Set("a"))
+    val nodeC = FlowNode(id = "c", agent = Some("X"), prompt = Some(""), dependsOn = Set("a"))
+    val nodeD = FlowNode(id = "d", agent = Some("X"), prompt = Some(""), dependsOn = Set("b", "c"))
     val stepStatus = Map(
       "a" -> StepStatus.Done.toString,
       "b" -> StepStatus.Done.toString,
       "c" -> StepStatus.Pending.toString,
       "d" -> StepStatus.Pending.toString
     )
-    val runningAgents = Map.empty[String, Any]
-    val isDReady = stepStatus.get(stepD.id).contains(StepStatus.Pending.toString) &&
-      !runningAgents.contains(stepD.id) &&
-      stepD.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
+    val isDReady = stepStatus.get(nodeD.id).contains(StepStatus.Pending.toString) &&
+      nodeD.dependsOn.forall(dep => stepStatus.get(dep).contains(StepStatus.Done.toString))
     // c is not done yet, so d is not ready
     assert(!isDReady)
 
   // ============================================================
-  // Flow nesting — PipelineStep with flow reference
+  // FlowNode validation
   // ============================================================
 
-  test("nested step has isNested=true"):
-    val step = PipelineStep(id = "test", flow = Some("sub-flow"))
-    assert(step.isNested)
+  test("nested node has isNested=true"):
+    val node = FlowNode(id = "test", flow = Some("sub-flow"))
+    assert(node.isNested)
 
-  test("atomic step has isNested=false"):
-    val step = PipelineStep(id = "test", agent = Some("Explorer"), prompt = Some("do"))
-    assert(!step.isNested)
+  test("atomic node has isNested=false"):
+    val node = FlowNode(id = "test", agent = Some("Explorer"), prompt = Some("do"))
+    assert(!node.isNested)
 
-  test("step cannot have both agent and flow"):
+  test("node cannot have both agent and flow"):
     intercept[IllegalArgumentException]:
-      PipelineStep(id = "bad", agent = Some("X"), prompt = Some("y"), flow = Some("z"))
+      FlowNode(id = "bad", agent = Some("X"), prompt = Some("y"), flow = Some("z"))
 
-  test("step cannot have neither agent nor flow"):
+  test("node cannot have neither agent nor flow"):
     intercept[IllegalArgumentException]:
-      PipelineStep(id = "bad")
+      FlowNode(id = "bad")
 
 end FlowTreeSchedulingSpec

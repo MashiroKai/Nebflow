@@ -6,7 +6,7 @@ import nebflow.actor.ActorRef
 /**
  * Global registry mapping session IDs to their FlowTreeActor.
  *
- * The MountFlowTool uses this to find or create the FlowTreeActor
+ * The ExecuteFlowTool uses this to find or create the FlowTreeActor
  * for the current session. The FlowTreeActor registers itself on
  * creation and unregisters on shutdown.
  */

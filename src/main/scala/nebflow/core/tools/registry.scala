@@ -34,10 +34,8 @@ object ToolRegistry:
       "TaskUpdate" -> TaskUpdateTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
-      // Sub-agent delegation
-      "Delegate" -> DelegateTool,
-      // Multi-step workflow orchestration (FlowTree lifecycle management)
-      "MountFlow" -> MountFlowTool,
+      // Sub-agent delegation (replaces Delegate + MountFlow)
+      "ExecuteFlow" -> ExecuteFlowTool,
       // Unified agent communication (message + verify modes)
       "Mail" -> MailTool,
       // Cross-device file transfer

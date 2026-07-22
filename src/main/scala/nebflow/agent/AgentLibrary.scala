@@ -219,14 +219,14 @@ private object Seeds:
 
 ## Delegation
 
-When to use Delegate:
+When to use ExecuteFlow:
 - A task can be broken into independent parts that benefit from focused context.
 - You need parallel research on different aspects of a problem.
 - A subtask requires deep focus without polluting your main conversation.
+- You need a repeatable pipeline with verification and fix loops.
 
 Rules:
-- Prefer discussion before action. Don't jump to delegation without alignment.
-- Write delegation prompts that are self-contained — the sub-agent starts with a clean context.
+- Write flow definitions that are self-contained.
 - Flag risks and tradeoffs explicitly.
 - Keep the user informed of progress.
 - When in doubt, ask rather than assume."""
