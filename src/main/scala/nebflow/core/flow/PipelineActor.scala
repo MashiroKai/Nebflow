@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -17,10 +17,10 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 // ============================================================
 
 object PipelineActor:
-  private val logger = NebflowLogger(getClass)
+  private val logger = NebflowLogger.forName("nebflow.flow.pipeline")
 
-  private val VerifyId = "__verify__"
-  private val FixId = "__fix__"
+  private val ManagerId = "__manager__"
+  private val MaxConcurrency = 5
 
   val VerifyPromptPreamble =
     """You are the verification step of this workflow. Analyze the step results against the verification criteria below.
@@ -34,6 +34,12 @@ The verdict line is how the pipeline detects your result — without it, verific
 Do NOT call any tools to report the result. Just output the verdict line at the end of your analysis.
 
 --- Verification Criteria ---
+""".stripMargin
+
+  private val ManagerPromptPreamble =
+    """You are the manager of this workflow. All steps have completed. Review the results below and provide a concise summary of what was accomplished, any issues encountered, and the overall outcome.
+
+--- Step Results ---
 """.stripMargin
 
   // ============================================================
@@ -55,9 +61,6 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
 
     /** Step agent failed. */
     case class StepFailed(stepId: String, error: String) extends PipelineCommand
-
-    /** Verify agent reported result via Mail tool. */
-    case class VerifyCompleted(passed: Boolean, summary: String) extends PipelineCommand
 
     /** Query current state. */
     case class GetState(replyTo: ActorRef[PipelineSnapshot]) extends PipelineCommand
@@ -101,7 +104,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     stepStatus: Map[String, String] = Map.empty,
     results: Map[String, String] = Map.empty,
     failedReasons: Map[String, String] = Map.empty,
-    retryLeft: Map[String, Int] = Map.empty,
+    verdicts: Map[String, Boolean] = Map.empty,
+    nodeExecCount: Map[String, Int] = Map.empty,
     verifyResult: Option[String] = None,
     iteration: Int = 0,
     triggerInput: String = "",
@@ -118,7 +122,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
   case class PipelineConfig(
     name: String,
     flowName: String,
-    pipeline: BranchType.Pipeline,
+    flowDef: FlowDef,
     parentAgentRef: ActorRef[AgentCommand],
     wsSend: Option[Json => IO[Unit]],
     sessionId: Option[String],
@@ -186,12 +190,6 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               _ <- saveState(stateRef, cfg)
             yield this
 
-          case PipelineCommand.VerifyCompleted(passed, summary) =>
-            for
-              _ <- handleVerifyCompleted(ctx, stateRef, cfg, passed, summary)
-              _ <- saveState(stateRef, cfg)
-            yield this
-
           case PipelineCommand.GetState(replyTo) =>
             for
               state <- stateRef.get
@@ -234,7 +232,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
           replyTo.traverse_(_ ! PipelineEvent.Failed(s"Pipeline '${cfg.name}' is already running"))
         else
           // Reset run state and start
-          val initialStepStatus = cfg.pipeline.steps.map(s => s.id -> StepStatus.Pending.toString).toMap
+          val initialStepStatus = cfg.flowDef.nodes.map(n => n.id -> StepStatus.Pending.toString).toMap
           for
             _ <- stateRef.set(
               RunState(
@@ -248,12 +246,12 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               cfg,
               "flowStarted",
               "flowName" -> cfg.name.asJson,
-              "steps" -> cfg.pipeline.steps
-                .map(s =>
+              "steps" -> cfg.flowDef.nodes
+                .map(n =>
                   Json.obj(
-                    "id" -> s.id.asJson,
-                    "agent" -> s.agent.getOrElse("").asJson,
-                    "dependsOn" -> s.dependsOn.toList.asJson
+                    "id" -> n.id.asJson,
+                    "agent" -> n.agent.getOrElse("").asJson,
+                    "dependsOn" -> n.dependsOn.toList.asJson
                   )
                 )
                 .asJson
@@ -275,86 +273,111 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
   )(using ActorContext[PipelineCommand]): IO[Unit] =
     for
       state <- stateRef.get
-      ready = cfg.pipeline.steps.filter { step =>
-        state.stepStatus.get(step.id).contains(StepStatus.Pending.toString) &&
-        step.dependsOn.forall(dep => state.stepStatus.get(dep).contains(StepStatus.Done.toString))
+      ready = cfg.flowDef.nodes.filter { node =>
+        state.stepStatus.get(node.id).contains(StepStatus.Pending.toString) &&
+        node.dependsOn.forall(dep => state.stepStatus.get(dep).contains(StepStatus.Done.toString)) &&
+        isConditionMet(node.condition, state.verdicts)
       }
       // Count running steps (those with Running status)
       runningCount = state.stepStatus.count(_._2 == StepStatus.Running.toString)
-      slots = (cfg.pipeline.maxConcurrency - runningCount).max(0)
+      slots = (MaxConcurrency - runningCount).max(0)
       toStart = ready.take(slots)
-      _ <- toStart.traverse_(step => spawnStep(ctx, stateRef, cfg, step))
+      _ <- toStart.traverse_(node => spawnStep(ctx, stateRef, cfg, node))
       _ =
         if toStart.nonEmpty then logger.info(s"[${cfg.name}] Scheduled: ${toStart.map(_.id).mkString(", ")}")
     yield ()
+
+  /** Check if a condition (format "nodeId.fail") is met based on recorded verdicts. */
+  private def isConditionMet(condition: Option[String], verdicts: Map[String, Boolean]): Boolean =
+    condition match
+      case None => true
+      case Some(cond) =>
+        cond.lastIndexOf('.') match
+          case idx if idx > 0 =>
+            val nodeId = cond.substring(0, idx)
+            val condType = cond.substring(idx + 1)
+            condType == "fail" && verdicts.get(nodeId).contains(false)
+          case _ => true // malformed condition — allow scheduling
 
   private def spawnStep(
     ctx: ActorContext[PipelineCommand],
     stateRef: Ref[IO, RunState],
     cfg: PipelineConfig,
-    step: PipelineStep
+    node: FlowNode
   )(using ActorContext[PipelineCommand]): IO[Unit] =
-    val agentName = step.agent.getOrElse("")
-    for
-      state <- stateRef.get
-      resolvedPrompt = resolveTemplate(step.prompt.getOrElse(""), state.results ++ Map("input" -> state.triggerInput))
-      defOpt <- cfg.resources.agentLibrary.get(agentName)
-      _ <- defOpt match
-        case None =>
-          // Mark as Running so handleStepFailed processes the failure
-          // (otherwise the step stays Pending and the pipeline hangs forever)
-          stateRef.update(s => s.copy(stepStatus = s.stepStatus + (step.id -> StepStatus.Running.toString))) *> IO(
-            ctx.self ! PipelineCommand.StepFailed(step.id, s"Agent '$agentName' not found")
-          )
-        case Some(agentDef) =>
-          val agentUid = s"pipe-${cfg.name.take(20)}-${step.id}-${java.util.UUID.randomUUID().toString.take(8)}"
-          for
-            readTracker <- ReadTracker.create
-            fileHistory <- FileHistory.create()
-            childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(step.id))
-            st <- stateRef.get
-            actualPrompt = withMemory(resolvedPrompt, cfg)
-            _ <- stateRef.update(s =>
-              s.copy(
-                stepStatus = s.stepStatus + (step.id -> StepStatus.Running.toString),
-                retryLeft = s.retryLeft + (step.id -> step.retry)
+    val agentName = node.agent.getOrElse("")
+
+    def reject(msg: String): IO[Unit] =
+      // Mark as Running so handleStepFailed processes the failure
+      stateRef.update(s => s.copy(stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString))) *>
+        IO(ctx.self ! PipelineCommand.StepFailed(node.id, msg))
+
+    if agentName == "Nebula" then
+      reject("Nebula cannot be used as a step agent inside flows. Use Explorer, Coder, or other specialized agents.")
+    else if node.isNested then
+      reject("Nested flow execution not yet implemented")
+    else
+      for
+        state <- stateRef.get
+        resolvedPrompt = resolveTemplate(
+          node.prompt.getOrElse(""),
+          state.results ++ Map("input" -> state.triggerInput)
+        )
+        promptWithPreamble =
+          if node.verdict then VerifyPromptPreamble + resolvedPrompt
+          else resolvedPrompt
+        defOpt <- cfg.resources.agentLibrary.get(agentName)
+        _ <- defOpt match
+          case None =>
+            reject(s"Agent '$agentName' not found")
+          case Some(agentDef) =>
+            val agentUid = s"pipe-${cfg.name.take(20)}-${node.id}-${java.util.UUID.randomUUID().toString.take(8)}"
+            for
+              readTracker <- ReadTracker.create
+              fileHistory <- FileHistory.create()
+              childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id))
+              _ <- stateRef.update(s =>
+                s.copy(
+                  stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString),
+                  nodeExecCount = s.nodeExecCount.updatedWith(node.id)(v => Some(v.getOrElse(0) + 1))
+                )
               )
-            )
-            agentRef <- ctx.system.spawn(
-              AgentActor(
-                agentDef = agentDef,
-                resources = cfg.resources,
-                wsSend = childWs,
-                depth = 1,
-                parentRef = Some(cfg.parentAgentRef),
-                sessionId = cfg.sessionId,
-                sessionName = Some(s"${cfg.name}/${step.id}"),
-                readTracker = Some(readTracker),
-                fileHistory = Some(fileHistory),
-                contextWindow = cfg.resources.contextWindow,
-                projectRoot = Some(cfg.projectRoot),
-                safetyMode = cfg.safetyMode
-              ),
-              agentUid
-            )
-            adapterRef <- ctx.spawn(
-              stepAdapter(ctx.self, cfg.name, step.id, agentRef, step.timeout, isVerify = false, ""),
-              s"$agentUid-adapter"
-            )
-            _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
-            _ <- emit(
-              cfg,
-              "flowStepStarted",
-              "branchName" -> cfg.name.asJson,
-              "stepId" -> step.id.asJson,
-              "agentName" -> agentName.asJson
-            )
-            _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
-            _ = logger.info(s"[${cfg.name}] Spawned '${step.id}' ($agentName)")
-          yield ()
-          end for
-    yield ()
-    end for
+              actualPrompt = withMemory(promptWithPreamble, cfg)
+              agentRef <- ctx.system.spawn(
+                AgentActor(
+                  agentDef = agentDef,
+                  resources = cfg.resources,
+                  wsSend = childWs,
+                  depth = 1,
+                  parentRef = Some(cfg.parentAgentRef),
+                  sessionId = cfg.sessionId,
+                  sessionName = Some(s"${cfg.name}/${node.id}"),
+                  readTracker = Some(readTracker),
+                  fileHistory = Some(fileHistory),
+                  contextWindow = cfg.resources.contextWindow,
+                  projectRoot = Some(cfg.projectRoot),
+                  safetyMode = cfg.safetyMode
+                ),
+                agentUid
+              )
+              adapterRef <- ctx.spawn(
+                stepAdapter(ctx.self, node.id, agentRef, node.timeout),
+                s"$agentUid-adapter"
+              )
+              _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
+              _ <- emit(
+                cfg,
+                "flowStepStarted",
+                "branchName" -> cfg.name.asJson,
+                "stepId" -> node.id.asJson,
+                "agentName" -> agentName.asJson
+              )
+              _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
+              _ = logger.info(s"[${cfg.name}] Spawned '${node.id}' ($agentName)")
+            yield ()
+            end for
+      yield ()
+      end for
   end spawnStep
 
   // ============================================================
@@ -371,28 +394,96 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     for
       state <- stateRef.get
       _ <-
-        if stepId == FixId then
-          // Fix completed → re-verify
-          for
-            _ <- stateRef.update(s =>
-              s.copy(
-                stepStatus = s.stepStatus + (FixId -> StepStatus.Done.toString)
-              )
-            )
-            _ <- runVerify(ctx, stateRef, cfg)
-          yield ()
+        if stepId == ManagerId then
+          // Manager completed — its output IS the final summary
+          stateRef.update(s => s.copy(verifyResult = Some(output))) *>
+            completePipeline(ctx, stateRef, cfg, output)
         else if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
+          val nodeOpt = cfg.flowDef.nodes.find(_.id == stepId)
           for
+            // Mark as Done, store result
             _ <- stateRef.update(s =>
               s.copy(
                 results = s.results + (stepId -> output),
                 stepStatus = s.stepStatus + (stepId -> StepStatus.Done.toString)
               )
             )
+            // Parse verdict if applicable
+            _ <- nodeOpt.filter(_.verdict) match
+              case Some(node) =>
+                val vr = parseVerdict(output)
+                for
+                  _ <- stateRef.update(s =>
+                    s.copy(verdicts = s.verdicts + (node.id -> vr.pass))
+                  )
+                  _ <- emit(
+                    cfg,
+                    "flowVerifyResult",
+                    "branchName" -> cfg.name.asJson,
+                    "pass" -> vr.pass.asJson,
+                    "summary" -> vr.summary.take(500).asJson
+                  )
+                yield ()
+              case None => IO.unit
+            // Standard completion events
             _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
             _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", output.take(200)))
             _ = logger.info(s"[${cfg.name}] Step '$stepId' completed (${output.length} chars)")
+            // Retry / loop-back logic
+            _ <- nodeOpt.flatMap(_.retry) match
+              case Some(RetryTarget(target, maxIter)) =>
+                handleRetry(ctx, stateRef, cfg, stepId, target, maxIter)
+              case None => IO.unit
           yield ()
+        else IO.unit
+    yield ()
+
+  /** Check if a retry (loop-back) should trigger after a node completes. */
+  private def handleRetry(
+    ctx: ActorContext[PipelineCommand],
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig,
+    nodeId: String,
+    target: String,
+    maxIter: Int
+  )(using ActorContext[PipelineCommand]): IO[Unit] =
+    for
+      state <- stateRef.get
+      node = cfg.flowDef.nodes.find(_.id == nodeId)
+      isVerdictNode = node.exists(_.verdict)
+      verdictFailed = isVerdictNode && state.verdicts.get(nodeId).contains(false)
+      // For verdict nodes: retry only on FAIL. For non-verdict nodes: always retry.
+      shouldRetry = !isVerdictNode || verdictFailed
+      targetCount = state.nodeExecCount.getOrElse(target, 0)
+      _ <-
+        if shouldRetry && targetCount < maxIter then
+          // Reset target and all its transitive downstream nodes (that are Done) back to Pending
+          val toReset = (downstreamOf(cfg.flowDef.nodes, target) + nodeId)
+            .filter(id => state.stepStatus.get(id).contains(StepStatus.Done.toString))
+          for
+            _ <- stateRef.update(s =>
+              s.copy(stepStatus = s.stepStatus ++ toReset.map(_ -> StepStatus.Pending.toString).toMap)
+            )
+            _ <- emit(
+              cfg,
+              "flowLoopIteration",
+              "branchName" -> cfg.name.asJson,
+              "target" -> target.asJson,
+              "iteration" -> (targetCount + 1).asJson,
+              "maxIterations" -> maxIter.asJson
+            )
+            _ <- logger.info(
+              s"[${cfg.name}] Retry: resetting [${toReset.toList.sorted.mkString(", ")}] (target: $target, iter ${targetCount + 1}/$maxIter)"
+            )
+          yield ()
+        else if verdictFailed then
+          // Verdict failed and retries exhausted
+          failPipeline(
+            ctx,
+            stateRef,
+            cfg,
+            s"Verification failed after $targetCount iteration(s) of '$target'"
+          )
         else IO.unit
     yield ()
 
@@ -406,46 +497,32 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     for
       state <- stateRef.get
       _ <-
-        if stepId == FixId then failPipeline(ctx, stateRef, cfg, s"Fix step failed: $error")
-        else if stepId == VerifyId then handleVerifyFail(ctx, stateRef, cfg, s"Verify error: $error")
+        if stepId == ManagerId then
+          failPipeline(ctx, stateRef, cfg, s"Manager agent failed: $error")
         else if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
-          val retries = state.retryLeft.getOrElse(stepId, 0)
-          if retries > 0 then
-            val step = cfg.pipeline.steps.find(_.id == stepId).getOrElse(cfg.pipeline.steps.head)
+          // Check if any pending step depends on this one
+          val hasDependers = cfg.flowDef.nodes.exists(n =>
+            n.dependsOn.contains(stepId) &&
+              state.stepStatus.get(n.id).contains(StepStatus.Pending.toString)
+          )
+          if hasDependers then failPipeline(ctx, stateRef, cfg, s"Step '$stepId' failed, dependents cannot run")
+          else
             for
               _ <- stateRef.update(s =>
                 s.copy(
-                  retryLeft = s.retryLeft + (stepId -> (retries - 1))
+                  stepStatus = s.stepStatus + (stepId -> StepStatus.Failed.toString),
+                  failedReasons = s.failedReasons + (stepId -> error)
                 )
               )
-              _ <- logger.info(s"[${cfg.name}] Step '$stepId' failed ($error), retrying (${retries - 1} left)")
-              _ <- spawnStep(ctx, stateRef, cfg, step)
+              _ <- emit(
+                cfg,
+                "flowStepFailed",
+                "branchName" -> cfg.name.asJson,
+                "stepId" -> stepId.asJson,
+                "error" -> error.asJson
+              )
+              _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Failed", error))
             yield ()
-          else
-            // Retries exhausted — check if any step depends on this one
-            val hasDependers = cfg.pipeline.steps.exists(s =>
-              s.dependsOn.contains(stepId) &&
-                state.stepStatus.get(s.id).contains(StepStatus.Pending.toString)
-            )
-            if hasDependers then failPipeline(ctx, stateRef, cfg, s"Step '$stepId' failed, dependents cannot run")
-            else
-              for
-                _ <- stateRef.update(s =>
-                  s.copy(
-                    stepStatus = s.stepStatus + (stepId -> StepStatus.Failed.toString),
-                    failedReasons = s.failedReasons + (stepId -> error)
-                  )
-                )
-                _ <- emit(
-                  cfg,
-                  "flowStepFailed",
-                  "branchName" -> cfg.name.asJson,
-                  "stepId" -> stepId.asJson,
-                  "error" -> error.asJson
-                )
-                _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Failed", error))
-              yield ()
-            end if
           end if
         else IO.unit
     yield ()
@@ -460,116 +537,51 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
       _ <-
         if state.phase != RunPhase.Running then IO.unit
         else
-          val allDone = cfg.pipeline.steps.forall(s =>
-            state.stepStatus.get(s.id).exists(x => x == StepStatus.Done.toString || x == StepStatus.Failed.toString)
-          ) && !state.stepStatus.contains(VerifyId) && !state.stepStatus.contains(FixId)
-          if allDone && !state.stepStatus.contains(VerifyId) then runVerify(ctx, stateRef, cfg)
+          val managerRunning = state.stepStatus.contains(ManagerId)
+          val allDone = cfg.flowDef.nodes.forall(n =>
+            state.stepStatus.get(n.id).exists(x =>
+              x == StepStatus.Done.toString || x == StepStatus.Failed.toString
+            )
+          )
+          if allDone && !managerRunning then
+            runManagerSummary(ctx, stateRef, cfg)
           else scheduleReadySteps(ctx, stateRef, cfg)
     yield ()
 
   // ============================================================
-  // Verify handling
+  // Manager summary
   // ============================================================
 
-  private def runVerify(
+  private def runManagerSummary(
     ctx: ActorContext[PipelineCommand],
     stateRef: Ref[IO, RunState],
     cfg: PipelineConfig
   )(using ActorContext[PipelineCommand]): IO[Unit] =
-    for
-      state <- stateRef.get
-      contextBlock = buildVerifyContext(state.results, state.failedReasons, state.stepStatus)
-      prompt = s"$contextBlock\n\n${cfg.pipeline.verify.prompt}"
-      _ <- emit(
-        cfg,
-        "flowStepStarted",
-        "branchName" -> cfg.name.asJson,
-        "stepId" -> VerifyId.asJson,
-        "agentName" -> cfg.pipeline.verify.agent.asJson
-      )
-      _ <- spawnById(
-        ctx,
-        stateRef,
-        cfg,
-        cfg.pipeline.verify.agent,
-        VerifyPromptPreamble + withMemory(prompt, cfg),
-        VerifyId,
-        cfg.pipeline.verify.timeout,
-        isVerify = true
-      )
-    yield ()
-
-  private def handleVerifyCompleted(
-    ctx: ActorContext[PipelineCommand],
-    stateRef: Ref[IO, RunState],
-    cfg: PipelineConfig,
-    passed: Boolean,
-    summary: String
-  )(using ActorContext[PipelineCommand]): IO[Unit] =
-    for
-      state <- stateRef.get
-      _ <- stateRef.update(s =>
-        s.copy(
-          verifyResult = Some(summary),
-          stepStatus = s.stepStatus + (VerifyId -> StepStatus.Done.toString)
-        )
-      )
-      _ <- emit(
-        cfg,
-        "flowVerifyResult",
-        "branchName" -> cfg.name.asJson,
-        "pass" -> passed.asJson,
-        "summary" -> summary.take(500).asJson,
-        "iteration" -> state.iteration.asJson
-      )
-      _ <-
-        if passed then completePipeline(ctx, stateRef, cfg, summary)
-        else handleVerifyFail(ctx, stateRef, cfg, summary)
-    yield ()
-
-  private def handleVerifyFail(
-    ctx: ActorContext[PipelineCommand],
-    stateRef: Ref[IO, RunState],
-    cfg: PipelineConfig,
-    reason: String
-  )(using ActorContext[PipelineCommand]): IO[Unit] =
-    cfg.pipeline.loop match
-      case Some(loop) =>
+    cfg.flowDef.manager match
+      case None =>
+        // No manager — build summary from node results and complete
         for
           state <- stateRef.get
-          _ <-
-            if state.iteration < loop.maxIterations then
-              for
-                _ <- stateRef.update(s =>
-                  s.copy(
-                    iteration = s.iteration + 1,
-                    stepStatus = s.stepStatus + (FixId -> StepStatus.Pending.toString)
-                  )
-                )
-                _ <- emit(
-                  cfg,
-                  "flowLoopIteration",
-                  "branchName" -> cfg.name.asJson,
-                  "iteration" -> (state.iteration + 1).asJson,
-                  "maxIterations" -> loop.maxIterations.asJson
-                )
-                _ <- logger.info(s"[${cfg.name}] Verify FAIL (iter ${state.iteration}), running fix")
-                fixPrompt = resolveTemplate(loop.fix.prompt.getOrElse(""), state.results ++ Map("verify" -> reason))
-                _ <- spawnById(
-                  ctx,
-                  stateRef,
-                  cfg,
-                  loop.fix.agent.getOrElse("Nebula"),
-                  withMemory(fixPrompt, cfg),
-                  FixId,
-                  loop.fix.timeout,
-                  isVerify = false
-                )
-              yield ()
-            else failPipeline(ctx, stateRef, cfg, s"Verification failed after ${state.iteration} iteration(s): $reason")
+          summary = buildStepSummary(state.results, state.failedReasons, state.stepStatus)
+          _ <- completePipeline(ctx, stateRef, cfg, summary)
         yield ()
-      case None =>
-        failPipeline(ctx, stateRef, cfg, s"Verification failed: $reason")
+      case Some(agentName) =>
+        for
+          state <- stateRef.get
+          contextBlock = buildNodeResultsContext(state.results, state.failedReasons, state.stepStatus)
+          prompt = ManagerPromptPreamble + "\n" + contextBlock
+          _ <- stateRef.update(s =>
+            s.copy(stepStatus = s.stepStatus + (ManagerId -> StepStatus.Running.toString))
+          )
+          _ <- emit(
+            cfg,
+            "flowStepStarted",
+            "branchName" -> cfg.name.asJson,
+            "stepId" -> ManagerId.asJson,
+            "agentName" -> agentName.asJson
+          )
+          _ <- spawnById(ctx, stateRef, cfg, agentName, withMemory(prompt, cfg), ManagerId, 600.seconds, isManager = true)
+        yield ()
 
   // ============================================================
   // Pipeline completion / failure
@@ -590,7 +602,6 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
         "pass" -> true.asJson,
         "summary" -> summary.take(500).asJson
       )
-      // No ExternalEvent — verify agent's Mail(type=verify) already notified Main Agent
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Done(summary)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
       // Launch reflect in background — non-blocking, fire-and-forget
@@ -627,7 +638,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     yield ()
 
   // ============================================================
-  // Spawn helper (shared by steps, verify, fix)
+  // Spawn helper (for manager and ad-hoc agents)
   // ============================================================
 
   private def spawnById(
@@ -638,52 +649,56 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     prompt: String,
     stepId: String,
     timeout: FiniteDuration,
-    isVerify: Boolean
+    isManager: Boolean = false
   )(using ActorContext[PipelineCommand]): IO[Unit] =
-    for
-      defOpt <- cfg.resources.agentLibrary.get(agentName)
-      _ <- defOpt match
-        case None =>
-          ctx.self ! PipelineCommand.StepFailed(stepId, s"Agent '$agentName' not found")
-          IO.unit
-        case Some(agentDef) =>
-          val agentUid = s"pipe-${cfg.name.take(20)}-$stepId-${java.util.UUID.randomUUID().toString.take(8)}"
-          for
-            readTracker <- ReadTracker.create
-            fileHistory <- FileHistory.create()
-            childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
-            _ <- stateRef.update(s =>
-              s.copy(
-                stepStatus = s.stepStatus + (stepId -> StepStatus.Running.toString)
+    // Nebula restriction: cannot be used as step agent (manager is exempt)
+    if !isManager && agentName == "Nebula" then
+      IO(ctx.self ! PipelineCommand.StepFailed(
+        stepId,
+        "Nebula cannot be used as a step agent inside flows. Use Explorer, Coder, or other specialized agents."
+      ))
+    else
+      for
+        defOpt <- cfg.resources.agentLibrary.get(agentName)
+        _ <- defOpt match
+          case None =>
+            IO(ctx.self ! PipelineCommand.StepFailed(stepId, s"Agent '$agentName' not found"))
+          case Some(agentDef) =>
+            val agentUid = s"pipe-${cfg.name.take(20)}-$stepId-${java.util.UUID.randomUUID().toString.take(8)}"
+            for
+              readTracker <- ReadTracker.create
+              fileHistory <- FileHistory.create()
+              childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
+              _ <- stateRef.update(s =>
+                s.copy(stepStatus = s.stepStatus + (stepId -> StepStatus.Running.toString))
               )
-            )
-            agentRef <- ctx.system.spawn(
-              AgentActor(
-                agentDef = agentDef,
-                resources = cfg.resources,
-                wsSend = childWs,
-                depth = 1,
-                parentRef = Some(cfg.parentAgentRef),
-                sessionId = cfg.sessionId,
-                sessionName = Some(s"${cfg.name}/$stepId"),
-                readTracker = Some(readTracker),
-                fileHistory = Some(fileHistory),
-                contextWindow = cfg.resources.contextWindow,
-                projectRoot = Some(cfg.projectRoot),
-                safetyMode = cfg.safetyMode
-              ),
-              agentUid
-            )
-            _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
-            adapterRef <- ctx.spawn(
-              stepAdapter(ctx.self, cfg.name, stepId, agentRef, timeout, isVerify, agentRef.path.toString),
-              s"$agentUid-adapter"
-            )
-            _ <- agentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
-            _ = logger.info(s"[${cfg.name}] Spawned '$stepId' ($agentName)")
-          yield ()
-          end for
-    yield ()
+              agentRef <- ctx.system.spawn(
+                AgentActor(
+                  agentDef = agentDef,
+                  resources = cfg.resources,
+                  wsSend = childWs,
+                  depth = 1,
+                  parentRef = Some(cfg.parentAgentRef),
+                  sessionId = cfg.sessionId,
+                  sessionName = Some(s"${cfg.name}/$stepId"),
+                  readTracker = Some(readTracker),
+                  fileHistory = Some(fileHistory),
+                  contextWindow = cfg.resources.contextWindow,
+                  projectRoot = Some(cfg.projectRoot),
+                  safetyMode = cfg.safetyMode
+                ),
+                agentUid
+              )
+              _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
+              adapterRef <- ctx.spawn(
+                stepAdapter(ctx.self, stepId, agentRef, timeout),
+                s"$agentUid-adapter"
+              )
+              _ <- agentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
+              _ = logger.info(s"[${cfg.name}] Spawned '$stepId' ($agentName)")
+            yield ()
+            end for
+      yield ()
 
   // ============================================================
   // Step adapter — monitors agent, forwards results
@@ -691,12 +706,9 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
 
   private def stepAdapter(
     pipeRef: ActorRef[PipelineCommand],
-    pipeName: String,
     stepId: String,
     subagentRef: ActorRef[AgentCommand],
-    timeout: FiniteDuration,
-    isVerify: Boolean,
-    verifyAgentPath: String
+    timeout: FiniteDuration
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
@@ -716,18 +728,10 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
         def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
           event match
             case AgentEvent.Completed(_, messages) =>
+              val text = extractLastAssistantText(messages)
               done.set(true) *>
-                (if isVerify then
-                   val text = extractLastAssistantText(messages)
-                   val verdict = parseVerdict(text)
-                   for
-                     _ <- logger.info(s"stepAdapter: verify verdict=$verdict")
-                     _ <- pipeRef ! PipelineCommand.VerifyCompleted(verdict.pass, verdict.summary)
-                   yield Behaviors.stopped[AgentEvent]
-                 else
-                   val text = extractLastAssistantText(messages)
-                   for _ <- pipeRef ! PipelineCommand.StepCompleted(stepId, text)
-                   yield Behaviors.stopped[AgentEvent])
+                (pipeRef ! PipelineCommand.StepCompleted(stepId, text)) *>
+                IO.pure(Behaviors.stopped[AgentEvent])
 
             case AgentEvent.Failed(_, error) =>
               done.set(true) *>
@@ -746,7 +750,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               yield Behaviors.stopped[AgentEvent]
 
         override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
-          FlowMembership.leaveAll(subagentRef.path.toString))
+          FlowMembership.leaveAll(subagentRef.path.toString)
+      )
     }
 
   // ============================================================
@@ -754,7 +759,6 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
   // ============================================================
 
   private val MaxStepOutputChars = 8000
-
   private val MaxMemoryChars = 4000
 
   /** Inject flow memory as a context prefix to a prompt. */
@@ -766,6 +770,19 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
         then cfg.flowMemory.take(MaxMemoryChars) + "\n... (truncated)"
         else cfg.flowMemory
       s"=== Flow Memory (accumulated from past runs) ===\n$mem\n=== End Memory ===\n\n$prompt"
+
+  /** Find target + all nodes that (transitively) depend on target. */
+  private def downstreamOf(nodes: List[FlowNode], target: String): Set[String] =
+    var result = Set(target)
+    var changed = true
+    while changed do
+      changed = false
+      nodes.foreach { n =>
+        if !result.contains(n.id) && n.dependsOn.exists(result.contains) then
+          result = result + n.id
+          changed = true
+      }
+    result
 
   // ============================================================
   // Reflect — learning loop after pipeline completion
@@ -882,7 +899,7 @@ Produce the updated memory file:"""
       p.replace("${" + id + "}", truncated)
     }
 
-  private[flow] def buildVerifyContext(
+  private[flow] def buildNodeResultsContext(
     results: Map[String, String],
     failedReasons: Map[String, String],
     stepStatus: Map[String, String]
@@ -902,7 +919,7 @@ Produce the updated memory file:"""
     sb.append("=== End Results ===\n")
     sb.toString
 
-  end buildVerifyContext
+  end buildNodeResultsContext
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse
@@ -949,12 +966,12 @@ Produce the updated memory file:"""
       case Some(sid) if sid.nonEmpty =>
         for
           state <- stateRef.get
-          stepInfos = cfg.pipeline.steps.map { step =>
+          stepInfos = cfg.flowDef.nodes.map { node =>
             PipelineStateStore.StepInfo(
-              id = step.id,
-              agent = step.agent.getOrElse(""),
-              status = state.stepStatus.getOrElse(step.id, "Pending"),
-              dependsOn = step.dependsOn.toList
+              id = node.id,
+              agent = node.agent.getOrElse(""),
+              status = state.stepStatus.getOrElse(node.id, "Pending"),
+              dependsOn = node.dependsOn.toList
             )
           }
           pipelineState = PipelineStateStore.PipelineState(

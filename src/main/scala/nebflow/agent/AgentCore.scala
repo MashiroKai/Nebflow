@@ -245,7 +245,7 @@ private[agent] trait AgentCore:
             else Nil
           modelDescs <- if isCompactTurn then IO.pure(Nil) else resources.providerRegistry.getAllModelsDetailed()
           freshTools =
-            if isCompactTurn then Some(Nil) else enrichDelegateTools(buildToolList(freshDef, depth), modelDescs)
+            if isCompactTurn then Some(Nil) else enrichExecuteFlowTools(buildToolList(freshDef, depth), modelDescs)
           // Memory is injected via system prompt (memoryBlock), not synthetic Read messages
           patchedMessages <- stateForLlm.liveFileTracker
             .fold(IO.pure(stateForLlm.messages))(_.patchMessages(stateForLlm.messages))
@@ -600,7 +600,7 @@ private[agent] trait AgentCore:
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
     val depthFiltered =
-      if depth >= nebflow.core.tools.DelegateTool.MaxDepth then base - "Delegate" - "MountFlow" else base
+      if depth >= MaxDepth then base - "ExecuteFlow" else base
     if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
 
   end buildAllowedToolSet
@@ -609,14 +609,14 @@ private[agent] trait AgentCore:
     val allowedSet = buildAllowedToolSet(agentDef, depth)
     Some(ToolRegistry.ALL_TOOLS.filter(t => allowedSet.contains(t.name)))
 
-  private def enrichDelegateTools(
+  private def enrichExecuteFlowTools(
     tools: Option[List[ToolDefinition]],
     models: List[(String, String, Option[String])]
   ): Option[List[ToolDefinition]] =
     if models.isEmpty then tools
     else
       tools.map(_.map { td =>
-        if td.name == "Delegate" then
+        if td.name == "ExecuteFlow" then
           val modelList = models
             .map { case (ref, _, desc) =>
               s"  - $ref" + desc.map(d => s": $d").getOrElse("")

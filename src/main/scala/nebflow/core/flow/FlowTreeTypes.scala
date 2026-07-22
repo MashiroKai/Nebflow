@@ -6,295 +6,140 @@ import io.circe.syntax.*
 import scala.concurrent.duration.*
 
 // ============================================================
-// Restart Policy (for Source scripts, persistent daemons)
+// Flow Node — unified node type for BranchFlow graphs
 // ============================================================
+// Replaces PipelineStep + VerifyStep + LoopConfig.
+// A node is either:
+//   - An agent task (agent + prompt)
+//   - A nested flow reference (flow + optional flowInput)
+//
+// Special flags:
+//   - verdict: true → output parsed for "VERDICT: PASS/FAIL"
+//   - condition: "nodeId.fail" → only runs if nodeId's verdict was FAIL
+//   - retry: { target, maxIterations } → after this node, re-trigger target
 
-enum RestartPolicy:
-  case Permanent, Transient, Temporary
+/** Retry target — creates a cycle back to an earlier node. */
+case class RetryTarget(
+  target: String,
+  maxIterations: Int = 3
+)
 
-object RestartPolicy:
-  given Encoder[RestartPolicy] = Encoder.encodeString.contramap(_.toString.toLowerCase)
-
-  given Decoder[RestartPolicy] = Decoder.decodeString.emap {
-    case "permanent" => Right(Permanent)
-    case "transient" => Right(Transient)
-    case "temporary" => Right(Temporary)
-    case other => Left(s"Unknown restart policy: $other")
+object RetryTarget:
+  given Encoder[RetryTarget] = Encoder.instance { r =>
+    Json.obj("target" -> r.target.asJson, "maxIterations" -> r.maxIterations.asJson)
+  }
+  given Decoder[RetryTarget] = Decoder.instance { c =>
+    for
+      target <- c.downField("target").as[String]
+      maxIter <- c.downField("maxIterations").as[Option[Int]]
+    yield RetryTarget(target, maxIter.getOrElse(3))
   }
 
-// ============================================================
-// Pipeline Step (replaces FlowStep — supports nesting)
-// ============================================================
-
-/** A step in a pipeline. Either an atomic agent task or a nested flow reference. */
-case class PipelineStep(
+/** A node in a BranchFlow graph. Either an agent task or a nested flow reference. */
+case class FlowNode(
   id: String,
-  agent: Option[String] = None, // atomic: agent name
-  prompt: Option[String] = None, // atomic: task prompt
-  flow: Option[String] = None, // nested: flow definition name
+  agent: Option[String] = None,
+  prompt: Option[String] = None,
+  flow: Option[String] = None,
+  flowInput: Option[String] = None,
   dependsOn: Set[String] = Set.empty,
-  retry: Int = 2,
+  verdict: Boolean = false,
+  condition: Option[String] = None,
+  retry: Option[RetryTarget] = None,
   timeoutSeconds: Int = 1800
 ):
-
   require(
     (agent.isDefined && prompt.isDefined && flow.isEmpty) ||
       (agent.isEmpty && prompt.isEmpty && flow.isDefined),
-    s"Step '$id' must have either (agent + prompt) or flow, not both/neither"
+    s"Node '$id' must have either (agent + prompt) or flow, not both/neither"
   )
 
   def isNested: Boolean = flow.isDefined
+  def isVerdict: Boolean = verdict
   def timeout: FiniteDuration = timeoutSeconds.seconds
 
-end PipelineStep
+end FlowNode
 
-object PipelineStep:
+object FlowNode:
 
-  given Encoder[PipelineStep] = Encoder.instance { s =>
+  given Encoder[FlowNode] = Encoder.instance { s =>
     val base = Json.obj(
       "id" -> s.id.asJson,
       "dependsOn" -> s.dependsOn.toList.asJson,
-      "retry" -> s.retry.asJson,
       "timeoutSeconds" -> s.timeoutSeconds.asJson
     )
     val agentPart = s.agent.map(a => Json.obj("agent" -> a.asJson)).getOrElse(Json.obj())
     val promptPart = s.prompt.map(p => Json.obj("prompt" -> p.asJson)).getOrElse(Json.obj())
     val flowPart = s.flow.map(f => Json.obj("flow" -> f.asJson)).getOrElse(Json.obj())
-    base.deepMerge(agentPart).deepMerge(promptPart).deepMerge(flowPart)
+    val flowInputPart = s.flowInput.map(fi => Json.obj("flowInput" -> fi.asJson)).getOrElse(Json.obj())
+    val verdictPart = if s.verdict then Json.obj("verdict" -> true.asJson) else Json.obj()
+    val conditionPart = s.condition.map(c => Json.obj("condition" -> c.asJson)).getOrElse(Json.obj())
+    val retryPart = s.retry.map(r => Json.obj("retry" -> r.asJson)).getOrElse(Json.obj())
+    base.deepMerge(agentPart).deepMerge(promptPart).deepMerge(flowPart).deepMerge(flowInputPart)
+      .deepMerge(verdictPart).deepMerge(conditionPart).deepMerge(retryPart)
   }
 
-  given Decoder[PipelineStep] = Decoder.instance { c =>
+  given Decoder[FlowNode] = Decoder.instance { c =>
     for
       id <- c.downField("id").as[String]
       agent <- c.downField("agent").as[Option[String]]
       prompt <- c.downField("prompt").as[Option[String]]
       flow <- c.downField("flow").as[Option[String]]
+      flowInput <- c.downField("flowInput").as[Option[String]]
       deps <- c.downField("dependsOn").as[Option[List[String]]]
-      retry <- c.downField("retry").as[Option[Int]]
+      verdict <- c.downField("verdict").as[Option[Boolean]]
+      condition <- c.downField("condition").as[Option[String]]
+      retry <- c.downField("retry").as[Option[RetryTarget]]
       timeoutS <- c.downField("timeoutSeconds").as[Option[Int]]
     yield
-      val validated = PipelineStep(
+      val validated = FlowNode(
         id,
         agent,
         prompt,
         flow,
+        flowInput,
         deps.getOrElse(Nil).toSet,
-        retry.getOrElse(2),
+        verdict.getOrElse(false),
+        condition,
+        retry,
         timeoutS.getOrElse(1800)
       )
       validated
   }
-end PipelineStep
+
+end FlowNode
 
 // ============================================================
-// Verify Step (reused from existing — standalone, no FlowStep dependency)
+// Flow Definition (top-level YAML)
 // ============================================================
 
-case class VerifyStep(
-  agent: String = "Explorer",
-  prompt: String,
-  timeoutSeconds: Int = 1800
-):
-  def timeout: FiniteDuration = timeoutSeconds.seconds
-
-object VerifyStep:
-
-  given Encoder[VerifyStep] = Encoder.instance { v =>
-    Json.obj(
-      "agent" -> v.agent.asJson,
-      "prompt" -> v.prompt.asJson,
-      "timeoutSeconds" -> v.timeoutSeconds.asJson
-    )
-  }
-
-  given Decoder[VerifyStep] = Decoder.instance { c =>
-    for
-      agent <- c.downField("agent").as[Option[String]]
-      prompt <- c.downField("prompt").as[String]
-      timeoutS <- c.downField("timeoutSeconds").as[Option[Int]]
-    yield VerifyStep(agent.getOrElse("Explorer"), prompt, timeoutS.getOrElse(1800))
-  }
-end VerifyStep
-
-// ============================================================
-// Loop Config (replaces LoopDef — uses PipelineStep for fix)
-// ============================================================
-
-case class LoopConfig(
-  fix: PipelineStep,
-  maxIterations: Int = 3
-)
-
-object LoopConfig:
-
-  given Encoder[LoopConfig] = Encoder.instance { l =>
-    Json.obj(
-      "fix" -> l.fix.asJson,
-      "maxIterations" -> l.maxIterations.asJson
-    )
-  }
-
-  given Decoder[LoopConfig] = Decoder.instance { c =>
-    for
-      fix <- c.downField("fix").as[PipelineStep]
-      maxIter <- c.downField("maxIterations").as[Option[Int]]
-    yield LoopConfig(fix, maxIter.getOrElse(3))
-  }
-end LoopConfig
-
-// ============================================================
-// Reactor Action
-// ============================================================
-
-sealed trait ReactorAction
-
-object ReactorAction:
-  case class RunAgent(agent: String, prompt: String) extends ReactorAction
-  case class MountFlow(flowName: String) extends ReactorAction
-
-  given Encoder[ReactorAction] = Encoder.instance {
-    case RunAgent(agent, prompt) =>
-      Json.obj(
-        "type" -> "runAgent".asJson,
-        "agent" -> agent.asJson,
-        "prompt" -> prompt.asJson
-      )
-    case MountFlow(flowName) =>
-      Json.obj(
-        "type" -> "mountFlow".asJson,
-        "flowName" -> flowName.asJson
-      )
-  }
-
-  given Decoder[ReactorAction] = Decoder.instance { c =>
-    c.downField("type").as[String].flatMap {
-      case "runAgent" =>
-        for
-          agent <- c.downField("agent").as[String]
-          prompt <- c.downField("prompt").as[String]
-        yield RunAgent(agent, prompt)
-      case "mountFlow" =>
-        c.downField("flowName").as[String].map(MountFlow(_))
-      case other => Left(io.circe.DecodingFailure(s"Unknown reactor action type: $other", c.history))
-    }
-  }
-end ReactorAction
-
-// ============================================================
-// Branch Type (discriminated union for the four branch kinds)
-// ============================================================
-
-sealed trait BranchType:
-  def typeName: String
-
-object BranchType:
-
-  case class Daemon(agent: String, prompt: String, persistent: Boolean = false) extends BranchType:
-    def typeName = "daemon"
-
-  case class Pipeline(
-    steps: List[PipelineStep],
-    verify: VerifyStep,
-    loop: Option[LoopConfig] = None,
-    maxConcurrency: Int = 5
-  ) extends BranchType:
-    def typeName = "pipeline"
-
-  case class Reactor(
-    subscribe: Set[String],
-    filter: Map[String, String] = Map.empty,
-    action: ReactorAction
-  ) extends BranchType:
-    def typeName = "reactor"
-
-  case class Source(command: String, restart: RestartPolicy = RestartPolicy.Permanent) extends BranchType:
-    def typeName = "source"
-
-  given Encoder[BranchType] = Encoder.instance {
-    case d: Daemon =>
-      Json.obj(
-        "type" -> "daemon".asJson,
-        "agent" -> d.agent.asJson,
-        "prompt" -> d.prompt.asJson,
-        "persistent" -> d.persistent.asJson
-      )
-    case p: Pipeline =>
-      Json.obj(
-        "type" -> "pipeline".asJson,
-        "steps" -> p.steps.asJson,
-        "verify" -> p.verify.asJson,
-        "loop" -> p.loop.asJson,
-        "maxConcurrency" -> p.maxConcurrency.asJson
-      )
-    case r: Reactor =>
-      Json.obj(
-        "type" -> "reactor".asJson,
-        "subscribe" -> r.subscribe.toList.asJson,
-        "filter" -> r.filter.asJson,
-        "action" -> r.action.asJson
-      )
-    case s: Source =>
-      Json.obj(
-        "type" -> "source".asJson,
-        "command" -> s.command.asJson,
-        "restart" -> s.restart.asJson
-      )
-  }
-
-  given Decoder[BranchType] = Decoder.instance { c =>
-    c.downField("type").as[String].flatMap {
-      case "daemon" =>
-        for
-          agent <- c.downField("agent").as[String]
-          prompt <- c.downField("prompt").as[String]
-          persistent <- c.downField("persistent").as[Option[Boolean]]
-        yield Daemon(agent, prompt, persistent.getOrElse(false))
-      case "pipeline" =>
-        for
-          steps <- c.downField("steps").as[List[PipelineStep]]
-          verify <- c.downField("verify").as[VerifyStep]
-          loop <- c.downField("loop").as[Option[LoopConfig]]
-          maxConc <- c.downField("maxConcurrency").as[Option[Int]]
-        yield Pipeline(steps, verify, loop, maxConc.getOrElse(5))
-      case "reactor" =>
-        for
-          subscribe <- c.downField("subscribe").as[List[String]]
-          filter <- c.downField("filter").as[Option[Map[String, String]]]
-          action <- c.downField("action").as[ReactorAction]
-        yield Reactor(subscribe.toSet, filter.getOrElse(Map.empty), action)
-      case "source" =>
-        for
-          command <- c.downField("command").as[String]
-          restart <- c.downField("restart").as[Option[RestartPolicy]]
-        yield Source(command, restart.getOrElse(RestartPolicy.Permanent))
-      case other => Left(io.circe.DecodingFailure(s"Unknown branch type: $other", c.history))
-    }
-  }
-end BranchType
-
-// ============================================================
-// Flow Definition (top-level YAML definition)
-// ============================================================
-
+/**
+ * A flow definition loaded from YAML.
+ *
+ * @param manager agent name that orchestrates this flow (e.g., "Nebula").
+ *                The manager receives the task, oversees execution, and summarizes results.
+ *                Must not be used as a step agent (use specialized agents like Explorer/Coder).
+ * @param nodes the execution graph — each node is an agent task or nested flow.
+ */
 case class FlowDef(
   name: String,
-  branchType: BranchType,
+  manager: Option[String] = None,
+  nodes: List[FlowNode] = Nil,
   maxDepth: Int = 5
 )
 
 object FlowDef:
 
   given Encoder[FlowDef] = Encoder.instance { f =>
-    Json
-      .obj(
-        "name" -> f.name.asJson,
-        "maxDepth" -> f.maxDepth.asJson
-      )
-      .deepMerge(f.branchType.asJson.asObject.fold(Json.obj())(jo => Json.obj("branch" -> jo.toJson)))
+    Json.obj(
+      "name" -> f.name.asJson,
+      "manager" -> f.manager.asJson,
+      "nodes" -> f.nodes.asJson,
+      "maxDepth" -> f.maxDepth.asJson
+    )
   }
 
-  // FlowDef is parsed from YAML, not persisted directly.
-  // The loader handles the YAML → FlowDef mapping.
+  // FlowDef is parsed from YAML by FlowDefLoader, not persisted directly.
 
 // ============================================================
 // Branch Phase & State
@@ -305,27 +150,24 @@ enum BranchPhase:
 
 object BranchPhase:
   given Encoder[BranchPhase] = Encoder.encodeString.contramap(_.toString)
-
   given Decoder[BranchPhase] = Decoder.decodeString.emap { s =>
     BranchPhase.values.find(_.toString == s).toRight(s"Unknown phase: $s")
   }
 
-/** Persistable branch state (excludes runtime ActorRef / Process refs). */
+/** Persistable branch state. */
 case class BranchState(
-  name: String, // unique instance name
-  address: String, // ActorRef path for Mail routing
-  branchType: BranchType,
+  name: String,
+  address: String,
+  flowName: String,
   phase: BranchPhase,
   parentBranch: Option[String] = None,
-  // Pipeline runtime state
-  stepStatus: Map[String, String] = Map.empty, // stepId → "Pending"/"Running"/"Done"/"Failed"
-  results: Map[String, String] = Map.empty, // stepId → output text
+  stepStatus: Map[String, String] = Map.empty,
+  results: Map[String, String] = Map.empty,
   failedReasons: Map[String, String] = Map.empty,
   retryLeft: Map[String, Int] = Map.empty,
-  verifyResult: Option[String] = None,
+  verdicts: Map[String, Boolean] = Map.empty,
   iteration: Int = 0,
-  // Tree structure
-  children: Map[String, String] = Map.empty // childName → childBranchName
+  children: Map[String, String] = Map.empty
 )
 
 object BranchState:
@@ -334,14 +176,14 @@ object BranchState:
     Json.obj(
       "name" -> s.name.asJson,
       "address" -> s.address.asJson,
-      "branchType" -> s.branchType.asJson,
+      "flowName" -> s.flowName.asJson,
       "phase" -> s.phase.asJson,
       "parentBranch" -> s.parentBranch.asJson,
       "stepStatus" -> s.stepStatus.asJson,
       "results" -> s.results.asJson,
       "failedReasons" -> s.failedReasons.asJson,
       "retryLeft" -> s.retryLeft.asJson,
-      "verifyResult" -> s.verifyResult.asJson,
+      "verdicts" -> s.verdicts.asJson,
       "iteration" -> s.iteration.asJson,
       "children" -> s.children.asJson
     )
@@ -351,27 +193,27 @@ object BranchState:
     for
       name <- c.downField("name").as[String]
       address <- c.downField("address").as[String]
-      branchType <- c.downField("branchType").as[BranchType]
+      flowName <- c.downField("flowName").as[String]
       phase <- c.downField("phase").as[BranchPhase]
       parentBranch <- c.downField("parentBranch").as[Option[String]]
       stepStatus <- c.downField("stepStatus").as[Option[Map[String, String]]]
       results <- c.downField("results").as[Option[Map[String, String]]]
       failedReasons <- c.downField("failedReasons").as[Option[Map[String, String]]]
       retryLeft <- c.downField("retryLeft").as[Option[Map[String, Int]]]
-      verifyResult <- c.downField("verifyResult").as[Option[String]]
+      verdicts <- c.downField("verdicts").as[Option[Map[String, Boolean]]]
       iteration <- c.downField("iteration").as[Option[Int]]
       children <- c.downField("children").as[Option[Map[String, String]]]
     yield BranchState(
       name,
       address,
-      branchType,
+      flowName,
       phase,
       parentBranch,
       stepStatus.getOrElse(Map.empty),
       results.getOrElse(Map.empty),
       failedReasons.getOrElse(Map.empty),
       retryLeft.getOrElse(Map.empty),
-      verifyResult,
+      verdicts.getOrElse(Map.empty),
       iteration.getOrElse(0),
       children.getOrElse(Map.empty)
     )
@@ -379,7 +221,7 @@ object BranchState:
 end BranchState
 
 // ============================================================
-// Flow Tree Snapshot (whole-tree persistence)
+// Flow Tree Snapshot
 // ============================================================
 
 case class FlowTreeSnapshot(
@@ -405,19 +247,18 @@ object FlowTreeSnapshot:
 end FlowTreeSnapshot
 
 // ============================================================
-// ============================================================
-// Mount Result (returned by FlowTreeActor to MountFlowTool)
+// Mount Result
 // ============================================================
 
 sealed trait MountResult
 
 object MountResult:
-  case class Mounted(name: String, address: String, typeName: String) extends MountResult
+  case class Mounted(name: String, address: String) extends MountResult
   case class Unmounted(name: String) extends MountResult
   case class Error(message: String) extends MountResult
 
 // ============================================================
-// Tree Commands (messages for FlowTreeActor — simplified supervisor)
+// Tree Commands (messages for TreeFlow)
 // ============================================================
 
 sealed trait TreeCommand
@@ -432,7 +273,6 @@ object TreeCommand:
 
   case class UnmountBranch(name: String) extends TreeCommand
 
-  /** Trigger a pipeline with input. replyTo receives progress/done/failed events. */
   case class TriggerPipeline(
     name: String,
     input: String = "",
