@@ -38,7 +38,7 @@ import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
-import { initNeblink } from './neblink.js';
+import { initNeblink, checkPairingRedirect } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
@@ -2032,6 +2032,7 @@ document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flow
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initNeblink();
+checkPairingRedirect();
 initDropbox();
 planMode.init();
 

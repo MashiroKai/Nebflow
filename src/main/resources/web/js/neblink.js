@@ -1,6 +1,6 @@
 /**
  * NebLink — P2P device discovery via NebLink Server.
- * No login, no relay server. NebLink Server is the trust boundary.
+ * Device pairing: nebflow.space login → auto-configure NebLink.
  */
 import state from './state.js';
 import { escapeHtml } from './utils.js';
@@ -10,7 +10,10 @@ import { openDropbox } from './dropbox.js';
 
 let neblinkState = {
   device: null,
-  peers: []
+  peers: [],
+  paired: false,
+  pairing: false,
+  pairError: ''
 };
 
 // Per-device remote update state: 'idle' | 'select' | 'updating' | 'done' | 'error'
@@ -51,10 +54,70 @@ export async function refreshNeblink() {
   _rerender?.();
 }
 
+// ---- Pairing flow ----
+
+/** Check URL for pairing redirect from nebflow.space/connect */
+export function checkPairingRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  const server = params.get('server');
+  const networkId = params.get('networkId');
+  const secret = params.get('secret');
+
+  if (server && networkId && secret) {
+    // Clean URL first
+    const cleanUrl = window.location.origin + window.location.pathname;
+    window.history.replaceState({}, document.title, cleanUrl);
+
+    // Send pairing config to backend
+    neblinkState.pairing = true;
+    _rerender?.();
+    fetch('/api/neblink/pair', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ server, networkId, secret })
+    }).then(r => r.json()).then(data => {
+      if (data.ok) {
+        neblinkState.pairing = false;
+        neblinkState.paired = true;
+        neblinkState.pairError = '';
+        setTimeout(() => fetchNeblinkStatus().then(() => _rerender?.()), 1500);
+      } else {
+        neblinkState.pairing = false;
+        neblinkState.pairError = data.error || '配对失败';
+      }
+      _rerender?.();
+    }).catch(e => {
+      neblinkState.pairing = false;
+      neblinkState.pairError = '网络错误: ' + e.message;
+      _rerender?.();
+    });
+    return true;
+  }
+  return false;
+}
+
 // ---- Settings section HTML ----
 export function neblinkSettingsHTML() {
   const local = neblinkState.device || {};
   const peers = neblinkState.peers || [];
+
+  // If pairing in progress
+  if (neblinkState.pairing) {
+    return `<div class="neblink-login-section">
+      <div class="neblink-pairing-status">${t('neblink.pairing') || '正在配对...'}</div>
+    </div>`;
+  }
+
+  // If no device configured — show login button
+  if (!local.deviceId) {
+    const pairErr = neblinkState.pairError
+      ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
+    return `<div class="neblink-login-section">
+      <div class="neblink-login-hint">${t('neblink.loginHint') || '登录 nebflow.space 连接你的设备'}</div>
+      ${pairErr}
+      <button class="neblink-login-btn" id="neblink-login-btn">${t('neblink.login') || '登录连接'}</button>
+    </div>`;
+  }
 
   const allDevices = [
     { ...local, isLocal: true },
@@ -123,6 +186,15 @@ export function neblinkSettingsHTML() {
 // ---- Bind events after HTML insert ----
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
+
+  // Login button — opens nebflow.space/connect
+  const loginBtn = document.getElementById('neblink-login-btn');
+  if (loginBtn) {
+    loginBtn.addEventListener('click', () => {
+      const origin = window.location.origin;
+      window.open(`https://nebflow.space/connect?redirect=${encodeURIComponent(origin)}`, '_blank');
+    });
+  }
 
   // Peer update buttons
   document.querySelectorAll('.neblink-peer-update-btn').forEach(btn => {
