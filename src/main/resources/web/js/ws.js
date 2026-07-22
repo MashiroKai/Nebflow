@@ -1,5 +1,6 @@
 import state from './state.js';
-import { findViewBySessionId, setActiveView, chatViews } from './chatView.js';
+import { findViewBySessionId, setActiveView, activeView, chatViews } from './chatView.js';
+import { interceptFlowStep } from './flowAgentPopup.js';
 
 // ---------- Handler registry (supports multiple handlers per type) ----------
 const handlers = {};
@@ -166,6 +167,16 @@ export function connect() {
         view = chatViews.primary || null;
       }
       setActiveView(view || null);
+
+      // ── Flow step popup: redirect events to popup ChatView ────────
+      // If a popup is open for this flowStepId, set activeView to it so
+      // all rendering (streaming text, tool cards, etc.) targets the popup.
+      if (msg.flowStepId && interceptFlowStep(msg)) {
+        // Still dispatch handlers — they'll render into the popup view
+        const list = handlers[msg.type];
+        if (list) for (const h of list) h(msg, activeView);
+        return;
+      }
 
       // ── Plan mode: intercept only agentTextDelta ───────────────────
       // We accumulate plan text for the card, but let all other plan agent
