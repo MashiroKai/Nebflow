@@ -314,49 +314,52 @@ object LlmInterface:
                                     .orElse(Option(err.getMessage))
                                     .getOrElse(classification.reason.toString)
 
-                                  if classification.permanence == ErrorPermanence.Fatal then
-                                    // Error affects all providers — abort entire stream
-                                    fs2.Stream.eval(
-                                      resetLock *> logger.warn(
-                                        s"Stream fatal: ${candidate.providerId}/${candidate.model} ${classification.reason} — aborting"
-                                      )
-                                        *> failureRef.update(_ :+ attempt)
-                                        *> notify
-                                    ) *> fs2.Stream.raiseError(new FallbackExhaustedError(List(attempt)))
-                                  else if classification.permanence == ErrorPermanence.Permanent then
-                                    fs2.Stream.eval(
-                                      resetLock *>
-                                        logger.warn(
-                                          s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
+                                  classification.permanence match
+                                    case ErrorPermanence.Fatal =>
+                                      // Error affects all providers — abort entire stream
+                                      fs2.Stream.eval(
+                                        resetLock *> logger.warn(
+                                          s"Stream fatal: ${candidate.providerId}/${candidate.model} ${classification.reason} — aborting"
                                         )
-                                        *> failureRef.update(_ :+ attempt)
-                                        *> notify
-                                        *> healthMonitor.markDown(candidate.providerId, candidate.model, downReason)
-                                    ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
-                                  else if retriesLeft > 0 && !isTimeout then
-                                    // Only retry same provider for non-timeout errors.
-                                    // Timeout means the provider is unresponsive — skip to next.
-                                    val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
-                                    val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
-                                    fs2.Stream.eval(
-                                      resetLock *> notify *> logger.warn(
-                                        s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
-                                      ) *> IO.sleep(delay.millis)
-                                    ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
-                                  else
-                                    // Timeout or retries exhausted — try next provider
-                                    val skipMsg =
-                                      if isTimeout then "inactivity timeout, skipping to next provider"
-                                      else "retries exhausted"
-                                    fs2.Stream.eval(
-                                      resetLock *> logger.warn(
-                                        s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
-                                      )
-                                        *> failureRef.update(_ :+ attempt)
-                                        *> notify
-                                        *> healthMonitor.markDown(candidate.providerId, candidate.model, downReason)
-                                    ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
-                                  end if
+                                          *> failureRef.update(_ :+ attempt)
+                                          *> notify
+                                      ) *> fs2.Stream.raiseError(new FallbackExhaustedError(List(attempt)))
+                                    case ErrorPermanence.Permanent =>
+                                      fs2.Stream.eval(
+                                        resetLock *>
+                                          logger.warn(
+                                            s"Stream: ${candidate.providerId}/${candidate.model} permanent error (${classification.reason})"
+                                          )
+                                          *> failureRef.update(_ :+ attempt)
+                                          *> notify
+                                          *> healthMonitor.markDown(candidate.providerId, candidate.model, downReason)
+                                      ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                                    case ErrorPermanence.Transient =>
+                                      if retriesLeft > 0 && !isTimeout then
+                                        // Only retry same provider for non-timeout errors.
+                                        // Timeout means the provider is unresponsive — skip to next.
+                                        val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
+                                        val delay = math.min(backoffMs + jitter, Fallback.MaxBackoffMs)
+                                        fs2.Stream.eval(
+                                          resetLock *> notify *> logger.warn(
+                                            s"Stream retry ${candidate.providerId}/${candidate.model}: ${classification.reason} (${retriesLeft} left, ${delay}ms)"
+                                          ) *> IO.sleep(delay.millis)
+                                        ) *> tryCandidate(remaining, retriesLeft - 1, backoffMs * 2)
+                                      else
+                                        // Timeout or retries exhausted — try next provider
+                                        val skipMsg =
+                                          if isTimeout then "inactivity timeout, skipping to next provider"
+                                          else "retries exhausted"
+                                        fs2.Stream.eval(
+                                          resetLock *> logger.warn(
+                                            s"Stream fallback: ${candidate.providerId}/${candidate.model} $skipMsg"
+                                          )
+                                            *> failureRef.update(_ :+ attempt)
+                                            *> notify
+                                            *> healthMonitor.markDown(candidate.providerId, candidate.model, downReason)
+                                        ) *> tryCandidate(rest, maxRetries, Fallback.InitialBackoffMs)
+                                      end if
+                                  end match
                                 end if
                               }
                             }
