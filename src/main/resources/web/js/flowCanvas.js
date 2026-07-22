@@ -6,6 +6,9 @@
 // Gray lines show data flow direction.
 
 import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader, isCanvasOpen } from './canvas.js';
+import { openStepPopup, closeStepPopup, onAgentEvent } from './flowAgentPopup.js';
+
+export { onAgentEvent };
 
 // ── View state (pan/zoom) ──────────────────────────────────
 let viewX = 0, viewY = 0, viewScale = 1;
@@ -49,7 +52,12 @@ const FLOW_CSS = `
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
   text-align: center;
   min-width: 80px;
-  transition: opacity 0.4s ease;
+  transition: opacity 0.4s ease, border-color 0.2s, box-shadow 0.2s;
+}
+.flow-node:not(.root) { cursor: pointer; }
+.flow-node:not(.root):hover {
+  border-color: var(--color-primary, #6366f1);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04), 0 0 0 3px rgba(99,102,241,0.12);
 }
 .flow-node.root {
   min-width: 110px;
@@ -364,6 +372,7 @@ function renderAll() {
 
   setupPanZoom(layout);
   bindToolbar(layout); // always re-bind — DOM is rebuilt each render
+  bindNodeClicks(allNodes);
   fitView(layout);
 }
 
@@ -435,6 +444,7 @@ function setupPanZoom(layout) {
 
   root.addEventListener('mousedown', (e) => {
     if (e.target.closest('.flow-btn')) return;
+    if (e.target.closest('.flow-node:not(.root)')) return; // don't pan when clicking a node
     isPanning = true;
     panStartX = e.clientX;
     panStartY = e.clientY;
@@ -470,6 +480,20 @@ function bindToolbar(layout) {
   });
   document.getElementById('flow-fit')?.addEventListener('click', () => {
     fitView(layout);
+  });
+}
+
+// ── Node click → agent popup ─────────────────────────────
+
+function bindNodeClicks(allNodes) {
+  allNodes.forEach(n => {
+    if (n.isRoot) return;
+    const el = document.querySelector(`[data-step-id="${n.id}"]`);
+    if (!el) return;
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openStepPopup(n.id, n.label, n.agent || '', n.pipeline || '');
+    });
   });
 }
 
