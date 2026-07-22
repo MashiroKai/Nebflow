@@ -515,9 +515,13 @@ function bindNodeClicks(allNodes) {
     if (n.isRoot) return;
     const el = document.querySelector(`[data-step-id="${n.id}"]`);
     if (!el) return;
+    // Look up nodeSessionId from pipeline state
+    const p = pipelines.get(n.pipeline);
+    const step = p?.steps.find(s => s.id === n.label);
+    const nodeSessionId = step?.nodeSessionId || null;
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      openStepPopup(n.id, n.label, n.agent || '', n.pipeline || '');
+      openStepPopup(n.id, n.label, n.agent || '', n.pipeline || '', nodeSessionId);
     });
   });
 }
@@ -558,6 +562,8 @@ export function updateStep(msg) {
   step.status = msg.status === 'running' ? 'Running'
     : msg.status === 'done' ? 'Done'
     : msg.status === 'failed' ? 'Failed' : step.status;
+  // Store nodeSessionId from flowStepStarted for popup history loading
+  if (msg.nodeSessionId) step.nodeSessionId = msg.nodeSessionId;
   renderAll();
 }
 

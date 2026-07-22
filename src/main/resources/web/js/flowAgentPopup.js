@@ -148,7 +148,7 @@ function ensureStepView(flowStepId) {
 
 // ── Open popup ────────────────────────────────────────────
 
-export function openStepPopup(flowStepId, nodeLabel, agentName, flowName) {
+export function openStepPopup(flowStepId, nodeLabel, agentName, flowName, nodeSessionId) {
   closeStepPopup();
   currentStepId = flowStepId;
 
@@ -189,6 +189,12 @@ export function openStepPopup(flowStepId, nodeLabel, agentName, flowName) {
     const atBottom = entry.container.scrollTop + entry.container.clientHeight >= entry.container.scrollHeight - 40;
     entry.view.stream.scrollSnapped = atBottom;
   });
+
+  // Load session history from backend if we have a nodeSessionId
+  // and the container is empty (no real-time events were captured)
+  if (nodeSessionId && entry.container.children.length === 0) {
+    loadSessionHistory(entry.view, nodeSessionId, entry.container);
+  }
 }
 
 export function closeStepPopup() {
@@ -208,6 +214,49 @@ export function removeStepView(flowStepId) {
   if (entry) {
     entry.container.remove();
     stepViews.delete(flowStepId);
+  }
+}
+
+// ── Load session history from backend ─────────────────────
+// Fetches UI messages via REST API and renders them into the ChatView.
+
+async function loadSessionHistory(view, sessionId, container) {
+  try {
+    const resp = await fetch(`/api/sessions/${sessionId}/history`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const messages = data.messages || [];
+    if (messages.length === 0) return;
+
+    // Import rendering functions dynamically to avoid circular deps
+    const { renderUserBubble, renderTool } = await import('./chat.js');
+    const { setActiveView: setAV } = await import('./chatView.js');
+    const { renderMarkdownWithMath } = await import('./utils.js');
+
+    setAV(view);
+
+    for (const msg of messages) {
+      if (msg.type === 'user') {
+        renderUserBubble(msg.text || '', null, msg.timestamp);
+      } else if (msg.type === 'ai') {
+        // Render AI message as a bubble
+        const row = document.createElement('div');
+        row.className = 'row';
+        const bubble = document.createElement('div');
+        bubble.className = 'bubble ai';
+        bubble.innerHTML = renderMarkdownWithMath(msg.text || '');
+        row.appendChild(bubble);
+        container.appendChild(row);
+      } else if (msg.type === 'tool') {
+        // Render tool result
+        if (msg.label && msg.content) {
+          renderTool(msg.label, msg.summary || '', msg.content, msg.isError || false, msg.input, sessionId);
+        }
+      }
+    }
+    container.scrollTop = container.scrollHeight;
+  } catch (e) {
+    console.warn('[flowAgentPopup] Failed to load session history:', e);
   }
 }
 
