@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -25,13 +25,19 @@ object PipelineActor:
   val VerifyPromptPreamble =
     """You are the verification step of this workflow. Analyze the step results against the verification criteria below.
 
-At the END of your response, you MUST include a verdict line in exactly this format:
-  VERDICT: PASS
-or
-  VERDICT: FAIL: <one-line reason>
+Report your verdict using Mail(type=verify, passed=..., summary="..."):
+  - passed=true if the work meets all criteria.
+  - passed=false if issues remain AFTER you have mailed specific feedback to the relevant agent and given them a chance to fix it.
 
-The verdict line is how the pipeline detects your result — without it, verification fails.
-Do NOT call any tools to report the result. Just output the verdict line at the end of your analysis.
+Workflow for failing verification:
+  1. Mail(type=message) the peer whose work needs fixing, with specific, actionable feedback.
+  2. Wait for their response.
+  3. Re-evaluate. If now acceptable, Mail(type=verify, passed=true).
+  4. If still not acceptable after reasonable attempts, Mail(type=verify, passed=false, summary="...").
+
+If Mail is unavailable, include a fallback verdict line at the END of your response:
+  VERDICT: PASS
+  VERDICT: FAIL: <one-line reason>
 
 --- Verification Criteria ---
 """.stripMargin
@@ -64,6 +70,12 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
 
     /** Query current state. */
     case class GetState(replyTo: ActorRef[PipelineSnapshot]) extends PipelineCommand
+
+    /** Verify agent reported verdict via Mail(type=verify). */
+    case class VerifyReceived(stepId: String, result: VerifyResult) extends PipelineCommand
+
+    /** Global flow timeout fired. */
+    case object FlowTimeout extends PipelineCommand
 
     /** Shutdown the pipeline actor. */
     case object Stop extends PipelineCommand
@@ -106,6 +118,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     failedReasons: Map[String, String] = Map.empty,
     verdicts: Map[String, Boolean] = Map.empty,
     nodeExecCount: Map[String, Int] = Map.empty,
+    agentPaths: Map[String, String] = Map.empty,
+    agentRefs: Map[String, ActorRef[AgentCommand]] = Map.empty,
     verifyResult: Option[String] = None,
     iteration: Int = 0,
     triggerInput: String = "",
@@ -130,7 +144,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     projectRoot: String,
     safetyMode: String,
     flowMemory: String = "",
-    gatewayPort: Int = 8080
+    gatewayPort: Int = 8080,
+    expectsMail: Boolean = true
   )
 
   // ============================================================
@@ -189,6 +204,20 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               _ <- afterStepUpdate(ctx, stateRef, cfg)
               _ <- saveState(stateRef, cfg)
             yield this
+
+          case PipelineCommand.VerifyReceived(stepId, result) =>
+            for
+              _ <- handleVerifyReceived(ctx, stateRef, cfg, stepId, result)
+              _ <- afterStepUpdate(ctx, stateRef, cfg)
+              _ <- saveState(stateRef, cfg)
+            yield this
+
+          case PipelineCommand.FlowTimeout =>
+            stateRef.get.flatMap { state =>
+              if state.phase == RunPhase.Running then
+                failPipeline(ctx, stateRef, cfg, s"Flow timed out after $MaxFlowDuration")
+              else IO.unit
+            }.as(this)
 
           case PipelineCommand.GetState(replyTo) =>
             for
@@ -257,7 +286,16 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                 .asJson
             )
             _ <- logger.info(s"[${cfg.name}] Triggered with input (${input.length} chars)")
+            _ <- FlowMembership.registerFlow(cfg.name, cfg.flowDef.nodes)
             _ <- scheduleReadySteps(ctx, stateRef, cfg)
+            // Start global flow timeout
+            _ <- ctx.forkTurn(
+              IO.sleep(MaxFlowDuration) *>
+                stateRef.get.flatMap { s =>
+                  if s.phase == RunPhase.Running then IO(ctx.self ! PipelineCommand.FlowTimeout)
+                  else IO.unit
+                }
+            )
           yield ()
           end for
     yield ()
@@ -336,13 +374,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               readTracker <- ReadTracker.create
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id))
-              _ <- stateRef.update(s =>
-                s.copy(
-                  stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString),
-                  nodeExecCount = s.nodeExecCount.updatedWith(node.id)(v => Some(v.getOrElse(0) + 1))
-                )
-              )
-              actualPrompt = withMemory(promptWithPreamble, cfg)
+              peerInfo = buildPeerInfo(node.id, state.agentPaths, cfg.name, neighborsOf(cfg.flowDef.nodes, node.id))
+              actualPrompt = withMemory(peerInfo + promptWithPreamble, cfg)
               agentRef <- ctx.system.spawn(
                 AgentActor(
                   agentDef = agentDef,
@@ -356,15 +389,34 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                   fileHistory = Some(fileHistory),
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
-                  safetyMode = cfg.safetyMode
+                  safetyMode = cfg.safetyMode,
+                  expectsMail = cfg.expectsMail
                 ),
                 agentUid
+              )
+              _ <- stateRef.update(s =>
+                s.copy(
+                  stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString),
+                  nodeExecCount = s.nodeExecCount.updatedWith(node.id)(v => Some(v.getOrElse(0) + 1)),
+                  agentPaths = s.agentPaths + (node.id -> agentRef.path.toString),
+                  agentRefs = s.agentRefs + (node.id -> agentRef)
+                )
               )
               adapterRef <- ctx.spawn(
                 stepAdapter(ctx.self, node.id, agentRef, node.timeout),
                 s"$agentUid-adapter"
               )
-              _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
+              _ <- FlowMembership.join(agentRef.path.toString, cfg.name, node.id)
+              _ <-
+                if node.verdict then
+                  for
+                    d <- Deferred[IO, VerifyResult]
+                    _ <- FlowVerifyRegistry.register(agentRef.path.toString, d)
+                    _ <- ctx.forkTurn(
+                      d.get.flatMap(r => IO(ctx.self ! PipelineCommand.VerifyReceived(node.id, r)))
+                    )
+                  yield ()
+                else IO.unit
               _ <- emit(
                 cfg,
                 "flowStepStarted",
@@ -381,7 +433,46 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
   end spawnStep
 
   // ============================================================
-  // Step completion / failure
+  // Verify result handling (from Mail type=verify)
+  // ============================================================
+
+  private def handleVerifyReceived(
+    ctx: ActorContext[PipelineCommand],
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig,
+    stepId: String,
+    result: VerifyResult
+  )(using ActorContext[PipelineCommand]): IO[Unit] =
+    for
+      state <- stateRef.get
+      _ <-
+        if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
+          val verdictText = s"VERDICT: ${if result.pass then "PASS" else "FAIL"}: ${result.summary}"
+          for
+            _ <- stateRef.update(s =>
+              s.copy(
+                results = s.results + (stepId -> verdictText),
+                stepStatus = s.stepStatus + (stepId -> StepStatus.Done.toString),
+                verdicts = s.verdicts + (stepId -> result.pass)
+              )
+            )
+            _ <- emit(
+              cfg,
+              "flowVerifyResult",
+              "branchName" -> cfg.name.asJson,
+              "pass" -> result.pass.asJson,
+              "summary" -> result.summary.take(500).asJson
+            )
+            _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
+            _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", result.summary))
+            _ = logger.info(s"[${cfg.name}] Verify '$stepId' via Mail: ${if result.pass then "PASS" else "FAIL"}")
+          yield ()
+        else
+          logger.debug(s"[${cfg.name}] VerifyReceived for '$stepId' ignored (status: ${state.stepStatus.getOrElse(stepId, "?")})")
+    yield ()
+
+  // ============================================================
+  // Step failure handling
   // ============================================================
 
   private def handleStepCompleted(
@@ -611,6 +702,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
       )
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Done(summary)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
+      // Stop all persistent agents and clean up flow membership
+      _ <- cleanupAgents(stateRef, cfg)
       // Launch reflect in background — non-blocking, fire-and-forget
       _ <- runReflect(stateRef, cfg, summary, passed = true)
       _ = logger.info(s"[${cfg.name}] Pipeline COMPLETED")
@@ -639,9 +732,28 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
       )
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Failed(reason)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
+      // Stop all persistent agents and clean up flow membership
+      _ <- cleanupAgents(stateRef, cfg)
       // Learn from failures too — reflect in background
       _ <- runReflect(stateRef, cfg, reason, passed = false)
       _ = logger.warn(s"[${cfg.name}] Pipeline FAILED: $reason")
+    yield ()
+
+  /** Stop all persistent agents and clean up flow membership on pipeline end. */
+  private def cleanupAgents(
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig
+  )(using ctx: ActorContext[?]): IO[Unit] =
+    for
+      state <- stateRef.get
+      _ <- state.agentRefs.values.toList.traverse_(ref =>
+        IO(ctx.system.stop(ref)).handleErrorWith(e =>
+          logger.warn(s"[${cfg.name}] Failed to stop agent ${ref.path}: ${e.getMessage}")
+        )
+      )
+      _ <- state.agentPaths.values.toList.traverse_(path => FlowMembership.leaveAll(path))
+      _ <- FlowMembership.unregisterFlow(cfg.name)
+      _ = logger.info(s"[${cfg.name}] Cleaned up ${state.agentRefs.size} agents")
     yield ()
 
   // ============================================================
@@ -676,9 +788,6 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               readTracker <- ReadTracker.create
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(stepId))
-              _ <- stateRef.update(s =>
-                s.copy(stepStatus = s.stepStatus + (stepId -> StepStatus.Running.toString))
-              )
               agentRef <- ctx.system.spawn(
                 AgentActor(
                   agentDef = agentDef,
@@ -692,11 +801,18 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                   fileHistory = Some(fileHistory),
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
-                  safetyMode = cfg.safetyMode
+                  safetyMode = cfg.safetyMode,
+                  expectsMail = cfg.expectsMail
                 ),
                 agentUid
               )
-              _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
+              _ <- stateRef.update(s =>
+                s.copy(
+                  stepStatus = s.stepStatus + (stepId -> StepStatus.Running.toString),
+                  agentRefs = s.agentRefs + (stepId -> agentRef)
+                )
+              )
+              _ <- FlowMembership.join(agentRef.path.toString, cfg.name, stepId)
               adapterRef <- ctx.spawn(
                 stepAdapter(ctx.self, stepId, agentRef, timeout),
                 s"$agentUid-adapter"
@@ -757,7 +873,9 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               yield Behaviors.stopped[AgentEvent]
 
         override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
-          FlowMembership.leaveAll(subagentRef.path.toString)
+          // Only clean up Deferred; leave FlowMembership intact so persistent
+          // agents can still receive Mail until PipelineActor cleans up on completion.
+          FlowVerifyRegistry.remove(subagentRef.path.toString)
       )
     }
 
@@ -767,6 +885,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
 
   private val MaxStepOutputChars = 8000
   private val MaxMemoryChars = 4000
+  private val MaxFlowDuration = 3600.seconds // 1 hour global flow timeout
 
   /** Inject flow memory as a context prefix to a prompt. */
   private def withMemory(prompt: String, cfg: PipelineConfig): String =
@@ -790,6 +909,41 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
           changed = true
       }
     result
+
+  /** Compute the set of node IDs that have a DAG edge with the given node. */
+  private def neighborsOf(nodes: List[FlowNode], nodeId: String): Set[String] =
+    nodes.find(_.id == nodeId) match
+      case None => Set.empty
+      case Some(node) =>
+        val upstream = node.dependsOn
+        val downstream = nodes.filter(_.dependsOn.contains(nodeId)).map(_.id).toSet
+        val retryTargets = node.retry.map(_.target).toSet
+        val retrySources = nodes.filter(_.retry.exists(_.target == nodeId)).map(_.id).toSet
+        upstream ++ downstream ++ retryTargets ++ retrySources
+
+  /** Build peer address info block for agent prompt injection (filtered by DAG edges). */
+  private def buildPeerInfo(
+    nodeId: String,
+    agentPaths: Map[String, String],
+    flowName: String,
+    neighbors: Set[String]
+  ): String =
+    val peers = agentPaths.filter { (id, _) => id != nodeId && neighbors.contains(id) }
+    if peers.isEmpty then ""
+    else
+      val lines = peers.map { (id, path) => s"- $id: $path" }.mkString("\n")
+      s"""=== Flow Communication ===
+         |You are node "$nodeId" in flow "$flowName". You can communicate with these peers via Mail:
+         |$lines
+         |
+         |When you complete your work, use Mail(type=message) to send your result to relevant peers.
+         |If you are a verify node:
+         |  - If verification fails, Mail(type=message) the peer with specific feedback before declaring failure.
+         |  - After rework or if satisfied, use Mail(type=verify, passed=..., summary=...) to report the final verdict.
+         |=== End Communication ===
+         |
+         |""".stripMargin
+    end if
 
   // ============================================================
   // Reflect — learning loop after pipeline completion

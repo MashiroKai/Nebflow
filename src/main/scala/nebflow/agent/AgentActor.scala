@@ -39,7 +39,8 @@ object AgentActor extends AgentCore with AgentSession:
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
     safetyMode: String = "confirm-edits",
-    gitBranch: Option[String] = None
+    gitBranch: Option[String] = None,
+    expectsMail: Boolean = false
   ): Behavior[AgentCommand] =
     Behaviors.setup { ctx =>
       logAgentEvent(
@@ -75,7 +76,8 @@ object AgentActor extends AgentCore with AgentSession:
             rulesMd = rulesMd,
             folderId = folderId,
             safetyMode = safetyMode,
-            gitBranch = gitBranch
+            gitBranch = gitBranch,
+            expectsMail = expectsMail
           )
         )(using ctx)
       )
@@ -1173,6 +1175,44 @@ object AgentActor extends AgentCore with AgentSession:
           .as(idle(agentDef, resources, depth, parentRef, state.withStatus(AgentStatus.Idle).withInteraction(None)))
   end processing
   // ============================================================
+  // Mail check — flow agents must call Mail before finishing
+  // ============================================================
+
+  /** Check if the conversation contains any Mail tool call. */
+  private def hasUsedMail(messages: List[Message]): Boolean =
+    messages.exists(_.content match
+      case Right(blocks) => blocks.exists {
+        case ContentBlock.ToolUse(_, name, _) => name == "Mail"
+        case _ => false
+      }
+      case _ => false
+    )
+
+  /** Inject a system reminder telling the agent to use Mail, then trigger a new turn. */
+  private def handleMissingMail(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    replyTo: Option[ActorRef[AgentEvent]],
+    result: ConsumeResult
+  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "mail-reminder", "agent finished without Mail")
+    val assistantContent = (result.thinking, result.text) match
+      case (None, _) => Left(result.text)
+      case (Some(t), "") => Right(List(ContentBlock.Thinking(t, result.thinkingSignature)))
+      case (Some(t), txt) =>
+        Right(List(ContentBlock.Thinking(t, result.thinkingSignature), ContentBlock.Text(txt)))
+    val assistantMsg = Message(MessageRole.Assistant, assistantContent)
+    val reminderMsg = Message(MessageRole.User, Left(
+      "<system-reminder>\nYou must use the Mail tool to report your result before finishing. Call Mail now with your findings.\n</system-reminder>"
+    ))
+    val newMessages = state.messages ++ List(assistantMsg, reminderMsg)
+    val updatedState = state.copy(execution = state.execution.copy(messages = newMessages, status = AgentStatus.Processing))
+    pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, replyTo)
+
+  // ============================================================
   // LlmComplete branch selector
   // ============================================================
 
@@ -1195,19 +1235,23 @@ object AgentActor extends AgentCore with AgentSession:
     else if result.toolCalls.nonEmpty then
       pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
     else if result.text.nonEmpty || result.thinking.nonEmpty then
-      finishTurn(
-        agentDef,
-        resources,
-        depth,
-        parentRef,
-        state.withEmptyResponseRetries(0),
-        replyTo,
-        result.text,
-        result.thinking,
-        result.thinkingSignature,
-        textAlreadyStreamed = true,
-        result.model
-      )
+      // Mail check: flow agents must call Mail before finishing
+      if state.expectsMail && !hasUsedMail(state.messages) then
+        handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
+      else
+        finishTurn(
+          agentDef,
+          resources,
+          depth,
+          parentRef,
+          state.withEmptyResponseRetries(0),
+          replyTo,
+          result.text,
+          result.thinking,
+          result.thinkingSignature,
+          textAlreadyStreamed = true,
+          result.model
+        )
     else handleEmptyResponse(agentDef, resources, depth, parentRef, state, replyTo, result)
 
   // ============================================================

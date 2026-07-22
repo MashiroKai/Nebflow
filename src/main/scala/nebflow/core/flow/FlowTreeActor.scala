@@ -146,7 +146,7 @@ object FlowTreeActor:
       )
       _ <- pipelinesRef.update(_ + (name -> ref))
       _ <- flowNamesRef.update(_ + (name -> defn.name))
-      _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, name)
+      _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, name, "__manager__")
       _ <- persistPipelines(pipelinesRef, flowNamesRef, cfg)
       _ <- emit(cfg, "treeBranchMounted", "name" -> name.asJson, "type" -> "pipeline".asJson)
       _ <- replyTo.traverse_(_ ! MountResult.Mounted(name, ref.path.toString))
@@ -244,7 +244,7 @@ object FlowTreeActor:
                   )
                   _ <- pipelinesRef.update(_ + (entry.name -> ref))
                   _ <- flowNamesRef.update(_ + (entry.name -> entry.flowName))
-                  _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, entry.name)
+                  _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, entry.name, "__manager__")
                   _ <- logger.info(s"Restored pipeline '${entry.name}' (flow: ${entry.flowName})")
                 yield ()
               case None =>
