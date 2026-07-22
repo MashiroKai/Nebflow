@@ -3,7 +3,7 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { activeView, setActiveView } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 import { sendWs } from './ws.js';
@@ -261,15 +261,19 @@ export function renderUserBubble(text, attachments, timestamp) {
     row.appendChild(bubble);
   });
 
-  // Timestamp below bubble
+  // Timestamp + copy button
   const ts = timestamp || Date.now();
+  const metaEl = document.createElement('div');
+  metaEl.className = 'msg-meta';
   const timeEl = document.createElement('div');
   timeEl.className = 'msg-time';
   timeEl.setAttribute('data-ts', ts);
   timeEl.textContent = formatHm(ts);
   timeEl.title = '点击切换 12/24 小时制';
   timeEl.addEventListener('click', toggleTimeFormat);
-  row.appendChild(timeEl);
+  metaEl.appendChild(timeEl);
+  if (text) metaEl.appendChild(createMsgCopyButton(text));
+  row.appendChild(metaEl);
 
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
@@ -340,6 +344,11 @@ export function finishAi(durationMs, model) {
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
       renderDurationBadge(bubble, durationMs, model, seed, ts);
+    }
+    // Copy button for AI message
+    const aiRow = bubble.closest('.row');
+    if (aiRow) {
+      aiRow.appendChild(createMsgCopyButton(activeView.stream.aiText));
     }
     // Trigger voice TTS: enqueue all <voice> blocks for sequential playback,
     // and attach click-to-replay handlers on the green text.

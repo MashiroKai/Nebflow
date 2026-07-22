@@ -5,7 +5,7 @@
 import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, createMsgCopyButton } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { createDurationBadgeElement, formatHm, toggleTimeFormat } from './chat.js';
 
@@ -130,6 +130,7 @@ export function restoreFromStorage() {
         }
         row.appendChild(bubble);
       });
+      if (m.text) row.appendChild(createMsgCopyButton(m.text));
       chat.appendChild(row);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
@@ -172,6 +173,7 @@ export function restoreFromStorage() {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           row.appendChild(badge);
         }
+        row.appendChild(createMsgCopyButton(m.text));
         chat.appendChild(row);
       }
     } else if (m.type === 'tool') {
@@ -439,15 +441,19 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       });
-      // Timestamp
+      // Timestamp + copy button
       if (m.timestamp && m.timestamp > 0) {
+        const metaEl = document.createElement('div');
+        metaEl.className = 'msg-meta';
         const timeEl = document.createElement('div');
         timeEl.className = 'msg-time';
         timeEl.setAttribute('data-ts', m.timestamp);
         timeEl.textContent = formatHm(m.timestamp);
         timeEl.title = '点击切换 12/24 小时制';
         timeEl.addEventListener('click', toggleTimeFormat);
-        row.appendChild(timeEl);
+        metaEl.appendChild(timeEl);
+        if (m.text) metaEl.appendChild(createMsgCopyButton(m.text));
+        row.appendChild(metaEl);
       }
       fragment.appendChild(row);
     } else if (m.type === 'ai') {
@@ -491,6 +497,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
           row.appendChild(badge);
         }
+        row.appendChild(createMsgCopyButton(m.text));
         fragment.appendChild(row);
       }
     } else if (m.type === 'tool') {
