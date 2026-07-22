@@ -735,8 +735,8 @@ object AgentActor extends AgentCore with AgentSession:
           )
         else Nil
         val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ eventMessages ++ immediateMessages
-        // Increment delegate count for Delegate/MountFlow calls
-        val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "MountFlow")
+        // Increment delegate count for Delegate/ExecuteFlow calls
+        val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "ExecuteFlow")
         val newDelegateCount = state.delegateCount + delegateIncrement
         // Record strength reads for SKILL.md / memory detail file reads
         toolCalls.foreach { call =>

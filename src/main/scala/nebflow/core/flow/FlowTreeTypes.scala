@@ -124,6 +124,7 @@ end FlowNode
 case class FlowDef(
   name: String,
   manager: Option[String] = None,
+  description: String = "",
   nodes: List[FlowNode] = Nil,
   maxDepth: Int = 5
 )
@@ -134,6 +135,7 @@ object FlowDef:
     Json.obj(
       "name" -> f.name.asJson,
       "manager" -> f.manager.asJson,
+      "description" -> f.description.asJson,
       "nodes" -> f.nodes.asJson,
       "maxDepth" -> f.maxDepth.asJson
     )
