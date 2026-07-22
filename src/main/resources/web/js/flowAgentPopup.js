@@ -79,9 +79,15 @@ export function openStepPopup(flowStepId, nodeLabel, agentName, flowName) {
   // Remove existing popup
   closeStepPopup();
 
-  // Create overlay
+  // Create overlay — relative to canvas panel, not viewport
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay';
+
+  // Append to canvas panel if open, otherwise body
+  const canvasPanel = document.getElementById('canvas-panel');
+  const mountEl = (canvasPanel && canvasPanel.classList.contains('visible')) ? canvasPanel : document.body;
+  if (mountEl === canvasPanel) popupOverlay.classList.add('in-canvas');
+
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
@@ -99,7 +105,7 @@ export function openStepPopup(flowStepId, nodeLabel, agentName, flowName) {
     </div>
   `;
 
-  document.body.appendChild(popupOverlay);
+  mountEl.appendChild(popupOverlay);
 
   // Close on overlay click or close button
   popupOverlay.addEventListener('click', (e) => {
@@ -234,6 +240,11 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   display: flex; align-items: center; justify-content: center;
   z-index: 320;
   animation: fa-fade-in 0.2s ease;
+}
+/* When inside canvas panel, scope overlay to that panel only */
+.flow-agent-overlay.in-canvas {
+  position: absolute;
+  z-index: 100;
 }
 @keyframes fa-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
