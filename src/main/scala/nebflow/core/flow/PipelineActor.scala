@@ -120,6 +120,7 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
     nodeExecCount: Map[String, Int] = Map.empty,
     agentPaths: Map[String, String] = Map.empty,
     agentRefs: Map[String, ActorRef[AgentCommand]] = Map.empty,
+    nodeSessionIds: Map[String, String] = Map.empty,
     verifyResult: Option[String] = None,
     iteration: Int = 0,
     triggerInput: String = "",
@@ -371,6 +372,11 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
           case Some(agentDef) =>
             val agentUid = s"pipe-${cfg.name.take(20)}-${node.id}-${java.util.UUID.randomUUID().toString.take(8)}"
             for
+              // Create a real session for this flow node — unified with normal sessions
+              nodeSession <- cfg.resources.sessionStore.createSession(
+                s"${cfg.name}/${node.id}",
+                agentName = Some(agentName)
+              )
               readTracker <- ReadTracker.create
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id))
@@ -387,7 +393,7 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
                   wsSend = childWs,
                   depth = 1,
                   parentRef = Some(cfg.parentAgentRef),
-                  sessionId = cfg.sessionId,
+                  sessionId = Some(nodeSession.id),
                   sessionName = Some(s"${cfg.name}/${node.id}"),
                   readTracker = Some(readTracker),
                   fileHistory = Some(fileHistory),
@@ -403,7 +409,8 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
                   stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString),
                   nodeExecCount = s.nodeExecCount.updatedWith(node.id)(v => Some(v.getOrElse(0) + 1)),
                   agentPaths = s.agentPaths + (node.id -> agentRef.path.toString),
-                  agentRefs = s.agentRefs + (node.id -> agentRef)
+                  agentRefs = s.agentRefs + (node.id -> agentRef),
+                  nodeSessionIds = s.nodeSessionIds + (node.id -> nodeSession.id)
                 )
               )
               adapterRef <- ctx.spawn(
@@ -426,7 +433,8 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
                 "flowStepStarted",
                 "branchName" -> cfg.name.asJson,
                 "stepId" -> node.id.asJson,
-                "agentName" -> agentName.asJson
+                "agentName" -> agentName.asJson,
+                "nodeSessionId" -> nodeSession.id.asJson
               )
               _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
               _ = logger.info(s"[${cfg.name}] Spawned '${node.id}' ($agentName)")
