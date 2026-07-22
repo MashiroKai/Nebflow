@@ -20,10 +20,33 @@ let panZoomReady = false;
 // ── CSS ────────────────────────────────────────────────────
 const FLOW_CSS = `
 <style>
+/* Card wrapper — matches canvas-header glass style */
+.flow-card {
+  position: absolute;
+  top: 12px; left: 12px; right: 12px; bottom: 12px;
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 0 rgba(255,255,255,0.25),
+    0px 2px 8px rgba(0,0,0,0.04),
+    0px 8px 24px rgba(0,0,0,0.06);
+}
+@media (prefers-color-scheme: dark) {
+  .flow-card {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255,255,255,0.04),
+      0px 2px 8px rgba(0,0,0,0.20),
+      0px 8px 24px rgba(0,0,0,0.35);
+  }
+}
 .flow-root {
   width: 100%; height: 100%; position: relative; overflow: hidden;
   cursor: grab;
-  background: var(--color-bg);
+  background: transparent;
 }
 .flow-root.panning { cursor: grabbing; }
 .flow-viewport {
@@ -305,10 +328,12 @@ function renderAll() {
   const layout = computeLayout();
   if (!layout) {
     setCanvasContent(`${FLOW_CSS}
-      <div class="flow-root">
-        <div class="flow-empty">
-          <div style="font: 600 14px -apple-system; color: var(--color-text-muted)">No active flows</div>
-          <div class="hint">Mount a flow to see the architecture</div>
+      <div class="flow-card">
+        <div class="flow-root">
+          <div class="flow-empty">
+            <div style="font: 600 14px -apple-system; color: var(--color-text-muted)">No active flows</div>
+            <div class="hint">Mount a flow to see the architecture</div>
+          </div>
         </div>
       </div>`);
     showCanvasHeader(false);
@@ -329,19 +354,21 @@ function renderAll() {
     </div>`;
 
   setCanvasContent(`${FLOW_CSS}
-    <div class="flow-root" id="flow-root">
-      ${infoHtml}
-      <div class="flow-viewport" id="flow-viewport">
-        <svg class="flow-svg" id="flow-svg" xmlns="http://www.w3.org/2000/svg">
-          <defs>
-            <marker id="flow-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-              <path d="M0,0 L6,3 L0,6 Z" fill="context-stroke" />
-            </marker>
-          </defs>
-        </svg>
-        ${nodesHtml}
+    <div class="flow-card">
+      <div class="flow-root" id="flow-root">
+        ${infoHtml}
+        <div class="flow-viewport" id="flow-viewport">
+          <svg class="flow-svg" id="flow-svg" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="flow-arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="context-stroke" />
+              </marker>
+            </defs>
+          </svg>
+          ${nodesHtml}
+        </div>
+        ${toolbarHtml}
       </div>
-      ${toolbarHtml}
     </div>`);
   showCanvasHeader(false);
 
