@@ -190,7 +190,8 @@ private[agent] trait AgentCore:
             state.copy(execution = state.execution.copy(messages = compacted)).withCurrentTurnId(turnId)
           case None => state.withCurrentTurnId(turnId)
 
-        val llmIo = for
+        // Synchronous context preparation (fast: file reads with mtime cache)
+        val contextIo = for
           turnCtx <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
           freshDef = turnCtx.agentDef
           voiceEnabled <- resources.voiceMutedRef.get.map(!_)
@@ -216,10 +217,9 @@ private[agent] trait AgentCore:
           systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
           reminders = SystemReminders.collectAll(isUserTurn)
+          // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
             case Some(_) =>
-              ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
-              // Persist git branch change so it survives restarts
               stateForLlm.sessionId.traverse_(sid =>
                 resources.sessionStore
                   .updateGitBranch(sid, turnCtx.currentBranch)
@@ -227,10 +227,7 @@ private[agent] trait AgentCore:
                     IO(NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}"))
                   )
               )
-            case None =>
-              IO.whenA(turnCtx.currentBranch != stateForLlm.gitBranch)(
-                ctx.self ! AgentCommand.UpdateGitBranch(turnCtx.currentBranch)
-              )
+            case None => IO.unit
           loggedReminders <- SystemReminders.logAndReturn(reminders)
           allReminders = loggedReminders ++ turnCtx.branchChange.toList
           remindersText = SystemReminder.renderAll(allReminders)
@@ -258,31 +255,7 @@ private[agent] trait AgentCore:
             thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
             systemStable = Some(systemStable)
           )
-          result <- resources.llm
-            .sendStream(request, onAttempt = Some(onAttemptCb))
-            .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
-            .compile
-            .toList
-            .flatMap { chunks =>
-              val cr = aggregateChunks(chunks)
-              LlmLogWriter.log(
-                request,
-                chunks,
-                cr.text,
-                cr.toolCalls,
-                cr.thinking,
-                cr.stopReason,
-                cr.usage,
-                cr.model,
-                isSubagent,
-                isCompactTurn
-              ) *> IO.pure(cr)
-            }
-            .attempt
-          _ <- result match
-            case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
-            case Left(e) => ctx.self ! LlmFailed(e, replyTo, turnId)
-        yield ()
+        yield (turnCtx, request)
 
         val agentStartIO =
           if depth > 0 && !isCompactTurn && !isAskTurn then
@@ -295,10 +268,42 @@ private[agent] trait AgentCore:
           else IO.unit
         for
           _ <- agentStartIO
-          _ <- ctx.forkTurn(llmIo.handleErrorWith { e =>
-            IO.delay(NebflowLogger.forName("nebflow.agent").warn(s"pipeLlmCall failed: ${e.getMessage}"))
-              .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
-          })
+          (turnCtx, request) <- contextIo
+          // Synchronously update gitBranch in state — no async message
+          stateWithBranch = stateForLlm.withGitBranch(turnCtx.currentBranch)
+          _ <- ctx.forkTurn(
+            resources.llm
+              .sendStream(request, onAttempt = Some(onAttemptCb))
+              .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
+              .compile
+              .toList
+              .flatMap { chunks =>
+                val cr = aggregateChunks(chunks)
+                LlmLogWriter.log(
+                  request,
+                  chunks,
+                  cr.text,
+                  cr.toolCalls,
+                  cr.thinking,
+                  cr.stopReason,
+                  cr.usage,
+                  cr.model,
+                  isSubagent,
+                  isCompactTurn
+                ) *> IO.pure(cr)
+              }
+              .attempt
+              .flatMap {
+                case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
+                case Left(e) => ctx.self ! LlmFailed(e, replyTo, turnId)
+              }
+              .handleErrorWith { e =>
+                NebflowLogger
+                  .forName("nebflow.agent")
+                  .warn(s"pipeLlmCall failed: ${e.getMessage}")
+                  .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
+              }
+          )
         yield processing(
           agentDef,
           resources,
@@ -306,8 +311,8 @@ private[agent] trait AgentCore:
           parentRef,
           // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
           (if MaintenanceService.shouldTrigger(stateForLlm, depth, isCompactTurn, isAskTurn) then
-             stateForLlm.withLastMaintenanceDelegateCount(stateForLlm.delegateCount)
-           else stateForLlm)
+             stateWithBranch.withLastMaintenanceDelegateCount(stateForLlm.delegateCount)
+           else stateWithBranch)
             .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
         )
 

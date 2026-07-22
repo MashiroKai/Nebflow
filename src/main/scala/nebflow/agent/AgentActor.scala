@@ -285,6 +285,9 @@ object AgentActor extends AgentCore with AgentSession:
             (replyTo ! answers) *> IO.pure(idle(agentDef, resources, depth, parentRef, state.withInteraction(None)))
           case None => IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
+      case AgentCommand.UpdateGitBranch(branch) =>
+        IO.pure(idle(agentDef, resources, depth, parentRef, state.withGitBranch(branch)))
+
       case AgentCommand.CompactionComplete(result) =>
         logAgentEvent(
           agentDef,
@@ -366,8 +369,7 @@ object AgentActor extends AgentCore with AgentSession:
         }
 
       case _: AgentCommand.LlmComplete | _: AgentCommand.LlmFailed | _: AgentCommand.ToolsComplete |
-          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults |
-          _: AgentCommand.UpdateGitBranch =>
+          _: AgentCommand.SetPermissionDeferred | _: AgentCommand.ReplaceToolResults =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput

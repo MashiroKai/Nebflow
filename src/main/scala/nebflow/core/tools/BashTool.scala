@@ -277,6 +277,16 @@ Git safety:
       else if lines.length == 1 then lines.head
       else s"${lines.length} lines of output"
 
+  // ── Git branch change detection ──────────────────────────────────────
+  // Commands that may change the current branch. After such commands,
+  // we reset the agent's tracked branch so the next refreshTurn re-detects
+  // silently (first detection = no notification) instead of falsely
+  // alarming about an "external" branch change.
+  private val GitBranchChangeRe = """\bgit\s+(checkout|switch|rebase|merge|cherry-pick|worktree\s+add)\b""".r
+
+  private def isGitBranchChange(command: String): Boolean =
+    GitBranchChangeRe.findFirstIn(command).isDefined
+
   // ── Pipe truncation handling ──────────────────────────────────────────
   // `cmd | tail -N` causes tail to buffer ALL output until EOF, so the stuck
   // detector sees zero output lines even though the real command is printing.
@@ -397,6 +407,13 @@ Git safety:
                       Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"))
                   }
               else executeForegroundWithAutoBackground(shell, actualCommand, explicitTimeoutMs, desc, ctx, tailN)
+            }.flatTap { result =>
+              // After git branch-changing commands, reset branch tracking so the
+              // next refreshTurn re-detects silently (no false notification).
+              // Harmless if the command failed — branch didn't change, re-detect = same.
+              if isGitBranchChange(actualCommand) && result.isRight then
+                ctx.agentActorRef.fold(IO.unit)(ref => ref ! AgentCommand.UpdateGitBranch(None))
+              else IO.unit
             }
           end if
     end match
