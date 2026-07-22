@@ -106,6 +106,7 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
     failedReasons: Map[String, String] = Map.empty,
     verdicts: Map[String, Boolean] = Map.empty,
     nodeExecCount: Map[String, Int] = Map.empty,
+    agentPaths: Map[String, String] = Map.empty,
     verifyResult: Option[String] = None,
     iteration: Int = 0,
     triggerInput: String = "",
@@ -337,13 +338,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               readTracker <- ReadTracker.create
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id))
-              _ <- stateRef.update(s =>
-                s.copy(
-                  stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString),
-                  nodeExecCount = s.nodeExecCount.updatedWith(node.id)(v => Some(v.getOrElse(0) + 1))
-                )
-              )
-              actualPrompt = withMemory(promptWithPreamble, cfg)
+              peerInfo = buildPeerInfo(node.id, state.agentPaths, cfg.name)
+              actualPrompt = withMemory(peerInfo + promptWithPreamble, cfg)
               agentRef <- ctx.system.spawn(
                 AgentActor(
                   agentDef = agentDef,
@@ -361,6 +357,13 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                   expectsMail = cfg.expectsMail
                 ),
                 agentUid
+              )
+              _ <- stateRef.update(s =>
+                s.copy(
+                  stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString),
+                  nodeExecCount = s.nodeExecCount.updatedWith(node.id)(v => Some(v.getOrElse(0) + 1)),
+                  agentPaths = s.agentPaths + (node.id -> agentRef.path.toString)
+                )
               )
               adapterRef <- ctx.spawn(
                 stepAdapter(ctx.self, node.id, agentRef, node.timeout),
@@ -793,6 +796,23 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
           changed = true
       }
     result
+
+  /** Build peer address info block for agent prompt injection. */
+  private def buildPeerInfo(nodeId: String, agentPaths: Map[String, String], flowName: String): String =
+    val peers = agentPaths.filter { (id, _) => id != nodeId }
+    if peers.isEmpty then ""
+    else
+      val lines = peers.map { (id, path) => s"- $id: $path" }.mkString("\n")
+      s"""=== Flow Communication ===
+         |You are node "$nodeId" in flow "$flowName". You can communicate with these peers via Mail:
+         |$lines
+         |
+         |When you complete your work, use Mail(type=message) to send your result to relevant peers.
+         |If you are a verify node, use Mail(type=verify, passed=..., summary=...) to report the verdict.
+         |=== End Communication ===
+         |
+         |""".stripMargin
+    end if
 
   // ============================================================
   // Reflect — learning loop after pipeline completion
