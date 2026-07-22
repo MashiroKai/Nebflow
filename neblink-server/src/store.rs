@@ -37,13 +37,18 @@ impl Store {
                 platform TEXT NOT NULL,
                 last_seen INTEGER NOT NULL,
                 PRIMARY KEY (id, network_id)
-            );
-            ALTER TABLE networks ADD COLUMN secret_plain TEXT NOT NULL DEFAULT '';"
+            );"
         )
         .unwrap_or_else(|e| {
             tracing::error!("Failed to create tables: {e}");
             std::process::exit(1);
         });
+
+        // Migration: add secret_plain column to old databases (ignore error if already exists)
+        let _ = conn.execute(
+            "ALTER TABLE networks ADD COLUMN secret_plain TEXT NOT NULL DEFAULT ''",
+            [],
+        );
 
         tracing::info!("Database ready: {}", db_path);
 
