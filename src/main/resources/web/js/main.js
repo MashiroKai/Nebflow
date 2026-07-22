@@ -44,6 +44,7 @@ import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
 import { initCanvas } from './canvas.js';
 import * as flowCanvas from './flowCanvas.js';
+import { onAgentEvent as onFlowAgentEvent } from './flowAgentPopup.js';
 
 // Randomized cosmic thinking bubble text
 const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
@@ -1336,6 +1337,7 @@ document.addEventListener('click', (e) => {
 
 onMessage('agentStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
+  if (msg.flowStepId) onFlowAgentEvent(msg);
   const sid = msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || msg.name;
@@ -1350,11 +1352,12 @@ onMessage('agentStart', (msg, view) => {
   if (view) updateDelegateIndicator();
 });
 
-onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); if (msg.flowStepId) onFlowAgentEvent(msg); });
+onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessionId); if (msg.flowStepId) onFlowAgentEvent(msg); });
 
 onMessage('agentToolStart', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
+  if (msg.flowStepId) onFlowAgentEvent(msg);
   const sid = msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
@@ -1364,7 +1367,7 @@ onMessage('agentToolStart', (msg, view) => {
   }
 });
 
-onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
+onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); if (msg.flowStepId) onFlowAgentEvent(msg); });
 onMessage('agentEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
 onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); });
@@ -1372,6 +1375,7 @@ onMessage('agentRetryStatus', (msg, view) => { resetStreamTimeout(msg.sessionId)
 
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
+  if (msg.flowStepId) onFlowAgentEvent(msg);
   const sid = msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
