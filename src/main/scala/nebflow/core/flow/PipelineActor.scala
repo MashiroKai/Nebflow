@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import cats.effect.{IO, Ref}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -64,6 +64,9 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
 
     /** Query current state. */
     case class GetState(replyTo: ActorRef[PipelineSnapshot]) extends PipelineCommand
+
+    /** Verify agent reported verdict via Mail(type=verify). */
+    case class VerifyReceived(stepId: String, result: VerifyResult) extends PipelineCommand
 
     /** Shutdown the pipeline actor. */
     case object Stop extends PipelineCommand
@@ -188,6 +191,13 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
           case PipelineCommand.StepFailed(stepId, error) =>
             for
               _ <- handleStepFailed(ctx, stateRef, cfg, stepId, error)
+              _ <- afterStepUpdate(ctx, stateRef, cfg)
+              _ <- saveState(stateRef, cfg)
+            yield this
+
+          case PipelineCommand.VerifyReceived(stepId, result) =>
+            for
+              _ <- handleVerifyReceived(ctx, stateRef, cfg, stepId, result)
               _ <- afterStepUpdate(ctx, stateRef, cfg)
               _ <- saveState(stateRef, cfg)
             yield this
@@ -370,6 +380,17 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                 s"$agentUid-adapter"
               )
               _ <- FlowMembership.join(agentRef.path.toString, cfg.name)
+              // For verdict nodes: register Deferred so Mail(type=verify) can signal completion
+              _ <-
+                if node.verdict then
+                  for
+                    d <- Deferred[IO, VerifyResult]
+                    _ <- FlowVerifyRegistry.register(agentRef.path.toString, d)
+                    _ <- ctx.forkTurn(
+                      d.get.flatMap(r => IO(ctx.self ! PipelineCommand.VerifyReceived(node.id, r)))
+                    )
+                  yield ()
+                else IO.unit
               _ <- emit(
                 cfg,
                 "flowStepStarted",
@@ -386,7 +407,51 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
   end spawnStep
 
   // ============================================================
-  // Step completion / failure
+  // Verify result handling (from Mail type=verify)
+  // ============================================================
+
+  private def handleVerifyReceived(
+    ctx: ActorContext[PipelineCommand],
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig,
+    stepId: String,
+    result: VerifyResult
+  )(using ActorContext[PipelineCommand]): IO[Unit] =
+    for
+      state <- stateRef.get
+      _ <-
+        if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
+          val verdictText = s"VERDICT: ${if result.pass then "PASS" else "FAIL"}: ${result.summary}"
+          for
+            _ <- stateRef.update(s =>
+              s.copy(
+                results = s.results + (stepId -> verdictText),
+                stepStatus = s.stepStatus + (stepId -> StepStatus.Done.toString),
+                verdicts = s.verdicts + (stepId -> result.pass)
+              )
+            )
+            _ <- emit(
+              cfg,
+              "flowVerifyResult",
+              "branchName" -> cfg.name.asJson,
+              "pass" -> result.pass.asJson,
+              "summary" -> result.summary.take(500).asJson
+            )
+            _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
+            _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", result.summary))
+            _ = logger.info(s"[${cfg.name}] Verify '$stepId' via Mail: ${if result.pass then "PASS" else "FAIL"}")
+            // Retry / loop-back logic
+            _ <- cfg.flowDef.nodes.find(_.id == stepId).flatMap(_.retry) match
+              case Some(RetryTarget(target, maxIter)) =>
+                handleRetry(ctx, stateRef, cfg, stepId, target, maxIter)
+              case None => IO.unit
+          yield ()
+        else
+          logger.debug(s"[${cfg.name}] VerifyReceived for '$stepId' ignored (status: ${state.stepStatus.getOrElse(stepId, "?")})")
+    yield ()
+
+  // ============================================================
+  // Step failure handling
   // ============================================================
 
   private def handleStepCompleted(
@@ -763,7 +828,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
               yield Behaviors.stopped[AgentEvent]
 
         override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
-          FlowMembership.leaveAll(subagentRef.path.toString)
+          FlowMembership.leaveAll(subagentRef.path.toString) *>
+            FlowVerifyRegistry.remove(subagentRef.path.toString)
       )
     }
 
