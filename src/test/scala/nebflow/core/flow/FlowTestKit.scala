@@ -164,7 +164,8 @@ final class FlowTestKit(
           sessionId = Some("test-session"),
           resources = resources,
           projectRoot = tempDir.toString,
-          safetyMode = "yolo"
+          safetyMode = "yolo",
+          expectsMail = false
         )
       ),
       s"pipe-$name-${java.util.UUID.randomUUID().toString.take(8)}"
