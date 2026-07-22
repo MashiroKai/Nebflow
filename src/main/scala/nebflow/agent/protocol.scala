@@ -412,7 +412,10 @@ case class SessionContext(
   safetyMode: String = "confirm-edits",
   pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
-  pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None
+  pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None,
+  /** When true, agent must call Mail at least once before finishing.
+   *  Used by flow agents to enforce structured result reporting. */
+  expectsMail: Boolean = false
 )
 
 case class InteractionState(
@@ -521,7 +524,8 @@ object AgentState:
     rulesMd: Option[String] = None,
     folderId: Option[String] = None,
     safetyMode: String = "confirm-edits",
-    gitBranch: Option[String] = None
+    gitBranch: Option[String] = None,
+    expectsMail: Boolean = false
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -541,7 +545,8 @@ object AgentState:
         projectRoot = projectRoot,
         rulesMd = rulesMd,
         gitBranch = gitBranch,
-        safetyMode = safetyMode
+        safetyMode = safetyMode,
+        expectsMail = expectsMail
       ),
       ExecutionContext(messages, status, turnIdx, 0L, interaction),
       CompactionState(pendingCompaction, compactionFailures, 0L, latestUsage),
@@ -582,6 +587,7 @@ extension (s: AgentState)
   def folderId: Option[String] = s.session.folderId
   def gitBranch: Option[String] = s.session.gitBranch
   def safetyMode: String = s.session.safetyMode
+  def expectsMail: Boolean = s.session.expectsMail
 
   def withSession(session: SessionContext): AgentState = s.copy(session = session)
   def withExecution(execution: ExecutionContext): AgentState = s.copy(execution = execution)
