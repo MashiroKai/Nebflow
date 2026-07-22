@@ -122,45 +122,36 @@ object FlowTreeActor:
     instanceName: Option[String],
     replyTo: Option[ActorRef[MountResult]]
   )(using ActorContext[TreeCommand]): IO[Unit] =
-    defn.branchType match
-      case pipeline: BranchType.Pipeline =>
-        for
-          pipelines <- pipelinesRef.get
-          baseName = instanceName.getOrElse(defn.name)
-          name = makeUniqueName(pipelines.keys.toSet, baseName)
-          memory <- FlowMemoryStore.load(defn.name)
-          pipeConfig = PipelineActor.PipelineConfig(
-            name = name,
-            flowName = defn.name,
-            pipeline = pipeline,
-            parentAgentRef = cfg.parentAgentRef,
-            wsSend = cfg.wsSend,
-            sessionId = cfg.sessionId,
-            resources = cfg.resources,
-            projectRoot = cfg.projectRoot,
-            safetyMode = cfg.safetyMode,
-            flowMemory = memory,
-            gatewayPort = cfg.gatewayPort
-          )
-          ref <- ctx.system.spawn(
-            PipelineActor(pipeConfig),
-            s"pipeline-$name-${java.util.UUID.randomUUID().toString.take(8)}"
-          )
-          _ <- pipelinesRef.update(_ + (name -> ref))
-          _ <- flowNamesRef.update(_ + (name -> defn.name))
-          _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, name)
-          _ <- persistPipelines(pipelinesRef, flowNamesRef, cfg)
-          _ <- emit(cfg, "treeBranchMounted", "name" -> name.asJson, "type" -> "pipeline".asJson)
-          _ <- replyTo.traverse_(_ ! MountResult.Mounted(name, ref.path.toString, "pipeline"))
-          _ <- logger.info(s"Pipeline '$name' mounted (flow: ${defn.name})")
-        yield ()
-
-      case other =>
-        val msg = s"Branch type '${other.typeName}' is not supported yet. Only 'pipeline' is available."
-        for
-          _ <- replyTo.traverse_(_ ! MountResult.Error(msg))
-          _ <- logger.warn(msg)
-        yield ()
+    for
+      pipelines <- pipelinesRef.get
+      baseName = instanceName.getOrElse(defn.name)
+      name = makeUniqueName(pipelines.keys.toSet, baseName)
+      memory <- FlowMemoryStore.load(defn.name)
+      pipeConfig = PipelineActor.PipelineConfig(
+        name = name,
+        flowName = defn.name,
+        flowDef = defn,
+        parentAgentRef = cfg.parentAgentRef,
+        wsSend = cfg.wsSend,
+        sessionId = cfg.sessionId,
+        resources = cfg.resources,
+        projectRoot = cfg.projectRoot,
+        safetyMode = cfg.safetyMode,
+        flowMemory = memory,
+        gatewayPort = cfg.gatewayPort
+      )
+      ref <- ctx.system.spawn(
+        PipelineActor(pipeConfig),
+        s"pipeline-$name-${java.util.UUID.randomUUID().toString.take(8)}"
+      )
+      _ <- pipelinesRef.update(_ + (name -> ref))
+      _ <- flowNamesRef.update(_ + (name -> defn.name))
+      _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, name)
+      _ <- persistPipelines(pipelinesRef, flowNamesRef, cfg)
+      _ <- emit(cfg, "treeBranchMounted", "name" -> name.asJson, "type" -> "pipeline".asJson)
+      _ <- replyTo.traverse_(_ ! MountResult.Mounted(name, ref.path.toString))
+      _ <- logger.info(s"Pipeline '$name' mounted (flow: ${defn.name})")
+    yield ()
 
   private def handleUnmount(
     ctx: ActorContext[TreeCommand],
@@ -232,33 +223,30 @@ object FlowTreeActor:
           _ <- entries.traverse_ { entry =>
             FlowDefLoader.load(entry.flowName).flatMap {
               case Some(defn) =>
-                defn.branchType match
-                  case pipeline: BranchType.Pipeline =>
-                    for
-                      memory <- FlowMemoryStore.load(entry.flowName)
-                      pipeConfig = PipelineActor.PipelineConfig(
-                        name = entry.name,
-                        flowName = entry.flowName,
-                        pipeline = pipeline,
-                        parentAgentRef = cfg.parentAgentRef,
-                        wsSend = cfg.wsSend,
-                        sessionId = cfg.sessionId,
-                        resources = cfg.resources,
-                        projectRoot = cfg.projectRoot,
-                        safetyMode = cfg.safetyMode,
-                        flowMemory = memory,
-                        gatewayPort = cfg.gatewayPort
-                      )
-                      ref <- ctx.system.spawn(
-                        PipelineActor(pipeConfig),
-                        s"pipeline-${entry.name}-${java.util.UUID.randomUUID().toString.take(8)}"
-                      )
-                      _ <- pipelinesRef.update(_ + (entry.name -> ref))
-                      _ <- flowNamesRef.update(_ + (entry.name -> entry.flowName))
-                      _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, entry.name)
-                      _ <- logger.info(s"Restored pipeline '${entry.name}' (flow: ${entry.flowName})")
-                    yield ()
-                  case _ => IO.unit
+                for
+                  memory <- FlowMemoryStore.load(entry.flowName)
+                  pipeConfig = PipelineActor.PipelineConfig(
+                    name = entry.name,
+                    flowName = entry.flowName,
+                    flowDef = defn,
+                    parentAgentRef = cfg.parentAgentRef,
+                    wsSend = cfg.wsSend,
+                    sessionId = cfg.sessionId,
+                    resources = cfg.resources,
+                    projectRoot = cfg.projectRoot,
+                    safetyMode = cfg.safetyMode,
+                    flowMemory = memory,
+                    gatewayPort = cfg.gatewayPort
+                  )
+                  ref <- ctx.system.spawn(
+                    PipelineActor(pipeConfig),
+                    s"pipeline-${entry.name}-${java.util.UUID.randomUUID().toString.take(8)}"
+                  )
+                  _ <- pipelinesRef.update(_ + (entry.name -> ref))
+                  _ <- flowNamesRef.update(_ + (entry.name -> entry.flowName))
+                  _ <- FlowMembership.join(cfg.parentAgentRef.path.toString, entry.name)
+                  _ <- logger.info(s"Restored pipeline '${entry.name}' (flow: ${entry.flowName})")
+                yield ()
               case None =>
                 logger.warn(s"Restore: flow '${entry.flowName}' not found for pipeline '${entry.name}'")
             }
@@ -324,7 +312,7 @@ object FlowTreeActor:
                 pipeConfig = PipelineActor.PipelineConfig(
                   name = name,
                   flowName = flowName,
-                  pipeline = newDef.branchType.asInstanceOf[BranchType.Pipeline],
+                  flowDef = newDef,
                   parentAgentRef = cfg.parentAgentRef,
                   wsSend = cfg.wsSend,
                   sessionId = cfg.sessionId,

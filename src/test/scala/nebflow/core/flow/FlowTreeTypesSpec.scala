@@ -23,50 +23,77 @@ class FlowTreeTypesSpec extends FunSuite:
       case Left(_) => ()
 
   // ============================================================
-  // PipelineStep
+  // RetryTarget
   // ============================================================
 
-  test("PipelineStep: atomic step (agent + prompt) round-trip") {
-    val step = PipelineStep(
+  test("RetryTarget: default maxIterations round-trip") {
+    val rt = RetryTarget(target = "fix-step")
+    val decoded = roundTrip(rt)
+    assertEquals(decoded.target, "fix-step")
+    assertEquals(decoded.maxIterations, 3)
+  }
+
+  test("RetryTarget: custom maxIterations round-trip") {
+    val rt = RetryTarget(target = "retry-node", maxIterations = 10)
+    val decoded = roundTrip(rt)
+    assertEquals(decoded.target, "retry-node")
+    assertEquals(decoded.maxIterations, 10)
+  }
+
+  test("RetryTarget: decodes without maxIterations (defaults to 3)") {
+    val json = """{"target":"t"}"""
+    decode[RetryTarget](json) match
+      case Right(rt) =>
+        assertEquals(rt.target, "t")
+        assertEquals(rt.maxIterations, 3)
+      case Left(e) => fail(s"Decode failed: $e")
+  }
+
+  // ============================================================
+  // FlowNode
+  // ============================================================
+
+  test("FlowNode: atomic agent node round-trip") {
+    val node = FlowNode(
       id = "explore",
       agent = Some("Explorer"),
       prompt = Some("Analyze the codebase")
     )
-    val decoded = roundTrip(step)
+    val decoded = roundTrip(node)
     assertEquals(decoded.id, "explore")
     assertEquals(decoded.agent, Some("Explorer"))
     assertEquals(decoded.prompt, Some("Analyze the codebase"))
     assertEquals(decoded.flow, None)
     assertEquals(decoded.dependsOn, Set.empty)
-    assertEquals(decoded.retry, 2)
+    assertEquals(decoded.verdict, false)
+    assertEquals(decoded.retry, None)
+    assertEquals(decoded.condition, None)
     assertEquals(decoded.timeoutSeconds, 1800)
     assert(!decoded.isNested)
   }
 
-  test("PipelineStep: atomic step with custom dependsOn, retry, timeout round-trip") {
-    val step = PipelineStep(
+  test("FlowNode: atomic node with dependsOn and custom timeout round-trip") {
+    val node = FlowNode(
       id = "build",
-      agent = Some("Nebula"),
+      agent = Some("Coder"),
       prompt = Some("Compile and test"),
       dependsOn = Set("explore", "plan"),
-      retry = 5,
       timeoutSeconds = 600
     )
-    val decoded = roundTrip(step)
+    val decoded = roundTrip(node)
     assertEquals(decoded.id, "build")
-    assertEquals(decoded.agent, Some("Nebula"))
+    assertEquals(decoded.agent, Some("Coder"))
     assertEquals(decoded.dependsOn, Set("explore", "plan"))
-    assertEquals(decoded.retry, 5)
     assertEquals(decoded.timeoutSeconds, 600)
     assert(!decoded.isNested)
   }
 
-  test("PipelineStep: nested step (flow reference) round-trip") {
-    val step = PipelineStep(
+  test("FlowNode: nested flow node round-trip") {
+    val node = FlowNode(
       id = "sub-flow",
       flow = Some("deploy-flow")
     )
-    val decoded = roundTrip(step)
+    val decoded = roundTrip(node)
     assertEquals(decoded.id, "sub-flow")
     assertEquals(decoded.flow, Some("deploy-flow"))
     assertEquals(decoded.agent, None)
@@ -74,257 +101,93 @@ class FlowTreeTypesSpec extends FunSuite:
     assert(decoded.isNested)
   }
 
-  test("PipelineStep: nested step with dependsOn and custom retry round-trip") {
-    val step = PipelineStep(
-      id = "nested-after",
-      flow = Some("child-flow"),
-      dependsOn = Set("parent-step"),
-      retry = 1,
+  test("FlowNode: nested flow node with flowInput, dependsOn, timeout round-trip") {
+    val node = FlowNode(
+      id = "deploy",
+      flow = Some("deploy-flow"),
+      flowInput = Some("${buildResult}"),
+      dependsOn = Set("build"),
       timeoutSeconds = 300
     )
-    val decoded = roundTrip(step)
-    assertEquals(decoded.flow, Some("child-flow"))
-    assertEquals(decoded.dependsOn, Set("parent-step"))
-    assertEquals(decoded.retry, 1)
+    val decoded = roundTrip(node)
+    assertEquals(decoded.flow, Some("deploy-flow"))
+    assertEquals(decoded.flowInput, Some("${buildResult}"))
+    assertEquals(decoded.dependsOn, Set("build"))
     assertEquals(decoded.timeoutSeconds, 300)
-    assert(decoded.isNested)
   }
 
-  test("PipelineStep: atomic JSON omits flow field") {
-    val step = PipelineStep(id = "s", agent = Some("Explorer"), prompt = Some("p"))
-    val json = step.asJson
-    assert(json.asObject.forall(!_.contains("flow")), "Atomic step JSON should not contain 'flow' field")
+  test("FlowNode: verdict node round-trip") {
+    val node = FlowNode(
+      id = "verify",
+      agent = Some("Explorer"),
+      prompt = Some("Check correctness"),
+      verdict = true
+    )
+    val decoded = roundTrip(node)
+    assertEquals(decoded.id, "verify")
+    assertEquals(decoded.verdict, true)
+    assert(decoded.isVerdict)
   }
 
-  test("PipelineStep: nested JSON omits agent and prompt fields") {
-    val step = PipelineStep(id = "s", flow = Some("f"))
-    val json = step.asJson
+  test("FlowNode: node with retry round-trip") {
+    val node = FlowNode(
+      id = "verify",
+      agent = Some("Explorer"),
+      prompt = Some("Check results"),
+      verdict = true,
+      retry = Some(RetryTarget(target = "fix", maxIterations = 5))
+    )
+    val decoded = roundTrip(node)
+    assertEquals(decoded.retry, Some(RetryTarget("fix", 5)))
+  }
+
+  test("FlowNode: node with condition round-trip") {
+    val node = FlowNode(
+      id = "fix",
+      agent = Some("Coder"),
+      prompt = Some("Fix issues"),
+      condition = Some("verify.fail")
+    )
+    val decoded = roundTrip(node)
+    assertEquals(decoded.condition, Some("verify.fail"))
+  }
+
+  test("FlowNode: atomic JSON omits flow field") {
+    val node = FlowNode(id = "s", agent = Some("Explorer"), prompt = Some("p"))
+    val json = node.asJson
+    assert(json.asObject.forall(!_.contains("flow")), "Atomic node JSON should not contain 'flow' field")
+  }
+
+  test("FlowNode: nested JSON omits agent and prompt fields") {
+    val node = FlowNode(id = "s", flow = Some("f"))
+    val json = node.asJson
     val obj = json.asObject.getOrElse(fail("Should be a JSON object"))
-    assert(!obj.contains("agent"), "Nested step JSON should not contain 'agent' field")
-    assert(!obj.contains("prompt"), "Nested step JSON should not contain 'prompt' field")
+    assert(!obj.contains("agent"), "Nested node JSON should not contain 'agent' field")
+    assert(!obj.contains("prompt"), "Nested node JSON should not contain 'prompt' field")
   }
 
-  // ============================================================
-  // RestartPolicy
-  // ============================================================
-
-  test("RestartPolicy: all three types round-trip") {
-    val permanent: RestartPolicy = RestartPolicy.Permanent
-    val transient: RestartPolicy = RestartPolicy.Transient
-    val temporary: RestartPolicy = RestartPolicy.Temporary
-    assertEquals(roundTrip(permanent), RestartPolicy.Permanent)
-    assertEquals(roundTrip(transient), RestartPolicy.Transient)
-    assertEquals(roundTrip(temporary), RestartPolicy.Temporary)
+  test("FlowNode: non-verdict JSON omits verdict field") {
+    val node = FlowNode(id = "s", agent = Some("Explorer"), prompt = Some("p"))
+    val json = node.asJson
+    assert(json.asObject.forall(!_.contains("verdict")), "Non-verdict node JSON should not contain 'verdict' field")
   }
 
-  test("RestartPolicy: encodes as lowercase string") {
-    assertEquals(RestartPolicy.Permanent.asJson.asString, Some("permanent"))
-    assertEquals(RestartPolicy.Transient.asJson.asString, Some("transient"))
-    assertEquals(RestartPolicy.Temporary.asJson.asString, Some("temporary"))
+  test("FlowNode: rejects both agent and flow") {
+    intercept[IllegalArgumentException] {
+      FlowNode(id = "bad", agent = Some("X"), prompt = Some("y"), flow = Some("z"))
+    }
   }
 
-  test("RestartPolicy: rejects unknown value") {
-    assertFailsLeft[RestartPolicy](""""unknown"""")
+  test("FlowNode: rejects neither agent nor flow") {
+    intercept[IllegalArgumentException] {
+      FlowNode(id = "bad")
+    }
   }
 
-  // ============================================================
-  // VerifyStep
-  // ============================================================
-
-  test("VerifyStep: default agent and timeout round-trip") {
-    val v = VerifyStep(prompt = "Check correctness")
-    val decoded = roundTrip(v)
-    assertEquals(decoded.agent, "Explorer")
-    assertEquals(decoded.prompt, "Check correctness")
-    assertEquals(decoded.timeoutSeconds, 1800)
-  }
-
-  test("VerifyStep: custom agent and timeout round-trip") {
-    val v = VerifyStep(agent = "Nebula", prompt = "Run tests", timeoutSeconds = 900)
-    val decoded = roundTrip(v)
-    assertEquals(decoded.agent, "Nebula")
-    assertEquals(decoded.prompt, "Run tests")
-    assertEquals(decoded.timeoutSeconds, 900)
-  }
-
-  // ============================================================
-  // LoopConfig
-  // ============================================================
-
-  test("LoopConfig: default maxIterations round-trip") {
-    val fix = PipelineStep(id = "fix", agent = Some("Nebula"), prompt = Some("Fix it"))
-    val lc = LoopConfig(fix = fix)
-    val decoded = roundTrip(lc)
-    assertEquals(decoded.fix.id, "fix")
-    assertEquals(decoded.fix.agent, Some("Nebula"))
-    assertEquals(decoded.maxIterations, 3)
-  }
-
-  test("LoopConfig: custom maxIterations round-trip") {
-    val fix = PipelineStep(id = "fixer", agent = Some("Explorer"), prompt = Some("Investigate"), retry = 0)
-    val lc = LoopConfig(fix = fix, maxIterations = 10)
-    val decoded = roundTrip(lc)
-    assertEquals(decoded.maxIterations, 10)
-    assertEquals(decoded.fix.retry, 0)
-  }
-
-  test("LoopConfig: fix step can be nested flow reference") {
-    val fix = PipelineStep(id = "auto-fix", flow = Some("auto-fixer-flow"))
-    val lc = LoopConfig(fix = fix, maxIterations = 7)
-    val decoded = roundTrip(lc)
-    assert(decoded.fix.isNested)
-    assertEquals(decoded.fix.flow, Some("auto-fixer-flow"))
-    assertEquals(decoded.maxIterations, 7)
-  }
-
-  // ============================================================
-  // ReactorAction
-  // ============================================================
-
-  test("ReactorAction: RunAgent round-trip") {
-    val action: ReactorAction = ReactorAction.RunAgent(agent = "Nebula", prompt = "Handle event")
-    val decoded = roundTrip[ReactorAction](action)
-    assertEquals(decoded, action)
-  }
-
-  test("ReactorAction: MountFlow round-trip") {
-    val action: ReactorAction = ReactorAction.MountFlow(flowName = "responder-flow")
-    val decoded = roundTrip[ReactorAction](action)
-    assertEquals(decoded, action)
-  }
-
-  test("ReactorAction: type discriminator in JSON") {
-    val runAgentJson = (ReactorAction.RunAgent("Nebula", "Do X"): ReactorAction).asJson
-    assertEquals(runAgentJson.hcursor.downField("type").as[String], Right("runAgent"))
-
-    val mountFlowJson = (ReactorAction.MountFlow("test-flow"): ReactorAction).asJson
-    assertEquals(mountFlowJson.hcursor.downField("type").as[String], Right("mountFlow"))
-  }
-
-  test("ReactorAction: rejects unknown type discriminator") {
-    val bad = Json
-      .obj(
-        "type" -> "teleport".asJson,
-        "agent" -> "X".asJson,
-        "prompt" -> "Y".asJson
-      )
-      .noSpaces
-    assertFailsLeft[ReactorAction](bad)
-  }
-
-  // ============================================================
-  // BranchType — all four variants
-  // ============================================================
-
-  test("BranchType: Daemon round-trip with persistent=true") {
-    val d: BranchType = BranchType.Daemon(agent = "Explorer", prompt = "Watch for events", persistent = true)
-    val decoded = roundTrip[BranchType](d)
-    assertEquals(decoded, d)
-  }
-
-  test("BranchType: Daemon default persistent is false") {
-    val d: BranchType = BranchType.Daemon(agent = "Explorer", prompt = "Watch")
-    val decoded = roundTrip[BranchType](d)
-    assertEquals(decoded, d)
-    // Verify persistent defaulted to false in the original
-    d match
-      case BranchType.Daemon(_, _, persistent) => assertEquals(persistent, false)
-      case _ => fail("Expected Daemon")
-  }
-
-  test("BranchType: Pipeline with steps, verify, and loop round-trip") {
-    val p: BranchType = BranchType.Pipeline(
-      steps = List(
-        PipelineStep(id = "s1", agent = Some("Explorer"), prompt = Some("Explore")),
-        PipelineStep(id = "s2", agent = Some("Nebula"), prompt = Some("Implement"), dependsOn = Set("s1"))
-      ),
-      verify = VerifyStep(prompt = "Check all"),
-      loop = Some(
-        LoopConfig(
-          fix = PipelineStep(id = "fix", agent = Some("Nebula"), prompt = Some("Fix")),
-          maxIterations = 5
-        )
-      ),
-      maxConcurrency = 3
-    )
-    val decoded = roundTrip[BranchType](p)
-    assertEquals(decoded, p)
-  }
-
-  test("BranchType: Pipeline without loop uses default maxConcurrency") {
-    val p: BranchType = BranchType.Pipeline(
-      steps = List(PipelineStep(id = "only", agent = Some("Explorer"), prompt = Some("Do"))),
-      verify = VerifyStep(prompt = "Check")
-    )
-    val decoded = roundTrip[BranchType](p)
-    assertEquals(decoded, p)
-    decoded match
-      case BranchType.Pipeline(_, _, loop, maxConcurrency) =>
-        assertEquals(loop, None)
-        assertEquals(maxConcurrency, 5)
-      case _ => fail("Expected Pipeline")
-  }
-
-  test("BranchType: Reactor with RunAgent action round-trip") {
-    val r: BranchType = BranchType.Reactor(
-      subscribe = Set("github.push", "ci.failed"),
-      filter = Map("repo" -> "nebflow"),
-      action = ReactorAction.RunAgent("Nebula", "Respond")
-    )
-    val decoded = roundTrip[BranchType](r)
-    assertEquals(decoded, r)
-  }
-
-  test("BranchType: Reactor with MountFlow action round-trip") {
-    val r: BranchType = BranchType.Reactor(
-      subscribe = Set("alert"),
-      action = ReactorAction.MountFlow("incident-handler")
-    )
-    val decoded = roundTrip[BranchType](r)
-    assertEquals(decoded, r)
-  }
-
-  test("BranchType: Source with custom restart round-trip") {
-    val s: BranchType = BranchType.Source(command = "python script.py", restart = RestartPolicy.Temporary)
-    val decoded = roundTrip[BranchType](s)
-    assertEquals(decoded, s)
-  }
-
-  test("BranchType: Source default restart is Permanent") {
-    val s: BranchType = BranchType.Source(command = "echo hello")
-    val decoded = roundTrip[BranchType](s)
-    assertEquals(decoded, s)
-    decoded match
-      case BranchType.Source(_, restart) => assertEquals(restart, RestartPolicy.Permanent)
-      case _ => fail("Expected Source")
-  }
-
-  test("BranchType: type discriminator field for all variants") {
-    assertEquals(
-      (BranchType.Daemon("A", "B"): BranchType).asJson.hcursor.downField("type").as[String],
-      Right("daemon")
-    )
-    assertEquals(
-      (BranchType.Pipeline(List.empty, VerifyStep(prompt = "x")): BranchType).asJson.hcursor
-        .downField("type")
-        .as[String],
-      Right("pipeline")
-    )
-    assertEquals(
-      (BranchType.Reactor(Set.empty, action = ReactorAction.MountFlow("x")): BranchType).asJson.hcursor
-        .downField("type")
-        .as[String],
-      Right("reactor")
-    )
-    assertEquals(
-      (BranchType.Source("cmd"): BranchType).asJson.hcursor.downField("type").as[String],
-      Right("source")
-    )
-  }
-
-  test("BranchType: rejects unknown branch type discriminator") {
-    val bad = Json.obj("type" -> "mystery".asJson).noSpaces
-    assertFailsLeft[BranchType](bad)
+  test("FlowNode: agent without prompt is rejected") {
+    intercept[IllegalArgumentException] {
+      FlowNode(id = "bad", agent = Some("X"))
+    }
   }
 
   // ============================================================
@@ -333,7 +196,7 @@ class FlowTreeTypesSpec extends FunSuite:
 
   test("BranchPhase: all five phases round-trip") {
     BranchPhase.values.foreach { phase =>
-      val decoded = roundTrip[BranchPhase](phase)
+      val decoded = roundTrip(phase)
       assertEquals(decoded, phase)
     }
   }
@@ -346,22 +209,23 @@ class FlowTreeTypesSpec extends FunSuite:
   // BranchState
   // ============================================================
 
-  test("BranchState: minimal daemon state round-trip") {
+  test("BranchState: minimal state round-trip") {
     val state = BranchState(
       name = "watcher",
       address = "nebflow://local/watcher",
-      branchType = BranchType.Daemon("Explorer", "Watch"),
+      flowName = "watch-flow",
       phase = BranchPhase.Running
     )
     val decoded = roundTrip(state)
     assertEquals(decoded.name, "watcher")
     assertEquals(decoded.address, "nebflow://local/watcher")
+    assertEquals(decoded.flowName, "watch-flow")
     assertEquals(decoded.phase, BranchPhase.Running)
     assertEquals(decoded.stepStatus, Map.empty)
     assertEquals(decoded.results, Map.empty)
     assertEquals(decoded.failedReasons, Map.empty)
     assertEquals(decoded.retryLeft, Map.empty)
-    assertEquals(decoded.verifyResult, None)
+    assertEquals(decoded.verdicts, Map.empty)
     assertEquals(decoded.iteration, 0)
     assertEquals(decoded.children, Map.empty)
     assertEquals(decoded.parentBranch, None)
@@ -371,30 +235,28 @@ class FlowTreeTypesSpec extends FunSuite:
     val state = BranchState(
       name = "build-flow",
       address = "nebflow://local/build",
-      branchType = BranchType.Pipeline(
-        steps = List(PipelineStep(id = "s1", agent = Some("Nebula"), prompt = Some("Build"))),
-        verify = VerifyStep(prompt = "Check build")
-      ),
+      flowName = "ci-pipeline",
       phase = BranchPhase.Running,
       stepStatus = Map("s1" -> "Done"),
       results = Map("s1" -> "Build successful"),
       retryLeft = Map("s1" -> 1),
-      verifyResult = Some("PASS: all tests green"),
+      verdicts = Map("verify" -> true),
       iteration = 1
     )
     val decoded = roundTrip(state)
+    assertEquals(decoded.flowName, "ci-pipeline")
     assertEquals(decoded.stepStatus, Map("s1" -> "Done"))
     assertEquals(decoded.results, Map("s1" -> "Build successful"))
     assertEquals(decoded.retryLeft, Map("s1" -> 1))
-    assertEquals(decoded.verifyResult, Some("PASS: all tests green"))
+    assertEquals(decoded.verdicts, Map("verify" -> true))
     assertEquals(decoded.iteration, 1)
   }
 
-  test("BranchState: crashed source branch with failed reasons round-trip") {
+  test("BranchState: crashed branch with failed reasons round-trip") {
     val state = BranchState(
       name = "crashed-branch",
       address = "nebflow://local/crashed",
-      branchType = BranchType.Source("bad-command"),
+      flowName = "dangerous-flow",
       phase = BranchPhase.Crashed,
       parentBranch = Some("parent-flow"),
       failedReasons = Map("proc" -> "exit code 1")
@@ -409,10 +271,7 @@ class FlowTreeTypesSpec extends FunSuite:
     val state = BranchState(
       name = "parent",
       address = "nebflow://local/parent",
-      branchType = BranchType.Pipeline(
-        steps = List(PipelineStep(id = "s", agent = Some("Nebula"), prompt = Some("p"))),
-        verify = VerifyStep(prompt = "v")
-      ),
+      flowName = "parent-flow",
       phase = BranchPhase.Completed,
       children = Map("child-a" -> "branch-a", "child-b" -> "branch-b")
     )
@@ -429,25 +288,20 @@ class FlowTreeTypesSpec extends FunSuite:
     val snapshot = FlowTreeSnapshot(
       sessionId = "session-001",
       branches = Map(
-        "daemon-1" -> BranchState(
-          name = "daemon-1",
-          address = "nebflow://local/daemon-1",
-          branchType = BranchType.Daemon("Explorer", "Poll"),
+        "branch-1" -> BranchState(
+          name = "branch-1",
+          address = "nebflow://local/branch-1",
+          flowName = "simple-flow",
           phase = BranchPhase.Running
         ),
-        "pipeline-1" -> BranchState(
-          name = "pipeline-1",
-          address = "nebflow://local/pipeline-1",
-          branchType = BranchType.Pipeline(
-            steps = List(
-              PipelineStep(id = "explore", agent = Some("Explorer"), prompt = Some("Go")),
-              PipelineStep(id = "impl", agent = Some("Nebula"), prompt = Some("Code"), dependsOn = Set("explore"))
-            ),
-            verify = VerifyStep(prompt = "Test all")
-          ),
+        "branch-2" -> BranchState(
+          name = "branch-2",
+          address = "nebflow://local/branch-2",
+          flowName = "ci-pipeline",
           phase = BranchPhase.Running,
           stepStatus = Map("explore" -> "Done", "impl" -> "Running"),
           results = Map("explore" -> "Found 3 files"),
+          verdicts = Map("verify" -> false),
           children = Map("sub-1" -> "sub-branch-1")
         )
       )
@@ -455,10 +309,11 @@ class FlowTreeTypesSpec extends FunSuite:
     val decoded = roundTrip(snapshot)
     assertEquals(decoded.sessionId, "session-001")
     assertEquals(decoded.branches.size, 2)
-    assertEquals(decoded.branches("daemon-1").phase, BranchPhase.Running)
-    assertEquals(decoded.branches("pipeline-1").stepStatus, Map("explore" -> "Done", "impl" -> "Running"))
-    assertEquals(decoded.branches("pipeline-1").results, Map("explore" -> "Found 3 files"))
-    assertEquals(decoded.branches("pipeline-1").children, Map("sub-1" -> "sub-branch-1"))
+    assertEquals(decoded.branches("branch-1").phase, BranchPhase.Running)
+    assertEquals(decoded.branches("branch-2").stepStatus, Map("explore" -> "Done", "impl" -> "Running"))
+    assertEquals(decoded.branches("branch-2").results, Map("explore" -> "Found 3 files"))
+    assertEquals(decoded.branches("branch-2").verdicts, Map("verify" -> false))
+    assertEquals(decoded.branches("branch-2").children, Map("sub-1" -> "sub-branch-1"))
   }
 
   test("FlowTreeSnapshot: empty branches map round-trip") {
@@ -472,198 +327,101 @@ class FlowTreeTypesSpec extends FunSuite:
   // FlowDefLoader — YAML parsing
   // ============================================================
 
-  test("FlowDefLoader: parse daemon YAML") {
+  test("FlowDefLoader: parse simple flow YAML") {
     val yaml =
-      """name: test-daemon
-        |type: daemon
-        |agent: Explorer
-        |prompt: You are a helper
+      """name: test-flow
+        |nodes:
+        |  - id: step1
+        |    agent: Explorer
+        |    prompt: Do something
         |""".stripMargin
     FlowDefLoader.parse(yaml) match
       case Right(defn) =>
-        assertEquals(defn.name, "test-daemon")
+        assertEquals(defn.name, "test-flow")
+        assertEquals(defn.manager, None)
         assertEquals(defn.maxDepth, 5)
-        defn.branchType match
-          case BranchType.Daemon(agent, prompt, persistent) =>
-            assertEquals(agent, "Explorer")
-            assertEquals(prompt, "You are a helper")
-            assertEquals(persistent, false)
-          case other => fail(s"Expected Daemon, got $other")
+        assertEquals(defn.nodes.length, 1)
+        assertEquals(defn.nodes(0).id, "step1")
+        assertEquals(defn.nodes(0).agent, Some("Explorer"))
+        assertEquals(defn.nodes(0).prompt, Some("Do something"))
       case Left(err) => fail(s"Parse should succeed: $err")
   }
 
-  test("FlowDefLoader: parse daemon YAML with persistent flag and maxDepth") {
+  test("FlowDefLoader: parse flow YAML with manager and multiple nodes") {
     val yaml =
-      """name: persistent-daemon
-        |type: daemon
-        |agent: Nebula
-        |prompt: Keep running
-        |persistent: true
+      """name: ci-flow
+        |manager: Nebula
         |maxDepth: 10
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(defn) =>
-        assertEquals(defn.name, "persistent-daemon")
-        assertEquals(defn.maxDepth, 10)
-        defn.branchType match
-          case BranchType.Daemon(agent, prompt, persistent) =>
-            assertEquals(agent, "Nebula")
-            assertEquals(prompt, "Keep running")
-            assertEquals(persistent, true)
-          case other => fail(s"Expected Daemon, got $other")
-      case Left(err) => fail(s"Parse should succeed: $err")
-  }
-
-  test("FlowDefLoader: parse pipeline YAML with steps, verify, and loop") {
-    val yaml =
-      """name: ci-pipeline
-        |type: pipeline
-        |steps:
+        |nodes:
         |  - id: lint
         |    agent: Explorer
         |    prompt: Run linters
         |  - id: test
-        |    agent: Nebula
+        |    agent: Coder
         |    prompt: Run tests
         |    dependsOn:
         |      - lint
-        |    retry: 3
         |    timeoutSeconds: 600
-        |verify:
-        |  agent: Explorer
-        |  prompt: Verify everything passes
-        |loop:
-        |  fix:
-        |    id: fix
-        |    agent: Nebula
-        |    prompt: Fix failures
-        |  maxIterations: 4
-        |maxConcurrency: 2
         |""".stripMargin
     FlowDefLoader.parse(yaml) match
       case Right(defn) =>
-        assertEquals(defn.name, "ci-pipeline")
-        defn.branchType match
-          case BranchType.Pipeline(steps, verify, loop, maxConcurrency) =>
-            assertEquals(steps.length, 2)
-            assertEquals(steps(0).id, "lint")
-            assertEquals(steps(0).agent, Some("Explorer"))
-            assertEquals(steps(0).prompt, Some("Run linters"))
-            assertEquals(steps(1).id, "test")
-            assertEquals(steps(1).dependsOn, Set("lint"))
-            assertEquals(steps(1).retry, 3)
-            assertEquals(steps(1).timeoutSeconds, 600)
-            assertEquals(verify.agent, "Explorer")
-            assertEquals(verify.prompt, "Verify everything passes")
-            assertEquals(loop.map(_.maxIterations), Some(4))
-            assertEquals(loop.map(_.fix.id), Some("fix"))
-            assertEquals(maxConcurrency, 2)
-          case other => fail(s"Expected Pipeline, got $other")
-        end match
+        assertEquals(defn.name, "ci-flow")
+        assertEquals(defn.manager, Some("Nebula"))
+        assertEquals(defn.maxDepth, 10)
+        assertEquals(defn.nodes.length, 2)
+        assertEquals(defn.nodes(0).id, "lint")
+        assertEquals(defn.nodes(1).id, "test")
+        assertEquals(defn.nodes(1).dependsOn, Set("lint"))
+        assertEquals(defn.nodes(1).timeoutSeconds, 600)
       case Left(err) => fail(s"Parse should succeed: $err")
-    end match
   }
 
-  test("FlowDefLoader: parse pipeline YAML without loop (defaults applied)") {
+  test("FlowDefLoader: parse flow YAML with verdict and retry nodes") {
     val yaml =
-      """name: simple-pipeline
-        |type: pipeline
-        |steps:
-        |  - id: only
+      """name: verify-flow
+        |nodes:
+        |  - id: build
+        |    agent: Coder
+        |    prompt: Build the project
+        |  - id: verify
         |    agent: Explorer
-        |    prompt: Do it
-        |verify:
-        |  prompt: Check
+        |    prompt: Check correctness
+        |    verdict: true
+        |    dependsOn:
+        |      - build
+        |    retry:
+        |      target: build
+        |      maxIterations: 3
         |""".stripMargin
     FlowDefLoader.parse(yaml) match
       case Right(defn) =>
-        defn.branchType match
-          case BranchType.Pipeline(_, verify, loop, maxConcurrency) =>
-            assertEquals(loop, None)
-            assertEquals(maxConcurrency, 5)
-            assertEquals(verify.agent, "Explorer")
-          case other => fail(s"Expected Pipeline, got $other")
+        assertEquals(defn.nodes.length, 2)
+        val verify = defn.nodes(1)
+        assertEquals(verify.id, "verify")
+        assertEquals(verify.verdict, true)
+        assertEquals(verify.retry, Some(RetryTarget("build", 3)))
       case Left(err) => fail(s"Parse should succeed: $err")
   }
 
-  test("FlowDefLoader: parse source YAML with restart policy") {
+  test("FlowDefLoader: parse flow with nested flow reference node") {
     val yaml =
-      """name: webhook-listener
-        |type: source
-        |command: python -m webhook.server
-        |restart: temporary
+      """name: parent-flow
+        |nodes:
+        |  - id: prepare
+        |    agent: Explorer
+        |    prompt: Prepare
+        |  - id: deploy
+        |    flow: deploy-flow
+        |    dependsOn:
+        |      - prepare
         |""".stripMargin
     FlowDefLoader.parse(yaml) match
       case Right(defn) =>
-        assertEquals(defn.name, "webhook-listener")
-        defn.branchType match
-          case BranchType.Source(command, restart) =>
-            assertEquals(command, "python -m webhook.server")
-            assertEquals(restart, RestartPolicy.Temporary)
-          case other => fail(s"Expected Source, got $other")
-      case Left(err) => fail(s"Parse should succeed: $err")
-  }
-
-  test("FlowDefLoader: parse source YAML with default restart") {
-    val yaml =
-      """name: simple-source
-        |type: source
-        |command: ./run.sh
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(defn) =>
-        defn.branchType match
-          case BranchType.Source(command, restart) =>
-            assertEquals(command, "./run.sh")
-            assertEquals(restart, RestartPolicy.Permanent)
-          case other => fail(s"Expected Source, got $other")
-      case Left(err) => fail(s"Parse should succeed: $err")
-  }
-
-  test("FlowDefLoader: parse reactor YAML with RunAgent action") {
-    val yaml =
-      """name: alert-responder
-        |type: reactor
-        |subscribe:
-        |  - alerts
-        |  - incidents
-        |filter:
-        |  severity: critical
-        |action:
-        |  type: runAgent
-        |  agent: Nebula
-        |  prompt: Respond to the alert
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(defn) =>
-        assertEquals(defn.name, "alert-responder")
-        defn.branchType match
-          case BranchType.Reactor(subscribe, filter, action) =>
-            assertEquals(subscribe, Set("alerts", "incidents"))
-            assertEquals(filter, Map("severity" -> "critical"))
-            assertEquals(action, ReactorAction.RunAgent("Nebula", "Respond to the alert"))
-          case other => fail(s"Expected Reactor, got $other")
-      case Left(err) => fail(s"Parse should succeed: $err")
-  }
-
-  test("FlowDefLoader: parse reactor YAML with MountFlow action") {
-    val yaml =
-      """name: auto-deployer
-        |type: reactor
-        |subscribe:
-        |  - push
-        |action:
-        |  type: mountFlow
-        |  flowName: deploy-pipeline
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(defn) =>
-        defn.branchType match
-          case BranchType.Reactor(subscribe, filter, action) =>
-            assertEquals(subscribe, Set("push"))
-            assert(filter.isEmpty)
-            assertEquals(action, ReactorAction.MountFlow("deploy-pipeline"))
-          case other => fail(s"Expected Reactor, got $other")
+        assertEquals(defn.nodes.length, 2)
+        assert(defn.nodes(0).agent.isDefined, "First node should be atomic")
+        assert(defn.nodes(1).isNested, "Second node should be nested flow reference")
+        assertEquals(defn.nodes(1).flow, Some("deploy-flow"))
+        assertEquals(defn.nodes(1).dependsOn, Set("prepare"))
       case Left(err) => fail(s"Parse should succeed: $err")
   }
 
@@ -676,119 +434,36 @@ class FlowTreeTypesSpec extends FunSuite:
 
   test("FlowDefLoader: missing name returns Left") {
     val yaml =
-      """type: daemon
-        |agent: Explorer
-        |prompt: test
+      """nodes:
+        |  - id: s
+        |    agent: Explorer
+        |    prompt: test
         |""".stripMargin
     FlowDefLoader.parse(yaml) match
       case Right(_) => fail("Should fail when name is missing")
       case Left(err) => assert(err.contains("name"), s"Error should mention name: $err")
   }
 
-  test("FlowDefLoader: missing type discriminator returns Left") {
-    val yaml =
-      """name: no-type
-        |agent: Explorer
-        |""".stripMargin
+  test("FlowDefLoader: flow with no nodes defaults to empty list") {
+    val yaml = "name: empty-flow\n"
     FlowDefLoader.parse(yaml) match
-      case Right(_) => fail("Should fail when type discriminator is missing")
-      case Left(err) => () // expected
+      case Right(defn) =>
+        assertEquals(defn.name, "empty-flow")
+        assert(defn.nodes.isEmpty, "Nodes should default to empty")
+      case Left(err) => fail(s"Parse should succeed: $err")
   }
 
-  test("FlowDefLoader: unknown branch type returns Left") {
+  test("FlowDefLoader: manager defaults to None when absent") {
     val yaml =
-      """name: bad-type
-        |type: flux-capacitor
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(_) => fail("Should fail on unknown branch type")
-      case Left(_) => () // expected
-  }
-
-  test("FlowDefLoader: pipeline missing steps returns Left") {
-    val yaml =
-      """name: no-steps
-        |type: pipeline
-        |verify:
-        |  prompt: check
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(_) => fail("Should fail when steps is missing")
-      case Left(_) => () // expected
-  }
-
-  test("FlowDefLoader: pipeline missing verify returns Left") {
-    val yaml =
-      """name: no-verify
-        |type: pipeline
-        |steps:
-        |  - id: s1
+      """name: no-manager
+        |nodes:
+        |  - id: s
         |    agent: Explorer
-        |    prompt: do something
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(_) => fail("Should fail when verify is missing")
-      case Left(_) => () // expected
-  }
-
-  test("FlowDefLoader: daemon missing agent returns Left") {
-    val yaml =
-      """name: no-agent
-        |type: daemon
-        |prompt: test
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(_) => fail("Should fail when agent is missing for daemon")
-      case Left(_) => () // expected
-  }
-
-  test("FlowDefLoader: source missing command returns Left") {
-    val yaml =
-      """name: no-command
-        |type: source
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(_) => fail("Should fail when command is missing for source")
-      case Left(_) => () // expected
-  }
-
-  test("FlowDefLoader: reactor missing action returns Left") {
-    val yaml =
-      """name: no-action
-        |type: reactor
-        |subscribe:
-        |  - events
-        |""".stripMargin
-    FlowDefLoader.parse(yaml) match
-      case Right(_) => fail("Should fail when action is missing for reactor")
-      case Left(_) => () // expected
-  }
-
-  test("FlowDefLoader: nested flow step in pipeline YAML parses correctly") {
-    val yaml =
-      """name: nested-pipeline
-        |type: pipeline
-        |steps:
-        |  - id: explore
-        |    agent: Explorer
-        |    prompt: Explore
-        |  - id: deploy
-        |    flow: deploy-flow
-        |    dependsOn:
-        |      - explore
-        |verify:
-        |  prompt: Check deployment
+        |    prompt: test
         |""".stripMargin
     FlowDefLoader.parse(yaml) match
       case Right(defn) =>
-        defn.branchType match
-          case BranchType.Pipeline(steps, _, _, _) =>
-            assertEquals(steps.length, 2)
-            assert(steps(0).agent.isDefined, "First step should be atomic")
-            assert(steps(1).isNested, "Second step should be nested flow reference")
-            assertEquals(steps(1).flow, Some("deploy-flow"))
-            assertEquals(steps(1).dependsOn, Set("explore"))
-          case other => fail(s"Expected Pipeline, got $other")
+        assertEquals(defn.manager, None)
       case Left(err) => fail(s"Parse should succeed: $err")
   }
 

@@ -150,15 +150,15 @@ final class FlowTestKit(
   /** Spawn a PipelineActor directly (for low-level tests). */
   def spawnPipeline(
     name: String,
-    pipeline: BranchType.Pipeline,
+    flowDef: FlowDef,
     parentAgentRef: ActorRef[AgentCommand]
   ): IO[ActorRef[PipelineActor.PipelineCommand]] =
     actorSystem.spawn(
       PipelineActor(
         PipelineActor.PipelineConfig(
           name = name,
-          flowName = name,
-          pipeline = pipeline,
+          flowName = flowDef.name,
+          flowDef = flowDef,
           parentAgentRef = parentAgentRef,
           wsSend = None,
           sessionId = Some("test-session"),
