@@ -26,6 +26,7 @@ impl Store {
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 secret_hash TEXT NOT NULL,
+                secret_plain TEXT NOT NULL DEFAULT '',
                 owner_id TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
@@ -36,7 +37,8 @@ impl Store {
                 platform TEXT NOT NULL,
                 last_seen INTEGER NOT NULL,
                 PRIMARY KEY (id, network_id)
-            );",
+            );
+            ALTER TABLE networks ADD COLUMN secret_plain TEXT NOT NULL DEFAULT '';"
         )
         .unwrap_or_else(|e| {
             tracing::error!("Failed to create tables: {e}");
@@ -70,8 +72,8 @@ impl Store {
 
         let db = self.db.lock().unwrap();
         db.execute(
-            "INSERT INTO networks (id, name, secret_hash, owner_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![&network_id, name, &secret_hash, owner_id, now],
+            "INSERT INTO networks (id, name, secret_hash, secret_plain, owner_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![&network_id, name, &secret_hash, &secret, owner_id, now],
         )
         .expect("Failed to insert network");
         drop(db);
@@ -153,8 +155,8 @@ impl Store {
 
         let db = self.db.lock().unwrap();
         let changed = db.execute(
-            "UPDATE networks SET secret_hash = ?1 WHERE id = ?2 AND owner_id = ?3",
-            params![&secret_hash, network_id, owner_id],
+            "UPDATE networks SET secret_hash = ?1, secret_plain = ?2 WHERE id = ?3 AND owner_id = ?4",
+            params![&secret_hash, &secret, network_id, owner_id],
         )
         .map_err(|e| format!("Database error: {e}"))?;
         drop(db);
@@ -211,6 +213,18 @@ impl Store {
             .unwrap_or(0);
         drop(db);
         count > 0
+    }
+
+    /// Get the plaintext secret for a network (requires ownership).
+    pub fn get_network_secret(&self, network_id: &str, owner_id: &str) -> Option<String> {
+        let db = self.db.lock().unwrap();
+        let result = db.query_row(
+            "SELECT secret_plain FROM networks WHERE id = ?1 AND owner_id = ?2",
+            params![network_id, owner_id],
+            |row| row.get::<_, String>(0),
+        );
+        drop(db);
+        result.ok().filter(|s| !s.is_empty())
     }
 
     // ===== Device session operations =====
