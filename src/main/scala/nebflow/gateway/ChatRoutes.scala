@@ -97,24 +97,34 @@ class ChatRoutes(handle: LlmHandle[IO], token: String):
     ServerSentEvent(data = Some(chunk.asJson.noSpaces))
 
   private def errorSse(err: Throwable): ServerSentEvent =
-    val payload = Json.obj(
-      "error" -> Option(err.getMessage).getOrElse("streamError").asJson
-    )
     err match
       case e: FallbackExhaustedError =>
+        val sanitized = e.attempts.map { a =>
+          Json.obj(
+            "providerId" -> a.providerId.asJson,
+            "model" -> a.model.asJson,
+            "reason" -> a.reason.map(_.toString).asJson
+          )
+        }
         ServerSentEvent(
           data = Some(
             Json
               .obj(
                 "error" -> "allProvidersFailed".asJson,
-                "attempts" -> e.attempts.asJson
+                "attempts" -> sanitized.asJson
               )
               .noSpaces
           ),
           eventType = Some("error")
         )
       case _ =>
-        ServerSentEvent(data = Some(payload.noSpaces), eventType = Some("error"))
+        val msg = NebflowError.toUserMessage(
+          NebflowError.Internal(Option(err.getMessage).getOrElse("streamError"))
+        )
+        ServerSentEvent(
+          data = Some(Json.obj("error" -> msg.asJson).noSpaces),
+          eventType = Some("error")
+        )
     end match
   end errorSse
 end ChatRoutes

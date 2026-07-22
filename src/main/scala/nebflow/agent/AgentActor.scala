@@ -651,20 +651,16 @@ object AgentActor extends AgentCore with AgentSession:
             AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
           val errMsg = error match
             case e: FallbackExhaustedError =>
-              val attempts = e.attempts
-                .map { a =>
-                  val detail = a.message.getOrElse(a.reason.map(_.toString).getOrElse("unknown"))
-                  s"${a.providerId}/${a.model}: $detail"
-                }
-                .mkString("; ")
-              s"All providers failed: $attempts"
+              val attemptSummaries = e.attempts.map(a =>
+                s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
+              )
+              NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
             case e: ToolPipelineError =>
               e.message
             case _ =>
-              Option(error.getMessage)
-                .filter(_.nonEmpty)
-                .map(m => s"LLM request failed: ${m.take(200)}")
-                .getOrElse(s"LLM request failed: ${error.getClass.getSimpleName}")
+              NebflowError.toUserMessage(
+                NebflowError.Internal(Option(error.getMessage).getOrElse("internalError"))
+              )
           for
 
             _ <- cleanedState.sessionId.fold(IO.unit) { sid =>

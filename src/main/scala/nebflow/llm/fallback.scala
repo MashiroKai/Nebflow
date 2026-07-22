@@ -153,16 +153,19 @@ object Fallback:
 
           val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate))
 
-          if classification.permanence == ErrorPermanence.Fatal then
-            // Error affects all providers (e.g. context overflow) — abort immediately
-            notifyExhausted *> IO.raiseError(new FallbackExhaustedError(allFailures))
-          else if classification.permanence == ErrorPermanence.Permanent then notifyExhausted *> fallback(allFailures)
-          else if retriesLeft > 0 then
-            val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
-            val delay = math.min(backoffMs + jitter, MaxBackoffMs)
-            IO.sleep(delay.millis) *>
-              tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
-          else notifyExhausted *> fallback(allFailures)
+          classification.permanence match
+            case ErrorPermanence.Fatal =>
+              // Error affects all providers (e.g. context overflow) — abort immediately
+              notifyExhausted *> IO.raiseError(new FallbackExhaustedError(allFailures))
+            case ErrorPermanence.Permanent =>
+              notifyExhausted *> fallback(allFailures)
+            case ErrorPermanence.Transient =>
+              if retriesLeft > 0 then
+                val jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 2000)
+                val delay = math.min(backoffMs + jitter, MaxBackoffMs)
+                IO.sleep(delay.millis) *>
+                  tryWithRetry(candidate, retriesLeft - 1, backoffMs * 2, allFailures)(fallback)
+              else notifyExhausted *> fallback(allFailures)
       }
     end tryWithRetry
 
