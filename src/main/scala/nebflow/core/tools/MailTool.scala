@@ -32,44 +32,33 @@ Modes:
     No address needed — auto-routes to the main agent.
     Only use this if you are a flow verify agent."""
 
-  // NOTE: input_schema must be a JSON-Schema *object* (top-level "type": "object" +
-  // "properties"). A flat layout puts a property named "type" at the top level,
-  // which Anthropic/DeepSeek reject with "not valid under any of the schemas in anyOf".
-  val inputSchema: JsonObject = JsonObject.fromIterable(
-    List(
-      "type" -> "object".asJson,
-      "properties" -> io.circe.Json.obj(
-        "type" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "enum" -> List("message", "verify").asJson,
-          "description" -> "message: send to another agent. verify: report flow verification result.".asJson
-        ),
-        "address" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "(type=message) Recipient address, e.g. nebflow://local/delegate-Nebula-abc12345".asJson
-        ),
-        "message" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "(type=message) The message or instruction to send".asJson
-        ),
-        "passed" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "(type=verify) true if verification passed, false if issues found".asJson
-        ),
-        "summary" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "(type=verify) Concise result summary. Key findings only, no process details. Max 200 chars.".asJson
-        ),
-        "mode" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "enum" -> List("queue", "immediate").asJson,
-          "description" -> "(type=message) queue: message waits in mailbox (default). immediate: interrupts current work first.".asJson
-        )
-      ),
-      // required fields are mode-dependent (message: address+message; verify: passed),
-      // so enforce them at call time rather than in the schema.
-      "required" -> io.circe.Json.arr()
-    )
+  val inputSchema: JsonObject = JsonObject(
+    "type" -> JsonObject(
+      "type" -> "string".asJson,
+      "enum" -> List("message", "verify").asJson,
+      "description" -> "message: send to another agent. verify: report flow verification result.".asJson
+    ).asJson,
+    "address" -> JsonObject(
+      "type" -> "string".asJson,
+      "description" -> "(type=message) Recipient address, e.g. nebflow://local/delegate-Nebula-abc12345".asJson
+    ).asJson,
+    "message" -> JsonObject(
+      "type" -> "string".asJson,
+      "description" -> "(type=message) The message or instruction to send".asJson
+    ).asJson,
+    "passed" -> JsonObject(
+      "type" -> "boolean".asJson,
+      "description" -> "(type=verify) true if verification passed, false if issues found".asJson
+    ).asJson,
+    "summary" -> JsonObject(
+      "type" -> "string".asJson,
+      "description" -> "(type=verify) Concise result summary. Key findings only, no process details. Max 200 chars.".asJson
+    ).asJson,
+    "mode" -> JsonObject(
+      "type" -> "string".asJson,
+      "enum" -> List("queue", "immediate").asJson,
+      "description" -> "(type=message) queue: message waits in mailbox (default). immediate: interrupts current work first.".asJson
+    ).asJson
   )
 
   def summarize(input: JsonObject): String =
