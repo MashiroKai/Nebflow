@@ -356,7 +356,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                   fileHistory = Some(fileHistory),
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
-                  safetyMode = cfg.safetyMode
+                  safetyMode = cfg.safetyMode,
+                  expectsMail = true
                 ),
                 agentUid
               )
@@ -602,6 +603,13 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
         "pass" -> true.asJson,
         "summary" -> summary.take(500).asJson
       )
+      // Notify parent agent of completion
+      _ <- cfg.parentAgentRef ! AgentCommand.ExternalEvent(
+        source = "flow",
+        eventType = "completed",
+        payload = s"[Flow: ${cfg.name}] PASS\n$summary",
+        metadata = JsonObject("flowName" -> cfg.name.asJson, "pass" -> true.asJson)
+      )
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Done(summary)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
       // Launch reflect in background — non-blocking, fire-and-forget
@@ -685,7 +693,8 @@ Do NOT call any tools to report the result. Just output the verdict line at the 
                   fileHistory = Some(fileHistory),
                   contextWindow = cfg.resources.contextWindow,
                   projectRoot = Some(cfg.projectRoot),
-                  safetyMode = cfg.safetyMode
+                  safetyMode = cfg.safetyMode,
+                  expectsMail = true
                 ),
                 agentUid
               )
