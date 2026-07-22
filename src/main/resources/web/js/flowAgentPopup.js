@@ -37,7 +37,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 @keyframes fa-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 .flow-agent-modal {
-  width: 560px; max-width: 90vw; max-height: 72vh;
+  width: calc(100% - 48px); max-width: 480px; max-height: calc(100% - 48px);
   display: flex; flex-direction: column;
   background: var(--glass-bg, rgba(255,255,255,0.03));
   -webkit-backdrop-filter: blur(30px) saturate(1.15);
