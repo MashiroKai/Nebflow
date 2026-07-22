@@ -512,6 +512,14 @@
 .msg-copy.copied { color: #34c759; opacity: 1; }
 .row:hover .msg-copy { opacity: 0.35; }
 .row:hover .msg-copy:hover { opacity: 0.6; }
+/* Copy button inside duration badge */
+.duration-badge .msg-copy {
+  opacity: 0.35;
+  padding: 1px;
+}
+.duration-badge .msg-copy svg { width: 11px; height: 11px; }
+.duration-badge .msg-copy:hover { opacity: 0.6; }
+.duration-badge .msg-copy.copied { color: #34c759; opacity: 1; }
 
 .bubble {
   max-width: 100%;

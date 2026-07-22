@@ -341,14 +341,18 @@ export function finishAi(durationMs, model) {
     bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
     if (askBox) bubble.appendChild(askBox);
     const ts = Date.now();
+    let hasBadge = false;
     if (durationMs != null && durationMs > 0) {
       const seed = activeView.dom.chat.querySelectorAll('.duration-badge').length;
-      renderDurationBadge(bubble, durationMs, model, seed, ts);
+      renderDurationBadge(bubble, durationMs, model, seed, ts, activeView.stream.aiText);
+      hasBadge = true;
     }
-    // Copy button for AI message
-    const aiRow = bubble.closest('.row');
-    if (aiRow) {
-      aiRow.appendChild(createMsgCopyButton(activeView.stream.aiText));
+    // Copy button for AI message (standalone only if no badge to embed into)
+    if (!hasBadge) {
+      const aiRow = bubble.closest('.row');
+      if (aiRow) {
+        aiRow.appendChild(createMsgCopyButton(activeView.stream.aiText));
+      }
     }
     // Trigger voice TTS: enqueue all <voice> blocks for sequential playback,
     // and attach click-to-replay handlers on the green text.
@@ -422,7 +426,7 @@ export function pickThinkingPhrase(durationMs, seed) {
  * @param {number} [timestamp] - epoch millis for display
  * @returns {HTMLElement}
  */
-export function createDurationBadgeElement(durationMs, model, seed, timestamp) {
+export function createDurationBadgeElement(durationMs, model, seed, timestamp, copyText) {
   const badge = document.createElement('div');
   badge.className = 'duration-badge';
 
@@ -454,17 +458,25 @@ export function createDurationBadgeElement(durationMs, model, seed, timestamp) {
     badge.appendChild(timeSpan);
   }
 
+  if (copyText) {
+    const div = document.createElement('span');
+    div.className = 'duration-badge-divider';
+    badge.appendChild(div);
+    const copyBtn = createMsgCopyButton(copyText);
+    badge.appendChild(copyBtn);
+  }
+
   return badge;
 }
 
 /**
  * Render a subtle duration badge below an AI bubble.
  */
-export function renderDurationBadge(bubble, durationMs, model, seed, timestamp) {
+export function renderDurationBadge(bubble, durationMs, model, seed, timestamp, copyText) {
   if (!bubble) return;
   const row = bubble.closest('.row');
   if (!row) return;
-  const badge = createDurationBadgeElement(durationMs, model, seed, timestamp);
+  const badge = createDurationBadgeElement(durationMs, model, seed, timestamp, copyText);
   row.appendChild(badge);
 }
 
