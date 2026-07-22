@@ -91,7 +91,7 @@ export function registerSkillCommands(skills) {
         desc: () => skill.description || t('slash.skillDefault'),
         whenToUse: skill.whenToUse || '',
         argumentHint: skill.argumentHint || '',
-        run: () => enterSkillMode(skill.name, skill.description, skill.argumentHint)
+        run: () => enterSkillMode(skill.name, skill.description, skill.argumentHint, skill.source)
       };
     }
   });
@@ -271,7 +271,7 @@ function updateInputIndicator() {
     if (planEl) planEl.classList.remove('show');
     if (askEl) askEl.classList.remove('show');
     if (skillEl) {
-      if (skillLabel) skillLabel.textContent = activeView.skillModeName || 'SKILL';
+      if (skillLabel) skillLabel.textContent = activeView.skillModeSource === 'flow' ? 'FLOW' : (activeView.skillModeName || 'SKILL');
       skillEl.classList.add('show');
       const w = skillEl.offsetWidth + 12;
       input.style.paddingLeft = Math.max(w, 56) + 'px';
@@ -297,7 +297,7 @@ function updateInputIndicator() {
 }
 
 // ---------- Skill Mode ----------
-export function enterSkillMode(skillName, description, argumentHint) {
+export function enterSkillMode(skillName, description, argumentHint, source) {
   if (activeView.skillMode) {
     // Already in skill mode — if it's a different skill, switch; otherwise do nothing
     if (activeView.skillModeName === skillName) return;
@@ -307,6 +307,7 @@ export function enterSkillMode(skillName, description, argumentHint) {
   if (activeView.stream.askMode) cancelAskMode();
   activeView.skillMode = true;
   activeView.skillModeName = skillName;
+  activeView.skillModeSource = source || '';
   activeView.skillModeDesc = description || '';
   activeView.skillModeArgHint = argumentHint || '';
   updateInputIndicator();
@@ -318,6 +319,7 @@ export function cancelSkillMode() {
   if (!activeView.skillMode) return;
   activeView.skillMode = false;
   activeView.skillModeName = '';
+  activeView.skillModeSource = '';
   activeView.skillModeDesc = '';
   activeView.skillModeArgHint = '';
   updateInputIndicator();
@@ -349,6 +351,7 @@ export function cancelCompactMode() {
 export function applyInputModes(skillData, askActive) {
   activeView.skillMode = false;
   activeView.skillModeName = '';
+  activeView.skillModeSource = '';
   activeView.skillModeDesc = '';
   activeView.skillModeArgHint = '';
   activeView.stream.askMode = false;
@@ -356,6 +359,7 @@ export function applyInputModes(skillData, askActive) {
   if (skillData) {
     activeView.skillMode = true;
     activeView.skillModeName = skillData.name || '';
+    activeView.skillModeSource = skillData.source || '';
     activeView.skillModeDesc = skillData.desc || '';
     activeView.skillModeArgHint = skillData.argHint || '';
   } else if (askActive) {

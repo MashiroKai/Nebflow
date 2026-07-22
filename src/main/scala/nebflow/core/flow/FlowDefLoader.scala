@@ -53,14 +53,19 @@ object FlowDefLoader:
             val nodeCount = fd.nodes.size
             val agents = fd.nodes.flatMap(_.agent).distinct.mkString("+")
             val mgr = fd.manager.getOrElse("-")
-            s"- $name: ${nodeCount} node(s), manager: $mgr, agents: $agents"
+            val meta = s"${nodeCount} node(s), manager: $mgr, agents: $agents"
+            fd.description match
+              case desc if desc.nonEmpty => s"- $name: $desc ($meta)"
+              case _ => s"- $name: $meta"
           }
           .mkString("\n")
         s"""# Flows
            |
-           |Flows are reusable, self-improving pipelines in ~/.nebflow/flows/. Each flow runs
-           |multi-step agents with automatic verification and learning. Use ExecuteFlow to
-           |mount and trigger flows.
+           |Flows are reusable, self-improving pipelines. Each flow runs multi-step agents with
+           |automatic verification (verify-fix loop) and learns from past runs. Mount once, then
+           |trigger with different inputs. Check the catalog below — if a flow matches your task,
+           |prefer it over manual delegation: it handles orchestration, parallelism, and quality
+           |gates for you.
            |
            |$entries""".stripMargin
       end if
@@ -72,9 +77,10 @@ object FlowDefLoader:
       json <- yamlParser.parse(yaml).left.map(e => s"YAML parse error: ${e.message}")
       name <- json.hcursor.downField("name").as[String].left.map(e => s"Invalid 'name': ${e.message}")
       manager <- json.hcursor.downField("manager").as[Option[String]].left.map(e => s"Invalid 'manager': ${e.message}")
+      desc <- json.hcursor.downField("description").as[Option[String]].left.map(e => s"Invalid 'description': ${e.message}")
       maxDepth <- json.hcursor.downField("maxDepth").as[Option[Int]].left.map(e => s"Invalid 'maxDepth': ${e.message}")
       nodes <- json.hcursor.downField("nodes").as[Option[List[FlowNode]]].left.map(e => s"Invalid 'nodes': ${e.message}")
-    yield FlowDef(name, manager, nodes.getOrElse(Nil), maxDepth.getOrElse(5))
+    yield FlowDef(name, manager, desc.getOrElse(""), nodes.getOrElse(Nil), maxDepth.getOrElse(5))
 
   /** Parse inline YAML and return FlowDef (for ExecuteFlow inline definitions). */
   def parseInline(yaml: String): IO[Either[String, FlowDef]] =
