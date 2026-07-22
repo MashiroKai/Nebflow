@@ -604,8 +604,10 @@ private[agent] trait AgentCore:
       case Nil => Set.empty[String]
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
+    // Mail is always available — it's a communication primitive, not a domain tool
+    val withBuiltin = base + "Mail"
     val depthFiltered =
-      if depth >= MaxDepth then base - "ExecuteFlow" else base
+      if depth >= MaxDepth then withBuiltin - "ExecuteFlow" else withBuiltin
     if depth > 0 then depthFiltered -- SubagentBlockedTools else depthFiltered
 
   end buildAllowedToolSet
