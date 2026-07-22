@@ -18,7 +18,7 @@ import nebflow.service.{MemoryStore, RulesStore, StrengthStore}
  *   • rulesMd        — folder chain → RulesStore.resolveInheritedRules (mtime-cached)
  *   • projectRoot    — folder chain → SessionStore.resolveProjectRoot
  *   • thinkingConfig — global Ref[IO, ThinkingConfig]
- *   • gitBranch      — git rev-parse --abbrev-ref HEAD
+ *   • gitBranch      — read .git/HEAD directly (supports worktrees)
  *   • memory files   — built into memoryBlock string, injected into system prompt
  */
 object ContextRefresher:
@@ -77,62 +77,87 @@ object ContextRefresher:
       case None => IO.pure(None)
 
   // ============================================================
-  // Git branch detection
+  // Git branch detection (file-based, zero subprocess overhead)
   // ============================================================
 
+  /** Git info: branch name + worktree flag. */
+  case class GitInfo(branch: String, isWorktree: Boolean)
+
+  private val RefPrefix = "ref: refs/heads/"
+  private val GitdirPrefix = "gitdir:"
+
   /**
-   * Detect current git branch for the given project root.
+   * Detect current git branch by reading .git/HEAD directly.
+   * Zero subprocess overhead — pure file I/O.
+   * Supports worktrees (where .git is a file, not a directory).
    * Returns None if the directory is not a git repo.
    */
-  private def detectGitBranch(projectRoot: Option[String]): IO[Option[String]] =
+  def detectGitBranch(projectRoot: Option[String]): IO[Option[GitInfo]] =
     projectRoot match
       case Some(root) =>
         IO.blocking {
           try
-            val pb = new ProcessBuilder("git", "rev-parse", "--abbrev-ref", "HEAD")
-            pb.directory(new java.io.File(root))
-            pb.redirectErrorStream(true)
-            val proc = pb.start()
-            val output = scala.io.Source.fromInputStream(proc.getInputStream)(scala.io.Codec.UTF8).mkString.trim
-            proc.waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
-            if proc.exitValue() == 0 && output.nonEmpty && !output.startsWith("fatal:") then Some(output)
+            val dotGit = java.nio.file.Paths.get(root, ".git")
+            if !java.nio.file.Files.exists(dotGit) then None
+            else if java.nio.file.Files.isDirectory(dotGit) then
+              // Standard repo: .git/HEAD
+              readHeadFile(dotGit.resolve("HEAD"), isWorktree = false)
+            else if java.nio.file.Files.isRegularFile(dotGit) then
+              // Worktree or submodule: .git is a file containing "gitdir: <path>"
+              val content = java.nio.file.Files.readString(dotGit).trim
+              if content.startsWith(GitdirPrefix) then
+                val gitdirPath = java.nio.file.Paths.get(content.substring(GitdirPrefix.length).trim)
+                val headFile = gitdirPath.resolve("HEAD")
+                readHeadFile(headFile, isWorktree = true)
+              else None
             else None
           catch case _: Exception => None
         }
       case None => IO.pure(None)
 
+  /** Parse a HEAD file and extract branch name (or detached HEAD hash). */
+  private def readHeadFile(headPath: java.nio.file.Path, isWorktree: Boolean): Option[GitInfo] =
+    try
+      val content = java.nio.file.Files.readString(headPath).trim
+      if content.startsWith(RefPrefix) then
+        Some(GitInfo(content.substring(RefPrefix.length), isWorktree))
+      else if content.length >= 7 then
+        // Detached HEAD — show short hash
+        Some(GitInfo(s"(${content.substring(0, 7)})", isWorktree))
+      else None
+    catch case _: Exception => None
+
   /**
    * Check for git branch change and produce a reminder if the branch has changed.
-   * Returns (reminder, currentBranch).
+   * Returns (reminder, currentGitInfo).
+   *
+   * Notification policy:
+   *   - First detection (None → Some):  silent
+   *   - Branch changed (Some → Some):   notify
+   *   - Detection lost (Some → None):   silent (likely transient I/O issue)
+   *   - No git (None → None):           silent
    */
   private def checkBranchChange(
     projectRoot: Option[String],
     lastBranch: Option[String]
   ): IO[(Option[SystemReminder], Option[String])] =
-    detectGitBranch(projectRoot).map { currentBranch =>
+    detectGitBranch(projectRoot).map { currentInfo =>
+      val currentBranch = currentInfo.map(_.branch)
       if currentBranch != lastBranch then
-        val reminder = (lastBranch, currentBranch) match
-          case (Some(old), Some(current)) =>
+        val reminder = (lastBranch, currentInfo) match
+          case (Some(old), Some(info)) =>
+            val wtNote = if info.isWorktree then " (in worktree)" else ""
             Some(
               SystemReminder(
                 "gitBranch",
-                s"Git branch changed from \"$old\" to \"$current\". All subsequent file operations now apply to the new branch. " +
-                  "If you have uncommitted work, verify it is on the intended branch before making changes."
+                s"Git branch changed from \"$old\" to \"${info.branch}\"$wtNote. " +
+                  "All subsequent file operations now apply to the new branch."
               )
             )
-          case (None, Some(current)) =>
-            // First detection — just record, no alarm
-            None
-          case (Some(old), None) =>
-            // Was a git repo, now not — could be worrying
-            Some(
-              SystemReminder(
-                "gitBranch",
-                s"Git branch was \"$old\" but the project is no longer detected as a git repository. " +
-                  "File operations will continue but version control tracking may be lost."
-              )
-            )
-          case (None, None) => None
+          // First detection — silent
+          case (None, _) => None
+          // Detection lost — silent (transient I/O, not worth alarming)
+          case (Some(_), None) => None
         (reminder, currentBranch)
       else (None, currentBranch)
     }
