@@ -283,24 +283,68 @@ body.col-resizing #canvas-panel { transition: none; }
 
 /* Header areas act as drag handles — cursor: grab communicates affordance.
    Interactive children (buttons) override with their own cursor.
-   Canvas header is NOT a drag handle (conflicts with flow pan/drag). */
-.sidebar-topbar {
-  cursor: grab;
-}
-#header {
+   Canvas header is also a drag handle now (panelDragger binds it). */
+.sidebar-topbar,
+#header,
+.canvas-header {
   cursor: grab;
 }
 
-/* Drag-handle pill — a HORIZONTAL grip centered near the top of each draggable
-   card's header. Horizontal (wide, short) so it reads as a "grab here to move"
-   tab; smooth fully-rounded edges; vertically centered on the header's top band.
-   Kept inside the card (no negative offsets) so #sidebar's overflow:hidden can't
-   clip it. Same color/opacity/transition language as the resize grip. */
-.sidebar-topbar::after,
-#header::after {
+/* ── Reverse notch (反刘海) — shared bump design for all three panels ──
+   The bump is a seamless glass extension of the header, like a water drop
+   bulging from the top edge. Same background, same border — the transition
+   is organic, not a separate piece glued on.
+   On hover/drag: ONLY the pill (grab indicator) changes. The bump is inert. */
+
+/* Sidebar bump */
+.sidebar-topbar::before {
   content: '';
   position: absolute;
-  top: 5px;
+  top: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 11px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Canvas bump */
+.canvas-header::before {
+  /* Replace the old gradient line with the bump.
+     Keep content flow identical — just change the visual. */
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 56px;
+  height: 11px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-bottom: none;
+  border-radius: 10px 10px 0 0;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ── Drag-handle pill — sits on the bump ──
+   A horizontal grip centered on the bump. On hover/drag it lights up
+   and grows slightly. The bump itself never changes. */
+.sidebar-topbar::after,
+#header::after,
+.canvas-header::after {
+  content: '';
+  position: absolute;
+  top: -2px;
   left: 50%;
   transform: translateX(-50%);
   width: 36px;
@@ -310,58 +354,38 @@ body.col-resizing #canvas-panel { transition: none; }
   opacity: 0.3;
   pointer-events: none;
   transition: opacity 0.2s, background 0.2s, width 0.2s, height 0.2s;
-  z-index: 1;
-}
-/* Hover/drag on the SIDEBAR header lights up its pill. */
-.sidebar-topbar:hover::after,
-body.panel-dragging .panel-drag-source > .sidebar-topbar::after {
-  opacity: 0.9;
-  background: var(--color-primary);
-  width: 48px;
-  height: 5px;
-}
-
-/* MAIN header: precise bump hover zone (.bump-hover class toggled by JS).
- * The pill and bump only react when the mouse is directly over the bump area,
- * not the entire header. */
-#header.bump-hover::after,
-body.panel-dragging .panel-drag-source > #header::after {
-  opacity: 0.9;
-  background: var(--color-primary);
-  width: 48px;
-  height: 5px;
-  top: -5px;
-}
-/* Header pill sits on the bump, sidebar pill stays inside */
-#header::after {
-  top: -3px;
   z-index: 2;
 }
 
-/* Bump expands and glows on hover — reverse notch grows */
-#header.bump-hover::before,
-body.panel-dragging .panel-drag-source > #header::before {
-  width: 90px;
-  height: 18px;
-  top: -12px;
-  border-color: var(--color-primary);
-  box-shadow: 0 -2px 12px rgba(99, 102, 241, 0.12);
+/* Hover zone — invisible hit area on the bump only.
+   JS toggles .bump-hover on the header element. */
+.sidebar-topbar.bump-hover::after,
+#header.bump-hover::after,
+.canvas-header.bump-hover::after,
+body.panel-dragging .panel-drag-source > .sidebar-topbar::after,
+body.panel-dragging .panel-drag-source > #header::after,
+body.panel-dragging .panel-drag-source > .canvas-header::after {
+  opacity: 0.9;
+  background: var(--color-primary);
+  width: 48px;
+  height: 5px;
 }
 
 /* Invisible hover hit zone — only the bump area triggers hover */
-.header-bump-zone {
+.bump-zone {
   position: absolute;
-  top: -10px;
+  top: -8px;
   left: 50%;
   transform: translateX(-50%);
-  width: 110px;
-  height: 22px;
+  width: 80px;
+  height: 18px;
   z-index: 5;
   background: transparent;
 }
 
-/* Anchor context for the pill. (#header is already positioned via chat.css.) */
-.sidebar-topbar {
+/* Anchor context for the pill. */
+.sidebar-topbar,
+.canvas-header {
   position: relative;
 }
 
