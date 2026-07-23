@@ -15,7 +15,7 @@ case class VerifyResult(pass: Boolean, summary: String)
 // ============================================================
 
 enum StepStatus:
-  case Pending, Running, Done, Failed, Canceled
+  case Pending, Running, Retrying, Done, Failed, Canceled
 
 // ============================================================
 // FlowVerifyRegistry — bridges MailTool(type=verify) ↔ pipeline
