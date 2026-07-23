@@ -38,6 +38,8 @@ object PipelineStateStore:
     verifyResult: Option[String] = None,
     verifyAgent: String = "",
     maxIterations: Int = 0,
+    /** Preserved trigger input for crash recovery / resume. */
+    triggerInput: Option[String] = None,
     updatedAt: Long = System.currentTimeMillis()
   )
 
@@ -83,6 +85,7 @@ object PipelineStateStore:
       "verifyResult" -> s.verifyResult.asJson,
       "verifyAgent" -> s.verifyAgent.asJson,
       "maxIterations" -> s.maxIterations.asJson,
+      "triggerInput" -> s.triggerInput.asJson,
       "updatedAt" -> s.updatedAt.asJson
     )
   }
@@ -98,6 +101,7 @@ object PipelineStateStore:
       verifyResult <- c.downField("verifyResult").as[Option[String]]
       verifyAgent <- c.downField("verifyAgent").as[Option[String]]
       maxIterations <- c.downField("maxIterations").as[Option[Int]]
+      triggerInput <- c.downField("triggerInput").as[Option[String]]
       updatedAt <- c.downField("updatedAt").as[Option[Long]]
     yield PipelineState(
       name,
@@ -109,6 +113,7 @@ object PipelineStateStore:
       verifyResult,
       verifyAgent.getOrElse(""),
       maxIterations.getOrElse(0),
+      triggerInput,
       updatedAt.getOrElse(0L)
     )
   }
@@ -140,6 +145,22 @@ object PipelineStateStore:
       IO.blocking {
         if os.exists(file) then os.remove(file)
       }.void
+
+  /** Load a single pipeline's state (for crash recovery). */
+  def load(sessionId: String, pipelineName: String): IO[Option[PipelineState]] =
+    if sessionId.isEmpty then IO.pure(None)
+    else
+      val file = stateFile(sessionId, pipelineName)
+      IO.blocking {
+        if !os.exists(file) then None
+        else
+          val content = os.read(file)
+          parser.decode[PipelineState](content) match
+            case Right(state) => Some(state)
+            case Left(e) =>
+              logger.warn(s"Failed to decode pipeline state ${file.last}: ${e.getMessage}")
+              None
+      }
 
   /** Load all pipeline states for a session. */
   def loadAll(sessionId: String): IO[List[PipelineState]] =
