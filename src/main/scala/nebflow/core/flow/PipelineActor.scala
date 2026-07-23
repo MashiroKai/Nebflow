@@ -98,6 +98,9 @@ You are a step in a flow pipeline. Follow these rules strictly:
     /** Cancel the pipeline — stop all agents, mark as failed. */
     case object Cancel extends PipelineCommand
 
+    /** Internal: re-schedule ready steps after a retry backoff. */
+    case object ScheduleReady extends PipelineCommand
+
     /** Shutdown the pipeline actor. */
     case object Stop extends PipelineCommand
 
@@ -140,6 +143,9 @@ You are a step in a flow pipeline. Follow these rules strictly:
     verdicts: Map[String, Boolean] = Map.empty,
     nodeExecCount: Map[String, Int] = Map.empty,
     stepRetries: Map[String, Int] = Map.empty,
+    /** Errors from previous attempts, injected into retry prompts so agents
+     * can learn from failures rather than repeating the same mistake. */
+    lastErrors: Map[String, String] = Map.empty,
     agentPaths: Map[String, String] = Map.empty,
     agentRefs: Map[String, ActorRef[AgentCommand]] = Map.empty,
     nodeSessionIds: Map[String, String] = Map.empty,
@@ -248,6 +254,12 @@ You are a step in a flow pipeline. Follow these rules strictly:
                 failPipeline(ctx, stateRef, cfg, "Flow canceled by user/agent")
               else IO.unit
             }.as(this)
+
+          case PipelineCommand.ScheduleReady =>
+            for
+              s <- stateRef.get
+              _ <- if s.phase == RunPhase.Running then scheduleReadySteps(ctx, stateRef, cfg) else IO.unit
+            yield this
 
           case PipelineCommand.GetState(replyTo) =>
             for
@@ -439,7 +451,12 @@ You are a step in a flow pipeline. Follow these rules strictly:
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id), Some(nodeSession.id))
               peerInfo = buildPeerInfo(node.id, state.agentPaths, cfg.name, neighborsOf(cfg.flowDef.nodes, node.id))
-              actualPrompt = withMemory(FlowAgentPrefix + peerInfo + promptWithPreamble, cfg)
+              // If this is a retry, inject the previous error so the agent can adjust
+              retryContext = state.lastErrors.get(node.id) match
+                case Some(err) =>
+                  s"\n\n=== Previous Attempt Failed ===\nThe previous attempt failed with this error:\n$err\n\nPlease adjust your approach to avoid this failure.\n=== End Error Context ===\n"
+                case None => ""
+              actualPrompt = withMemory(FlowAgentPrefix + peerInfo + promptWithPreamble + retryContext, cfg)
               // Only require Mail if the node has reachable peers already spawned
               nodeNeighbors = neighborsOf(cfg.flowDef.nodes, node.id)
               hasReachablePeers = nodeNeighbors.exists(id => state.agentPaths.contains(id))
@@ -667,6 +684,8 @@ You are a step in a flow pipeline. Follow these rules strictly:
     stepId: String,
     error: String
   )(using ActorContext[PipelineCommand]): IO[Unit] =
+    import StepErrorClassifier.*
+    val errorType = StepErrorClassifier.classify(error)
     for
       state <- stateRef.get
       _ <-
@@ -675,13 +694,18 @@ You are a step in a flow pipeline. Follow these rules strictly:
         else if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
           val nodeOpt = cfg.flowDef.nodes.find(_.id == stepId)
           val currentRetries = state.stepRetries.getOrElse(stepId, 0)
+          // Effective max retries: node config (default 1 for transient errors)
+          val effectiveMaxRetries = nodeOpt.map(n => if n.maxRetries > 0 then n.maxRetries else 1).getOrElse(0)
+          val canRetry = errorType.shouldRetry && currentRetries < effectiveMaxRetries
           nodeOpt match
-            case Some(node) if node.maxRetries > 0 && currentRetries < node.maxRetries =>
+            case Some(node) if canRetry =>
+              val delayMs = StepErrorClassifier.backoffMs(currentRetries)
               for
                 _ <- stateRef.update(s =>
                   s.copy(
                     stepStatus = s.stepStatus + (stepId -> StepStatus.Pending.toString),
-                    stepRetries = s.stepRetries + (stepId -> (currentRetries + 1))
+                    stepRetries = s.stepRetries + (stepId -> (currentRetries + 1)),
+                    lastErrors = s.lastErrors + (stepId -> error)
                   )
                 )
                 _ <- emit(
@@ -690,11 +714,19 @@ You are a step in a flow pipeline. Follow these rules strictly:
                   "branchName" -> cfg.name.asJson,
                   "stepId" -> stepId.asJson,
                   "attempt" -> (currentRetries + 1).asJson,
-                  "maxRetries" -> node.maxRetries.asJson,
-                  "error" -> error.asJson
+                  "maxRetries" -> effectiveMaxRetries.asJson,
+                  "error" -> error.asJson,
+                  "errorType" -> errorType.toString.asJson,
+                  "backoffMs" -> delayMs.asJson
                 )
-                _ <- logger.info(s"[${cfg.name}] Retrying step '$stepId' (attempt ${currentRetries + 1}/${node.maxRetries})")
-                _ <- scheduleReadySteps(ctx, stateRef, cfg)
+                _ <- logger.info(
+                  s"[${cfg.name}] Retrying step '$stepId' (attempt ${currentRetries + 1}/$effectiveMaxRetries, type=$errorType, backoff=${delayMs}ms)"
+                )
+                // Schedule rescan after backoff — step is Pending so scheduleReadySteps will pick it up
+                _ <- ctx.forkTurn(
+                  IO.sleep(scala.concurrent.duration.FiniteDuration(delayMs, scala.concurrent.duration.MILLISECONDS)) *>
+                    IO(ctx.self ! PipelineCommand.ScheduleReady)
+                )
               yield ()
             case _ =>
               // Check if any pending step depends on this one
@@ -702,7 +734,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
                 n.dependsOn.contains(stepId) &&
                   state.stepStatus.get(n.id).contains(StepStatus.Pending.toString)
               )
-              if hasDependers then failPipeline(ctx, stateRef, cfg, s"Step '$stepId' failed, dependents cannot run")
+              if hasDependers then failPipeline(ctx, stateRef, cfg, s"Step '$stepId' failed ($errorType): $error")
               else
                 for
                   _ <- stateRef.update(s =>
@@ -716,7 +748,8 @@ You are a step in a flow pipeline. Follow these rules strictly:
                     "flowStepFailed",
                     "branchName" -> cfg.name.asJson,
                     "stepId" -> stepId.asJson,
-                    "error" -> error.asJson
+                    "error" -> error.asJson,
+                    "errorType" -> errorType.toString.asJson
                   )
                   _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Failed", error))
                 yield ()
