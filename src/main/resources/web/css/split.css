@@ -75,61 +75,52 @@
    Hidden by default; shown via body.canvas-open.
    Content is injected by canvas.js — NOT a ChatView.
 
-   Because the panel sits on the RIGHT, the reveal slides in from the right edge.
-   The canvas column width is set immediately to its target (so the slide layer
-   has a stable width basis), while Main's flex-basis animates to yield space
-   smoothly. The inner #canvas-slide translates from the right on open and back
-   to the right on close — open/close have independent duration + easing so they
-   can be tuned separately. */
-:root {
-  /* Slide-in (expand): slightly snappier. Slide-out (collapse): a touch softer. */
-  --canvas-slide-in-duration: 0.32s;
-  --canvas-slide-out-duration: 0.28s;
-  --canvas-slide-in-ease: cubic-bezier(0.32, 0.72, 0, 1);
-  --canvas-slide-out-ease: cubic-bezier(0.4, 0, 0.2, 1);
-}
+   CSS-driven animation, matching the sidebar collapse pattern:
+   canvas.js sets --canvas-width and toggles body.canvas-open.
+   The panel's flex-basis transitions using the same --panel-duration/--panel-ease
+   as the sidebar. #main stays flex:1 — the browser redistributes space naturally. */
 #canvas-panel {
   display: none;
   flex-direction: column;
-  flex: 0 0 0;        /* fixed basis; flex-basis driven inline, no flex-grow */
+  flex: 0 0 0;        /* collapsed by default; CSS animates to --canvas-width */
   min-width: 0;
   position: relative;
   background: var(--color-bg);
   opacity: 1;
   overflow: hidden;
-  /* The column width grows/shrinks with the same easing as the slide so the
-     reveal stays in lockstep. body.canvas-open picks the slide-in timing; the
-     default (collapsing) uses slide-out timing. */
-  transition: flex-basis var(--canvas-slide-out-duration) var(--canvas-slide-out-ease);
+  /* Same transition as sidebar: one duration, one easing, one property. */
+  transition: flex-basis var(--panel-duration) var(--panel-ease);
 }
-body.canvas-open #canvas-panel.visible {
-  transition: flex-basis var(--canvas-slide-in-duration) var(--canvas-slide-in-ease);
-}
+/* .visible makes the panel display:flex (stays visible during close animation).
+   body.canvas-open sets the target flex-basis. This separation ensures the
+   panel remains in the layout during the close transition (flex-basis → 0)
+   before being hidden by the .hidden class after the timeout. */
 #canvas-panel.visible {
   display: flex;
+}
+body.canvas-open #canvas-panel.visible {
+  flex-basis: var(--canvas-width, 45vw);
+  opacity: 1;
 }
 #canvas-panel.hidden {
   display: none;
 }
 
-/* Slide layer — fills the panel. Its width basis is the panel's target width
-   (set immediately), so translateX(100%) is a stable off-screen-right start.
-   Open/close transitions are separate (data-state switches them) so they can be
-   tuned independently. canvas.js flips data-state after committing the start. */
+/* Slide layer — fills the panel. translateX(100%) hides it off-screen right;
+   data-state="open" slides it in. Uses the same timing as everything else. */
 #canvas-slide {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
   transform: translateX(100%);   /* off-screen to the right (collapsed) */
+  transition: transform var(--panel-duration) var(--panel-ease);
 }
 #canvas-slide[data-state="open"] {
   transform: translateX(0);
-  transition: transform var(--canvas-slide-in-duration) var(--canvas-slide-in-ease);
 }
 #canvas-slide[data-state="closed"] {
   transform: translateX(100%);
-  transition: transform var(--canvas-slide-out-duration) var(--canvas-slide-out-ease);
 }
 
 /* Canvas header — glassmorphism bar matching primary header style */
@@ -212,15 +203,6 @@ body.canvas-open #canvas-panel.visible {
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
-/* Canvas open body state — split layout.
-   When open, the canvas takes the inline width set by canvas.js; Main fills the
-   remaining space. The canvas opacity goes to 1; its width animates from 0 via
-   the #canvas-panel transition. (Main's flex stays 1; its transition is set in
-   the #main block below, switched by canvas-open for in/out timing.) */
-body.canvas-open #canvas-panel.visible {
-  opacity: 1;
-}
-
 /* ═══════════════════════════════════════════════════════════════════════
    Three-column layout: unified cards + draggable resizers
    ─ Sidebar | resizer | Main | resizer | Canvas
@@ -237,27 +219,14 @@ body.canvas-open #canvas-panel.visible {
 }
 #sidebar-panel { width: 100%; }
 
-/* Main — fills remaining space by default; JS pins a fixed width on drag.
-   (min-width:0 lets flex children shrink so the chat can narrow.)
-   canvas.js drives an explicit flex-basis on Main during canvas open/close so
-   Main expands/contracts in concert with the canvas (both animate the same
-   property with the same easing). Disabled during column resize. */
+/* Main — fills remaining space by default (flex:1).
+   Stays flex:1 during canvas open/close — the browser redistributes space
+   naturally as the canvas panel's flex-basis animates, exactly like how
+   Main absorbs the sidebar collapse. No canvas-specific transition needed. */
 #main {
   flex: 1;
   min-width: 0;
-  /* Main yields/reclaims space in lockstep with the canvas slide. Match the
-     canvas slide durations so Main's grow/shrink stays in sync with the reveal.
-     open → slide-in duration/ease; default (closing) → slide-out duration/ease. */
-  transition: flex-basis var(--canvas-slide-out-duration) var(--canvas-slide-out-ease);
 }
-body.canvas-open #main {
-  transition: flex-basis var(--canvas-slide-in-duration) var(--canvas-slide-in-ease);
-}
-/* Canvas — participates in layout only when visible. Its open width is set
-   inline by canvas.js (measured fill width) or by colResizer (drag pin). The
-   base `flex: 0 0 0` means it never competes via flex-grow — width is explicit,
-   which is what makes the open/close transition animate cleanly. The open
-   opacity rule lives above (body.canvas-open #canvas-panel.visible). */
 
 /* ── Column resizer handles ─────────────────────────────────────────────── */
 /* A grabbable strip between two columns. The drag surface spans the card gap
