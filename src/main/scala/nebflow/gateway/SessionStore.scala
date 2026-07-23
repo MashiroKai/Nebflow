@@ -198,6 +198,8 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
       val folders = json.hcursor.downField("folders").as[List[Folder]].getOrElse(Nil)
       (activeId, sessions, folders)
     }.flatMap { case (activeId, sessions, folders) =>
+      // Recover folders from disk if index lost them
+      val recoveredFolders = recoverFoldersFromDisk(folders)
       recoverOrphans(sessions).flatMap { recovered =>
         val allSessions = sessions ++ recovered
         if recovered.nonEmpty then
@@ -206,18 +208,54 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           )
         if activeId.nonEmpty && allSessions.exists(_.id == activeId) then
           loadSessionMessages(activeId).flatMap { msgs =>
-            indexRef.set((activeId, allSessions, folders)) *> activeMessagesRef.set(msgs)
+            indexRef.set((activeId, allSessions, recoveredFolders)) *> activeMessagesRef.set(msgs)
           }
         else if allSessions.nonEmpty then
           allSessions.maxByOption(_.updatedAt) match
             case Some(first) =>
               loadSessionMessages(first.id).flatMap { msgs =>
-                indexRef.set((first.id, allSessions, folders)) *> activeMessagesRef.set(msgs)
+                indexRef.set((first.id, allSessions, recoveredFolders)) *> activeMessagesRef.set(msgs)
               }
             case None => createDefaultSession
         else createDefaultSession
       }
     }
+
+  /**
+   * If index has 0 folders but ~/.nebflow/folders/ has memory/rules files,
+   * reconstruct folder entries from disk. Prevents permanent folder loss
+   * when the index is accidentally cleared.
+   */
+  private def recoverFoldersFromDisk(indexedFolders: List[Folder]): List[Folder] =
+    if indexedFolders.nonEmpty then indexedFolders
+    else
+      val foldersDir = os.Path(sessionsDir.wrapped.getParent.toString) / "folders"
+      if !os.exists(foldersDir) then indexedFolders
+      else
+        val diskIds = os
+          .list(foldersDir)
+          .filter(p => p.last.endsWith(".memory.md") || p.last.endsWith(".rules.md"))
+          .map(_.last.split("\\.").head)
+          .distinct
+          .toList
+        if diskIds.isEmpty then indexedFolders
+        else
+          val now = System.currentTimeMillis()
+          val recovered = diskIds.map { id =>
+            // Try to extract name from memory file
+            val memFile = foldersDir / s"$id.memory.md"
+            val name =
+              if os.exists(memFile) then
+                val content = os.read(memFile)
+                content.linesIterator
+                  .find(_.contains("文件夹名称"))
+                  .map(_.split("：").lastOption.map(_.trim).filter(_.nonEmpty).getOrElse(s"Folder ${id.take(8)}"))
+                  .getOrElse(s"Folder ${id.take(8)}")
+              else s"Folder ${id.take(8)}"
+            Folder(id, name, createdAt = now, updatedAt = now)
+          }
+          logger.info(s"Recovered ${recovered.size} folder(s) from disk (index had 0)")
+          recovered
 
   /** Scan disk for session files not in the index and recover them. */
   private def recoverOrphans(indexed: List[SessionMeta]): IO[List[SessionMeta]] =
