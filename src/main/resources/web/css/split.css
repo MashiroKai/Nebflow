@@ -368,7 +368,6 @@ body.panel-dragging .panel-drag-source > #header::after {
 /* Hover: bump border subtly turns primary color, matching pill behavior */
 #header:hover::before {
   border-color: var(--color-primary);
-  opacity: 0.6;
 }
 
 /* Anchor context for the pill. (#header is already positioned via chat.css.) */
