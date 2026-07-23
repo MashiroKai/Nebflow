@@ -51,7 +51,22 @@ export function initPanelDragger() {
   restoreOrder();
   applyOrder(false);
   bindAllHandles();
+  initHeaderBumpZone();
   observeBodyClass();
+}
+
+// ── Header bump hover zone ─────────────────────────────────────
+// Creates an invisible hit area over the bump (reverse notch) at the top
+// of #header. Hover only triggers when the mouse is on the bump itself,
+// not the entire header area.
+function initHeaderBumpZone() {
+  const header = document.getElementById('header');
+  if (!header || header.querySelector('.header-bump-zone')) return;
+  const zone = document.createElement('div');
+  zone.className = 'header-bump-zone';
+  header.appendChild(zone);
+  zone.addEventListener('mouseenter', () => header.classList.add('bump-hover'));
+  zone.addEventListener('mouseleave', () => header.classList.remove('bump-hover'));
 }
 
 // ── Order persistence ──────────────────────────────────────────

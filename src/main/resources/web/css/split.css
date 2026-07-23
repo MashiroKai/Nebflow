@@ -318,25 +318,52 @@ body.col-resizing #canvas-panel { transition: none; }
   transition: opacity 0.2s, background 0.2s, width 0.2s, height 0.2s;
   z-index: 1;
 }
-/* Hover/drag on the header lights up the pill, same as the resize grip. */
+/* Hover/drag on the SIDEBAR header lights up its pill. */
 .sidebar-topbar:hover::after,
-#header:hover::after,
-body.panel-dragging .panel-drag-source > .sidebar-topbar::after,
-body.panel-dragging .panel-drag-source > #header::after {
+body.panel-dragging .panel-drag-source > .sidebar-topbar::after {
   opacity: 0.9;
   background: var(--color-primary);
   width: 48px;
   height: 5px;
 }
+
+/* MAIN header: precise bump hover zone (.bump-hover class toggled by JS).
+ * The pill and bump only react when the mouse is directly over the bump area,
+ * not the entire header. */
+#header.bump-hover::after,
+body.panel-dragging .panel-drag-source > #header::after {
+  opacity: 0.9;
+  background: var(--color-primary);
+  width: 48px;
+  height: 5px;
+  top: -5px;
+}
 /* Header pill sits on the bump, sidebar pill stays inside */
 #header::after {
-  top: -2px;
+  top: -3px;
   z-index: 2;
 }
 
-/* Hover: bump border subtly turns primary color, matching pill behavior */
-#header:hover::before {
+/* Bump expands and glows on hover — reverse notch grows */
+#header.bump-hover::before,
+body.panel-dragging .panel-drag-source > #header::before {
+  width: 90px;
+  height: 18px;
+  top: -12px;
   border-color: var(--color-primary);
+  box-shadow: 0 -2px 12px rgba(99, 102, 241, 0.12);
+}
+
+/* Invisible hover hit zone — only the bump area triggers hover */
+.header-bump-zone {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 110px;
+  height: 22px;
+  z-index: 5;
+  background: transparent;
 }
 
 /* Anchor context for the pill. (#header is already positioned via chat.css.) */
