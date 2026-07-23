@@ -20,7 +20,6 @@ object PipelineActor:
   private val logger = NebflowLogger.forName("nebflow.flow.pipeline")
 
   private val ManagerId = "__manager__"
-  private val MaxConcurrency = 5
 
   val VerifyPromptPreamble =
     """You are the verification step of this workflow. Analyze the step results against the verification criteria below.
@@ -239,7 +238,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
           case PipelineCommand.FlowTimeout =>
             stateRef.get.flatMap { state =>
               if state.phase == RunPhase.Running then
-                failPipeline(ctx, stateRef, cfg, s"Flow timed out after $MaxFlowDuration")
+                failPipeline(ctx, stateRef, cfg, s"Flow timed out after ${cfg.flowDef.flowTimeoutSeconds}s")
               else IO.unit
             }.as(this)
 
@@ -331,7 +330,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
             _ <- scheduleReadySteps(ctx, stateRef, cfg)
             // Start global flow timeout
             _ <- ctx.forkTurn(
-              IO.sleep(MaxFlowDuration) *>
+              IO.sleep(cfg.flowDef.flowTimeoutSeconds.seconds) *>
                 stateRef.get.flatMap { s =>
                   if s.phase == RunPhase.Running then IO(ctx.self ! PipelineCommand.FlowTimeout)
                   else IO.unit
@@ -359,7 +358,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
       }
       // Count running steps (those with Running status)
       runningCount = state.stepStatus.count(_._2 == StepStatus.Running.toString)
-      slots = (MaxConcurrency - runningCount).max(0)
+      slots = (cfg.flowDef.maxConcurrency - runningCount).max(0)
       toStart = ready.take(slots)
       _ <- toStart.traverse_(node => spawnStep(ctx, stateRef, cfg, node))
       _ =
@@ -1069,7 +1068,6 @@ You are a step in a flow pipeline. Follow these rules strictly:
 
   private val MaxStepOutputChars = 8000
   private val MaxMemoryChars = 4000
-  private val MaxFlowDuration = 3600.seconds // 1 hour global flow timeout
 
   /** Inject flow memory as a context prefix to a prompt. */
   private def withMemory(prompt: String, cfg: PipelineConfig): String =

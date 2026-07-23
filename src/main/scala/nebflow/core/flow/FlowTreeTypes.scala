@@ -132,7 +132,8 @@ case class FlowDef(
   manager: Option[String] = None,
   description: String = "",
   nodes: List[FlowNode] = Nil,
-  maxDepth: Int = 5
+  maxConcurrency: Int = 5,
+  flowTimeoutSeconds: Int = 3600
 )
 
 object FlowDef:
@@ -143,7 +144,8 @@ object FlowDef:
       "manager" -> f.manager.asJson,
       "description" -> f.description.asJson,
       "nodes" -> f.nodes.asJson,
-      "maxDepth" -> f.maxDepth.asJson
+      "maxConcurrency" -> f.maxConcurrency.asJson,
+      "flowTimeoutSeconds" -> f.flowTimeoutSeconds.asJson
     )
   }
 
