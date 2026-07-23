@@ -10,13 +10,18 @@
 // CSS handles all transitions via flex-basis. #main stays flex:1 throughout —
 // the browser redistributes space naturally, just like sidebar collapse.
 //
-// One rAF on open ensures the browser commits the initial frame (display:flex,
-// flex-basis:0) before the transition target is applied — the same purpose as
-// the old forced reflow, but without blocking the main thread.
+// Double rAF on open ensures the browser paints one full frame at the initial
+// state (display:flex, flex-basis:0) before the transition target is applied.
+// The sidebar doesn't need this because it's always visible — only its width
+// changes. The canvas starts at display:none, so it needs one committed frame
+// at flex-basis:0 before triggering the transition.
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
 const LS_KEY = 'nebflow_col_widths';
+
+// Track pending close timeout so openCanvas can cancel it (rapid toggle safety).
+let closeTimeout = null;
 
 /** Read a previously persisted canvas width (px) from storage. */
 function getPersistedCanvasWidth() {
@@ -45,6 +50,9 @@ export function openCanvas(title = '') {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
 
+  // Cancel any pending close cleanup from a rapid toggle.
+  if (closeTimeout) { clearTimeout(closeTimeout); closeTimeout = null; }
+
   panel.classList.remove('hidden');
   panel.classList.add('visible');
   if (title) {
@@ -56,14 +64,18 @@ export function openCanvas(title = '') {
   const canvasTarget = computeOpenWidth();
   document.documentElement.style.setProperty('--canvas-width', canvasTarget + 'px');
 
-  // Use rAF to let the browser commit the starting frame (display:flex,
-  // flex-basis:0) before we trigger the transition by adding canvas-open.
-  // This replaces the old forced reflow (void offsetWidth) — same effect,
-  // but non-blocking.
+  // Double rAF: the first rAF lets the browser complete one full style recalc
+  // + layout + paint cycle, committing the initial state (display:flex,
+  // flex-basis:0) to the render tree. The second rAF runs in the next frame,
+  // so adding canvas-open correctly triggers a transition from the painted
+  // initial state to the target. This replaces the old forced reflow
+  // (void offsetWidth) — same frame-commit guarantee, but non-blocking.
   requestAnimationFrame(() => {
-    document.body.classList.add('canvas-open');
-    const slide = document.getElementById('canvas-slide');
-    if (slide) slide.setAttribute('data-state', 'open');
+    requestAnimationFrame(() => {
+      document.body.classList.add('canvas-open');
+      const slide = document.getElementById('canvas-slide');
+      if (slide) slide.setAttribute('data-state', 'open');
+    });
   });
 }
 
@@ -92,13 +104,14 @@ export function closeCanvas() {
   document.body.classList.remove('canvas-open');
 
   // Cleanup after the transition completes.
-  const DURATION = 350; // --panel-duration (0.32s) + small buffer
-  setTimeout(() => {
+  const DURATION = 400; // --panel-duration (0.32s) + 80ms buffer
+  closeTimeout = setTimeout(() => {
     panel.classList.remove('visible');
     panel.classList.add('hidden');
     if (slide) slide.removeAttribute('data-state');
     const content = document.getElementById('canvas-content');
     if (content) content.innerHTML = '';
+    closeTimeout = null;
   }, DURATION);
 }
 
