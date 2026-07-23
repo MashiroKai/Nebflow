@@ -285,6 +285,8 @@ object TreeCommand:
 
   case class ReloadDefinition(flowName: String) extends TreeCommand
 
+  case class CancelPipeline(name: String) extends TreeCommand
+
   case object Shutdown extends TreeCommand
 
 end TreeCommand

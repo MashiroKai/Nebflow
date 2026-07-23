@@ -90,6 +90,18 @@ object FlowTreeActor:
           case TreeCommand.ReloadDefinition(flowName) =>
             handleReload(ctx, pipelinesRef, flowNamesRef, cfg, flowName).as(this)
 
+          case TreeCommand.CancelPipeline(name) =>
+            pipelinesRef.get.flatMap { pipelines =>
+              pipelines.get(name) match
+                case Some(ref) =>
+                  for
+                    _ <- ref ! PipelineActor.PipelineCommand.Cancel
+                    _ <- logger.info(s"Cancel sent to pipeline '$name'")
+                  yield ()
+                case None =>
+                  logger.warn(s"Cannot cancel '$name': not found")
+            }.as(this)
+
           case TreeCommand.Shutdown =>
             for
               pipelines <- pipelinesRef.get

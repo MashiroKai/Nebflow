@@ -98,19 +98,23 @@ Behavior:
     else
       val items = questionsJson.flatMap { q =>
         val question = q.hcursor.downField("question").as[String].getOrElse("")
-        val id = q.hcursor.downField("id").as[String].toOption
-        val dependsOn = for
-          dep <- q.hcursor.downField("dependsOn").focus
-          ref <- dep.hcursor.downField("ref").as[String].toOption
-          equals <- dep.hcursor.downField("equals").as[String].toOption
-        yield QuestionDependency(ref, equals)
-        val options = q.hcursor.downField("options").as[List[io.circe.Json]].getOrElse(Nil)
-        val opts = options.flatMap { o =>
-          val label = o.hcursor.downField("label").as[String].getOrElse("")
-          val desc = o.hcursor.downField("description").as[String].toOption
-          Some(AskOption(label, desc))
-        }
-        Some(AskItem(question, opts, id = id, dependsOn = dependsOn))
+        if question.isBlank then None  // skip malformed entries with empty question
+        else
+          val id = q.hcursor.downField("id").as[String].toOption
+          val dependsOn = for
+            dep <- q.hcursor.downField("dependsOn").focus
+            ref <- dep.hcursor.downField("ref").as[String].toOption
+            equals <- dep.hcursor.downField("equals").as[String].toOption
+          yield QuestionDependency(ref, equals)
+          val options = q.hcursor.downField("options").as[List[io.circe.Json]].getOrElse(Nil)
+          val opts = options.flatMap { o =>
+            val label = o.hcursor.downField("label").as[String].getOrElse("")
+            if label.isBlank then None  // skip options with empty label
+            else
+              val desc = o.hcursor.downField("description").as[String].toOption
+              Some(AskOption(label, desc))
+          }
+          Some(AskItem(question, opts, id = id, dependsOn = dependsOn))
       }.toList
 
       if items.isEmpty then IO.pure(Left(ToolError("No valid questions provided")))

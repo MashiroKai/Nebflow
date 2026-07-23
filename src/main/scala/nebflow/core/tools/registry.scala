@@ -36,6 +36,8 @@ object ToolRegistry:
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Sub-agent delegation (replaces Delegate + MountFlow)
       "ExecuteFlow" -> ExecuteFlowTool,
+      // Flow progress query + cancel
+      "FlowControl" -> FlowControlTool,
       // Unified agent communication (message + verify modes)
       "Mail" -> MailTool,
       // Cross-device file transfer
