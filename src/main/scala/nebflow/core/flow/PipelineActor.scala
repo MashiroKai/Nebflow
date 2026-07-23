@@ -473,7 +473,8 @@ You are a step in a flow pipeline. Follow these rules strictly:
               // If this is a retry, inject the previous error so the agent can adjust
               retryContext = state.lastErrors.get(node.id) match
                 case Some(err) =>
-                  s"\n\n=== Previous Attempt Failed ===\nThe previous attempt failed with this error:\n$err\n\nPlease adjust your approach to avoid this failure.\n=== End Error Context ===\n"
+                  val safeError = err.take(500)
+                  s"\n\n=== Previous Attempt Failed ===\nThe previous attempt failed with this error:\n$safeError\n\nPlease adjust your approach to avoid this failure.\n=== End Error Context ===\n"
                 case None => ""
               actualPrompt = withMemory(FlowAgentPrefix + peerInfo + promptWithPreamble + retryContext, cfg)
               // Only require Mail if the node has reachable peers already spawned
@@ -722,7 +723,10 @@ You are a step in a flow pipeline. Follow these rules strictly:
               for
                 _ <- stateRef.update(s =>
                   s.copy(
-                    stepStatus = s.stepStatus + (stepId -> StepStatus.Pending.toString),
+                    // Use Retrying (not Pending) so scheduleReadySteps doesn't
+                    // immediately re-spawn it. ScheduleReady flips it to Pending
+                    // after the backoff delay.
+                    stepStatus = s.stepStatus + (stepId -> StepStatus.Retrying.toString),
                     stepRetries = s.stepRetries + (stepId -> (currentRetries + 1)),
                     lastErrors = s.lastErrors + (stepId -> error)
                   )
@@ -734,16 +738,19 @@ You are a step in a flow pipeline. Follow these rules strictly:
                   "stepId" -> stepId.asJson,
                   "attempt" -> (currentRetries + 1).asJson,
                   "maxRetries" -> effectiveMaxRetries.asJson,
-                  "error" -> error.asJson,
+                  "error" -> error.take(500).asJson,
                   "errorType" -> errorType.toString.asJson,
                   "backoffMs" -> delayMs.asJson
                 )
                 _ <- logger.info(
                   s"[${cfg.name}] Retrying step '$stepId' (attempt ${currentRetries + 1}/$effectiveMaxRetries, type=$errorType, backoff=${delayMs}ms)"
                 )
-                // Schedule rescan after backoff — step is Pending so scheduleReadySteps will pick it up
+                // After backoff: flip Retrying → Pending, then reschedule
                 _ <- ctx.forkTurn(
                   IO.sleep(scala.concurrent.duration.FiniteDuration(delayMs, scala.concurrent.duration.MILLISECONDS)) *>
+                    stateRef.update(s =>
+                      s.copy(stepStatus = s.stepStatus + (stepId -> StepStatus.Pending.toString))
+                    ) *>
                     IO(ctx.self ! PipelineCommand.ScheduleReady)
                 )
               yield ()
@@ -767,7 +774,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
                     "flowStepFailed",
                     "branchName" -> cfg.name.asJson,
                     "stepId" -> stepId.asJson,
-                    "error" -> error.asJson,
+                    "error" -> error.take(500).asJson,
                     "errorType" -> errorType.toString.asJson
                   )
                   _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Failed", error))
