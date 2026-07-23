@@ -46,6 +46,27 @@ Workflow for failing verification:
 --- Step Results ---
 """.stripMargin
 
+  /** System prefix injected into EVERY flow agent's prompt.
+   *  Tells agents the working principles of operating inside a flow pipeline.
+   *  Without this, agents don't know they need Mail, shouldn't use background
+   *  tasks, or that their output is auto-forwarded. */
+  val FlowAgentPrefix =
+    """=== Flow Agent Guidelines ===
+You are a step in a flow pipeline. Follow these rules strictly:
+
+1. OUTPUT FORWARDING: Your response text is automatically captured and passed to downstream steps. Write a clear, complete summary of what you did and found.
+
+2. MAIL IS MANDATORY: If peer agents are listed in the "Flow Communication" section below, you MUST use Mail(type=message) to send your key findings to relevant peers before finishing. If you finish without calling Mail, your turn will be rejected and you will be asked to retry.
+
+3. VERIFICATION: If your task is verification (indicated by the verification criteria below), you MUST use Mail(type=verify, passed=..., summary=...) to report your verdict. Do NOT finish without calling Mail.
+
+4. NO BACKGROUND TASKS: Do NOT use run_in_background for any command. All commands must complete synchronously within your turn. Background task notifications do not work inside flows — they will cause your step to hang.
+
+5. FOCUS: Complete only your assigned task. Do not expand scope or work on unrelated files.
+=== End Guidelines ===
+
+""".stripMargin
+
   // ============================================================
   // Messages
   // ============================================================
@@ -400,7 +421,7 @@ Workflow for failing verification:
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id), Some(nodeSession.id))
               peerInfo = buildPeerInfo(node.id, state.agentPaths, cfg.name, neighborsOf(cfg.flowDef.nodes, node.id))
-              actualPrompt = withMemory(peerInfo + promptWithPreamble, cfg)
+              actualPrompt = withMemory(FlowAgentPrefix + peerInfo + promptWithPreamble, cfg)
               // Only require Mail if the node has reachable peers already spawned
               nodeNeighbors = neighborsOf(cfg.flowDef.nodes, node.id)
               hasReachablePeers = nodeNeighbors.exists(id => state.agentPaths.contains(id))
