@@ -37,13 +37,75 @@ export function renderQueueBar(sessionId, handlers = {}) {
   const label = t('input.queued') || '排队中';
   title.textContent = `${label} (${items.length})`;
   header.appendChild(title);
+
+  // Collapse toggle
+  const collapseBtn = document.createElement('button');
+  collapseBtn.className = 'queue-bar-collapse';
+  collapseBtn.innerHTML = bar.classList.contains('collapsed') ? '\u25B8' : '\u25BE';
+  collapseBtn.title = bar.classList.contains('collapsed') ? 'Expand' : 'Collapse';
+  collapseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    bar.classList.toggle('collapsed');
+    collapseBtn.innerHTML = bar.classList.contains('collapsed') ? '\u25B8' : '\u25BE';
+    collapseBtn.title = bar.classList.contains('collapsed') ? 'Expand' : 'Collapse';
+  });
+  header.appendChild(collapseBtn);
   bar.appendChild(header);
+
+  // Skip rendering items if collapsed
+  if (bar.classList.contains('collapsed')) return;
 
   // Items
   items.forEach((item) => {
     const row = document.createElement('div');
     row.className = 'queue-item';
     row.dataset.queueId = item.id;
+    row.draggable = true;
+
+    // Drag handle (grip icon)
+    const grip = document.createElement('span');
+    grip.className = 'queue-item-grip';
+    grip.innerHTML = '\u22EE';
+    grip.title = 'Drag to reorder';
+    row.appendChild(grip);
+
+    // Drag events
+    row.addEventListener('dragstart', (e) => {
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.id);
+      bar._draggedId = item.id;
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+      bar.querySelectorAll('.queue-item.drag-over').forEach(el => el.classList.remove('drag-over'));
+      delete bar._draggedId;
+    });
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (bar._draggedId && bar._draggedId !== item.id) {
+        row.classList.add('drag-over');
+      }
+    });
+    row.addEventListener('dragleave', () => {
+      row.classList.remove('drag-over');
+    });
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      row.classList.remove('drag-over');
+      const draggedId = bar._draggedId;
+      if (!draggedId || draggedId === item.id) return;
+      const queue = state.messageQueue[sessionId] || [];
+      const fromIdx = queue.findIndex(q => q.id === draggedId);
+      const toIdx = queue.findIndex(q => q.id === item.id);
+      if (fromIdx === -1 || toIdx === -1) return;
+      const [moved] = queue.splice(fromIdx, 1);
+      queue.splice(toIdx, 0, moved);
+      state.messageQueue[sessionId] = queue;
+      renderQueueBar(sessionId, handlers);
+    });
 
 	    const textEl = document.createElement('span');
 	    textEl.className = 'queue-item-text';

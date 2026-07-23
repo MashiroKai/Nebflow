@@ -75,6 +75,9 @@ Workflow for failing verification:
     /** Global flow timeout fired. */
     case object FlowTimeout extends PipelineCommand
 
+    /** Cancel the pipeline — stop all agents, mark as failed. */
+    case object Cancel extends PipelineCommand
+
     /** Shutdown the pipeline actor. */
     case object Stop extends PipelineCommand
 
@@ -215,6 +218,13 @@ Workflow for failing verification:
             stateRef.get.flatMap { state =>
               if state.phase == RunPhase.Running then
                 failPipeline(ctx, stateRef, cfg, s"Flow timed out after $MaxFlowDuration")
+              else IO.unit
+            }.as(this)
+
+          case PipelineCommand.Cancel =>
+            stateRef.get.flatMap { state =>
+              if state.phase == RunPhase.Running then
+                failPipeline(ctx, stateRef, cfg, "Flow canceled by user/agent")
               else IO.unit
             }.as(this)
 
