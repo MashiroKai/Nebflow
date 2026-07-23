@@ -1412,14 +1412,17 @@ onMessage('flowStarted', (msg) => {
 
 onMessage('flowStepStarted', (msg) => {
   flowCanvas.updateStep({ ...msg, status: 'running' });
+  if (state.updateBgTasksUI) state.updateBgTasksUI();
 });
 
 onMessage('flowStepCompleted', (msg) => {
   flowCanvas.updateStep({ ...msg, status: 'done' });
+  if (state.updateBgTasksUI) state.updateBgTasksUI();
 });
 
 onMessage('flowStepFailed', (msg) => {
   flowCanvas.updateStep({ ...msg, status: 'failed' });
+  if (state.updateBgTasksUI) state.updateBgTasksUI();
 });
 
 onMessage('flowVerifyResult', (msg) => {
@@ -1805,7 +1808,7 @@ function renderBgDropdown() {
       e.stopPropagation();
       cancelBtn.disabled = true;
       cancelBtn.textContent = '...';
-      sendWs({ type: 'cancelFlow', name: flow.name });
+      sendWs({ type: 'cancelFlow', name: flow.name, sessionId: state.activeSessionId });
     };
     row.appendChild(info);
     row.appendChild(cancelBtn);
