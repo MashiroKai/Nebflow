@@ -73,8 +73,6 @@ export function openCanvas(title = '') {
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       document.body.classList.add('canvas-open');
-      const slide = document.getElementById('canvas-slide');
-      if (slide) slide.setAttribute('data-state', 'open');
     });
   });
 }
@@ -98,7 +96,6 @@ export function closeCanvas() {
   }
 
   const slide = document.getElementById('canvas-slide');
-  if (slide) slide.setAttribute('data-state', 'closed');
 
   // Remove body class — CSS animates flex-basis back to 0.
   document.body.classList.remove('canvas-open');
@@ -108,7 +105,6 @@ export function closeCanvas() {
   closeTimeout = setTimeout(() => {
     panel.classList.remove('visible');
     panel.classList.add('hidden');
-    if (slide) slide.removeAttribute('data-state');
     const content = document.getElementById('canvas-content');
     if (content) content.innerHTML = '';
     closeTimeout = null;
