@@ -189,6 +189,25 @@ You are a step in a flow pipeline. Follow these rules strictly:
 
       for
         _ <- logger.info(s"PipelineActor '${config.name}' created (flow: ${config.flowName})")
+        // Check for interrupted state from a previous run (crash recovery)
+        _ <- config.sessionId match
+          case Some(sid) if sid.nonEmpty =>
+            PipelineStateStore.load(sid, config.name).flatMap {
+              case Some(saved) if saved.phase == "Running" =>
+                val input = saved.triggerInput.getOrElse("")
+                for
+                  _ <- logger.warn(s"[${config.name}] Detected interrupted run (phase=Running), auto-resuming in 3s")
+                  _ <- emit(config, "flowResuming",
+                    "branchName" -> config.name.asJson,
+                    "flowName" -> config.flowName.asJson
+                  )
+                  _ <- ctx.forkTurn(
+                    IO.sleep(3.seconds) *> IO(ctx.self ! PipelineCommand.Trigger(input, None))
+                  )
+                yield ()
+              case _ => IO.unit
+            }
+          case _ => IO.unit
         _ <- saveState(stateRef, config) // persist initial idle state
       yield running(ctx, stateRef, config)
     }
@@ -1372,7 +1391,8 @@ Produce the updated memory file:"""
             iteration = state.iteration,
             verifyResult = state.verifyResult,
             verifyAgent = cfg.flowDef.nodes.find(_.verdict).flatMap(_.agent).getOrElse(""),
-            maxIterations = cfg.flowDef.nodes.flatMap(_.retry).headOption.map(_.maxIterations).getOrElse(0)
+            maxIterations = cfg.flowDef.nodes.flatMap(_.retry).headOption.map(_.maxIterations).getOrElse(0),
+            triggerInput = if state.triggerInput.nonEmpty then Some(state.triggerInput) else None
           )
           _ <- PipelineStateStore.save(sid, pipelineState)
         yield ()
