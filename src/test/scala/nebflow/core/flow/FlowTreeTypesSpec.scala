@@ -172,22 +172,19 @@ class FlowTreeTypesSpec extends FunSuite:
     assert(json.asObject.forall(!_.contains("verdict")), "Non-verdict node JSON should not contain 'verdict' field")
   }
 
+  // Structural validity is now checked via FlowNode.isValid + FlowDefLoader.validate,
+  // NOT by a constructor `require` (a require threw at decode time and aborted the
+  // entire nodes list — root cause 4). So these assert isValid=false, not an exception.
   test("FlowNode: rejects both agent and flow") {
-    intercept[IllegalArgumentException] {
-      FlowNode(id = "bad", agent = Some("X"), prompt = Some("y"), flow = Some("z"))
-    }
+    assert(!FlowNode(id = "bad", agent = Some("X"), prompt = Some("y"), flow = Some("z")).isValid)
   }
 
   test("FlowNode: rejects neither agent nor flow") {
-    intercept[IllegalArgumentException] {
-      FlowNode(id = "bad")
-    }
+    assert(!FlowNode(id = "bad").isValid)
   }
 
   test("FlowNode: agent without prompt is rejected") {
-    intercept[IllegalArgumentException] {
-      FlowNode(id = "bad", agent = Some("X"))
-    }
+    assert(!FlowNode(id = "bad", agent = Some("X")).isValid)
   }
 
   // ============================================================
@@ -444,13 +441,13 @@ class FlowTreeTypesSpec extends FunSuite:
       case Left(err) => assert(err.contains("name"), s"Error should mention name: $err")
   }
 
-  test("FlowDefLoader: flow with no nodes defaults to empty list") {
+  // A flow with no nodes is now rejected at parse time (root cause 4: empty
+  // nodes would pass `allDone` vacuously and immediately "complete" uselessly).
+  test("FlowDefLoader: flow with no nodes is rejected") {
     val yaml = "name: empty-flow\n"
     FlowDefLoader.parse(yaml) match
-      case Right(defn) =>
-        assertEquals(defn.name, "empty-flow")
-        assert(defn.nodes.isEmpty, "Nodes should default to empty")
-      case Left(err) => fail(s"Parse should succeed: $err")
+      case Right(_) => fail("Parse should reject a flow with no nodes")
+      case Left(err) => assert(err.contains("no nodes"), s"Error should mention no nodes: $err")
   }
 
   test("FlowDefLoader: manager defaults to None when absent") {

@@ -204,6 +204,17 @@ export function clearRetryStatus() {
 }
 
 // ---------- Busy toggle (per-session) ----------
+
+/** Reflect the WebSocket connection state onto the send button. The send button
+ *  doubles as the connection indicator: when disconnected it goes grey/red
+ *  (.disconnected) to signal sends are unavailable. Called from ws.js on
+ *  connect/disconnect and from setBusy/clearBusy. */
+export function refreshSendButtonState() {
+  const btn = activeView?.dom?.sendBtn || document.getElementById('send-btn');
+  if (!btn) return;
+  btn.classList.toggle('disconnected', !state.connected);
+}
+
 export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
@@ -222,6 +233,7 @@ export function clearBusy(sessionId) {
     sendBtn.style.display = 'flex';
     stopBtn.style.display = 'none';
     input.focus();
+    refreshSendButtonState();
   }
 }
 
@@ -261,23 +273,28 @@ export function renderUserBubble(text, attachments, timestamp) {
     row.appendChild(bubble);
   });
 
-  // Timestamp + copy button
+  // Timestamp + copy button (pill style, matching AI duration badge)
   const ts = timestamp || Date.now();
-  const metaEl = document.createElement('div');
-  metaEl.className = 'msg-meta';
-  const timeEl = document.createElement('div');
-  timeEl.className = 'msg-time';
-  timeEl.setAttribute('data-ts', ts);
-  timeEl.textContent = formatHm(ts);
-  timeEl.title = '点击切换 12/24 小时制';
-  timeEl.addEventListener('click', toggleTimeFormat);
-  metaEl.appendChild(timeEl);
-  if (text) metaEl.appendChild(createMsgCopyButton(text));
-  row.appendChild(metaEl);
+  const badge = document.createElement('div');
+  badge.className = 'duration-badge';
+  const timeSpan = document.createElement('span');
+  timeSpan.className = 'duration-badge-time';
+  timeSpan.setAttribute('data-ts', ts);
+  timeSpan.textContent = formatHm(ts);
+  timeSpan.title = '点击切换 12/24 小时制';
+  timeSpan.addEventListener('click', toggleTimeFormat);
+  badge.appendChild(timeSpan);
+  if (text) {
+    const div = document.createElement('span');
+    div.className = 'duration-badge-divider';
+    badge.appendChild(div);
+    badge.appendChild(createMsgCopyButton(text));
+  }
+  row.appendChild(badge);
 
   chat.appendChild(row);
   chat.scrollTop = chat.scrollHeight;
-  return { type: 'user', text, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
+  return { type: 'user', text, timestamp: ts, attachments: (attachments || []).map(a => ({ type: a.type, name: a.name, preview: a.preview })) };
 }
 
 /** Format epoch millis as HH:MM (24h) or h:MM AM/PM (12h), respecting user preference */

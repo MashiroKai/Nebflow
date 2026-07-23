@@ -68,20 +68,28 @@
 .neblink-peer {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-radius: 4px;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
   font-size: 13px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  transition: border-color 0.15s, background 0.15s;
 }
-.neblink-peer:hover { background: var(--color-bg); }
+.neblink-peer:hover { background: var(--color-frame-hover, var(--color-bg)); border-color: var(--color-frame-text-muted, var(--color-text-muted)); }
 
-.neblink-peer-dot {
-  width: 6px;
-  height: 6px;
+.neblink-peer-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
   flex-shrink: 0;
+  border: 1px solid var(--color-border);
 }
-.dot-on { background: var(--color-success); }
 
 .neblink-peer-name {
   flex: 1;
@@ -89,7 +97,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text);
+  cursor: pointer;
 }
+.neblink-peer-name:hover { color: var(--color-primary); }
 
 .neblink-peer-platform {
   font-size: 11px;

@@ -27,15 +27,25 @@
 </head>
 <body>
   <script>if(localStorage.getItem('nebflow_sidebar_collapsed')==='true')document.body.classList.add('sidebar-collapsed');</script>
-  <!-- Sidebar — unified glass card (schedule + session list) -->
+  <!-- Activity Bar — vertical icon strip (independent glass card).
+       Top: avatar (tap to log in to NebLink). Bottom: settings.
+       Device management lives in the Settings panel (NebLink section). -->
+  <div id="activity-bar">
+    <button id="activity-avatar" class="activity-avatar" title="Login">
+      <img class="activity-avatar-logo" src="favicon.svg" alt="">
+      <img class="activity-avatar-photo" alt="" hidden>
+      <span class="activity-avatar-letter" hidden>N</span>
+    </button>
+    <div class="activity-spacer"></div>
+    <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
+  </div>
+
+  <!-- Sidebar — scheduled tasks only (single-session architecture) -->
   <div id="sidebar">
     <div id="sidebar-panel">
       <div id="panel-sessions" class="panel active">
-        <!-- Sidebar top bar — settings gear + connection indicator -->
-        <div class="sidebar-topbar">
-          <button id="settings-btn" class="panel-btn" title="Settings"><i data-lucide="settings"></i></button>
-          <div class="conn off" id="conn"></div>
-        </div>
+        <!-- Sidebar top bar — empty drag handle for panel reordering -->
+        <div class="sidebar-topbar"></div>
 
         <!-- Schedule Section -->
         <div id="schedule-section">
@@ -50,17 +60,6 @@
             <!-- Tasks rendered here by scheduled-task.js -->
           </div>
         </div>
-
-        <div class="sidebar-section-divider"></div>
-
-        <!-- Session management actions -->
-        <div class="session-actions">
-          <button id="new-folder-btn" class="panel-btn"><i data-lucide="folder"></i></button>
-          <button id="new-session-btn" class="panel-btn">+</button>
-        </div>
-
-        <!-- Session List -->
-        <div id="session-list"></div>
       </div>
       <div id="panel-settings" class="panel">
         <div class="panel-header">
@@ -73,6 +72,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Column resizer — drag to adjust sidebar / main widths -->
+  <div class="col-resizer" data-left="sidebar" data-right="main"></div>
 
   <!-- Main Chat Area -->
   <div id="main">
@@ -151,15 +153,20 @@
   </div>
   </div>
 
+  <!-- Column resizer — drag to adjust main / canvas widths (only when canvas open) -->
+  <div class="col-resizer canvas-resizer" data-left="main" data-right="canvas"></div>
+
   <!-- Canvas Panel — generic display container (画板) -->
   <div id="canvas-panel" class="hidden">
-    <div class="canvas-header">
-      <span class="canvas-title" id="canvas-title"></span>
-      <button id="canvas-close-btn" class="canvas-close-btn" title="Close">
-        <i data-lucide="x"></i>
-      </button>
+    <div id="canvas-slide">
+      <div class="canvas-header">
+        <span class="canvas-title" id="canvas-title"></span>
+        <button id="canvas-close-btn" class="canvas-close-btn" title="Close">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div id="canvas-content"></div>
     </div>
-    <div id="canvas-content"></div>
   </div>
 
   <!-- Modals -->
@@ -186,6 +193,8 @@
     <div id="agent-modal">
       <div id="agent-modal-title">Edit Agent</div>
       <div id="agent-modal-body">
+        <div class="agent-field-label">Tools</div>
+        <div id="agent-tools-grid"></div>
         <div class="agent-field-label" data-i18n="agent.systemPrompt">System Prompt</div>
         <textarea id="agent-system-input" placeholder="System prompt (Markdown)" rows="12" spellcheck="false"></textarea>
       </div>

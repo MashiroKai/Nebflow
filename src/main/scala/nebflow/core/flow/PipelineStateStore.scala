@@ -20,7 +20,12 @@ object PipelineStateStore:
     id: String,
     agent: String,
     status: String,
-    dependsOn: List[String] = Nil
+    dependsOn: List[String] = Nil,
+    nodeSessionId: Option[String] = None,
+    verdict: Boolean = false,
+    condition: Option[String] = None,
+    retryTarget: Option[String] = None,
+    retryMaxIterations: Option[Int] = None
   )
 
   case class PipelineState(
@@ -31,6 +36,8 @@ object PipelineStateStore:
     results: Map[String, String] = Map.empty,
     iteration: Int = 0,
     verifyResult: Option[String] = None,
+    verifyAgent: String = "",
+    maxIterations: Int = 0,
     updatedAt: Long = System.currentTimeMillis()
   )
 
@@ -39,7 +46,12 @@ object PipelineStateStore:
       "id" -> s.id.asJson,
       "agent" -> s.agent.asJson,
       "status" -> s.status.asJson,
-      "dependsOn" -> s.dependsOn.asJson
+      "dependsOn" -> s.dependsOn.asJson,
+      "nodeSessionId" -> s.nodeSessionId.asJson,
+      "verdict" -> s.verdict.asJson,
+      "condition" -> s.condition.asJson,
+      "retryTarget" -> s.retryTarget.asJson,
+      "retryMaxIterations" -> s.retryMaxIterations.asJson
     )
   }
 
@@ -49,7 +61,15 @@ object PipelineStateStore:
       agent <- c.downField("agent").as[String]
       status <- c.downField("status").as[String]
       deps <- c.downField("dependsOn").as[Option[List[String]]]
-    yield StepInfo(id, agent, status, deps.getOrElse(Nil))
+      nodeSessionId <- c.downField("nodeSessionId").as[Option[String]]
+      verdict <- c.downField("verdict").as[Option[Boolean]]
+      condition <- c.downField("condition").as[Option[String]]
+      retryTarget <- c.downField("retryTarget").as[Option[String]]
+      retryMaxIter <- c.downField("retryMaxIterations").as[Option[Int]]
+    yield StepInfo(
+      id, agent, status, deps.getOrElse(Nil), nodeSessionId,
+      verdict.getOrElse(false), condition, retryTarget, retryMaxIter
+    )
   }
 
   given Encoder[PipelineState] = Encoder.instance { s =>
@@ -61,6 +81,8 @@ object PipelineStateStore:
       "results" -> s.results.asJson,
       "iteration" -> s.iteration.asJson,
       "verifyResult" -> s.verifyResult.asJson,
+      "verifyAgent" -> s.verifyAgent.asJson,
+      "maxIterations" -> s.maxIterations.asJson,
       "updatedAt" -> s.updatedAt.asJson
     )
   }
@@ -74,6 +96,8 @@ object PipelineStateStore:
       results <- c.downField("results").as[Option[Map[String, String]]]
       iteration <- c.downField("iteration").as[Option[Int]]
       verifyResult <- c.downField("verifyResult").as[Option[String]]
+      verifyAgent <- c.downField("verifyAgent").as[Option[String]]
+      maxIterations <- c.downField("maxIterations").as[Option[Int]]
       updatedAt <- c.downField("updatedAt").as[Option[Long]]
     yield PipelineState(
       name,
@@ -83,6 +107,8 @@ object PipelineStateStore:
       results.getOrElse(Map.empty),
       iteration.getOrElse(0),
       verifyResult,
+      verifyAgent.getOrElse(""),
+      maxIterations.getOrElse(0),
       updatedAt.getOrElse(0L)
     )
   }

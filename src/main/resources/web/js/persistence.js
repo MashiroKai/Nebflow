@@ -130,7 +130,27 @@ export function restoreFromStorage() {
         }
         row.appendChild(bubble);
       });
-      if (m.text) row.appendChild(createMsgCopyButton(m.text));
+      // Timestamp + copy button (pill style, matching AI duration badge)
+      if (m.timestamp && m.timestamp > 0) {
+        const badge = document.createElement('div');
+        badge.className = 'duration-badge';
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'duration-badge-time';
+        timeSpan.setAttribute('data-ts', m.timestamp);
+        timeSpan.textContent = formatHm(m.timestamp);
+        timeSpan.title = '点击切换 12/24 小时制';
+        timeSpan.addEventListener('click', toggleTimeFormat);
+        badge.appendChild(timeSpan);
+        if (m.text) {
+          const div = document.createElement('span');
+          div.className = 'duration-badge-divider';
+          badge.appendChild(div);
+          badge.appendChild(createMsgCopyButton(m.text));
+        }
+        row.appendChild(badge);
+      } else if (m.text) {
+        row.appendChild(createMsgCopyButton(m.text));
+      }
       chat.appendChild(row);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
@@ -442,19 +462,24 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         }
         row.appendChild(bubble);
       });
-      // Timestamp + copy button
+      // Timestamp + copy button (pill style, matching AI duration badge)
       if (m.timestamp && m.timestamp > 0) {
-        const metaEl = document.createElement('div');
-        metaEl.className = 'msg-meta';
-        const timeEl = document.createElement('div');
-        timeEl.className = 'msg-time';
-        timeEl.setAttribute('data-ts', m.timestamp);
-        timeEl.textContent = formatHm(m.timestamp);
-        timeEl.title = '点击切换 12/24 小时制';
-        timeEl.addEventListener('click', toggleTimeFormat);
-        metaEl.appendChild(timeEl);
-        if (m.text) metaEl.appendChild(createMsgCopyButton(m.text));
-        row.appendChild(metaEl);
+        const badge = document.createElement('div');
+        badge.className = 'duration-badge';
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'duration-badge-time';
+        timeSpan.setAttribute('data-ts', m.timestamp);
+        timeSpan.textContent = formatHm(m.timestamp);
+        timeSpan.title = '点击切换 12/24 小时制';
+        timeSpan.addEventListener('click', toggleTimeFormat);
+        badge.appendChild(timeSpan);
+        if (m.text) {
+          const div = document.createElement('span');
+          div.className = 'duration-badge-divider';
+          badge.appendChild(div);
+          badge.appendChild(createMsgCopyButton(m.text));
+        }
+        row.appendChild(badge);
       }
       fragment.appendChild(row);
     } else if (m.type === 'ai') {

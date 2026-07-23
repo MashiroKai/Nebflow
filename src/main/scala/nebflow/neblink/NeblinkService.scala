@@ -87,16 +87,22 @@ class NeblinkService private (
 
   def identity: IO[DeviceIdentity] = identityRef.get
 
-  /** Update device capabilities and/or user description. Persists to disk. */
+  /** Update device capabilities, user description, and/or avatar URL. Persists to disk. */
   def updateDeviceInfo(
     capabilities: Option[Map[String, String]] = None,
-    userDescription: Option[String] = None
+    userDescription: Option[String] = None,
+    avatarUrl: Option[String] = None
   ): IO[Unit] =
     for
       updated <- identityRef.modify { id =>
         val newId = id.copy(
           capabilities = capabilities.getOrElse(id.capabilities),
-          userDescription = userDescription.getOrElse(id.userDescription)
+          userDescription = userDescription.getOrElse(id.userDescription),
+          // Only overwrite avatarUrl when a non-empty value is supplied; an empty
+          // string clears it, None leaves it untouched.
+          avatarUrl = avatarUrl match
+            case Some(url) => Some(url).filter(_.nonEmpty)
+            case None => id.avatarUrl
         )
         (newId, newId)
       }

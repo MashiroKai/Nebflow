@@ -2,7 +2,7 @@
 
 import state, { LS_SESSIONS_KEY, LS_DRAFTS_KEY } from './state.js';
 import { sendWs, onMessage } from './ws.js';
-import { showAgentModal, startInlineNewSession, showBatchDeleteModal } from './modal.js';
+import { showAgentModal, showBatchDeleteModal } from './modal.js';
 import { renderMarkdownWithMath, smartScroll, stopSpinner } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
@@ -115,6 +115,23 @@ function showPanel(tab) {
   if (panel) panel.classList.add('active');
 }
 
+/**
+ * Open the Settings panel: switch view, fetch fresh config, and render.
+ * Shared by the sidebar's back navigation and the Activity Bar settings button
+ * so both trigger identical behavior.
+ */
+export function openSettingsPanel() {
+  showPanel('settings');
+  sendWs({type: 'getConfig'});
+  renderSettings();
+}
+
+/** Return whether the settings panel is currently shown. */
+export function isSettingsPanelActive() {
+  const panel = document.getElementById('panel-settings');
+  return !!panel && panel.classList.contains('active');
+}
+
 // ---------- Session Switching ----------
 
 /** Switch the main panel to display a different session. */
@@ -145,6 +162,14 @@ function switchToSession(sessionId) {
   restoreInputDraft(sessionId);
   clearMemoryCache();
 
+  // Restore folder context: highlight the session's parent folder
+  const session = (state.sessions || []).find(s => s.id === sessionId);
+  if (session?.folderId) {
+    setActiveFolder(session.folderId);
+  } else {
+    clearActiveFolder();
+  }
+
   // Clear unread for the newly active session
   state.unreadSessions.delete(sessionId);
   state.markedUnreadSessions.delete(sessionId);
@@ -163,16 +188,9 @@ function switchToSession(sessionId) {
 }
 
 export function initNavTabs() {
-  // New layout: settings button in sessions panel header
-  const settingsBtn = document.getElementById('settings-btn');
-  if (settingsBtn) {
-    settingsBtn.addEventListener('click', () => {
-      showPanel('settings');
-      sendWs({type: 'getConfig'});
-      renderSettings();
-    });
-  }
-
+  // Settings button now lives in the Activity Bar; its handler is wired in
+  // activityBar.js (which calls openSettingsPanel). Here we keep the back
+  // navigation from the Settings panel to the Sessions panel.
   const settingsBackBtn = document.getElementById('settings-back-btn');
   if (settingsBackBtn) {
     settingsBackBtn.addEventListener('click', () => {
@@ -470,7 +488,7 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
         <div>Nebflow v${state.serverVersion || '...'}</div>
-        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.dom.connEl.classList.contains('off') ? '#f44336' : '#4caf50'}">${state.dom.connEl.classList.contains('off') ? t('settings.disconnected') : t('settings.connected')}</span></div>
+        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
         <div style="margin-top:10px">
           <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
           <span id="update-status" style="margin-left:8px;font-size:12px;color:var(--color-text-secondary)"></span>
@@ -1087,8 +1105,8 @@ function renderOneSessionItem(s, container, opts = {}) {
         switchToSession(s.id);
       }
     } else {
-      clearActiveFolder();
-      // Unified session switching — all agents display in the main panel
+      // Unified session switching — all agents display in the main panel.
+      // switchToSession handles folder context restoration.
       switchToSession(s.id);
     }
   };
@@ -1178,6 +1196,12 @@ export function renderSessionSidebar(sessionData, activeId) {
     }
     if (changed) { try { localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all)); } catch(e) {} }
   } catch(e) {}
+  // Session list DOM removed in single-session architecture — sidebar shows only scheduled tasks.
+  // Sub-agent sessions are accessed via the flow canvas node popup.
+  if (!sessionList) {
+    updateHeaderSessionName();
+    return;
+  }
   sessionList.innerHTML = '';
 
   // Setup unified drop handler on sessionList (once)
@@ -1217,6 +1241,11 @@ export function renderSessionSidebar(sessionData, activeId) {
     });
   }
 
+  // ── Single-session architecture: only render the active session ──
+  // Sub-agent sessions are accessed via the flow canvas node popup.
+  const activeSession = (sessionData || []).find(s => s.id === state.activeSessionId);
+  const visibleSessions = activeSession ? [activeSession] : (sessionData || []).slice(0, 1);
+
   // Sort sessions helper
   const sortSessions = (list) => [...list].sort((a, b) => {
     const pa = state.pinnedSessions.has(a.id) ? 1 : 0;
@@ -1228,7 +1257,7 @@ export function renderSessionSidebar(sessionData, activeId) {
   // Group sessions and folders by agent
   const allFolders = state.folders || [];
   const agentGroups = {};
-  (state.sessions || []).forEach(s => {
+  visibleSessions.forEach(s => {
     const agent = s.agentName || 'Nebula';
     if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
     agentGroups[agent].sessions.push(s);
@@ -1906,7 +1935,7 @@ function updateFolderStatus(folderId) {
 }
 
 export function updateSessionStatus(sessionId) {
-  if (!sessionId) return;
+  if (!sessionId || !state.dom.sessionList) return;
   const item = state.dom.sessionList.querySelector(`.session-item[data-id="${sessionId}"]`);
   if (item) {
     const el = item.querySelector('.session-status');
@@ -1962,6 +1991,7 @@ function updateAgentNotificationDotExternal(agentName) {
 function markSessionActivity(sessionId) {
   // Don't update if session is busy (in progress)
   if (state.busySessionIds.has(sessionId)) return;
+  if (!state.dom.sessionList) return;
 
   // Update updatedAt in state.sessions so future renders stay sorted
   const session = state.sessions.find(s => s.id === sessionId);

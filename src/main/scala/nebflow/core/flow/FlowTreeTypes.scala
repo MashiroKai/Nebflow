@@ -48,11 +48,13 @@ case class FlowNode(
   retry: Option[RetryTarget] = None,
   timeoutSeconds: Int = 1800
 ):
-  require(
+  // NOTE: structural validity (agent+prompt XOR flow) is validated by
+  // FlowDefLoader.validate, NOT by a `require` here — a require would throw at
+  // decode time and abort the entire nodes list, turning one bad node into
+  // "flow has zero nodes" with no diagnostics.
+  def isValid: Boolean =
     (agent.isDefined && prompt.isDefined && flow.isEmpty) ||
-      (agent.isEmpty && prompt.isEmpty && flow.isDefined),
-    s"Node '$id' must have either (agent + prompt) or flow, not both/neither"
-  )
+      (agent.isEmpty && prompt.isEmpty && flow.isDefined)
 
   def isNested: Boolean = flow.isDefined
   def isVerdict: Boolean = verdict
