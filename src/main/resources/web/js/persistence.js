@@ -170,10 +170,11 @@ export function restoreFromStorage() {
         bubble.innerHTML = renderMarkdownWithMath(m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
+        } else {
+          row.appendChild(createMsgCopyButton(m.text));
         }
-        row.appendChild(createMsgCopyButton(m.text));
         chat.appendChild(row);
       }
     } else if (m.type === 'tool') {
@@ -494,10 +495,11 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         deferMd(bubble, m.text || '');
         row.appendChild(bubble);
         if (m.durationMs != null && m.durationMs > 0) {
-          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp);
+          const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
+        } else {
+          row.appendChild(createMsgCopyButton(m.text));
         }
-        row.appendChild(createMsgCopyButton(m.text));
         fragment.appendChild(row);
       }
     } else if (m.type === 'tool') {
