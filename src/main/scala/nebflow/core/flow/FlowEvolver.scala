@@ -138,7 +138,7 @@ Rules:
         logger.warn(s"[Evolve:$flowName] LLM analysis failed: ${e.getMessage}").as(currentYaml)
       }
 
-  /** Write the new YAML, git add + commit. */
+  /** Write the new YAML, git add + commit. Validates before writing. */
   private def applyAndCommit(
     flowName: String,
     oldYaml: String,
@@ -147,22 +147,28 @@ Rules:
     iterations: Int
   ): IO[Unit] =
     val file = flowsDir / s"$flowName.yaml"
-    IO.blocking {
-      os.write.over(file, newYaml)
-      val dir = flowsDir.toIO
-      Process(Seq("git", "add", s"$flowName.yaml"), dir).!
-      val status = if passed then "pass" else "fail"
-      val msg = s"evolve: $flowName ($status, iter=$iterations)"
-      Process(Seq("git", "commit", "-m", msg, "--allow-empty"), dir).!
-    }.void
-      .flatMap { _ =>
-        logger.info(s"[Evolve:$flowName] Applied evolution (git committed)")
-      }
-      .handleErrorWith { e =>
-        // If git fails, revert the file change
-        IO.blocking { os.write.over(file, oldYaml) }.void *>
-          logger.warn(s"[Evolve:$flowName] Git commit failed, reverted: ${e.getMessage}")
-      }
+    FlowDefLoader.parse(newYaml) match
+      case Left(err) =>
+        logger.warn(
+          s"[Evolve:$flowName] Rejecting invalid YAML from LLM: $err"
+        )
+      case Right(_) =>
+        IO.blocking {
+          os.write.over(file, newYaml)
+          val dir = flowsDir.toIO
+          Process(Seq("git", "add", s"$flowName.yaml"), dir).!
+          val status = if passed then "pass" else "fail"
+          val msg = s"evolve: $flowName ($status, iter=$iterations)"
+          Process(Seq("git", "commit", "-m", msg, "--allow-empty"), dir).!
+        }.void
+          .flatMap { _ =>
+            logger.info(s"[Evolve:$flowName] Applied evolution (git committed)")
+          }
+          .handleErrorWith { e =>
+            // If git fails, revert the file change
+            IO.blocking { os.write.over(file, oldYaml) }.void *>
+              logger.warn(s"[Evolve:$flowName] Git commit failed, reverted: ${e.getMessage}")
+          }
   end applyAndCommit
 
 end FlowEvolver
