@@ -119,6 +119,7 @@ Workflow for failing verification:
     failedReasons: Map[String, String] = Map.empty,
     verdicts: Map[String, Boolean] = Map.empty,
     nodeExecCount: Map[String, Int] = Map.empty,
+    stepRetries: Map[String, Int] = Map.empty,
     agentPaths: Map[String, String] = Map.empty,
     agentRefs: Map[String, ActorRef[AgentCommand]] = Map.empty,
     nodeSessionIds: Map[String, String] = Map.empty,
@@ -633,30 +634,55 @@ Workflow for failing verification:
         if stepId == ManagerId then
           failPipeline(ctx, stateRef, cfg, s"Manager agent failed: $error")
         else if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
-          // Check if any pending step depends on this one
-          val hasDependers = cfg.flowDef.nodes.exists(n =>
-            n.dependsOn.contains(stepId) &&
-              state.stepStatus.get(n.id).contains(StepStatus.Pending.toString)
-          )
-          if hasDependers then failPipeline(ctx, stateRef, cfg, s"Step '$stepId' failed, dependents cannot run")
-          else
-            for
-              _ <- stateRef.update(s =>
-                s.copy(
-                  stepStatus = s.stepStatus + (stepId -> StepStatus.Failed.toString),
-                  failedReasons = s.failedReasons + (stepId -> error)
+          val nodeOpt = cfg.flowDef.nodes.find(_.id == stepId)
+          val currentRetries = state.stepRetries.getOrElse(stepId, 0)
+          nodeOpt match
+            case Some(node) if node.maxRetries > 0 && currentRetries < node.maxRetries =>
+              for
+                _ <- stateRef.update(s =>
+                  s.copy(
+                    stepStatus = s.stepStatus + (stepId -> StepStatus.Pending.toString),
+                    stepRetries = s.stepRetries + (stepId -> (currentRetries + 1))
+                  )
                 )
+                _ <- emit(
+                  cfg,
+                  "flowStepRetrying",
+                  "branchName" -> cfg.name.asJson,
+                  "stepId" -> stepId.asJson,
+                  "attempt" -> (currentRetries + 1).asJson,
+                  "maxRetries" -> node.maxRetries.asJson,
+                  "error" -> error.asJson
+                )
+                _ <- logger.info(s"[${cfg.name}] Retrying step '$stepId' (attempt ${currentRetries + 1}/${node.maxRetries})")
+                _ <- scheduleReadySteps(ctx, stateRef, cfg)
+              yield ()
+            case _ =>
+              // Check if any pending step depends on this one
+              val hasDependers = cfg.flowDef.nodes.exists(n =>
+                n.dependsOn.contains(stepId) &&
+                  state.stepStatus.get(n.id).contains(StepStatus.Pending.toString)
               )
-              _ <- emit(
-                cfg,
-                "flowStepFailed",
-                "branchName" -> cfg.name.asJson,
-                "stepId" -> stepId.asJson,
-                "error" -> error.asJson
-              )
-              _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Failed", error))
-            yield ()
-          end if
+              if hasDependers then failPipeline(ctx, stateRef, cfg, s"Step '$stepId' failed, dependents cannot run")
+              else
+                for
+                  _ <- stateRef.update(s =>
+                    s.copy(
+                      stepStatus = s.stepStatus + (stepId -> StepStatus.Failed.toString),
+                      failedReasons = s.failedReasons + (stepId -> error)
+                    )
+                  )
+                  _ <- emit(
+                    cfg,
+                    "flowStepFailed",
+                    "branchName" -> cfg.name.asJson,
+                    "stepId" -> stepId.asJson,
+                    "error" -> error.asJson
+                  )
+                  _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Failed", error))
+                yield ()
+              end if
+          end match
         else IO.unit
     yield ()
 
