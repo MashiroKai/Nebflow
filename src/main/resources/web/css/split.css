@@ -359,6 +359,18 @@ body.panel-dragging .panel-drag-source > #header::after {
   width: 48px;
   height: 5px;
 }
+/* Header pill sits on the bump, sidebar pill stays inside */
+#header::after {
+  top: -2px;
+  z-index: 2;
+}
+
+/* Hover: bump border subtly turns primary color, matching pill behavior */
+#header:hover::before {
+  border-color: var(--color-primary);
+  opacity: 0.6;
+}
+
 /* Anchor context for the pill. (#header is already positioned via chat.css.) */
 .sidebar-topbar {
   position: relative;
