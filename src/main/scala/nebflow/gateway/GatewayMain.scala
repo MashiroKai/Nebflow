@@ -213,7 +213,15 @@ object GatewayMain extends IOApp.Simple:
             // Global session state shared across all connections
             val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
             val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
-            sessionStore.load.flatMap { _ =>
+            sessionStore.load
+              .flatMap { _ =>
+                // Single-session architecture: guarantee the primary agent Nebula
+                // has exactly one session and that it is the active session shown in
+                // the Main window, before any WS client connects. Adopts legacy
+                // agentless sessions (preserving history) and activates as needed.
+                sessionStore.ensureActiveAgentSession("Nebula").void
+              }
+              .flatMap { _ =>
               LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
                 case (handle, registry, healthMonitor, releaseBackend) =>
                   // Clear per-session model overrides on restart so all sessions

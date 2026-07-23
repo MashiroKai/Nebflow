@@ -37,6 +37,10 @@ object FlowTestKit:
     Dispatcher.parallel[IO].allocated.flatMap { (dispatcher, _) =>
       IO(os.temp.dir(prefix = "nebflow-test")).flatMap { tempDir =>
         PathUtil.setDataRoot(tempDir)
+        // Disable LLM log writing in tests: it uses a fake LLM, so the log is
+        // useless, and pruneOldLogs reads stale real-world log files line-by-line
+        // which OOMs the 1GB test heap. This is environmental, not flow logic.
+        nebflow.core.LlmLogWriter.setEnabled(false)
         val setup: IO[Unit] = IO.blocking {
           os.makeDir.all(tempDir / "agents" / "Explorer")
           os.makeDir.all(tempDir / "agents" / "Nebula")
@@ -176,6 +180,19 @@ final class FlowTestKit(
       Behaviors.receiveMessage(_ => IO.pure(ignore))
     actorSystem.spawn(ignore, s"parent-${java.util.UUID.randomUUID().toString.take(8)}")
 
+  /** Spawn a parent agent that records ExternalEvents it receives. Lets a test
+   *  assert on the flow's completion notification (e.g. pass/fail, payload). */
+  def spawnCapturingParent(): IO[(ActorRef[AgentCommand], IO[List[AgentCommand.ExternalEvent]])] =
+    val received = Ref.unsafe[IO, List[AgentCommand.ExternalEvent]](Nil)
+    def behavior: Behavior[AgentCommand] =
+      Behaviors.receiveMessage {
+        case ev: AgentCommand.ExternalEvent =>
+          received.update(_ :+ ev).as(behavior)
+        case _ => IO.pure(behavior)
+      }
+    actorSystem.spawn(behavior, s"capture-${java.util.UUID.randomUUID().toString.take(8)}")
+      .map(ref => (ref, received.get))
+
   def writeMemory(flowName: String, content: String): IO[Unit] =
     FlowMemoryStore.save(flowName, content)
 
@@ -216,11 +233,12 @@ object FakeLlm:
       StreamChunk.Done(Some("stop"), None, Some(meta(agentId)))
     )
 
-  /** All steps reply briefly, verify outputs VERDICT: PASS, reflect returns memory. */
+  /** All steps reply briefly; the verify node reports PASS via Mail (the single
+   *  verdict source) by completing the pending Deferred; reflect returns memory. */
   val passing: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       val allText = req.messages.map(_.textContent).mkString("\n")
-      val isVerify = allText.contains("VERDICT") || allText.contains("Verification Criteria")
+      val isVerify = allText.contains("Verification Criteria")
       val isReflect = allText.contains("updated memory")
       val isEvolve = allText.contains("flow optimization") || allText.contains("propose specific improvements")
       IO {
@@ -228,8 +246,15 @@ object FakeLlm:
           s"[FakeLlm.passing] agentId=${req.agentId} msgCount=${req.messages.size} isVerify=$isVerify isReflect=$isReflect isEvolve=$isEvolve first200=${allText.take(200)}"
         )
       } *>
+        (
+          if isVerify then
+            // Simulate the verify agent calling Mail(type=verify, passed=true):
+            // complete the Deferred registered by PipelineActor.
+            FlowVerifyRegistry.completeAllForTest(VerifyResult(pass = true, "All checks passed.")).void
+          else IO.unit
+        ) *>
         IO.pure(
-          if isVerify then resp("Analysis complete.\nVERDICT: PASS", req.agentId)
+          if isVerify then resp("Analysis complete. Reported PASS via Mail.", req.agentId)
           else if isReflect then resp("# Flow Memory: test\n\n## Patterns\n- Test pattern learned.\n", req.agentId)
           else if isEvolve then
             // Return the YAML unchanged (extract from prompt)
@@ -247,24 +272,30 @@ object FakeLlm:
     ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
-  /** Verify always outputs VERDICT: FAIL. */
+  /** Verify node reports FAIL via Mail (single verdict source). */
   val failing: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       val allText = req.messages.map(_.textContent).mkString("\n")
-      IO.pure(
-        if allText.contains("VERDICT") || allText.contains("Verification Criteria") then
-          resp("Issues found.\nVERDICT: FAIL: output too brief", req.agentId)
-        else if allText.contains("updated memory") then
-          resp("# Flow Memory: test\n\n## Pitfalls\n- Brief outputs fail.\n", req.agentId)
-        else resp("ok", req.agentId)
-      )
+      val isVerify = allText.contains("Verification Criteria")
+      (
+        if isVerify then
+          FlowVerifyRegistry.completeAllForTest(VerifyResult(pass = false, "output too brief")).void
+        else IO.unit
+      ) *>
+        IO.pure(
+          if isVerify then resp("Issues found. Reported FAIL via Mail.", req.agentId)
+          else if allText.contains("updated memory") then
+            resp("# Flow Memory: test\n\n## Pitfalls\n- Brief outputs fail.\n", req.agentId)
+          else resp("ok", req.agentId)
+        )
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
-  /** Never outputs VERDICT — simulates agent ignoring instructions. */
+  /** Verify node never calls Mail — simulates an agent ignoring instructions.
+   *  With Mail as the single source, this yields a FAIL verdict (no Mail = fail). */
   val noVerdict: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.pure(resp("Found some interesting patterns in the code.", req.agentId))

@@ -16,6 +16,7 @@ export default {
   // WebSocket
   ws: null,
   heartbeat: null,
+  connected: false,
 
   // Session
   activeSessionId: null,

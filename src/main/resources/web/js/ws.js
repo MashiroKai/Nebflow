@@ -2,6 +2,14 @@ import state from './state.js';
 import { findViewBySessionId, setActiveView, activeView, chatViews } from './chatView.js';
 import { interceptFlowStep } from './flowAgentPopup.js';
 
+/** Reflect the connection state onto the send button (doubles as the connection
+ *  indicator). Defined here (not imported from chat.js) to avoid a circular
+ *  dependency: chat.js imports sendWs from ws.js. */
+function syncSendButtonConnState() {
+  const btn = activeView?.dom?.sendBtn || document.getElementById('send-btn');
+  if (btn) btn.classList.toggle('disconnected', !state.connected);
+}
+
 // ---------- Handler registry (supports multiple handlers per type) ----------
 const handlers = {};
 
@@ -109,8 +117,8 @@ export function connect() {
 
   state.ws.onopen = () => {
     reconnectAttempts = 0;
-    state.dom.connEl.classList.remove('off');
-    state.dom.connEl.classList.remove('reconnecting');
+    state.connected = true;
+    syncSendButtonConnState();
     if (state.thinkingMode?.enabled) {
       sendWs({type: 'setThinking', thinking: state.thinkingMode});
     }
@@ -132,15 +140,15 @@ export function connect() {
   };
 
   state.ws.onclose = () => {
-    state.dom.connEl?.classList.add('off');
-    state.dom.connEl?.classList.add('reconnecting');
+    state.connected = false;
+    syncSendButtonConnState();
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     scheduleReconnect();
   };
 
   state.ws.onerror = () => {
-    state.dom.connEl?.classList.add('off');
-    state.dom.connEl?.classList.add('reconnecting');
+    state.connected = false;
+    syncSendButtonConnState();
   };
 
   state.ws.onmessage = (e) => {

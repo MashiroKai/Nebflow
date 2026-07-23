@@ -21,7 +21,7 @@ const FLOW_CSS = `
 /* Card wrapper — matches #header / #input-area glass card style */
 .flow-card {
   position: absolute;
-  top: 8px; left: 8px; right: 8px; bottom: 8px;
+  top: 8px; left: 8px; right: 8px; bottom: 12px;
   border-radius: 20px;
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
@@ -220,65 +220,55 @@ function computeLayout() {
     const maxDepth = Math.max(0, ...Object.values(depthMap));
 
     // Layer assignment (Y position by hierarchy from Main Agent):
-    // Y1: verify (closest to Main Agent — reports to it)
-    // Y2: leaf steps (last in chain, feed verify)
-    // Y3+: earlier steps by reverse depth
+    // Y1: verdict nodes (closest to Main Agent — they report the final verdict)
+    // Y2+: other steps by reverse dependency depth
     const colCenter = colX + colWidth / 2;
 
-    // Verify at Y=rowHeight*1
-    const verifyY = rowHeight * 1;
-    allNodes.push({
-      id: `${name}/__verify__`, label: 'verify', status: p.verifyStatus || (p.verifyResult ? 'done' : 'pending'),
-      agent: p.verifyAgent || 'Explorer', pipeline: name, isVerify: true,
-      x: colCenter, y: verifyY,
-    });
+    // Render REAL backend nodes — no synthetic __verify__. A node with
+    // verdict:true is the verify step; there can be zero, one, or several, and
+    // they may be named anything. We trust the backend model, not a hardcode.
+    const verdictSteps = p.steps.filter(s => s.verdict);
 
-    // Leaf steps (no dependers) at Y=rowHeight*2
-    const leafSteps = p.steps.filter(s => !p.steps.some(o => (o.dependsOn || []).includes(s.id)));
-    if (leafSteps.length === 0 && p.steps.length > 0) leafSteps.push(...p.steps);
-
-    // Assign Y by reverse depth: deeper dependency chain = lower Y
-    // Step at maxDepth = closest to verify (Y=2), step at depth 0 = furthest
     p.steps.forEach(s => {
-      const d = depthMap[s.id];
-      const stepsFromLeaf = maxDepth - d; // 0 for leaf, increases for earlier steps
-      const y = rowHeight * (2 + stepsFromLeaf);
+      const isVerify = !!s.verdict;
+      // Verdict nodes sit closest to Main Agent (Y=1); other steps by reverse depth.
+      const y = isVerify
+        ? rowHeight * 1
+        : rowHeight * (2 + (maxDepth - depthMap[s.id]));
       allNodes.push({
         id: `${name}/${s.id}`, label: s.id, status: (s.status || 'pending').toLowerCase(),
         agent: s.agent || '', pipeline: name, stepId: s.id,
+        isVerify,
         x: colCenter, y,
       });
     });
 
     // ── Edge definitions (store now, draw after spreading) ──
 
-    // Main Agent → verify (verify reports to main)
-    allEdges.push({ from: '__root__', to: `${name}/__verify__`, active: p.phase === 'Completed' || p.phase === 'Failed' });
-
-    // Leaf steps → verify
-    leafSteps.forEach(s => {
-      allEdges.push({ from: `${name}/${s.id}`, to: `${name}/__verify__`, active: p.verifyResult !== null });
+    // Main Agent → each verdict node (verdict reports to main)
+    verdictSteps.forEach(v => {
+      allEdges.push({ from: '__root__', to: `${name}/${v.id}`, active: p.phase === 'Completed' || p.phase === 'Failed' });
     });
+    // If there are NO verdict nodes, still connect Main Agent to the root-most
+    // step so the graph isn't disconnected.
+    if (verdictSteps.length === 0 && p.steps.length > 0) {
+      const roots = p.steps.filter(s => !s.dependsOn || s.dependsOn.length === 0);
+      (roots.length ? roots : p.steps.slice(0, 1)).forEach(r => {
+        allEdges.push({ from: '__root__', to: `${name}/${r.id}`, active: p.phase === 'Completed' || p.phase === 'Failed' });
+      });
+    }
 
-    // Step dependency edges: dependency → dependent
-    // Two sources: explicit dependsOn + implicit serial
-    const hasExplicitEdge = (fromId, toId) =>
-      p.steps.some(s => s.id === toId && (s.dependsOn || []).includes(fromId));
-
-    p.steps.forEach((s, i) => {
-      // Explicit edges
+    // Step dependency edges: dependency → dependent (explicit dependsOn only —
+    // no synthetic leaf→verify wiring; the backend DAG is authoritative).
+    p.steps.forEach(s => {
       (s.dependsOn || []).forEach(d => {
         allEdges.push({ from: `${name}/${d}`, to: `${name}/${s.id}`, active: s.status === 'Done' || s.status === 'Running' });
       });
-      // Implicit serial edge: previous step → this step (if not already connected)
-      if (i > 0 && !(s.dependsOn || []).includes(p.steps[i - 1].id) && !hasExplicitEdge(p.steps[i - 1].id, s.id)) {
-        allEdges.push({ from: `${name}/${p.steps[i - 1].id}`, to: `${name}/${s.id}`, active: s.status === 'Done' || s.status === 'Running' });
-      }
     });
 
     // Spread nodes horizontally within same Y level
     const yGroups = {};
-    allNodes.filter(n => n.pipeline === name && !n.isVerify && !n.isRoot).forEach(n => {
+    allNodes.filter(n => n.pipeline === name && !n.isRoot).forEach(n => {
       const yKey = n.y;
       if (!yGroups[yKey]) yGroups[yKey] = [];
       yGroups[yKey].push(n);
@@ -341,7 +331,7 @@ function renderAll() {
   const { allNodes, allPaths, count } = layout;
   const runningCount = allNodes.filter(n => n.status === 'running').length;
 
-  const nodesHtml = allNodes.map(n => nodeHtml(n.id, n.label, n.status, !!n.isRoot, n.agent || '')).join('');
+  const nodesHtml = allNodes.map(n => nodeHtml(n.id, n.label, n.status, !!n.isRoot, n.agent || '', !!n.isVerify)).join('');
 
   const infoHtml = `<div class="flow-info">${count} pipeline${count > 1 ? 's' : ''} · ${runningCount} running</div>`;
   const toolbarHtml = `
@@ -401,9 +391,9 @@ function renderAll() {
   fitView(layout);
 }
 
-function nodeHtml(id, label, status, isRoot = false, agent = '') {
-  const cls = `flow-node ${status}${isRoot ? ' root' : ''}`;
-  const displayLabel = isRoot ? 'Main Agent' : label;
+function nodeHtml(id, label, status, isRoot = false, agent = '', isVerify = false) {
+  const cls = `flow-node ${status}${isRoot ? ' root' : ''}${isVerify ? ' verify' : ''}`;
+  const displayLabel = isRoot ? 'Main Agent' : (isVerify ? `${label} · verify` : label);
   const statusText = isRoot ? 'orchestrator' : status;
   const agentHtml = (!isRoot && agent) ? `<div class="flow-agent">${agent}</div>` : '';
   return `
@@ -459,6 +449,20 @@ function setupWindowListeners() {
     const r = document.getElementById('flow-root');
     r?.classList.remove('panning');
   });
+  // Re-fit the flow view when the canvas size changes (column resizer or
+  // window resize). Debounced so rapid drags don't thrash layout math.
+  let resizeTimer = null;
+  const onResize = () => {
+    if (!isCanvasOpen()) return;
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      // Recompute layout from current data and re-fit the viewport.
+      const layout = computeLayout();
+      if (layout) fitView(layout);
+    }, 120);
+  };
+  window.addEventListener('resize', onResize);
+  window.addEventListener('nebflow-col-resize', onResize);
   panZoomReady = true;
 }
 
@@ -534,12 +538,17 @@ export function startFlow(msg) {
     id: s.id || s.stepId,
     agent: s.agent || s.agentName || '',
     dependsOn: s.dependsOn || [],
+    verdict: !!s.verdict,             // backend is the single source of truth
     status: 'Pending',
   }));
+  // verifyAgent / maxIterations come from the backend now (flowStarted carries
+  // them). No more hardcoded 'Explorer' / 3 fallbacks.
   pipelines.set(name, {
     name, flowName: msg.flowName || name, phase: 'Running',
-    steps, iteration: 0, maxIterations: msg.maxIterations || 3,
-    verifyResult: null, verifyAgent: msg.verifyAgent || 'Explorer',
+    steps, iteration: 0,
+    maxIterations: typeof msg.maxIterations === 'number' ? msg.maxIterations : 0,
+    verifyResult: null,
+    verifyAgent: msg.verifyAgent || '',
     verifyStatus: 'pending',
   });
   renderAll();
@@ -549,19 +558,14 @@ export function updateStep(msg) {
   const pipeName = msg.branchName || msg.flowName;
   const p = pipelines.get(pipeName);
   if (!p) return;
-  // Handle verify step (not in p.steps — tracked separately)
-  if (msg.stepId === '__verify__') {
-    p.verifyStatus = msg.status === 'running' ? 'running'
-      : msg.status === 'done' ? 'done'
-      : msg.status === 'failed' ? 'failed' : p.verifyStatus;
-    renderAll();
-    return;
-  }
+  // No synthetic __verify__ node anymore — verdict nodes are real steps in
+  // p.steps (carrying verdict:true). Update them like any other step.
   const step = p.steps.find(s => s.id === msg.stepId);
   if (!step) return;
   step.status = msg.status === 'running' ? 'Running'
     : msg.status === 'done' ? 'Done'
-    : msg.status === 'failed' ? 'Failed' : step.status;
+    : msg.status === 'failed' ? 'Failed'
+    : msg.status === 'canceled' ? 'Canceled' : step.status;
   // Store nodeSessionId from flowStepStarted for popup history loading
   if (msg.nodeSessionId) step.nodeSessionId = msg.nodeSessionId;
   renderAll();
@@ -640,9 +644,13 @@ export async function autoRestore(sessionIdArg) {
         steps: (p.steps || []).map(s => ({
           id: s.id, agent: s.agent || '',
           dependsOn: s.dependsOn || [], status: s.status || 'Pending',
+          verdict: !!s.verdict,
+          nodeSessionId: s.nodeSessionId || null,
         })),
-        iteration: p.iteration || 0, maxIterations: 3,
-        verifyResult: p.verifyResult ?? null, verifyAgent: 'Explorer',
+        iteration: p.iteration || 0,
+        maxIterations: typeof p.maxIterations === 'number' ? p.maxIterations : 0,
+        verifyResult: p.verifyResult ?? null,
+        verifyAgent: p.verifyAgent || '',
         verifyStatus,
       });
     }

@@ -73,20 +73,63 @@
 /* ===== Canvas Panel (画板) ===== */
 /* Generic display container on the right side.
    Hidden by default; shown via body.canvas-open.
-   Content is injected by canvas.js — NOT a ChatView. */
+   Content is injected by canvas.js — NOT a ChatView.
+
+   Because the panel sits on the RIGHT, the reveal slides in from the right edge.
+   The canvas column width is set immediately to its target (so the slide layer
+   has a stable width basis), while Main's flex-basis animates to yield space
+   smoothly. The inner #canvas-slide translates from the right on open and back
+   to the right on close — open/close have independent duration + easing so they
+   can be tuned separately. */
+:root {
+  /* Slide-in (expand): slightly snappier. Slide-out (collapse): a touch softer. */
+  --canvas-slide-in-duration: 0.32s;
+  --canvas-slide-out-duration: 0.28s;
+  --canvas-slide-in-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --canvas-slide-out-ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
 #canvas-panel {
   display: none;
   flex-direction: column;
-  flex: 1;
+  flex: 0 0 0;        /* fixed basis; flex-basis driven inline, no flex-grow */
   min-width: 0;
   position: relative;
   background: var(--color-bg);
+  opacity: 1;
+  overflow: hidden;
+  /* The column width grows/shrinks with the same easing as the slide so the
+     reveal stays in lockstep. body.canvas-open picks the slide-in timing; the
+     default (collapsing) uses slide-out timing. */
+  transition: flex-basis var(--canvas-slide-out-duration) var(--canvas-slide-out-ease);
+}
+body.canvas-open #canvas-panel.visible {
+  transition: flex-basis var(--canvas-slide-in-duration) var(--canvas-slide-in-ease);
 }
 #canvas-panel.visible {
   display: flex;
 }
 #canvas-panel.hidden {
   display: none;
+}
+
+/* Slide layer — fills the panel. Its width basis is the panel's target width
+   (set immediately), so translateX(100%) is a stable off-screen-right start.
+   Open/close transitions are separate (data-state switches them) so they can be
+   tuned independently. canvas.js flips data-state after committing the start. */
+#canvas-slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);   /* off-screen to the right (collapsed) */
+}
+#canvas-slide[data-state="open"] {
+  transform: translateX(0);
+  transition: transform var(--canvas-slide-in-duration) var(--canvas-slide-in-ease);
+}
+#canvas-slide[data-state="closed"] {
+  transform: translateX(100%);
+  transition: transform var(--canvas-slide-out-duration) var(--canvas-slide-out-ease);
 }
 
 /* Canvas header — glassmorphism bar matching primary header style */
@@ -169,12 +212,208 @@
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
-/* Canvas open body state — split layout */
-body.canvas-open #main {
-  flex: 1;
-}
+/* Canvas open body state — split layout.
+   When open, the canvas takes the inline width set by canvas.js; Main fills the
+   remaining space. The canvas opacity goes to 1; its width animates from 0 via
+   the #canvas-panel transition. (Main's flex stays 1; its transition is set in
+   the #main block below, switched by canvas-open for in/out timing.) */
 body.canvas-open #canvas-panel.visible {
+  opacity: 1;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Three-column layout: unified cards + draggable resizers
+   ─ Sidebar | resizer | Main | resizer | Canvas
+   Defaults: Sidebar is a fixed-width card; Main/Canvas fill available space.
+   colResizer.js pins exact pixel widths (flex: 0 0 <px>) on drag so the
+   rendered width matches the drag 1:1, and persists them to localStorage.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Sidebar — default fixed width; JS overrides via inline flex on drag.
+   #sidebar-panel previously had a fixed 220px width; now it fills #sidebar. */
+#sidebar {
+  flex: 0 0 236px;
+  min-width: 0;
+}
+#sidebar-panel { width: 100%; }
+
+/* Main — fills remaining space by default; JS pins a fixed width on drag.
+   (min-width:0 lets flex children shrink so the chat can narrow.)
+   canvas.js drives an explicit flex-basis on Main during canvas open/close so
+   Main expands/contracts in concert with the canvas (both animate the same
+   property with the same easing). Disabled during column resize. */
+#main {
   flex: 1;
+  min-width: 0;
+  /* Main yields/reclaims space in lockstep with the canvas slide. Match the
+     canvas slide durations so Main's grow/shrink stays in sync with the reveal.
+     open → slide-in duration/ease; default (closing) → slide-out duration/ease. */
+  transition: flex-basis var(--canvas-slide-out-duration) var(--canvas-slide-out-ease);
+}
+body.canvas-open #main {
+  transition: flex-basis var(--canvas-slide-in-duration) var(--canvas-slide-in-ease);
+}
+/* Canvas — participates in layout only when visible. Its open width is set
+   inline by canvas.js (measured fill width) or by colResizer (drag pin). The
+   base `flex: 0 0 0` means it never competes via flex-grow — width is explicit,
+   which is what makes the open/close transition animate cleanly. The open
+   opacity rule lives above (body.canvas-open #canvas-panel.visible). */
+
+/* ── Column resizer handles ─────────────────────────────────────────────── */
+/* A grabbable strip between two columns. The drag surface spans the card gap
+   (16px, via negative margins overlapping the cards' 8px margins). A visible
+   "grip" pill in the middle signals where to grab; it highlights on hover/drag.
+   Visibility is controlled by panelDragger.js (inline display style), not CSS
+   body-class rules — both adjacent panels must be visible for a resizer to show. */
+.col-resizer {
+  flex: 0 0 16px;
+  margin: 8px -8px 12px -8px;  /* overlap card margins; bottom matches sidebar */
+  position: relative;
+  z-index: 40;
+  cursor: col-resize;
+  display: none;             /* panelDragger.js controls visibility */
+}
+/* Grip handle — centered pill, always visible. */
+.col-resizer::before {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px; height: 36px;
+  border-radius: 4px;
+  background: var(--color-text-muted);
+  opacity: 0.35;
+  transition: opacity 0.2s, background 0.2s, height 0.2s, width 0.2s;
+  pointer-events: none;
+}
+.col-resizer:hover::before,
+.col-resizer.dragging::before,
+.col-resizer.drop-target::before {
+  opacity: 0.9;
+  background: var(--color-primary);
+  height: 48px;
+  width: 5px;
+}
+/* While reordering panels, suppress the resize handle's own :hover so only the
+   drop-target handle lights up (otherwise the handle under the cursor also
+   highlights, making the indicator look wrong — especially when dragging left). */
+body.panel-dragging .col-resizer:hover::before {
+  opacity: 0.35;
+  background: var(--color-text-muted);
+  height: 36px;
+  width: 4px;
+}
+/* While dragging, prevent text selection / iframe pointer events interfering. */
+body.col-resizing { cursor: col-resize; user-select: none; }
+body.col-resizing iframe { pointer-events: none; }
+/* Disable panel transitions during resize — the open/close transition on the
+   panels (sidebar collapse, canvas toggle, main re-flow) makes resizer dragging
+   feel laggy if left active. Re-enabled once dragging ends. */
+body.col-resizing #sidebar,
+body.col-resizing #main,
+body.col-resizing #canvas-panel { transition: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Panel drag-to-reorder (panelDragger.js)
+   Drag a panel header to move it between positions.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Header areas act as drag handles — cursor: grab communicates affordance.
+   Interactive children (buttons) override with their own cursor.
+   Canvas header is NOT a drag handle (conflicts with flow pan/drag). */
+.sidebar-topbar {
+  cursor: grab;
+}
+#header {
+  cursor: grab;
+}
+
+/* Drag-handle pill — a HORIZONTAL grip centered near the top of each draggable
+   card's header. Horizontal (wide, short) so it reads as a "grab here to move"
+   tab; smooth fully-rounded edges; vertically centered on the header's top band.
+   Kept inside the card (no negative offsets) so #sidebar's overflow:hidden can't
+   clip it. Same color/opacity/transition language as the resize grip. */
+.sidebar-topbar::after,
+#header::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 4px;
+  border-radius: 9999px;
+  background: var(--color-text-muted);
+  opacity: 0.3;
+  pointer-events: none;
+  transition: opacity 0.2s, background 0.2s, width 0.2s, height 0.2s;
+  z-index: 1;
+}
+/* Hover/drag on the header lights up the pill, same as the resize grip. */
+.sidebar-topbar:hover::after,
+#header:hover::after,
+body.panel-dragging .panel-drag-source > .sidebar-topbar::after,
+body.panel-dragging .panel-drag-source > #header::after {
+  opacity: 0.9;
+  background: var(--color-primary);
+  width: 48px;
+  height: 5px;
+}
+/* Anchor context for the pill. (#header is already positioned via chat.css.) */
+.sidebar-topbar {
+  position: relative;
+}
+
+/* Buttons & interactive elements inside headers keep pointer cursor */
+.sidebar-topbar button,
+#header button,
+#header .ctx-bar-wrap {
+  cursor: pointer;
+}
+#header input,
+#header textarea {
+  cursor: text;
+}
+
+/* While dragging: suppress text selection & iframe pointer events */
+body.panel-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+body.panel-dragging iframe {
+  pointer-events: none;
+}
+body.panel-dragging .sidebar-topbar,
+body.panel-dragging #header {
+  cursor: grabbing;
+}
+
+/* Source panel being dragged — dimmed to show it's the moving one */
+.panel-drag-source {
+  opacity: 0.25;
+  transition: opacity 0.15s;
+}
+
+/* Ghost — floating label following the cursor during drag */
+.panel-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -50%);
+  padding: 6px 14px;
+  background: var(--glass-bg, rgba(255,255,255,0.7));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px));
+  backdrop-filter: blur(var(--glass-blur, 20px));
+  border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
+  border-radius: 9999px;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  pointer-events: none;
+  z-index: 9999;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+  white-space: nowrap;
 }
 
 /* ── Dark Theme — Canvas Panel ────────────────────────────────────────── */

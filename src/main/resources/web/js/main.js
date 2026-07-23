@@ -25,8 +25,7 @@ import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
   showDeleteFolderModal,
-  showAgentModal, hideAgentModal, initModals,
-  startInlineNewSession
+  showAgentModal, hideAgentModal, initModals
 } from './modal.js';
 import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
 import { renderTaskList } from './taskList.js';
@@ -44,6 +43,9 @@ import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
 import { initCanvas } from './canvas.js';
 import * as flowCanvas from './flowCanvas.js';
+import { initColResizers } from './colResizer.js';
+import { initPanelDragger } from './panelDragger.js';
+import { initActivityBar } from './activityBar.js';
 
 // Randomized cosmic thinking bubble text
 const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
@@ -127,7 +129,6 @@ state.dom = {
   attPreview: document.getElementById('attachment-preview'),
   statusWrap: document.getElementById('status-wrap'),
   statusText: document.getElementById('status-text'),
-  connEl: document.getElementById('conn'),
   voiceOverlay: document.getElementById('voice-overlay'),
   voiceText: document.getElementById('voice-text'),
   lottieSpinnerEl: document.getElementById('lottie-spinner'),
@@ -146,7 +147,6 @@ state.dom = {
   deleteConfirmBtn: document.getElementById('delete-confirm'),
   agentOverlay: document.getElementById('agent-overlay'),
   agentModal: document.getElementById('agent-modal'),
-  newSessionBtn: document.getElementById('new-session-btn'),
   agentSystemInput: document.getElementById('agent-system-input'),
   agentModalCancel: document.getElementById('agent-modal-cancel'),
   agentModalSave: document.getElementById('agent-modal-save'),
@@ -1209,7 +1209,7 @@ onMessage('historyPage', (msg, view) => {
     // is complete, ensure the viewport shows the latest content.
     // Uses rAF to avoid layout thrashing — fires after any pending style calculations.
     requestAnimationFrame(() => {
-      const chat = activeView.dom.chat;
+      const chat = view.dom.chat;
       if (view.stream.scrollSnapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
         chat.scrollTop = chat.scrollHeight;
         view.stream.scrollSnapped = true;
@@ -2028,6 +2028,9 @@ initPathPicker();
 initInput(chatViews.primary);
 initMemory();
 initCanvas();
+initColResizers();
+initPanelDragger();
+initActivityBar();
 document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
@@ -2035,6 +2038,15 @@ initNeblink();
 checkPairingRedirect();
 initDropbox();
 planMode.init();
+
+// ---------- Click agent name in header → open agent config modal ----------
+document.getElementById('session-name')?.addEventListener('click', () => {
+  const active = state.sessions.find(s => s.id === state.activeSessionId);
+  const agentName = active?.agentName || 'Nebula';
+  // Show modal immediately with cached data, then fetch fresh system prompt
+  showAgentModal(agentName, '');
+  sendWs({ type: 'getAgentSystemPrompt', name: agentName });
+});
 
 // ---------- Plan mode event handlers ----------
 onMessage('planStart', (msg, view) => planMode.onPlanStart(msg, view));

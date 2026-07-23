@@ -80,17 +80,29 @@ body {
   }
 }
 
+/* ---------- Sidebar Collapse / Canvas open-close (unified animation) ----------
+   Both panels animate with the same ease + duration so expand/collapse feels
+   consistent across the layout. The curve is a gentle material-style ease that
+   starts quickly and settles softly (avoiding the abrupt stop of a linear ease).
+   Disable transitions during column resize (split.css) so dragging stays crisp. */
+:root {
+  --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --panel-duration: 0.32s;
+}
+
 /* ---------- Sidebar Collapse ---------- */
 #sidebar {
-  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              opacity 0.2s ease,
-              margin 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              padding 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-              border-width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width var(--panel-duration) var(--panel-ease),
+              flex-basis var(--panel-duration) var(--panel-ease),
+              opacity var(--panel-duration) var(--panel-ease),
+              margin var(--panel-duration) var(--panel-ease),
+              padding var(--panel-duration) var(--panel-ease),
+              border-width var(--panel-duration) var(--panel-ease);
   overflow: hidden;
 }
 body.sidebar-collapsed #sidebar {
   width: 0;
+  flex: 0 0 0;   /* override flex-basis from --col-sidebar so it collapses */
   opacity: 0;
   margin: 0;
   padding: 0;

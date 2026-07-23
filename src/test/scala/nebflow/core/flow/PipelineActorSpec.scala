@@ -152,6 +152,95 @@ class PipelineActorSpec extends CatsEffectSuite:
   }
 
   // ============================================================
+  // Regression tests for root-cause fixes
+  // ============================================================
+
+  // A flow with a conditional fix node whose gate PASSES must NOT deadlock.
+  // Previously the fix node stayed Pending forever (no "skip" state) and the
+  // pipeline hung until the 1-hour global timeout. Now it's Canceled and the
+  // pipeline terminates normally. (Root cause 1: completion semantics.)
+  private val conditionalFlow = FlowDef(
+    name = "test-conditional",
+    nodes = List(
+      FlowNode(id = "work", agent = Some("Explorer"), prompt = Some("Do the work.")),
+      FlowNode(
+        id = "verify", agent = Some("Explorer"),
+        prompt = Some("Verify the work."), verdict = true, dependsOn = Set("work")
+      ),
+      FlowNode(
+        id = "fix", agent = Some("Explorer"),
+        prompt = Some("Fix issues."),
+        condition = Some("verify.fail"), dependsOn = Set("verify")
+      )
+    )
+  )
+
+  test("regression: conditional node does not deadlock when gate PASSES") {
+    Resource.eval(FlowTestKit.create(FakeLlm.passing)).use { kit =>
+      for
+        parent <- kit.spawnParentAgent()
+        pipeRef <- kit.spawnPipeline("test-cond", conditionalFlow, parent)
+        _ <- pipeRef ! TriggerCmd("input", None)
+        snapshot <- waitForState(pipeRef, "Idle", 30.seconds)
+        // fix must be Canceled (not Pending), proving the deadlock is gone.
+      yield assertEquals(snapshot.stepStatus.getOrElse("fix", "?"), "Canceled")
+    }
+  }
+
+  // A failed step must NOT be reported as PASS. Previously completePipeline
+  // hardcoded pass=true, so a leaf failure was silently swallowed as success.
+  // (Root cause 1: pass derivation.)
+  test("regression: failed step is not reported as PASS") {
+    // FakeLlm.failing makes the verify node report FAIL via Mail.
+    Resource.eval(FlowTestKit.create(FakeLlm.failing)).use { kit =>
+      for
+        (parent, getEvents) <- kit.spawnCapturingParent()
+        pipeRef <- kit.spawnPipeline("test-failreport", simpleFlow, parent)
+        _ <- pipeRef ! TriggerCmd("input", None)
+        _ <- waitForState(pipeRef, "Idle", 30.seconds)
+        events <- getEvents
+        completed = events.find(_.eventType == "completed")
+      yield assert(completed.exists(_.payload.contains("FAIL")),
+        s"expected a FAIL completion event, got: ${events.map(_.payload)}")
+    }
+  }
+
+  // A verify node that reports PASS via Mail, with NO VERDICT text, must keep
+  // PASS. Previously two verdict paths (Mail + text parse) raced, and the text
+  // path defaulted missing-VERDICT to FAIL, flipping PASS→FAIL. With Mail as
+  // the single source there is no text path. (Root cause 2: single verdict.)
+  test("regression: Mail-reported PASS is not flipped by text path") {
+    Resource.eval(FlowTestKit.create(FakeLlm.passing)).use { kit =>
+      for
+        (parent, getEvents) <- kit.spawnCapturingParent()
+        pipeRef <- kit.spawnPipeline("test-noflip", simpleFlow, parent)
+        _ <- pipeRef ! TriggerCmd("input", None)
+        _ <- waitForState(pipeRef, "Idle", 30.seconds)
+        events <- getEvents
+        completed = events.find(_.eventType == "completed")
+      yield assert(completed.exists(_.payload.contains("PASS")),
+        s"expected a PASS completion event (Mail-reported, no text VERDICT), got: ${events.map(_.payload)}")
+    }
+  }
+
+  // A flow definition with a dangling dependsOn reference must be rejected at
+  // parse time with a readable error, not silently accepted and fail at runtime.
+  // (Root cause 4: parse-time validation.)
+  test("regression: validation rejects dangling dependsOn") {
+    val badYaml =
+      """name: bad-flow
+        |nodes:
+        |  - id: a
+        |    agent: Explorer
+        |    prompt: hi
+        |    dependsOn: [nonexistent]
+        |""".stripMargin
+    FlowDefLoader.parse(badYaml) match
+      case Left(err) => assert(err.contains("nonexistent"), s"error should name the bad ref: $err")
+      case Right(_)  => fail("expected a validation error for dangling dependsOn")
+  }
+
+  // ============================================================
   // Resource cleanup
   // ============================================================
 
