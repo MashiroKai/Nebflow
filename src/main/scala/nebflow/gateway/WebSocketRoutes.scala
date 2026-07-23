@@ -1183,6 +1183,20 @@ class WebSocketRoutes(
           else IO.unit
           end if
 
+        case "cancelFlow" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val flowName = json.hcursor.downField("name").as[String].getOrElse("")
+          val cfSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          if flowName.nonEmpty && cfSessionId.nonEmpty then
+            nebflow.core.flow.FlowTreeRegistry.get(cfSessionId).flatMap {
+              case Some(treeRef) =>
+                treeRef ! nebflow.core.flow.TreeCommand.CancelPipeline(flowName)
+                logger.info(s"Cancel flow '$flowName' requested by user via WS")
+              case None =>
+                logger.warn(s"Cannot cancel flow '$flowName': no FlowTreeActor for session")
+            }
+          else IO.unit
+
         case "getHistory" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")

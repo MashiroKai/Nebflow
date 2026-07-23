@@ -411,11 +411,30 @@ You are a step in a flow pipeline. Follow these rules strictly:
           case Some(agentDef) =>
             val agentUid = s"pipe-${cfg.name.take(20)}-${node.id}-${java.util.UUID.randomUUID().toString.take(8)}"
             for
-              // Create a real session for this flow node — unified with normal sessions
-              nodeSession <- cfg.resources.sessionStore.createSession(
-                s"${cfg.name}/${node.id}",
-                agentName = Some(agentName)
-              )
+              // Create a real session for this flow node — unified with normal sessions.
+              // Wrap in handleErrorWith so transient I/O errors (e.g. concurrent
+              // _index.json write race) don't crash the entire pipeline.
+              nodeSession <- cfg.resources.sessionStore
+                .createSession(
+                  s"${cfg.name}/${node.id}",
+                  agentName = Some(agentName)
+                )
+                .handleErrorWith(e =>
+                  logger.warn(s"[${cfg.name}] createSession failed for '$node.id', using fallback: ${e.getMessage}") *>
+                    cfg.resources.sessionStore
+                      .createSession(s"${cfg.name}/${node.id}", agentName = Some(agentName))
+                      .handleErrorWith(e2 =>
+                        // Last resort: synthesize a session-like object with a random ID
+                        IO.pure(nebflow.shared.SessionMeta(
+                          java.util.UUID.randomUUID().toString,
+                          s"${cfg.name}/${node.id}",
+                          System.currentTimeMillis(),
+                          System.currentTimeMillis(),
+                          hasUnread = false,
+                          agentName = Some(agentName)
+                        ))
+                      )
+                )
               readTracker <- ReadTracker.create
               fileHistory <- FileHistory.create()
               childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id), Some(nodeSession.id))
