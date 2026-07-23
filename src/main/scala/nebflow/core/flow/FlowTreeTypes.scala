@@ -46,7 +46,8 @@ case class FlowNode(
   verdict: Boolean = false,
   condition: Option[String] = None,
   retry: Option[RetryTarget] = None,
-  timeoutSeconds: Int = 1800
+  timeoutSeconds: Int = 1800,
+  maxRetries: Int = 0
 ):
   // NOTE: structural validity (agent+prompt XOR flow) is validated by
   // FlowDefLoader.validate, NOT by a `require` here — a require would throw at
@@ -77,8 +78,9 @@ object FlowNode:
     val verdictPart = if s.verdict then Json.obj("verdict" -> true.asJson) else Json.obj()
     val conditionPart = s.condition.map(c => Json.obj("condition" -> c.asJson)).getOrElse(Json.obj())
     val retryPart = s.retry.map(r => Json.obj("retry" -> r.asJson)).getOrElse(Json.obj())
+    val maxRetriesPart = if s.maxRetries > 0 then Json.obj("maxRetries" -> s.maxRetries.asJson) else Json.obj()
     base.deepMerge(agentPart).deepMerge(promptPart).deepMerge(flowPart).deepMerge(flowInputPart)
-      .deepMerge(verdictPart).deepMerge(conditionPart).deepMerge(retryPart)
+      .deepMerge(verdictPart).deepMerge(conditionPart).deepMerge(retryPart).deepMerge(maxRetriesPart)
   }
 
   given Decoder[FlowNode] = Decoder.instance { c =>
@@ -93,6 +95,7 @@ object FlowNode:
       condition <- c.downField("condition").as[Option[String]]
       retry <- c.downField("retry").as[Option[RetryTarget]]
       timeoutS <- c.downField("timeoutSeconds").as[Option[Int]]
+      maxRetries <- c.downField("maxRetries").as[Option[Int]]
     yield
       val validated = FlowNode(
         id,
@@ -104,7 +107,8 @@ object FlowNode:
         verdict.getOrElse(false),
         condition,
         retry,
-        timeoutS.getOrElse(1800)
+        timeoutS.getOrElse(1800),
+        maxRetries.getOrElse(0)
       )
       validated
   }
