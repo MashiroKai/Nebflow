@@ -392,10 +392,18 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
           "sessions" -> sessions.asJson,
           "folders" -> folders.asJson
         )
-        // Atomic write: write to temp file then rename
-        os.write.over(indexTempFile, json.spaces2, createFolders = true)
-        os.move.over(indexTempFile, indexFile)
-      }
+        // Atomic write: use UNIQUE temp file per call to avoid concurrent move race.
+        // The old shared temp file (_index.json.tmp) caused a race when multiple
+        // flow agents called createSession → saveIndex simultaneously: one thread
+        // moved the temp file, the other's os.move failed → pipeline crash.
+        val tmpFile = sessionsDir / s"_index.json.tmp.${java.util.UUID.randomUUID()}"
+        os.write.over(tmpFile, json.spaces2, createFolders = true)
+        os.move.over(tmpFile, indexFile)
+      }.handleErrorWith(e =>
+        // If even the unique-temp approach fails (extremely unlikely), log and
+        // continue — the in-memory Ref is the source of truth.
+        IO.delay(logger.warn(s"saveIndex failed (non-fatal): ${e.getMessage}")).void
+      )
     }
 
   def getActiveMessages: IO[List[Message]] = activeMessagesRef.get
