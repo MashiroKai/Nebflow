@@ -107,7 +107,14 @@ class ScheduledTaskService(
       _ <- logger.info(
         s"Triggering scheduled task ${task.id} for session ${task.sessionId}: ${task.content.take(60)}"
       )
-      _ <- taskStore.markTriggered(task.sessionId, task.id)
+      _ <- task.repeat match
+        case Some(r) if r == "hourly" || r == "daily" || r == "weekly" =>
+          val nextTriggerAt = nextTriggerTime(task.triggerAt, r)
+          taskStore.rescheduleTask(task.sessionId, task.id, nextTriggerAt) *>
+            logger.info(s"Rescheduled recurring task ${task.id} (${r}) for ${formatTime(nextTriggerAt)}") *>
+            notifyTaskChange()
+        case _ =>
+          taskStore.markTriggered(task.sessionId, task.id)
       _ <- routeToAgent(task.sessionId, event).handleErrorWith(e =>
         logger.warn(s"Failed to route scheduled task to agent: ${e.getMessage}")
       )
@@ -120,6 +127,7 @@ class ScheduledTaskService(
             "content" -> task.content.asJson,
             "triggerAt" -> task.triggerAt.asJson,
             "referencePath" -> task.referencePath.asJson,
+            "repeat" -> task.repeat.asJson,
             "formattedTime" -> formattedTime.asJson
           )
         )
@@ -129,6 +137,12 @@ class ScheduledTaskService(
     end for
 
   end triggerTask
+
+  private def nextTriggerTime(current: Long, repeat: String): Long = repeat match
+    case "hourly" => current + 3_600_000L
+    case "daily"  => current + 86_400_000L
+    case "weekly" => current + 604_800_000L
+    case other    => current // unknown pattern — don't advance (will re-fire immediately)
 
   private def formatTime(epochMs: Long): String =
     val instant = Instant.ofEpochMilli(epochMs)

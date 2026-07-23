@@ -52,6 +52,16 @@ class ScheduledTaskStore(baseDir: os.Path):
       saveTasks(sessionId, updated)
     }
 
+  /** Reschedule a recurring task — bump triggerAt forward, keep triggered=false. */
+  def rescheduleTask(sessionId: String, taskId: String, nextTriggerAt: Long): IO[Unit] =
+    loadTasks(sessionId).flatMap { existing =>
+      val updated = existing.map { t =>
+        if t.id == taskId then t.copy(triggered = false, triggeredAt = None, triggerAt = nextTriggerAt)
+        else t
+      }
+      saveTasks(sessionId, updated)
+    }
+
   /** Get all due (untriggered, past triggerAt) tasks across all sessions. */
   def getAllDueTasks: IO[List[ScheduledTask]] = IO.blocking {
     if !os.exists(baseDir) then Nil

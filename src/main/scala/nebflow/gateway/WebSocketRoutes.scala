@@ -1049,8 +1049,9 @@ class WebSocketRoutes(
           val crContent = hc.downField("content").as[String].getOrElse("")
           val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
           val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
+          val crRepeat = hc.downField("repeat").as[Option[String]].getOrElse(None)
           if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
-            val task = nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath)
+            val task = nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath, crRepeat)
             sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
               sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
               wsSend(
@@ -1061,7 +1062,8 @@ class WebSocketRoutes(
                     "content" -> task.content.asJson,
                     "triggerAt" -> task.triggerAt.asJson,
                     "createdAt" -> task.createdAt.asJson,
-                    "referencePath" -> task.referencePath.asJson
+                    "referencePath" -> task.referencePath.asJson,
+                    "repeat" -> task.repeat.asJson
                   )
                 )
               )
@@ -1087,7 +1089,8 @@ class WebSocketRoutes(
                   "createdAt" -> t.createdAt.asJson,
                   "triggered" -> t.triggered.asJson,
                   "triggeredAt" -> t.triggeredAt.asJson,
-                  "referencePath" -> t.referencePath.asJson
+                  "referencePath" -> t.referencePath.asJson,
+                  "repeat" -> t.repeat.asJson
                 )
               }
               wsSend(
