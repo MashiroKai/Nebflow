@@ -32,6 +32,8 @@ object ToolRegistry:
       "TaskCreate" -> TaskCreateTool,
       "TaskList" -> TaskListTool,
       "TaskUpdate" -> TaskUpdateTool,
+      // Scheduled tasks
+      "Schedule" -> ScheduleTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Sub-agent delegation (replaces Delegate + MountFlow)
