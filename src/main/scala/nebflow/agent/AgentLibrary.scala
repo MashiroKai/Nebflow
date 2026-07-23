@@ -83,6 +83,19 @@ class AgentLibrary(
     os.write.over(dir / "system.md", content)
   }
 
+  /** Update the tools list in agent.json. Reads the existing file, modifies
+   *  the "tools" field, and writes it back. */
+  def updateTools(name: String, tools: List[String]): IO[Unit] = IO.blocking {
+    val jsonPath = agentsDir / name / "agent.json"
+    if os.exists(jsonPath) then
+      val json = os.read(jsonPath)
+      io.circe.parser.parse(json).toOption match
+        case Some(parsed) =>
+          val updated = parsed.deepMerge(io.circe.Json.obj("tools" -> tools.asJson))
+          os.write.over(jsonPath, updated.noSpaces)
+        case None => () // skip if unparseable
+  }
+
   /** Read a system.md file. */
   def readSystemPrompt(name: String): IO[Option[String]] = IO.blocking {
     val p = agentsDir / name / "system.md"
@@ -208,8 +221,8 @@ private object Seeds:
   val Nebula = SeedAgent(
     "Nebula",
     Some("Nebula"),
-    "AI coding assistant with full tool access",
-    List("*"),
+    "Orchestrator — delegates all execution to specialized agents via Flow",
+    List("AskUserQuestion", "Card", "Curl", "ExecuteFlow", "Mail", "RemoveUnnecessary", "TaskCreate", "TaskList", "TaskUpdate", "TransferFile", "WebFetch", "WebSearch"),
     """You are Nebula, an AI coding assistant running inside Nebflow.
 
 ## Session Management

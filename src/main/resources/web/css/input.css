@@ -150,11 +150,19 @@ body.drag-over #input-bar {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.15s;
+  transition: background 0.2s, box-shadow 0.2s;
 }
 #send-btn:hover { background: var(--color-primary-hover); }
 #send-btn:disabled { background: #ccc; cursor: default; }
 #send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
+/* Disconnected state — doubles as the connection indicator: the send button
+   goes grey (disabled-looking) so users see they can't send until the link is
+   back. Grey, not red — red reads as an error, grey reads as "unavailable". */
+#send-btn.disconnected {
+  background: #ccc;
+  cursor: not-allowed;
+}
+#send-btn.disconnected:hover { background: #ccc; }
 
 #stop-btn {
   background: var(--color-error);

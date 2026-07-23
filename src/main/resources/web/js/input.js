@@ -4,7 +4,7 @@
 import state, { LS_HISTORY_KEY } from './state.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
 import { sendWs } from './ws.js';
-import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF } from './chat.js';
+import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState } from './chat.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
@@ -963,6 +963,9 @@ export function initInput(view) {
   const voiceText = view.dom.voiceText;
 
   const slashDropdown = view.dom.slashDropdown;
+
+  // Sync the send button's connection state on init (grey until connected).
+  refreshSendButtonState();
 
   // Auto-resize textarea
   input.addEventListener('input', () => {

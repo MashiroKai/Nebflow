@@ -374,9 +374,12 @@ export default {
   'task.yesterday': 'Yesterday',
 
   // NebLink
+  'neblink.title': 'Device Link',
   'neblink.devices': 'Devices',
   'neblink.thisDevice': 'This device',
   'neblink.connected': 'Connected',
+  'neblink.unknownDevice': 'Unnamed device',
+  'neblink.noPeersHint': 'No other devices found. Configure NebLink Server on both devices.',
   'neblink.detectedTools': 'Detected tools',
   'neblink.deviceDescription': 'Device description',
   'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',

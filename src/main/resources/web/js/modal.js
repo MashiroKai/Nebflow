@@ -145,12 +145,42 @@ function deleteSession(sessionId) {
 
 let currentAgentName = null;
 
+/** Render the tools grid with toggleable chips.
+ *  @param {string[]} agentTools — tools currently enabled for this agent */
+function renderToolsGrid(agentTools) {
+  const grid = document.getElementById('agent-tools-grid');
+  if (!grid) return;
+  const allTools = (state.availableTools || []).map(t => typeof t === 'string' ? t : t.name);
+  const isAll = agentTools.includes('*');
+
+  grid.innerHTML = allTools.map(name => {
+    const checked = isAll || agentTools.includes(name);
+    return `<span class="agent-tool-check${checked ? ' checked' : ''}" data-tool="${name}">${name}</span>`;
+  }).join('');
+
+  grid.querySelectorAll('.agent-tool-check').forEach(el => {
+    el.addEventListener('click', () => el.classList.toggle('checked'));
+  });
+}
+
+/** Collect checked tool names from the grid. */
+function getCheckedTools() {
+  const grid = document.getElementById('agent-tools-grid');
+  if (!grid) return ['*'];
+  const checked = [...grid.querySelectorAll('.agent-tool-check.checked')].map(el => el.dataset.tool);
+  return checked;
+}
+
 export function showAgentModal(name, systemMd) {
   currentAgentName = name;
   document.getElementById('agent-modal').classList.add('show');
   document.getElementById('agent-overlay').classList.add('on');
   document.getElementById('agent-modal-title').textContent = t('agent.editTitle', { name });
   document.getElementById('agent-system-input').value = systemMd || '';
+
+  // Populate tools from cached agentList data
+  const agent = state.agentsData.find(a => a.name === name) || {};
+  renderToolsGrid(agent.tools || ['*']);
 }
 
 export function hideAgentModal() {
@@ -161,12 +191,14 @@ export function hideAgentModal() {
 // ---------- Init all modal handlers ----------
 export function initModals() {
   const {
-    newSessionBtn, modalCancel, modalConfirm, modalInput,
+    modalCancel, modalConfirm, modalInput,
     deleteCancelBtn, deleteConfirmBtn, modalOverlay
   } = state.dom;
 
-  // New session — inline input instead of modal
-  newSessionBtn.onclick = startInlineNewSession;
+  // New session — inline input instead of modal (button removed in single-session
+  // architecture; guarded in case it reappears).
+  const newSessionBtn = document.getElementById('new-session-btn');
+  if (newSessionBtn) newSessionBtn.onclick = startInlineNewSession;
   modalCancel.onclick = hideModals;
   modalConfirm.onclick = confirmNewSession;
   modalInput.onkeydown = (e) => {
@@ -194,12 +226,14 @@ export function initModals() {
     if (e.target.id === 'agent-overlay') hideAgentModal();
   });
 
-  // Agent modal save — only edits system prompt
+  // Agent modal save — sends system prompt + tools
   document.getElementById('agent-modal-save')?.addEventListener('click', () => {
     const name = currentAgentName;
     const systemMd = document.getElementById('agent-system-input').value;
+    const tools = getCheckedTools();
     if (!name) return;
     sendWs({type: 'updateAgentSystemPrompt', name, systemMd});
+    sendWs({type: 'updateAgentTools', name, tools});
     hideAgentModal();
   });
 

@@ -375,9 +375,12 @@ export default {
   'task.yesterday': '昨天',
 
   // NebLink
+  'neblink.title': '设备互联',
   'neblink.devices': '设备',
   'neblink.thisDevice': '本机',
   'neblink.connected': '已连接',
+  'neblink.unknownDevice': '未命名设备',
+  'neblink.noPeersHint': '还没有其他设备。请在两台设备上都配置 NebLink Server。',
   'neblink.detectedTools': '已检测工具',
   'neblink.deviceDescription': '设备描述',
   'neblink.deviceDescHint': '如：校园网环境、有 Vivado 2023.2',

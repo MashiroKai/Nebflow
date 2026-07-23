@@ -24,4 +24,8 @@ class AgentService(library: AgentLibrary):
   def updateSystemPrompt(name: String, content: String): IO[Unit] =
     library.updateSystemPrompt(name, content)
 
+  /** Update the tools list for an agent (user toggles tools in config modal). */
+  def updateTools(name: String, tools: List[String]): IO[Unit] =
+    library.updateTools(name, tools)
+
 end AgentService

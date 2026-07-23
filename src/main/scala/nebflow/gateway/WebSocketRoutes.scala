@@ -692,12 +692,14 @@ class WebSocketRoutes(
                 _ <- logger.info(s"Forking session $forkSessionId ($sourceName)")
                 newMeta <- sessionStore.forkSession(forkSessionId, s"Fork of $sourceName")
                 _ <- (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
+                  val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
                   wsSend(
                     io.circe.Json.obj(
                       "type" -> "sessionList".asJson,
                       "sessions" -> sessions.asJson,
                       "folders" -> folders.asJson,
-                      "activeId" -> forkSessionId.asJson
+                      "activeId" -> forkSessionId.asJson,
+                      "foldersWithRules" -> rulesFolderIds.asJson
                     )
                   )
                 }
@@ -841,16 +843,7 @@ class WebSocketRoutes(
               // Send unified session list (all agents)
               val sendList = agentName match
                 case Some(an) =>
-                  (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "agentSessionList".asJson,
-                        "agentName" -> an.asJson,
-                        "sessions" -> sessions.asJson,
-                        "folders" -> folders.asJson
-                      )
-                    )
-                  }
+                  sendAgentSessionListByName(wsSend, an)
                 case None =>
                   sessionService.sendSessionList(wsSend, "Nebula")
               sendList *> telStart
@@ -1254,17 +1247,7 @@ class WebSocketRoutes(
         case "listAgentSessions" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
           if agentName.nonEmpty then
-            // Return ALL sessions and folders (unified list)
-            (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "agentSessionList".asJson,
-                  "agentName" -> agentName.asJson,
-                  "sessions" -> sessions.asJson,
-                  "folders" -> folders.asJson
-                )
-              )
-            }
+            sendAgentSessionListByName(wsSend, agentName)
           else IO.unit
           end if
 
@@ -1484,6 +1467,15 @@ class WebSocketRoutes(
           val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
           if agentName.nonEmpty then
             agentService.updateSystemPrompt(agentName, systemMd) *>
+              wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
+          else IO.unit
+
+        case "updateAgentTools" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val agentName = json.hcursor.downField("name").as[String].getOrElse("")
+          val tools = json.hcursor.downField("tools").as[List[String]].getOrElse(List("*"))
+          if agentName.nonEmpty then
+            agentService.updateTools(agentName, tools) *>
               wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
           else IO.unit
 
@@ -2443,6 +2435,64 @@ class WebSocketRoutes(
         // Agent text is typically short and embedded in the main AI bubble on the frontend.
         // We'll record a minimal agent entry for history if needed.
         IO.unit
+
+      // ── Flow node session persistence ──────────────────────────────────
+      // Sub-agent events carry an injected nodeSessionId (set by
+      // PipelineActor.routeWsSend). Accumulate/flush them into that node
+      // session's .ui.json so the flow node popup shows full history on reopen,
+      // mirroring how the root session's textDelta/toolEnd/done are recorded.
+      case "agentTextDelta" =>
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val delta = hc.downField("delta").as[String].getOrElse("")
+        nodeSessionId match
+          case Some(nsid) if delta.nonEmpty =>
+            sessionTextBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
+          case _ => IO.unit
+
+      case "agentToolEnd" =>
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        val label = hc.downField("label").as[String].getOrElse("")
+        nodeSessionId match
+          case Some(nsid) if label.nonEmpty =>
+            val summary = hc.downField("summary").as[String].getOrElse("")
+            val content = hc.downField("content").as[String].getOrElse("")
+            val isError = hc.downField("isError").as[Boolean].getOrElse(false)
+            val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
+            // Flush any accumulated text before recording the tool, so the AI
+            // message bubble appears above the tool card in history.
+            sessionTextBuffers
+              .modify(m => (m - nsid, m.getOrElse(nsid, "")))
+              .flatMap { text =>
+                val flushText =
+                  if text.nonEmpty then
+                    sharedResources.sessionStore.appendUiMessages(
+                      nsid,
+                      List(UiMessage.Ai(text, None, None, None, System.currentTimeMillis()))
+                    )
+                  else IO.unit
+                flushText *> sharedResources.sessionStore.appendUiMessages(
+                  nsid,
+                  List(UiMessage.Tool(label, summary, content, isError, input))
+                )
+              }
+          case _ => IO.unit
+
+      case "agentDone" =>
+        val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
+        nodeSessionId match
+          case Some(nsid) =>
+            // Flush any remaining accumulated text as a final AI bubble.
+            sessionTextBuffers
+              .modify(m => (m - nsid, m.getOrElse(nsid, "")))
+              .flatMap { text =>
+                if text.nonEmpty then
+                  sharedResources.sessionStore.appendUiMessages(
+                    nsid,
+                    List(UiMessage.Ai(text, None, None, None, System.currentTimeMillis()))
+                  )
+                else IO.unit
+              }
+          case _ => IO.unit
 
       case "askUser" =>
         val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)

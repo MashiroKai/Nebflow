@@ -44,3 +44,6 @@ credentials.json
 dist/
 beta.md
 typescript
+
+# ZCode agent workspace
+.zcode/
