@@ -336,7 +336,8 @@ class FlowTreeTypesSpec extends FunSuite:
       case Right(defn) =>
         assertEquals(defn.name, "test-flow")
         assertEquals(defn.manager, None)
-        assertEquals(defn.maxDepth, 5)
+        assertEquals(defn.maxConcurrency, 5)
+        assertEquals(defn.flowTimeoutSeconds, 3600)
         assertEquals(defn.nodes.length, 1)
         assertEquals(defn.nodes(0).id, "step1")
         assertEquals(defn.nodes(0).agent, Some("Explorer"))
@@ -348,7 +349,8 @@ class FlowTreeTypesSpec extends FunSuite:
     val yaml =
       """name: ci-flow
         |manager: Nebula
-        |maxDepth: 10
+        |maxConcurrency: 3
+        |flowTimeoutSeconds: 7200
         |nodes:
         |  - id: lint
         |    agent: Explorer
@@ -364,7 +366,8 @@ class FlowTreeTypesSpec extends FunSuite:
       case Right(defn) =>
         assertEquals(defn.name, "ci-flow")
         assertEquals(defn.manager, Some("Nebula"))
-        assertEquals(defn.maxDepth, 10)
+        assertEquals(defn.maxConcurrency, 3)
+        assertEquals(defn.flowTimeoutSeconds, 7200)
         assertEquals(defn.nodes.length, 2)
         assertEquals(defn.nodes(0).id, "lint")
         assertEquals(defn.nodes(1).id, "test")
