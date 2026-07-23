@@ -79,9 +79,10 @@ object FlowDefLoader:
       name <- json.hcursor.downField("name").as[String].left.map(e => s"Invalid 'name': ${e.message}")
       manager <- json.hcursor.downField("manager").as[Option[String]].left.map(e => s"Invalid 'manager': ${e.message}")
       desc <- json.hcursor.downField("description").as[Option[String]].left.map(e => s"Invalid 'description': ${e.message}")
-      maxDepth <- json.hcursor.downField("maxDepth").as[Option[Int]].left.map(e => s"Invalid 'maxDepth': ${e.message}")
+      maxConcurrency <- json.hcursor.downField("maxConcurrency").as[Option[Int]].left.map(e => s"Invalid 'maxConcurrency': ${e.message}")
+      flowTimeoutSeconds <- json.hcursor.downField("flowTimeoutSeconds").as[Option[Int]].left.map(e => s"Invalid 'flowTimeoutSeconds': ${e.message}")
       nodes <- json.hcursor.downField("nodes").as[Option[List[FlowNode]]].left.map(e => s"Invalid 'nodes': ${e.message}")
-      fd = FlowDef(name, manager, desc.getOrElse(""), nodes.getOrElse(Nil), maxDepth.getOrElse(5))
+      fd = FlowDef(name, manager, desc.getOrElse(""), nodes.getOrElse(Nil), maxConcurrency.getOrElse(5), flowTimeoutSeconds.getOrElse(3600))
       _ <- validate(fd)
     yield fd
 
