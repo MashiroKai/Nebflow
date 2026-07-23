@@ -58,24 +58,19 @@
 #header::before {
   content: '';
   position: absolute;
-  top: -8px;
+  top: -5px;
   left: 50%;
   transform: translateX(-50%);
-  width: 72px;
-  height: 14px;
+  width: 56px;
+  height: 11px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-bottom: none;
-  border-radius: 12px 12px 0 0;
+  border-radius: 10px 10px 0 0;
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   z-index: 0;
   pointer-events: none;
-  transition: width 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
-              height 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
-              top 0.28s cubic-bezier(0.34, 1.56, 0.64, 1),
-              border-color 0.2s ease,
-              box-shadow 0.25s ease;
 }
 #header .header-left { display: flex; align-items: center; }
 #header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: 15px; }
