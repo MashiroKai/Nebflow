@@ -280,7 +280,8 @@ class RestApiRoutes(
                   "name" -> id.deviceName.asJson,
                   "platform" -> id.platform.asJson,
                   "capabilities" -> id.capabilities.asJson,
-                  "userDescription" -> id.userDescription.asJson
+                  "userDescription" -> id.userDescription.asJson,
+                  "avatarUrl" -> id.avatarUrl.asJson
                 ),
                 "peers" -> peersList
                   .map(p =>
@@ -372,6 +373,8 @@ class RestApiRoutes(
           val serverOpt = body.hcursor.downField("server").as[Option[String]].toOption.flatten
           val networkIdOpt = body.hcursor.downField("networkId").as[Option[String]].toOption.flatten
           val secretOpt = body.hcursor.downField("secret").as[Option[String]].toOption.flatten
+          // Optional account avatar URL returned by nebflow.space on pairing.
+          val avatarOpt = body.hcursor.downField("avatar").as[Option[String]].toOption.flatten
           (serverOpt, networkIdOpt, secretOpt) match
             case (Some(server), Some(networkId), Some(secret)) =>
               val newConfig = NeblinkServerConfig(url = server, networkId = networkId, secret = secret)
@@ -379,6 +382,9 @@ class RestApiRoutes(
                 current <- NeblinkConfig.load
                 updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
                 _ <- NeblinkConfig.save(updated)
+                // Persist the account avatar (if nebflow.space provided one) onto
+                // the device identity so the UI can show it after login.
+                _ <- neblinkService.fold(IO.unit)(_.updateDeviceInfo(avatarUrl = avatarOpt))
                 resp <- Ok(Json.obj("ok" -> true.asJson, "message" -> "Configuration saved. Please restart Nebflow to apply.".asJson))
               yield resp
             case _ =>

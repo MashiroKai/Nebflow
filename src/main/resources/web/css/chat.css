@@ -88,7 +88,10 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  cursor: pointer;
+  transition: opacity 0.15s;
 }
+#header #session-name:hover { opacity: 0.7; }
 #header #header-model-info {
   display: none;
   color: var(--color-frame-text-muted);
@@ -166,17 +169,7 @@
   letter-spacing: 0.2px;
 }
 #header .header-right { display: flex; align-items: center; gap: 10px; margin-left: auto; position: relative; }
-.conn {
-  width: 8px; height: 8px; border-radius: 50%;
-  background: var(--color-success);
-  flex-shrink: 0;
-  transition: background 0.3s;
-}
-.conn.off { background: var(--color-error); }
-.conn.off.reconnecting {
-  background: var(--color-warning);
-  animation: conn-pulse 1.5s ease-in-out infinite;
-}
+/* conn-pulse keyframe — reused by the activity-bar avatar pairing animation. */
 @keyframes conn-pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }

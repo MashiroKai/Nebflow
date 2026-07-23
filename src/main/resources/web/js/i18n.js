@@ -95,7 +95,6 @@ export function applyLocaleToHtml() {
 
   // Buttons/titles not covered by the map above
   const extras = [
-    ['new-session-btn', 'title', 'sidebar.newSession'],
     ['search-clear', 'title', 'search.clear'],
     ['sidebar-edge', 'title', 'sidebar.edgeToggle'],
     ['new-agent-btn', 'title', 'nav.newAgent'],

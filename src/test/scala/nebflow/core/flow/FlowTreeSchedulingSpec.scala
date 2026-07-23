@@ -156,12 +156,11 @@ class FlowTreeSchedulingSpec extends FunSuite:
     val node = FlowNode(id = "test", agent = Some("Explorer"), prompt = Some("do"))
     assert(!node.isNested)
 
+  // Structural validity is now via isValid (root cause 4 removed the throwing require).
   test("node cannot have both agent and flow"):
-    intercept[IllegalArgumentException]:
-      FlowNode(id = "bad", agent = Some("X"), prompt = Some("y"), flow = Some("z"))
+    assert(!FlowNode(id = "bad", agent = Some("X"), prompt = Some("y"), flow = Some("z")).isValid)
 
   test("node cannot have neither agent nor flow"):
-    intercept[IllegalArgumentException]:
-      FlowNode(id = "bad")
+    assert(!FlowNode(id = "bad").isValid)
 
 end FlowTreeSchedulingSpec

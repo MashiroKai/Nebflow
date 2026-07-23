@@ -16,6 +16,11 @@ let neblinkState = {
   pairError: ''
 };
 
+/** Read-only accessor for the current NebLink state (used by the Activity Bar). */
+export function getNeblinkState() {
+  return neblinkState;
+}
+
 // Per-device remote update state: 'idle' | 'select' | 'updating' | 'done' | 'error'
 let deviceUpdateState = {};
 let _rerender = null;
@@ -40,7 +45,8 @@ export async function fetchNeblinkStatus() {
       deviceName: d.name,
       platform: d.platform,
       capabilities: d.capabilities || {},
-      userDescription: d.userDescription || ''
+      userDescription: d.userDescription || '',
+      avatarUrl: d.avatarUrl || ''
     } : null;
     neblinkState.peers = data.peers || [];
   } catch (e) {
@@ -62,6 +68,8 @@ export function checkPairingRedirect() {
   const server = params.get('server');
   const networkId = params.get('networkId');
   const secret = params.get('secret');
+  // Optional account avatar URL, if nebflow.space includes it on the redirect.
+  const avatar = params.get('avatar');
 
   if (server && networkId && secret) {
     // Clean URL first
@@ -71,10 +79,12 @@ export function checkPairingRedirect() {
     // Send pairing config to backend
     neblinkState.pairing = true;
     _rerender?.();
+    const pairBody = { server, networkId, secret };
+    if (avatar) pairBody.avatar = avatar;
     fetch('/api/neblink/pair', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ server, networkId, secret })
+      body: JSON.stringify(pairBody)
     }).then(r => r.json()).then(data => {
       if (data.ok) {
         neblinkState.pairing = false;
@@ -154,19 +164,23 @@ export function neblinkSettingsHTML() {
 
     const did = escapeHtml(d.deviceId || '');
     const descVal = escapeHtml(d.userDescription || '');
+    // Display name: prefer the user-set description, fall back to the device's
+    // host name. Raw device names look technical; the friendly name reads better.
+    const displayName = escapeHtml(d.userDescription || d.deviceName || t('neblink.unknownDevice') || 'Unknown');
+    const platformLabel = platformDisplay(d.platform);
 
     return `
       <div class="neblink-peer">
-        <span class="neblink-peer-dot dot-on"></span>
+        <span class="neblink-peer-icon">${platformLabel.icon}</span>
         <span class="neblink-peer-name dropbox-clickable"
           data-device-id="${did}"
           data-device-name="${escapeHtml(d.deviceName || '')}"
           data-platform="${escapeHtml(d.platform || '')}"
           data-desc="${descVal}"
-          data-is-local="${d.isLocal ? '1' : '0'}">${escapeHtml(d.deviceName || d.platform || 'Unknown')}</span>
+          data-is-local="${d.isLocal ? '1' : '0'}">${displayName}</span>
         ${d.isLocal
           ? '<span class="neblink-peer-status local-tag">' + t('neblink.thisDevice') + '</span>'
-          : '<span class="neblink-peer-status">' + t('neblink.connected') + '</span>'}
+          : '<span class="neblink-peer-status">' + platformLabel.text + '</span>'}
         ${updateUI}
       </div>`;
   }).join('');
@@ -181,6 +195,20 @@ export function neblinkSettingsHTML() {
       <div class="neblink-peers-list">${deviceRows}</div>
       ${peerHint}
     </div>`;
+}
+
+/** Map a raw platform string (e.g. "macos", "windows") to a friendly label +
+ *  inline SVG icon for the device row. Falls back to a generic device icon. */
+function platformDisplay(platform) {
+  const p = (platform || '').toLowerCase();
+  const mac = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M16.36 12.93c.02 2.3 2.02 3.07 2.04 3.08-.02.05-.32 1.1-1.06 2.18-.64.93-1.3 1.86-2.34 1.88-1.02.02-1.35-.6-2.52-.6-1.17 0-1.53.58-2.5.62-1 .04-1.77-1-2.42-1.93-1.32-1.9-2.33-5.39-.97-7.74.67-1.17 1.88-1.91 3.19-1.93.99-.02 1.92.66 2.52.66.6 0 1.74-.82 2.93-.7.5.02 1.9.2 2.8 1.52-.07.05-1.67.98-1.65 2.92M14.6 5.4c.55-.67.92-1.6.82-2.52-.79.03-1.75.53-2.32 1.2-.51.59-.96 1.53-.84 2.44.88.07 1.79-.45 2.34-1.12"/></svg>';
+  const win = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M3 5.48 10.4 4.4v7.1H3V5.48m0 13.04V13.4h7.4v7.1L3 18.52M11.4 4.26 21 3v8.5H11.4V4.26m0 15.48V13.4H21V21l-9.6-1.26"/></svg>';
+  const linux = '<svg viewBox="0 0 24 24" fill="currentColor" width="15" height="15"><path d="M12.5 2c-1.3 0-2 1.1-2 2.4 0 .4.1.8.2 1.1-.5.5-1 1.4-1.4 2.5-.4 1.2-1 2.2-1.5 2.7-.5.4-1 .9-1.3 1.6-.3.7-.4 1.9.3 2.7-.3.5-.6 1.4-.3 2.3.2.7.7 1.2.8 1.7.1.5 0 .9.3 1.3.4.5 1 .5 1.6.3.4.6 1.1.9 1.9.9.9 0 1.6-.4 2-1 .4.2.9.3 1.4.1.8-.3 1.2-1 1.2-1.8 0-.4-.1-.7-.2-1 .3-.4.6-.9.6-1.6 0-.6-.2-1.1-.5-1.5.2-.4.3-.9.1-1.5-.2-.7-.7-1.2-.8-1.7-.1-.5 0-.9-.3-1.3-.4-.5-1-.5-1.6-.3-.4-.6-1.1-.9-1.9-.9-.5 0-.9.1-1.3.3.1-.3.2-.7.2-1.1 0-1.3-.7-2.4-2-2.4"/></svg>';
+  const generic = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="15" height="15"><rect x="3" y="4" width="18" height="12" rx="1"/><path d="M8 20h8M12 16v4"/></svg>';
+  if (p.includes('mac')) return { icon: mac, text: 'macOS' };
+  if (p.includes('win')) return { icon: win, text: 'Windows' };
+  if (p.includes('linux')) return { icon: linux, text: 'Linux' };
+  return { icon: generic, text: platform || 'Device' };
 }
 
 // ---- Bind events after HTML insert ----

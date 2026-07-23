@@ -103,22 +103,14 @@ Modes:
       case Some(passed) =>
         if agentPath.isBlank then IO.pure(Left(ToolError("Cannot determine agent identity for verify report.")))
         else
+          // The verdict's single source of truth is the Deferred registered by
+          // PipelineActor. Completing it is the ONLY effect — we deliberately do
+          // NOT emit a separate ExternalEvent to the parent here, because that
+          // raced/duplicated the pipeline's own completion event and used a
+          // different eventType ("verify-failed" vs "failed"). The pipeline
+          // remains the sole authority for flow-level pass/fail notifications.
           val concise = summary.take(200)
-          for
-            // 1. Complete Deferred — signals PipelineActor for scheduling (fix loop / complete)
-            deferredCompleted <- FlowVerifyRegistry.complete(agentPath, VerifyResult(passed, concise))
-            // 2. Notify Main Agent via ExternalEvent — replaces old ExternalEvent from PipelineActor
-            _ <- ctx.parentRef match
-              case Some(parent) =>
-                val flowName = ctx.sessionName.getOrElse("flow")
-                val status = if passed then "PASS" else "FAIL"
-                parent ! AgentCommand.ExternalEvent(
-                  source = "flow",
-                  eventType = if passed then "completed" else "verify-failed",
-                  payload = s"[Flow: $flowName] $status\n$concise"
-                )
-              case None => IO.unit
-          yield
+          FlowVerifyRegistry.complete(agentPath, VerifyResult(passed, concise)).map { deferredCompleted =>
             if deferredCompleted then Right(if passed then "Verification PASSED." else s"Verification FAILED: $concise")
             else
               Left(
@@ -126,7 +118,7 @@ Modes:
                   "No pending flow verification for this agent. This type=verify is only for flow verify steps."
                 )
               )
-          end for
+          }
     end match
   end handleVerify
 

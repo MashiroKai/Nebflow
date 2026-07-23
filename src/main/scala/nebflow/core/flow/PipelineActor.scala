@@ -8,7 +8,7 @@ import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.{FileHistory, ReadTracker}
-import nebflow.shared.{LlmRequest, Message, MessageRole}
+import nebflow.shared.{LlmRequest, Message, MessageRole, UiMessage}
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
@@ -25,19 +25,17 @@ object PipelineActor:
   val VerifyPromptPreamble =
     """You are the verification step of this workflow. Analyze the step results against the verification criteria below.
 
-Report your verdict using Mail(type=verify, passed=..., summary="..."):
+You MUST report your verdict using Mail(type=verify, passed=..., summary="..."):
   - passed=true if the work meets all criteria.
   - passed=false if issues remain AFTER you have mailed specific feedback to the relevant agent and given them a chance to fix it.
+
+This is the ONLY way to report a verdict. Do NOT print a "VERDICT:" line in your response — it will be ignored. If you finish without calling Mail(type=verify), verification is treated as FAILED.
 
 Workflow for failing verification:
   1. Mail(type=message) the peer whose work needs fixing, with specific, actionable feedback.
   2. Wait for their response.
   3. Re-evaluate. If now acceptable, Mail(type=verify, passed=true).
   4. If still not acceptable after reasonable attempts, Mail(type=verify, passed=false, summary="...").
-
-If Mail is unavailable, include a fallback verdict line at the END of your response:
-  VERDICT: PASS
-  VERDICT: FAIL: <one-line reason>
 
 --- Verification Criteria ---
 """.stripMargin
@@ -281,10 +279,20 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
                   Json.obj(
                     "id" -> n.id.asJson,
                     "agent" -> n.agent.getOrElse("").asJson,
-                    "dependsOn" -> n.dependsOn.toList.asJson
+                    "dependsOn" -> n.dependsOn.toList.asJson,
+                    "verdict" -> n.verdict.asJson,
+                    "condition" -> n.condition.asJson,
+                    "retry" -> n.retry.map(r =>
+                      Json.obj("target" -> r.target.asJson, "maxIterations" -> r.maxIterations.asJson)
+                    ).getOrElse(Json.Null)
                   )
                 )
-                .asJson
+                .asJson,
+              // The agent of the first verdict node + the first retry's maxIterations,
+              // so the frontend can label the verify step and show iteration limits
+              // WITHOUT hardcoding 'Explorer' / 3 (it had no backend source for these).
+              "verifyAgent" -> cfg.flowDef.nodes.find(_.verdict).flatMap(_.agent).getOrElse("").asJson,
+              "maxIterations" -> cfg.flowDef.nodes.flatMap(_.retry).headOption.map(_.maxIterations).getOrElse(0).asJson
             )
             _ <- logger.info(s"[${cfg.name}] Triggered with input (${input.length} chars)")
             _ <- FlowMembership.registerFlow(cfg.name, cfg.flowDef.nodes)
@@ -379,7 +387,7 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
               )
               readTracker <- ReadTracker.create
               fileHistory <- FileHistory.create()
-              childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id))
+              childWs = routeWsSend(cfg.wsSend, cfg.sessionId, Some(node.id), Some(nodeSession.id))
               peerInfo = buildPeerInfo(node.id, state.agentPaths, cfg.name, neighborsOf(cfg.flowDef.nodes, node.id))
               actualPrompt = withMemory(peerInfo + promptWithPreamble, cfg)
               // Only require Mail if the node has reachable peers already spawned
@@ -413,21 +421,25 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
                   nodeSessionIds = s.nodeSessionIds + (node.id -> nodeSession.id)
                 )
               )
+              // For verdict nodes, create the verdict Deferred BEFORE spawning the
+              // adapter and register it, then pass it to the adapter. The adapter
+              // completes it with FAIL if the agent finishes without calling Mail
+              // (Mail is the single source; forgetting to report = failure). This
+              // keeps the verdict source unified (always the Deferred) while still
+              // failing deterministically when Mail is skipped.
+              verifyDeferred <-
+                if node.verdict then Deferred[IO, VerifyResult].flatMap(d =>
+                  FlowVerifyRegistry.register(agentRef.path.toString, d) *>
+                    ctx.forkTurn(
+                      d.get.flatMap(r => IO(ctx.self ! PipelineCommand.VerifyReceived(node.id, r)))
+                    ).as(Some(d))
+                )
+                else IO.pure(None)
               adapterRef <- ctx.spawn(
-                stepAdapter(ctx.self, node.id, agentRef, node.timeout),
+                stepAdapter(ctx.self, node.id, agentRef, node.timeout, node.verdict, verifyDeferred, agentRef.path.toString),
                 s"$agentUid-adapter"
               )
               _ <- FlowMembership.join(agentRef.path.toString, cfg.name, node.id)
-              _ <-
-                if node.verdict then
-                  for
-                    d <- Deferred[IO, VerifyResult]
-                    _ <- FlowVerifyRegistry.register(agentRef.path.toString, d)
-                    _ <- ctx.forkTurn(
-                      d.get.flatMap(r => IO(ctx.self ! PipelineCommand.VerifyReceived(node.id, r)))
-                    )
-                  yield ()
-                else IO.unit
               _ <- emit(
                 cfg,
                 "flowStepStarted",
@@ -435,6 +447,12 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
                 "stepId" -> node.id.asJson,
                 "agentName" -> agentName.asJson,
                 "nodeSessionId" -> nodeSession.id.asJson
+              )
+              // Persist the step's input prompt as a user message in the node
+              // session, so the flow node popup history shows what was asked.
+              _ <- cfg.resources.sessionStore.appendUiMessages(
+                nodeSession.id,
+                List(UiMessage.User(actualPrompt, Nil, true, System.currentTimeMillis()))
               )
               _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
               _ = logger.info(s"[${cfg.name}] Spawned '${node.id}' ($agentName)")
@@ -460,6 +478,7 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
       _ <-
         if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
           val verdictText = s"VERDICT: ${if result.pass then "PASS" else "FAIL"}: ${result.summary}"
+          val nodeOpt = cfg.flowDef.nodes.find(_.id == stepId)
           for
             _ <- stateRef.update(s =>
               s.copy(
@@ -478,6 +497,11 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
             _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
             _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", result.summary))
             _ = logger.info(s"[${cfg.name}] Verify '$stepId' via Mail: ${if result.pass then "PASS" else "FAIL"}")
+            // Trigger retry/loop-back for this verdict node (Mail is the single
+            // source, so the retry fires here — not in handleStepCompleted).
+            _ <- nodeOpt.flatMap(_.retry) match
+              case Some(RetryTarget(target, maxIter)) => handleRetry(ctx, stateRef, cfg, stepId, target, maxIter)
+              case None => IO.unit
           yield ()
         else
           logger.debug(s"[${cfg.name}] VerifyReceived for '$stepId' ignored (status: ${state.stepStatus.getOrElse(stepId, "?")})")
@@ -498,46 +522,42 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
       state <- stateRef.get
       _ <-
         if stepId == ManagerId then
-          // Manager completed — its output IS the final summary
+          // Manager completed — its output IS the final summary.
+          // Pass/fail is derived from the run state (computePass), NOT from the
+          // manager's prose, so a failed leaf/verdict still reports correctly.
           stateRef.update(s => s.copy(verifyResult = Some(output))) *>
-            completePipeline(ctx, stateRef, cfg, output)
+            stateRef.get.flatMap(s => completePipeline(ctx, stateRef, cfg, output, computePass(s, cfg)))
         else if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
           val nodeOpt = cfg.flowDef.nodes.find(_.id == stepId)
-          for
-            // Mark as Done, store result
-            _ <- stateRef.update(s =>
-              s.copy(
-                results = s.results + (stepId -> output),
-                stepStatus = s.stepStatus + (stepId -> StepStatus.Done.toString)
-              )
-            )
-            // Parse verdict if applicable
-            _ <- nodeOpt.filter(_.verdict) match
-              case Some(node) =>
-                val vr = parseVerdict(output)
-                for
-                  _ <- stateRef.update(s =>
-                    s.copy(verdicts = s.verdicts + (node.id -> vr.pass))
+          nodeOpt match
+            case Some(node) if node.verdict =>
+              // SINGLE SOURCE OF TRUTH: a verdict node is marked Done ONLY by
+              // handleVerifyReceived (the Mail(type=verify) → Deferred path).
+              // stepAdapter's Completed arriving here means the agent finished
+              // but we MUST NOT record a verdict or mark Done — if Mail hasn't
+              // arrived yet it's still in flight; if it never arrives, the
+              // stepAdapter timeout will fire StepFailed. Acting here would race
+              // with VerifyReceived and (the old bug) flip a Mail-PASS into a
+              // text-defaulted FAIL, or wrongly satisfy a downstream condition.
+              // So this is a deliberate no-op.
+              IO.unit
+            case _ =>
+              // Normal (non-verdict) node — store result, mark Done.
+              for
+                _ <- stateRef.update(s =>
+                  s.copy(
+                    results = s.results + (stepId -> output),
+                    stepStatus = s.stepStatus + (stepId -> StepStatus.Done.toString)
                   )
-                  _ <- emit(
-                    cfg,
-                    "flowVerifyResult",
-                    "branchName" -> cfg.name.asJson,
-                    "pass" -> vr.pass.asJson,
-                    "summary" -> vr.summary.take(500).asJson
-                  )
-                yield ()
-              case None => IO.unit
-            // Standard completion events
-            _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
-            _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", output.take(200)))
-            _ = logger.info(s"[${cfg.name}] Step '$stepId' completed (${output.length} chars)")
-            // Retry / loop-back logic
-            _ <- nodeOpt.flatMap(_.retry) match
-              case Some(RetryTarget(target, maxIter)) =>
-                handleRetry(ctx, stateRef, cfg, stepId, target, maxIter)
-              case None => IO.unit
-          yield ()
+                )
+                _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
+                _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", output.take(200)))
+                _ = logger.info(s"[${cfg.name}] Step '$stepId' completed (${output.length} chars)")
+                _ <- nodeOpt.flatMap(_.retry) match
+                  case Some(RetryTarget(target, maxIter)) =>
+                    handleRetry(ctx, stateRef, cfg, stepId, target, maxIter)
+                  case None => IO.unit
+              yield ()
         else IO.unit
     yield ()
 
@@ -636,24 +656,95 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
     cfg: PipelineConfig
   )(using ActorContext[PipelineCommand]): IO[Unit] =
     for
+      _ <- cancelUnreachable(stateRef, cfg)
       state <- stateRef.get
       _ <-
         if state.phase != RunPhase.Running then IO.unit
         else
-          val managerRunning = state.stepStatus.contains(ManagerId)
-          val allDone = cfg.flowDef.nodes.forall(n =>
-            state.stepStatus.get(n.id).exists(x =>
-              x == StepStatus.Done.toString || x == StepStatus.Failed.toString
-            )
+          val managerRunning = state.stepStatus.contains(ManagerId) &&
+            state.stepStatus.get(ManagerId).contains(StepStatus.Running.toString)
+          val terminated = cfg.flowDef.nodes.forall(n =>
+            state.stepStatus.get(n.id).exists(isTerminal)
           )
-          if allDone && !managerRunning then
+          if terminated && !managerRunning then
             runManagerSummary(ctx, stateRef, cfg)
           else scheduleReadySteps(ctx, stateRef, cfg)
     yield ()
 
+  /** A step status is terminal if the node will never change again. */
+  private def isTerminal(status: String): Boolean =
+    status == StepStatus.Done.toString ||
+      status == StepStatus.Failed.toString ||
+      status == StepStatus.Canceled.toString
+
+  /**
+   *  Fixed-point: mark Pending nodes whose condition can NEVER be satisfied as
+   *  Canceled (a true terminal state). This is the root fix for the conditional
+   *  deadlock — a `condition: verify.fail` node, when verify PASSES, would
+   *  otherwise stay Pending forever and block termination.
+   *
+   *  A Pending node with a condition is unreachable if its gating verdict node
+   *  has already produced a verdict opposite to what the condition requires
+   *  (e.g. gate PASS but condition needs fail). We also cancel Pending nodes
+   *  whose dependencies have hit a terminal FAILED/Canceled state (they can
+   *  never become Done). Both run to a fixed point. */
+  private def cancelUnreachable(
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig
+  ): IO[Unit] =
+    stateRef.update { s =>
+      var st = s
+      var changed = true
+      while changed do
+        changed = false
+        cfg.flowDef.nodes.foreach { n =>
+          if st.stepStatus.get(n.id).contains(StepStatus.Pending.toString) then
+            val shouldCancel = conditionUnsatisfiable(n, st.verdicts) ||
+              depsBlocked(n, st.stepStatus)
+            if shouldCancel then
+              st = st.copy(stepStatus = st.stepStatus + (n.id -> StepStatus.Canceled.toString))
+              changed = true
+        }
+      st
+    }
+
+  /** A condition can never be met: e.g. condition=verify.fail but verify PASSED. */
+  private def conditionUnsatisfiable(node: FlowNode, verdicts: Map[String, Boolean]): Boolean =
+    node.condition.exists { cond =>
+      cond.lastIndexOf('.') match
+        case idx if idx > 0 =>
+          val nodeId = cond.substring(0, idx)
+          // gate produced a verdict AND it's the opposite of what .fail needs (a fail)
+          verdicts.get(nodeId).contains(true)
+        case _ => false
+    }
+
+  /** A dependency is in a terminal non-Done state (Failed/Canceled) → this node
+   *  can never have all deps Done, so it can never run. */
+  private def depsBlocked(node: FlowNode, stepStatus: Map[String, String]): Boolean =
+    node.dependsOn.exists { dep =>
+      stepStatus.get(dep).exists(s => s == StepStatus.Failed.toString || s == StepStatus.Canceled.toString)
+    }
+
   // ============================================================
   // Manager summary
   // ============================================================
+
+  /**
+   *  Derive the flow's pass/fail from the run state — NOT hardcoded. A flow
+   *  passes iff:
+   *    - no verdict node failed (every verdict node reported PASS), AND
+   *    - no non-verdict node hard-failed.
+   *  This is the root fix for "completePipeline always reports pass=true": a
+   *  leaf step failure or a FAIL verdict now correctly yields pass=false. */
+  private def computePass(state: RunState, cfg: PipelineConfig): Boolean =
+    val verdictFailed = cfg.flowDef.nodes.exists(n =>
+      n.verdict && state.verdicts.get(n.id).contains(false)
+    )
+    val stepFailed = cfg.flowDef.nodes.exists(n =>
+      !n.verdict && state.stepStatus.get(n.id).contains(StepStatus.Failed.toString)
+    )
+    !verdictFailed && !stepFailed
 
   private def runManagerSummary(
     ctx: ActorContext[PipelineCommand],
@@ -666,7 +757,8 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
         for
           state <- stateRef.get
           summary = buildStepSummary(state.results, state.failedReasons, state.stepStatus)
-          _ <- completePipeline(ctx, stateRef, cfg, summary)
+          pass = computePass(state, cfg)
+          _ <- completePipeline(ctx, stateRef, cfg, summary, pass)
         yield ()
       case Some(agentName) =>
         for
@@ -694,31 +786,33 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
     ctx: ActorContext[PipelineCommand],
     stateRef: Ref[IO, RunState],
     cfg: PipelineConfig,
-    summary: String
+    summary: String,
+    pass: Boolean
   )(using ActorContext[PipelineCommand]): IO[Unit] =
+    val status = if pass then "PASS" else "FAIL"
     for
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Completed))
       _ <- emit(
         cfg,
         "flowCompleted",
         "branchName" -> cfg.name.asJson,
-        "pass" -> true.asJson,
+        "pass" -> pass.asJson,
         "summary" -> summary.take(500).asJson
       )
       // Notify parent agent of completion
       _ <- cfg.parentAgentRef ! AgentCommand.ExternalEvent(
         source = "flow",
         eventType = "completed",
-        payload = s"[Flow: ${cfg.name}] PASS\n$summary",
-        metadata = JsonObject("flowName" -> cfg.name.asJson, "pass" -> true.asJson)
+        payload = s"[Flow: ${cfg.name}] $status\n$summary",
+        metadata = JsonObject("flowName" -> cfg.name.asJson, "pass" -> pass.asJson)
       )
       _ <- stateRef.get.flatMap(_.replyTo.traverse_(_ ! PipelineEvent.Done(summary)))
       _ <- stateRef.update(s => s.copy(phase = RunPhase.Idle, replyTo = None))
       // Stop all persistent agents and clean up flow membership
       _ <- cleanupAgents(stateRef, cfg)
       // Launch reflect in background — non-blocking, fire-and-forget
-      _ <- runReflect(stateRef, cfg, summary, passed = true)
-      _ = logger.info(s"[${cfg.name}] Pipeline COMPLETED")
+      _ <- runReflect(stateRef, cfg, summary, passed = pass)
+      _ = logger.info(s"[${cfg.name}] Pipeline COMPLETED (pass=$pass)")
     yield ()
 
   private def failPipeline(
@@ -843,11 +937,30 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
     pipeRef: ActorRef[PipelineCommand],
     stepId: String,
     subagentRef: ActorRef[AgentCommand],
-    timeout: FiniteDuration
+    timeout: FiniteDuration,
+    isVerdict: Boolean = false,
+    verifyDeferred: Option[Deferred[IO, VerifyResult]] = None,
+    agentPath: String = ""
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
       val done = Ref.unsafe[IO, Boolean](false)
+
+      // The verdict Deferred is the single source of truth. When the verify
+      // agent's turn completes, resolve the node from the Deferred's state:
+      //   - if Mail already completed it (Some(result)), forward that result;
+      //   - if not (None), the agent forgot to Mail → deterministic FAIL.
+      // We send VerifyReceived directly (the authoritative channel) rather than
+      // relying on the Deferred's d.get watcher, which doesn't reliably resume
+      // across the agent/pipeline runtime boundary in tests. handleVerifyReceived's
+      // Running-guard makes the resolution write-once (idempotent).
+      def resolveVerdict(): IO[Unit] =
+        verifyDeferred match
+          case Some(d) =>
+            d.tryGet.flatMap { opt =>
+              pipeRef ! PipelineCommand.VerifyReceived(stepId, opt.getOrElse(VerifyResult(false, "Verify agent did not report via Mail.")))
+            }
+          case None => IO.unit
 
       ctx.forkTurn(
         IO.sleep(timeout) *>
@@ -865,7 +978,9 @@ If Mail is unavailable, include a fallback verdict line at the END of your respo
             case AgentEvent.Completed(_, messages) =>
               val text = extractLastAssistantText(messages)
               done.set(true) *>
-                (pipeRef ! PipelineCommand.StepCompleted(stepId, text)) *>
+                (if isVerdict then resolveVerdict()
+                 else pipeRef ! PipelineCommand.StepCompleted(stepId, text)
+                ) *>
                 IO.pure(Behaviors.stopped[AgentEvent])
 
             case AgentEvent.Failed(_, error) =>
@@ -1100,31 +1215,20 @@ Produce the updated memory file:"""
       .filter(_.nonEmpty)
       .getOrElse("")
 
-  /** Parse VERDICT line from verify agent output to determine pass/fail. */
-  private val VerdictRegex = "(?i)VERDICT:\\s*(PASS|FAIL)\\s*:?\\s*(.*)".r
-
-  private def parseVerdict(text: String): VerifyResult =
-    text.linesIterator
-      .collect { case VerdictRegex(status, reason) =>
-        val passed = status.equalsIgnoreCase("PASS")
-        val summary = reason.trim match
-          case "" => if passed then "Verification passed." else "Verification failed."
-          case r => r
-        VerifyResult(passed, summary)
-      }
-      .toList
-      .lastOption
-      .getOrElse(VerifyResult(false, "No VERDICT line found in verify agent output."))
-
   private def routeWsSend(
     wsSend: Option[Json => IO[Unit]],
     sessionId: Option[String],
-    flowStepId: Option[String] = None
+    flowStepId: Option[String] = None,
+    nodeSessionId: Option[String] = None
   ): Json => IO[Unit] =
     val base = wsSend.getOrElse((_: Json) => IO.unit)
     val patches = List(
       sessionId.map(sid => Json.obj("sessionId" -> sid.asJson)),
-      flowStepId.map(fid => Json.obj("flowStepId" -> fid.asJson))
+      flowStepId.map(fid => Json.obj("flowStepId" -> fid.asJson)),
+      // Inject nodeSessionId so the recording wrapper can persist sub-agent
+      // events (agentTextDelta / agentToolEnd / agentDone) into the flow node's
+      // own session history — not the parent session.
+      nodeSessionId.map(nsid => Json.obj("nodeSessionId" -> nsid.asJson))
     ).flatten
     patches match
       case Nil => base
@@ -1144,7 +1248,12 @@ Produce the updated memory file:"""
               id = node.id,
               agent = node.agent.getOrElse(""),
               status = state.stepStatus.getOrElse(node.id, "Pending"),
-              dependsOn = node.dependsOn.toList
+              dependsOn = node.dependsOn.toList,
+              nodeSessionId = state.nodeSessionIds.get(node.id),
+              verdict = node.verdict,
+              condition = node.condition,
+              retryTarget = node.retry.map(_.target),
+              retryMaxIterations = node.retry.map(_.maxIterations)
             )
           }
           pipelineState = PipelineStateStore.PipelineState(
@@ -1154,7 +1263,9 @@ Produce the updated memory file:"""
             steps = stepInfos,
             results = state.results,
             iteration = state.iteration,
-            verifyResult = state.verifyResult
+            verifyResult = state.verifyResult,
+            verifyAgent = cfg.flowDef.nodes.find(_.verdict).flatMap(_.agent).getOrElse(""),
+            maxIterations = cfg.flowDef.nodes.flatMap(_.retry).headOption.map(_.maxIterations).getOrElse(0)
           )
           _ <- PipelineStateStore.save(sid, pipelineState)
         yield ()

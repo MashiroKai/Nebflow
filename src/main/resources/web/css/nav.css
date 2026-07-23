@@ -177,3 +177,144 @@
 .nav-item:hover { color: var(--color-frame-text); background: var(--color-frame-hover); }
 .nav-item.active { color: var(--color-frame-text-bright); background: var(--color-frame-active); }
 .nav-item svg { width: 20px; height: 20px; }
+
+/* ============================================================
+   Activity Bar — vertical icon strip (independent glass card)
+   Lives to the left of #sidebar. WeChat-style: avatar at top,
+   device list expands below it after login, settings at bottom.
+   order:-1 keeps it leftmost regardless of panelDragger reorder.
+   ============================================================ */
+#activity-bar {
+  order: -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 48px;
+  flex-shrink: 0;
+  /* Match #sidebar's floating glass card: same margin ring + glass treatment. */
+  margin: 8px 0 12px 8px;
+  max-height: calc(100vh - 20px);
+  border-radius: 20px;
+  overflow: hidden;
+  padding: 8px 0;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0,0,0, 0.04),
+    0px 8px 24px rgba(0,0,0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  #activity-bar {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+/* Keep the activity bar visible even when the sidebar is collapsed. */
+body.sidebar-collapsed #activity-bar {
+  width: 48px;
+  opacity: 1;
+  margin: 8px 0 12px 8px;
+}
+
+/* ── Avatar (top) — login affordance ─────────────────────── */
+.activity-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--color-frame-input-bg);
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
+}
+.activity-avatar:hover { background: var(--color-frame-hover); transform: scale(1.04); }
+.activity-avatar:active { transform: scale(0.97); }
+.activity-avatar-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  /* Disable the pixel-art crispEdges from favicon.svg so it scales smoothly. */
+  shape-rendering: geometricPrecision;
+  image-rendering: auto;
+  pointer-events: none;
+}
+/* Account avatar photo (shown after login, when an avatarUrl is available). */
+.activity-avatar-photo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.activity-avatar-letter {
+  font: 600 14px -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1;
+  user-select: none;
+}
+/* State is conveyed by the avatar content (logo vs photo), not by a ring.
+   Kept as no-ops for compatibility with the class toggles in activityBar.js. */
+.activity-avatar.paired {
+  color: var(--color-frame-text-bright);
+}
+.activity-avatar.pairing {
+  animation: conn-pulse 1.5s ease-in-out infinite;
+}
+
+/* ── Generic icon button (settings, etc.) ────────────────── */
+.activity-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  flex-shrink: 0;
+  transition: color 0.15s, background 0.15s;
+  padding: 0;
+}
+.activity-btn:hover {
+  color: var(--color-frame-text-bright);
+  background: var(--color-frame-hover);
+}
+.activity-btn.active {
+  color: var(--color-frame-text-bright);
+  background: var(--color-frame-active);
+}
+/* Active indicator: 3px primary-color bar on the left edge,
+   mirroring .nav-agent.active::before. */
+.activity-btn.active::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--color-primary);
+}
+.activity-btn svg {
+  width: 19px;
+  height: 19px;
+  stroke-width: 1.8;
+}
+
+/* Spacer pushes settings to the bottom of the bar. */
+.activity-spacer { flex: 1; }
