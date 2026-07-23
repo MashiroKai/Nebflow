@@ -276,8 +276,13 @@ function computeLayout() {
     Object.values(yGroups).forEach(group => {
       const count = group.length;
       if (count > 1) {
+        // Minimum 170px between parallel node centers — prevents overlap
+        // and gives visual breathing room. Cards are ~120px wide.
+        const spacing = 170;
+        const totalSpread = (count - 1) * spacing;
+        const startX = colCenter - totalSpread / 2;
         group.forEach((n, i) => {
-          n.x = colX + colWidth * ((i + 1) / (count + 1));
+          n.x = startX + i * spacing;
         });
       }
     });
@@ -621,6 +626,19 @@ export function onSessionChange(activeSessionId) {
 }
 
 // ── Backend restore ────────────────────────────────────────
+
+/** Get all running flows for background task display. */
+export function getRunningFlows() {
+  const result = [];
+  for (const [name, p] of pipelines) {
+    if (p.phase === 'Running') {
+      const running = p.steps.filter(s => s.status === 'Running').length;
+      const done = p.steps.filter(s => s.status === 'Done').length;
+      result.push({ name, flowName: p.flowName, running, done, total: p.steps.length });
+    }
+  }
+  return result;
+}
 
 export async function autoRestore(sessionIdArg) {
   try {

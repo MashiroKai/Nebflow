@@ -1407,6 +1407,7 @@ window.addEventListener('nebflow-session-change', (e) => {
 
 onMessage('flowStarted', (msg) => {
   flowCanvas.startFlow(msg);
+  if (state.updateBgTasksUI) state.updateBgTasksUI();
 });
 
 onMessage('flowStepStarted', (msg) => {
@@ -1431,6 +1432,7 @@ onMessage('flowLoopIteration', (msg) => {
 
 onMessage('flowCompleted', (msg) => {
   flowCanvas.completeFlow(msg);
+  if (state.updateBgTasksUI) state.updateBgTasksUI();
 });
 
 // --- Compaction events (per-session) ---
@@ -1771,6 +1773,44 @@ function renderBgDropdown() {
     row.appendChild(cancelBtn);
     listEl.appendChild(row);
   });
+
+  // Flow entries
+  const flows = flowCanvas.getRunningFlows();
+  flows.forEach(flow => {
+    const row = document.createElement('div');
+    row.className = 'bg-task-row';
+    const info = document.createElement('div');
+    info.className = 'bg-task-info';
+    const desc = document.createElement('span');
+    desc.className = 'bg-task-desc';
+    desc.textContent = flow.flowName || flow.name;
+    const meta = document.createElement('div');
+    meta.className = 'bg-task-meta';
+    const progress = document.createElement('span');
+    progress.className = 'bg-task-id';
+    progress.textContent = `${flow.done}/${flow.total} steps`;
+    if (flow.running > 0) {
+      const runningTag = document.createElement('span');
+      runningTag.className = 'bg-task-status bg-status-active';
+      runningTag.textContent = `${flow.running} running`;
+      meta.appendChild(runningTag);
+    }
+    meta.appendChild(progress);
+    info.appendChild(desc);
+    info.appendChild(meta);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'bg-task-cancel';
+    cancelBtn.textContent = t('bg.cancel');
+    cancelBtn.onclick = (e) => {
+      e.stopPropagation();
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = '...';
+      sendWs({ type: 'cancelFlow', name: flow.name });
+    };
+    row.appendChild(info);
+    row.appendChild(cancelBtn);
+    listEl.appendChild(row);
+  });
 }
 
 function startBgTimer() {
@@ -1800,13 +1840,15 @@ function updateBgTasksUI() {
     task.status === 'running' || task.status === 'cancelling' ||
     (task.finishedAt && (now - task.finishedAt < 3000))
   );
+  const flows = flowCanvas.getRunningFlows();
+  const totalCount = active.length + flows.length;
   const el = activeView.dom.bgIndicatorEl;
   const countEl = activeView.dom.bgCountEl;
   const dropdown = activeView.dom.bgDropdownEl;
   if (!el || !countEl) return;
-  if (active.length > 0) {
+  if (totalCount > 0) {
     el.classList.remove('hidden');
-    countEl.textContent = active.length;
+    countEl.textContent = totalCount;
   } else {
     el.classList.add('hidden');
     if (dropdown) dropdown.classList.add('hidden');
