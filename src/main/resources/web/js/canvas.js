@@ -96,7 +96,18 @@ export function closeCanvas() {
     } catch (_) {}
   }
 
-  // Remove body class — CSS animates flex-basis + opacity back to 0.
+  // Convert colResizer's inline flex pin to --canvas-width for clean CSS transition.
+  // Inline flex (e.g. style.flex = '0 0 500px') overrides CSS rules, preventing
+  // the flex-basis transition. We must clear it BEFORE removing body.canvas-open.
+  const currentW = panel.getBoundingClientRect().width;
+  if (currentW > 0) {
+    document.documentElement.style.setProperty('--canvas-width', currentW + 'px');
+  }
+  panel.style.flex = '';
+  const mainEl = document.getElementById('main');
+  if (mainEl) mainEl.style.flex = '';
+
+  // Remove body class — CSS animates flex-basis to 0.
   document.body.classList.remove('canvas-open');
 
   // Cleanup after the transition completes.
