@@ -30,9 +30,8 @@ export function renderTaskList(tasks, container) {
     return;
   }
 
-  // Only show active tasks; completed/failed reflected in stats only
+  // Only show active tasks; completed/failed are archived
   const active = tasks.filter(t => activeStatuses.has(t.status));
-  const terminalCount = tasks.length - active.length;
 
   if (active.length === 0) {
     container.classList.remove('has-tasks');
@@ -68,16 +67,14 @@ export function renderTaskList(tasks, container) {
       return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
     });
 
-  // Stats
+  // Stats — only show active counts, no completed
   const counts = { pending: 0, in_progress: 0 };
   active.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
 
   let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
   html += '<div class="task-header">';
   html += `<button class="task-toggle" title="${collapsed ? t('task.expand') : t('task.collapse')}"><i data-lucide="${collapsed ? 'chevron-down' : 'chevron-up'}"></i></button>`;
-  html += `<span class="task-count">${t('task.count', { count: active.length })}</span>`;
   const parts = [];
-  if (terminalCount > 0) parts.push(t('task.done', { count: terminalCount }));
   if (counts.in_progress > 0) parts.push(t('task.inProgress', { count: counts.in_progress }));
   if (counts.pending > 0) parts.push(t('task.open', { count: counts.pending }));
   if (parts.length > 0) html += `<span class="task-stats">${parts.join(', ')}</span>`;
