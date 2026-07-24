@@ -33,6 +33,9 @@ import scala.concurrent.duration.*
 
 object FlowTestKit:
 
+  /** Session ID for tests — must match PipelineStateStore's hex+hyphen validation. */
+  val TestSessionId = "deadbeef-0000-0000-0000-deadbeef0000"
+
   def create(llm: LlmHandle[IO] = FakeLlm.passing): IO[FlowTestKit] =
     Dispatcher.parallel[IO].allocated.flatMap { (dispatcher, _) =>
       IO(os.temp.dir(prefix = "nebflow-test")).flatMap { tempDir =>
@@ -115,13 +118,14 @@ final class FlowTestKit(
   val resources: SharedResources,
   val actorSystem: ActorSystem
 ):
+  import FlowTestKit.TestSessionId
 
   /** Spawn a FlowTreeActor — the full mount/trigger path. */
   def spawnTreeActor(parentAgentRef: ActorRef[AgentCommand]): IO[ActorRef[TreeCommand]] =
     val treeConfig = FlowTreeActor.TreeConfig(
       parentAgentRef = parentAgentRef,
       wsSend = None,
-      sessionId = Some("test-session"),
+      sessionId = Some(TestSessionId),
       resources = resources,
       projectRoot = tempDir.toString,
       safetyMode = "yolo",
@@ -165,7 +169,7 @@ final class FlowTestKit(
           flowDef = flowDef,
           parentAgentRef = parentAgentRef,
           wsSend = None,
-          sessionId = Some("test-session"),
+          sessionId = Some(TestSessionId),
           resources = resources,
           projectRoot = tempDir.toString,
           safetyMode = "yolo",
@@ -201,7 +205,7 @@ final class FlowTestKit(
 
   /** Read all pipeline states for this session. */
   def pipelineStates: IO[List[PipelineStateStore.PipelineState]] =
-    PipelineStateStore.loadAll("test-session")
+    PipelineStateStore.loadAll(TestSessionId)
 
   def cleanup(): IO[Unit] =
     actorSystem.stopAll *> IO.blocking(os.remove.all(tempDir)).void
@@ -233,60 +237,55 @@ object FakeLlm:
       StreamChunk.Done(Some("stop"), None, Some(meta(agentId)))
     )
 
-  /** All steps reply briefly; the verify node reports PASS via Mail (the single
-   *  verdict source) by completing the pending Deferred; reflect returns memory. */
+  /** All steps reply briefly; the verify node doesn't send Mail to retry target
+   *  → PASS verdict. Reflect returns memory. */
   val passing: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       val allText = req.messages.map(_.textContent).mkString("\n")
-      val isVerify = allText.contains("Verification Criteria")
       val isReflect = allText.contains("updated memory")
       val isEvolve = allText.contains("flow optimization") || allText.contains("propose specific improvements")
-      IO {
-        println(
-          s"[FakeLlm.passing] agentId=${req.agentId} msgCount=${req.messages.size} isVerify=$isVerify isReflect=$isReflect isEvolve=$isEvolve first200=${allText.take(200)}"
-        )
-      } *>
-        (
-          if isVerify then
-            // Simulate the verify agent calling Mail(type=verify, passed=true):
-            // complete the Deferred registered by PipelineActor.
-            FlowVerifyRegistry.completeAllForTest(VerifyResult(pass = true, "All checks passed.")).void
-          else IO.unit
-        ) *>
-        IO.pure(
-          if isVerify then resp("Analysis complete. Reported PASS via Mail.", req.agentId)
-          else if isReflect then resp("# Flow Memory: test\n\n## Patterns\n- Test pattern learned.\n", req.agentId)
-          else if isEvolve then
-            // Return the YAML unchanged (extract from prompt)
-            val yamlStart = allText.indexOf("=== Current Flow Definition ===")
-            val yamlEnd = allText.indexOf("=== End Definition ===")
-            if yamlStart >= 0 && yamlEnd > yamlStart then
-              resp(allText.substring(yamlStart + 31, yamlEnd).trim, req.agentId)
-            else resp("NO_CHANGE", req.agentId)
-          else resp("Task completed.", req.agentId)
-        )
-    end send
+      IO.pure(
+        if isReflect then resp("# Flow Memory: test\n\n## Patterns\n- Test pattern learned.\n", req.agentId)
+        else if isEvolve then
+          // Return the YAML unchanged (extract from prompt)
+          val yamlStart = allText.indexOf("=== Current Flow Definition ===")
+          val yamlEnd = allText.indexOf("=== End Definition ===")
+          if yamlStart >= 0 && yamlEnd > yamlStart then
+            resp(allText.substring(yamlStart + 31, yamlEnd).trim, req.agentId)
+          else resp("NO_CHANGE", req.agentId)
+        else resp("Task completed.", req.agentId)
+      )
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
-  /** Verify node reports FAIL via Mail (single verdict source). */
+  /** Verify node sends Mail to retry target → FAIL verdict → triggers retry.
+   *  Uses FlowMailTracker to record the send (simulates Mail tool call). */
   val failing: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       val allText = req.messages.map(_.textContent).mkString("\n")
-      val isVerify = allText.contains("Verification Criteria")
+      // Detect verify step by the Flow Communication section that lists peers
+      val isVerify = allText.contains("Flow Communication")
+      val isReflect = allText.contains("updated memory")
       (
         if isVerify then
-          FlowVerifyRegistry.completeAllForTest(VerifyResult(pass = false, "output too brief")).void
+          // Extract the retry target's address from the Flow Communication section
+          // and record a Mail send. PipelineActor will detect this → FAIL.
+          val lines = allText.split("\n")
+          val peerLines = lines.filter(_.trim.startsWith("- "))
+          val firstPeerPath = peerLines.headOption.map(_.trim.stripPrefix("- ").split(": ").last).getOrElse("")
+          val senderPath = req.agentId // not the real path, but enough for tracking
+          if firstPeerPath.nonEmpty then
+            FlowMailTracker.recordForTest(senderPath, firstPeerPath).void
+          else IO.unit
         else IO.unit
       ) *>
         IO.pure(
-          if isVerify then resp("Issues found. Reported FAIL via Mail.", req.agentId)
-          else if allText.contains("updated memory") then
+          if isReflect then
             resp("# Flow Memory: test\n\n## Pitfalls\n- Brief outputs fail.\n", req.agentId)
-          else resp("ok", req.agentId)
+          else resp("Issues found. Mailed feedback to peer.", req.agentId)
         )
     def sendStream(
       req: LlmRequest,
@@ -294,8 +293,8 @@ object FakeLlm:
     ): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.eval(send(req)).flatMap { r => streamFrom(r.reply, req.agentId) }
 
-  /** Verify node never calls Mail — simulates an agent ignoring instructions.
-   *  With Mail as the single source, this yields a FAIL verdict (no Mail = fail). */
+  /** Verify node never calls Mail — same as passing (no Mail = PASS).
+   *  Kept for backward compat with tests that expect this behavior. */
   val noVerdict: LlmHandle[IO] = new LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.pure(resp("Found some interesting patterns in the code.", req.agentId))
@@ -322,3 +321,4 @@ private class InMemoryTaskStore extends TaskStore:
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]] = IO.pure(None)
   def delete(sessionId: String, taskId: String): IO[Boolean] = tasks.update(_ - ((sessionId, taskId))).as(true)
   def deleteAll(sessionId: String): IO[Unit] = tasks.update(_.view.filterKeys(_._1 != sessionId).toMap).void
+  def renderForPrompt(sessionId: String): IO[String] = IO.pure("")

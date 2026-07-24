@@ -1,6 +1,6 @@
 package nebflow.core.flow
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
@@ -21,24 +21,6 @@ object PipelineActor:
 
   private val ManagerId = "__manager__"
 
-  val VerifyPromptPreamble =
-    """You are the verification step of this workflow. Analyze the step results against the verification criteria below.
-
-You MUST report your verdict using Mail(type=verify, passed=..., summary="..."):
-  - passed=true if the work meets all criteria.
-  - passed=false if issues remain AFTER you have mailed specific feedback to the relevant agent and given them a chance to fix it.
-
-This is the ONLY way to report a verdict. Do NOT print a "VERDICT:" line in your response — it will be ignored. If you finish without calling Mail(type=verify), verification is treated as FAILED.
-
-Workflow for failing verification:
-  1. Mail(type=message) the peer whose work needs fixing, with specific, actionable feedback.
-  2. Wait for their response.
-  3. Re-evaluate. If now acceptable, Mail(type=verify, passed=true).
-  4. If still not acceptable after reasonable attempts, Mail(type=verify, passed=false, summary="...").
-
---- Verification Criteria ---
-""".stripMargin
-
   private val ManagerPromptPreamble =
     """You are the manager of this workflow. All steps have completed. Review the results below and provide a concise summary of what was accomplished, any issues encountered, and the overall outcome.
 
@@ -55,13 +37,11 @@ You are a step in a flow pipeline. Follow these rules strictly:
 
 1. OUTPUT FORWARDING: Your response text is automatically captured and passed to downstream steps. Write a clear, complete summary of what you did and found.
 
-2. MAIL IS MANDATORY: If peer agents are listed in the "Flow Communication" section below, you MUST use Mail(type=message) to send your key findings to relevant peers before finishing. If you finish without calling Mail, your turn will be rejected and you will be asked to retry.
+2. MAIL IS MANDATORY: If peer agents are listed in the "Flow Communication" section below, you MUST use Mail to send your key findings to relevant peers before finishing. If you finish without calling Mail, your turn will be rejected and you will be asked to retry.
 
-3. VERIFICATION: If your task is verification (indicated by the verification criteria below), you MUST use Mail(type=verify, passed=..., summary=...) to report your verdict. Do NOT finish without calling Mail.
+3. NO BACKGROUND TASKS: Do NOT use run_in_background for any command. All commands must complete synchronously within your turn. Background task notifications do not work inside flows — they will cause your step to hang.
 
-4. NO BACKGROUND TASKS: Do NOT use run_in_background for any command. All commands must complete synchronously within your turn. Background task notifications do not work inside flows — they will cause your step to hang.
-
-5. FOCUS: Complete only your assigned task. Do not expand scope or work on unrelated files.
+4. FOCUS: Complete only your assigned task. Do not expand scope or work on unrelated files.
 === End Guidelines ===
 
 """.stripMargin
@@ -88,9 +68,6 @@ You are a step in a flow pipeline. Follow these rules strictly:
 
     /** Query current state. */
     case class GetState(replyTo: ActorRef[PipelineSnapshot]) extends PipelineCommand
-
-    /** Verify agent reported verdict via Mail(type=verify). */
-    case class VerifyReceived(stepId: String, result: VerifyResult) extends PipelineCommand
 
     /** Global flow timeout fired. */
     case object FlowTimeout extends PipelineCommand
@@ -249,13 +226,6 @@ You are a step in a flow pipeline. Follow these rules strictly:
           case PipelineCommand.StepFailed(stepId, error) =>
             for
               _ <- handleStepFailed(ctx, stateRef, cfg, stepId, error)
-              _ <- afterStepUpdate(ctx, stateRef, cfg)
-              _ <- saveState(stateRef, cfg)
-            yield this
-
-          case PipelineCommand.VerifyReceived(stepId, result) =>
-            for
-              _ <- handleVerifyReceived(ctx, stateRef, cfg, stepId, result)
               _ <- afterStepUpdate(ctx, stateRef, cfg)
               _ <- saveState(stateRef, cfg)
             yield this
@@ -552,9 +522,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
           node.prompt.getOrElse(""),
           state.results ++ Map("input" -> state.triggerInput)
         )
-        promptWithPreamble =
-          if node.verdict then VerifyPromptPreamble + resolvedPrompt
-          else resolvedPrompt
+        promptWithPreamble = resolvedPrompt
         defOpt <- cfg.resources.agentLibrary.get(agentName)
         _ <- defOpt match
           case None =>
@@ -628,22 +596,8 @@ You are a step in a flow pipeline. Follow these rules strictly:
                   nodeSessionIds = s.nodeSessionIds + (node.id -> nodeSession.id)
                 )
               )
-              // For verdict nodes, create the verdict Deferred BEFORE spawning the
-              // adapter and register it, then pass it to the adapter. The adapter
-              // completes it with FAIL if the agent finishes without calling Mail
-              // (Mail is the single source; forgetting to report = failure). This
-              // keeps the verdict source unified (always the Deferred) while still
-              // failing deterministically when Mail is skipped.
-              verifyDeferred <-
-                if node.verdict then Deferred[IO, VerifyResult].flatMap(d =>
-                  FlowVerifyRegistry.register(agentRef.path.toString, d) *>
-                    ctx.forkTurn(
-                      d.get.flatMap(r => IO(ctx.self ! PipelineCommand.VerifyReceived(node.id, r)))
-                    ).as(Some(d))
-                )
-                else IO.pure(None)
               adapterRef <- ctx.spawn(
-                stepAdapter(ctx.self, node.id, agentRef, node.timeout, node.verdict, verifyDeferred, agentRef.path.toString),
+                stepAdapter(ctx.self, node.id, agentRef, node.timeout),
                 s"$agentUid-adapter"
               )
               _ <- FlowMembership.join(agentRef.path.toString, cfg.name, node.id)
@@ -673,52 +627,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
   end spawnStep
 
   // ============================================================
-  // Verify result handling (from Mail type=verify)
-  // ============================================================
-
-  private def handleVerifyReceived(
-    ctx: ActorContext[PipelineCommand],
-    stateRef: Ref[IO, RunState],
-    cfg: PipelineConfig,
-    stepId: String,
-    result: VerifyResult
-  )(using ActorContext[PipelineCommand]): IO[Unit] =
-    for
-      state <- stateRef.get
-      _ <-
-        if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
-          val verdictText = s"VERDICT: ${if result.pass then "PASS" else "FAIL"}: ${result.summary}"
-          val nodeOpt = cfg.flowDef.nodes.find(_.id == stepId)
-          for
-            _ <- stateRef.update(s =>
-              s.copy(
-                results = s.results + (stepId -> verdictText),
-                stepStatus = s.stepStatus + (stepId -> StepStatus.Done.toString),
-                verdicts = s.verdicts + (stepId -> result.pass)
-              )
-            )
-            _ <- emit(
-              cfg,
-              "flowVerifyResult",
-              "branchName" -> cfg.name.asJson,
-              "pass" -> result.pass.asJson,
-              "summary" -> result.summary.take(500).asJson
-            )
-            _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
-            _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", result.summary))
-            _ = logger.info(s"[${cfg.name}] Verify '$stepId' via Mail: ${if result.pass then "PASS" else "FAIL"}")
-            // Trigger retry/loop-back for this verdict node (Mail is the single
-            // source, so the retry fires here — not in handleStepCompleted).
-            _ <- nodeOpt.flatMap(_.retry) match
-              case Some(RetryTarget(target, maxIter)) => handleRetry(ctx, stateRef, cfg, stepId, target, maxIter)
-              case None => IO.unit
-          yield ()
-        else
-          logger.debug(s"[${cfg.name}] VerifyReceived for '$stepId' ignored (status: ${state.stepStatus.getOrElse(stepId, "?")})")
-    yield ()
-
-  // ============================================================
-  // Step failure handling
+  // Step completion handling
   // ============================================================
 
   private def handleStepCompleted(
@@ -733,24 +642,48 @@ You are a step in a flow pipeline. Follow these rules strictly:
       _ <-
         if stepId == ManagerId then
           // Manager completed — its output IS the final summary.
-          // Pass/fail is derived from the run state (computePass), NOT from the
-          // manager's prose, so a failed leaf/verdict still reports correctly.
           stateRef.update(s => s.copy(verifyResult = Some(output))) *>
             stateRef.get.flatMap(s => completePipeline(ctx, stateRef, cfg, output, computePass(s, cfg)))
         else if state.stepStatus.get(stepId).contains(StepStatus.Running.toString) then
           val nodeOpt = cfg.flowDef.nodes.find(_.id == stepId)
           nodeOpt match
             case Some(node) if node.verdict =>
-              // SINGLE SOURCE OF TRUTH: a verdict node is marked Done ONLY by
-              // handleVerifyReceived (the Mail(type=verify) → Deferred path).
-              // stepAdapter's Completed arriving here means the agent finished
-              // but we MUST NOT record a verdict or mark Done — if Mail hasn't
-              // arrived yet it's still in flight; if it never arrives, the
-              // stepAdapter timeout will fire StepFailed. Acting here would race
-              // with VerifyReceived and (the old bug) flip a Mail-PASS into a
-              // text-defaulted FAIL, or wrongly satisfy a downstream condition.
-              // So this is a deliberate no-op.
-              IO.unit
+              // Determine pass/fail from Mail activity:
+              //   - If Mail was sent to retry target → FAIL
+              //   - Otherwise → PASS
+              //   (FlowMembership ensures only DAG neighbors can Mail, so
+              //   only the verify agent could have sent to the retry target.)
+              val checkTarget = node.retry match
+                case Some(RetryTarget(target, _)) =>
+                  val targetPath = state.agentPaths.getOrElse(target, "")
+                  FlowMailTracker.anySentTo(targetPath)
+                case None => IO.pure(false)
+              checkTarget.flatMap { mailedToTarget =>
+                val passed = !mailedToTarget
+                val verdictText = s"VERDICT: ${if passed then "PASS" else "FAIL"}: ${output.take(200)}"
+                for
+                  _ <- stateRef.update(s =>
+                    s.copy(
+                      results = s.results + (stepId -> verdictText),
+                      stepStatus = s.stepStatus + (stepId -> StepStatus.Done.toString),
+                      verdicts = s.verdicts + (stepId -> passed)
+                    )
+                  )
+                  _ <- emit(cfg, "flowVerifyResult",
+                    "branchName" -> cfg.name.asJson,
+                    "pass" -> passed.asJson,
+                    "summary" -> output.take(500).asJson
+                  )
+                  _ <- emit(cfg, "flowStepCompleted", "branchName" -> cfg.name.asJson, "stepId" -> stepId.asJson)
+                  _ <- state.replyTo.traverse_(_ ! PipelineEvent.Progress(stepId, "Done", output.take(200)))
+                  _ = logger.info(s"[${cfg.name}] Verdict '$stepId': ${if passed then "PASS" else "FAIL"} (mailedToTarget=$mailedToTarget)")
+                  _ <- FlowMailTracker.clearAllForTest
+                  _ <- node.retry match
+                    case Some(RetryTarget(target, maxIter)) if !passed =>
+                      handleRetry(ctx, stateRef, cfg, stepId, target, maxIter)
+                    case _ => IO.unit
+                yield ()
+              }
             case _ =>
               // Normal (non-verdict) node — store result, mark Done.
               for
@@ -1194,30 +1127,11 @@ You are a step in a flow pipeline. Follow these rules strictly:
     pipeRef: ActorRef[PipelineCommand],
     stepId: String,
     subagentRef: ActorRef[AgentCommand],
-    timeout: FiniteDuration,
-    isVerdict: Boolean = false,
-    verifyDeferred: Option[Deferred[IO, VerifyResult]] = None,
-    agentPath: String = ""
+    timeout: FiniteDuration
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
       val done = Ref.unsafe[IO, Boolean](false)
-
-      // The verdict Deferred is the single source of truth. When the verify
-      // agent's turn completes, resolve the node from the Deferred's state:
-      //   - if Mail already completed it (Some(result)), forward that result;
-      //   - if not (None), the agent forgot to Mail → deterministic FAIL.
-      // We send VerifyReceived directly (the authoritative channel) rather than
-      // relying on the Deferred's d.get watcher, which doesn't reliably resume
-      // across the agent/pipeline runtime boundary in tests. handleVerifyReceived's
-      // Running-guard makes the resolution write-once (idempotent).
-      def resolveVerdict(): IO[Unit] =
-        verifyDeferred match
-          case Some(d) =>
-            d.tryGet.flatMap { opt =>
-              pipeRef ! PipelineCommand.VerifyReceived(stepId, opt.getOrElse(VerifyResult(false, "Verify agent did not report via Mail.")))
-            }
-          case None => IO.unit
 
       ctx.forkTurn(
         IO.sleep(timeout) *>
@@ -1235,9 +1149,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
             case AgentEvent.Completed(_, messages) =>
               val text = extractLastAssistantText(messages)
               done.set(true) *>
-                (if isVerdict then resolveVerdict()
-                 else pipeRef ! PipelineCommand.StepCompleted(stepId, text)
-                ) *>
+                (pipeRef ! PipelineCommand.StepCompleted(stepId, text)) *>
                 IO.pure(Behaviors.stopped[AgentEvent])
 
             case AgentEvent.Failed(_, error) =>
@@ -1256,10 +1168,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
                   else IO.unit
               yield Behaviors.stopped[AgentEvent]
 
-        override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] =
-          // Only clean up Deferred; leave FlowMembership intact so persistent
-          // agents can still receive Mail until PipelineActor cleans up on completion.
-          FlowVerifyRegistry.remove(subagentRef.path.toString)
+        override def onStop(ctx: ActorContext[AgentEvent]): IO[Unit] = IO.unit
       )
     }
 
@@ -1319,10 +1228,9 @@ You are a step in a flow pipeline. Follow these rules strictly:
          |You are node "$nodeId" in flow "$flowName". You can communicate with these peers via Mail:
          |$lines
          |
-         |When you complete your work, use Mail(type=message) to send your result to relevant peers.
-         |If you are a verify node:
-         |  - If verification fails, Mail(type=message) the peer with specific feedback before declaring failure.
-         |  - After rework or if satisfied, use Mail(type=verify, passed=..., summary=...) to report the final verdict.
+         |When you complete your work, use Mail to send your result to relevant peers.
+         |If you are a verify node and find issues, Mail the peer with specific feedback
+         |so they can fix it in the next iteration.
          |=== End Communication ===
          |
          |""".stripMargin

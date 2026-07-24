@@ -5,126 +5,64 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.agent.*
-import nebflow.core.flow.{FlowMembership, FlowVerifyRegistry, VerifyResult}
+import nebflow.core.flow.{FlowMailTracker, FlowMembership}
 import nebflow.shared.{Message, MessageRole}
 
 /**
- * Unified agent communication tool.
+ * Agent-to-agent communication tool.
  *
- * Two modes:
- *   - type=message (default): Send a message to another agent by address.
- *   - type=verify: Report flow verification result. Auto-routes to the main agent.
- *     Replaces the old FlowVerify tool — one tool for all communication.
+ * Sends a message to another agent by address. In flow pipelines, the pattern
+ * of Mail sends implicitly determines control flow:
+ *   - Verify agent sends Mail to fix agent → triggers retry
+ *   - Verify agent completes without Mail to fix agent → pass
+ *   - Mail to the manager → summary notification
  */
 object MailTool extends Tool:
   val name: String = "Mail"
 
   val description: String =
-    """Unified communication tool for agent-to-agent and agent-to-main messaging.
+    """Send a message to another agent by address.
 
-Modes:
-  type=message (default): Send a message to another agent by address.
-    Required: address, message
-    Optional: mode ("queue" or "immediate")
+Required: address, message
+Optional: mode ("queue" or "immediate")
 
-  type=verify: Report verification result from a flow verify step.
-    Required: passed (boolean), summary (string, keep under 200 chars — key findings only)
-    No address needed — auto-routes to the main agent.
-    Only use this if you are a flow verify agent."""
+In flow pipelines, Mail patterns implicitly control execution:
+  - Verify agent sends Mail to fix agent with feedback → triggers retry
+  - Verify agent completes without Mail to fix agent → pass"""
 
   // NOTE: input_schema must be a JSON-Schema *object* (top-level "type": "object" +
   // "properties"). A flat layout puts a property named "type" at the top level,
-  // which Anthropic/DeepSeek reject with "not valid under any of the schemas in anyOf".
+  // which Anthropic/DeepSeek reject with "not valid under anyOf".
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(
       "type" -> "object".asJson,
       "properties" -> io.circe.Json.obj(
-        "type" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "enum" -> List("message", "verify").asJson,
-          "description" -> "message: send to another agent. verify: report flow verification result.".asJson
-        ),
         "address" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "(type=message) Recipient address, e.g. nebflow://local/delegate-Nebula-abc12345".asJson
+          "description" -> "Recipient address, e.g. nebflow://local/delegate-Nebula-abc12345".asJson
         ),
         "message" -> io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "(type=message) The message or instruction to send".asJson
-        ),
-        "passed" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" -> "(type=verify) true if verification passed, false if issues found".asJson
-        ),
-        "summary" -> io.circe.Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "(type=verify) Concise result summary. Key findings only, no process details. Max 200 chars.".asJson
+          "description" -> "The message or instruction to send".asJson
         ),
         "mode" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "enum" -> List("queue", "immediate").asJson,
-          "description" -> "(type=message) queue: message waits in mailbox (default). immediate: interrupts current work first.".asJson
+          "description" -> "queue: message waits in mailbox (default). immediate: interrupts current work first.".asJson
         )
       ),
-      // required fields are mode-dependent (message: address+message; verify: passed),
-      // so enforce them at call time rather than in the schema.
-      "required" -> io.circe.Json.arr()
+      "required" -> io.circe.Json.arr("address".asJson, "message".asJson)
     )
   )
 
   def summarize(input: JsonObject): String =
-    input("type").flatMap(_.asString) match
-      case Some("verify") =>
-        val passed = input("passed").flatMap(_.asBoolean).getOrElse(false)
-        s"Mail(verify: ${if passed then "PASS" else "FAIL"})"
-      case _ =>
-        val addr = input("address").flatMap(_.asString).getOrElse("?")
-        val mode = input("mode").flatMap(_.asString).getOrElse("queue")
-        s"Mail(→${addr.takeRight(20)}, $mode)"
+    val addr = input("address").flatMap(_.asString).getOrElse("?")
+    val mode = input("mode").flatMap(_.asString).getOrElse("queue")
+    s"Mail(→${addr.takeRight(20)}, $mode)"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val msgType = input("type").flatMap(_.asString).getOrElse("message")
-    msgType match
-      case "verify" => handleVerify(input, ctx)
-      case _ => handleMessage(input, ctx)
-
-  // ── type=verify: report flow verification result ──────────
-
-  private def handleVerify(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val passedOpt = input("passed").flatMap(_.asBoolean)
-    val summary = input("summary").flatMap(_.asString).getOrElse("")
-    val agentPath = ctx.agentActorRef.map(_.path.toString).getOrElse("")
-
-    passedOpt match
-      case None =>
-        IO.pure(Left(ToolError("Missing required parameter: passed (boolean)")))
-      case Some(passed) =>
-        if agentPath.isBlank then IO.pure(Left(ToolError("Cannot determine agent identity for verify report.")))
-        else
-          // The verdict's single source of truth is the Deferred registered by
-          // PipelineActor. Completing it is the ONLY effect — we deliberately do
-          // NOT emit a separate ExternalEvent to the parent here, because that
-          // raced/duplicated the pipeline's own completion event and used a
-          // different eventType ("verify-failed" vs "failed"). The pipeline
-          // remains the sole authority for flow-level pass/fail notifications.
-          val concise = summary.take(200)
-          FlowVerifyRegistry.complete(agentPath, VerifyResult(passed, concise)).map { deferredCompleted =>
-            if deferredCompleted then Right(if passed then "Verification PASSED." else s"Verification FAILED: $concise")
-            else
-              Left(
-                ToolError(
-                  "No pending flow verification for this agent. This type=verify is only for flow verify steps."
-                )
-              )
-          }
-    end match
-  end handleVerify
-
-  // ── type=message: standard agent-to-agent messaging ───────
-
-  private def handleMessage(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val address = input("address").flatMap(_.asString).getOrElse("")
     val message = input("message").flatMap(_.asString).getOrElse("")
     val mode = input("mode").flatMap(_.asString).getOrElse("queue")
@@ -150,27 +88,38 @@ Modes:
                   )
                 )
               else
-                system.resolve[AgentCommand](address).attempt.flatMap {
-                  case Right(ref) =>
-                    val adapterName = s"mail-reply-${java.util.UUID.randomUUID().toString.take(8)}"
-                    for
-                      adapterRef <- system.spawn(
-                        replyAdapter(address, ctx.agentActorRef),
-                        adapterName
-                      )
-                      _ <-
-                        if mode == "immediate" then
-                          (ref ! AgentCommand.Interrupt()) *> (ref ! AgentCommand.UserInput(message, Some(adapterRef)))
-                        else ref ! AgentCommand.UserInput(message, Some(adapterRef))
-                    yield Right(s"Message sent to $address ($mode mode). The agent will process it in its mailbox.")
-                  case Left(err) =>
-                    IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
-                }
+                for
+                  // Record the send BEFORE attempting delivery — PipelineActor uses
+                  // this to determine verify pass/fail even if delivery fails.
+                  _ <- FlowMailTracker.record(senderPath, address)
+                  r <- system.resolve[AgentCommand](address).attempt.flatMap {
+                    case Right(ref) =>
+                      val adapterName = s"mail-reply-${java.util.UUID.randomUUID().toString.take(8)}"
+                      for
+                        adapterRef <- system.spawn(
+                          replyAdapter(address, ctx.agentActorRef),
+                          adapterName
+                        )
+                        _ <-
+                          if mode == "immediate" then
+                            (ref ! AgentCommand.Interrupt()) *> (ref ! AgentCommand.UserInput(message, Some(adapterRef)))
+                          else ref ! AgentCommand.UserInput(message, Some(adapterRef))
+                      yield Right(s"Message sent to $address ($mode mode). The agent will process it in its mailbox.")
+                    case Left(err) =>
+                      // Delivery failed, but tracking was recorded. For flow agents,
+                      // the pipeline will still detect the send and trigger retry.
+                      // Return a soft success for flow senders, error for standalone.
+                      FlowMembership.flowsOf(senderPath).flatMap { flows =>
+                        if flows.nonEmpty then
+                          IO.pure(Right(s"Message recorded for $address."))
+                        else
+                          IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
+                      }
+                  }
+                yield r
           yield result
           end for
     end if
-
-  end handleMessage
 
   /** Temporary adapter: forwards the sub-agent's completion event to the parent, then stops. */
   private def replyAdapter(
