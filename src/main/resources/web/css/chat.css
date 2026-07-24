@@ -39,7 +39,7 @@
   border: 1px solid var(--glass-border);
   color: var(--color-frame-text-bright);
   padding: 10px 16px;
-  margin: 8px;
+  margin: 8px 0;
   border-radius: 20px;
   font-size: 14px;
   font-weight: 500;

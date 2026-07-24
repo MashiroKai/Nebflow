@@ -416,13 +416,13 @@ html.ui-init #canvas-panel {
 }
 #sidebar-panel { width: 100%; }
 
-/* Main — fills remaining space by default (flex:1).
-   Stays flex:1 during canvas open/close — the browser redistributes space
-   naturally as the canvas panel's flex-basis animates, exactly like how
-   Main absorbs the sidebar collapse. */
+/* Main — fills remaining space (flex:1).
+   Left/right margins (8px each) create consistent gaps with adjacent
+   panels, matching the activity-bar ↔ sidebar gap (8+8=16px). */
 #main {
   flex: 1;
   min-width: 0;
+  margin: 0 8px;
 }
 
 /* ── Resizer overlay layer ──────────────────────────────────────────────
