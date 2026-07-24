@@ -184,9 +184,43 @@ function computeLayout() {
   if (names.length === 0) return null;
 
   const colWidth = 280;
-  const colSpacing = 120;
   const rowHeight = 140;
-  const originX = 0, originY = 0;
+  const nodeSpacing = 170; // min horizontal pixels between parallel node centers
+
+  // ── Pre-pass: compute depths and max parallel nodes per Y level ──
+  let maxParallel = 1;
+  const pipelineMeta = {};
+  names.forEach(name => {
+    const p = pipelines.get(name);
+    const depthMap = {};
+    function getDepth(id) {
+      if (id in depthMap) return depthMap[id];
+      const step = p.steps.find(s => s.id === id);
+      if (!step || !step.dependsOn || step.dependsOn.length === 0) { depthMap[id] = 0; return 0; }
+      const d = Math.max(...step.dependsOn.map(getDepth)) + 1;
+      depthMap[id] = d;
+      return d;
+    }
+    p.steps.forEach(s => getDepth(s.id));
+    const maxDepth = Math.max(0, ...Object.values(depthMap));
+    const verdictSteps = p.steps.filter(s => s.verdict);
+
+    // Count nodes at each Y level to find this column's max parallelism
+    const yCounts = {};
+    p.steps.forEach(s => {
+      const isVerify = !!s.verdict;
+      const yLevel = isVerify ? 1 : (2 + (maxDepth - depthMap[s.id]));
+      yCounts[yLevel] = (yCounts[yLevel] || 0) + 1;
+    });
+    const colMax = Math.max(1, ...Object.values(yCounts));
+    maxParallel = Math.max(maxParallel, colMax);
+
+    pipelineMeta[name] = { depthMap, maxDepth, verdictSteps };
+  });
+
+  // Dynamic column spacing: ensure adjacent columns never overlap even
+  // when both have the maximum number of parallel nodes at the same Y.
+  const colSpacing = Math.max(120, (maxParallel - 1) * nodeSpacing - colWidth + 60);
 
   const allNodes = [];
   const allEdges = [];
@@ -272,8 +306,6 @@ function computeLayout() {
     Object.values(yGroups).forEach(group => {
       const count = group.length;
       if (count > 1) {
-        // Minimum 170px between parallel node centers — prevents overlap
-        // and gives visual breathing room. Cards are ~120px wide.
         const spacing = 170;
         const totalSpread = (count - 1) * spacing;
         const startX = colCenter - totalSpread / 2;
@@ -522,13 +554,14 @@ function bindNodeClicks(allNodes) {
     if (n.isRoot) return;
     const el = document.querySelector(`[data-step-id="${n.id}"]`);
     if (!el) return;
-    // Look up nodeSessionId from pipeline state
-    const p = pipelines.get(n.pipeline);
-    const step = p?.steps.find(s => s.id === n.label);
-    const nodeSessionId = step?.nodeSessionId || null;
     el.addEventListener('click', (e) => {
       e.stopPropagation();
-      openStepPopup(n.id, n.label, n.agent || '', n.pipeline || '', nodeSessionId);
+      // Look up nodeSessionId at click time — it may have been set
+      // after the initial render (step started after flow tab opened)
+      const p = pipelines.get(n.pipeline);
+      const step = p?.steps.find(s => s.id === n.label);
+      const sid = step?.nodeSessionId || null;
+      openStepPopup(n.id, n.label, n.agent || '', n.pipeline || '', sid);
     });
   });
 }

@@ -663,6 +663,9 @@ You are a step in a flow pipeline. Follow these rules strictly:
               )
               _ <- agentRef ! AgentCommand.UserInput(actualPrompt, Some(adapterRef))
               _ = logger.info(s"[${cfg.name}] Spawned '${node.id}' ($agentName)")
+              // Persist state immediately so nodeSessionId is available via
+              // the status API — the flow popup needs it to load chat history.
+              _ <- saveState(stateRef, cfg)
             yield ()
             end for
       yield ()
