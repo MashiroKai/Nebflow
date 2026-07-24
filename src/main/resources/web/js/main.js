@@ -36,7 +36,7 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
-import { initWorkspace, refreshWorkspace } from './workspace.js';
+import { refreshWorkspace } from './workspace.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { initNeblink, checkPairingRedirect } from './neblink.js';
 import { initDropbox } from './dropbox.js';
@@ -1404,6 +1404,8 @@ onMessage('agentDone', (msg, view) => {
 // --- Flow events → canvas DAG visualization ---
 window.addEventListener('nebflow-session-change', (e) => {
   flowCanvas.onSessionChange(e.detail.sessionId);
+  refreshWorkspace(e.detail.sessionId);
+  refreshScheduledTasks(e.detail.sessionId);
 });
 
 onMessage('flowStarted', (msg) => {
@@ -2090,7 +2092,6 @@ initActivityBar();
 document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
-initWorkspace();
 initNeblink();
 checkPairingRedirect();
 initDropbox();
