@@ -212,7 +212,7 @@ body.canvas-open #canvas-panel {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 8px 6px 10px;
-  margin: 16px 8px 0 8px;
+  margin: 16px 10px 0 10px;
   border-radius: 14px;
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
@@ -257,7 +257,7 @@ body.canvas-open #canvas-panel {
 #canvas-content {
   flex: 1;
   overflow: hidden;
-  padding: 0;
+  padding: 0 10px;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -360,7 +360,7 @@ body.canvas-open #canvas-panel {
 
 /* ── Content viewers ─────────────────────────────────────── */
 .canvas-md-viewer {
-  padding: 16px 20px;
+  padding: 16px 10px;
   font-size: 14px;
   line-height: 1.7;
   color: var(--color-text);
@@ -372,14 +372,14 @@ body.canvas-open #canvas-panel {
   margin-bottom: 0.4em;
 }
 .canvas-code-viewer {
-  padding: 12px 8px;
+  padding: 12px 0;
 }
 .canvas-code-viewer pre {
   margin: 0;
   border-radius: 8px;
 }
 .canvas-html-viewer {
-  padding: 16px 20px;
+  padding: 16px 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -408,7 +408,7 @@ html.ui-init #canvas-panel {
    Mirrors activity-bar on the left: fixed width, flex-shrink:0, provides
    a stable right boundary so canvas panel always fits within viewport. */
 .edge-bar-right {
-  flex: 0 0 8px;
+  flex: 0 0 10px;
   flex-shrink: 0;
   align-self: stretch;
   background: transparent;
