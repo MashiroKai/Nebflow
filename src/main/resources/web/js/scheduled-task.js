@@ -292,9 +292,11 @@ function saveInlineTask() {
     return;
   }
 
-  // If time is in the past, auto-bump to 5 min from now
+  // If time is within 2 minutes of now, auto-bump to 5 min from now.
+  // This prevents race conditions where a near-future time expires by the
+  // time the WS message round-trips to the server.
   const now = Date.now();
-  const effectiveTriggerAt = triggerAt <= now
+  const effectiveTriggerAt = triggerAt <= now + 120000
     ? (() => { const d = new Date(now + 300000); d.setMinutes(Math.ceil(d.getMinutes() / 5) * 5, 0, 0); return d.getTime(); })()
     : triggerAt;
 
