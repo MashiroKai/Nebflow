@@ -366,10 +366,16 @@ class WebSocketRoutes(
       end if
 
     case req @ GET -> Root =>
-      StaticFile.fromResource("web/index.html", Some(req)).getOrElseF(NotFound())
+      StaticFile
+        .fromResource("web/index.html", Some(req))
+        .map(_.putHeaders("Cache-Control" -> "no-cache"))
+        .getOrElseF(NotFound())
 
     case req @ GET -> Root / "css" / file =>
-      StaticFile.fromResource(s"web/css/$file", Some(req)).getOrElseF(NotFound())
+      StaticFile
+        .fromResource(s"web/css/$file", Some(req))
+        .map(_.putHeaders("Cache-Control" -> "no-cache"))
+        .getOrElseF(NotFound())
 
     case req @ GET -> Root / "js" / "locales" / file =>
       StaticFile.fromResource(s"web/js/locales/$file", Some(req)).getOrElseF(NotFound())
