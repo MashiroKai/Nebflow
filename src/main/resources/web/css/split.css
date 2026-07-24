@@ -117,14 +117,15 @@ body.canvas-open #canvas-panel.visible {
   flex-direction: column;
 }
 
-/* Canvas header — glassmorphism bar matching primary header style */
+/* Canvas header — glassmorphism bar containing tab bar + close button */
 .canvas-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 16px;
-  margin: 8px;
-  border-radius: 20px;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  margin: 8px 8px 0 8px;
+  border-radius: 14px;
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -133,35 +134,12 @@ body.canvas-open #canvas-panel.visible {
   font-size: 14px;
   font-weight: 500;
   flex-shrink: 0;
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 30;
   box-shadow:
     inset 0 1px 0 0 rgba(255,255,255,0.25),
     0px 2px 8px rgba(0,0,0,0.04),
     0px 8px 24px rgba(0,0,0,0.06);
 }
-.canvas-header::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%, transparent 90%);
-  pointer-events: none;
-  z-index: 1;
-}
-.canvas-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* (Header ::before bump is defined later with the panel drag-handle styles) */
 
 /* Canvas close button */
 .canvas-close-btn {
@@ -187,14 +165,120 @@ body.canvas-open #canvas-panel.visible {
   height: 16px;
 }
 
-/* Canvas content area — scrollable container for future use */
+/* Canvas content area — stacking container for tab panes */
 #canvas-content {
   flex: 1;
-  overflow-y: auto;
-  padding: 64px 12px 12px 12px;
+  overflow: hidden;
+  padding: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+  min-height: 0;
+}
+
+/* ── Tab bar ─────────────────────────────────────────────── */
+.canvas-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.canvas-tab-bar::-webkit-scrollbar { display: none; }
+
+/* ── Individual tab button ───────────────────────────────── */
+.canvas-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 4px 5px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+}
+.canvas-tab:hover {
+  background: var(--color-border);
+  color: var(--color-text);
+}
+.canvas-tab.active {
+  background: var(--color-primary, #6366f1);
+  color: #fff;
+}
+.canvas-tab.active:hover {
+  background: var(--color-primary, #6366f1);
+}
+.canvas-tab-label {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canvas-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0;
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s;
+}
+.canvas-tab-close:hover {
+  opacity: 1;
+  background: rgba(255,255,255,0.2);
+}
+.canvas-tab.active .canvas-tab-close:hover {
+  background: rgba(255,255,255,0.25);
+}
+
+/* ── Tab panes ───────────────────────────────────────────── */
+.canvas-tab-pane {
+  display: none;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.canvas-tab-pane.active {
+  display: flex;
+}
+.canvas-tab-pane.scrollable {
+  overflow-y: auto;
   scrollbar-color: var(--color-frame-border) transparent;
+}
+
+/* ── Content viewers ─────────────────────────────────────── */
+.canvas-md-viewer {
+  padding: 16px 20px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--color-text);
+}
+.canvas-md-viewer h1,
+.canvas-md-viewer h2,
+.canvas-md-viewer h3 {
+  margin-top: 1.2em;
+  margin-bottom: 0.4em;
+}
+.canvas-code-viewer {
+  padding: 12px 8px;
+}
+.canvas-code-viewer pre {
+  margin: 0;
+  border-radius: 8px;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
