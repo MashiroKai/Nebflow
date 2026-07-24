@@ -186,15 +186,7 @@ object ContextRefresher:
       MemoryStore
         .loadAgentMemory(agentName)
         .map(content => filterByStrength(content, currentDelegateCount))
-        .map(content => s"## Agent Memory\n\n$content"),
-      folderId
-        .flatMap(fid => MemoryStore.loadFolderMemory(fid))
-        .map(content => filterByStrength(content, currentDelegateCount))
-        .map(content => s"## Folder Memory\n\n$content"),
-      sessionId
-        .flatMap(sid => MemoryStore.loadSessionMemory(sid))
-        .map(content => filterByStrength(content, currentDelegateCount))
-        .map(content => s"## Session Memory\n\n$content")
+        .map(content => s"## Agent Memory\n\n$content")
     ).flatten
 
     if sections.isEmpty then ""

@@ -408,6 +408,126 @@ You are a step in a flow pipeline. Follow these rules strictly:
             condType == "fail" && verdicts.get(nodeId).contains(false)
           case _ => true // malformed condition — allow scheduling
 
+  // ============================================================
+  // Nested flow spawning
+  // ============================================================
+
+  /** Spawn a nested flow as a sub-pipeline.
+   *
+   * Loads the referenced flow definition, resolves its input template,
+   * creates a child PipelineActor, and triggers it. The child's result
+   * (Done/Failed) is forwarded back as StepCompleted/StepFailed via an
+   * adapter actor.
+   */
+  private def spawnNestedFlow(
+    ctx: ActorContext[PipelineCommand],
+    stateRef: Ref[IO, RunState],
+    cfg: PipelineConfig,
+    node: FlowNode
+  )(using ActorContext[PipelineCommand]): IO[Unit] =
+    val subFlowName = node.flow.getOrElse("")
+    val subInstanceName = s"${cfg.name}/${node.id}"
+
+    def reject(msg: String): IO[Unit] =
+      stateRef.update(s => s.copy(stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString))) *>
+        IO(ctx.self ! PipelineCommand.StepFailed(node.id, msg))
+
+    FlowDefLoader.load(subFlowName).flatMap {
+      case None =>
+        reject(s"Nested flow '$subFlowName' not found in ~/.nebflow/flows/")
+      case Some(subFlowDef) =>
+        // Validate: no Nebula as step agent in sub-flow
+        val nebViolation = subFlowDef.nodes.find(_.agent.contains("Nebula"))
+        if nebViolation.isDefined then
+          reject(s"Nested flow '$subFlowName' contains Nebula as step agent (node '${nebViolation.get.id}'). Use Explorer, Coder, etc.")
+        else
+          for
+            state <- stateRef.get
+            // Resolve flowInput template: use node's flowInput, or fall back to trigger input
+            rawInput = node.flowInput.getOrElse(state.triggerInput)
+            resolvedInput = resolveTemplate(rawInput, state.results ++ Map("input" -> state.triggerInput))
+            subUid = s"sub-${cfg.name.take(15)}-${node.id}-${java.util.UUID.randomUUID().toString.take(8)}"
+            // Build sub-pipeline config — shares resources, wsSend, session, etc.
+            subConfig = PipelineConfig(
+              name = subInstanceName,
+              flowName = subFlowName,
+              flowDef = subFlowDef,
+              parentAgentRef = cfg.parentAgentRef,
+              wsSend = cfg.wsSend,
+              sessionId = cfg.sessionId,
+              resources = cfg.resources,
+              projectRoot = cfg.projectRoot,
+              safetyMode = cfg.safetyMode,
+              expectsMail = false // sub-pipeline agents don't Mail the parent
+            )
+            // Spawn adapter: converts PipelineEvent → PipelineCommand
+            adapterRef <- ctx.spawn(
+              nestedFlowAdapter(ctx.self, node.id, node.timeout),
+              s"$subUid-adapter"
+            )
+            // Spawn sub-pipeline
+            subPipeRef <- ctx.system.spawn(
+              PipelineActor(subConfig),
+              subUid
+            )
+            _ <- stateRef.update(s =>
+              s.copy(
+                stepStatus = s.stepStatus + (node.id -> StepStatus.Running.toString),
+                nodeExecCount = s.nodeExecCount.updatedWith(node.id)(v => Some(v.getOrElse(0) + 1))
+                // Sub-pipeline ref not tracked in agentRefs — different type
+                // (ActorRef[PipelineCommand] vs ActorRef[AgentCommand]).
+                // The adapter handles the sub-pipeline's lifecycle.
+              )
+            )
+            _ <- emit(
+              cfg,
+              "flowStepStarted",
+              "branchName" -> cfg.name.asJson,
+              "stepId" -> node.id.asJson,
+              "agentName" -> s"flow:$subFlowName".asJson,
+              "nestedFlow" -> subFlowName.asJson
+            )
+            _ = logger.info(s"[${cfg.name}] Spawned nested flow '${node.id}' ($subFlowName)")
+            // Trigger the sub-pipeline — adapter receives Done/Failed
+            _ <- subPipeRef ! PipelineCommand.Trigger(resolvedInput, Some(adapterRef))
+          yield ()
+    }
+
+  /** Adapter that converts a child PipelineActor's events into StepCompleted/StepFailed
+   * for the parent pipeline. */
+  private def nestedFlowAdapter(
+    parentRef: ActorRef[PipelineCommand],
+    stepId: String,
+    timeout: FiniteDuration
+  ): Behavior[PipelineEvent] =
+    Behaviors.setup { ctx =>
+      val done = Ref.unsafe[IO, Boolean](false)
+      ctx.forkTurn(
+        IO.sleep(timeout) *>
+          done.get.flatMap {
+            case true => IO.unit
+            case false =>
+              done.set(true) *>
+                (parentRef ! PipelineCommand.StepFailed(stepId, s"nested flow timeout after ${timeout.toSeconds}s"))
+          }
+      )
+      IO.pure(new Behavior[PipelineEvent]:
+        def receive(ctx: ActorContext[PipelineEvent], event: PipelineEvent): IO[Behavior[PipelineEvent]] =
+          event match
+            case PipelineEvent.Done(summary) =>
+              done.set(true) *>
+                (parentRef ! PipelineCommand.StepCompleted(stepId, summary)) *>
+                IO.pure(Behaviors.stopped[PipelineEvent])
+            case PipelineEvent.Failed(reason) =>
+              done.set(true) *>
+                (parentRef ! PipelineCommand.StepFailed(stepId, reason)) *>
+                IO.pure(Behaviors.stopped[PipelineEvent])
+            case PipelineEvent.Progress(_, _, _) =>
+              // Forward progress as-is (could be used for UI updates)
+              IO.pure(this)
+      )
+    }
+
   private def spawnStep(
     ctx: ActorContext[PipelineCommand],
     stateRef: Ref[IO, RunState],
@@ -424,7 +544,7 @@ You are a step in a flow pipeline. Follow these rules strictly:
     if agentName == "Nebula" then
       reject("Nebula cannot be used as a step agent inside flows. Use Explorer, Coder, or other specialized agents.")
     else if node.isNested then
-      reject("Nested flow execution not yet implemented")
+      spawnNestedFlow(ctx, stateRef, cfg, node)
     else
       for
         state <- stateRef.get

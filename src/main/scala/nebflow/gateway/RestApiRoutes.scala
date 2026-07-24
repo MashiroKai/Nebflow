@@ -200,8 +200,6 @@ class RestApiRoutes(
           val content = scope match
             case "user" => nebflow.service.MemoryStore.loadUserMemory.getOrElse("")
             case "agent" => nebflow.service.MemoryStore.loadAgentMemory(agentName).getOrElse("")
-            case "folder" =>
-              if folderId.nonEmpty then nebflow.service.MemoryStore.loadFolderMemory(folderId).getOrElse("") else ""
             case _ => ""
           Ok(Json.obj("scope" -> scope.asJson, "content" -> content.asJson))
         }

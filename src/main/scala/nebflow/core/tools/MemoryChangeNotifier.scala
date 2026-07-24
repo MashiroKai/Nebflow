@@ -11,8 +11,6 @@ import io.circe.syntax.*
  * Memory files are:
  *   - ~/.nebflow/NEBFLOW.md                        (User)
  *   - ~/.nebflow/agents/<name>/memory.md           (Agent)
- *   - ~/.nebflow/folders/<id>.memory.md            (Folder)
- *   - ~/.nebflow/sessions/<id>.memory.md           (Session)
  */
 object MemoryChangeNotifier:
 
@@ -21,9 +19,7 @@ object MemoryChangeNotifier:
     val home = sys.props("user.home")
     val normalized = filePath.replace("\\", "/")
     normalized.startsWith(s"$home/.nebflow/NEBFLOW.md") ||
-    normalized.contains(s"$home/.nebflow/agents/") && normalized.endsWith("memory.md") ||
-    normalized.contains(s"$home/.nebflow/folders/") && normalized.endsWith(".memory.md") ||
-    normalized.contains(s"$home/.nebflow/sessions/") && normalized.endsWith(".memory.md")
+    normalized.contains(s"$home/.nebflow/agents/") && normalized.endsWith("memory.md")
 
   /**
    * If the path is a memory file, push `memoryChanged` via wsSend.
