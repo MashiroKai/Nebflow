@@ -438,8 +438,7 @@ body.drag-over #input-bar {
   opacity: 0.4;
 }
 .queue-item.drag-over {
-  border-top: 2px solid var(--color-primary);
-  padding-top: 2px;
+  box-shadow: inset 0 2px 0 0 var(--color-primary);
 }
 .queue-item-grip {
   cursor: grab;
