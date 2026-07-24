@@ -30,7 +30,7 @@ private[agent] trait AgentCore:
    * Tools removed from sub-agents (depth > 0): user-interaction tools that
    * don't make sense in an autonomous sub-agent context.
    */
-  private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "TaskList", "AskUserQuestion")
+  private val SubagentBlockedTools = Set("TaskCreate", "TaskUpdate", "AskUserQuestion")
 
   private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
 
@@ -198,6 +198,10 @@ private[agent] trait AgentCore:
           allowedTools = buildAllowedToolSet(freshDef, depth)
           devInfo = deviceInfoBlock
           sessionsText = formatAgentSessions(stateForLlm.agentSessions)
+          // Load active tasks for system prompt injection (real-time per turn)
+          taskListText <- stateForLlm.sessionId match
+            case Some(sid) => resources.taskStore.renderForPrompt(sid)
+            case None => IO.pure("")
           promptCtx = PromptContext(
             availableTools = allowedTools,
             depth = depth,
@@ -212,6 +216,7 @@ private[agent] trait AgentCore:
             skillCatalog = turnCtx.skillCatalog,
             flowCatalog = turnCtx.flowCatalog,
             memoryBlock = turnCtx.memoryBlock,
+            taskListText = taskListText,
             rulesMd = turnCtx.rulesMd
           )
           systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)

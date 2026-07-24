@@ -15,6 +15,7 @@ trait TaskStore:
   def get(sessionId: String, taskId: String): IO[Option[Task]]
   def list(sessionId: String): IO[List[Task]]
   def listActive(sessionId: String): IO[List[Task]]
+  def renderForPrompt(sessionId: String): IO[String]
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
   def deleteAll(sessionId: String): IO[Unit]
@@ -98,6 +99,7 @@ object FileTaskStore extends TaskStore:
         description = input.description,
         activeForm = input.activeForm,
         status = TaskStatus.Pending,
+        parentId = input.parentTaskId,
         createdAt = Some(now),
         updatedAt = Some(now)
       )
@@ -221,6 +223,37 @@ object FileTaskStore extends TaskStore:
 
   def listActive(sessionId: String): IO[List[Task]] =
     list(sessionId).map(_.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress))
+
+  /** Render tasks as a hierarchical text block for system prompt injection.
+   *  Only active (pending + in_progress) tasks are shown, with tree-style indentation. */
+  def renderForPrompt(sessionId: String): IO[String] =
+    list(sessionId).map { allTasks =>
+      val active = allTasks.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress)
+      if active.isEmpty then ""
+      else
+        val byParent = active.groupBy(_.parentId)
+        val roots = byParent.getOrElse(None, Nil).sortBy(_.id.toIntOption.getOrElse(0))
+
+        val sb = new StringBuilder
+        sb.append("## Current Tasks\n\n")
+        sb.append("Your task list is below. Work through tasks in order. Mark each as completed when fully done.\n\n")
+
+        def renderTask(t: Task, depth: Int): Unit =
+          val indent = "  " * depth
+          val statusIcon = t.status match
+            case TaskStatus.InProgress => "[in_progress]"
+            case TaskStatus.Pending => "[pending]"
+            case _ => ""
+          val activeStr = t.activeForm match
+            case Some(a) if t.status == TaskStatus.InProgress => s" — $a"
+            case _ => ""
+          sb.append(s"$indent#${t.id} $statusIcon ${t.subject}$activeStr\n")
+          val children = byParent.getOrElse(Some(t.id), Nil).sortBy(_.id.toIntOption.getOrElse(0))
+          children.foreach(c => renderTask(c, depth + 1))
+
+        roots.foreach(r => renderTask(r, 0))
+        sb.toString
+    }
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file
   def delete(sessionId: String, taskId: String): IO[Boolean] =

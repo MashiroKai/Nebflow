@@ -1,11 +1,13 @@
 import { t } from './i18n.js';
 
-const MAX_VISIBLE = 10;
+const MAX_VISIBLE = 15;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
 
 const iconMap = {
   pending: 'square',
-  in_progress: 'loader-2'
+  in_progress: 'loader-2',
+  completed: 'check',
+  failed: 'x'
 };
 
 const activeStatuses = new Set(['pending', 'in_progress']);
@@ -28,12 +30,11 @@ export function renderTaskList(tasks, container) {
     return;
   }
 
-  // Only show active tasks; completed/filtered are reflected in stats only
+  // Only show active tasks; completed/failed reflected in stats only
   const active = tasks.filter(t => activeStatuses.has(t.status));
   const terminalCount = tasks.length - active.length;
 
   if (active.length === 0) {
-    // All done — show brief summary then collapse
     container.classList.remove('has-tasks');
     container.innerHTML = '';
     return;
@@ -43,14 +44,29 @@ export function renderTaskList(tasks, container) {
 
   const collapsed = isCollapsed();
 
-  // Sort: in_progress first, then pending by ID
-  const sorted = [...active].sort((a, b) => {
-    if (a.status !== b.status) {
-      const order = { in_progress: 0, pending: 1 };
-      return (order[a.status] ?? 1) - (order[b.status] ?? 1);
-    }
-    return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
+  // Build parent → children map
+  const byParent = new Map();
+  active.forEach(t => {
+    const pid = t.parentId || null;
+    if (!byParent.has(pid)) byParent.set(pid, []);
+    byParent.get(pid).push(t);
   });
+
+  // Sort within each parent by ID
+  byParent.forEach(arr => arr.sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0)));
+
+  // Roots are tasks with no parent or whose parent is not active
+  const activeIds = new Set(active.map(t => t.id));
+  const roots = active
+    .filter(t => !t.parentId || !activeIds.has(t.parentId))
+    .sort((a, b) => {
+      // in_progress first, then by ID
+      if (a.status !== b.status) {
+        const order = { in_progress: 0, pending: 1 };
+        return (order[a.status] ?? 1) - (order[b.status] ?? 1);
+      }
+      return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
+    });
 
   // Stats
   const counts = { pending: 0, in_progress: 0 };
@@ -69,29 +85,40 @@ export function renderTaskList(tasks, container) {
 
   html += `<div class="task-body"><div class="task-body-inner">`;
 
-  const visible = sorted.slice(0, MAX_VISIBLE);
-  visible.forEach(task => {
-    const isActive = task.status === 'in_progress';
+  let visibleCount = 0;
+  function renderTaskItem(task, depth) {
+    if (visibleCount >= MAX_VISIBLE) return;
+    visibleCount++;
 
+    const isActive = task.status === 'in_progress';
     let cls = 'task-item';
     cls += isActive ? ' task-active' : ' task-pending';
+    if (depth > 0) cls += ' task-child';
 
+    const indent = depth * 16;
     const iconName = iconMap[task.status] || 'square';
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
     const blocked = task.blockedBy && task.blockedBy.length > 0
       ? ` <span class="task-blocked">${t('task.blockedBy', { ids: task.blockedBy.join(', #') })}</span>`
       : '';
 
-    html += `<div class="${cls}" data-task-id="${task.id}">`;
+    html += `<div class="${cls}" data-task-id="${task.id}" style="margin-left:${indent}px">`;
     html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
     html += `<span class="task-label">${escapeHtml(label)}</span>`;
     html += `<span class="task-id">#${task.id}</span>`;
     html += blocked;
     html += '</div>';
-  });
 
-  if (sorted.length > MAX_VISIBLE) {
-    html += `<div class="task-more">${t('task.more', { count: sorted.length - MAX_VISIBLE })}</div>`;
+    // Render children
+    const children = byParent.get(task.id) || [];
+    children.forEach(c => renderTaskItem(c, depth + 1));
+  }
+
+  roots.forEach(task => renderTaskItem(task, 0));
+
+  const totalShown = active.length;
+  if (totalShown > MAX_VISIBLE) {
+    html += `<div class="task-more">${t('task.more', { count: totalShown - MAX_VISIBLE })}</div>`;
   }
 
   html += '</div></div>'; // .task-body-inner / .task-body
