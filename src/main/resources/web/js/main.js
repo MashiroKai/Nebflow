@@ -1906,6 +1906,7 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   const idx = tasks.findIndex(t => t.taskId === msg.taskId);
   if (idx >= 0) {
     tasks[idx].status = msg.status;
+    if (msg.description && !tasks[idx].description) tasks[idx].description = msg.description;
     if (msg.status === 'completed' || msg.status === 'failed') {
       tasks[idx].finishedAt = Date.now();
     }

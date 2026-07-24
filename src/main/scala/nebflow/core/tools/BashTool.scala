@@ -679,6 +679,8 @@ Git safety:
       val idleMs = now - health.lastActivityMs.get()
       val runningMs = now - health.startedAtMs.get()
       val lines = health.outputLineCount.get()
+      val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
+      val description = desc.getOrElse(firstLine)
 
       // Log if idle for a while (possible stuck indicator)
       val logStuck =
@@ -695,6 +697,7 @@ Git safety:
             "type" -> "backgroundTaskUpdate".asJson,
             "sessionId" -> ctx.sessionId.asJson,
             "taskId" -> jobId.asJson,
+            "description" -> description.asJson,
             "status" -> "running".asJson,
             "heartbeat" -> io.circe.Json.obj(
               "alive" -> alive.asJson,
