@@ -60,9 +60,7 @@ const FLOW_CSS = `
 .flow-node {
   position: absolute; transform: translate(-50%, -50%);
   z-index: 2;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  background: var(--color-surface);
   border: 1px solid var(--glass-border);
   border-radius: 14px;
   padding: 14px 20px;
