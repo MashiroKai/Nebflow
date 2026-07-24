@@ -9,6 +9,28 @@ import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, build
 import { renderWithRegistry } from './cardRegistry.js';
 import { createDurationBadgeElement, formatHm, toggleTimeFormat } from './chat.js';
 
+// ---------- AI message badge (no duration) ----------
+// Builds a duration-badge pill with timestamp + copy button, matching
+// the style used by finishAi() in chat.js for live messages.
+function createAiCopyBadge(timestamp, text) {
+  const badge = document.createElement('div');
+  badge.className = 'duration-badge';
+  if (timestamp && timestamp > 0) {
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'duration-badge-time';
+    timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.textContent = formatHm(timestamp);
+    timeSpan.title = '点击切换 12/24 小时制';
+    timeSpan.addEventListener('click', toggleTimeFormat);
+    badge.appendChild(timeSpan);
+    const div = document.createElement('span');
+    div.className = 'duration-badge-divider';
+    badge.appendChild(div);
+  }
+  if (text) badge.appendChild(createMsgCopyButton(text));
+  return badge;
+}
+
 // ---------- Duration formatting (mirrors chat.js formatDuration) ----------
 function formatDurationPersisted(ms) {
   const totalSeconds = ms / 1000;
@@ -149,7 +171,7 @@ export function restoreFromStorage() {
         }
         row.appendChild(badge);
       } else if (m.text) {
-        row.appendChild(createMsgCopyButton(m.text));
+        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       }
       chat.appendChild(row);
     } else if (m.type === 'ai') {
@@ -193,7 +215,7 @@ export function restoreFromStorage() {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
         } else {
-          row.appendChild(createMsgCopyButton(m.text));
+          row.appendChild(createAiCopyBadge(m.timestamp, m.text));
         }
         chat.appendChild(row);
       }
@@ -523,7 +545,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
         } else {
-          row.appendChild(createMsgCopyButton(m.text));
+          row.appendChild(createAiCopyBadge(m.timestamp, m.text));
         }
         fragment.appendChild(row);
       }

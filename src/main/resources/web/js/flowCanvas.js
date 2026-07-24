@@ -216,9 +216,15 @@ function computeLayout() {
     pipelineMeta[name] = { depthMap, maxDepth, verdictSteps };
   });
 
-  // Dynamic column spacing: ensure adjacent columns never overlap even
-  // when both have the maximum number of parallel nodes at the same Y.
-  const colSpacing = Math.max(120, (maxParallel - 1) * nodeSpacing - colWidth + 60);
+  // Dynamic column spacing: adjacent columns need enough gap so that
+  // nodes spread horizontally within one column don't overlap the next column.
+  // Worst case: both columns have maxParallel nodes at the same Y, spread by nodeSpacing.
+  // Left column's right-most node center: colCenter + (maxParallel-1)*nodeSpacing/2
+  // Right column's left-most node center: colCenter + colSpacing - (maxParallel-1)*nodeSpacing/2
+  // Center-to-center gap = colSpacing - (maxParallel-1)*nodeSpacing.
+  // Each node is ~120px wide (half = 60px), so edge-to-edge gap = center gap - 120.
+  // We want edge-to-edge ≥ 60px → center gap ≥ 180 → colSpacing ≥ (maxParallel-1)*nodeSpacing + 180.
+  const colSpacing = Math.max(120, (maxParallel - 1) * nodeSpacing + 180);
 
   const allNodes = [];
   const allEdges = [];
