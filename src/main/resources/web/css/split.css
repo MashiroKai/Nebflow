@@ -378,6 +378,12 @@ body.canvas-open #canvas-panel {
   margin: 0;
   border-radius: 8px;
 }
+.canvas-html-viewer {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    Three-column layout: unified cards + draggable resizers

@@ -310,7 +310,8 @@ export async function openWorkspaceItem(item) {
       break;
     }
     case 'html': {
-      pane.innerHTML = content || '';
+      pane.innerHTML = `<div class="canvas-html-viewer">${content || ''}</div>`;
+      pane.classList.add('scrollable');
       break;
     }
     default: {
