@@ -5,7 +5,7 @@
 // Nodes positioned by hierarchy depth from Main Agent.
 // Gray lines show data flow direction.
 
-import { openCanvas, closeCanvas, setCanvasContent, showCanvasHeader, isCanvasOpen } from './canvas.js';
+import { openTab, closeTab, getTabPane, hasTab, isCanvasOpen } from './canvas.js';
 import { openStepPopup, closeStepPopup } from './flowAgentPopup.js';
 
 // ── View state (pan/zoom) ──────────────────────────────────
@@ -314,13 +314,17 @@ function computeLayout() {
 // ── Rendering ──────────────────────────────────────────────
 
 function renderAll() {
-  // Only render content when the canvas is already open.
+  // Only render when the canvas is open AND the flow tab exists AND is visible.
   // Data (pipelines map) is always updated by event handlers regardless.
+  // If the flow tab is hidden (user switched to another tab), skip rendering —
+  // it will re-render on tab switch via the canvas-tab-switched listener.
   if (!isCanvasOpen()) return;
+  const pane = getTabPane('flow');
+  if (!pane || !pane.classList.contains('active')) return;
 
   const layout = computeLayout();
   if (!layout) {
-    setCanvasContent(`${FLOW_CSS}
+    pane.innerHTML = `${FLOW_CSS}
       <div class="flow-card">
         <div class="flow-root">
           <div class="flow-empty">
@@ -328,8 +332,7 @@ function renderAll() {
             <div class="hint">Mount a flow to see the architecture</div>
           </div>
         </div>
-      </div>`);
-    showCanvasHeader(false);
+      </div>`;
     return;
   }
 
@@ -346,7 +349,7 @@ function renderAll() {
       <button class="flow-btn" id="flow-fit" title="Fit all">⊡</button>
     </div>`;
 
-  setCanvasContent(`${FLOW_CSS}
+  pane.innerHTML = `${FLOW_CSS}
     <div class="flow-card">
       <div class="flow-root" id="flow-root">
         ${infoHtml}
@@ -362,8 +365,7 @@ function renderAll() {
         </div>
         ${toolbarHtml}
       </div>
-    </div>`);
-  showCanvasHeader(false);
+    </div>`;
 
   // Position nodes absolutely in viewport
   const viewport = document.getElementById('flow-viewport');
@@ -424,7 +426,7 @@ function applyTransform() {
 function fitView(layout) {
   if (!layout) return;
   const root = document.getElementById('flow-root');
-  if (!root) return;
+  if (!root || !root.clientWidth || !root.clientHeight) return;
   const cw = root.clientWidth;
   const ch = root.clientHeight;
   const lw = layout.maxX - layout.minX;
@@ -608,16 +610,21 @@ export function completeFlow(msg) {
 
 export function closeFlow() {
   if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
-  closeCanvas();
+  closeTab('flow');
   document.getElementById('flow-toggle-btn')?.classList.remove('active');
 }
 
 export async function toggleCanvas() {
-  const isOpen = document.body.classList.contains('canvas-open');
   const btn = document.getElementById('flow-toggle-btn');
-  if (isOpen) { closeCanvas(); btn?.classList.remove('active'); return; }
+  // If flow tab exists, close it (toggle off).
+  if (hasTab('flow')) {
+    closeTab('flow');
+    btn?.classList.remove('active');
+    return;
+  }
+  // Open flow tab.
   btn?.classList.add('active');
-  openCanvas('');
+  openTab('flow', 'Flow', { type: 'flow', closable: false });
   renderAll();
 }
 
@@ -677,3 +684,18 @@ export async function autoRestore(sessionIdArg) {
     console.warn('[flowCanvas] Restore failed:', e);
   }
 }
+
+// ── Tab lifecycle ──────────────────────────────────────────
+// When the flow tab is closed (by canvas close, closeTab, or clearAllTabs),
+// deactivate the toggle button and disconnect the ResizeObserver.
+document.addEventListener('canvas-tab-closed', (e) => {
+  if (e.detail.id !== 'flow') return;
+  document.getElementById('flow-toggle-btn')?.classList.remove('active');
+  if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+});
+
+// When switching back to the flow tab, re-render (state may have changed
+// while the tab was hidden — renderAll skips hidden tabs).
+document.addEventListener('canvas-tab-switched', (e) => {
+  if (e.detail.id === 'flow') renderAll();
+});
