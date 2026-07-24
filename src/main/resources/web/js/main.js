@@ -2076,6 +2076,16 @@ initMemory();
 initCanvas();
 initColResizers();
 initPanelDragger();
+
+// Remove UI initialization lock — all layout setup is done.
+// Double-rAF ensures the browser has painted at least one frame with
+// the final layout before re-enabling transitions.
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => {
+    document.documentElement.classList.remove('ui-init');
+  });
+});
+
 initActivityBar();
 document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
