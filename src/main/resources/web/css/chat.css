@@ -6,19 +6,19 @@
   min-width: 0;
   position: relative;
 }
-/* Top fade removed — chat now starts at header's top edge (margin-top: 16px),
-   so messages can never scroll above the header. No fade needed. */
-/* Bottom fade — messages dissolve above input */
-#main::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 60px;
-  background: linear-gradient(to top, var(--color-bg), transparent);
-  z-index: 15;
-  pointer-events: none;
+/* Top fade + bottom fade removed — #chat box now clips at header center
+   and input bar center. The glass blur provides the transition. */
+#chat {
+  flex: 1;
+  overflow-y: auto;
+  /* margin-top ≈ header center (16px header-offset + ~29px half header height).
+     margin-bottom ≈ input bar center (10px area padding + ~27px half bar height).
+     Messages scroll behind the glass and get clipped at each element's center. */
+  margin: 45px 0 37px;
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  overscroll-behavior: contain;
 }
 #header {
   background:
@@ -396,15 +396,6 @@
 .bg-task-row.bg-task-cancelling {
   opacity: 0.65;
   pointer-events: none;
-}
-#chat {
-  flex: 1;
-  overflow-y: auto;
-  margin-top: 16px;
-  padding: 48px 0 88px 0;
-  display: flex;
-  flex-direction: column;
-  overscroll-behavior: contain;
 }
 /* History pagination indicators */
 .history-loader {
