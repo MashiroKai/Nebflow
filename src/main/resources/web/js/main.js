@@ -36,6 +36,7 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
+import { initWorkspace, refreshWorkspace } from './workspace.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { initNeblink, checkPairingRedirect } from './neblink.js';
 import { initDropbox } from './dropbox.js';
@@ -2079,6 +2080,7 @@ initActivityBar();
 document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
+initWorkspace();
 initNeblink();
 checkPairingRedirect();
 initDropbox();

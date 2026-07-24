@@ -1121,6 +1121,74 @@ class WebSocketRoutes(
             }
           else IO.unit
 
+        // ===== Workspace Knowledge =====
+
+        case "listWorkspaceItems" =>
+          val wsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+          if wsSessionId.nonEmpty then
+            sharedResources.knowledgeStore.loadItems(wsSessionId).flatMap { items =>
+              val itemJsons = items.map { it =>
+                io.circe.Json.obj(
+                  "id" -> it.id.asJson,
+                  "sessionId" -> it.sessionId.asJson,
+                  "title" -> it.title.asJson,
+                  "itemType" -> it.itemType.asJson,
+                  "content" -> it.content.asJson,
+                  "createdAt" -> it.createdAt.asJson
+                )
+              }
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "workspaceItemList".asJson,
+                  "items" -> itemJsons.asJson,
+                  "sessionId" -> wsSessionId.asJson
+                )
+              )
+            }
+          else IO.unit
+
+        case "saveWorkspaceItem" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val svSessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val svTitle = hc.downField("title").as[String].getOrElse("")
+          val svType = hc.downField("itemType").as[String].getOrElse("markdown")
+          val svContent = hc.downField("content").as[String].getOrElse("")
+          if svSessionId.nonEmpty && svTitle.nonEmpty then
+            val item = nebflow.core.workspace.WorkspaceItem.create(svSessionId, svTitle, svType, svContent)
+            sharedResources.knowledgeStore.addItem(item).flatMap { _ =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "workspaceItemSaved".asJson,
+                  "item" -> io.circe.Json.obj(
+                    "id" -> item.id.asJson,
+                    "sessionId" -> item.sessionId.asJson,
+                    "title" -> item.title.asJson,
+                    "itemType" -> item.itemType.asJson,
+                    "content" -> item.content.asJson,
+                    "createdAt" -> item.createdAt.asJson
+                  )
+                )
+              )
+            }
+          else IO.unit
+
+        case "deleteWorkspaceItem" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val delSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val delId = json.hcursor.downField("id").as[String].getOrElse("")
+          if delSessionId.nonEmpty && delId.nonEmpty then
+            sharedResources.knowledgeStore.deleteItem(delSessionId, delId).flatMap { _ =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "workspaceItemDeleted".asJson,
+                  "id" -> delId.asJson,
+                  "sessionId" -> delSessionId.asJson
+                )
+              )
+            }
+          else IO.unit
+
         case "ping" => IO.unit
 
         case "getActiveBgTasks" =>

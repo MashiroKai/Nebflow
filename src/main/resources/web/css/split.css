@@ -47,6 +47,155 @@
   flex-shrink: 0;
 }
 
+/* ===== Workspace Section (below schedule) ===== */
+#workspace-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.workspace-header {
+  padding: 10px 14px 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+.workspace-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-frame-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.workspace-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.workspace-count {
+  font-size: 10px;
+  color: var(--color-frame-text-muted);
+  opacity: 0.5;
+}
+#workspace-list {
+  padding: 4px 6px 8px;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+#workspace-list::-webkit-scrollbar { width: 4px; }
+#workspace-list::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.15);
+  border-radius: 2px;
+}
+
+/* ── Workspace Items ── */
+.workspace-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px 8px;
+  font-size: 11px;
+  color: var(--color-frame-text-muted);
+  opacity: 0.4;
+}
+.workspace-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  position: relative;
+}
+.workspace-item:hover {
+  background: rgba(128, 128, 128, 0.06);
+}
+.workspace-item.removing {
+  opacity: 0;
+  transform: translateX(20px);
+  transition: all 0.2s;
+}
+.workspace-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: rgba(91, 127, 191, 0.08);
+  color: rgb(91, 127, 191);
+  opacity: 0.7;
+}
+.workspace-item-icon svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.8;
+}
+.workspace-item[data-type="code"] .workspace-item-icon {
+  background: rgba(168, 85, 247, 0.08);
+  color: rgb(168, 85, 247);
+}
+.workspace-item[data-type="html"] .workspace-item-icon {
+  background: rgba(234, 88, 12, 0.08);
+  color: rgb(234, 88, 12);
+}
+.workspace-item-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.workspace-item-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-item-preview {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.workspace-item-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+.workspace-item:hover .workspace-item-delete {
+  opacity: 0.5;
+}
+.workspace-item-delete:hover {
+  opacity: 1 !important;
+  background: rgba(239, 68, 68, 0.1);
+  color: rgb(239, 68, 68);
+}
+.workspace-item-delete svg {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+}
+
 /* ===== Agent Badge ===== */
 .agent-badge {
   font-size: 11px;
