@@ -67,21 +67,34 @@ function escapeHtml(str) {
 // ── Badge ──────────────────────────────────────────────────────────────
 
 function updateBadge() {
-  return;
+  const btn = $('#reminder-btn');
+  if (!btn) return;
+  let badge = btn.querySelector('.reminder-badge');
+  const count = pendingCount();
+  if (count > 0) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'reminder-badge';
+      btn.appendChild(badge);
+    }
+    badge.textContent = count > 9 ? '9+' : count;
+  } else if (badge) {
+    badge.remove();
+  }
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
 
 function renderList() {
-  const body = $('#schedule-list');
+  const body = $('#reminder-panel .reminder-panel-body');
   if (!body) return;
 
   const pending = tasks.filter(t => !t.triggered);
   const triggered = tasks.filter(t => t.triggered);
 
   // Update header count
-  const countEl = $('.schedule-count');
-  if (countEl) countEl.textContent = pending.length > 0 ? t('task.pendingCount', { count: pending.length }) : '';
+  const countEl = $('#reminder-panel .reminder-panel-count');
+  if (countEl) countEl.textContent = pending.length > 0 ? pending.length : '';
 
   // Clear and rebuild
   body.innerHTML = '';
@@ -225,18 +238,30 @@ function buildInlineCreate() {
 // ── Actions ────────────────────────────────────────────────────────────
 
 function openPanel() {
+  const panel = $('#reminder-panel');
+  if (!panel) return;
+  panelOpen = true;
+  isCreating = false;
+  panel.classList.add('open');
+
+  if (typeof lucide !== 'undefined') lucide.createIcons();
+
   if (state.activeSessionId) {
     sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
   }
-  renderList();
 }
 
 function closePanel() {
-  // No-op: schedule is always visible in sidebar
+  const panel = $('#reminder-panel');
+  if (!panel) return;
+  panelOpen = false;
+  isCreating = false;
+  panel.classList.remove('open');
 }
 
 function togglePanel() {
-  // No-op: schedule is always visible in sidebar
+  if (panelOpen) closePanel();
+  else openPanel();
 }
 
 function startInlineCreate() {
@@ -390,8 +415,17 @@ onMessage('scheduledTaskTriggered', (msg) => {
 // ── Public Init ────────────────────────────────────────────────────────
 
 export function initScheduledTask() {
-  // "+" button in schedule header
-  const createBtn = $('#schedule-add-btn');
+  // Header clock button — toggle panel
+  const reminderBtn = $('#reminder-btn');
+  if (reminderBtn) {
+    reminderBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      togglePanel();
+    });
+  }
+
+  // "+" button in panel header
+  const createBtn = $('#reminder-create-btn');
   if (createBtn) {
     createBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -403,8 +437,8 @@ export function initScheduledTask() {
     });
   }
 
-  // Body click: click empty area to create/save
-  const body = $('#schedule-list');
+  // Panel body click: click empty area to create/save
+  const body = $('#reminder-panel .reminder-panel-body');
   if (body) {
     body.addEventListener('click', (e) => {
       if (e.target.closest('button, input, a, .reminder-row')) return;
@@ -412,6 +446,14 @@ export function initScheduledTask() {
       else startInlineCreate();
     });
   }
+
+  // Outside click: close panel
+  document.addEventListener('click', (e) => {
+    const panel = $('#reminder-panel');
+    if (panel && panelOpen && !panel.contains(e.target) && !e.target.closest('#reminder-btn')) {
+      closePanel();
+    }
+  });
 
   // Auto-load tasks for active session
   if (state.activeSessionId) {

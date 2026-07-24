@@ -40,26 +40,12 @@
     <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
   </div>
 
-  <!-- Sidebar — scheduled tasks only (single-session architecture) -->
+  <!-- Sidebar — workspace only -->
   <div id="sidebar">
     <div id="sidebar-panel">
       <div id="panel-sessions" class="panel active">
         <!-- Sidebar top bar — empty drag handle for panel reordering -->
         <div class="sidebar-topbar"></div>
-
-        <!-- Schedule Section -->
-        <div id="schedule-section">
-          <div class="schedule-header">
-            <span class="schedule-title">Schedule</span>
-            <div class="schedule-header-right">
-              <span class="schedule-count"></span>
-              <button id="schedule-add-btn" class="reminder-create-btn" title="New Task"><i data-lucide="plus"></i></button>
-            </div>
-          </div>
-          <div id="schedule-list" class="reminder-panel-body">
-            <!-- Tasks rendered here by scheduled-task.js -->
-          </div>
-        </div>
 
         <!-- Workspace Section -->
         <div id="workspace-section">
@@ -107,6 +93,7 @@
         <button class="voice-toggle" id="voice-toggle-btn" title="Voice output">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
         </button>
+        <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="clock"></i></button>
         <div id="bg-indicator" class="hidden">
           <span class="bg-dot"></span>
           <span class="bg-count">0</span>
@@ -130,6 +117,20 @@
     <div id="bg-dropdown" class="hidden">
       <div class="bg-dropdown-header">Background tasks</div>
       <div class="bg-dropdown-list"></div>
+    </div>
+    <!-- Reminder Panel — floating dropdown from header button -->
+    <div id="reminder-panel">
+      <div class="reminder-panel-header">
+        <div class="reminder-panel-title">Scheduled Tasks</div>
+        <div class="reminder-panel-header-right">
+          <span class="reminder-panel-count"></span>
+          <button class="reminder-create-btn" id="reminder-create-btn" title="New Task">
+            <i data-lucide="plus"></i>
+          </button>
+        </div>
+      </div>
+      <div class="reminder-panel-body"></div>
+      <div class="reminder-panel-footer"></div>
     </div>
     <div id="top-overlays">
       <div id="task-list"></div>
@@ -225,8 +226,7 @@
     <div id="memory-modal">
       <div id="memory-modal-title">Memory</div>
       <div class="memory-tabs">
-        <button class="memory-tab active" data-scope="folder">Folder</button>
-        <button class="memory-tab" data-scope="agent">Agent</button>
+        <button class="memory-tab active" data-scope="agent">Agent</button>
         <button class="memory-tab" data-scope="user">User</button>
       </div>
       <div id="memory-modal-body">
