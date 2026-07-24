@@ -302,8 +302,6 @@ export default {
   // === Task list ===
   'task.expand': 'Expand',
   'task.collapse': 'Collapse',
-  'task.count': '{count} tasks',
-  'task.done': '{count} done',
   'task.inProgress': '{count} in progress',
   'task.open': '{count} open',
   'task.blockedBy': 'blocked by #{ids}',
@@ -319,7 +317,6 @@ export default {
   'tool.Glob': 'Glob',
   'tool.TaskCreate': 'TaskCreate',
   'tool.TaskUpdate': 'TaskUpdate',
-  'tool.TaskList': 'TaskList',
   'tool.Card': 'Card',
   'tool.AskUser': 'AskUser',
   'tool.WebSearch': 'WebSearch',
