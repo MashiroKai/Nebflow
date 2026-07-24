@@ -425,17 +425,24 @@ html.ui-init #canvas-panel {
   min-width: 0;
 }
 
+/* ── Resizer overlay layer ──────────────────────────────────────────────
+   Completely isolated from flex layout. Fixed full-viewport container
+   with pointer-events:none; individual resizers re-enable it.
+   JS positions each resizer at the midpoint between adjacent panels. */
+.resizer-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+}
+
 /* ── Column resizer handles ─────────────────────────────────────────────── */
-/* Absolutely positioned overlay — does NOT participate in flex layout.
-   Panel margins create all spacing (8px each side = 16px gap), exactly
-   like the activity-bar ↔ sidebar gap. JS positions the resizer at the
-   midpoint between adjacent panels. The grip pill is centered inside. */
 .col-resizer {
   position: absolute;
   top: 0;
   bottom: 0;
   width: 16px;
-  z-index: 40;
+  pointer-events: auto;
   cursor: col-resize;
   display: none;             /* panelDragger.js controls visibility + position */
 }
