@@ -35,12 +35,17 @@ function getPersistedCanvasWidth() {
 }
 
 /** Compute the target open width: a persisted width if any, else ~45% of
- *  the viewport, clamped to [min, max]. */
+ *  the viewport, clamped to [min, max] AND to available space (leave room
+ *  for sidebar + main panel). */
 function computeOpenWidth() {
+  const sidebarWidth = 260; // sidebar + margins + resizer
+  const minMainWidth = 350; // keep main usable
+  const maxAvailable = window.innerWidth - sidebarWidth - minMainWidth;
+  const effectiveMax = Math.min(MAX_CANVAS_WIDTH, maxAvailable);
   const persisted = getPersistedCanvasWidth();
-  if (persisted) return Math.max(MIN_CANVAS_WIDTH, Math.min(MAX_CANVAS_WIDTH, persisted));
+  if (persisted) return Math.max(MIN_CANVAS_WIDTH, Math.min(effectiveMax, persisted));
   const target = Math.round(window.innerWidth * 0.45);
-  return Math.max(MIN_CANVAS_WIDTH, Math.min(MAX_CANVAS_WIDTH, target));
+  return Math.max(MIN_CANVAS_WIDTH, Math.min(effectiveMax, target));
 }
 
 /** Open the canvas panel.
