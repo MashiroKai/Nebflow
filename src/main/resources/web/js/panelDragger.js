@@ -58,9 +58,11 @@ export function initPanelDragger() {
     requestAnimationFrame(repositionAllResizers);
   });
 
-  // Reposition after colResizer drag ends
+  // Reposition after drag ends (col-resizing class is removed before event fires)
   window.addEventListener('nebflow-col-resize', () => {
-    requestAnimationFrame(repositionAllResizers);
+    if (!document.body.classList.contains('col-resizing')) {
+      requestAnimationFrame(repositionAllResizers);
+    }
   });
 }
 
