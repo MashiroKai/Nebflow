@@ -24,7 +24,7 @@ const FLOW_CSS = `
    blur + inset highlight are enough; flow nodes provide their own depth. */
 .flow-card {
   position: absolute;
-  top: 8px; left: 8px; right: 8px; bottom: 12px;
+  top: 8px; left: 0; right: 0; bottom: 12px;
   border-radius: 20px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
