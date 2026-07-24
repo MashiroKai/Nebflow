@@ -415,18 +415,18 @@ body.canvas-open #canvas-panel {
 }
 
 /* ── Column resizer handles ─────────────────────────────────────────────── */
-/* A grabbable strip between two columns. The drag surface spans the card gap
-   (16px, via negative margins overlapping the cards' 8px margins). A visible
-   "grip" pill in the middle signals where to grab; it highlights on hover/drag.
-   Visibility is controlled by panelDragger.js (inline display style), not CSS
-   body-class rules — both adjacent panels must be visible for a resizer to show. */
+/* Absolutely positioned overlay — does NOT participate in flex layout.
+   Panel margins create all spacing (8px each side = 16px gap), exactly
+   like the activity-bar ↔ sidebar gap. JS positions the resizer at the
+   midpoint between adjacent panels. The grip pill is centered inside. */
 .col-resizer {
-  flex: 0 0 16px;
-  margin: 8px -8px 12px -8px;  /* overlap card margins; bottom matches sidebar */
-  position: relative;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 16px;
   z-index: 40;
   cursor: col-resize;
-  display: none;             /* panelDragger.js controls visibility */
+  display: none;             /* panelDragger.js controls visibility + position */
 }
 /* Grip handle — centered pill, always visible. */
 .col-resizer::before {
