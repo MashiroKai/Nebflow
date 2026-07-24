@@ -484,7 +484,7 @@ body.canvas-open #canvas-panel.visible {
   width: 4px; height: 36px;
   border-radius: 4px;
   background: var(--color-text-muted);
-  opacity: 0.35;
+  opacity: 0.15;
   transition: opacity 0.2s, background 0.2s, height 0.2s, width 0.2s;
   pointer-events: none;
 }

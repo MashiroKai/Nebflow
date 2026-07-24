@@ -38,13 +38,14 @@ function getPersistedCanvasWidth() {
  *  the viewport, clamped to [min, max] AND to available space (leave room
  *  for sidebar + main panel). */
 function computeOpenWidth() {
-  const sidebarWidth = 260; // sidebar + margins + resizer
-  const minMainWidth = 350; // keep main usable
-  const maxAvailable = window.innerWidth - sidebarWidth - minMainWidth;
+  // Fixed elements: activity-bar(56) + sidebar(236) + sidebar resizer(16) + canvas resizer(16) + edge-bar(3)
+  const fixedWidth = 327;
+  const minMainWidth = 350;
+  const maxAvailable = window.innerWidth - fixedWidth - minMainWidth;
   const effectiveMax = Math.min(MAX_CANVAS_WIDTH, maxAvailable);
   const persisted = getPersistedCanvasWidth();
   if (persisted) return Math.max(MIN_CANVAS_WIDTH, Math.min(effectiveMax, persisted));
-  const target = Math.round(window.innerWidth * 0.45);
+  const target = Math.round(window.innerWidth * 0.42);
   return Math.max(MIN_CANVAS_WIDTH, Math.min(effectiveMax, target));
 }
 
@@ -336,9 +337,9 @@ export function initCanvas() {
   // Responsive: clamp canvas width when browser is resized.
   window.addEventListener('resize', () => {
     if (!isCanvasOpen()) return;
-    const sidebarWidth = 260;
+    const fixedWidth = 327;
     const minMainWidth = 350;
-    const maxAvailable = window.innerWidth - sidebarWidth - minMainWidth;
+    const maxAvailable = window.innerWidth - fixedWidth - minMainWidth;
     const current = parseFloat(getComputedStyle(document.documentElement)
       .getPropertyValue('--canvas-width')) || 0;
     if (current > maxAvailable) {
