@@ -281,7 +281,8 @@ function escapeHtml(str) {
  *  @param {string} item.title   — Tab label
  *  @param {string} item.content — Raw content (markdown text, source code, or HTML) */
 export async function openWorkspaceItem(item) {
-  const { id, type, title, content } = item;
+  const { id, itemType, title, content } = item;
+  const type = itemType;  // workspace items use 'itemType', not 'type'
   if (!id) return;
 
   // If tab already exists, just switch to it.
