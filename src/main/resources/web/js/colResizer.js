@@ -115,8 +115,14 @@ function bindResizer(handle) {
     const startX = e.clientX;
     const leftW0 = leftEl.getBoundingClientRect().width;
     const rightW0 = rightEl.getBoundingClientRect().width;
-    pinWidth(leftName, leftW0);
-    pinWidth(rightName, rightW0);
+    // Only pin the sidebar (left column of sidebar|main pair).
+    // For main|canvas: only control canvas via --canvas-width, let main flex:1.
+    if (leftName === 'sidebar') {
+      pinWidth(leftName, leftW0);
+    }
+    if (rightName === 'canvas') {
+      pinWidth(rightName, rightW0);
+    }
 
     handle.classList.add('dragging');
     document.body.classList.add('col-resizing');
@@ -127,8 +133,16 @@ function bindResizer(handle) {
       const minR = MIN_WIDTHS[rightName] || 0;
       // Clamp so neither column shrinks below its minimum.
       const clamped = Math.max(-leftW0 + minL, Math.min(rightW0 - minR, dx));
-      pinWidth(leftName, leftW0 + clamped);
-      pinWidth(rightName, rightW0 - clamped);
+      if (leftName === 'sidebar') {
+        pinWidth(leftName, leftW0 + clamped);
+      }
+      if (rightName === 'canvas') {
+        pinWidth(rightName, Math.max(MIN_WIDTHS.canvas, rightW0 - clamped));
+      }
+      // For sidebar|main resizer: also pin main so drag works
+      if (rightName === 'main') {
+        pinWidth(rightName, rightW0 - clamped);
+      }
       notifyResize();
     };
 
@@ -190,8 +204,8 @@ function saveWidths() {
   try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (_) {}
 }
 
-/** Restore persisted widths on load. Sidebar always; main/canvas only when
- *  the canvas is open. */
+/** Restore persisted widths on load. Sidebar always; canvas only when
+ *  the canvas is open. Main is NEVER pinned — it always flex:1 to fill. */
 function restoreWidths() {
   let data = {};
   try { data = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (_) {}
@@ -199,9 +213,8 @@ function restoreWidths() {
     pinWidth('sidebar', Math.max(MIN_WIDTHS.sidebar, data.sidebar));
   }
   const canvasOpen = document.body.classList.contains('canvas-open');
-  if (canvasOpen) {
-    if (data.main) pinWidth('main', Math.max(MIN_WIDTHS.main, data.main));
-    if (data.canvas) pinWidth('canvas', Math.max(MIN_WIDTHS.canvas, data.canvas));
+  if (canvasOpen && data.canvas) {
+    pinWidth('canvas', Math.max(MIN_WIDTHS.canvas, data.canvas));
   }
 }
 
