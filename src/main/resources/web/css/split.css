@@ -249,15 +249,19 @@ body.canvas-open #canvas-panel.visible {
   display: none;
 }
 
-/* Slide layer — fills the panel. No separate transform animation needed:
-   the panel's flex-basis transition handles the reveal. overflow:hidden on
-   #canvas-panel clips the content during the width animation, exactly like
-   how the sidebar reveals its content. */
+/* Slide layer — slides in from right when opening, out to right when closing.
+   Uses the SAME duration + easing as flex-basis so they stay perfectly synced.
+   overflow:hidden on #canvas-panel clips the off-screen content. */
 #canvas-slide {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
+  transform: translateX(100%);
+  transition: transform var(--panel-duration) var(--panel-ease);
+}
+body.canvas-open #canvas-panel.visible #canvas-slide {
+  transform: translateX(0);
 }
 
 /* Canvas header — glassmorphism bar containing tab bar + close button */
