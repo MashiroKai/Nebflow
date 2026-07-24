@@ -54,14 +54,34 @@ export function initPanelDragger() {
   observeBodyClass();
 }
 
-// ── Header bump hover zone ─────────────────────────────────────
-// Creates an invisible hit area over the bump (reverse notch) at the top
-// of each panel header. Hover only triggers when the mouse is directly
-// over the bump, not the entire header area.
+// ── Header bump: continuous SVG edge + glass fill ──────────────
+// Injects an inline SVG that draws ONE continuous top-edge line across
+// each header, including a smooth bump in the center. The glass fill
+// comes from ::before (no border). The SVG draws the visible edge.
+// This eliminates the T-junction seam that pseudo-element borders create.
 function initHeaderBumpZone() {
   ['.sidebar-topbar', '#header', '.canvas-header'].forEach(sel => {
     document.querySelectorAll(sel).forEach(header => {
       if (header.querySelector('.bump-zone')) return;
+
+      // SVG: continuous top edge with bump — spans full header width
+      const svgNs = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(svgNs, 'svg');
+      svg.classList.add('bump-edge');
+      svg.setAttribute('viewBox', '0 0 100 14');
+      svg.setAttribute('preserveAspectRatio', 'none');
+      // Path: flat → smooth S-curve up → arc → S-curve down → flat
+      // Baseline at y=12, bump peak at y=3, bump spans x=30..70
+      const path = document.createElementNS(svgNs, 'path');
+      path.setAttribute('d', 'M 0 12 L 30 12 C 36 12 38 3 50 3 C 62 3 64 12 70 12 L 100 12');
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', 'currentColor');
+      path.setAttribute('stroke-width', '1');
+      path.setAttribute('vector-effect', 'non-scaling-stroke');
+      svg.appendChild(path);
+      header.appendChild(svg);
+
+      // Hover zone
       const zone = document.createElement('div');
       zone.className = 'bump-zone';
       header.appendChild(zone);
