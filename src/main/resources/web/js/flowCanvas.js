@@ -18,27 +18,23 @@ let panZoomReady = false;
 // ── CSS ────────────────────────────────────────────────────
 const FLOW_CSS = `
 <style>
-/* Card wrapper — matches #header / #input-area glass card style */
+/* Card wrapper — glass surface for the infinite canvas.
+   No border or outer shadow: the card sits on #canvas-panel's solid
+   background, so a border would create a harsh rectangle. The glass
+   blur + inset highlight are enough; flow nodes provide their own depth. */
 .flow-card {
   position: absolute;
   top: 8px; left: 8px; right: 8px; bottom: 12px;
   border-radius: 20px;
-  border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   overflow: hidden;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255,255,255,0.25),
-    0px 2px 8px rgba(0,0,0,0.04),
-    0px 8px 24px rgba(0,0,0,0.06);
+  box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.25);
 }
 @media (prefers-color-scheme: dark) {
   .flow-card {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255,255,255,0.04),
-      0px 2px 8px rgba(0,0,0,0.20),
-      0px 8px 24px rgba(0,0,0,0.35);
+    box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.04);
   }
 }
 .flow-root {
