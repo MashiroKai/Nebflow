@@ -8,7 +8,6 @@ import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
-import { refreshScheduledTasks } from './scheduled-task.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
