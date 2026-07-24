@@ -434,13 +434,13 @@ body.canvas-open #canvas-panel.visible {
    rendered width matches the drag 1:1, and persists them to localStorage.
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* Right edge bar — thin fixed strip anchoring the canvas panel's right edge */
+/* Right edge bar — structural spacer anchoring canvas right boundary.
+   Invisible: takes 3px of layout space but has no visual appearance. */
 .edge-bar-right {
   flex: 0 0 3px;
   flex-shrink: 0;
   align-self: stretch;
-  background: var(--glass-border);
-  opacity: 0.5;
+  background: transparent;
   z-index: 20;
 }
 
