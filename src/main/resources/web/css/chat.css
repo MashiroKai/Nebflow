@@ -51,7 +51,9 @@
   right: 0;
   z-index: 30;
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25)
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 1px 3px rgba(0, 0, 0, 0.04),
+    0px 2px 8px rgba(0, 0, 0, 0.06);
 }
 #header .header-left { display: flex; align-items: center; }
 #header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: 15px; }
@@ -226,6 +228,8 @@
   max-width: 380px;
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 2px 8px rgba(0, 0, 0, 0.06);
   z-index: 100;
   overflow: hidden;
 }
@@ -247,7 +251,9 @@
 @media (prefers-color-scheme: dark) {
   #delegate-dropdown {
     box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04)
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 2px 8px rgba(0, 0, 0, 0.35);
   }
 }
 #delegate-dropdown.hidden { display: none; }
@@ -271,6 +277,8 @@
   max-width: 380px;
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 2px 8px rgba(0, 0, 0, 0.06);
   z-index: 100;
   overflow: hidden;
 }
@@ -292,7 +300,9 @@
 @media (prefers-color-scheme: dark) {
   #bg-dropdown {
     box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04)
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 2px 8px rgba(0, 0, 0, 0.35);
   }
 }
 #bg-dropdown.hidden { display: none; }
@@ -677,6 +687,7 @@
   padding: 2px 8px 2px 6px;
   background: var(--color-surface);
   border-radius: 6px;
+  box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
   user-select: none;
   width: fit-content;
 }
@@ -965,7 +976,9 @@
 @media (prefers-color-scheme: dark) {
   #header {
     box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04)
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 2px 8px rgba(0, 0, 0, 0.35);
   }
 
   .notice-warn { background: rgba(217,165,65,0.12); }
@@ -1212,6 +1225,7 @@
   font-size: 13px;
   line-height: 1.4;
   background: var(--color-surface);
+  box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
   color: var(--color-text);
   animation: notifSlideIn 0.3s ease;
 }
