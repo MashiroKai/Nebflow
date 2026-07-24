@@ -364,11 +364,27 @@ export function finishAi(durationMs, model) {
       renderDurationBadge(bubble, durationMs, model, seed, ts, activeView.stream.aiText);
       hasBadge = true;
     }
-    // Copy button for AI message (standalone only if no badge to embed into)
+    // Copy button for AI message — use duration-badge pill with timestamp,
+    // matching user message style. No phrase/model when no duration.
     if (!hasBadge) {
       const aiRow = bubble.closest('.row');
       if (aiRow) {
-        aiRow.appendChild(createMsgCopyButton(activeView.stream.aiText));
+        const badge = document.createElement('div');
+        badge.className = 'duration-badge';
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'duration-badge-time';
+        timeSpan.setAttribute('data-ts', ts);
+        timeSpan.textContent = formatHm(ts);
+        timeSpan.title = '点击切换 12/24 小时制';
+        timeSpan.addEventListener('click', toggleTimeFormat);
+        badge.appendChild(timeSpan);
+        if (activeView.stream.aiText) {
+          const div = document.createElement('span');
+          div.className = 'duration-badge-divider';
+          badge.appendChild(div);
+          badge.appendChild(createMsgCopyButton(activeView.stream.aiText));
+        }
+        aiRow.appendChild(badge);
       }
     }
     // Trigger voice TTS: enqueue all <voice> blocks for sequential playback,
