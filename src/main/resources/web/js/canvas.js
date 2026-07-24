@@ -53,17 +53,18 @@ export function openCanvas(title = '') {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
 
-  // Cancel any pending close cleanup from a rapid toggle.
   if (closeTimeout) { clearTimeout(closeTimeout); closeTimeout = null; }
 
-  // Set the target width via CSS custom property; CSS handles the transition.
+  panel.classList.remove('hidden');
+  panel.classList.add('visible');
+
   const canvasTarget = computeOpenWidth();
   document.documentElement.style.setProperty('--canvas-width', canvasTarget + 'px');
 
-  // Single rAF: panel is already display:flex at flex-basis:0.
-  // Just add the class to trigger the transition.
   requestAnimationFrame(() => {
-    document.body.classList.add('canvas-open');
+    requestAnimationFrame(() => {
+      document.body.classList.add('canvas-open');
+    });
   });
 }
 
@@ -91,6 +92,8 @@ export function closeCanvas() {
   // Cleanup after the transition completes.
   const DURATION = 400;
   closeTimeout = setTimeout(() => {
+    panel.classList.remove('visible');
+    panel.classList.add('hidden');
     clearAllTabs();
     closeTimeout = null;
   }, DURATION);

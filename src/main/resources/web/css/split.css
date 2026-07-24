@@ -224,30 +224,29 @@
    Hidden by default; shown via body.canvas-open.
    Content is injected by canvas.js — NOT a ChatView.
 
-   CSS-driven animation, matching the sidebar collapse pattern EXACTLY:
-   canvas.js sets --canvas-width and toggles body.canvas-open.
-   The panel transitions flex-basis, opacity, margin, padding — same as sidebar.
-   No display:none → flex jump. Panel stays in layout at all times. */
+   CSS-driven animation: toggles body.canvas-open.
+   The panel's flex-basis transitions using --panel-duration/--panel-ease.
+   #main stays flex:1 — the browser redistributes space naturally. */
 #canvas-panel {
-  display: flex;           /* always flex — no display switching */
+  display: none;
   flex-direction: column;
-  flex: 0 0 0;             /* collapsed by default */
+  flex: 0 0 0;
   min-width: 0;
   position: relative;
   background: var(--color-bg);
-  opacity: 0;
+  opacity: 1;
   overflow: hidden;
-  pointer-events: none;    /* no interaction when collapsed */
-  /* Same multi-property transition as sidebar */
-  transition: flex-basis var(--panel-duration) var(--panel-ease),
-              opacity var(--panel-duration) var(--panel-ease),
-              margin var(--panel-duration) var(--panel-ease),
-              padding var(--panel-duration) var(--panel-ease);
+  transition: flex-basis var(--panel-duration) var(--panel-ease);
 }
-body.canvas-open #canvas-panel {
+#canvas-panel.visible {
+  display: flex;
+}
+body.canvas-open #canvas-panel.visible {
   flex-basis: var(--canvas-width, 45vw);
   opacity: 1;
-  pointer-events: auto;
+}
+#canvas-panel.hidden {
+  display: none;
 }
 
 /* Slide layer — fills the panel. No separate transform animation needed:
@@ -518,65 +517,20 @@ body.col-resizing #canvas-panel { transition: none; }
   cursor: grab;
 }
 
-/* ── Reverse notch (反刘海) — continuous SVG edge + glass fill ──
-   The bump is created by TWO layers:
-   1. ::before — glass fill (background + backdrop-filter, NO border)
-   2. inline SVG (.bump-edge) — draws ONE continuous top-edge line
-      that flows from the header's left border, up over the bump,
-      and back to the right border. No seams, no T-junctions.
-   On hover/drag: ONLY the pill changes. The bump edge is inert. */
+/* ── Drag-handle pill — simple horizontal bar on each header ──
+   No bump, no edge styling. Just a grab indicator that lights up on hover. */
 
-/* Sidebar & canvas need position:relative for ::before / SVG */
-.sidebar-topbar {
-  position: relative;
-  z-index: 1;
-}
-.canvas-header {
-  position: relative;
-}
+/* Sidebar & canvas need position:relative for ::after */
+.sidebar-topbar { position: relative; z-index: 1; }
+.canvas-header { position: relative; }
 
-/* Glass fill for the bump area — no border, SVG handles the edge */
-.sidebar-topbar::before,
-#header::before,
-.canvas-header::before {
-  content: '';
-  position: absolute;
-  top: -7px;           /* extends above header */
-  left: 50%;
-  transform: translateX(-50%);
-  width: 70px;         /* matches the SVG bump width ratio */
-  height: 9px;
-  background: var(--glass-bg);
-  border: none;        /* NO border — SVG draws the continuous edge */
-  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  z-index: 31;
-  pointer-events: none;
-}
-
-/* SVG continuous edge — spans full header width */
-.bump-edge {
-  position: absolute;
-  top: -7px;           /* aligns with ::before */
-  left: 0;
-  width: 100%;
-  height: 14px;
-  z-index: 32;         /* above ::before, above header */
-  color: var(--glass-border);
-  pointer-events: none;
-  overflow: visible;
-}
-
-/* ── Drag-handle pill — sits on the bump ──
-   A horizontal grip centered on the bump. On hover/drag it lights up
-   and grows slightly. The bump itself never changes. */
+/* Pill indicator */
 .sidebar-topbar::after,
 #header::after,
 .canvas-header::after {
   content: '';
   position: absolute;
-  top: 3px;
+  top: 4px;
   left: 50%;
   transform: translateX(-50%);
   width: 36px;
@@ -589,9 +543,8 @@ body.col-resizing #canvas-panel { transition: none; }
   z-index: 3;
 }
 
-/* Hover zone — invisible hit area on the bump only.
-   JS toggles .bump-hover on the header element. */
-.sidebar-topbar.bump-hover::after,
+/* Hover/drag lights up the pill */
+.sidebar-topbar:hover::after,
 #header.bump-hover::after,
 .canvas-header.bump-hover::after,
 body.panel-dragging .panel-drag-source > .sidebar-topbar::after,
@@ -603,21 +556,16 @@ body.panel-dragging .panel-drag-source > .canvas-header::after {
   height: 5px;
 }
 
-/* Invisible hover hit zone — only the bump area triggers hover */
+/* Invisible hover hit zone — only the pill area triggers hover on main/canvas */
 .bump-zone {
   position: absolute;
-  top: -6px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
   width: 80px;
-  height: 18px;
+  height: 14px;
   z-index: 4;
   background: transparent;
-}
-
-/* canvas-header needs position:relative for ::before to work */
-.canvas-header {
-  position: relative;
 }
 
 /* Buttons & interactive elements inside headers keep pointer cursor */
