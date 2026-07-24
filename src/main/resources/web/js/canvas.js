@@ -56,37 +56,26 @@ function computeOpenWidth() {
 /** Open the canvas panel.
  *  @param {string} title — Unused in tab model (titles are per-tab). Kept for API compat.
  *
- *  CSS-driven: sets --canvas-width and toggles body.canvas-open. The panel's
- *  flex-basis + opacity animate from 0 to the target via CSS transition.
- *  No display switching — panel is always display:flex, like the sidebar. */
+ *  Mirrors the sidebar pattern: set CSS variable, toggle body class, done.
+ *  The panel is always display:flex (never display:none), so no double-rAF
+ *  or forced reflow is needed. CSS handles the entire transition. */
 export function openCanvas(title = '') {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
 
   if (closeTimeout) { clearTimeout(closeTimeout); closeTimeout = null; }
 
-  // Clear main's inline flex pin so it goes back to flex:1 (fills remaining
-  // space). This prevents pinned main width + canvas width from overflowing.
-  const mainEl = document.getElementById('main');
-  if (mainEl) mainEl.style.flex = '';
-
-  panel.classList.remove('hidden');
-  panel.classList.add('visible');
-
+  // Set target width via CSS custom property, then toggle body class.
+  // The panel transitions from flex-basis:0 to --canvas-width via CSS.
   const canvasTarget = computeOpenWidth();
   document.documentElement.style.setProperty('--canvas-width', canvasTarget + 'px');
-
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      document.body.classList.add('canvas-open');
-    });
-  });
+  document.body.classList.add('canvas-open');
 }
 
 /** Close the canvas panel and clear all tabs.
  *
- *  CSS-driven: removes body.canvas-open so the panel's flex-basis + opacity
- *  animate back to 0. After the transition, all tabs are removed. */
+ *  Mirrors the sidebar pattern: remove body class, CSS animates back to 0.
+ *  After the transition, all tabs are removed. */
 export function closeCanvas() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
@@ -101,28 +90,17 @@ export function closeCanvas() {
     } catch (_) {}
   }
 
-  // Convert colResizer's inline flex pin to --canvas-width for clean CSS transition.
-  // Inline flex (e.g. style.flex = '0 0 500px') overrides CSS rules, preventing
-  // the flex-basis transition. We must clear it BEFORE removing body.canvas-open.
-  const currentW = panel.getBoundingClientRect().width;
-  if (currentW > 0) {
-    document.documentElement.style.setProperty('--canvas-width', currentW + 'px');
-  }
+  // Clear any inline flex pin so CSS transition takes effect.
   panel.style.flex = '';
-  const mainEl = document.getElementById('main');
-  if (mainEl) mainEl.style.flex = '';
 
-  // Remove body class — CSS animates flex-basis to 0.
+  // Remove body class — CSS animates flex-basis + opacity back to 0.
   document.body.classList.remove('canvas-open');
 
-  // Cleanup after the transition completes.
-  const DURATION = 400;
+  // Cleanup after the CSS transition completes.
   closeTimeout = setTimeout(() => {
-    panel.classList.remove('visible');
-    panel.classList.add('hidden');
     clearAllTabs();
     closeTimeout = null;
-  }, DURATION);
+  }, 350);
 }
 
 /** Check whether the canvas is currently visible.

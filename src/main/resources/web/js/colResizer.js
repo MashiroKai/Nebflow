@@ -42,34 +42,22 @@ export function initColResizers() {
   restoreWidths();
   bindAll();
 
-  // Clear pinned main/canvas widths when the canvas closes so Main can fill.
-  // Restore them when it reopens.
-  const canvasPanel = document.getElementById('canvas-panel');
-  if (canvasPanel) {
-    const mo = new MutationObserver(() => {
-      if (canvasPanel.classList.contains('visible')) {
-        restoreWidths();
-      } else {
-        clearPin('main');
-        clearPin('canvas');
-      }
-    });
-    mo.observe(canvasPanel, { attributes: true, attributeFilter: ['class'] });
-  }
-
-  // When the sidebar collapses, clear its drag-pinned inline flex so the
-  // collapse CSS (body.sidebar-collapsed #sidebar { flex: 0 0 0 }) can take
-  // effect — otherwise the higher-specificity inline style keeps it expanded.
-  // On expand, restore the persisted width so it returns to the user's size.
+  // Single body-class MutationObserver handles both sidebar and canvas pin
+  // management — mirrors how the sidebar works (body class drives everything).
   const bodyEl = document.body;
-  const moSidebar = new MutationObserver(() => {
+  const moBody = new MutationObserver(() => {
+    // Sidebar: clear pin on collapse, restore on expand.
     if (bodyEl.classList.contains('sidebar-collapsed')) {
       clearPin('sidebar');
     } else {
       restoreWidths();
     }
+    // Canvas: clear main pin when canvas closes so Main fills remaining space.
+    if (!bodyEl.classList.contains('canvas-open')) {
+      clearPin('main');
+    }
   });
-  moSidebar.observe(bodyEl, { attributes: true, attributeFilter: ['class'] });
+  moBody.observe(bodyEl, { attributes: true, attributeFilter: ['class'] });
 }
 
 function bindAll() {
