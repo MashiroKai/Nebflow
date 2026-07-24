@@ -1,14 +1,7 @@
 package nebflow.core.flow
 
-import cats.effect.{Deferred, IO, Ref}
+import cats.effect.{IO, Ref}
 import cats.implicits.*
-import nebflow.core.NebflowLogger
-
-// ============================================================
-// VerifyResult — used by FlowVerifyRegistry + MailTool
-// ============================================================
-
-case class VerifyResult(pass: Boolean, summary: String)
 
 // ============================================================
 // StepStatus — pipeline step lifecycle states
@@ -18,42 +11,41 @@ enum StepStatus:
   case Pending, Running, Retrying, Done, Failed, Canceled
 
 // ============================================================
-// FlowVerifyRegistry — bridges MailTool(type=verify) ↔ pipeline
+// FlowMailTracker — records Mail sends between flow agents
 // ============================================================
 
 /**
- * Global registry mapping verify agent paths to their pending Deferred.
- * PipelineActor registers a Deferred before spawning a verify agent.
- * MailTool completes it when the verify agent calls Mail(type=verify).
+ * Global registry tracking which agents sent Mail to whom.
+ * PipelineActor checks this after a verdict node completes:
+ *   - If the verify agent sent Mail to its retry target → FAIL
+ *   - If it didn't → PASS
+ *
+ * This replaces the old Deferred-based verify mechanism.
+ * The Mail itself is the signal — no separate type=verify needed.
  */
-object FlowVerifyRegistry:
-  private val logger = NebflowLogger(getClass)
-  private val pending = Ref.unsafe[IO, Map[String, Deferred[IO, VerifyResult]]](Map.empty)
+object FlowMailTracker:
+  private val sent = Ref.unsafe[IO, Map[String, Set[String]]](Map.empty)
 
-  def register(agentPath: String, d: Deferred[IO, VerifyResult]): IO[Unit] =
-    pending.update(_ + (agentPath -> d))
+  /** Record that `from` sent Mail to `to`. Called by MailTool after every send. */
+  def record(from: String, to: String): IO[Unit] =
+    sent.update(m => m.updatedWith(from)(_.map(_ + to).orElse(Some(Set(to)))))
 
-  def tryGet(agentPath: String): IO[Option[Deferred[IO, VerifyResult]]] =
-    pending.get.map(_.get(agentPath))
+  /** Check if `from` sent Mail to `to`. */
+  def sentTo(from: String, to: String): IO[Boolean] =
+    sent.get.map(_.get(from).exists(_.contains(to)))
 
-  def complete(agentPath: String, result: VerifyResult): IO[Boolean] =
-    pending.get.flatMap { m =>
-      m.get(agentPath) match
-        case Some(d) => d.complete(result).as(true)
-        case None => IO.pure(false)
-    }
+  /** Check if ANYONE sent Mail to `to` (regardless of sender). */
+  def anySentTo(to: String): IO[Boolean] =
+    sent.get.map(_.values.exists(_.contains(to)))
 
-  def remove(agentPath: String): IO[Unit] =
-    pending.update(_ - (agentPath))
+  /** Clear records for a sender (called after PipelineActor processes the verdict). */
+  def clear(from: String): IO[Unit] =
+    sent.update(_ - from)
 
-  /** Test-only: complete ALL pending verify Deferreds with the given result.
-   *  Used by the test FakeLlm to simulate a verify agent calling
-   *  Mail(type=verify) — since the fake LLM can't call tools and doesn't know
-   *  the spawned agent's actor path. Production never calls this. */
-  def completeAllForTest(result: VerifyResult): IO[Int] =
-    pending.get.flatMap { m =>
-      m.values.toList.traverse_(_.complete(result)).as(m.size) <*
-        pending.set(Map.empty)
-    }
+  /** Test-only: simulate Mail sends without an actual MailTool call. */
+  def recordForTest(from: String, to: String): IO[Unit] = record(from, to)
 
-end FlowVerifyRegistry
+  /** Test-only: clear all records. */
+  def clearAllForTest: IO[Unit] = sent.set(Map.empty)
+
+end FlowMailTracker

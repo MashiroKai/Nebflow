@@ -191,17 +191,19 @@ class PipelineActorSpec extends CatsEffectSuite:
   // hardcoded pass=true, so a leaf failure was silently swallowed as success.
   // (Root cause 1: pass derivation.)
   test("regression: failed step is not reported as PASS") {
-    // FakeLlm.failing makes the verify node report FAIL via Mail.
+    // FakeLlm.failing makes the verify node Mail the retry target → FAIL verdict.
+    // With maxIterations=1, the retry exhausts immediately → pipeline fails.
     Resource.eval(FlowTestKit.create(FakeLlm.failing)).use { kit =>
       for
         (parent, getEvents) <- kit.spawnCapturingParent()
-        pipeRef <- kit.spawnPipeline("test-failreport", simpleFlow, parent)
+        pipeRef <- kit.spawnPipeline("test-failreport", flowWithRetry, parent)
         _ <- pipeRef ! TriggerCmd("input", None)
         _ <- waitForState(pipeRef, "Idle", 30.seconds)
         events <- getEvents
-        completed = events.find(_.eventType == "completed")
-      yield assert(completed.exists(_.payload.contains("FAIL")),
-        s"expected a FAIL completion event, got: ${events.map(_.payload)}")
+        // Pipeline should fail (either "completed" with FAIL or "failed" event)
+        failEvent = events.find(e => e.eventType == "completed" || e.eventType == "failed")
+      yield assert(failEvent.exists(_.payload.contains("FAIL")),
+        s"expected a FAIL event, got: ${events.map(e => (e.eventType, e.payload.take(50)))}")
     }
   }
 
