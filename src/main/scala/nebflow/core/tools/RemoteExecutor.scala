@@ -234,6 +234,7 @@ class RemoteExecutor(neblinkService: NeblinkService, dispatcher: Dispatcher[IO])
                 "type" -> "backgroundTaskUpdate".asJson,
                 "sessionId" -> ctx.sessionId.asJson,
                 "taskId" -> jobId.asJson,
+                "description" -> description.asJson,
                 "status" -> "running".asJson,
                 "heartbeat" -> io.circe.Json.obj(
                   "alive" -> true.asJson,

@@ -89,6 +89,22 @@ function clearPin(name) {
   if (el) el.style.flex = '';
 }
 
+/** Bind drag-to-resize on a single .col-resizer handle.
+ *  Reads data-left / data-right (set by panelDragger.applyOrder) to know
+ *  which columns this handle separates, then pins fixed pixel widths during
+ *  drag so mouse movement maps 1:1 to width changes.
+ *
+ *  Pinning strategy (assumes default order sidebar | main | canvas):
+ *    sidebar  — always pinned (flex:0 0 px); drag maps 1:1.
+ *    canvas   — pinned via --canvas-width CSS var to avoid fighting the
+ *               open/close transition; main flex:1 absorbs the difference.
+ *    main     — pinned ONLY during sidebar drag (so sidebar|main pair maps
+ *               1:1); cleared on mouseup so it returns to flex:1 fill.
+ *
+ *  Limitation: the name-based conditions (`leftName === 'sidebar'` etc.)
+ *  assume the default panel order. After panel reordering, some resizer
+ *  pairs may not pin correctly because the panel identity no longer matches
+ *  the expected side (e.g., sidebar on the right of a resizer). */
 function bindResizer(handle) {
   handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -98,13 +114,13 @@ function bindResizer(handle) {
     const rightEl = COL_EL[rightName]?.();
     if (!leftEl || !rightEl) return;
 
-    // Snapshot the rendered widths at drag start, then pin both columns to
+    // Snapshot the rendered widths at drag start, then pin columns to
     // FIXED widths so subsequent mouse moves map 1:1 to pixel changes.
     const startX = e.clientX;
     const leftW0 = leftEl.getBoundingClientRect().width;
     const rightW0 = rightEl.getBoundingClientRect().width;
-    // Only pin the sidebar (left column of sidebar|main pair).
-    // For main|canvas: only control canvas via --canvas-width, let main flex:1.
+    // Pin sidebar (flex:0 0 px) and canvas (--canvas-width var) at drag start.
+    // Main is left unpinned — it flex:1 to absorb the change.
     if (leftName === 'sidebar') {
       pinWidth(leftName, leftW0);
     }
@@ -127,7 +143,8 @@ function bindResizer(handle) {
       if (rightName === 'canvas') {
         pinWidth(rightName, Math.max(MIN_WIDTHS.canvas, rightW0 - clamped));
       }
-      // For sidebar|main resizer: also pin main so drag works
+      // When the right column is main (sidebar|main resizer), pin main too
+      // so both sides of the pair resize 1:1 with the cursor.
       if (rightName === 'main') {
         pinWidth(rightName, rightW0 - clamped);
       }
