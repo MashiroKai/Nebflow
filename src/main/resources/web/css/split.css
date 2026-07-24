@@ -495,15 +495,6 @@ body.col-resizing #canvas-panel { transition: none; }
    Drag a panel header to move it between positions.
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* Header areas act as drag handles — cursor: grab communicates affordance.
-   Interactive children (buttons) override with their own cursor.
-   Canvas header is also a drag handle now (panelDragger binds it). */
-.sidebar-topbar,
-#header,
-.canvas-header {
-  cursor: grab;
-}
-
 /* ── Drag-handle pill — simple horizontal bar on each header ──
    No bump, no edge styling. Just a grab indicator that lights up on hover. */
 
@@ -531,7 +522,7 @@ body.col-resizing #canvas-panel { transition: none; }
 }
 
 /* Hover/drag lights up the pill */
-.sidebar-topbar:hover::after,
+.sidebar-topbar.bump-hover::after,
 #header.bump-hover::after,
 .canvas-header.bump-hover::after,
 body.panel-dragging .panel-drag-source > .sidebar-topbar::after,
@@ -553,6 +544,7 @@ body.panel-dragging .panel-drag-source > .canvas-header::after {
   height: 14px;
   z-index: 4;
   background: transparent;
+  cursor: grab;
 }
 
 /* Buttons & interactive elements inside headers keep pointer cursor */
@@ -574,8 +566,7 @@ body.panel-dragging {
 body.panel-dragging iframe {
   pointer-events: none;
 }
-body.panel-dragging .sidebar-topbar,
-body.panel-dragging #header {
+body.panel-dragging .bump-zone {
   cursor: grabbing;
 }
 

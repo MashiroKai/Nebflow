@@ -50,15 +50,14 @@
 }
 .panel.active { display: flex; }
 
-/* ---------- Sidebar Top Bar — drag handle for panel reordering ---------- */
-/* No visible content; kept as a slim grab strip so users can still drag the
-   sidebar header to reorder columns (panelDragger.js binds here). */
+/* ---------- Sidebar Top Bar ---------- */
+/* The bump-zone (pill at top) is the drag handle for panel reordering.
+   The topbar itself is not a drag area — cursor: grab lives on .bump-zone. */
 .sidebar-topbar {
   display: flex;
   align-items: center;
   padding: 4px 14px;
   flex-shrink: 0;
-  cursor: grab;
 }
 .panel-header {
   padding: 14px 14px;
