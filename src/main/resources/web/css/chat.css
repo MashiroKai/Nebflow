@@ -55,7 +55,6 @@
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
 }
-/* Bump (::before) defined in split.css — shared selector for all three headers */
 #header .header-left { display: flex; align-items: center; }
 #header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: 15px; }
 #header .header-center {

@@ -523,46 +523,54 @@ body.col-resizing #canvas-panel { transition: none; }
   cursor: grab;
 }
 
-/* ── Reverse notch (反刘海) — unified bump for all three panels ──
-   The bump is positioned to overlap the header's top border (top: -1px),
-   so its background COVERS the header's border at that spot. The bump's
-   own border + inset highlight continue seamlessly from the header's edge,
-   creating the illusion of one glass surface rising upward.
-   On hover/drag: ONLY the pill (grab indicator) changes. The bump is inert. */
+/* ── Reverse notch (反刘海) — continuous SVG edge + glass fill ──
+   The bump is created by TWO layers:
+   1. ::before — glass fill (background + backdrop-filter, NO border)
+   2. inline SVG (.bump-edge) — draws ONE continuous top-edge line
+      that flows from the header's left border, up over the bump,
+      and back to the right border. No seams, no T-junctions.
+   On hover/drag: ONLY the pill changes. The bump edge is inert. */
 
-/* Sidebar & canvas need position:relative for ::before bump */
+/* Sidebar & canvas need position:relative for ::before / SVG */
 .sidebar-topbar {
   position: relative;
   z-index: 1;
 }
+.canvas-header {
+  position: relative;
+}
 
-/* Bump (::before) — unified across all three panel headers.
-   Mirrors the ::after shared-selector pattern below.
-   #header gets a higher z-index override since it sits at z-index: 30. */
+/* Glass fill for the bump area — no border, SVG handles the edge */
 .sidebar-topbar::before,
 #header::before,
 .canvas-header::before {
   content: '';
   position: absolute;
-  top: 0;
+  top: -7px;           /* extends above header */
   left: 50%;
   transform: translateX(-50%);
-  width: 120px;
+  width: 70px;         /* matches the SVG bump width ratio */
   height: 9px;
   background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  border-bottom: none;
+  border: none;        /* NO border — SVG draws the continuous edge */
   border-radius: 50% 50% 0 0 / 100% 100% 0 0;
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
-  z-index: 2;
+  z-index: 31;
   pointer-events: none;
 }
 
-/* #header sits at a higher stacking level (z-index: 30) than sidebar/canvas */
-#header::before {
-  z-index: 31;
+/* SVG continuous edge — spans full header width */
+.bump-edge {
+  position: absolute;
+  top: -7px;           /* aligns with ::before */
+  left: 0;
+  width: 100%;
+  height: 14px;
+  z-index: 32;         /* above ::before, above header */
+  color: var(--glass-border);
+  pointer-events: none;
+  overflow: visible;
 }
 
 /* ── Drag-handle pill — sits on the bump ──
