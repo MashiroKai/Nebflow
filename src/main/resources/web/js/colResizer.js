@@ -193,10 +193,18 @@ function saveWidths() {
 }
 
 /** Restore persisted widths on load. Sidebar always; canvas only when
- *  the canvas is open. Main is NEVER pinned — it always flex:1 to fill. */
+ *  the canvas is open. Main is NEVER pinned — it always flex:1 to fill.
+ *  Transitions are temporarily disabled to prevent jitter on page load. */
 function restoreWidths() {
   let data = {};
   try { data = JSON.parse(localStorage.getItem(LS_KEY) || '{}'); } catch (_) {}
+
+  // Suppress transitions during width restoration to prevent jitter
+  const panels = ['sidebar', 'main', 'canvas-panel']
+    .map(id => document.getElementById(id))
+    .filter(Boolean);
+  panels.forEach(el => el.style.transition = 'none');
+
   if (data.sidebar) {
     pinWidth('sidebar', Math.max(MIN_WIDTHS.sidebar, data.sidebar));
   }
@@ -204,6 +212,13 @@ function restoreWidths() {
   if (canvasOpen && data.canvas) {
     pinWidth('canvas', Math.max(MIN_WIDTHS.canvas, data.canvas));
   }
+
+  // Re-enable transitions on next frame
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      panels.forEach(el => el.style.transition = '');
+    });
+  });
 }
 
 function clearWidths() {
