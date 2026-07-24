@@ -23,7 +23,9 @@
   gap: 8px;
   flex-shrink: 0;
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25)
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 1px 3px rgba(0, 0, 0, 0.04),
+    0px 2px 8px rgba(0, 0, 0, 0.06);
 }
 #input-bar::before {
   content: '';
@@ -256,6 +258,8 @@ body.drag-over #input-bar {
   border-radius: 20px;
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
+    0px 1px 3px rgba(0, 0, 0, 0.04),
+    0px 2px 8px rgba(0, 0, 0, 0.06);
   margin-bottom: 4px;
   max-height: 200px;
   overflow-y: auto;
@@ -364,7 +368,9 @@ body.drag-over #input-bar {
   border: 1px solid var(--glass-border);
   border-radius: 20px;
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25)
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 1px 3px rgba(0, 0, 0, 0.04),
+    0px 2px 8px rgba(0, 0, 0, 0.06);
 }
 /* Top-edge refraction line — same technique as .glass::before */
 #queue-bar.visible::before {
@@ -536,7 +542,9 @@ body.drag-over #input-bar {
 @media (prefers-color-scheme: dark) {
   #input-bar {
     box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04)
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 1px 3px rgba(0, 0, 0, 0.20),
+      0px 2px 8px rgba(0, 0, 0, 0.35);
   }
   #input {
     color: #e0e2e5;
@@ -549,14 +557,16 @@ body.drag-over #input-bar {
 
   #slash-dropdown {
     box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04)
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 4px 16px rgba(0, 0, 0, 0.30),
       0px 8px 32px rgba(0, 0, 0, 0.45);
   }
 
   #queue-bar.visible {
     box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04)
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 1px 3px rgba(0, 0, 0, 0.20),
+      0px 2px 8px rgba(0, 0, 0, 0.35);
   }
   .queue-item-btn.immediate:hover {
     background: rgba(var(--sapphire), 0.18);
