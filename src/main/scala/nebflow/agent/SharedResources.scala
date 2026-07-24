@@ -8,6 +8,7 @@ import nebflow.core.compact.HistoryArchiver
 import nebflow.core.hooks.{HookEngine, HooksConfig}
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.task.TaskStore
+import nebflow.core.workspace.KnowledgeStore
 import nebflow.core.telemetry.TelemetryReporter
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{FileChangeTracker, PathUtil}
@@ -48,5 +49,6 @@ case class SharedResources(
   neblinkService: Option[NeblinkService] = None,
   dropboxService: Option[DropboxService] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None,
+  knowledgeStore: KnowledgeStore = new KnowledgeStore(PathUtil.dataRoot / "workspace-items"),
   voiceMutedRef: Ref[IO, Boolean]
 )

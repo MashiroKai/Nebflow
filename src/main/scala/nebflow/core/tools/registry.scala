@@ -34,6 +34,8 @@ object ToolRegistry:
       "TaskUpdate" -> TaskUpdateTool,
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
+      // Workspace knowledge
+      "SaveWorkspaceItem" -> SaveWorkspaceItemTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
       // Sub-agent delegation (replaces Delegate + MountFlow)
