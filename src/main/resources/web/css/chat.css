@@ -15,7 +15,7 @@
      margin-bottom ≈ input bar center (10px area padding + ~27px half bar height).
      Messages scroll behind the glass and get clipped at each element's center. */
   margin: 45px 0 37px;
-  padding: 8px 0;
+  padding: 8px 0 36px;
   display: flex;
   flex-direction: column;
   overscroll-behavior: contain;
