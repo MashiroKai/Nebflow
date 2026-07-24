@@ -448,7 +448,7 @@ html.ui-init #canvas-panel {
   width: 16px;
   z-index: 1;
 }
-/* Visible grip pill — centered, shows on hover/drag */
+/* Visible grip pill — centered, dim gray by default, brightens on hover/drag */
 .col-resizer::before {
   content: '';
   position: absolute;
@@ -457,7 +457,7 @@ html.ui-init #canvas-panel {
   width: 4px; height: 36px;
   border-radius: 4px;
   background: var(--color-text-muted);
-  opacity: 0;
+  opacity: 0.25;
   transition: opacity 0.2s, background 0.2s, height 0.2s, width 0.2s;
   pointer-events: none;
   z-index: 2;
