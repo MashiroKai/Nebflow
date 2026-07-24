@@ -15,7 +15,7 @@
   bottom: 0;
   left: 0;
   right: 0;
-  height: 40px;
+  height: 60px;
   background: linear-gradient(to top, var(--color-bg), transparent);
   z-index: 15;
   pointer-events: none;
@@ -401,9 +401,7 @@
   flex: 1;
   overflow-y: auto;
   margin-top: 16px;
-  /* padding-top ≈ header height / 2 (messages reach header center)
-     padding-bottom ≈ input area center (messages reach input bar center) */
-  padding: 28px 0 36px 0;
+  padding: 48px 0 88px 0;
   display: flex;
   flex-direction: column;
   overscroll-behavior: contain;
