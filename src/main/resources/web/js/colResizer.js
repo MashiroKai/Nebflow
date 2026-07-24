@@ -76,14 +76,27 @@ function bindAll() {
   document.querySelectorAll('.col-resizer').forEach(bindResizer);
 }
 
-/** Pin a fixed pixel width on a column (flex: 0 0 <px> — exact render width). */
+/** Pin a fixed pixel width on a column.
+ *  For canvas: uses --canvas-width CSS variable so it doesn't fight
+ *  the CSS transition on open/close. For others: inline flex. */
 function pinWidth(name, px) {
+  if (name === 'canvas') {
+    document.documentElement.style.setProperty('--canvas-width', px + 'px');
+    // Also clear any inline flex on canvas panel so CSS var takes effect
+    const el = COL_EL[name]?.();
+    if (el) el.style.flex = '';
+    return;
+  }
   const el = COL_EL[name]?.();
   if (el) el.style.flex = `0 0 ${px}px`;
 }
 
 /** Remove a pinned width so the column uses its CSS default (flex:1 / fill). */
 function clearPin(name) {
+  if (name === 'canvas') {
+    // Don't clear --canvas-width on close — closeCanvas handles it
+    return;
+  }
   const el = COL_EL[name]?.();
   if (el) el.style.flex = '';
 }
