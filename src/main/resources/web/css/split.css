@@ -386,6 +386,17 @@ body.canvas-open #canvas-panel {
    rendered width matches the drag 1:1, and persists them to localStorage.
    ═══════════════════════════════════════════════════════════════════════ */
 
+/* ── UI initialization lock — prevents transition jitter on page load ──
+   Added by inline <head> script before body renders, removed by JS after
+   all layout initialization (width restoration, panel ordering) completes.
+   Without this, sidebar's transition: flex-basis animates the initial
+   width pin, causing visible jitter. */
+html.ui-init #sidebar,
+html.ui-init #main,
+html.ui-init #canvas-panel {
+  transition: none !important;
+}
+
 /* Right edge bar — structural anchor, invisible.
    Mirrors activity-bar on the left: fixed width, flex-shrink:0, provides
    a stable right boundary so canvas panel always fits within viewport. */
@@ -406,12 +417,12 @@ body.canvas-open #canvas-panel {
 #sidebar-panel { width: 100%; }
 
 /* Main — fills remaining space by default (flex:1).
-   Left/right margins create consistent 16px gaps with adjacent panels
-   (sidebar margin-right 8px + main margin-left 8px = 16px). */
+   Stays flex:1 during canvas open/close — the browser redistributes space
+   naturally as the canvas panel's flex-basis animates, exactly like how
+   Main absorbs the sidebar collapse. */
 #main {
   flex: 1;
   min-width: 0;
-  margin: 0 8px;
 }
 
 /* ── Column resizer handles ─────────────────────────────────────────────── */
