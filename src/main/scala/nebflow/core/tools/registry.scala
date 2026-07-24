@@ -30,7 +30,6 @@ object ToolRegistry:
       "AskUserQuestion" -> AskUserQuestionTool,
       // Task management
       "TaskCreate" -> TaskCreateTool,
-      "TaskList" -> TaskListTool,
       "TaskUpdate" -> TaskUpdateTool,
       // Scheduled tasks
       "Schedule" -> ScheduleTool,
