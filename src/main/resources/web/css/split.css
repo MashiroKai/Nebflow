@@ -406,12 +406,12 @@ body.canvas-open #canvas-panel {
 #sidebar-panel { width: 100%; }
 
 /* Main — fills remaining space by default (flex:1).
-   Stays flex:1 during canvas open/close — the browser redistributes space
-   naturally as the canvas panel's flex-basis animates, exactly like how
-   Main absorbs the sidebar collapse. No canvas-specific transition needed. */
+   Left/right margins create consistent 16px gaps with adjacent panels
+   (sidebar margin-right 8px + main margin-left 8px = 16px). */
 #main {
   flex: 1;
   min-width: 0;
+  margin: 0 8px;
 }
 
 /* ── Column resizer handles ─────────────────────────────────────────────── */
