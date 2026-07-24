@@ -678,7 +678,9 @@ class RestApiRoutes(
     // GET /flow/status/:sessionId — return all pipeline states for frontend
     // NOTE: Router mounts this under /api prefix, so full path is /api/flow/status/:sessionId
     case GET -> Root / "flow" / "status" / sessionId =>
-      if sessionId.isEmpty then BadRequest(Json.obj("error" -> "Missing sessionId".asJson))
+      // Validate sessionId: only UUID format (hex + dashes), no path traversal
+      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
           states <- nebflow.core.flow.PipelineStateStore.loadAll(sessionId)

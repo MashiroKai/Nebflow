@@ -119,9 +119,13 @@ object PipelineStateStore:
   }
 
   private def stateDir(sessionId: String): os.Path =
+    // Defense in depth: reject non-UUID-like session IDs to prevent path traversal
+    require(sessionId.matches("^[a-fA-F0-9-]{1,64}$"), s"Invalid sessionId: $sessionId")
     PathUtil.dataRoot / "sessions" / sessionId / "pipeline-state"
 
   private def stateFile(sessionId: String, pipelineName: String): os.Path =
+    // Reject pipeline names with path separators or suspicious patterns
+    require(pipelineName.matches("^[a-zA-Z0-9._-]{1,128}$"), s"Invalid pipeline name: $pipelineName")
     stateDir(sessionId) / s"$pipelineName.json"
 
   /** Save a pipeline state snapshot (atomic write). */
