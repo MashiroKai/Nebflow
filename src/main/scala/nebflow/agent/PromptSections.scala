@@ -57,6 +57,8 @@ object PromptSections:
     memoryBlock: String = "",
     /** Pre-rendered active-sessions block (from formatAgentSessions). */
     agentSessionsText: String = "",
+    /** Pre-rendered task list block (from TaskStore.renderForPrompt). */
+    taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
     rulesMd: Option[String] = None
   )
@@ -232,6 +234,13 @@ object PromptSections:
       620,
       condition = _.language.isDefined,
       renderer = ctx => languageBlock(ctx.language.get)
+    ),
+
+    // --- Task list (always visible to agent) ---
+    PromptSection.dynamic(
+      630,
+      condition = _.taskListText.nonEmpty,
+      renderer = _.taskListText
     ),
 
     // --- Catalog sections ---

@@ -32,6 +32,7 @@ case class Task(
   description: String,
   activeForm: Option[String] = None,
   status: TaskStatus = TaskStatus.Pending,
+  parentId: Option[String] = None,
   blocks: List[String] = Nil,
   blockedBy: List[String] = Nil,
   createdAt: Option[String] = None,
@@ -44,7 +45,8 @@ object Task:
 case class TaskCreateInput(
   subject: String,
   description: String,
-  activeForm: Option[String] = None
+  activeForm: Option[String] = None,
+  parentTaskId: Option[String] = None
 )
 
 object TaskCreateInput:

@@ -24,13 +24,21 @@ object TaskCreateTool extends Tool:
 - Task can be completed in less than 3 trivial steps
 - Purely conversational or informational requests
 
+## Nested Tasks
+
+Pass `parentTaskId` to create a sub-task under a parent task. This creates a
+hierarchical task tree. Sub-tasks inherit the parent's context.
+
 ## Fields
 
 - **subject**: Brief, actionable title in imperative form (e.g., "Fix authentication bug")
 - **description**: What needs to be done
 - **activeForm** (optional): Present continuous form for spinner (e.g., "Fixing authentication bug")
+- **parentTaskId** (optional): Parent task ID for creating sub-tasks
 
-All tasks are created with status `pending`. Use TaskUpdate to change status and manage dependencies."""
+All tasks are created with status `pending`. Use TaskUpdate to change status and manage dependencies.
+
+The current task list is always visible in your system prompt — no need to call TaskList."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -47,6 +55,10 @@ All tasks are created with status `pending`. Use TaskUpdate to change status and
         "activeForm" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "Present continuous form shown in spinner (e.g., 'Running tests')".asJson
+        ),
+        "parentTaskId" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Parent task ID for creating a sub-task".asJson
         )
       ),
       "required" -> Json.arr("subject".asJson, "description".asJson)
@@ -67,7 +79,8 @@ All tasks are created with status `pending`. Use TaskUpdate to change status and
         val createInput = TaskCreateInput(
           subject = input("subject").flatMap(_.asString).getOrElse(""),
           description = input("description").flatMap(_.asString).getOrElse(""),
-          activeForm = input("activeForm").flatMap(_.asString)
+          activeForm = input("activeForm").flatMap(_.asString),
+          parentTaskId = input("parentTaskId").flatMap(_.asString)
         )
         for
           id <- store.create(sessionId, createInput)
