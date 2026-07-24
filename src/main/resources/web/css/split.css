@@ -428,11 +428,21 @@ body.canvas-open #canvas-panel.visible {
 
 /* ═══════════════════════════════════════════════════════════════════════
    Three-column layout: unified cards + draggable resizers
-   ─ Sidebar | resizer | Main | resizer | Canvas
+   ─ Sidebar | resizer | Main | resizer | Canvas | Edge bar
    Defaults: Sidebar is a fixed-width card; Main/Canvas fill available space.
    colResizer.js pins exact pixel widths (flex: 0 0 <px>) on drag so the
    rendered width matches the drag 1:1, and persists them to localStorage.
    ═══════════════════════════════════════════════════════════════════════ */
+
+/* Right edge bar — thin fixed strip anchoring the canvas panel's right edge */
+.edge-bar-right {
+  flex: 0 0 3px;
+  flex-shrink: 0;
+  align-self: stretch;
+  background: var(--glass-border);
+  opacity: 0.5;
+  z-index: 20;
+}
 
 /* Sidebar — default fixed width; JS overrides via inline flex on drag.
    #sidebar-panel previously had a fixed 220px width; now it fills #sidebar. */
