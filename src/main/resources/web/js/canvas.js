@@ -328,8 +328,8 @@ export function initCanvas() {
     closeBtn.addEventListener('click', closeCanvas);
   }
 
-  // Listen for workspace-open-item events (dispatched by sidebar/workspace UI).
-  document.addEventListener('workspace-open-item', (e) => {
+  // Listen for workspace-open-item events (dispatched on window by workspace.js).
+  window.addEventListener('workspace-open-item', (e) => {
     if (e.detail) openWorkspaceItem(e.detail);
   });
 
