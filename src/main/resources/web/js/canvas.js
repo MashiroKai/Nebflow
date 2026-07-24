@@ -65,6 +65,11 @@ export function openCanvas(title = '') {
 
   if (closeTimeout) { clearTimeout(closeTimeout); closeTimeout = null; }
 
+  // Clear main's inline flex pin so it goes back to flex:1 (fills remaining
+  // space). This prevents pinned main width + canvas width from overflowing.
+  const mainEl = document.getElementById('main');
+  if (mainEl) mainEl.style.flex = '';
+
   panel.classList.remove('hidden');
   panel.classList.add('visible');
 
