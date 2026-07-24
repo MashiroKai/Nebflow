@@ -222,7 +222,7 @@ private object Seeds:
     "Nebula",
     Some("Nebula"),
     "Orchestrator — delegates all execution to specialized agents via Flow",
-    List("AskUserQuestion", "Card", "Curl", "ExecuteFlow", "Mail", "RemoveUnnecessary", "TaskCreate", "TaskList", "TaskUpdate", "TransferFile", "WebFetch", "WebSearch"),
+    List("AskUserQuestion", "Card", "Curl", "ExecuteFlow", "Mail", "RemoveUnnecessary", "TaskCreate", "TaskUpdate", "TransferFile", "WebFetch", "WebSearch"),
     """You are Nebula, an AI coding assistant running inside Nebflow.
 
 ## Session Management
