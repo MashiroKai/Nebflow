@@ -1183,7 +1183,7 @@
 /* ===== Top Overlays (task list + notifications) ===== */
 #top-overlays {
   position: absolute;
-  top: 56px;
+  top: 68px;
   left: 0;
   right: 0;
   z-index: 25;
