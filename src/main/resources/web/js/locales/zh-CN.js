@@ -302,8 +302,6 @@ export default {
   // === Task list ===
   'task.expand': '展开',
   'task.collapse': '收起',
-  'task.count': '{count} 个任务',
-  'task.done': '{count} 已完成',
   'task.inProgress': '{count} 进行中',
   'task.open': '{count} 待处理',
   'task.blockedBy': '等待 #{ids}',
@@ -319,7 +317,6 @@ export default {
   'tool.Glob': '查找文件',
   'tool.TaskCreate': '创建任务',
   'tool.TaskUpdate': '更新任务',
-  'tool.TaskList': '列出任务',
   'tool.Card': '卡片',
   'tool.AskUser': '询问用户',
   'tool.WebSearch': '网络搜索',
