@@ -1127,6 +1127,22 @@ class WebSocketRoutes(
             }
           else IO.unit
 
+        // ===== Task List (fetch on session switch / reconnect) =====
+
+        case "getTaskList" =>
+          val tlsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+          if tlsSessionId.nonEmpty then
+            sharedResources.taskStore.list(tlsSessionId).flatMap { tasks =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "taskListUpdate".asJson,
+                  "sessionId" -> tlsSessionId.asJson,
+                  "tasks" -> tasks.asJson
+                )
+              )
+            }
+          else IO.unit
+
         // ===== Workspace Knowledge =====
 
         case "listWorkspaceItems" =>

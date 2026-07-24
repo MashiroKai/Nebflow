@@ -1406,6 +1406,7 @@ window.addEventListener('nebflow-session-change', (e) => {
   flowCanvas.onSessionChange(e.detail.sessionId);
   refreshWorkspace(e.detail.sessionId);
   refreshScheduledTasks(e.detail.sessionId);
+  if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
 });
 
 onMessage('flowStarted', (msg) => {
@@ -2238,6 +2239,8 @@ onReconnect(() => {
     // Re-fetch workspace items — the initial load may have been dropped
     // if WS wasn't open when nebflow-session-change fired.
     refreshWorkspace(sid);
+    // Re-fetch task list for the same reason
+    sendWs({ type: 'getTaskList', sessionId: sid });
   }
   // Sync background task state — completion events may have been missed
   sendWs({ type: 'getActiveBgTasks' });

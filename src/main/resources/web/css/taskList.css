@@ -1,43 +1,28 @@
 #task-list {
-  padding: 0 12px;
-  margin: 0 8px 4px 8px;
+  padding: 0 8px;
+  margin: 0;
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.3s ease, padding 0.3s ease, margin 0.3s ease;
+  transition: max-height 0.3s ease, padding 0.3s ease;
 }
 
 #task-list.has-tasks {
   max-height: 50vh;
   overflow-y: auto;
-  padding: 10px 12px;
+  padding: 2px 8px 4px;
 }
 
+/* Flat card — no glass background, just a subtle top border to separate from header */
 .task-card {
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 10px 14px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
-    0px 1px 3px rgba(0, 0, 0, 0.03),
-    0px 4px 12px rgba(0, 0, 0, 0.04);
-}
-@media (prefers-color-scheme: dark) {
-  .task-card {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.03),
-      0px 1px 3px rgba(0, 0, 0, 0.15),
-      0px 4px 12px rgba(0, 0, 0, 0.25);
-  }
+  border-top: 1px solid var(--color-border);
+  padding: 8px 8px 6px;
 }
 
 .task-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   font-size: 12px;
   cursor: default;
 }
@@ -66,11 +51,6 @@
 .task-toggle svg {
   width: 14px;
   height: 14px;
-}
-
-.task-count {
-  font-weight: 600;
-  color: var(--color-text, #000);
 }
 
 .task-stats {
@@ -104,7 +84,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  padding: 3px 0;
   font-size: 13px;
   line-height: 1.4;
 }
