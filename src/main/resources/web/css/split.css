@@ -425,28 +425,30 @@ html.ui-init #canvas-panel {
   margin: 0 8px;
 }
 
-/* ── Resizer overlay layer ──────────────────────────────────────────────
-   Completely isolated from flex layout. Fixed full-viewport container
-   with pointer-events:none; individual resizers re-enable it.
-   JS positions each resizer at the midpoint between adjacent panels. */
-.resizer-overlay {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 50;
-}
-
 /* ── Column resizer handles ─────────────────────────────────────────────── */
+/* Zero-width flex items — they stay in the flex flow (same layer) but take
+   NO space. All panel spacing comes from panel margins (8px each side).
+   The drag hit area (::after) overflows symmetrically into both adjacent
+   panels' margins via absolute positioning. The grip (::before) is a
+   visual indicator centered on the boundary. */
 .col-resizer {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 16px;
-  pointer-events: auto;
+  flex: 0 0 0;
+  position: relative;
+  z-index: 40;
   cursor: col-resize;
-  display: none;             /* panelDragger.js controls visibility + position */
+  display: none;             /* panelDragger.js controls visibility */
 }
-/* Grip handle — centered pill, always visible. */
+/* Invisible drag hit area — 16px wide, centered on the zero-width element */
+.col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 12px;
+  left: -8px;
+  width: 16px;
+  z-index: 1;
+}
+/* Visible grip pill — centered, shows on hover/drag */
 .col-resizer::before {
   content: '';
   position: absolute;
@@ -458,6 +460,7 @@ html.ui-init #canvas-panel {
   opacity: 0;
   transition: opacity 0.2s, background 0.2s, height 0.2s, width 0.2s;
   pointer-events: none;
+  z-index: 2;
 }
 .col-resizer:hover::before,
 .col-resizer.dragging::before,

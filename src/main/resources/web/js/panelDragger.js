@@ -52,18 +52,6 @@ export function initPanelDragger() {
   bindAllHandles();
   initHeaderBumpZone();
   observeBodyClass();
-
-  // Reposition resizers on window resize
-  window.addEventListener('resize', () => {
-    requestAnimationFrame(repositionAllResizers);
-  });
-
-  // Reposition after drag ends (col-resizing class is removed before event fires)
-  window.addEventListener('nebflow-col-resize', () => {
-    if (!document.body.classList.contains('col-resizing')) {
-      requestAnimationFrame(repositionAllResizers);
-    }
-  });
 }
 
 // ── Header pill hover zone ─────────────────────────────────────
@@ -135,28 +123,6 @@ function isPanelVisible(id) {
 function updateResizerVisibility(resizer, leftId, rightId) {
   const show = isPanelVisible(leftId) && isPanelVisible(rightId);
   resizer.style.display = show ? 'block' : 'none';
-  if (show) positionResizer(resizer, leftId, rightId);
-}
-
-/** Position an absolutely-positioned resizer at the midpoint between two panels. */
-function positionResizer(resizer, leftId, rightId) {
-  const leftEl = PANEL_EL[leftId]?.();
-  const rightEl = PANEL_EL[rightId]?.();
-  if (!leftEl || !rightEl) return;
-  const lr = leftEl.getBoundingClientRect();
-  const rr = rightEl.getBoundingClientRect();
-  const gapCenter = (lr.right + rr.left) / 2;
-  resizer.style.left = (gapCenter - 8) + 'px'; // center the 16px resizer
-}
-
-/** Reposition all visible resizers — called on resize, panel toggle, etc. */
-function repositionAllResizers() {
-  const resizers = document.querySelectorAll('.col-resizer');
-  resizers.forEach((r) => {
-    if (r.style.display !== 'none' && r.dataset.left && r.dataset.right) {
-      positionResizer(r, r.dataset.left, r.dataset.right);
-    }
-  });
 }
 
 // Watch body class changes (sidebar collapse / canvas open) to update
