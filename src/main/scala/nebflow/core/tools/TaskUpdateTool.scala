@@ -15,7 +15,7 @@ object TaskUpdateTool extends Tool:
 
 **Mark tasks as resolved:**
 - IMPORTANT: Always mark tasks as completed when you FULLY finish them
-- After resolving, call TaskList to find your next task
+- After resolving, check your task list in the system prompt for the next task
 - If you encounter errors, blockers, or cannot finish, mark as failed
 - Never mark completed if tests are failing, implementation is partial, or you encountered unresolved errors
 
