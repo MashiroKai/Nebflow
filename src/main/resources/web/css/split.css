@@ -224,35 +224,30 @@
    Hidden by default; shown via body.canvas-open.
    Content is injected by canvas.js — NOT a ChatView.
 
-   CSS-driven animation, matching the sidebar collapse pattern:
+   CSS-driven animation, matching the sidebar collapse pattern EXACTLY:
    canvas.js sets --canvas-width and toggles body.canvas-open.
-   The panel's flex-basis transitions using the same --panel-duration/--panel-ease
-   as the sidebar. #main stays flex:1 — the browser redistributes space naturally. */
+   The panel transitions flex-basis, opacity, margin, padding — same as sidebar.
+   No display:none → flex jump. Panel stays in layout at all times. */
 #canvas-panel {
-  display: none;
+  display: flex;           /* always flex — no display switching */
   flex-direction: column;
-  flex: 0 0 0;        /* collapsed by default; CSS animates to --canvas-width */
+  flex: 0 0 0;             /* collapsed by default */
   min-width: 0;
   position: relative;
   background: var(--color-bg);
-  opacity: 1;
+  opacity: 0;
   overflow: hidden;
-  /* Same transition as sidebar: one duration, one easing, one property. */
-  transition: flex-basis var(--panel-duration) var(--panel-ease);
+  pointer-events: none;    /* no interaction when collapsed */
+  /* Same multi-property transition as sidebar */
+  transition: flex-basis var(--panel-duration) var(--panel-ease),
+              opacity var(--panel-duration) var(--panel-ease),
+              margin var(--panel-duration) var(--panel-ease),
+              padding var(--panel-duration) var(--panel-ease);
 }
-/* .visible makes the panel display:flex (stays visible during close animation).
-   body.canvas-open sets the target flex-basis. This separation ensures the
-   panel remains in the layout during the close transition (flex-basis → 0)
-   before being hidden by the .hidden class after the timeout. */
-#canvas-panel.visible {
-  display: flex;
-}
-body.canvas-open #canvas-panel.visible {
+body.canvas-open #canvas-panel {
   flex-basis: var(--canvas-width, 45vw);
   opacity: 1;
-}
-#canvas-panel.hidden {
-  display: none;
+  pointer-events: auto;
 }
 
 /* Slide layer — fills the panel. No separate transform animation needed:

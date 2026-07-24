@@ -47,7 +47,8 @@ function computeOpenWidth() {
  *  @param {string} title — Unused in tab model (titles are per-tab). Kept for API compat.
  *
  *  CSS-driven: sets --canvas-width and toggles body.canvas-open. The panel's
- *  flex-basis animates from 0 to the target via CSS transition. */
+ *  flex-basis + opacity animate from 0 to the target via CSS transition.
+ *  No display switching — panel is always display:flex, like the sidebar. */
 export function openCanvas(title = '') {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
@@ -55,26 +56,21 @@ export function openCanvas(title = '') {
   // Cancel any pending close cleanup from a rapid toggle.
   if (closeTimeout) { clearTimeout(closeTimeout); closeTimeout = null; }
 
-  panel.classList.remove('hidden');
-  panel.classList.add('visible');
-
   // Set the target width via CSS custom property; CSS handles the transition.
   const canvasTarget = computeOpenWidth();
   document.documentElement.style.setProperty('--canvas-width', canvasTarget + 'px');
 
-  // Double rAF: ensures the browser paints one frame at flex-basis:0 before
-  // the transition target is applied.
+  // Single rAF: panel is already display:flex at flex-basis:0.
+  // Just add the class to trigger the transition.
   requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      document.body.classList.add('canvas-open');
-    });
+    document.body.classList.add('canvas-open');
   });
 }
 
 /** Close the canvas panel and clear all tabs.
  *
- *  CSS-driven: removes body.canvas-open so the panel's flex-basis animates back
- *  to 0. After the transition, all tabs are removed. */
+ *  CSS-driven: removes body.canvas-open so the panel's flex-basis + opacity
+ *  animate back to 0. After the transition, all tabs are removed. */
 export function closeCanvas() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
@@ -89,14 +85,12 @@ export function closeCanvas() {
     } catch (_) {}
   }
 
-  // Remove body class — CSS animates flex-basis back to 0.
+  // Remove body class — CSS animates flex-basis + opacity back to 0.
   document.body.classList.remove('canvas-open');
 
   // Cleanup after the transition completes.
   const DURATION = 400;
   closeTimeout = setTimeout(() => {
-    panel.classList.remove('visible');
-    panel.classList.add('hidden');
     clearAllTabs();
     closeTimeout = null;
   }, DURATION);
