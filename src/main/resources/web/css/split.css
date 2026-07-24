@@ -328,8 +328,8 @@ body.canvas-open #canvas-panel {
 .canvas-tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 4px 5px 12px;
+  gap: 4px;
+  padding: 5px 8px 5px 12px;
   border-radius: 8px;
   font-size: 12px;
   font-weight: 500;
@@ -339,17 +339,25 @@ body.canvas-open #canvas-panel {
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s;
   user-select: none;
+  border: 1px solid transparent;
 }
 .canvas-tab:hover {
-  background: var(--color-border);
+  background: var(--glass-etched-bg);
   color: var(--color-text);
 }
 .canvas-tab.active {
-  background: var(--color-primary, #6366f1);
-  color: #fff;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--glass-border);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.3);
+}
+@media (prefers-color-scheme: dark) {
+  .canvas-tab.active {
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04);
+  }
 }
 .canvas-tab.active:hover {
-  background: var(--color-primary, #6366f1);
+  background: var(--color-surface);
 }
 .canvas-tab-label {
   max-width: 160px;
@@ -368,15 +376,17 @@ body.canvas-open #canvas-panel {
   cursor: pointer;
   border-radius: 4px;
   padding: 0;
-  opacity: 0.6;
-  transition: opacity 0.15s, background 0.15s;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.canvas-tab:hover .canvas-tab-close,
+.canvas-tab.active .canvas-tab-close {
+  opacity: 0.5;
 }
 .canvas-tab-close:hover {
-  opacity: 1;
-  background: rgba(255,255,255,0.2);
-}
-.canvas-tab.active .canvas-tab-close:hover {
-  background: rgba(255,255,255,0.25);
+  opacity: 1 !important;
+  background: rgba(239, 68, 68, 0.1);
+  color: rgb(239, 68, 68);
 }
 
 /* ── Tab panes ───────────────────────────────────────────── */
