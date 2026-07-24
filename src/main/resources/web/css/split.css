@@ -221,36 +221,27 @@
 
 /* ===== Canvas Panel (画板) ===== */
 /* Generic display container on the right side.
-   Hidden by default; shown via body.canvas-open.
-   Content is injected by canvas.js — NOT a ChatView.
+   Always display:flex (never display:none) — mirrors the sidebar pattern.
+   Collapsed state: flex-basis:0 + opacity:0 (clipped by overflow:hidden).
+   Open state: body.canvas-open sets flex-basis to --canvas-width.
 
-   CSS-driven animation: toggles body.canvas-open.
-   The panel's flex-basis transitions using --panel-duration/--panel-ease.
+   CSS-driven animation: toggling body.canvas-open is all JS needs to do.
    #main stays flex:1 — the browser redistributes space naturally. */
 #canvas-panel {
-  display: none;
+  display: flex;
   flex-direction: column;
   flex: 0 0 0;
   min-width: 0;
   position: relative;
   background: var(--color-bg);
-  opacity: 1;
+  opacity: 0;
   overflow: hidden;
-  /* Same multi-property transition as sidebar for smooth directional feel */
   transition: flex-basis var(--panel-duration) var(--panel-ease),
-              opacity var(--panel-duration) var(--panel-ease),
-              margin var(--panel-duration) var(--panel-ease),
-              padding var(--panel-duration) var(--panel-ease);
+              opacity var(--panel-duration) var(--panel-ease);
 }
-#canvas-panel.visible {
-  display: flex;
-}
-body.canvas-open #canvas-panel.visible {
+body.canvas-open #canvas-panel {
   flex-basis: var(--canvas-width, 45vw);
   opacity: 1;
-}
-#canvas-panel.hidden {
-  display: none;
 }
 
 /* Slide layer — no transform animation. overflow:hidden on #canvas-panel
