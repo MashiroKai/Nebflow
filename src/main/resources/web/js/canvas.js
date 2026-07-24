@@ -38,11 +38,15 @@ function getPersistedCanvasWidth() {
  *  the viewport, clamped to [min, max] AND to available space (leave room
  *  for sidebar + main panel). */
 function computeOpenWidth() {
-  // Fixed elements: activity-bar(56) + sidebar(236) + sidebar resizer(16) + canvas resizer(16) + edge-bar(3)
-  const fixedWidth = 327;
+  // Measure ACTUAL available space instead of guessing fixed widths.
+  const sidebar = document.getElementById('sidebar');
+  const activityBar = document.getElementById('activity-bar');
+  const sidebarW = sidebar ? sidebar.getBoundingClientRect().width : 0;
+  const activityW = activityBar ? activityBar.getBoundingClientRect().width + 8 : 0; // +left margin
+  const edgeBarW = 3;
   const minMainWidth = 350;
-  const maxAvailable = window.innerWidth - fixedWidth - minMainWidth;
-  const effectiveMax = Math.min(MAX_CANVAS_WIDTH, maxAvailable);
+  const maxAvailable = window.innerWidth - sidebarW - activityW - edgeBarW - minMainWidth;
+  const effectiveMax = Math.min(MAX_CANVAS_WIDTH, Math.max(MIN_CANVAS_WIDTH, maxAvailable));
   const persisted = getPersistedCanvasWidth();
   if (persisted) return Math.max(MIN_CANVAS_WIDTH, Math.min(effectiveMax, persisted));
   const target = Math.round(window.innerWidth * 0.42);
@@ -337,9 +341,11 @@ export function initCanvas() {
   // Responsive: clamp canvas width when browser is resized.
   window.addEventListener('resize', () => {
     if (!isCanvasOpen()) return;
-    const fixedWidth = 327;
-    const minMainWidth = 350;
-    const maxAvailable = window.innerWidth - fixedWidth - minMainWidth;
+    const sidebar = document.getElementById('sidebar');
+    const activityBar = document.getElementById('activity-bar');
+    const sidebarW = sidebar ? sidebar.getBoundingClientRect().width : 0;
+    const activityW = activityBar ? activityBar.getBoundingClientRect().width + 8 : 0;
+    const maxAvailable = window.innerWidth - sidebarW - activityW - 3 - 350;
     const current = parseFloat(getComputedStyle(document.documentElement)
       .getPropertyValue('--canvas-width')) || 0;
     if (current > maxAvailable) {
