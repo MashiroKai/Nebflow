@@ -2235,6 +2235,9 @@ onReconnect(() => {
       view.pagination.pendingInitialLoad = true;
       sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
     }
+    // Re-fetch workspace items — the initial load may have been dropped
+    // if WS wasn't open when nebflow-session-change fired.
+    refreshWorkspace(sid);
   }
   // Sync background task state — completion events may have been missed
   sendWs({ type: 'getActiveBgTasks' });
