@@ -171,9 +171,16 @@ body.sidebar-collapsed #sidebar {
 #session-list,
 #nav-agent-list,
 #settings-content,
-#config-editor,
-#chat {
+#config-editor {
   scrollbar-color: var(--color-frame-border) transparent;
+}
+
+/* Hide scrollbar on main chat area */
+#chat {
+  scrollbar-width: none;
+}
+#chat::-webkit-scrollbar {
+  display: none;
 }
 
 /* ===== Safety Mode Toggle ===== */
