@@ -148,8 +148,12 @@ function bindAllHandles() {
     if (!panelEl) return;
     const handle = panelEl.querySelector(HANDLE_SEL[id]);
     if (!handle) return;
-    handle.addEventListener('mousedown', (e) => onHandleDown(e, id));
-    handle.addEventListener('dragstart', (e) => e.preventDefault());
+    // Drag only from the bump-zone (pill area at top), not the entire header
+    const bumpZone = handle.querySelector('.bump-zone');
+    if (bumpZone) {
+      bumpZone.addEventListener('mousedown', (e) => onHandleDown(e, id));
+      bumpZone.addEventListener('dragstart', (e) => e.preventDefault());
+    }
   });
 }
 
