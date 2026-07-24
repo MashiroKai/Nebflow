@@ -183,7 +183,6 @@
   flex-direction: column;
   flex: 0 0 0;
   min-width: 0;
-  margin-left: 10px;
   position: relative;
   background: var(--color-bg);
   opacity: 0;
@@ -408,7 +407,7 @@ html.ui-init #canvas-panel {
    Mirrors activity-bar on the left: fixed width, flex-shrink:0, provides
    a stable right boundary so canvas panel always fits within viewport. */
 .edge-bar-right {
-  flex: 0 0 10px;
+  flex: 0 0 0;
   flex-shrink: 0;
   align-self: stretch;
   background: transparent;
