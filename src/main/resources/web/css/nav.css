@@ -193,8 +193,8 @@
   width: 48px;
   flex-shrink: 0;
   /* Match #sidebar's floating glass card: same margin ring + glass treatment. */
-  margin: 8px 8px 12px 8px;
-  max-height: calc(100vh - 20px);
+  margin: 16px 10px 10px;
+  max-height: calc(100vh - 26px);
   border-radius: 20px;
   overflow: hidden;
   padding: 8px 0;
@@ -219,7 +219,7 @@
 body.sidebar-collapsed #activity-bar {
   width: 48px;
   opacity: 1;
-  margin: 8px 8px 12px 8px;
+  margin: 16px 10px 10px;
 }
 
 /* ── Avatar (top) — login affordance ─────────────────────── */

@@ -183,7 +183,7 @@
   flex-direction: column;
   flex: 0 0 0;
   min-width: 0;
-  margin-left: 8px;
+  margin-left: 10px;
   position: relative;
   background: var(--color-bg);
   opacity: 0;
@@ -212,7 +212,7 @@ body.canvas-open #canvas-panel {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 8px 6px 10px;
-  margin: 8px 0 0 0;
+  margin: 16px 0 0 0;
   border-radius: 14px;
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
@@ -419,11 +419,11 @@ html.ui-init #canvas-panel {
 
 /* Main — fills remaining space (flex:1).
    Left/right margins (8px each) create consistent gaps with adjacent
-   panels, matching the activity-bar ↔ sidebar gap (8+8=16px). */
+   panels, matching the activity-bar ↔ sidebar gap (10+10=20px). */
 #main {
   flex: 1;
   min-width: 0;
-  margin: 0 8px;
+  margin: 0 10px;
 }
 
 /* ── Column resizer handles ─────────────────────────────────────────────── */
@@ -439,12 +439,12 @@ html.ui-init #canvas-panel {
   cursor: col-resize;
   display: none;             /* panelDragger.js controls visibility */
 }
-/* Invisible drag hit area — 16px wide, centered on the zero-width element */
+/* Invisible drag hit area — only around the grip, not the full height */
 .col-resizer::after {
   content: '';
   position: absolute;
-  top: 8px;
-  bottom: 12px;
+  top: calc(50% - 32px);
+  height: 64px;
   left: -8px;
   width: 16px;
   z-index: 1;
