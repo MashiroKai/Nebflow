@@ -212,7 +212,7 @@ body.canvas-open #canvas-panel {
   justify-content: space-between;
   gap: 8px;
   padding: 6px 8px 6px 10px;
-  margin: 8px 8px 0 8px;
+  margin: 8px 0 0 0;
   border-radius: 14px;
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
