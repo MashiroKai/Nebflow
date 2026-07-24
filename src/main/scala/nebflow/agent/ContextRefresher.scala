@@ -235,8 +235,9 @@ object ContextRefresher:
   ): IO[TurnContext] =
     for
       freshDefOpt <- resources.agentLibrary.get(agentDef.name)
-      // Preserve runtime tools list — only refresh configuration content from disk.
-      freshDef = freshDefOpt.map(_.copy(tools = agentDef.tools)).getOrElse(agentDef)
+      // Use the full refreshed definition from disk — including tools.
+      // This ensures frontend tool list changes are picked up in real-time.
+      freshDef = freshDefOpt.getOrElse(agentDef)
       systemPrefix <- systemPrefixSource.get
       projectRoot <- resolveProjectRoot(state.folderId, resources, freshDef.name)
       rulesMd = resolveRules(state, resources)
