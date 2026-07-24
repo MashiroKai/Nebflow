@@ -1596,8 +1596,6 @@ class WebSocketRoutes(
               val content = scope match
                 case "user" => MemoryStore.loadUserMemory.getOrElse("")
                 case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
-                case "folder" =>
-                  if folderId.nonEmpty then MemoryStore.loadFolderMemory(folderId).getOrElse("") else ""
                 case _ => ""
               wsSend(
                 io.circe.Json.obj(
@@ -1630,8 +1628,6 @@ class WebSocketRoutes(
               val save = scope match
                 case "user" => MemoryStore.saveUserMemory(content)
                 case "agent" => MemoryStore.saveAgentMemory(agentName, content)
-                case "folder" =>
-                  if folderId.nonEmpty then MemoryStore.saveFolderMemory(folderId, content) else IO.unit
                 case _ => IO.unit
               save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
             })
@@ -1657,10 +1653,6 @@ class WebSocketRoutes(
                 "agent" -> io.circe.Json.obj(
                   "exists" -> MemoryStore.agentExists(agentName).asJson,
                   "preview" -> MemoryStore.agentPreview(agentName).asJson
-                ),
-                "folder" -> io.circe.Json.obj(
-                  "exists" -> (folderId.nonEmpty && MemoryStore.folderExists(folderId)).asJson,
-                  "preview" -> (if folderId.nonEmpty then MemoryStore.folderPreview(folderId) else None).asJson
                 )
               )
             )
