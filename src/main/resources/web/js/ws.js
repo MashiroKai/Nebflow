@@ -132,11 +132,9 @@ export function connect() {
         sendWs({type: 'ping'});
       }
     }, 30000);
-    // On reconnect (not first connect), notify callbacks so they can
-    // re-fetch state that may have changed during the disconnect.
-    if (hasConnectedBefore) {
-      reconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] reconnect callback error:', e); } });
-    }
+    // On (re)connect, notify callbacks so they can fetch state that
+    // requires an open WS (e.g. workspace items, scheduled tasks).
+    reconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] connect callback error:', e); } });
     hasConnectedBefore = true;
   };
 
