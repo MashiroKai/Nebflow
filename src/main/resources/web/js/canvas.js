@@ -332,6 +332,20 @@ export function initCanvas() {
   document.addEventListener('workspace-open-item', (e) => {
     if (e.detail) openWorkspaceItem(e.detail);
   });
+
+  // Responsive: clamp canvas width when browser is resized.
+  window.addEventListener('resize', () => {
+    if (!isCanvasOpen()) return;
+    const sidebarWidth = 260;
+    const minMainWidth = 350;
+    const maxAvailable = window.innerWidth - sidebarWidth - minMainWidth;
+    const current = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--canvas-width')) || 0;
+    if (current > maxAvailable) {
+      const clamped = Math.max(MIN_CANVAS_WIDTH, maxAvailable);
+      document.documentElement.style.setProperty('--canvas-width', clamped + 'px');
+    }
+  });
 }
 
 /** Show or hide the canvas header bar.

@@ -236,7 +236,11 @@
   background: var(--color-bg);
   opacity: 1;
   overflow: hidden;
-  transition: flex-basis var(--panel-duration) var(--panel-ease);
+  /* Same multi-property transition as sidebar for smooth directional feel */
+  transition: flex-basis var(--panel-duration) var(--panel-ease),
+              opacity var(--panel-duration) var(--panel-ease),
+              margin var(--panel-duration) var(--panel-ease),
+              padding var(--panel-duration) var(--panel-ease);
 }
 #canvas-panel.visible {
   display: flex;
@@ -249,19 +253,13 @@ body.canvas-open #canvas-panel.visible {
   display: none;
 }
 
-/* Slide layer — slides in from right when opening, out to right when closing.
-   Uses the SAME duration + easing as flex-basis so they stay perfectly synced.
-   overflow:hidden on #canvas-panel clips the off-screen content. */
+/* Slide layer — no transform animation. overflow:hidden on #canvas-panel
+   clips content during the flex-basis transition, exactly like sidebar. */
 #canvas-slide {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
-  transform: translateX(100%);
-  transition: transform var(--panel-duration) var(--panel-ease);
-}
-body.canvas-open #canvas-panel.visible #canvas-slide {
-  transform: translateX(0);
 }
 
 /* Canvas header — glassmorphism bar containing tab bar + close button */
