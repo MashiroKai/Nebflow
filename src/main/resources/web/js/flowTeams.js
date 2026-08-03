@@ -36,6 +36,10 @@ export function flowCardHtml(flow, agentStatus, mailFlash) {
       </div>`;
   }).join('');
 
+  const flowTags = (flow.flows || []).map(fn =>
+    `<span class="flow-tag" data-flow-name="${esc(fn)}" title="Trigger ${esc(fn)} flow">${esc(fn)}</span>`
+  ).join('');
+
   return `
     <div class="flow-card">
       <div class="flow-card-header">
@@ -47,6 +51,7 @@ export function flowCardHtml(flow, agentStatus, mailFlash) {
         <div class="flow-card-summary ${summaryCls}"><span class="dot"></span>${summaryText}</div>
       </div>
       <div class="flow-agents">${tilesHtml}</div>
+      ${flowTags ? `<div class="flow-tags">${flowTags}</div>` : ''}
     </div>`;
 }
 
@@ -84,6 +89,20 @@ export function bindCardActions(openMailbox, openRules, openDefinition) {
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       openDefinition(el.getAttribute('data-flow') || '');
+    });
+  });
+  document.querySelectorAll('.flow-tag').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const flowName = el.getAttribute('data-flow-name') || '';
+      if (flowName) {
+        const input = document.getElementById('chat-input');
+        if (input) {
+          input.value = `/${flowName} `;
+          input.focus();
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      }
     });
   });
 }
