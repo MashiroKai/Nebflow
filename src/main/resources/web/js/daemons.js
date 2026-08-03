@@ -239,7 +239,6 @@ const DAEMON_CSS = `
 let daemons = [];
 let panelOpen = false;
 let pollTimer = null;
-let showAddForm = false;
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('nebflow_token') || ''; }
@@ -278,25 +277,13 @@ function renderList() {
   if (!body) return;
   body.innerHTML = '';
 
-  if (daemons.length === 0 && !showAddForm) {
+  if (daemons.length === 0) {
     body.appendChild(buildEmptyState());
   } else {
     for (const d of daemons) body.appendChild(buildRow(d));
   }
 
-  // Add form in footer
-  const footer = document.querySelector('#daemon-panel .daemon-panel-footer');
-  if (footer) {
-    footer.innerHTML = '';
-    if (showAddForm) footer.appendChild(buildAddForm());
-  }
-
   if (typeof lucide !== 'undefined') lucide.createIcons();
-
-  if (showAddForm) {
-    const firstInput = footer?.querySelector('.daemon-add-input');
-    if (firstInput) requestAnimationFrame(() => firstInput.focus());
-  }
 }
 
 function buildEmptyState() {
@@ -305,7 +292,6 @@ function buildEmptyState() {
   el.innerHTML = `
     <div class="daemon-empty-text">${t('daemons.empty')}</div>
     <div class="daemon-empty-hint">${t('daemons.emptyHint')}</div>`;
-  el.addEventListener('click', (e) => { e.stopPropagation(); showAddForm = true; renderList(); });
   return el;
 }
 
@@ -332,9 +318,6 @@ function buildRow(d) {
       <button class="daemon-btn-icon" data-act="restart" data-id="${esc(d.id)}" title="Restart">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
       </button>
-      <button class="daemon-btn-icon delete" data-act="delete" data-id="${esc(d.id)}" title="Delete">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-      </button>
     </div>`;
 
   // Click daemon name to open URL in new tab
@@ -357,83 +340,10 @@ function buildRow(d) {
       if (act === 'start') await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/start`);
       else if (act === 'stop') await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/stop`);
       else if (act === 'restart') await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/restart`);
-      else if (act === 'delete') await apiCall('DELETE', `/api/daemons/${encodeURIComponent(id)}`);
     });
   });
 
   return row;
-}
-
-function buildAddForm() {
-  const el = document.createElement('div');
-  el.className = 'daemon-add-form';
-  el.innerHTML = `
-    <div class="daemon-add-field">
-      <label class="daemon-add-label">${t('daemons.fieldId')}</label>
-      <input class="daemon-add-input" id="daemon-form-id" placeholder="my-server" autocomplete="off">
-    </div>
-    <div class="daemon-add-field">
-      <label class="daemon-add-label">${t('daemons.fieldName')}</label>
-      <input class="daemon-add-input" id="daemon-form-name" placeholder="My Dev Server" autocomplete="off">
-    </div>
-    <div class="daemon-add-field">
-      <label class="daemon-add-label">${t('daemons.fieldCommand')}</label>
-      <input class="daemon-add-input mono" id="daemon-form-command" placeholder="npm run dev" autocomplete="off">
-    </div>
-    <div class="daemon-add-field">
-      <label class="daemon-add-label">${t('daemons.fieldCwd')}</label>
-      <input class="daemon-add-input mono" id="daemon-form-cwd" placeholder="/path/to/project" autocomplete="off">
-    </div>
-    <div class="daemon-add-field">
-      <label class="daemon-add-label">${t('daemons.fieldPort')}</label>
-      <input class="daemon-add-input" id="daemon-form-port" type="number" placeholder="3000" autocomplete="off">
-    </div>
-    <div class="daemon-add-actions">
-      <button class="daemon-add-cancel" id="daemon-form-cancel">${t('daemons.cancel')}</button>
-      <button class="daemon-add-save" id="daemon-form-save">${t('daemons.add')}</button>
-    </div>`;
-
-  const idInput = el.querySelector('#daemon-form-id');
-  const nameInput = el.querySelector('#daemon-form-name');
-  const cmdInput = el.querySelector('#daemon-form-command');
-  const cwdInput = el.querySelector('#daemon-form-cwd');
-  const portInput = el.querySelector('#daemon-form-port');
-
-  async function save() {
-    const id = idInput.value.trim();
-    const command = cmdInput.value.trim();
-    if (!id || !command) {
-      if (!id) idInput.focus();
-      else cmdInput.focus();
-      return;
-    }
-    const body = {
-      id,
-      name: nameInput.value.trim() || id,
-      command,
-      cwd: cwdInput.value.trim() || undefined,
-      port: portInput.value ? parseInt(portInput.value, 10) : undefined,
-      autoStart: false,
-    };
-    showAddForm = false;
-    await apiCall('POST', '/api/daemons', body);
-  }
-
-  el.querySelector('#daemon-form-save').addEventListener('click', (e) => { e.stopPropagation(); save(); });
-  el.querySelector('#daemon-form-cancel').addEventListener('click', (e) => {
-    e.stopPropagation(); showAddForm = false; renderList();
-  });
-
-  // Enter key submits
-  [idInput, nameInput, cmdInput, cwdInput, portInput].forEach(inp => {
-    inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); save(); }
-      if (e.key === 'Escape') { e.preventDefault(); showAddForm = false; renderList(); }
-    });
-    inp.addEventListener('click', (e) => e.stopPropagation());
-  });
-
-  return el;
 }
 
 // ── Panel Control ──────────────────────────────────────────
@@ -441,7 +351,6 @@ function openPanel() {
   const panel = document.getElementById('daemon-panel');
   if (!panel) return;
   panelOpen = true;
-  showAddForm = false;
   panel.classList.add('open');
   document.getElementById('daemon-btn')?.classList.add('active');
   if (typeof lucide !== 'undefined') lucide.createIcons();
@@ -456,7 +365,6 @@ function closePanel() {
   const panel = document.getElementById('daemon-panel');
   if (!panel) return;
   panelOpen = false;
-  showAddForm = false;
   panel.classList.remove('open');
   document.getElementById('daemon-btn')?.classList.remove('active');
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -485,13 +393,6 @@ export function initDaemons() {
   // Close button in panel header
   document.getElementById('daemon-close-btn')?.addEventListener('click', (e) => {
     e.stopPropagation(); closePanel();
-  });
-
-  // Add button in panel header
-  document.getElementById('daemon-add-btn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    showAddForm = !showAddForm;
-    renderList();
   });
 
   // Outside click: close panel

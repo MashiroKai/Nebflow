@@ -100,6 +100,9 @@ export default {
   'settings.cardDesignResetConfirm': 'Reset to default design guidelines? Current content will be overwritten.',
   'settings.cardDesignEdit': 'Edit Design Guidelines',
   'settings.cardDesignPlaceholder': '# Card Visual Design Guidelines\n\nDescribe the style guide for the Card tool in Markdown...',
+  'settings.modelCaps': 'Model Capabilities',
+  'settings.modelCapsHint': 'Tag models with capability labels for smart routing. Tags are selected from a preset list.',
+  'settings.noModels': 'No models configured',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',

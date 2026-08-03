@@ -100,6 +100,9 @@ export default {
   'settings.cardDesignResetConfirm': '确定恢复默认设计指导？当前内容将被覆盖。',
   'settings.cardDesignEdit': '编辑设计指导',
   'settings.cardDesignPlaceholder': '# 卡片视觉设计规范\n\n用 Markdown 描述 Card 工具的样式指南...',
+  'settings.modelCaps': '模型能力',
+  'settings.modelCapsHint': '为模型标记能力标签，用于智能路由。只能从预置列表中选择。',
+  'settings.noModels': '未配置模型',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
