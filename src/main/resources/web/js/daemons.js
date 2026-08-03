@@ -257,7 +257,8 @@ async function fetchDaemons() {
   try {
     const resp = await fetch('/api/daemons', { headers: authHeaders() });
     if (!resp.ok) { daemons = []; if (panelOpen) renderList(); return; }
-    daemons = await resp.json();
+    const data = await resp.json();
+    daemons = Array.isArray(data) ? data : (data.daemons || []);
     if (panelOpen) renderList();
   } catch (e) { if (panelOpen) renderList(); }
 }

@@ -14,6 +14,8 @@ const iconMap = {
 const activeStatuses = new Set(['pending', 'in_progress']);
 const visibleStatuses = new Set(['pending', 'in_progress', 'completed']);
 
+let currentSessionId = null;
+
 function isCollapsed() {
   try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
 }
@@ -22,7 +24,8 @@ function setCollapsed(v) {
   try { localStorage.setItem(COLLAPSED_KEY, v ? '1' : '0'); } catch {}
 }
 
-export function renderTaskList(tasks, container) {
+export function renderTaskList(tasks, container, sessionId) {
+  if (sessionId) currentSessionId = sessionId;
   container = container || document.getElementById('task-list');
   if (!container) return;
 
@@ -133,7 +136,7 @@ export function renderTaskList(tasks, container) {
       if (btn.classList.contains('filled')) return; // already dismissing
       btn.classList.add('filled');
       const taskId = btn.dataset.taskId;
-      if (taskId) sendWs({ type: 'dismissTask', sessionId: state.activeSessionId, taskId });
+      if (taskId) sendWs({ type: 'dismissTask', sessionId: currentSessionId || '', taskId });
     });
   });
 
