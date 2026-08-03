@@ -67,6 +67,14 @@ export const FLOW_CSS = `
 .flow-tile.manager { border-color: var(--color-primary, #07c160); background: var(--glass-bg); }
 .flow-tile-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; flex-shrink: 0; }
 .flow-tile.running .flow-tile-dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
+
+.flow-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 14px; }
+.flow-tag {
+  font: 500 11px -apple-system, sans-serif; color: var(--color-primary, #07c160);
+  padding: 3px 10px; border-radius: 20px; border: 1px solid var(--color-primary, #07c160);
+  opacity: 0.7; cursor: pointer; transition: opacity 0.15s, background 0.15s; white-space: nowrap;
+}
+.flow-tag:hover { opacity: 1; background: rgba(7,193,96,0.08); }
 .flow-tile.mail-flash .flow-tile-dot { background: var(--color-primary, #07c160); opacity: 1; transition: none; }
 .flow-tile-name { font: 600 12px -apple-system, sans-serif; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .flow-tile-role { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }

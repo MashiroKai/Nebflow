@@ -946,7 +946,8 @@ class RestApiRoutes(
           Json.obj(
             "name" -> instanceName.asJson,
             "type" -> "team".asJson,
-            "agents" -> agentsJson.asJson
+            "agents" -> agentsJson.asJson,
+            "flows" -> teamDefOpt.map(_.flows).getOrElse(List.empty[String]).asJson
           )
         }
       }
