@@ -14,5 +14,6 @@ case class AgentDef(
   systemPrompt: String = "",
   avatar: Option[String] = None,
   displayName: Option[String] = None,
-  voiceEnabled: Boolean = true
+  voiceEnabled: Boolean = true,
+  model: Option[AgentModelConfig] = None
 )

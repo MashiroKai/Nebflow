@@ -112,6 +112,45 @@ class ProviderRegistry(
     }
 
   /**
+   * Get candidate list customized for an agent's model configuration.
+   *
+   * - preferred model placed first (if resolvable)
+   * - capabilities filter: strict = only matching candidates; prefer-capable = matching first
+   * - no config → returns global candidate list (same as getCandidates)
+   */
+  def getCandidatesForAgent(agentModel: Option[nebflow.agent.AgentModelConfig]): IO[List[ModelCandidate]] =
+    agentModel match
+      case None | Some(nebflow.agent.AgentModelConfig(None, Nil, _)) =>
+        getCandidates() // no config → global list
+      case Some(cfg) =>
+        getCandidates().flatMap { globalCandidates =>
+          // Resolve preferred model (if specified)
+          cfg.preferred match
+            case Some(ref) =>
+              getCandidateForRef(ref).map { preferredOpt =>
+                val base = preferredOpt.toList ++ globalCandidates.filterNot(c =>
+                  preferredOpt.exists(p => p.providerId == c.providerId && p.model == c.model)
+                )
+                applyCapabilityFilter(base, cfg)
+              }
+            case None =>
+              IO.pure(applyCapabilityFilter(globalCandidates, cfg))
+        }
+
+  /** Apply capability filtering / reordering based on fallbackPolicy. */
+  private def applyCapabilityFilter(
+    candidates: List[ModelCandidate],
+    cfg: nebflow.agent.AgentModelConfig
+  ): List[ModelCandidate] =
+    if cfg.capabilities.isEmpty then candidates
+    else
+      val required = cfg.capabilities.toSet
+      val (matching, rest) = candidates.partition(_.capabilities.intersect(required).nonEmpty)
+      cfg.fallbackPolicy match
+        case "strict" => matching // only capable models
+        case _ => matching ++ rest // prefer-capable: capable first, then rest
+
+  /**
    * Resolve vision + capabilities for a model.
    * Priority: ModelConfig inline fields > ModelRegistry (models.json) > defaults (false, empty).
    */
