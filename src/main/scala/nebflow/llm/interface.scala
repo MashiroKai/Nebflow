@@ -96,6 +96,7 @@ object LlmInterface:
       val cfgRef: Ref[IO, NebflowServiceConfig] = configRef.getOrElse(Ref.unsafe(config))
       val registry = ProviderRegistry(cfgRef, backend)
       val healthMonitor = ProviderHealthMonitor(registry)
+      val emptyTracker = new EmptyCompletionTracker
       val result =
 
         val handle = new LlmHandle[IO]:
@@ -268,8 +269,11 @@ object LlmInterface:
                             val stream = fs2.Stream.force(
                               (for
                                 // PreSendChecker: strip images for non-vision models
+                                // Also check runtime vision override from EmptyCompletionTracker
                                 msgs <- messagesRef.get
-                                effectiveMessages = if !candidate.vision && hasImage(msgs) then stripImages(msgs) else msgs
+                                runtimeVision <- emptyTracker.getRuntimeVision(candidate.providerId, candidate.model)
+                                effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
+                                effectiveMessages = if !effectiveVision && hasImage(msgs) then stripImages(msgs) else msgs
                                 adapter <- registry.getAdapter(candidate.providerId)
                               yield adapter.sendMessageStream(
                                 SendMessageParams(
@@ -308,9 +312,10 @@ object LlmInterface:
                                       // for any OpenAI-compatible provider). Use the actual providerId
                                       // from the candidate so the frontend shows correct provider name.
                                       val fixedMeta = done.meta.map(_.copy(providerId = candidate.providerId))
-                                      IO.pure(
-                                        done.copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
-                                      )
+                                      emptyTracker.resetOnSuccess(candidate.providerId, candidate.model) *>
+                                        IO.pure(
+                                          done.copy(meta = fixedMeta, contextWindow = Some(candidate.contextWindow))
+                                        )
                                     else
                                       IO.raiseError(
                                         new RuntimeException(
@@ -348,24 +353,49 @@ object LlmInterface:
                                     alreadyStripped <- imageStrippedRef.get
                                     msgs <- messagesRef.get
                                   yield (alreadyStripped, msgs)).flatMap {
-                                    case (false, msgs) if hasImage(msgs) && !candidate.vision =>
-                                      // Strip images and retry same candidate
-                                      fs2.Stream.eval(for
-                                        _ <- imageStrippedRef.set(true)
-                                        _ <- messagesRef.set(stripImages(msgs))
-                                        _ <- lockedRef.set(false)
-                                        _ <- logger.warn(
-                                          s"PostEmptyRecovery: empty completion with image on non-vision model " +
-                                            s"${candidate.providerId}/${candidate.model}, stripping and retrying"
-                                        )
-                                      yield ()).drain ++ tryCandidate(candidate :: rest, maxRetries, Fallback.InitialBackoffMs)
+                                    case (false, msgs) if hasImage(msgs) =>
+                                      // Check both config vision and runtime override
+                                      fs2.Stream.eval(emptyTracker.getRuntimeVision(candidate.providerId, candidate.model)).flatMap { runtimeVision =>
+                                        val effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
+                                        if !effectiveVision then
+                                          // Strip images and retry same candidate
+                                          fs2.Stream.eval(for
+                                            _ <- imageStrippedRef.set(true)
+                                            _ <- messagesRef.set(stripImages(msgs))
+                                            _ <- lockedRef.set(false)
+                                            _ <- logger.warn(
+                                              s"PostEmptyRecovery: empty completion with image on non-vision model " +
+                                                s"${candidate.providerId}/${candidate.model}, stripping and retrying"
+                                            )
+                                          yield ()).drain ++ tryCandidate(candidate :: rest, maxRetries, Fallback.InitialBackoffMs)
+                                        else fs2.Stream.raiseError[IO](err)
+                                      }
                                     case _ =>
                                       fs2.Stream.raiseError[IO](err)
                                   }
                                 else fs2.Stream.raiseError[IO](err)
                               }
                               .handleErrorWith { err =>
-                              val classification = Fallback.classifyError(err)
+                              // Phase 2: EmptyCompletionTracker + CapabilityMismatch classification
+                              val rawClassification = Fallback.classifyError(err)
+                              val isEmptyCompletion = err.getMessage != null &&
+                                err.getMessage.contains("Stream completed with no content")
+                              // For empty completions, record in tracker and check for capability mismatch
+                              val trackerIO = if isEmptyCompletion then
+                                for
+                                  msgs <- messagesRef.get
+                                  img = hasImage(msgs)
+                                  _ <- emptyTracker.onEmptyCompletion(candidate.providerId, candidate.model, img)
+                                yield img
+                              else IO.pure(false)
+
+                              fs2.Stream.eval(trackerIO).flatMap { hadImage =>
+                              // Override classification: empty completion with image on non-vision model
+                              // → CapabilityMismatch (Permanent, skip this provider)
+                              val classification =
+                                if isEmptyCompletion && hadImage && !candidate.vision then
+                                  rawClassification.copy(reason = FailoverReason.CapabilityMismatch)
+                                else rawClassification
                               // Timeout needs special handling: even if partial content was
                               // streamed (locked), we allow fallback to try the next provider.
                               // Other errors with locked=true are propagated to avoid duplication.
@@ -436,6 +466,7 @@ object LlmInterface:
                                       end if
                                   end match
                                 end if
+                              }
                               }
                             }
 
