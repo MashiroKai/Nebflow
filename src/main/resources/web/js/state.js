@@ -83,6 +83,7 @@ export default {
   parsedConfig: null,        // structured config parsed from JSON
   configDirty: false,        // true if local edits differ from server
   settingsShowJson: false,   // toggle advanced JSON editor
+  currentModel: null,        // runtime model (WS modelChanged; null = use default)
   // Available tools (loaded from backend ToolRegistry via serverConfig)
   availableTools: [],
   // Agent-configurable tools (from agentList)
