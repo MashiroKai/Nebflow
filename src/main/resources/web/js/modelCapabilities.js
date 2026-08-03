@@ -35,9 +35,16 @@ async function fetchModels() {
   loading = true;
   renderSection();
   try {
-    const resp = await fetch('/api/models', { headers: authHeaders() });
+    const resp = await fetch('/api/models/capabilities', { headers: authHeaders() });
     if (!resp.ok) { models = []; loading = false; renderSection(); return; }
-    models = await resp.json();
+    const data = await resp.json();
+    // API returns { models: { "provider/model": {vision, capabilities} } }
+    const modelsMap = data.models || {};
+    models = Object.entries(modelsMap).map(([id, info]) => ({
+      id,
+      capabilities: info.capabilities || [],
+      vision: info.vision || false
+    }));
   } catch (e) { models = []; }
   loading = false;
   renderSection();
@@ -80,7 +87,7 @@ function renderSection() {
     return;
   }
 
-  if (models.length === 0) {
+  if (!models || models.length === 0) {
     container.innerHTML = `<div class="cfg-empty">${t('settings.noModels') || 'No models configured'}</div>`;
     return;
   }

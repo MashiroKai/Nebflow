@@ -158,6 +158,7 @@ function render() {
 
   const runtime = currentRuntimeModel();
   const pref = preferredModel();
+  const fbs = fallbackChain().filter(r => r !== pref);
   const isFallback = runtime && pref && runtime !== pref;
 
   // ── Chip (always rendered) ──
