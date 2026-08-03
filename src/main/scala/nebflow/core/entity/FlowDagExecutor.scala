@@ -59,12 +59,16 @@ object FlowDagExecutor:
       ) ++ extra
       emitWs(Json.obj(fields*))
 
-    /** Resolve template variables: $task -> task input, $<nodeId>.output -> node output. */
+    /** Resolve template variables: $task -> task input, $<nodeId>.output -> node output.
+     *  Uses quoteReplacement to prevent $ and \ in agent output from being
+     *  interpreted as regex group references (Illegal group reference error). */
     def resolveInput(template: String, ctx: FlowExecContext): String =
       val withTask = template.replace("$task", ctx.taskInput)
       val pattern = "\\$([a-zA-Z0-9_-]+)\\.output".r
       pattern.replaceAllIn(withTask, m =>
-        ctx.nodeOutputs.getOrElse(m.group(1), s"[output of ${m.group(1)} not found]")
+        java.util.regex.Matcher.quoteReplacement(
+          ctx.nodeOutputs.getOrElse(m.group(1), s"[output of ${m.group(1)} not found]")
+        )
       )
 
     /** Execute a single DAG node: spawn agent, send input, collect output. */
