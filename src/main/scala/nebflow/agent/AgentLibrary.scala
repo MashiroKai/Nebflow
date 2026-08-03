@@ -98,6 +98,27 @@ class AgentLibrary(
         case None => () // skip if unparseable
   }
 
+  /**
+   * Update the model configuration in agent.json. Reads the existing file,
+   *  merges the "model" field, and writes it back.
+   *
+   * @return true if updated, false if agent.json not found.
+   * @throws RuntimeException if the existing JSON is corrupt.
+   */
+  def updateModel(name: String, config: AgentModelConfig): IO[Boolean] = IO.blocking {
+    val jsonPath = agentsDir / name / "agent.json"
+    if !os.exists(jsonPath) then false
+    else
+      val json = os.read(jsonPath)
+      io.circe.parser.parse(json) match
+        case Right(parsed) =>
+          val updated = parsed.deepMerge(io.circe.Json.obj("model" -> config.asJson))
+          os.write.over(jsonPath, updated.noSpaces)
+          true
+        case Left(err) =>
+          throw new RuntimeException(s"Failed to parse agent.json for '$name': ${err.getMessage}")
+  }
+
   /** Read a system.md file. */
   def readSystemPrompt(name: String): IO[Option[String]] = IO.blocking {
     val p = agentsDir / name / "system.md"

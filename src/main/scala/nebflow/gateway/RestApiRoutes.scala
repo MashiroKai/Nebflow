@@ -877,23 +877,18 @@ class RestApiRoutes(
           // Parse the model config from request body
           io.circe.parser.decode[nebflow.agent.AgentModelConfig](body.noSpaces) match
             case Right(modelConfig) =>
-              // Read agent.json, merge model field, write back
-              val agentDir = nebflow.agent.AgentLibrary.defaultDir / agentName
-              val jsonPath = agentDir / "agent.json"
-              IO.blocking {
-                if os.exists(jsonPath) then
-                  val existing = os.read(jsonPath)
-                  io.circe.parser.parse(existing).toOption match
-                    case Some(json) =>
-                      val updated = json.deepMerge(Json.obj("model" -> modelConfig.asJson))
-                      os.write.over(jsonPath, updated.noSpaces)
-                      true
-                    case None => false
-                else false
-              }.flatMap {
-                case true => Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
-                case false => NotFound(Json.obj("error" -> s"Agent '$agentName' config not found".asJson))
-              }
+              sharedResources.agentLibrary
+                .updateModel(agentName, modelConfig)
+                .flatMap {
+                  case true =>
+                    Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
+                  case false =>
+                    NotFound(Json.obj("error" -> s"Agent '$agentName' config not found".asJson))
+                }
+                .handleErrorWith { err =>
+                  // Corrupt JSON or IO failure
+                  InternalServerError(Json.obj("error" -> err.getMessage.asJson))
+                }
             case Left(err) =>
               BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
         }
