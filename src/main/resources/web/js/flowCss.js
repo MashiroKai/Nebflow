@@ -278,5 +278,27 @@ export const FLOW_CSS = `
 .dag-inline-node.failed { background: rgba(244, 67, 54, 0.04); }
 .dag-inline-id { font: 500 11px -apple-system, sans-serif; color: var(--color-text); }
 .dag-inline-agent { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; }
+
+/* ── Per-agent model config in definition viewer ── */
+.flow-agent-model-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-agent-model-select {
+  flex: 1; min-width: 0; height: 30px;
+  border: 1px solid var(--glass-etched-border, var(--glass-border));
+  border-radius: 8px; background: var(--glass-etched-bg, rgba(0,0,0,0.025));
+  color: var(--color-text); font: 500 12px -apple-system, sans-serif;
+  padding: 0 8px; cursor: pointer; outline: none;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.flow-agent-model-select:focus { border-color: rgba(91,127,191,0.35); box-shadow: 0 0 0 2px rgba(91,127,191,0.08); }
+.flow-agent-model-current { font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted); }
+.flow-agent-model-current.fallback { color: rgb(91, 127, 191); background: rgba(91,127,191,0.10); padding: 2px 8px; border-radius: 6px; }
+.flow-agent-model-fbs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.flow-agent-model-fb { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); padding: 2px 8px; border-radius: 6px; }
+
+/* ── Agent popup header model badge ── */
+.flow-agent-model-badge { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 2px 8px; border-radius: 6px; margin-left: 4px; }
 </style>
 `;
