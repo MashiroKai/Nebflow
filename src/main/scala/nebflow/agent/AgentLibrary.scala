@@ -130,7 +130,8 @@ class AgentLibrary(
               systemPrompt = prompt,
               avatar = j.avatar,
               displayName = j.displayName,
-              voiceEnabled = j.voice.getOrElse(false)
+              voiceEnabled = j.voice.getOrElse(false),
+              model = j.model
             )
           )
         case None =>
@@ -185,7 +186,8 @@ private case class AgentJson(
   tools: List[String] = List("*"),
   mcpServers: Option[List[String]] = None,
   avatar: Option[String] = None,
-  voice: Option[Boolean] = None
+  voice: Option[Boolean] = None,
+  model: Option[AgentModelConfig] = None
 )
 
 private object AgentJson:
@@ -199,7 +201,12 @@ private object AgentJson:
       tools <- c.downField("tools").as[Option[List[String]]]
       mcpServers <- c.downField("mcpServers").as[Option[List[String]]]
       avatar <- c.downField("avatar").as[Option[String]]
-    yield AgentJson(name, displayName, description, useWhen, tools.getOrElse(List("*")), mcpServers, avatar)
+    yield AgentJson(
+      name, displayName, description, useWhen,
+      tools.getOrElse(List("*")), mcpServers, avatar,
+      voice = c.downField("voice").as[Option[Boolean]].toOption.flatten,
+      model = c.downField("model").as[Option[AgentModelConfig]].toOption.flatten
+    )
   }
 
   given Encoder[AgentJson] = Encoder.instance { j =>
@@ -213,6 +220,8 @@ private object AgentJson:
         "mcpServers" -> j.mcpServers.asJson
       )
       .deepMerge(j.avatar.map(a => Json.obj("avatar" -> a.asJson)).getOrElse(Json.obj()))
+      .deepMerge(j.voice.map(v => Json.obj("voice" -> v.asJson)).getOrElse(Json.obj()))
+      .deepMerge(j.model.map(m => Json.obj("model" -> m.asJson)).getOrElse(Json.obj()))
   }
 end AgentJson
 
