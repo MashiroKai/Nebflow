@@ -312,6 +312,7 @@ export default {
   'task.open': '{count} open',
   'task.blockedBy': 'blocked by #{ids}',
   'task.more': '+{count} more',
+  'task.dismiss': 'Dismiss',
   'task.unit': 'tasks',
 
   // === Tool names (label first line) ===

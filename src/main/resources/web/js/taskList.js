@@ -1,4 +1,5 @@
 import { t } from './i18n.js';
+import { sendWs } from './ws.js';
 
 const MAX_VISIBLE = 20;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
@@ -11,6 +12,7 @@ const iconMap = {
 };
 
 const activeStatuses = new Set(['pending', 'in_progress']);
+const visibleStatuses = new Set(['pending', 'in_progress', 'completed']);
 
 function isCollapsed() {
   try { return localStorage.getItem(COLLAPSED_KEY) === '1'; } catch { return false; }
@@ -30,10 +32,10 @@ export function renderTaskList(tasks, container) {
     return;
   }
 
-  // Only show active tasks; completed/failed are archived
-  const active = tasks.filter(t => activeStatuses.has(t.status));
+  // Show active + completed tasks; failed/dismissed are hidden
+  const visible = tasks.filter(t => visibleStatuses.has(t.status));
 
-  if (active.length === 0) {
+  if (visible.length === 0) {
     container.classList.remove('has-tasks');
     container.innerHTML = '';
     return;
@@ -45,7 +47,7 @@ export function renderTaskList(tasks, container) {
 
   // Build parent → children map
   const byParent = new Map();
-  active.forEach(t => {
+  visible.forEach(t => {
     const pid = t.parentId || null;
     if (!byParent.has(pid)) byParent.set(pid, []);
     byParent.get(pid).push(t);
@@ -54,22 +56,22 @@ export function renderTaskList(tasks, container) {
   // Sort within each parent by ID
   byParent.forEach(arr => arr.sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0)));
 
-  // Roots are tasks with no parent or whose parent is not active
-  const activeIds = new Set(active.map(t => t.id));
-  const roots = active
-    .filter(t => !t.parentId || !activeIds.has(t.parentId))
+  // Roots are tasks with no parent or whose parent is not visible
+  const visibleIds = new Set(visible.map(t => t.id));
+  const roots = visible
+    .filter(t => !t.parentId || !visibleIds.has(t.parentId))
     .sort((a, b) => {
-      // in_progress first, then by ID
+      // in_progress first, then pending, then completed
       if (a.status !== b.status) {
-        const order = { in_progress: 0, pending: 1 };
-        return (order[a.status] ?? 1) - (order[b.status] ?? 1);
+        const order = { in_progress: 0, pending: 1, completed: 2 };
+        return (order[a.status] ?? 3) - (order[b.status] ?? 3);
       }
       return (parseInt(a.id) || 0) - (parseInt(b.id) || 0);
     });
 
   // Stats — only show active counts, no completed
   const counts = { pending: 0, in_progress: 0 };
-  active.forEach(t => { if (counts[t.status] !== undefined) counts[t.status]++; });
+  visible.forEach(t => { if (activeStatuses.has(t.status)) counts[t.status]++; });
 
   let html = `<div class="task-card${collapsed ? ' collapsed' : ''}">`;
   html += '<div class="task-header">';
@@ -88,8 +90,9 @@ export function renderTaskList(tasks, container) {
     visibleCount++;
 
     const isActive = task.status === 'in_progress';
+    const isCompleted = task.status === 'completed';
     let cls = 'task-item';
-    cls += isActive ? ' task-active' : ' task-pending';
+    cls += isActive ? ' task-active' : isCompleted ? ' task-completed' : ' task-pending';
     if (depth > 0) cls += ' task-child';
 
     const indent = depth * 16;
@@ -99,6 +102,9 @@ export function renderTaskList(tasks, container) {
     html += `<div class="${cls}" data-task-id="${task.id}" style="margin-left:${indent}px">`;
     html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
     html += `<span class="task-label">${escapeHtml(label)}</span>`;
+    if (isCompleted) {
+      html += `<button class="task-dismiss" data-task-id="${task.id}" title="${t('task.dismiss')}"><i data-lucide="x"></i></button>`;
+    }
     html += '</div>';
 
     // Render children
@@ -108,7 +114,7 @@ export function renderTaskList(tasks, container) {
 
   roots.forEach(task => renderTaskItem(task, 0));
 
-  const totalShown = active.length;
+  const totalShown = visible.length;
   if (totalShown > MAX_VISIBLE) {
     html += `<div class="task-more">${t('task.more', { count: totalShown - MAX_VISIBLE })}</div>`;
   }
@@ -118,6 +124,15 @@ export function renderTaskList(tasks, container) {
   container.innerHTML = html;
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
+
+  // Dismiss button handlers
+  container.querySelectorAll('.task-dismiss').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const taskId = btn.dataset.taskId;
+      if (taskId) sendWs({ type: 'dismissTask', taskId });
+    });
+  });
 
   // Toggle handler
   const toggleBtn = container.querySelector('.task-toggle');

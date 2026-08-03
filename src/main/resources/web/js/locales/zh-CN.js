@@ -312,6 +312,7 @@ export default {
   'task.open': '{count} 待处理',
   'task.blockedBy': '等待 #{ids}',
   'task.more': '+{count} 个',
+  'task.dismiss': '关闭',
   'task.unit': '个任务',
 
   // === Tool names (label first line) ===
