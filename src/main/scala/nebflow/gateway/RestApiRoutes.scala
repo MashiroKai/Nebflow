@@ -849,6 +849,55 @@ class RestApiRoutes(
             ))
         yield result
 
+    // GET /agents/:name/model — get agent's model configuration
+    case GET -> Root / "agents" / agentName / "model" =>
+      if !isValidAgentName(agentName) then
+        BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        for
+          agents <- sharedResources.agentLibrary.loadAll()
+          result <- agents.get(agentName) match
+            case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+            case Some(defn) =>
+              val modelConfig = defn.model.getOrElse(nebflow.agent.AgentModelConfig.empty)
+              // Include suggested capabilities for this role
+              val suggested = nebflow.agent.ModelRoleMatcher.suggestForRole(agentName)
+              Ok(Json.obj(
+                "model" -> modelConfig.asJson,
+                "suggested" -> suggested.asJson
+              ))
+        yield result
+
+    // PUT /agents/:name/model — update agent's model configuration
+    case req @ PUT -> Root / "agents" / agentName / "model" =>
+      if !isValidAgentName(agentName) then
+        BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          // Parse the model config from request body
+          io.circe.parser.decode[nebflow.agent.AgentModelConfig](body.noSpaces) match
+            case Right(modelConfig) =>
+              // Read agent.json, merge model field, write back
+              val agentDir = nebflow.agent.AgentLibrary.defaultDir / agentName
+              val jsonPath = agentDir / "agent.json"
+              IO.blocking {
+                if os.exists(jsonPath) then
+                  val existing = os.read(jsonPath)
+                  io.circe.parser.parse(existing).toOption match
+                    case Some(json) =>
+                      val updated = json.deepMerge(Json.obj("model" -> modelConfig.asJson))
+                      os.write.over(jsonPath, updated.noSpaces)
+                      true
+                    case None => false
+                else false
+              }.flatMap {
+                case true => Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
+                case false => NotFound(Json.obj("error" -> s"Agent '$agentName' config not found".asJson))
+              }
+            case Left(err) =>
+              BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
+        }
+
     // ===== Entity API (Team/Flow/Agent management) =====
 
     // GET /teams/:name — team detail
