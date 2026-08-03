@@ -75,7 +75,7 @@ export async function openMailbox(flowName) {
   const parentSid = state.activeSessionId || '';
   if (!parentSid) { body.innerHTML = `<div class="flow-mail-empty">No active session.</div>`; return; }
   try {
-    const resp = await fetch(`/api/flow/mailbox/${encodeURIComponent(parentSid)}/${encodeURIComponent(flowName)}`, { headers: authHeaders() });
+    const resp = await fetch(`/api/teams/mailbox/${encodeURIComponent(parentSid)}/${encodeURIComponent(flowName)}`, { headers: authHeaders() });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     const records = data.records || [];
@@ -109,7 +109,7 @@ export async function openDefinition(flowName) {
   if (!body) return;
   body.innerHTML = `<div class="flow-mail-empty">Loading…</div>`;
   try {
-    const resp = await fetch(`/api/flow/def/${encodeURIComponent(flowName)}`, { headers: authHeaders() });
+    const resp = await fetch(`/api/teams/def/${encodeURIComponent(flowName)}`, { headers: authHeaders() });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const fd = await resp.json();
     const agents = fd.agents || [];

@@ -296,7 +296,7 @@ body.sidebar-collapsed #sidebar {
 .header-dropdown-menu button[data-mode="confirm-edits"]::before { background: var(--color-frame-text-muted); }
 .header-dropdown-menu button[data-mode="auto-edits"]::before { background: #e8923c; }
 .header-dropdown-menu button[data-mode="auto-all"]::before { background: var(--color-error); }
-.flow-toggle-btn {
+.team-toggle-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -310,10 +310,10 @@ body.sidebar-collapsed #sidebar {
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.flow-toggle-btn:hover {
+.team-toggle-btn:hover {
   background: var(--color-frame-hover);
   color: var(--color-frame-text);
 }
-.flow-toggle-btn.active {
+.team-toggle-btn.active {
   color: var(--color-text);
 }

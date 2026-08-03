@@ -1077,7 +1077,7 @@ class WebSocketRoutes(
             )
           yield ()
 
-        case "getFlows" =>
+        case "getTeams" =>
           for
             teams <- EntityLoader.listTeams()
             flows <- EntityLoader.listFlows()
@@ -1087,8 +1087,9 @@ class WebSocketRoutes(
               io.circe.Json.obj("name" -> f.name.asJson, "description" -> f.description.asJson, "type" -> "flow".asJson))
             _ <- wsSend(
               io.circe.Json.obj(
-                "type" -> "flowList".asJson,
-                "flows" -> (teamEntries ++ flowEntries).asJson
+                "type" -> "teamList".asJson,
+                "teams" -> teamEntries.asJson,
+                "flows" -> flowEntries.asJson
               )
             )
           yield ()

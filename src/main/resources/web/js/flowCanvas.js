@@ -25,14 +25,14 @@ let flowsTabAutoOpened = false;  // prevent repeated auto-open
 function renderTeamsTab() {
   const pane = getTabPane('teams');
   if (!pane) return;
-  if (!pane.querySelector('#flow-canvas-style')) {
+  if (!pane.querySelector('#team-canvas-style')) {
     pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
   }
-  let scroll = pane.querySelector('#flow-scroll');
+  let scroll = pane.querySelector('#team-scroll');
   if (!scroll) {
     scroll = document.createElement('div');
     scroll.className = 'flow-scroll';
-    scroll.id = 'flow-scroll';
+    scroll.id = 'team-scroll';
     pane.appendChild(scroll);
   }
   renderTeamsPanel(scroll, teams, agentStatus, mailFlash);
@@ -47,7 +47,7 @@ function renderTeamsTab() {
 function renderFlowsTab() {
   const pane = getTabPane('flows');
   if (!pane) return;
-  if (!pane.querySelector('#flow-canvas-style')) {
+  if (!pane.querySelector('#team-canvas-style')) {
     pane.insertAdjacentHTML('afterbegin', FLOW_CSS);
   }
   let scroll = pane.querySelector('#flow-scroll-flows');
@@ -132,10 +132,10 @@ export async function fetchRunningFlows() {
 
 export async function autoRestore() {
   try {
-    const resp = await fetch('/api/flows', { headers: authHeaders() });
+    const resp = await fetch('/api/teams/mounted', { headers: authHeaders() });
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    teams = data.flows || [];
+    teams = data.teams || [];
     for (const f of teams) {
       for (const a of (f.agents || [])) {
         if (!a.sessionId) continue;
@@ -172,7 +172,7 @@ export function getRunningFlows() {
 export function onSessionChange() { autoRestore(); }
 
 export async function toggleCanvas() {
-  const btn = document.getElementById('flow-toggle-btn');
+  const btn = document.getElementById('team-toggle-btn');
   if (hasTab('teams') && !hasTab('flows')) {
     // Teams tab is open and no flows tab — close everything.
     btn?.classList.remove('active');
@@ -199,7 +199,7 @@ if (typeof window !== 'undefined') {
 document.addEventListener('canvas-tab-closed', (e) => {
   if (e.detail?.id === 'teams') {
     closeViewer();
-    document.getElementById('flow-toggle-btn')?.classList.remove('active');
+    document.getElementById('team-toggle-btn')?.classList.remove('active');
   }
   if (e.detail?.id === 'flows') {
     closeViewer();
