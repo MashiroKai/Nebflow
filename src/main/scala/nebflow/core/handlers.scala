@@ -10,11 +10,15 @@ import nebflow.shared.*
  * @param isError         Whether the tool execution failed.
  * @param frontendContent Full content for frontend rendering (e.g. card HTML).
  *                        When present, the frontend receives this instead of `content`.
+ * @param imageBlocks     Image content blocks extracted from the result (e.g. Read on an image file).
+ *                        Injected alongside tool_result blocks in the user message so LLM
+ *                        vision APIs can process them. None for text-only results.
  */
 case class ToolExecResult(
   content: String,
   isError: Boolean = false,
-  frontendContent: Option[String] = None
+  frontendContent: Option[String] = None,
+  imageBlocks: Option[List[ContentBlock.Image]] = None
 )
 
 // NOTE: executeTool has been consolidated into AgentCore.executeTool.
