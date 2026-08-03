@@ -46,10 +46,15 @@ export function initColResizers() {
   // management — mirrors how the sidebar works (body class drives everything).
   const bodyEl = document.body;
   const moBody = new MutationObserver(() => {
+    // Sidebar: clear pin on collapse, restore on expand.
     if (bodyEl.classList.contains('sidebar-collapsed')) {
       clearPin('sidebar');
     } else {
       restoreWidths();
+    }
+    // Canvas: clear main pin when canvas closes so Main fills remaining space.
+    if (!bodyEl.classList.contains('canvas-open')) {
+      clearPin('main');
     }
   });
   moBody.observe(bodyEl, { attributes: true, attributeFilter: ['class'] });
