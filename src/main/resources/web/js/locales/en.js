@@ -418,4 +418,18 @@ export default {
   'modelPicker.add': '+ add model…',
   'modelPicker.remove': 'remove',
   'modelPicker.hint': 'First = active model; order below = fallback order. Drag ⠿ to reorder.',
+
+  // === Daemons (Dev Servers) ===
+  'daemons.title': 'Dev Servers',
+  'daemons.empty': 'No dev servers',
+  'daemons.emptyHint': 'Click + to add a daemon',
+  'daemons.start': 'Start',
+  'daemons.stop': 'Stop',
+  'daemons.add': 'Add',
+  'daemons.cancel': 'Cancel',
+  'daemons.fieldId': 'ID',
+  'daemons.fieldName': 'Name',
+  'daemons.fieldCommand': 'Command',
+  'daemons.fieldCwd': 'Working Directory',
+  'daemons.fieldPort': 'Port (optional)',
 };
