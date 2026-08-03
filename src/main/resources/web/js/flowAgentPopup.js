@@ -257,6 +257,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
       <div class="flow-agent-header">
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || '')}</span>
         <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
+        <span class="flow-agent-model" id="flow-agent-model"></span>
         <span class="flow-agent-ctx" id="flow-agent-ctx"></span>
         <div class="flow-agent-close" id="flow-agent-close">✕</div>
       </div>
@@ -266,6 +267,11 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
       </div>
     </div>
   `;
+
+  // Async-fetch agent model info for header badge
+  if (agentName) {
+    fetchAgentModelBadge(agentName);
+  }
 
   mountEl.appendChild(popupOverlay);
 
@@ -354,6 +360,25 @@ function fmtTokens(n) {
   if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
   if (n >= 1000) return Math.round(n / 1000) + 'k';
   return String(n);
+}
+
+/** Fetch agent model config and render a badge in the popup header. */
+async function fetchAgentModelBadge(agentName) {
+  try {
+    const token = localStorage.getItem('nebflow_token') || '';
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers });
+    if (!resp.ok) return;
+    const cfg = await resp.json();
+    const el = popupOverlay?.querySelector('#flow-agent-model');
+    if (!el) return;
+    const current = cfg.current || cfg.preferred || cfg.default || '';
+    if (!current) { el.innerHTML = ''; return; }
+    const isFallback = cfg.preferred && current !== cfg.preferred;
+    el.innerHTML = isFallback
+      ? `<span class="flow-agent-model-badge">${esc(current)}</span>`
+      : `<span class="flow-agent-subtitle">${esc(current)}</span>`;
+  } catch (e) { /* non-critical */ }
 }
 
 /** Render the context usage ring into the popup header.

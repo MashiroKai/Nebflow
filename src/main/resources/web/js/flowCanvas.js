@@ -6,7 +6,7 @@
 import { openTab, closeCanvas, getTabPane, hasTab, isCanvasOpen } from './canvas.js';
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot } from './flowHelpers.js';
-import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf } from './flowTeams.js';
+import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf, populateTileModels } from './flowTeams.js';
 import { renderFlowsPanel, bindDagNodeClicks } from './flowDag.js';
 import { closeViewer, openMailbox, openRules, openDefinition } from './flowViewers.js';
 import { onReconnect } from './ws.js';
@@ -41,6 +41,7 @@ function renderTeamsTab() {
   bindCardActions(openMailbox, openRules, openDefinition);
   bindFlowRowClicks(runningFlows, () => renderTeamsTab());
   if (typeof lucide !== 'undefined') lucide.createIcons();
+  populateTileModels(teams);
 }
 
 // ── Flows tab ──────────────────────────────────────────────
