@@ -133,7 +133,7 @@ export function renderTaskList(tasks, container) {
       if (btn.classList.contains('filled')) return; // already dismissing
       btn.classList.add('filled');
       const taskId = btn.dataset.taskId;
-      if (taskId) sendWs({ type: 'dismissTask', taskId });
+      if (taskId) sendWs({ type: 'dismissTask', sessionId: state.activeSessionId, taskId });
     });
   });
 

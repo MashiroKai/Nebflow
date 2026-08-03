@@ -26,6 +26,7 @@ object ModelRegistry:
   )
   object ModelEntry:
     given Decoder[ModelEntry] = deriveDecoder[ModelEntry]
+    given Encoder[ModelEntry] = deriveEncoder[ModelEntry]
 
   case class ModelRegistryFile(
     models: Map[String, ModelEntry] = Map.empty,
@@ -33,6 +34,7 @@ object ModelRegistry:
   )
   object ModelRegistryFile:
     given Decoder[ModelRegistryFile] = deriveDecoder[ModelRegistryFile]
+    given Encoder[ModelRegistryFile] = deriveEncoder[ModelRegistryFile]
 
   case class CapabilityTag(
     label: String = "",
@@ -40,6 +42,7 @@ object ModelRegistry:
   )
   object CapabilityTag:
     given Decoder[CapabilityTag] = deriveDecoder[CapabilityTag]
+    given Encoder[CapabilityTag] = deriveEncoder[CapabilityTag]
 
   private def configPath: os.Path = PathUtil.dataRoot / "models.json"
 
@@ -61,6 +64,19 @@ object ModelRegistry:
       cache = Some(loaded)
       loaded
     }
+
+  /** Public load — returns the full registry file for API use. */
+  def loadForApi: ModelRegistryFile =
+    ensureLoaded
+
+  /** Save models to disk and update cache. */
+  def save(models: Map[String, ModelEntry]): Unit =
+    val current = ensureLoaded
+    val updated = current.copy(models = models)
+    val path = configPath
+    os.write.over(path, updated.asJson.noSpaces)
+    cache = Some(updated)
+    logger.infoSync(s"Saved models.json: ${models.size} models")
 
   /** Look up capabilities for a model by `providerId/modelId` key. */
   def lookup(providerId: String, modelId: String): Option[ModelEntry] =
