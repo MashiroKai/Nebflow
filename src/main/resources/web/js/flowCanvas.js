@@ -31,7 +31,7 @@ function renderTeamsTab() {
   let scroll = pane.querySelector('#team-scroll');
   if (!scroll) {
     scroll = document.createElement('div');
-    scroll.className = 'flow-scroll';
+    scroll.className = 'team-scroll';
     scroll.id = 'team-scroll';
     pane.appendChild(scroll);
   }
@@ -53,7 +53,7 @@ function renderFlowsTab() {
   let scroll = pane.querySelector('#flow-scroll-flows');
   if (!scroll) {
     scroll = document.createElement('div');
-    scroll.className = 'flow-scroll';
+    scroll.className = 'team-scroll';
     scroll.id = 'flow-scroll-flows';
     pane.appendChild(scroll);
   }
