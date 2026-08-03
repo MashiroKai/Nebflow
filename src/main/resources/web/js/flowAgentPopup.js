@@ -357,8 +357,8 @@ function fmtTokens(n) {
 }
 
 /** Render the context usage ring into the popup header.
- *  Reads state.sessionModelInfo[currentStepId] — same data source
- *  as the main chat header's updateHeaderModelInfo(). */
+ *  Matches the main window's ctx-ring style (same SVG structure, threshold line,
+ *  colors, and transitions) for visual consistency. */
 function updatePopupCtxRing() {
   if (!popupOverlay || !currentStepId) return;
   const el = popupOverlay.querySelector('#flow-agent-ctx');
@@ -370,22 +370,30 @@ function updatePopupCtxRing() {
   let color = '#4caf50';
   if (ratio > 0.5) color = '#d4a030';
   if (ratio > 0.75) color = '#e53935';
-  const R = 12;
+  const R = 15;
   const CIRC = 2 * Math.PI * R;
   const dashLen = CIRC * pct / 100;
+  const thresholdPct = Math.round((info.compactThreshold || 0.8) * 100);
+  const thresholdAngle = thresholdPct * 3.6;
   const tooltip = info.inputTokens != null
-    ? `${fmtTokens(info.inputTokens)} / ${fmtTokens(info.contextWindow)} tokens (${pct}%)`
+    ? `${fmtTokens(info.inputTokens)} / ${fmtTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
     : `${fmtTokens(info.contextWindow)} context window`;
   el.title = tooltip;
   el.style.display = 'inline-flex';
-  el.innerHTML = `<svg width="28" height="28" viewBox="0 0 30 30">
-    <circle cx="15" cy="15" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3"/>
-    <circle cx="15" cy="15" r="${R}" fill="none" stroke="${color}" stroke-width="3"
-            stroke-dasharray="${dashLen.toFixed(1)} ${CIRC.toFixed(1)}"
-            stroke-linecap="round"
-            transform="rotate(-90 15 15)"
-            style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
-  </svg><span style="font-size:10px;font-weight:600;color:${color};min-width:24px;text-align:center;">${pct}</span>`;
+  el.innerHTML = `<div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
+    <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
+      <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
+      <circle cx="18" cy="18" r="${R}" fill="none" stroke="${color}" stroke-width="3.5"
+              stroke-dasharray="${dashLen.toFixed(1)} ${CIRC.toFixed(1)}"
+              stroke-linecap="round"
+              transform="rotate(-90 18 18)"
+              style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
+      <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
+            class="ctx-ring-threshold"
+            transform="rotate(${thresholdAngle.toFixed(1)} 18 18)"/>
+    </svg>
+    <span class="ctx-ring-pct">${pct}</span>
+  </div>`;
 }
 
 // Update popup ring when model info arrives for any session
