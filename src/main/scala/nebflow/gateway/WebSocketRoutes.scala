@@ -1276,8 +1276,8 @@ class WebSocketRoutes(
           val dtSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           val dtTaskId = parse(text).flatMap(_.hcursor.downField("taskId").as[String]).getOrElse("")
           if dtSessionId.nonEmpty && dtTaskId.nonEmpty then
-            sharedResources.taskStore.dismiss(dtSessionId, dtTaskId).flatMap {
-              case Some(_) =>
+            sharedResources.taskStore.dismiss(dtSessionId, dtTaskId).attempt.flatMap {
+              case Right(Some(_)) =>
                 // Return updated task list (without dismissed tasks)
                 sharedResources.taskStore.listVisible(dtSessionId).flatMap { tasks =>
                   wsSend(
@@ -1288,8 +1288,15 @@ class WebSocketRoutes(
                     )
                   )
                 }
-              case None =>
+              case Right(None) =>
                 wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $dtTaskId".asJson))
+              case Left(err) =>
+                // IllegalStateException — active task cannot be dismissed
+                wsSend(io.circe.Json.obj(
+                  "type" -> "taskError".asJson,
+                  "error" -> s"Cannot dismiss: ${err.getMessage}".asJson,
+                  "taskId" -> dtTaskId.asJson
+                ))
             }
           else IO.unit
 

@@ -148,6 +148,7 @@ class ProviderRegistry(
       val (matching, rest) = candidates.partition(_.capabilities.intersect(required).nonEmpty)
       cfg.fallbackPolicy match
         case "strict" => matching // only capable models
+        case "any" => candidates   // ignore capabilities, keep global order
         case _ => matching ++ rest // prefer-capable: capable first, then rest
 
   /**
