@@ -15,6 +15,8 @@ trait TaskStore:
   def get(sessionId: String, taskId: String): IO[Option[Task]]
   def list(sessionId: String): IO[List[Task]]
   def listActive(sessionId: String): IO[List[Task]]
+  def listVisible(sessionId: String): IO[List[Task]]
+  def dismiss(sessionId: String, taskId: String): IO[Option[Task]]
   def renderForPrompt(sessionId: String): IO[String]
   def update(sessionId: String, taskId: String, updates: TaskUpdateInput): IO[Option[Task]]
   def delete(sessionId: String, taskId: String): IO[Boolean]
@@ -151,7 +153,10 @@ object FileTaskStore extends TaskStore:
       case (TaskStatus.InProgress, TaskStatus.Failed) => true
       case (TaskStatus.InProgress, TaskStatus.InProgress) => true // no-op
       case (TaskStatus.Completed, TaskStatus.Completed) => true // no-op
+      case (TaskStatus.Completed, TaskStatus.Dismissed) => true
       case (TaskStatus.Failed, TaskStatus.Failed) => true // no-op
+      case (TaskStatus.Failed, TaskStatus.Dismissed) => true
+      case (TaskStatus.Dismissed, TaskStatus.Dismissed) => true // no-op
       case _ => false
 
   // Issue #3: DFS cycle detection in dependency graph
@@ -223,6 +228,12 @@ object FileTaskStore extends TaskStore:
 
   def listActive(sessionId: String): IO[List[Task]] =
     list(sessionId).map(_.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress))
+
+  def listVisible(sessionId: String): IO[List[Task]] =
+    list(sessionId).map(_.filter(_.status != TaskStatus.Dismissed))
+
+  def dismiss(sessionId: String, taskId: String): IO[Option[Task]] =
+    update(sessionId, taskId, TaskUpdateInput(status = Some(TaskStatus.Dismissed)))
 
   /**
    * Render tasks as a hierarchical text block for system prompt injection.
