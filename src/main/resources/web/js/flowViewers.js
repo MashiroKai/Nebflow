@@ -6,6 +6,63 @@ import { renderMarkdownWithMath } from './utils.js';
 import state from './state.js';
 import { esc, authHeaders, fmtTime, overlayRoot } from './flowHelpers.js';
 
+/** Fetch and render per-agent model config into a placeholder element.
+ *  Called after agent blocks are rendered in openDefinition. */
+async function populateAgentModel(el, agentName) {
+  try {
+    const resp = await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, { headers: authHeaders() });
+    if (!resp.ok) { el.innerHTML = '<span class="flow-agent-block-empty">无法加载</span>'; return; }
+    const cfg = await resp.json();
+    renderAgentModelSection(el, agentName, cfg);
+  } catch (e) {
+    el.innerHTML = '<span class="flow-agent-block-empty">无法加载</span>';
+  }
+}
+
+/** Render model config section with preferred dropdown + current indicator. */
+function renderAgentModelSection(el, agentName, cfg) {
+  const preferred = cfg.preferred || cfg.default || '';
+  const current = cfg.current || preferred;
+  const fallbacks = cfg.fallback || [];
+  const isFallback = current && preferred && current !== preferred;
+
+  // Build model dropdown options from global model refs
+  const allRefs = state.allModelRefs || [];
+
+  const currentHtml = isFallback
+    ? `<span class="flow-agent-model-current fallback">运行: ${esc(current)}</span>`
+    : '';
+
+  const fbHtml = fallbacks.length > 0
+    ? `<div class="flow-agent-model-fbs">${fallbacks.map(f => `<span class="flow-agent-model-fb">${esc(f)}</span>`).join('')}</div>`
+    : '';
+
+  el.innerHTML = `
+    <div class="flow-agent-model-row">
+      <select class="flow-agent-model-select" data-agent="${esc(agentName)}">
+        ${preferred
+          ? `<option value="${esc(preferred)}" selected>${esc(preferred)}</option>`
+          : `<option value="" selected>使用全局默认</option>`}
+        ${allRefs.filter(r => r !== preferred).map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
+      </select>
+      ${currentHtml}
+    </div>
+    ${fbHtml}`;
+
+  // Bind dropdown change → PUT /api/agents/:name/model
+  const sel = el.querySelector('.flow-agent-model-select');
+  sel?.addEventListener('change', async () => {
+    try {
+      await fetch(`/api/agents/${encodeURIComponent(agentName)}/model`, {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preferred: sel.value }),
+      });
+      populateAgentModel(el, agentName);
+    } catch (e) { /* non-critical */ }
+  });
+}
+
 export function closeViewer() {
   const existing = overlayRoot().querySelector('.flow-viewer-overlay');
   if (existing) existing.remove();
@@ -134,7 +191,8 @@ export async function openDefinition(flowName) {
       const agentTools = a.tools || [];
       const toolsHtml = agentTools.length > 0 ? `<div class="flow-agent-block-field"><span class="flow-agent-block-label">Tools</span><div class="flow-agent-block-readonly">${esc(agentTools.join(', '))}</div></div>` : '';
       const sysHtml = a.systemPrompt ? `<div class="flow-agent-block-field"><span class="flow-agent-block-label">System Prompt</span><div class="flow-agent-block-readonly" style="max-height:200px;overflow-y:auto">${esc(a.systemPrompt)}</div></div>` : '';
-      return `<div class="flow-agent-block${isMgr ? ' is-manager' : ''}"><div class="flow-agent-block-head"><span class="flow-agent-block-name">${esc(a.name)}</span>${badge}${ext}</div>${dutyHtml}${capabilityHtml}${toolsHtml}${sysHtml}</div>`;
+      const modelHtml = `<div class="flow-agent-block-field"><span class="flow-agent-block-label">Model</span><div class="flow-agent-model-container" data-agent-name="${esc(a.name)}"></div></div>`;
+      return `<div class="flow-agent-block${isMgr ? ' is-manager' : ''}"><div class="flow-agent-block-head"><span class="flow-agent-block-name">${esc(a.name)}</span>${badge}${ext}</div>${dutyHtml}${capabilityHtml}${toolsHtml}${modelHtml}${sysHtml}</div>`;
     });
 
     const flowTabContent = `<div class="flow-def-tab-content active" data-tab-content="flow"><div class="flow-def-section"><h3>Team Description</h3><div class="flow-agent-block-readonly">${esc(fd.description || '')}</div></div></div>`;
@@ -151,6 +209,11 @@ export async function openDefinition(flowName) {
         body.querySelectorAll('.flow-def-tab').forEach(t => t.classList.toggle('active', t === tab));
         body.querySelectorAll('.flow-def-tab-content').forEach(c => c.classList.toggle('active', c.getAttribute('data-tab-content') === target));
       });
+    });
+
+    // Async-populate per-agent model config
+    body.querySelectorAll('.flow-agent-model-container').forEach(el => {
+      populateAgentModel(el, el.dataset.agentName);
     });
   } catch (e) { body.innerHTML = `<div class="flow-mail-empty">Failed: ${esc(e.message)}</div>`; }
 }

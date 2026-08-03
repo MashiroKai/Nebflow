@@ -1683,6 +1683,14 @@ onMessage('modelOptions', (msg, view) => {
 onMessage('sessionModelSet', (msg, view) => {
 });
 
+// --- Runtime model change (fallback kicked in) ---
+onMessage('modelChanged', (msg, view) => {
+  if (msg.newModel) {
+    state.currentModel = msg.newModel;
+    refreshModelPicker();
+  }
+});
+
 // --- Retry / fallback status ---
 onMessage('retryStatus', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
