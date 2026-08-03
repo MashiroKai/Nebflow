@@ -419,4 +419,18 @@ export default {
   'modelPicker.add': '+ 添加模型…',
   'modelPicker.remove': '移除',
   'modelPicker.hint': '第一个 = 当前模型；下方顺序 = Fallback 顺序。拖动 ⠿ 排序。',
+
+  // === Daemons (Dev Servers) ===
+  'daemons.title': '开发服务器',
+  'daemons.empty': '暂无服务',
+  'daemons.emptyHint': '点击 + 添加守护进程',
+  'daemons.start': '启动',
+  'daemons.stop': '停止',
+  'daemons.add': '添加',
+  'daemons.cancel': '取消',
+  'daemons.fieldId': 'ID',
+  'daemons.fieldName': '名称',
+  'daemons.fieldCommand': '命令',
+  'daemons.fieldCwd': '工作目录',
+  'daemons.fieldPort': '端口（可选）',
 };

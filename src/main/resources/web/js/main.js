@@ -36,6 +36,7 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
+import { initDaemons } from './daemons.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory } from './flowAgentPopup.js';
@@ -2280,6 +2281,7 @@ restoreQueue();
 restoreTabs();
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
+initDaemons();
 initNeblink();
 checkPairingRedirect();
 initDropbox();
