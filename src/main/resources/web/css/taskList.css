@@ -127,6 +127,53 @@
   color: var(--color-text-muted, #888);
 }
 
+.task-completed {
+  opacity: 0.55;
+}
+
+.task-completed .task-icon {
+  color: var(--color-text-muted, #888);
+}
+
+.task-completed .task-label {
+  font-weight: 400;
+  text-decoration: line-through;
+  text-decoration-color: var(--color-text-muted, #888);
+  text-decoration-thickness: 1px;
+}
+
+.task-dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-left: auto;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--color-text-muted, #888);
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.task-item:hover .task-dismiss {
+  opacity: 1;
+}
+
+.task-dismiss:hover {
+  background: rgba(255, 80, 80, 0.12);
+  color: #e05050;
+}
+
+.task-dismiss svg {
+  width: 12px;
+  height: 12px;
+}
+
 .task-label {
   flex: 1;
   overflow: hidden;
@@ -164,5 +211,10 @@
   .task-toggle:hover {
     background: rgba(255,255,255,0.06);
     color: #d8dae0;
+  }
+
+  .task-dismiss:hover {
+    background: rgba(255, 80, 80, 0.15);
+    color: #ff7070;
   }
 }
