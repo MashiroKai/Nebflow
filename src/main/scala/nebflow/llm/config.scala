@@ -26,7 +26,9 @@ case class ModelConfig(
   id: String,
   maxTokens: Int = Defaults.MaxTokens,
   contextWindow: Int = Defaults.ContextWindow,
-  description: Option[String] = None
+  description: Option[String] = None,
+  vision: Option[Boolean] = None,
+  capabilities: Option[List[String]] = None
 )
 
 object ModelConfig:

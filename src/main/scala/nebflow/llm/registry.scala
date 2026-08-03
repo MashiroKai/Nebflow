@@ -12,7 +12,9 @@ case class ModelCandidate(
   provider: ProviderConfig,
   model: String,
   maxTokens: Int = Defaults.MaxTokens,
-  contextWindow: Int = Defaults.ContextWindow
+  contextWindow: Int = Defaults.ContextWindow,
+  vision: Boolean = false,
+  capabilities: Set[String] = Set.empty
 )
 
 class ProviderRegistry(
@@ -52,7 +54,8 @@ class ProviderRegistry(
               val modelConfig = provider.models.find(_.id == modelId)
               val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
               val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
-              Some(ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow))
+              val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
+              Some(ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow, vision, caps))
             case None => None // Skip unknown provider
         catch case _: Exception => None // Skip malformed ref
       }
@@ -64,7 +67,8 @@ class ProviderRegistry(
         config.llm.providers.headOption
           .map { case (providerId, provider) =>
             provider.models.headOption.map { mc =>
-              ModelCandidate(providerId, provider, mc.id, mc.maxTokens, mc.contextWindow)
+              val (vision, caps) = resolveCapabilities(providerId, mc.id, Some(mc))
+              ModelCandidate(providerId, provider, mc.id, mc.maxTokens, mc.contextWindow, vision, caps)
             }
           }
           .flatten
@@ -101,10 +105,30 @@ class ProviderRegistry(
           val modelConfig = provider.models.find(_.id == modelId)
           val maxTokens = modelConfig.map(_.maxTokens).getOrElse(Defaults.MaxTokens)
           val contextWindow = modelConfig.map(_.contextWindow).getOrElse(Defaults.ContextWindow)
-          ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow)
+          val (vision, caps) = resolveCapabilities(providerId, modelId, modelConfig)
+          ModelCandidate(providerId, provider, modelId, maxTokens, contextWindow, vision, caps)
         }
       catch case _: Exception => None
     }
+
+  /**
+   * Resolve vision + capabilities for a model.
+   * Priority: ModelConfig inline fields > ModelRegistry (models.json) > defaults (false, empty).
+   */
+  private def resolveCapabilities(
+    providerId: String,
+    modelId: String,
+    modelConfig: Option[ModelConfig]
+  ): (Boolean, Set[String]) =
+    val registryEntry = ModelRegistry.lookup(providerId, modelId)
+    val vision = modelConfig.flatMap(_.vision)
+      .orElse(registryEntry.map(_.vision))
+      .getOrElse(false)
+    val caps = modelConfig.flatMap(_.capabilities)
+      .orElse(registryEntry.map(_.capabilities))
+      .getOrElse(Nil)
+      .toSet
+    (vision, caps)
 
   /** Reload: re-read config from disk and clear adapter cache. */
   def reloadConfig(): IO[Unit] =

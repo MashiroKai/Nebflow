@@ -12,6 +12,29 @@ import scala.concurrent.duration.*
 object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
 
+  // ── Vision PreCheck helpers ────────────────────────────
+
+  /** Check if any message in the list contains an Image content block. */
+  private[llm] def hasImage(messages: List[Message]): Boolean =
+    messages.exists(_.content match
+      case Right(blocks) => blocks.exists(_.isInstanceOf[ContentBlock.Image])
+      case Left(_) => false
+    )
+
+  /** Replace all Image blocks with a text placeholder (for non-vision models). */
+  private[llm] def stripImages(messages: List[Message]): List[Message] =
+    messages.map { msg =>
+      msg.content match
+        case Right(blocks) =>
+          val stripped = blocks.map {
+            case ContentBlock.Image(_, _) =>
+              ContentBlock.Text("[image omitted: model does not support vision]")
+            case other => other
+          }
+          msg.copy(content = Right(stripped))
+        case Left(_) => msg
+    }
+
   /**
    * Two-phase stream watchdog:
    *   Phase 1 (firstToken): no chunks received yet — if no chunk arrives within
@@ -172,6 +195,9 @@ object LlmInterface:
                 fs2.Stream.eval(IO.ref(false)).flatMap { lockedRef =>
                   fs2.Stream.eval(IO.ref(List.empty[FallbackAttempt])).flatMap { failureRef =>
                     fs2.Stream.eval(IO.ref(Option.empty[ModelCandidate])).flatMap { winnerRef =>
+                      // PreSendChecker + PostEmptyRecovery state
+                      fs2.Stream.eval(IO.ref(req.messages)).flatMap { messagesRef =>
+                        fs2.Stream.eval(IO.ref(false)).flatMap { imageStrippedRef =>
 
                       // Health-check wrapper: filters candidates by health state.
                       // If all are Down, notifies the frontend and blocks until
@@ -240,23 +266,24 @@ object LlmInterface:
                                 case _ => t
                             }
                             val stream = fs2.Stream.force(
-                              registry
-                                .getAdapter(candidate.providerId)
-                                .map(
-                                  _.sendMessageStream(
-                                    SendMessageParams(
-                                      req.messages,
-                                      candidate.model,
-                                      req.tools,
-                                      Some(candidate.maxTokens),
-                                      cappedThinking,
-                                      req.systemStable,
-                                      req.systemDynamic,
-                                      Some(req.sessionId),
-                                      Some(req.agentId)
-                                    )
-                                  )
+                              (for
+                                // PreSendChecker: strip images for non-vision models
+                                msgs <- messagesRef.get
+                                effectiveMessages = if !candidate.vision && hasImage(msgs) then stripImages(msgs) else msgs
+                                adapter <- registry.getAdapter(candidate.providerId)
+                              yield adapter.sendMessageStream(
+                                SendMessageParams(
+                                  effectiveMessages,
+                                  candidate.model,
+                                  req.tools,
+                                  Some(candidate.maxTokens),
+                                  cappedThinking,
+                                  req.systemStable,
+                                  req.systemDynamic,
+                                  Some(req.sessionId),
+                                  Some(req.agentId)
                                 )
+                              ))
                             )
                             (stream
                               // Per-provider two-phase watchdog: detects both
@@ -310,7 +337,34 @@ object LlmInterface:
                                     else IO.unit
                                   }
                                 )
-                                .drain).handleErrorWith { err =>
+                                .drain)
+                              // PostEmptyRecovery: if empty completion with images on non-vision model,
+                              // strip images and retry same candidate before falling through to normal error handling.
+                              .handleErrorWith { err =>
+                                val isEmptyCompletion = err.getMessage != null &&
+                                  err.getMessage.contains("Stream completed with no content")
+                                if isEmptyCompletion then
+                                  fs2.Stream.eval(for
+                                    alreadyStripped <- imageStrippedRef.get
+                                    msgs <- messagesRef.get
+                                  yield (alreadyStripped, msgs)).flatMap {
+                                    case (false, msgs) if hasImage(msgs) && !candidate.vision =>
+                                      // Strip images and retry same candidate
+                                      fs2.Stream.eval(for
+                                        _ <- imageStrippedRef.set(true)
+                                        _ <- messagesRef.set(stripImages(msgs))
+                                        _ <- lockedRef.set(false)
+                                        _ <- logger.warn(
+                                          s"PostEmptyRecovery: empty completion with image on non-vision model " +
+                                            s"${candidate.providerId}/${candidate.model}, stripping and retrying"
+                                        )
+                                      yield ()).drain ++ tryCandidate(candidate :: rest, maxRetries, Fallback.InitialBackoffMs)
+                                    case _ =>
+                                      fs2.Stream.raiseError[IO](err)
+                                  }
+                                else fs2.Stream.raiseError[IO](err)
+                              }
+                              .handleErrorWith { err =>
                               val classification = Fallback.classifyError(err)
                               // Timeout needs special handling: even if partial content was
                               // streamed (locked), we allow fallback to try the next provider.
@@ -344,7 +398,7 @@ object LlmInterface:
                                         )
                                           *> failureRef.update(_ :+ attempt)
                                           *> notify
-                                      ) *> fs2.Stream.raiseError(new FallbackExhaustedError(List(attempt)))
+                                      ) *> fs2.Stream.raiseError[IO](new FallbackExhaustedError(List(attempt)))
                                     case ErrorPermanence.Permanent =>
                                       fs2.Stream.eval(
                                         resetLock *>
@@ -386,6 +440,8 @@ object LlmInterface:
                             }
 
                       attemptWithHealthCheck
+                        }
+                        }
                     }
                   }
                 }
