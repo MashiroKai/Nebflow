@@ -6,7 +6,7 @@
 import { openTab, closeCanvas, getTabPane, hasTab, isCanvasOpen } from './canvas.js';
 import { FLOW_CSS } from './flowCss.js';
 import { esc, authHeaders, overlayRoot } from './flowHelpers.js';
-import { renderTeamsPanel, bindTileClicks, bindCardActions, statusOf } from './flowTeams.js';
+import { renderTeamsPanel, bindTileClicks, bindCardActions, bindFlowRowClicks, statusOf } from './flowTeams.js';
 import { renderFlowsPanel, bindDagNodeClicks } from './flowDag.js';
 import { closeViewer, openMailbox, openRules, openDefinition } from './flowViewers.js';
 import { onReconnect } from './ws.js';
@@ -35,10 +35,11 @@ function renderTeamsTab() {
     scroll.id = 'team-scroll';
     pane.appendChild(scroll);
   }
-  renderTeamsPanel(scroll, teams, agentStatus, mailFlash);
+  renderTeamsPanel(scroll, teams, agentStatus, mailFlash, runningFlows);
   overlayRoot();
   bindTileClicks();
   bindCardActions(openMailbox, openRules, openDefinition);
+  bindFlowRowClicks(runningFlows, () => renderTeamsTab());
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 
@@ -110,13 +111,13 @@ export function onFlowProgress(msg) {
     if (node) { node.status = msg.status || ''; if (msg.output) node.output = msg.output; if (msg.error) node.error = msg.error; }
   }
   maybeAutoOpenFlowsTab();
-  if (isCanvasOpen() && hasTab('flows')) renderFlowsTab();
+  if (isCanvasOpen()) renderOpenTabs();
 }
 
 export function onFlowCompleted(msg) {
   const rf = runningFlows.find(f => f.instanceId === (msg.instanceId || ''));
   if (rf) rf.status = msg.success ? 'completed' : 'failed';
-  fetchRunningFlows().then(() => { if (isCanvasOpen() && hasTab('flows')) renderFlowsTab(); });
+  fetchRunningFlows().then(() => { if (isCanvasOpen()) renderOpenTabs(); });
 }
 
 // ── Data fetch ─────────────────────────────────────────────
@@ -188,6 +189,7 @@ export async function toggleCanvas() {
   autoRestore().then(() => { if (teams.length > 0) renderTeamsTab(); });
   fetchRunningFlows().then(() => {
     if (runningFlows.length > 0) maybeAutoOpenFlowsTab();
+    if (hasTab('teams')) renderTeamsTab();
   });
 }
 

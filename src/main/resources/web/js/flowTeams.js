@@ -1,10 +1,18 @@
-// flowTeams.js — Team panel rendering: glass cards with agent tiles.
+// flowTeams.js — Team panel rendering: glass cards with agent tiles + inline flow DAG.
 //
-// Each mounted team is a glass card with a header (name, rules, mailbox buttons)
-// and an agent grid. Clicking an agent tile opens a chat popup.
+// Each mounted team is a glass card with a header (name, rules, mailbox buttons),
+// an agent grid, and a Flows section showing flow DAG nodes with real-time status.
+// Clicking an agent tile opens a chat popup. Clicking a flow row expands/collapses
+// its DAG nodes inline.
 
 import { openStepPopup } from './flowAgentPopup.js';
-import { esc, overlayRoot } from './flowHelpers.js';
+import { esc, authHeaders, overlayRoot } from './flowHelpers.js';
+import { orderDagNodes, dagNodeInlineHtml } from './flowDag.js';
+
+// ── Module-level state for flow rows ───────────────────────
+const dagCache = new Map();           // flowName → { ordered: [{nodeId, agent}] }
+const expandedFlows = new Set();      // "teamName/flowName" keys
+const manuallyCollapsed = new Set();  // same key — prevents auto-expand
 
 export function statusOf(agent, agentStatus) {
   const live = agent.sessionId ? agentStatus.get(agent.sessionId) : null;
@@ -13,7 +21,79 @@ export function statusOf(agent, agentStatus) {
   return 'idle';
 }
 
-export function flowCardHtml(flow, agentStatus, mailFlash) {
+// ── DAG data helpers ───────────────────────────────────────
+
+/** Fetch static DAG structure from /api/flow/dag/:flowName and cache it. */
+async function fetchDag(flowName) {
+  if (dagCache.has(flowName)) return dagCache.get(flowName);
+  try {
+    const resp = await fetch(`/api/flow/dag/${encodeURIComponent(flowName)}`, { headers: authHeaders() });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    // Normalize: nodes may be a map { nodeId: { agent, ... } } or an array
+    const rawNodes = data.nodes || {};
+    const isMap = typeof rawNodes === 'object' && !Array.isArray(rawNodes);
+    const nodeArr = isMap
+      ? Object.entries(rawNodes).map(([id, n]) => ({ nodeId: id, agent: (n && n.agent) || '' }))
+      : (Array.isArray(rawNodes) ? rawNodes.map(n => ({ nodeId: n.nodeId || '', agent: n.agent || '' })) : []);
+
+    // Topological sort — derive edges from onComplete fields
+    const edges = [];
+    for (const [id, node] of Object.entries(rawNodes)) {
+      if (!node) continue;
+      const oc = node.onComplete;
+      if (typeof oc === 'string') {
+        if (oc !== '$return') edges.push({ from: id, to: oc });
+      } else if (oc && typeof oc === 'object' && oc.cases) {
+        for (const target of Object.values(oc.cases)) {
+          if (typeof target === 'string' && target !== '$return') edges.push({ from: id, to: target });
+        }
+      }
+    }
+    const entry = data.entry;
+    const childrenMap = new Map();
+    edges.forEach(e => {
+      if (!childrenMap.has(e.from)) childrenMap.set(e.from, []);
+      childrenMap.get(e.from).push(e.to);
+    });
+    const ordered = [];
+    const visited = new Set();
+    function visit(id) {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const node = nodeArr.find(n => n.nodeId === id);
+      if (node) ordered.push(node);
+      (childrenMap.get(id) || []).forEach(c => visit(c));
+    }
+    if (entry) visit(entry);
+    nodeArr.forEach(n => { if (!visited.has(n.nodeId)) ordered.push(n); });
+
+    const result = { ordered };
+    dagCache.set(flowName, result);
+    return result;
+  } catch (e) { return null; }
+}
+
+/** Get ordered nodes with status for inline rendering.
+ *  - Running flow → use real-time node statuses from runningFlows
+ *  - Not running → use cached static DAG (all 'idle') */
+function getInlineNodes(flowName, runningFlows) {
+  const rf = runningFlows?.find(r => r.flowName === flowName);
+  if (rf) {
+    // Running — use orderDagNodes from flowDag.js (handles edges + entry)
+    return orderDagNodes(rf);
+  }
+  // Static DAG from cache
+  const dag = dagCache.get(flowName);
+  if (dag) {
+    return dag.ordered.map(n => ({ node: { nodeId: n.nodeId, agent: n.agent, status: 'idle' }, edgeLabel: null }));
+  }
+  return [];
+}
+
+// ── Card rendering ─────────────────────────────────────────
+
+export function flowCardHtml(flow, agentStatus, mailFlash, runningFlows) {
   const agents = flow.agents || [];
   const running = agents.filter(a => statusOf(a, agentStatus) === 'running').length;
   const summaryText = running > 0 ? `${running} running` : `${agents.length} idle`;
@@ -36,9 +116,40 @@ export function flowCardHtml(flow, agentStatus, mailFlash) {
       </div>`;
   }).join('');
 
-  const flowTags = (flow.flows || []).map(fn =>
-    `<span class="team-flow-tag" data-flow-name="${esc(fn)}" title="Trigger ${esc(fn)} flow">${esc(fn)}</span>`
-  ).join('');
+  // ── Flow rows with inline DAG ──
+  const flowNames = flow.flows || [];
+  let flowsSectionHtml = '';
+  if (flowNames.length > 0) {
+    const rowsHtml = flowNames.map(fn => {
+      const isRunning = (runningFlows || []).some(rf => rf.flowName === fn);
+      const key = `${flow.name}/${fn}`;
+      const isExpanded = expandedFlows.has(key);
+
+      // Render inline DAG nodes if expanded
+      let dagHtml = '';
+      if (isExpanded) {
+        const nodes = getInlineNodes(fn, runningFlows);
+        dagHtml = nodes.map(item => dagNodeInlineHtml(item, fn)).join('');
+      }
+
+      return `
+        <div class="team-flow-row${isRunning ? ' running' : ''}${isExpanded ? ' expanded' : ''}"
+             data-flow-name="${esc(fn)}" data-team="${esc(flow.name)}">
+          <div class="team-flow-hex"></div>
+          <div class="team-flow-label">${esc(fn)}</div>
+          <div class="team-flow-status"></div>
+          <div class="team-flow-chevron">\u25B6</div>
+        </div>
+        ${isExpanded ? `<div class="team-flow-dag">${dagHtml}</div>` : ''}`;
+    }).join('');
+
+    flowsSectionHtml = `
+      <div class="team-flows-divider"></div>
+      <div class="team-flows-section">
+        <div class="team-flows-header">Flows</div>
+        ${rowsHtml}
+      </div>`;
+  }
 
   return `
     <div class="team-card">
@@ -51,16 +162,28 @@ export function flowCardHtml(flow, agentStatus, mailFlash) {
         <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${summaryText}</div>
       </div>
       <div class="team-agents">${tilesHtml}</div>
-      ${flowTags ? `<div class="team-flow-tags">${flowTags}</div>` : ''}
+      ${flowsSectionHtml}
     </div>`;
 }
 
-export function renderTeamsPanel(scroll, flows, agentStatus, mailFlash) {
+export function renderTeamsPanel(scroll, flows, agentStatus, mailFlash, runningFlows) {
   if (flows.length === 0) {
     scroll.innerHTML = `<div class="team-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No active teams</div><div class="hint">Mount a team to see its agents</div></div>`;
     return;
   }
-  scroll.innerHTML = flows.map(flow => flowCardHtml(flow, agentStatus, mailFlash)).join('');
+
+  // Auto-expand running flows (unless manually collapsed)
+  for (const team of flows) {
+    for (const fn of (team.flows || [])) {
+      const key = `${team.name}/${fn}`;
+      const isRunning = (runningFlows || []).some(rf => rf.flowName === fn);
+      if (isRunning && !manuallyCollapsed.has(key)) {
+        expandedFlows.add(key);
+      }
+    }
+  }
+
+  scroll.innerHTML = flows.map(flow => flowCardHtml(flow, agentStatus, mailFlash, runningFlows)).join('');
 }
 
 export function bindTileClicks() {
@@ -91,18 +214,41 @@ export function bindCardActions(openMailbox, openRules, openDefinition) {
       openDefinition(el.getAttribute('data-flow') || '');
     });
   });
-  document.querySelectorAll('.team-flow-tag').forEach(el => {
-    el.addEventListener('click', (e) => {
+}
+
+/** Bind expand/collapse clicks for flow rows + node clicks for inline DAG nodes. */
+export function bindFlowRowClicks(runningFlows, reRender) {
+  document.querySelectorAll('.team-flow-row').forEach(el => {
+    el.addEventListener('click', async (e) => {
       e.stopPropagation();
       const flowName = el.getAttribute('data-flow-name') || '';
-      if (flowName) {
-        const input = document.getElementById('chat-input');
-        if (input) {
-          input.value = `/${flowName} `;
-          input.focus();
-          input.dispatchEvent(new Event('input', { bubbles: true }));
+      const teamName = el.getAttribute('data-team') || '';
+      const key = `${teamName}/${flowName}`;
+      const isRunning = (runningFlows || []).some(rf => rf.flowName === flowName);
+
+      if (expandedFlows.has(key)) {
+        expandedFlows.delete(key);
+        if (isRunning) manuallyCollapsed.add(key);
+      } else {
+        expandedFlows.add(key);
+        manuallyCollapsed.delete(key);
+        // Fetch static DAG if not running and not cached
+        if (!isRunning && !dagCache.has(flowName)) {
+          await fetchDag(flowName);
         }
       }
+      reRender();
+    });
+  });
+
+  // Inline DAG node clicks — open agent popup
+  document.querySelectorAll('.dag-inline-node').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const flowName = el.getAttribute('data-flow') || '';
+      const agentName = el.getAttribute('data-agent') || '';
+      const nodeId = el.getAttribute('data-node') || '';
+      openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null);
     });
   });
 }
