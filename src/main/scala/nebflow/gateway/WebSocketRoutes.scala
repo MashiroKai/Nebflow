@@ -1259,7 +1259,7 @@ class WebSocketRoutes(
         case "getTaskList" =>
           val tlsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if tlsSessionId.nonEmpty then
-            sharedResources.taskStore.list(tlsSessionId).flatMap { tasks =>
+            sharedResources.taskStore.listVisible(tlsSessionId).flatMap { tasks =>
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "taskListUpdate".asJson,
@@ -1267,6 +1267,29 @@ class WebSocketRoutes(
                   "tasks" -> tasks.asJson
                 )
               )
+            }
+          else IO.unit
+
+        // ===== Dismiss Task (user clears completed/failed tasks) =====
+
+        case "dismissTask" =>
+          val dtSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
+          val dtTaskId = parse(text).flatMap(_.hcursor.downField("taskId").as[String]).getOrElse("")
+          if dtSessionId.nonEmpty && dtTaskId.nonEmpty then
+            sharedResources.taskStore.dismiss(dtSessionId, dtTaskId).flatMap {
+              case Some(_) =>
+                // Return updated task list (without dismissed tasks)
+                sharedResources.taskStore.listVisible(dtSessionId).flatMap { tasks =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "taskListUpdate".asJson,
+                      "sessionId" -> dtSessionId.asJson,
+                      "tasks" -> tasks.asJson
+                    )
+                  )
+                }
+              case None =>
+                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $dtTaskId".asJson))
             }
           else IO.unit
 
