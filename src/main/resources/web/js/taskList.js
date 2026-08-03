@@ -96,15 +96,16 @@ export function renderTaskList(tasks, container) {
     if (depth > 0) cls += ' task-child';
 
     const indent = depth * 16;
-    const iconName = iconMap[task.status] || 'square';
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
 
     html += `<div class="${cls}" data-task-id="${task.id}" style="margin-left:${indent}px">`;
-    html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
-    html += `<span class="task-label">${escapeHtml(label)}</span>`;
     if (isCompleted) {
-      html += `<button class="task-dismiss" data-task-id="${task.id}" title="${t('task.dismiss')}"><i data-lucide="x"></i></button>`;
+      html += `<button class="task-circle" data-task-id="${task.id}" title="${t('task.dismiss')}"></button>`;
+    } else {
+      const iconName = iconMap[task.status] || 'square';
+      html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
     }
+    html += `<span class="task-label">${escapeHtml(label)}</span>`;
     html += '</div>';
 
     // Render children
@@ -125,10 +126,12 @@ export function renderTaskList(tasks, container) {
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
 
-  // Dismiss button handlers
-  container.querySelectorAll('.task-dismiss').forEach(btn => {
+  // Circle dismiss handlers — click circle → fill animation → dismiss
+  container.querySelectorAll('.task-circle').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      if (btn.classList.contains('filled')) return; // already dismissing
+      btn.classList.add('filled');
       const taskId = btn.dataset.taskId;
       if (taskId) sendWs({ type: 'dismissTask', taskId });
     });

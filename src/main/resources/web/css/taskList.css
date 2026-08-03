@@ -128,11 +128,7 @@
 }
 
 .task-completed {
-  opacity: 0.55;
-}
-
-.task-completed .task-icon {
-  color: var(--color-text-muted, #888);
+  opacity: 0.5;
 }
 
 .task-completed .task-label {
@@ -142,36 +138,50 @@
   text-decoration-thickness: 1px;
 }
 
-.task-dismiss {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* Apple Reminders-style circle checkbox for completed tasks */
+.task-circle {
+  flex-shrink: 0;
   width: 18px;
   height: 18px;
-  padding: 0;
-  margin-left: auto;
-  flex-shrink: 0;
-  border: none;
+  border: 1.5px solid var(--color-text-muted, #888);
+  border-radius: 50%;
   background: transparent;
-  border-radius: 4px;
   cursor: pointer;
-  color: var(--color-text-muted, #888);
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  padding: 0;
+  position: relative;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
+  opacity: 0.6;
 }
 
-.task-item:hover .task-dismiss {
+.task-circle:hover {
+  border-color: var(--color-primary, #07c160);
   opacity: 1;
 }
 
-.task-dismiss:hover {
-  background: rgba(255, 80, 80, 0.12);
-  color: #e05050;
+/* Filled state — click triggers dismiss, circle fills with checkmark */
+.task-circle.filled {
+  background: var(--color-primary, #07c160);
+  border-color: var(--color-primary, #07c160);
+  opacity: 1;
+  transform: scale(0.9);
 }
 
-.task-dismiss svg {
-  width: 12px;
-  height: 12px;
+.task-circle.filled::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  animation: circleCheck 0.2s ease;
+}
+
+@keyframes circleCheck {
+  from { opacity: 0; transform: rotate(45deg) scale(0.5); }
+  to   { opacity: 1; transform: rotate(45deg) scale(1); }
 }
 
 .task-label {
@@ -211,10 +221,5 @@
   .task-toggle:hover {
     background: rgba(255,255,255,0.06);
     color: #d8dae0;
-  }
-
-  .task-dismiss:hover {
-    background: rgba(255, 80, 80, 0.15);
-    color: #ff7070;
   }
 }
