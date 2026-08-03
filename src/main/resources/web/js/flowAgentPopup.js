@@ -26,7 +26,7 @@ export function getStepView(sessionId) {
 
 // ── CSS ───────────────────────────────────────────────────
 const POPUP_CSS = `<style id="flow-agent-popup-css">
-/* Overlay fills the flow card (position:absolute inside .flow-card).
+/* Overlay fills the flow card (position:absolute inside .team-card).
    No background dim — the modal's own glass effect is enough. */
 .flow-agent-overlay {
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -242,14 +242,14 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   popupOverlay.className = 'flow-agent-overlay';
 
   // Mount on the flow pane's stable overlay root (#flow-overlay-root), a
-  // sibling of #flow-scroll that survives renderAll re-renders. Mounting
+  // sibling of #team-scroll that survives renderAll re-renders. Mounting
   // directly on the pane would let renderAll's scroll rebuild destroy an open
-  // popup; mounting on .flow-card would drag it with the scroll.
+  // popup; mounting on .team-card would drag it with the scroll.
   // Tabs are now split into 'teams' and 'flows' — check both.
   let flowPane = document.querySelector('.canvas-tab-pane[data-tab-id="teams"]')
     || document.querySelector('.canvas-tab-pane[data-tab-id="flows"]');
   const overlayRootEl = flowPane?.querySelector('#flow-overlay-root');
-  const flowCard = document.querySelector('.flow-card');
+  const flowCard = document.querySelector('.team-card');
   const mountEl = overlayRootEl || flowPane || flowCard || document.body;
 
   popupOverlay.innerHTML = `

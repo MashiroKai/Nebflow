@@ -2068,7 +2068,8 @@ onMessage('skillList', (msg, view) => {
   registerSkillCommands(state.skills);
 });
 
-onMessage('flowList', (msg) => {
+onMessage('teamList', (msg) => {
+  state.teams = msg.teams || [];
   state.flows = msg.flows || [];
   flowCanvas.refresh();
 });
@@ -2272,7 +2273,7 @@ requestAnimationFrame(() => {
 
 initActivityBar();
 initModelPicker();
-document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
+document.getElementById('team-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
 // Restore Canvas tabs from localStorage (survives browser refresh)

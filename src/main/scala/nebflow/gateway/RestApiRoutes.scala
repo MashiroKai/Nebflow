@@ -681,13 +681,13 @@ class RestApiRoutes(
           }
       }
 
-    // GET /flows — return all mounted flows globally (no sessionId required)
-    // NOTE: Router mounts this under /api prefix, so full path is /api/flows
-    case GET -> Root / "flows" =>
+    // GET /teams/mounted — return all mounted teams with agent status
+    // NOTE: Router mounts this under /api prefix, so full path is /api/teams/mounted
+    case GET -> Root / "teams" / "mounted" =>
       for
         _ <- nebflow.core.flow.FlowTreeRegistry.awaitRestore(3000L)
-        flowsJson <- buildFlowsJson()
-        result <- Ok(Json.obj("flows" -> flowsJson))
+        teamsJson <- buildMountedTeamsJson()
+        result <- Ok(Json.obj("teams" -> teamsJson))
       yield result
 
     // GET /running-flows — list currently running DAG flow instances
@@ -749,20 +749,20 @@ class RestApiRoutes(
         result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
       yield result
 
-    // GET /flow/status/:sessionId — return mounted flows and agent status for frontend
-    // NOTE: Router mounts this under /api prefix, so full path is /api/flow/status/:sessionId
-    case GET -> Root / "flow" / "status" / sessionId =>
+    // GET /teams/status/:sessionId — return mounted teams and agent status for frontend
+    // NOTE: Router mounts this under /api prefix, so full path is /api/teams/status/:sessionId
+    case GET -> Root / "teams" / "status" / sessionId =>
       // Validate sessionId: only UUID format (hex + dashes), no path traversal
       if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
-          flowsJson <- buildFlowsJson()
-          result <- Ok(Json.obj("sessionId" -> sessionId.asJson, "flows" -> flowsJson))
+          teamsJson <- buildMountedTeamsJson()
+          result <- Ok(Json.obj("sessionId" -> sessionId.asJson, "teams" -> teamsJson))
         yield result
 
-    // GET /flow/mailbox/:sessionId/:flowName — mail history for a flow
-    case GET -> Root / "flow" / "mailbox" / sessionId / flowName =>
+    // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
+    case GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
       if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
@@ -771,8 +771,8 @@ class RestApiRoutes(
           result <- Ok(Json.obj("records" -> records.asJson))
         yield result
 
-    // DELETE /flow/mailbox/:sessionId/:flowName — clear mail history
-    case DELETE -> Root / "flow" / "mailbox" / sessionId / flowName =>
+    // DELETE /teams/mailbox/:sessionId/:teamName — clear mail history
+    case DELETE -> Root / "teams" / "mailbox" / sessionId / flowName =>
       if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
@@ -783,10 +783,10 @@ class RestApiRoutes(
 
     // ===== Flow Editor APIs =====
 
-    // GET /flow/def/:name — return team definition for the editor
-    case GET -> Root / "flow" / "def" / flowName =>
+    // GET /teams/def/:name — return team definition for the editor
+    case GET -> Root / "teams" / "def" / flowName =>
       if !isValidFlowName(flowName) then
-        BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
+        BadRequest(Json.obj("error" -> "Invalid name".asJson))
       else
         for
           teamOpt <- EntityLoader.loadTeam(flowName)
@@ -919,15 +919,10 @@ class RestApiRoutes(
       yield result
   }
 
-  /** Build the flows JSON array from global FlowMembership state.
-   *  Used by both `/flows` (no sessionId) and `/flow/status/:sessionId`.
-   *  When the runtime registry is empty (startup race), falls back to
-   *  persisted MountedFlowStore data so the frontend sees flow topology
-   *  before FlowTreeActor finishes restoring. */
-  /** Build mounted teams JSON for the frontend (GET /api/flows).
+  /** Build mounted teams JSON for the frontend (GET /api/teams/mounted).
    *  Reads from live FlowMembership runtime state. Each team is a card with
    *  agent tiles showing status. */
-  private def buildFlowsJson(): IO[Json] =
+  private def buildMountedTeamsJson(): IO[Json] =
     for
       flowsMap <- nebflow.core.flow.FlowMembership.listMountedFlows
       teams <- EntityLoader.listTeams()

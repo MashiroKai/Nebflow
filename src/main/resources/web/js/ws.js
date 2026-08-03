@@ -90,7 +90,7 @@ const STREAM_MSG_TYPES = new Set([
   'agentToolStart', 'agentToolEnd', 'agentEnd',
   'agentThinking', 'agentRetryStatus', 'agentDone',
   'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
-  'flowMail', 'flowProgress', 'flowCompleted', 'flowList'
+  'flowMail', 'flowProgress', 'flowCompleted', 'teamList'
 ]);
 
 export function onMessage(type, handler) {
@@ -178,7 +178,7 @@ export function connect() {
     }
     sendWs({type: 'setVoiceMuted', muted: localStorage.getItem('voiceMuted') === 'true'});
     sendWs({type: 'getSkills'});
-    sendWs({type: 'getFlows'});
+    sendWs({type: 'getTeams'});
     sendWs({type: 'memoryStatus'});
     sendWs({type: 'getLlmLog'});
     sendWs({type: 'getConfig'});

@@ -2,7 +2,7 @@
 // Imported once by flowCanvas.js on first render.
 
 export const FLOW_CSS = `
-<style id="flow-canvas-style">
+<style id="team-canvas-style">
 /* Tab pane: establish positioning context so overlays center within it */
 .canvas-tab-pane[data-type="flow"] {
   position: relative;
@@ -10,77 +10,79 @@ export const FLOW_CSS = `
 }
 
 /* Scroll container — fills the tab pane */
-.flow-scroll {
+.team-scroll {
   position: absolute; top: 0; left: 0; right: 0; bottom: 12px;
   overflow-y: auto; padding: 14px 14px 24px;
   display: flex; flex-wrap: wrap; align-content: flex-start; gap: 14px;
 }
-.flow-scroll::-webkit-scrollbar { width: 8px; }
-.flow-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+.team-scroll::-webkit-scrollbar { width: 8px; }
+.team-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
 
 /* Team card */
-.flow-card {
+.team-card {
   flex: 1 1 280px; min-width: 260px; max-width: 460px;
   border-radius: 16px; background: var(--color-surface);
   border: 1px solid var(--glass-border);
   box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
   overflow: hidden; display: flex; flex-direction: column;
 }
-.flow-card-header {
+.team-card-header {
   display: flex; align-items: center; gap: 8px; padding: 12px 14px;
   border-bottom: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
-.flow-card-title {
+.team-card-title {
   font: 600 13px -apple-system, sans-serif; color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   cursor: pointer; transition: color 0.15s;
 }
-.flow-card-title[data-act="def"]:hover { color: var(--color-primary, #07c160); }
-.flow-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
-.flow-act-btn {
+.team-card-title[data-act="def"]:hover { color: var(--color-primary, #07c160); }
+.team-card-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.team-act-btn {
   width: 26px; height: 26px; border: none; background: transparent;
   border-radius: 7px; color: var(--color-text-muted); cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   font: 600 13px -apple-system, sans-serif; transition: background 0.15s, color 0.15s;
 }
-.flow-act-btn svg { width: 15px; height: 15px; }
-.flow-act-btn:hover { background: var(--color-frame-hover, rgba(0,0,0,0.06)); color: var(--color-text); }
-.flow-card-summary {
+.team-act-btn svg { width: 15px; height: 15px; }
+.team-act-btn:hover { background: var(--color-frame-hover, rgba(0,0,0,0.06)); color: var(--color-text); }
+.team-card-summary {
   font: 500 11px -apple-system, sans-serif; color: var(--color-text-muted);
   flex-shrink: 0; margin-left: auto; display: flex; align-items: center; gap: 5px;
 }
-.flow-card-summary .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
-.flow-card-summary.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
+.team-card-summary .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; }
+.team-card-summary.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 @keyframes flow-pulse { 0% { box-shadow: 0 0 0 0 rgba(7,193,96,0.45); } 100% { box-shadow: 0 0 0 8px rgba(7,193,96,0); } }
 
-.flow-agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; padding: 14px; }
-.flow-tile {
+.team-agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; padding: 14px; }
+.team-tile {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 12px 8px; border-radius: 11px; border: 1px solid var(--glass-border);
   background: var(--color-surface); cursor: pointer; text-align: center;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s; min-width: 0;
 }
-.flow-tile:hover { border-color: var(--color-primary, #07c160); box-shadow: 0 0 0 3px rgba(7,193,96,0.10); }
-.flow-tile.manager { border-color: var(--color-primary, #07c160); background: var(--glass-bg); }
-.flow-tile-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; flex-shrink: 0; }
-.flow-tile.running .flow-tile-dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
+.team-tile:hover { border-color: var(--color-primary, #07c160); box-shadow: 0 0 0 3px rgba(7,193,96,0.10); }
+.team-tile.manager { border-color: var(--color-primary, #07c160); background: var(--glass-bg); }
+.team-tile-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--color-text-muted); opacity: 0.4; flex-shrink: 0; }
+.team-tile.running .team-tile-dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 
-.flow-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 14px; }
-.flow-tag {
+.team-flow-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 14px; }
+.team-flow-tag {
   font: 500 11px -apple-system, sans-serif; color: var(--color-primary, #07c160);
   padding: 3px 10px; border-radius: 20px; border: 1px solid var(--color-primary, #07c160);
   opacity: 0.7; cursor: pointer; transition: opacity 0.15s, background 0.15s; white-space: nowrap;
 }
-.flow-tag:hover { opacity: 1; background: rgba(7,193,96,0.08); }
-.flow-tile.mail-flash .flow-tile-dot { background: var(--color-primary, #07c160); opacity: 1; transition: none; }
-.flow-tile-name { font: 600 12px -apple-system, sans-serif; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
-.flow-tile-role { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.team-flow-tag:hover { opacity: 1; background: rgba(7,193,96,0.08); }
+.team-tile.mail-flash .team-tile-dot { background: var(--color-primary, #07c160); opacity: 1; transition: none; }
+.team-tile-name { font: 600 12px -apple-system, sans-serif; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.team-tile-role { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 
-.flow-empty { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; flex-direction: column; gap: 8px; }
-.flow-empty .hint { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
+.team-empty { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; flex-direction: column; gap: 8px; }
+.team-empty .hint { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
+.dag-empty { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-height: 240px; flex-direction: column; gap: 8px; }
+.dag-empty .hint { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; }
 
 /* DAG flow card */
 .dag-card {

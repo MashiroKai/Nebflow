@@ -66,7 +66,7 @@ export function dagCardHtml(rf) {
 
 export function renderFlowsPanel(scroll, runningFlows) {
   if (runningFlows.length === 0) {
-    scroll.innerHTML = `<div class="flow-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No running flows</div><div class="hint">Trigger a flow via Mail to see it here</div></div>`;
+    scroll.innerHTML = `<div class="dag-empty"><div style="font:600 14px -apple-system;color:var(--color-text-muted)">No running flows</div><div class="hint">Trigger a flow via Mail to see it here</div></div>`;
     return;
   }
   scroll.innerHTML = runningFlows.map(rf => dagCardHtml(rf)).join('');
