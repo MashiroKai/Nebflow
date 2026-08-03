@@ -63,17 +63,19 @@ object SaveWorkspaceItemTool extends Tool:
         val item = WorkspaceItem.create(sessionId, title, itemType, content)
         val notify = ctx.wsSend match
           case Some(send) =>
-            send(Json.obj(
-              "type" -> "workspaceItemSaved".asJson,
-              "item" -> Json.obj(
-                "id" -> item.id.asJson,
-                "sessionId" -> item.sessionId.asJson,
-                "title" -> item.title.asJson,
-                "itemType" -> item.itemType.asJson,
-                "content" -> item.content.asJson,
-                "createdAt" -> item.createdAt.asJson
+            send(
+              Json.obj(
+                "type" -> "workspaceItemSaved".asJson,
+                "item" -> Json.obj(
+                  "id" -> item.id.asJson,
+                  "sessionId" -> item.sessionId.asJson,
+                  "title" -> item.title.asJson,
+                  "itemType" -> item.itemType.asJson,
+                  "content" -> item.content.asJson,
+                  "createdAt" -> item.createdAt.asJson
+                )
               )
-            ))
+            )
           case None => IO.unit
         for
           _ <- sr.knowledgeStore.addItem(item)

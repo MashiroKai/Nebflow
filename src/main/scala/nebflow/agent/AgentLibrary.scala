@@ -83,8 +83,10 @@ class AgentLibrary(
     os.write.over(dir / "system.md", content)
   }
 
-  /** Update the tools list in agent.json. Reads the existing file, modifies
-   *  the "tools" field, and writes it back. */
+  /**
+   * Update the tools list in agent.json. Reads the existing file, modifies
+   *  the "tools" field, and writes it back.
+   */
   def updateTools(name: String, tools: List[String]): IO[Unit] = IO.blocking {
     val jsonPath = agentsDir / name / "agent.json"
     if os.exists(jsonPath) then
@@ -109,33 +111,53 @@ class AgentLibrary(
   // Disk scanning
   // ============================================================
 
+  /**
+   * Load a single agent from a directory containing agent.json + system.md.
+   *  Shared between global scanning and project-level overrides.
+   */
+  def loadFromDir(dir: os.Path): Option[AgentDef] =
+    val jsonPath = dir / "agent.json"
+    if !os.exists(jsonPath) then None
+    else
+      parseAgentJson(jsonPath) match
+        case Some(j) =>
+          val prompt = readSystemMd(dir / "system.md")
+          Some(
+            AgentDef(
+              name = j.name,
+              description = j.description.getOrElse(""),
+              tools = j.tools,
+              systemPrompt = prompt,
+              avatar = j.avatar,
+              displayName = j.displayName,
+              voiceEnabled = j.voice.getOrElse(false)
+            )
+          )
+        case None =>
+          logger.warn(s"Skipping invalid or unreadable: ${jsonPath.toString}")
+          None
+
+    end if
+
+  end loadFromDir
+
+  /**
+   * Load a project-specific agent from a folder directory.
+   *  Looks in `~/.nebflow/folders/<folderId>/agents/<name>/`.
+   *  Returns None if no folder agent directory exists.
+   */
+  def loadFolderAgent(folderId: String, name: String): IO[Option[AgentDef]] = IO.blocking {
+    val dir = PathUtil.dataRoot / "folders" / folderId / "agents" / name
+    if !os.isDir(dir) then None
+    else loadFromDir(dir)
+  }
+
   private def scanDisk(): Map[String, AgentDef] =
     if !os.exists(agentsDir) then Map.empty
     else
       os.list(agentsDir)
         .filter(os.isDir)
-        .flatMap { dir =>
-          val jsonPath = dir / "agent.json"
-          if !os.exists(jsonPath) then None
-          else
-            parseAgentJson(jsonPath) match
-              case Some(j) =>
-                val prompt = readSystemMd(dir / "system.md")
-                Some(
-                  j.name -> AgentDef(
-                    name = j.name,
-                    description = j.description.getOrElse(""),
-                    tools = j.tools,
-                    systemPrompt = prompt,
-                    avatar = j.avatar,
-                    displayName = j.displayName
-                  )
-                )
-              case None =>
-                logger.warn(s"Skipping invalid or unreadable: ${jsonPath.toString}")
-                None
-          end if
-        }
+        .flatMap { dir => loadFromDir(dir).map(d => d.name -> d) }
         .toMap
 
   private def parseAgentJson(path: os.Path): Option[AgentJson] =
@@ -159,9 +181,11 @@ private case class AgentJson(
   name: String,
   displayName: Option[String] = None,
   description: Option[String] = None,
+  useWhen: Option[String] = None,
   tools: List[String] = List("*"),
   mcpServers: Option[List[String]] = None,
-  avatar: Option[String] = None
+  avatar: Option[String] = None,
+  voice: Option[Boolean] = None
 )
 
 private object AgentJson:
@@ -171,10 +195,11 @@ private object AgentJson:
       name <- c.downField("name").as[String]
       displayName <- c.downField("displayName").as[Option[String]]
       description <- c.downField("description").as[Option[String]]
+      useWhen <- c.downField("useWhen").as[Option[String]]
       tools <- c.downField("tools").as[Option[List[String]]]
       mcpServers <- c.downField("mcpServers").as[Option[List[String]]]
       avatar <- c.downField("avatar").as[Option[String]]
-    yield AgentJson(name, displayName, description, tools.getOrElse(List("*")), mcpServers, avatar)
+    yield AgentJson(name, displayName, description, useWhen, tools.getOrElse(List("*")), mcpServers, avatar)
   }
 
   given Encoder[AgentJson] = Encoder.instance { j =>
@@ -183,6 +208,7 @@ private object AgentJson:
         "name" -> j.name.asJson,
         "displayName" -> j.displayName.asJson,
         "description" -> j.description.asJson,
+        "useWhen" -> j.useWhen.asJson,
         "tools" -> j.tools.asJson,
         "mcpServers" -> j.mcpServers.asJson
       )
@@ -211,7 +237,7 @@ private case class SeedAgent(
   )
 
   def toJson: String =
-    val agentJson = AgentJson(name, displayName, Some(description), tools, None, None)
+    val agentJson = AgentJson(name, displayName, Some(description), None, tools, None, None)
     agentJson.asJson.noSpaces
 
 end SeedAgent
@@ -221,28 +247,56 @@ private object Seeds:
   val Nebula = SeedAgent(
     "Nebula",
     Some("Nebula"),
-    "Orchestrator — delegates all execution to specialized agents via Flow",
-    List("AskUserQuestion", "Card", "Curl", "ExecuteFlow", "Mail", "RemoveUnnecessary", "TaskCreate", "TaskUpdate", "TransferFile", "WebFetch", "WebSearch"),
-    """You are Nebula, an AI coding assistant running inside Nebflow.
+    "Orchestrator — delegates all execution to specialized Teams and Flows",
+    List(
+      "AskUserQuestion",
+      "Bash",
+      "Curl",
+      "Glob",
+      "Grep",
+      "Load",
+      "Mail",
+      "Pop",
+      "Read",
+      "RemoveUnnecessary",
+      "Schedule",
+      "TaskCreate",
+      "TaskUpdate",
+      "TransferFile",
+      "WebFetch",
+      "WebSearch"
+    ),
+    """You are Nebula, the orchestrator of Nebflow. Your role is to understand user intent, route tasks to the right agents, and deliver results — not to implement features yourself.
 
-## Session Management
+## Core Principle
 
-- If the user asks for help, direct them to `/help`.
-- The Companion (Pickle) is a separate system. When the user addresses Pickle, stay out of the way — respond in one line or less for any part meant for you. Do not explain that you're not Pickle.
+You are NOT a worker. You are the bridge between the user and the agent ecosystem. Use Read/Grep/Glob/Bash only for quick exploration to make routing decisions. All implementation work goes through Teams and Flows.
 
-## Delegation
+## Task Routing
 
-When to use ExecuteFlow:
-- A task can be broken into independent parts that benefit from focused context.
-- You need parallel research on different aspects of a problem.
-- A subtask requires deep focus without polluting your main conversation.
-- You need a repeatable pipeline with verification and fix loops.
+### Teams (persistent, project-level work)
+Teams are long-running agent groups organized by project. Each Team has a Lead who coordinates members internally.
+- Load: `Load(type: "team", name: "my-project")` — reads team.json from disk, validates, and mounts. If there are errors, they are reported.
+- Define teams by writing `~/.nebflow/teams/<name>/team.json` directly (name, description, lead, members, flows).
+- Trigger: `Mail("team-name", "your task")` — Mail the team by its project name. The Lead coordinates internal agents and Mails you back when done.
+- Team agents have persistent sessions with memory — they remember past work.
 
-Rules:
-- Write flow definitions that are self-contained.
-- Flag risks and tradeoffs explicitly.
-- Keep the user informed of progress.
-- When in doubt, ask rather than assume."""
+### Flows (one-shot pipelines, no memory)
+Flows are task pipelines that run once with fresh context. No memory between runs.
+- Trigger: `Mail("flow-name", "task description")` — e.g. `Mail("entity-creator", "Create an agent for ...")`
+- The pipeline runs in the background. Result is delivered via Mail when complete.
+- Flows are defined in `~/.nebflow/flows/<name>.json` (DAG format).
+
+### When to use what
+- **Load + Mail (Team)**: Load a team and Mail its lead for project-level work
+- **Mail (Flow)**: One-shot pipeline tasks like code review, entity creation, releases
+- **Direct tools**: Quick exploration (Read/Grep/Glob) to understand a problem before routing
+
+## User Interaction
+- You are the only agent that talks to the user directly. Be friendly, concise, and proactive.
+- Use AskUserQuestion for decisions that need user input. Don't ask unless truly necessary.
+- Keep the user informed of progress. Summarize results when agents complete work.
+- When in doubt about routing, make a reasonable decision rather than asking."""
   )
 
   val Explorer = SeedAgent(

@@ -285,7 +285,13 @@ export default {
 
   // === Voice ===
   'voice.listening': 'Listening...',
+  'voice.speaking': 'Speech detected',
+  'voice.processing': 'Processing...',
+  'voice.loading': 'Loading speech model',
   'voice.error': 'Error: {error}',
+  'voice.hintListening': 'Pauses auto-segment sentences',
+  'voice.hintSpeaking': 'Listening, auto-transcribes on pause',
+  'voice.wakeTriggered': 'Hi, go ahead…',
 
   // === Background tasks ===
   'bg.header': 'Background tasks',
@@ -369,6 +375,9 @@ export default {
   'task.today': 'Today',
   'task.tomorrow': 'Tomorrow',
   'task.yesterday': 'Yesterday',
+  'task.lastTriggered': 'Last triggered',
+  'task.enabled': 'Click to disable',
+  'task.disabled': 'Click to enable',
 
   // NebLink
   'neblink.title': 'Device Link',
@@ -399,4 +408,14 @@ export default {
   'dropbox.saved': 'Saved',
   'dropbox.completed': 'Completed',
   'dropbox.failed': 'Transfer failed',
+
+  // Model picker (input bar right side)
+  'modelPicker.select': 'select',
+  'modelPicker.changeModel': 'Change model / fallback chain',
+  'modelPicker.chain': 'Model & fallback chain',
+  'modelPicker.active': 'active',
+  'modelPicker.empty': 'No models',
+  'modelPicker.add': '+ add model…',
+  'modelPicker.remove': 'remove',
+  'modelPicker.hint': 'First = active model; order below = fallback order. Drag ⠿ to reorder.',
 };

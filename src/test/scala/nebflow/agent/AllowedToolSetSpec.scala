@@ -1,0 +1,66 @@
+package nebflow.agent
+
+import munit.FunSuite
+import nebflow.core.tools.ToolRegistry
+
+/**
+ * Verifies that each agent's dedicated `tools` list actually restricts the
+ * tools available to it (#9 — per-agent tools interface).
+ *
+ * buildAllowedToolSet is the single source of truth: it filters both the
+ * LLM-request schema and runtime tool-call execution. The contract:
+ *   - a concrete tools list → exactly those tools + Mail
+ *   - "*" → all registered tools
+ *   - Mail is always present
+ *   - non-Nebula agents never get Nebula-exclusive tools (Pop, AskUserQuestion, Schedule)
+ */
+class AllowedToolSetSpec extends FunSuite:
+
+  // AgentCore.buildAllowedToolSet is protected; expose it via a minimal stub.
+  private object CoreProbe extends AgentCore:
+    def allowed(defn: AgentDef, depth: Int = 0): Set[String] =
+      buildAllowedToolSet(defn, depth)
+
+  private def mkDef(name: String, tools: List[String]): AgentDef =
+    AgentDef(name = name, description = "", tools = tools, systemPrompt = "")
+
+  test("concrete tools list yields exactly those tools + Mail"):
+    val defn = mkDef("researcher", List("Read", "Glob", "Grep"))
+    val allowed = CoreProbe.allowed(defn)
+    assertEquals(allowed, Set("Read", "Glob", "Grep", "Mail"))
+
+  test("'*' expands to all registered tools, minus Nebula-exclusive for non-Nebula"):
+    val defn = mkDef("omni", List("*"))
+    val allowed = CoreProbe.allowed(defn)
+    // Mail is a registered tool, so "*" already includes it. Non-Nebula agents
+    // drop Nebula-exclusive tools, EntityManagement tools, and Delegate.
+    assert(allowed.contains("Mail"))
+    assert(allowed.contains("Read"))
+    assert(allowed.contains("Bash"))
+    // Nebula-exclusive tools are stripped
+    assert(!allowed.contains("Pop"))
+    assert(!allowed.contains("AskUserQuestion"))
+    assert(!allowed.contains("Schedule"))
+    assert(!allowed.contains("Dispatch"))
+    // Delegate only for depth >= 2
+    assert(!allowed.contains("Delegate"))
+    // Fewer than total registered tools
+    assert(allowed.size < ToolRegistry.ALL_TOOLS.map(_.name).toSet.size)
+
+  test("Mail is always available even when not listed"):
+    val defn = mkDef("minimal", List("Read"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Mail"))
+
+  test("non-Nebula agents are stripped of Nebula-exclusive tools even if listed"):
+    // If a flow agent erroneously requests Pop, it must be dropped.
+    val defn = mkDef("leaky", List("Read", "Pop"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Read"), "Read allowed")
+    assert(!allowed.contains("Pop"), "Pop is Nebula-exclusive — must be dropped")
+    assert(allowed.contains("Mail"))
+
+  test("Nebula keeps Nebula-exclusive tools"):
+    val defn = mkDef("Nebula", List("Read", "Pop"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Pop"), "Nebula keeps Pop")

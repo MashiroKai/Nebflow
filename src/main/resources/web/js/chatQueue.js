@@ -29,31 +29,38 @@ export function renderQueueBar(sessionId, handlers = {}) {
   bar.classList.add('visible');
   bar.innerHTML = '';
 
-  // Header
+  // Header — toggle button first, matching task list style
   const header = document.createElement('div');
   header.className = 'queue-bar-header';
+
+  // Collapse toggle (chevron icon, same style as task-toggle)
+  const collapseBtn = document.createElement('button');
+  collapseBtn.className = 'queue-bar-collapse';
+  const chevronDown = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+  const chevronRight = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+  const isCollapsed = bar.classList.contains('collapsed');
+  collapseBtn.innerHTML = isCollapsed ? chevronRight : chevronDown;
+  collapseBtn.title = isCollapsed ? 'Expand' : 'Collapse';
+  collapseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    bar.classList.toggle('collapsed');
+    const coll = bar.classList.contains('collapsed');
+    collapseBtn.innerHTML = coll ? chevronRight : chevronDown;
+    collapseBtn.title = coll ? 'Expand' : 'Collapse';
+  });
+  header.appendChild(collapseBtn);
+
   const title = document.createElement('span');
   title.className = 'queue-bar-title';
   const label = t('input.queued') || '排队中';
   title.textContent = `${label} (${items.length})`;
   header.appendChild(title);
 
-  // Collapse toggle
-  const collapseBtn = document.createElement('button');
-  collapseBtn.className = 'queue-bar-collapse';
-  collapseBtn.innerHTML = bar.classList.contains('collapsed') ? '\u25B8' : '\u25BE';
-  collapseBtn.title = bar.classList.contains('collapsed') ? 'Expand' : 'Collapse';
-  collapseBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    bar.classList.toggle('collapsed');
-    collapseBtn.innerHTML = bar.classList.contains('collapsed') ? '\u25B8' : '\u25BE';
-    collapseBtn.title = bar.classList.contains('collapsed') ? 'Expand' : 'Collapse';
-  });
-  header.appendChild(collapseBtn);
   bar.appendChild(header);
 
-  // Skip rendering items if collapsed
-  if (bar.classList.contains('collapsed')) return;
+  // Items — always render, CSS handles hiding when collapsed.
+  // (Previously skipped rendering when collapsed, which caused items to
+  //  disappear after a re-render while collapsed — expanding showed nothing.)
 
   // Items
   items.forEach((item) => {
@@ -109,11 +116,17 @@ export function renderQueueBar(sessionId, handlers = {}) {
 
 	    const textEl = document.createElement('span');
 	    textEl.className = 'queue-item-text';
-	    const previewLen = 80;
-	    const fullText = item.skillName ? `/${item.skillName} ${item.text}` : item.text;
-	    textEl.textContent = fullText.length > previewLen
-	      ? fullText.slice(0, previewLen) + '…'
-	      : fullText;
+	    const fullText = item.mode === 'compact'
+	      ? `/compact ${item.text}`.trim()
+	      : item.skillName ? `/${item.skillName} ${item.text}` : item.text;
+	    textEl.textContent = fullText;
+	    // Always allow click-to-expand — CSS truncates by container width,
+	    // not character count, so even short messages may be visually clipped.
+	    textEl.title = 'Click to expand';
+	    textEl.addEventListener('click', () => {
+		const isExpanded = row.classList.toggle('expanded');
+		textEl.title = isExpanded ? 'Click to collapse' : 'Click to expand';
+	    });
 	    row.appendChild(textEl);
 
 	    // Attachment indicator: show small thumbnail for images, file icon for others
@@ -155,6 +168,16 @@ export function renderQueueBar(sessionId, handlers = {}) {
       handlers.onImmediate?.(item);
     });
     actions.appendChild(immBtn);
+
+    const recallBtn = document.createElement('button');
+    recallBtn.className = 'queue-item-btn recall';
+    recallBtn.title = t('chat.recall') || 'Recall';
+    recallBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>';
+    recallBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      handlers.onRecall?.(item);
+    });
+    actions.appendChild(recallBtn);
 
     const rmBtn = document.createElement('button');
     rmBtn.className = 'queue-item-btn remove';

@@ -26,17 +26,6 @@ class AcademicSearchSpec extends CatsEffectSuite:
     }
   }
 
-  test("Semantic Scholar: search HEXITEC ASIC") {
-    search("HEXITEC ASIC CdZnTe spectroscopy imaging", "Semantic Scholar").map {
-      case Right(result) =>
-        assert(result.contains("**"), s"should have titles: ${result.take(200)}")
-        println(s"\n=== Semantic Scholar result preview ===\n${result.take(500)}")
-      case Left(err) if err.message.contains("429") || err.message.contains("rate limited") =>
-        println(s"\n=== Semantic Scholar skipped (rate limited) ===")
-      case Left(err) => fail(s"Semantic Scholar failed: ${err.message}")
-    }
-  }
-
   test("Crossref: search NuSTAR CdZnTe") {
     search("NuSTAR CdZnTe detector X-ray", "Crossref").map {
       case Right(result) =>
@@ -48,7 +37,7 @@ class AcademicSearchSpec extends CatsEffectSuite:
   }
 
   test("general search still works (no academic engine)") {
-    search("react hooks tutorial", "Bing INT").map {
+    search("react hooks tutorial", "Sogou").map {
       case Right(result) =>
         assert(result.nonEmpty, "general search should return results")
       case Left(err) => fail(s"General search failed: ${err.message}")

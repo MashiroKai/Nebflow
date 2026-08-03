@@ -12,6 +12,21 @@ import { renderTaskList } from './taskList.js';
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
+import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
+
+// ---------- Large text auto-attachment (paste detection) ----------
+const LARGE_TEXT_THRESHOLD = 1000;
+
+/** Show a transient banner at the top of the viewport. */
+function showAttachmentBanner(message) {
+  const banner = document.createElement('div');
+  banner.className = 'attachment-banner';
+  banner.textContent = message;
+  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.9));color:var(--color-text);padding:8px 16px;border-radius:8px;z-index:1000;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
+  document.body.appendChild(banner);
+  setTimeout(() => { banner.style.opacity = '0'; }, 2700);
+  setTimeout(() => banner.remove(), 3000);
+}
 
 // ---------- Slash Commands ----------
 const slashCommands = {
@@ -62,12 +77,6 @@ const slashCommands = {
     desc: () => t('slash.ask'),
     run: () => {
       enterAskMode();
-    }
-  },
-  '/model': {
-    desc: () => t('slash.model'),
-    run: () => {
-      sendWs({type: 'getModelOptions', sessionId: activeView.sessionId});
     }
   }
 };
@@ -197,10 +206,10 @@ function pickSlashCommand(index) {
 /** Delete a user-level skill after confirmation. */
 function handleDeleteSkill(skillName) {
   const msg = t('slash.confirmDelete').replace('{skill}', skillName);
-  if (confirm(msg)) {
+  window.__showConfirm?.('Delete Skill', msg, () => {
     sendWs({ type: 'deleteSkill', name: skillName });
     closeSlashDropdown();
-  }
+  });
 }
 
 // ---------- Ask Mode ----------
@@ -427,6 +436,9 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
+// Track pending attachment operations to prevent send() race condition
+const pendingAttCount = { value: 0 };
+
 export async function addFileAttachment(file, callback, target) {
   // Capture the view at entry — activeView is a live module binding that ws.js
   // changes on every incoming message. Without capturing, the await points below
@@ -437,8 +449,13 @@ export async function addFileAttachment(file, callback, target) {
   }
   const attachments = (target && target.attachments) || (activeView && activeView.pendingAttachments);
   if (!attachments) { console.error('[input] addFileAttachment: no attachments array'); return; }
+
+  // Increment once at entry — every exit path below decrements.
+  pendingAttCount.value++;
+
   if (file.type.startsWith('image/')) {
     if (file.size > 10 * 1024 * 1024) {
+      pendingAttCount.value--;
       showAttError('Image too large (max 10MB): ' + file.name, target);
       return;
     }
@@ -464,28 +481,32 @@ export async function addFileAttachment(file, callback, target) {
       } catch (e2) {
         console.warn('[input] image fallback read failed:', e2);
         showAttError('Failed to read image: ' + file.name, target);
+        pendingAttCount.value--;
         return;
       }
     }
     renderAttachmentPreview(target);
     if (callback) callback();
+    pendingAttCount.value--;
   } else {
-    // Non-image: only send metadata (name + size + hash) — the backend resolves
-    // the local file path by searching the filesystem. No need to transfer file
-    // content over WebSocket.
+    // Non-image: send metadata (name + size + hash) for filesystem resolution,
+    // plus base64 data for small files (< 5MB) as a fallback when the file
+    // can't be found on disk (e.g. inside ~/Library/Containers).
     try {
+      const buffer = await file.arrayBuffer();
       let hash = '';
       try {
-        const buffer = await file.arrayBuffer();
         const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
       } catch (e) {
         console.warn('[input] SHA-256 computation failed:', e);
       }
+      const isSmall = file.size < 5 * 1024 * 1024;
+      const base64Data = isSmall ? arrayBufferToBase64(buffer) : '';
       attachments.push({
         type: 'text', mimeType: file.type || 'application/octet-stream',
-        data: '', name: file.name, hash, size: file.size
+        data: base64Data, name: file.name, hash, size: file.size
       });
       renderAttachmentPreview(target);
       if (callback) callback();
@@ -493,6 +514,7 @@ export async function addFileAttachment(file, callback, target) {
       console.warn('[input] file read failed:', e);
       showAttError('Failed to read file: ' + file.name, target);
     }
+    pendingAttCount.value--;
   }
 }
 
@@ -509,7 +531,7 @@ export function send() {
   }
   const input = v.dom.input;
   const text = input.value.trim();
-  const isBusy = state.busySessionIds.has(v.sessionId);
+  const isBusy = state.busySessionIds.has(v.sessionId) || state.compactingSessionIds.has(v.sessionId);
   // If in skill mode, send as skill activation
   if (v.skillMode) {
     const skillName = v.skillModeName;
@@ -576,6 +598,14 @@ export function send() {
       v.isSending = false;
       return;
     }
+    if (isBusy) {
+      queueMessage(v, text, [], null, 'compact');
+      input.value = '';
+      input.style.height = 'auto';
+      saveInputDraft(v.sessionId);
+      setTimeout(() => { v.isSending = false; }, 300);
+      return;
+    }
     v.isSending = true;
     sendWs({type:'command', command:'compact', sessionId: v.sessionId, instruction: text || undefined});
     renderSystemBubble(text
@@ -600,6 +630,13 @@ export function send() {
   }
   // Empty input — just ignore
   if (!text && v.pendingAttachments.length === 0) {
+    return;
+  }
+  // Wait for pending attachment processing (image compression, file reading)
+  // to prevent race condition where image is lost because send() runs before
+  // addFileAttachment finishes pushing to pendingAttachments.
+  if (pendingAttCount.value > 0) {
+    setTimeout(() => send(), 200);
     return;
   }
   // LLM is busy — queue the message instead of blocking
@@ -720,11 +757,52 @@ export function send() {
 // ---------- Input Queue (messages typed while LLM is busy) ----------
 
 let queueCounter = 0;
+const LS_QUEUE_KEY = 'nebflow_message_queue';
+
+/** Persist message queue to localStorage so it survives browser refresh. */
+function persistQueue() {
+  try {
+    // Strip non-serializable fields (preview images are large; keep metadata only)
+    const serializable = {};
+    for (const [sid, items] of Object.entries(state.messageQueue)) {
+      if (!items || items.length === 0) continue;
+      serializable[sid] = items.map(it => ({
+        id: it.id,
+        text: it.text,
+        skillName: it.skillName || null,
+        mode: it.mode || null,
+        attachments: (it.attachments || []).map(a => ({ type: a.type, name: a.name }))
+      }));
+    }
+    localStorage.setItem(LS_QUEUE_KEY, JSON.stringify(serializable));
+  } catch (e) { /* storage full or unavailable — non-critical */ }
+}
+
+/** Restore message queue from localStorage on page load. */
+export function restoreQueue() {
+  try {
+    const raw = localStorage.getItem(LS_QUEUE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    for (const [sid, items] of Object.entries(data)) {
+      if (Array.isArray(items) && items.length > 0) {
+        state.messageQueue[sid] = items;
+        // Restore queueCounter to avoid ID collisions
+        for (const it of items) {
+          if (it.id > queueCounter) queueCounter = it.id;
+        }
+        // Re-render queue bar for the restored session
+        refreshQueue(sid);
+      }
+    }
+  } catch (e) { /* corrupt data — ignore */ }
+}
 
 /** Helper: re-render the queue bar for a session with standard handlers. */
 function refreshQueue(sessionId) {
   renderQueueBar(sessionId, {
     onImmediate: (item) => sendImmediate(sessionId, item),
+    onRecall: (item) => recallQueuedItem(sessionId, item),
     onRemove: (item) => removeQueuedItem(sessionId, item)
   });
 }
@@ -734,29 +812,35 @@ window.addEventListener('queuebar-refresh', (e) => {
   refreshQueue(e.detail.sessionId);
 });
 
-function queueMessage(view, text, attachments, skillName) {
+function queueMessage(view, text, attachments, skillName, mode) {
   const sid = view.sessionId;
   const item = {
     id: ++queueCounter,
     text,
     attachments: attachments.map(a => ({ ...a })),
-    skillName
+    skillName,
+    mode
   };
   if (!state.messageQueue[sid]) state.messageQueue[sid] = [];
   state.messageQueue[sid].push(item);
   refreshQueue(sid);
+  persistQueue();
 }
 
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
-  if (item.skillName) {
+  if (item.mode === 'compact') {
+    sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
+  } else if (item.skillName) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
   } else {
     sendWs({ type: 'immediateInput', content: item.text, sessionId });
   }
   // Render in chat
   if (activeView && activeView.sessionId === sessionId) {
-    if (item.skillName) {
+    if (item.mode === 'compact') {
+      renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
+    } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
       renderUserBubble(item.text, item.attachments);
@@ -776,6 +860,7 @@ function sendImmediate(sessionId, item) {
     if (idx >= 0) q.splice(idx, 1);
   }
   refreshQueue(sessionId);
+  persistQueue();
 }
 
 function removeQueuedItem(sessionId, item) {
@@ -784,6 +869,32 @@ function removeQueuedItem(sessionId, item) {
   const idx = q.indexOf(item);
   if (idx >= 0) q.splice(idx, 1);
   refreshQueue(sessionId);
+  persistQueue();
+}
+
+/** Recall a queued item back to the input box for editing, removing it from the queue. */
+function recallQueuedItem(sessionId, item) {
+  const q = state.messageQueue[sessionId];
+  if (!q) return;
+  const idx = q.indexOf(item);
+  if (idx >= 0) q.splice(idx, 1);
+  refreshQueue(sessionId);
+  persistQueue();
+
+  // Put text back into the input box
+  const view = findViewBySessionId(sessionId);
+  if (view && view.dom.input) {
+    const text = item.mode === 'compact'
+      ? `/compact ${item.text}`.trim()
+      : item.skillName ? `/${item.skillName} ${item.text}` : item.text;
+    view.dom.input.value = text;
+    view.dom.input.style.height = 'auto';
+    view.dom.input.focus();
+    // Place cursor at end
+    const len = view.dom.input.value.length;
+    view.dom.input.setSelectionRange(len, len);
+    saveInputDraft(sessionId);
+  }
 }
 
 /** Called on 'done' event — send first queued message as normal UserInput.
@@ -799,10 +910,13 @@ export function drainMessageQueue(sessionId) {
   // Remove from queue
   q.shift();
   refreshQueue(sessionId);
+  persistQueue();
 
   // Render in chat (only if this session is the active view)
   if (view && activeView && activeView.sessionId === sessionId) {
-    if (item.skillName) {
+    if (item.mode === 'compact') {
+      renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
+    } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
       renderUserBubble(item.text, item.attachments);
@@ -825,7 +939,9 @@ export function drainMessageQueue(sessionId) {
     view.historyDraft = '';
   }
 
-  if (item.skillName) {
+  if (item.mode === 'compact') {
+    sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
+  } else if (item.skillName) {
     sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
   } else {
     const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -992,7 +1108,7 @@ export function initInput(view) {
   input.addEventListener('compositionstart', () => { view.composing = true; });
   input.addEventListener('compositionend', () => { view.composing = false; });
 
-  // Paste handler — image paste from clipboard
+  // Paste handler — image paste + large text detection
   input.addEventListener('paste', (e) => {
     setActiveView(view);
     const files = [];
@@ -1004,7 +1120,20 @@ export function initInput(view) {
         }
       }
     }
-    if (files.length === 0) return; // normal text paste, let browser handle it
+    if (files.length === 0) {
+      // Large text paste → auto-convert to file attachment via existing mechanism
+      const pastedText = e.clipboardData.getData('text/plain') || '';
+      if (pastedText.length > LARGE_TEXT_THRESHOLD) {
+        e.preventDefault();
+        e.stopPropagation();
+        const blob = new Blob([pastedText], { type: 'text/plain' });
+        const file = new File([blob], `pasted-text-${Date.now()}.txt`, { type: 'text/plain' });
+        addFileAttachment(file);
+        showAttachmentBanner(`大段文本（${pastedText.length} 字符）已转为文件附件`);
+        return;
+      }
+      return; // normal text paste, let browser handle it
+    }
     e.preventDefault();
     e.stopPropagation(); // prevent document-level paste from double-processing
     files.forEach(file => addFileAttachment(file));
@@ -1156,6 +1285,7 @@ export function initInput(view) {
       e.stopPropagation();
       dragCounter = 0;
       document.body.classList.remove('drag-over');
+      setActiveView(chatViews.primary);
       const files = [];
       if (e.dataTransfer.files) {
         for (const f of e.dataTransfer.files) files.push(f);
@@ -1178,119 +1308,97 @@ export function initInput(view) {
     });
   }
 
-  // Voice start/stop — Web Speech API (toggle mode)
-  let voiceActive = false;      // is voice recognition currently active?
-  let voiceFinal = '';           // accumulated finalized text this session
-  let voiceBefore = '';          // text before cursor at voice start
-  let voiceAfter = '';           // text after cursor at voice start
+  // Voice dictation — uses browser Web Speech API (free, no API key needed)
+  // Push-and-hold the mic button to start; release to stop.
+  // Interim text streams directly into the input box — no overlay.
+  let voiceActive = false;
+  let voiceAnchor = 0;       // position where current voice segment starts
+  let voiceInterimLen = 0;   // length of interim text currently displayed
 
-  function createRecognition() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const rec = new SR();
-    rec.lang = getLocale();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.maxAlternatives = 3;
-
-    rec.onresult = (ev) => {
-      let interimText = '';
-      for (let i = ev.resultIndex; i < ev.results.length; i++) {
-        // Pick the best alternative (highest confidence)
-        const result = ev.results[i];
-        let bestIdx = 0;
-        let bestConf = result[0].confidence || 0;
-        for (let j = 1; j < result.length; j++) {
-          const c = result[j].confidence || 0;
-          if (c > bestConf) { bestConf = c; bestIdx = j; }
-        }
-        const t = result[bestIdx].transcript;
-        if (result.isFinal) voiceFinal += t;
-        else interimText += t;
-      }
-      const current = voiceFinal + interimText;
-      voiceText.textContent = current || t('voice.listening');
-
-      // Dynamic cursor tracking: re-read cursor position each time
-      const cursorNow = (input.selectionStart !== null && input.selectionStart !== undefined)
-        ? input.selectionStart : input.value.length;
-      // Calculate length of old voice text currently in input.value
-      const oldVoiceLen = Math.max(0, input.value.length - (voiceBefore.length + voiceAfter.length));
-      // Map cursor position from current value (which includes old voice text) to raw text position
-      let rawCursor;
-      if (cursorNow <= voiceBefore.length) {
-        rawCursor = cursorNow; // cursor before voice region
-      } else if (cursorNow >= voiceBefore.length + oldVoiceLen) {
-        rawCursor = cursorNow - oldVoiceLen; // cursor after voice region
-      } else {
-        rawCursor = voiceBefore.length; // cursor inside voice region — keep at insertion point
-      }
-      // Extract raw text (without old voice text) and re-split at new cursor position
-      const rawText = input.value.substring(0, voiceBefore.length)
-        + input.value.substring(voiceBefore.length + oldVoiceLen);
-      voiceBefore = rawText.substring(0, rawCursor);
-      voiceAfter = rawText.substring(rawCursor);
-
-      const sep = voiceBefore && !voiceBefore.endsWith(' ') ? ' ' : '';
-      input.value = voiceBefore + sep + current + voiceAfter;
-      // Place cursor at the end of the newly inserted voice text
-      const cursorEnd = voiceBefore.length + (sep ? 1 : 0) + current.length;
-      input.setSelectionRange(cursorEnd, cursorEnd);
+  // Shared callbacks for dictation mode.
+  function makeVoiceCallbacks() {
+    return {
+      onInterim: (text) => {
+        // Replace [voiceAnchor, voiceAnchor + voiceInterimLen) with new interim text
+        const before = input.value.substring(0, voiceAnchor);
+        const after = input.value.substring(voiceAnchor + voiceInterimLen);
+        input.value = before + text + after;
+        voiceInterimLen = text.length;
+        input.focus();
+        input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+      },
+      onText: (text) => {
+        // Replace interim with final text + trailing space
+        const before = input.value.substring(0, voiceAnchor);
+        const after = input.value.substring(voiceAnchor + voiceInterimLen);
+        const insert = text + ' ';
+        input.value = before + insert + after;
+        voiceInterimLen = 0;
+        voiceAnchor = before.length + insert.length;
+        input.setSelectionRange(voiceAnchor, voiceAnchor);
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+      },
+      onState: (state, data) => {
+        updateVoiceUI(state, data);
+      },
     };
-
-    rec.onerror = (ev) => {
-      // no-speech and aborted are benign — just ignore
-      if (ev.error === 'no-speech' || ev.error === 'aborted') {
-        return;
-      }
-      voiceText.textContent = t('voice.error', { error: ev.error });
-      setTimeout(() => { if (!voiceActive) return; stopVoice(); }, 1500);
-    };
-
-    rec.onend = () => {
-      // Recognition ended. If voiceActive is still true, it stopped unexpectedly
-      // (browser limit, network issue, etc.). Sync UI to stopped state.
-      if (voiceActive) {
-        stopVoice();
-      } else {
-        // User explicitly toggled off — clean up UI
-        voiceOverlay.classList.remove('on');
-        voiceBtn.classList.remove('recording');
-      }
-    };
-
-    return rec;
   }
 
-  function startVoice() {
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      alert(t('input.voiceError'));
-      return;
+  // Update voice UI — only the button recording state, no overlay.
+  function updateVoiceUI(state, data) {
+    switch (state) {
+      case 'listening':
+      case 'speaking':
+        voiceBtn.classList.add('recording');
+        break;
+      case 'error':
+        voiceBtn.classList.remove('recording');
+        console.warn('[voice] Error:', data);
+        break;
+      case 'idle':
+        voiceBtn.classList.remove('recording');
+        break;
     }
+  }
+
+  async function startVoice() {
     voiceActive = true;
-    const pos = (input.selectionStart !== null && input.selectionStart !== undefined) ? input.selectionStart : input.value.length;
-    voiceBefore = input.value.substring(0, pos);
-    voiceAfter = input.value.substring(pos);
-    voiceFinal = '';
-    view.recognition = createRecognition();
-    view.recognition.start();
-    voiceOverlay.classList.add('on');
-    voiceText.textContent = t('voice.listening');
+    voiceAnchor = input.selectionStart ?? input.value.length;
+    voiceInterimLen = 0;
+    // Add separator space if needed
+    if (voiceAnchor > 0) {
+      const charBefore = input.value[voiceAnchor - 1];
+      if (charBefore && charBefore !== ' ' && charBefore !== '\n') {
+        input.value = input.value.substring(0, voiceAnchor) + ' ' + input.value.substring(voiceAnchor);
+        voiceAnchor++;
+      }
+    }
     voiceBtn.classList.add('recording');
+    input.classList.add('voice-dictating');
+    input.focus();
+    try { localStorage.setItem('nebflow_voice_used', '1'); } catch {}
+    await startDictation(makeVoiceCallbacks());
   }
 
   function stopVoice() {
     voiceActive = false;
-    if (view.recognition) {
-      try { view.recognition.stop(); } catch (_) {}
-      view.recognition = null;
+    // Remove any remaining interim cursor
+    if (voiceInterimLen > 0) {
+      const before = input.value.substring(0, voiceAnchor);
+      const after = input.value.substring(voiceAnchor + voiceInterimLen);
+      input.value = before + after;
+      voiceInterimLen = 0;
     }
-    voiceOverlay.classList.remove('on');
+    stopDictation();
     voiceBtn.classList.remove('recording');
-    // Return focus to input so Enter can send immediately
-    if (input.value.trim()) input.focus();
+    input.classList.remove('voice-dictating');
+    input.focus();
   }
 
-  // Long-press voice: mousedown/touchstart to start, mouseup/mouseleave/touchend to stop
+  // Push-and-hold voice: mousedown/touchstart to start, mouseup/mouseleave/touchend to stop
   function onVoiceStart(e) {
     if (e.type === 'touchstart') e.preventDefault();
     startVoice();

@@ -16,50 +16,38 @@ object WebSearchTool extends Tool:
 
   case class SearchEngine(name: String, url: String, region: String)
 
-  // Ordered by reliability: proven engines first, niche/slow ones last
+  // Ordered by reliability (determined via empirical testing):
+  // 360 and Sogou consistently rank highest for both Chinese and English queries.
   val ENGINES: List[SearchEngine] = List(
-    SearchEngine("Bing INT", "https://cn.bing.com/search?q={keyword}&ensearch=1", "global"),
-    SearchEngine("DuckDuckGo", "https://duckduckgo.com/html/?q={keyword}", "global"),
-    SearchEngine("Bing CN", "https://cn.bing.com/search?q={keyword}&ensearch=0", "cn"),
-    SearchEngine("Baidu", "https://www.baidu.com/s?wd={keyword}", "cn"),
     SearchEngine("Sogou", "https://sogou.com/web?query={keyword}", "cn"),
-    SearchEngine("Startpage", "https://www.startpage.com/sp/search?query={keyword}", "global"),
-    SearchEngine("Brave", "https://search.brave.com/search?q={keyword}", "global"),
-    SearchEngine("Qwant", "https://www.qwant.com/?q={keyword}", "global"),
     SearchEngine("360", "https://www.so.com/s?q={keyword}", "cn"),
-    SearchEngine("Toutiao", "https://so.toutiao.com/search?keyword={keyword}", "cn"),
-    SearchEngine("Ecosia", "https://www.ecosia.org/search?q={keyword}", "global"),
-    SearchEngine("Yahoo", "https://search.yahoo.com/search?p={keyword}", "global"),
+    SearchEngine("DuckDuckGo", "https://duckduckgo.com/html/?q={keyword}", "global"),
+    SearchEngine("Baidu", "https://www.baidu.com/s?wd={keyword}", "cn"),
     SearchEngine("WeChat", "https://wx.sogou.com/weixin?type=2&query={keyword}", "cn"),
-    SearchEngine("Jisilu", "https://www.jisilu.cn/explore/?keyword={keyword}", "cn"),
-    SearchEngine("WolframAlpha", "https://www.wolframalpha.com/input?i={keyword}", "global"),
     // Academic API engines (return structured JSON/XML, not HTML)
     SearchEngine("arXiv", "http://export.arxiv.org/api/query", "academic"),
-    SearchEngine("Semantic Scholar", "https://api.semanticscholar.org/graph/v1/paper/search", "academic"),
     SearchEngine("Crossref", "https://api.crossref.org/works", "academic")
   )
 
   private val engineMap: Map[String, SearchEngine] = ENGINES.map(e => e.name -> e).toMap
-  private val ACADEMIC_NAMES = Set("arXiv", "Semantic Scholar", "Crossref")
+  private val ACADEMIC_NAMES = Set("arXiv", "Crossref")
 
   val name = "WebSearch"
 
   val description = """Search the web using multiple search engines (no API key required).
 
 Available engines (default: auto-select via batch racing):
-- Global: Bing INT, DuckDuckGo, Startpage, Brave, Qwant, Ecosia, Yahoo, WolframAlpha
-- CN: Bing CN, Baidu, Sogou, 360, Toutiao, WeChat Articles, Jisilu
-- Academic: arXiv, Semantic Scholar, Crossref
+- General: Sogou, 360, DuckDuckGo, Baidu, WeChat Articles
+- Academic: arXiv, Crossref
 
 Academic engines for research paper search:
 - arXiv: preprint server, best for physics/CS/math papers. Returns title, authors, year, abstract, DOI.
-- Semantic Scholar: AI-powered academic search across all fields. Returns title, authors, year, abstract, DOI, open access PDF link.
 - Crossref: DOI registry, best for finding exact publication metadata. Returns title, authors, year, journal, DOI.
-- Specify engine="arXiv", engine="Semantic Scholar", or engine="Crossref" for academic queries.
-- For general web search, omit engine or specify a global/CN engine.
+- Specify engine="arXiv" or engine="Crossref" for academic queries.
+- For general web search, omit engine or specify a general engine.
 
 Usage:
-- For academic paper search, prefer engine="arXiv" or engine="Semantic Scholar" over general web search.
+- For academic paper search, prefer engine="arXiv" or engine="Crossref" over general web search.
 - Only use WebSearch and WebFetch for accessing information beyond your training data.
 - Do NOT generate or guess URLs unless you are confident they help the user with programming tasks.
 - When the user provides a URL, use WebFetch to retrieve its contents rather than guessing what's there.
@@ -78,7 +66,7 @@ Usage:
         "engine" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "enum" -> io.circe.Json.fromValues(ENGINES.map(_.name.asJson)),
-          "description" -> "Search engine to use. Defaults to Bing INT.".asJson
+          "description" -> "Search engine to use. Defaults to auto-racing all general engines.".asJson
         ),
         "max_results" -> io.circe.Json.obj(
           "type" -> "number".asJson,
@@ -102,7 +90,7 @@ Usage:
 
   def summarize(input: JsonObject): String =
     val query = input("query").flatMap(_.asString).getOrElse("")
-    val engine = input("engine").flatMap(_.asString).getOrElse("Bing INT")
+    val engine = input("engine").flatMap(_.asString).getOrElse("auto")
     val short = if query.length > 120 then query.take(117) + "..." else query
     s"""WebSearch("$short", engine=$engine)"""
 
@@ -414,7 +402,7 @@ Usage:
         case None => ENGINES.filter(e => !ACADEMIC_NAMES.contains(e.name))
 
       // When a specific engine is specified, try it ALONE first (batch size 1),
-      // so it doesn't lose a race to faster-but-lower-quality engines like Bing CN.
+      // so it doesn't lose a race to faster-but-lower-quality engines.
       // Fall back to batch racing only if the specified engine fails.
       val batches: List[List[SearchEngine]] = engineName match
         case Some(_) if enginesToTry.nonEmpty =>

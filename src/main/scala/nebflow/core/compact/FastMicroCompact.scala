@@ -26,7 +26,6 @@ object FastMicroCompact:
     "Curl",
     "Edit",
     "Write",
-    "Card"
   )
 
   /**

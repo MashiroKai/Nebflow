@@ -74,8 +74,7 @@ object ScheduleTool extends Tool:
             val repeat = input("repeat").flatMap(_.asString).filter(validRepeat.contains)
             val now = System.currentTimeMillis()
 
-            if content.isBlank then
-              IO.pure(Left(ToolError("content is required and must not be blank")))
+            if content.isBlank then IO.pure(Left(ToolError("content is required and must not be blank")))
             else if triggerAt <= now then
               IO.pure(Left(ToolError(s"triggerAt must be in the future (given $triggerAt, current $now)")))
             else
@@ -85,11 +84,33 @@ object ScheduleTool extends Tool:
                 _ <- sr.scheduledTaskService match
                   case Some(svc) => svc.notifyTaskChange()
                   case None => IO.unit
+                // Broadcast to frontend so the reminder panel updates in real-time
+                _ <- ctx.wsSend match
+                  case Some(send) =>
+                    send(
+                      io.circe.Json.obj(
+                        "type" -> "scheduledTaskCreated".asJson,
+                        "sessionId" -> sessionId.asJson,
+                        "task" -> io.circe.Json.obj(
+                          "id" -> task.id.asJson,
+                          "content" -> task.content.asJson,
+                          "triggerAt" -> task.triggerAt.asJson,
+                          "createdAt" -> task.createdAt.asJson,
+                          "referencePath" -> io.circe.Json.Null,
+                          "repeat" -> task.repeat.asJson
+                        )
+                      )
+                    )
+                  case None => IO.unit
               yield Right(
                 s"Scheduled task ${task.id} for ${formatTime(triggerAt)}" +
                   repeat.map(r => s" (recurring: $r)").getOrElse("") +
                   s": ${content.take(80)}"
               )
+
+              end for
+
+            end if
 
   private def formatTime(epochMs: Long): String =
     val instant = java.time.Instant.ofEpochMilli(epochMs)

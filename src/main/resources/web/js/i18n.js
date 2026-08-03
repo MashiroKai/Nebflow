@@ -63,7 +63,7 @@ export function applyLocaleToHtml() {
     'sidebar-toggle': ['title', 'sidebar.toggle'],
     'search-input': ['placeholder', 'sidebar.searchPlaceholder'],
     'panel-title-settings': ['text', 'sidebar.settingsTitle'],
-    'memory-btn': ['text', 'header.memory'],
+    'memory-btn': ['title', 'header.memory'],
     'bypass-toggle': ['title', 'bypass.toggle'],
     'input': ['placeholder', 'input.placeholder'],
     'voice-text': ['text', 'input.voiceListening'],

@@ -437,28 +437,6 @@ export function renderSettings() {
       <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">${t('settings.modelChain')}</div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.defaultModel')}</label>
-        <select class="cfg-select" id="cfg-default-model">
-          <option value="">${t('settings.selectPlaceholder')}</option>
-          ${allModels.map(m => `<option value="${m.ref}" ${m.ref === defaultModel ? 'selected' : ''}>${m.label}</option>`).join('')}
-        </select>
-      </div>
-      <div class="cfg-form-group">
-        <label class="cfg-label">${t('settings.fallbackModels')}</label>
-        <div id="cfg-fallback-list" class="cfg-tag-list">
-          ${fallbacks.map((f, i) => `
-            <span class="cfg-tag" data-idx="${i}" data-fallback="${escapeHtml(f)}">${escapeHtml(f)} <span class="cfg-tag-remove" data-idx="${i}">×</span></span>
-          `).join('')}
-        </div>
-        <select class="cfg-select cfg-select-sm" id="cfg-add-fallback">
-          <option value="">${t('settings.addFallback')}</option>
-          ${allModels.filter(m => m.ref !== defaultModel && !fallbacks.includes(m.ref)).map(m => `<option value="${m.ref}">${m.label}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-    <div class="settings-section">
       <div class="settings-section-title">${t('settings.mcpServers')}</div>
       <div id="mcp-server-list">
         ${mcpServers.map(s => renderMcpServerCard(s.id, s.enabled)).join('')}
@@ -623,14 +601,14 @@ function bindSettingsEvents(content, cfg, allModels) {
     const name = card.dataset.provider;
     card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (!confirm(t('provider.removeConfirm', { name }))) return;
-      // Use null instead of delete — backend mergeConfig treats null as explicit deletion
-      state.parsedConfig.llm.providers[name] = null;
-      // Clean up model chain references to the removed provider
-      cleanModelChainForProvider(name);
-      state.configDirty = true;
-      flushConfigToServer();
-      renderSettings();
+      window.__showConfirm?.('Remove Provider', t('provider.removeConfirm', { name }), () => {
+        state.parsedConfig.llm.providers[name] = null;
+        // Clean up model chain references to the removed provider
+        cleanModelChainForProvider(name);
+        state.configDirty = true;
+        flushConfigToServer();
+        renderSettings();
+      });
     });
     card.addEventListener('click', () => {
       const p = state.parsedConfig.llm.providers[name];
@@ -648,67 +626,7 @@ function bindSettingsEvents(content, cfg, allModels) {
     });
   });
 
-  // --- Model chain ---
-  document.getElementById('cfg-default-model')?.addEventListener('change', function() {
-    if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}, model: {default: ''}};
-    if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {default: '', fallbacks: []};
-    const oldDefault = state.parsedConfig.llm.model.default || '';
-    const newDefault = this.value;
-    if (newDefault === oldDefault) return;
-
-    const fallbacks = state.parsedConfig.llm.model.fallbacks || [];
-
-    // Auto-adjust fallbacks:
-    // 1. Remove the new default from fallbacks (it's now the primary)
-    // 2. Add the old default to fallbacks (becomes a fallback option)
-    let newFallbacks = fallbacks.filter(f => f !== newDefault);
-    if (oldDefault && oldDefault !== newDefault && !newFallbacks.includes(oldDefault)) {
-      newFallbacks.push(oldDefault);
-    }
-
-    state.parsedConfig.llm.model.default = newDefault;
-    state.parsedConfig.llm.model.fallbacks = newFallbacks;
-    state.configDirty = true;
-    flushConfigToServer();
-    renderSettings();
-  });
-
-  content.querySelectorAll('.cfg-tag-remove').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const idx = parseInt(btn.dataset.idx);
-      state.parsedConfig.llm.model.fallbacks.splice(idx, 1);
-      state.configDirty = true;
-      flushConfigToServer();
-      renderSettings();
-    });
-  });
-
-  document.getElementById('cfg-add-fallback')?.addEventListener('change', function() {
-    if (!this.value) return;
-    if (!state.parsedConfig.llm.model.fallbacks) state.parsedConfig.llm.model.fallbacks = [];
-    if (!state.parsedConfig.llm.model.fallbacks.includes(this.value)) {
-      state.parsedConfig.llm.model.fallbacks.push(this.value);
-      state.configDirty = true;
-      flushConfigToServer();
-    }
-  });
-
-  // --- Fallback drag-and-drop reorder (mouse events, no HTML5 DnD) ---
-  const fallbackList = document.getElementById('cfg-fallback-list');
-  if (fallbackList) {
-    fallbackList.querySelectorAll('.cfg-tag').forEach(tag => {
-      tag.addEventListener('mousedown', (e) => {
-        if (e.button !== 0 || e.target.closest('.cfg-tag-remove')) return;
-        e.preventDefault();
-        _fallbackDrag = {
-          tag, idx: parseInt(tag.dataset.idx),
-          startX: e.clientX, startY: e.clientY,
-          active: false, clone: null, targetTag: null
-        };
-      });
-    });
-  }
+  // Model chain is now edited via the input-bar model picker (modelPicker.js).
 
   // --- MCP Servers toggle ---
   content.querySelectorAll('.cfg-toggle[data-mcp]').forEach(btn => {
@@ -736,7 +654,7 @@ function bindSettingsEvents(content, cfg, allModels) {
       JSON.parse(cfg);
       sendWs({type: 'updateConfig', config: cfg});
     } catch(e) {
-      alert('Invalid JSON: ' + e.message);
+      window.__showToast?.('Invalid JSON: ' + e.message, 'error');
     }
   });
 
@@ -855,16 +773,16 @@ function showProviderModal(existingName, existingData, onSave) {
     ],
     onConfirm(values) {
       const name = values.name.trim();
-      if (!name) return alert(t('provider.idRequired'));
-      if (/\s/.test(name)) return alert(t('provider.noSpaces'));
+      if (!name) { window.__showToast?.(t('provider.idRequired'), 'error'); return; }
+      if (/\s/.test(name)) { window.__showToast?.(t('provider.noSpaces'), 'error'); return; }
       let baseUrl = values.baseUrl.trim();
-      if (!baseUrl) return alert(t('provider.baseUrlRequired'));
+      if (!baseUrl) { window.__showToast?.(t('provider.baseUrlRequired'), 'error'); return; }
       // Auto-add trailing slash
       if (!baseUrl.endsWith('/')) baseUrl += '/';
       const apiKey = values.apiKey.trim() || '***';
-      if (!isEdit && apiKey === '***') return alert(t('provider.keyRequired'));
+      if (!isEdit && apiKey === '***') { window.__showToast?.(t('provider.keyRequired'), 'error'); return; }
       const validModels = values.models.filter(m => m.id && m.id.trim());
-      if (validModels.length === 0) return alert(t('provider.modelRequired'));
+      if (validModels.length === 0) { window.__showToast?.(t('provider.modelRequired'), 'error'); return; }
       onSave(name, {
         baseUrl,
         apiKey,
@@ -2524,9 +2442,11 @@ export function initRulesModal() {
 // ===== Path Picker Modal =====
 let pathPickerFolderId = null;
 let pathPickerCurrentPath = '';
+let pathPickerCallback = null;
 
-function openPathPicker(folderId, currentRoot) {
+export function openPathPicker(folderId, currentRoot) {
   pathPickerFolderId = folderId;
+  pathPickerCallback = null;
   const startPath = currentRoot || '~';
   document.getElementById('path-picker-title').textContent = t('pathPicker.title');
   document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
@@ -2539,8 +2459,22 @@ function openPathPicker(folderId, currentRoot) {
   browseTo(startPath);
 }
 
+export function openPathPickerCallback(currentRoot, callback) {
+  pathPickerFolderId = null;
+  pathPickerCallback = callback;
+  const startPath = currentRoot || '~';
+  document.getElementById('path-picker-title').textContent = t('pathPicker.title');
+  document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
+  document.getElementById('path-picker-select').textContent = t('pathPicker.select');
+  document.getElementById('path-picker-clear').style.display = 'none';
+  document.getElementById('path-picker-overlay').classList.add('on');
+  document.getElementById('path-picker-modal').classList.add('show');
+  browseTo(startPath);
+}
+
 function closePathPicker() {
   pathPickerFolderId = null;
+  pathPickerCallback = null;
   pathPickerCurrentPath = '';
   document.getElementById('path-picker-overlay').classList.remove('on');
   document.getElementById('path-picker-modal').classList.remove('show');
@@ -2624,14 +2558,28 @@ export function initPathPicker() {
     if (e.target.id === 'path-picker-overlay') closePathPicker();
   });
   document.getElementById('path-picker-select').addEventListener('click', () => {
+    // Callback mode (Explorer folder picker)
+    if (pathPickerCallback) {
+      pathPickerCallback(pathPickerCurrentPath);
+      closePathPicker();
+      return;
+    }
+    // Folder mode
     if (!pathPickerFolderId) return;
     sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: pathPickerCurrentPath });
     closePathPicker();
+    window.dispatchEvent(new CustomEvent('project-root-changed'));
   });
   document.getElementById('path-picker-clear').addEventListener('click', () => {
+    if (pathPickerCallback) {
+      pathPickerCallback(null);
+      closePathPicker();
+      return;
+    }
     if (!pathPickerFolderId) return;
     sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: null });
     closePathPicker();
+    window.dispatchEvent(new CustomEvent('project-root-changed'));
   });
 }
 

@@ -51,8 +51,8 @@ object PromptSections:
     deviceInfo: String = "",
     /** Pre-rendered skill catalog (from SkillService.buildSkillCatalog). */
     skillCatalog: String = "",
-    /** Pre-rendered flow catalog (from FlowDefLoader.buildFlowCatalog). */
-    flowCatalog: String = "",
+    /** Pre-rendered team catalog (from TeamCatalog.buildCatalog). */
+    teamCatalog: String = "",
     /** Pre-rendered memory block (from ContextRefresher.buildMemoryBlock). */
     memoryBlock: String = "",
     /** Pre-rendered active-sessions block (from formatAgentSessions). */
@@ -60,7 +60,9 @@ object PromptSections:
     /** Pre-rendered task list block (from TaskStore.renderForPrompt). */
     taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
-    rulesMd: Option[String] = None
+    rulesMd: Option[String] = None,
+    /** Universal prompt from ~/.nebflow/prompts/universal.md — injected into ALL agents. */
+    universalPrompt: String = ""
   )
 
   object PromptContext:
@@ -200,6 +202,13 @@ object PromptSections:
       renderer = _.envInfo
     ),
 
+    // --- Universal prompt (all agents) ---
+    PromptSection.dynamic(
+      150,
+      condition = _.universalPrompt.nonEmpty,
+      renderer = _.universalPrompt
+    ),
+
     // --- Tool-dependent sections ---
     PromptSection(
       400,
@@ -250,9 +259,9 @@ object PromptSections:
       renderer = _.skillCatalog
     ),
     PromptSection.dynamic(
-      815,
-      condition = _.flowCatalog.nonEmpty,
-      renderer = _.flowCatalog
+      816,
+      condition = _.teamCatalog.nonEmpty,
+      renderer = _.teamCatalog
     ),
     PromptSection.dynamic(
       810,

@@ -1,6 +1,6 @@
 import { t } from './i18n.js';
 
-const MAX_VISIBLE = 15;
+const MAX_VISIBLE = 20;
 const COLLAPSED_KEY = 'nebflow-task-collapsed';
 
 const iconMap = {
@@ -95,15 +95,10 @@ export function renderTaskList(tasks, container) {
     const indent = depth * 16;
     const iconName = iconMap[task.status] || 'square';
     const label = (isActive && task.activeForm) ? task.activeForm : task.subject;
-    const blocked = task.blockedBy && task.blockedBy.length > 0
-      ? ` <span class="task-blocked">${t('task.blockedBy', { ids: task.blockedBy.join(', #') })}</span>`
-      : '';
 
     html += `<div class="${cls}" data-task-id="${task.id}" style="margin-left:${indent}px">`;
     html += `<span class="task-icon"><i data-lucide="${iconName}"></i></span>`;
     html += `<span class="task-label">${escapeHtml(label)}</span>`;
-    html += `<span class="task-id">#${task.id}</span>`;
-    html += blocked;
     html += '</div>';
 
     // Render children

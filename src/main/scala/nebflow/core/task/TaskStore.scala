@@ -224,8 +224,10 @@ object FileTaskStore extends TaskStore:
   def listActive(sessionId: String): IO[List[Task]] =
     list(sessionId).map(_.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress))
 
-  /** Render tasks as a hierarchical text block for system prompt injection.
-   *  Only active (pending + in_progress) tasks are shown, with tree-style indentation. */
+  /**
+   * Render tasks as a hierarchical text block for system prompt injection.
+   *  Only active (pending + in_progress) tasks are shown, with tree-style indentation.
+   */
   def renderForPrompt(sessionId: String): IO[String] =
     list(sessionId).map { allTasks =>
       val active = allTasks.filter(t => t.status == TaskStatus.Pending || t.status == TaskStatus.InProgress)
@@ -253,6 +255,7 @@ object FileTaskStore extends TaskStore:
 
         roots.foreach(r => renderTask(r, 0))
         sb.toString
+      end if
     }
 
   // Issue #10: Delete transaction ordering — cleanup references before deleting file

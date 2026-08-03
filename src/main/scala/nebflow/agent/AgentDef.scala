@@ -13,5 +13,6 @@ case class AgentDef(
   tools: List[String] = Nil,
   systemPrompt: String = "",
   avatar: Option[String] = None,
-  displayName: Option[String] = None
+  displayName: Option[String] = None,
+  voiceEnabled: Boolean = true
 )

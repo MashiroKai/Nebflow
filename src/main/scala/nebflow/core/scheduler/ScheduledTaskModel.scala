@@ -17,7 +17,9 @@ case class ScheduledTask(
   /** Optional file path for the LLM to reference when the task fires. */
   referencePath: Option[String] = None,
   /** Recurrence pattern: "hourly", "daily", "weekly", or None for one-shot. */
-  repeat: Option[String] = None
+  repeat: Option[String] = None,
+  /** When false, the task is skipped by fireDueTasks but kept in storage. */
+  enabled: Boolean = true
 )
 
 object ScheduledTask:

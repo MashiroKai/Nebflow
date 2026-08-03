@@ -49,8 +49,8 @@ export function initPanelDragger() {
 
   restoreOrder();
   applyOrder(false);
-  bindAllHandles();
-  initHeaderBumpZone();
+  initHeaderBumpZone();  // create bump-zone elements first
+  bindAllHandles();      // then bind mousedown to them
   observeBodyClass();
 }
 
@@ -214,76 +214,43 @@ function onDragMove(e) {
     dragState.ghost.style.top = e.clientY + 'px';
   }
 
-  // Determine insertion position among the OTHER panels
-  const others = order.filter(id => id !== dragState.panelId);
-  let insertAt = others.length; // default: append at end
+  // ── Determine insert position ──
+  // Count how many visible resizers the cursor has crossed (left → right).
+  // Each resizer is a panel boundary; crossing one means the dragged panel
+  // moves one slot. This is far more responsive than panel-center detection.
+  const visibleResizers = [...document.querySelectorAll('.col-resizer')]
+    .filter(r => r.style.display !== 'none')
+    .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
 
-  for (let i = 0; i < others.length; i++) {
-    const el = PANEL_EL[others[i]]?.();
-    if (!el || !isPanelVisible(others[i])) continue;
-    const rect = el.getBoundingClientRect();
-    if (e.clientX < rect.left + rect.width / 2) {
-      insertAt = i;
-      break;
-    }
+  let insertAt = 0;
+  let nearestResizer = null;
+  let nearestDist = Infinity;
+  for (const r of visibleResizers) {
+    const rect = r.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    if (e.clientX > cx) insertAt++;
+    const dist = Math.abs(e.clientX - cx);
+    if (dist < nearestDist) { nearestDist = dist; nearestResizer = r; }
   }
   dragState.insertAt = insertAt;
 
-  positionIndicator(others, insertAt);
+  // ── Highlight ──
+  // Only light up a resizer when the drop position differs from the original.
+  // Highlight the resizer nearest to the cursor — it represents the boundary
+  // the panel would jump across.
+  highlightResizer(null);
+  const origInsertAt = order.indexOf(dragState.panelId);
+  if (insertAt !== origInsertAt && nearestResizer) {
+    highlightResizer(nearestResizer);
+  }
 }
 
-/** Highlight the resizer handle at the insertion edge instead of drawing a
- *  separate drop line. Reuses the same "active pill" look as the resize handle's
- *  hover/drag state (via the .drop-target class) so the two feel unified. */
 let highlightedResizer = null;
-function positionIndicator(others, insertAt) {
-  // Clear any previously highlighted resizer.
-  if (highlightedResizer) {
-    highlightedResizer.classList.remove('drop-target');
-    highlightedResizer = null;
-  }
-
-  let edgeX = null;
-  const visibleOthers = others.filter(id => isPanelVisible(id));
-  if (visibleOthers.length === 0) return; // nothing to show against
-
-  // Map insertAt to a visible panel edge (left edge of the target panel, or the
-  // right edge of the last panel when appending at the end).
-  if (insertAt < others.length) {
-    const targetId = others[insertAt];
-    const el = PANEL_EL[targetId]?.();
-    if (el && isPanelVisible(targetId)) {
-      edgeX = el.getBoundingClientRect().left;
-    }
-  }
-  if (edgeX === null) {
-    for (let i = others.length - 1; i >= 0; i--) {
-      if (isPanelVisible(others[i])) {
-        const el = PANEL_EL[others[i]]?.();
-        if (el) edgeX = el.getBoundingClientRect().right;
-        break;
-      }
-    }
-  }
-
-  if (edgeX === null) return;
-
-  // Find the resizer whose center is closest to the insertion edge, and light it
-  // up. This is the handle between the two panels the dragged item will sit
-  // between — reusing the resize handle's own hover/drag animation.
-  let best = null;
-  let bestDist = Infinity;
-  document.querySelectorAll('.col-resizer').forEach(r => {
-    if (r.style.display === 'none') return;
-    const rect = r.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const dist = Math.abs(cx - edgeX);
-    if (dist < bestDist) { bestDist = dist; best = r; }
-  });
-  if (best && bestDist < 60) { // only highlight if there's a handle near the edge
-    best.classList.add('drop-target');
-    highlightedResizer = best;
-  }
+function highlightResizer(r) {
+  if (highlightedResizer === r) return;
+  if (highlightedResizer) highlightedResizer.classList.remove('drop-target');
+  highlightedResizer = r;
+  if (r) r.classList.add('drop-target');
 }
 
 function onDragUp() {

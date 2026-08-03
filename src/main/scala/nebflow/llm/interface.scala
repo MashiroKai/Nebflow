@@ -13,34 +13,52 @@ object LlmInterface:
   private val logger = NebflowLogger.forName("nebflow.llm")
 
   /**
-   * Stream pipe: raises TimeoutException if no element passes through within `d`.
-   * Resets the timer on each element. Detects hung LLM connections (e.g. provider
-   * sends initial events then stalls).
+   * Two-phase stream watchdog:
+   *   Phase 1 (firstToken): no chunks received yet — if no chunk arrives within
+   *     `firstToken`, the stream is considered hung (connection dead / provider down).
+   *   Phase 2 (subsequent): chunks received — if no chunk for `subsequent` duration,
+   *     the stream stalled mid-generation.
    *
-   * Uses System.currentTimeMillis() (not nanoTime) because nanoTime freezes during
-   * Mac sleep/wake, which would prevent timeout detection after wake.
+   * Resets the timer on each element. Uses System.currentTimeMillis() (not nanoTime)
+   * because nanoTime freezes during Mac sleep/wake.
    */
-  private def inactivityTimeout[O](d: FiniteDuration): fs2.Pipe[IO, O, O] =
-    val timeoutEx = new java.util.concurrent.TimeoutException(
-      s"LLM stream inactive for ${d.toSeconds}s"
+  private[llm] def inactivityTimeout[O](
+    firstToken: FiniteDuration,
+    subsequent: FiniteDuration
+  ): fs2.Pipe[IO, O, O] =
+    val firstEx = new java.util.concurrent.TimeoutException(
+      s"LLM stream: no response within ${firstToken.toSeconds}s"
+    )
+    val inactEx = new java.util.concurrent.TimeoutException(
+      s"LLM stream inactive for ${subsequent.toSeconds}s"
     )
     in =>
       fs2.Stream.eval(IO.ref(System.currentTimeMillis())).flatMap { lastActivity =>
-        val main = in.evalTap(_ => lastActivity.set(System.currentTimeMillis()))
-        // Check at 1/5 of the timeout interval for timely detection (min 5s, max 30s)
-        val checkInterval = math.max(math.min(d.toMillis / 5, 30000L), 5000L).millis
-        val watchdog = fs2.Stream
-          .awakeEvery[IO](checkInterval)
-          .evalMap { _ =>
-            IO(System.currentTimeMillis()).flatMap { now =>
-              lastActivity.get.flatMap { last =>
-                if now - last > d.toMillis then IO.raiseError(timeoutEx)
-                else IO.unit
+        fs2.Stream.eval(IO.ref(false)).flatMap { gotFirst =>
+          val main = in.evalTap(_ =>
+            lastActivity.set(System.currentTimeMillis()) *> gotFirst.set(true)
+          )
+          // Check interval: use the shorter timeout / 5 (min 2s, max 30s)
+          val shorterMs = math.min(firstToken.toMillis, subsequent.toMillis)
+          val checkInterval = math.max(math.min(shorterMs / 5, 30000L), 500L).millis
+          val watchdog = fs2.Stream
+            .awakeEvery[IO](checkInterval)
+            .evalMap { _ =>
+              IO(System.currentTimeMillis()).flatMap { now =>
+                lastActivity.get.flatMap { last =>
+                  gotFirst.get.flatMap { first =>
+                    val (limit, ex) =
+                      if first then (subsequent.toMillis, inactEx)
+                      else (firstToken.toMillis, firstEx)
+                    if now - last > limit then IO.raiseError(ex)
+                    else IO.unit
+                  }
+                }
               }
             }
-          }
-          .drain
-        main.concurrently(watchdog)
+            .drain
+          main.concurrently(watchdog)
+        }
       }
 
   end inactivityTimeout
@@ -241,10 +259,13 @@ object LlmInterface:
                                 )
                             )
                             (stream
-                              // Per-provider inactivity timeout: detect hung SSE connections
-                              // (HTTP alive but no meaningful data). Applied per-provider so
-                              // that a timeout on one provider allows the fallback to try the next.
-                              .through(inactivityTimeout(Defaults.LlmStreamInactivitySec.seconds))
+                              // Per-provider two-phase watchdog: detects both
+                              // dead connections (no first token) and mid-stream stalls.
+                              // Applied per-provider so a timeout on one allows fallback.
+                              .through(inactivityTimeout(
+                                Defaults.LlmFirstTokenTimeoutSec.seconds,
+                                Defaults.LlmStreamInactivitySec.seconds
+                              ))
                               .evalTap { chunk =>
                                 chunk match
                                   case StreamChunk.TextDelta(_) | StreamChunk.ToolCallChunk(_) |
