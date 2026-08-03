@@ -576,9 +576,9 @@ function persistTabs() {
 export function restoreTabs() {
   try {
     const raw = localStorage.getItem(LS_TABS_KEY);
-    if (!raw) return;
+    if (!raw) return false;
     const data = JSON.parse(raw);
-    if (!data.tabs || data.tabs.length === 0) return;
+    if (!data.tabs || data.tabs.length === 0) return false;
 
     // Defer WS import to avoid circular dependency
     import('./ws.js').then(({ sendWs }) => {
@@ -608,5 +608,7 @@ export function restoreTabs() {
         }
       });
     });
+    return true;
   } catch (e) { /* corrupt data — ignore */ }
+  return false;
 }

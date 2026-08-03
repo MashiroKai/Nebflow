@@ -2277,8 +2277,11 @@ initModelPicker();
 document.getElementById('team-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
 // Restore queued messages from localStorage (survives browser refresh)
 restoreQueue();
-// Restore Canvas tabs from localStorage (survives browser refresh)
-restoreTabs();
+// Restore Canvas tabs from localStorage (survives browser refresh).
+// If no saved tabs (e.g. cache cleared), auto-open Teams panel.
+if (!restoreTabs()) {
+  flowCanvas.toggleCanvas();
+}
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initDaemons();
