@@ -5,6 +5,7 @@ import cats.effect.{IO, Ref}
 import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.bridge.BridgeManager
 import nebflow.core.compact.HistoryArchiver
+import nebflow.core.daemon.DaemonService
 import nebflow.core.hooks.{HookEngine, HooksConfig}
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.task.TaskStore
@@ -49,6 +50,7 @@ case class SharedResources(
   neblinkService: Option[NeblinkService] = None,
   dropboxService: Option[DropboxService] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None,
+  daemonService: Option[DaemonService] = None,
   knowledgeStore: KnowledgeStore = new KnowledgeStore(PathUtil.dataRoot / "workspace-items"),
   voiceMutedRef: Ref[IO, Boolean],
   lastWsActivity: Ref[IO, Long] = Ref.unsafe[IO, Long](System.currentTimeMillis())

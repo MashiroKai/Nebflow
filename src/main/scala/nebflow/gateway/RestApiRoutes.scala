@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.SharedResources
 import nebflow.core.PathUtil
+import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.llm.NebflowServiceConfig
@@ -917,6 +918,111 @@ class RestApiRoutes(
         }
         result <- Ok(Json.obj("agents" -> entries.asJson))
       yield result
+
+    // ===== Daemon Management =====
+
+    // GET /daemons — list all daemons with runtime state
+    case req @ GET -> Root / "daemons" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => Ok(Json.obj("daemons" -> List.empty[String].asJson))
+          case Some(svc) =>
+            val store = new DaemonStore()
+            store.load().flatMap { configs =>
+              svc.getStates(configs).flatMap { states =>
+                Ok(Json.obj("daemons" -> states.asJson))
+              }
+            }
+      }
+
+    // POST /daemons — create a new daemon
+    case req @ POST -> Root / "daemons" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            req.as[Json].flatMap { body =>
+              val id = body.hcursor.downField("id").as[String].getOrElse("")
+              val name = body.hcursor.downField("name").as[String].getOrElse("")
+              val command = body.hcursor.downField("command").as[List[String]].getOrElse(List.empty)
+              val cwd = body.hcursor.downField("cwd").as[Option[String]].toOption.flatten
+              val env = body.hcursor.downField("env").as[Map[String, String]].getOrElse(Map.empty)
+              val autoStart = body.hcursor.downField("autoStart").as[Boolean].getOrElse(false)
+              val restartOnExit = body.hcursor.downField("restartOnExit").as[Boolean].getOrElse(false)
+
+              if id.isEmpty || name.isEmpty || command.isEmpty then
+                BadRequest(Json.obj("error" -> "Missing required fields: id, name, command".asJson))
+              else
+                val config = DaemonConfig(
+                  id = id,
+                  name = name,
+                  command = command,
+                  cwd = cwd,
+                  env = env,
+                  autoStart = autoStart,
+                  restartOnExit = restartOnExit
+                )
+                val store = new DaemonStore()
+                store.add(config).flatMap { _ =>
+                  // Auto-start if requested
+                  val startIO = if autoStart then svc.start(config).void.handleErrorWith(_ => IO.unit) else IO.unit
+                  startIO *> svc.getState(id).flatMap {
+                    case Some(state) => Ok(state.asJson)
+                    case None => Ok(config.asJson)
+                  }
+                }
+            }
+      }
+
+    // DELETE /daemons/:id — remove a daemon (stops if running)
+    case req @ DELETE -> Root / "daemons" / daemonId =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            svc.stop(daemonId).flatMap { _ =>
+              val store = new DaemonStore()
+              store.remove(daemonId) *> Ok(Json.obj("deleted" -> true.asJson))
+            }
+      }
+
+    // POST /daemons/:id/start — start a daemon
+    case req @ POST -> Root / "daemons" / daemonId / "start" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            val store = new DaemonStore()
+            svc.startById(store, daemonId).flatMap {
+              case Some(state) => Ok(state.asJson)
+              case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+            }
+      }
+
+    // POST /daemons/:id/stop — stop a daemon
+    case req @ POST -> Root / "daemons" / daemonId / "stop" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            svc.stop(daemonId).flatMap {
+              case Some(state) => Ok(state.asJson)
+              case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+            }
+      }
+
+    // POST /daemons/:id/restart — restart a daemon
+    case req @ POST -> Root / "daemons" / daemonId / "restart" =>
+      withAuth(req) {
+        sharedResources.daemonService match
+          case None => NotFound(Json.obj("error" -> "Daemon service not available".asJson))
+          case Some(svc) =>
+            val store = new DaemonStore()
+            svc.restart(store, daemonId).flatMap {
+              case Some(state) => Ok(state.asJson)
+              case None => NotFound(Json.obj("error" -> s"Daemon '$daemonId' not found".asJson))
+            }
+      }
   }
 
   /** Build mounted teams JSON for the frontend (GET /api/teams/mounted).

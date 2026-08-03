@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import nebflow.agent.*
 import nebflow.bridge.*
 import nebflow.core.*
+import nebflow.core.daemon.{DaemonService, DaemonStore}
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
@@ -400,6 +401,20 @@ object GatewayMain extends IOApp.Simple:
                                                 scheduledTaskService = Some(scheduledTaskService)
                                               )
 
+                                              // --- Daemon Service (external process lifecycle) ---
+                                              val daemonService = new DaemonService(dispatcher)
+                                              val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
+                                                daemonService = Some(daemonService)
+                                              )
+                                              // Auto-start daemons configured with autoStart=true
+                                              dispatcher.unsafeRunAndForget(
+                                                IO.sleep(2.seconds) *> daemonService
+                                                  .autoStart(DaemonStore())
+                                                  .handleErrorWith(e =>
+                                                    logger.warn(s"Daemon auto-start failed: ${e.getMessage}")
+                                                  )
+                                              )
+
                                               TtsService.create().flatMap { ttsService =>
                                                 SttService.create().flatMap { sttService =>
                                                   EmberServerBuilder
@@ -420,7 +435,7 @@ object GatewayMain extends IOApp.Simple:
                                                         sessionStore,
                                                         wsHub,
                                                         contextWindow,
-                                                        sharedResourcesFinal,
+                                                        sharedResourcesWithDaemon,
                                                         mcpManager,
                                                         sttService = sttService
                                                       )
@@ -430,7 +445,7 @@ object GatewayMain extends IOApp.Simple:
                                                       val restApiRoutes = new RestApiRoutes(
                                                         token,
                                                         configRef,
-                                                        sharedResourcesFinal,
+                                                        sharedResourcesWithDaemon,
                                                         sessionStore,
                                                         wsRoutes,
                                                         neblinkService = Some(neblinkService),
@@ -511,6 +526,7 @@ object GatewayMain extends IOApp.Simple:
                                                     }
                                                     .guarantee(
                                                       logger.info("shutting down...") *>
+                                                        daemonService.stopAll() *>
                                                         neblinkClient.traverse_(_.logout) *>
                                                         telemetry.fold(IO.unit)(_.shutdown) *>
                                                         mcpManager.stopAll() *>
