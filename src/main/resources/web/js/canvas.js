@@ -157,6 +157,16 @@ export function closeCanvas() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
 
+  // Persist the current width so a later reopen returns to the same size.
+  const w = document.documentElement.style.getPropertyValue('--canvas-width');
+  if (w) {
+    try {
+      const data = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+      data.canvas = parseFloat(w);
+      localStorage.setItem(LS_KEY, JSON.stringify(data));
+    } catch (_) {}
+  }
+
   // Clear any inline flex pin so CSS transition takes effect.
   panel.style.flex = '';
 

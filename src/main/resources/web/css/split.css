@@ -246,9 +246,13 @@
 }
 
 /* ===== Canvas Panel (画板) ===== */
-/* Mirrors #main's layout pattern: margin:0 10px on the panel,
-   headers and content fill the panel edge-to-edge (left:0;right:0).
-   This ensures header width = content width within each panel. */
+/* Generic display container on the right side.
+   Always display:flex (never display:none) — mirrors the sidebar pattern.
+   Collapsed state: flex-basis:0 + opacity:0 (clipped by overflow:hidden).
+   Open state: body.canvas-open sets flex-basis to --canvas-width.
+
+   CSS-driven animation: toggling body.canvas-open is all JS needs to do.
+   #main stays flex:1 — the browser redistributes space naturally. */
 #canvas-panel {
   display: flex;
   flex-direction: column;
