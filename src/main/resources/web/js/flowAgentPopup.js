@@ -1,23 +1,27 @@
-// flowAgentPopup.js — Mini session viewer for flow step agents.
+// flowAgentPopup.js — Mini session viewer for flow agents.
 //
-// Each flowStepId gets its own hidden ChatView instance that renders in
-// real-time. When the user clicks a node, the pre-rendered DOM is moved
-// into the popup modal — so all history is preserved.
+// Each flow agent session gets a ChatView instance that renders exactly
+// like the main chat window. When the user clicks an agent pill, the
+// pre-rendered DOM is moved into the popup modal — so all history and
+// streaming output is preserved.
 //
 // The popup is mounted INSIDE the flow card (not on document.body) so it
 // is positioned and sized relative to the card, not the viewport.
 
-import { ChatView, setActiveView, activeView } from './chatView.js';
+import { ChatView, setActiveView, activeView, chatViews } from './chatView.js';
+import { sendWs, onMessage, setFlowStepInterceptor } from './ws.js';
+import { restoreFromBackendHistory } from './persistence.js';
+import state from './state.js';
 
-// ── Per-step state ────────────────────────────────────────
-// flowStepId → { view: ChatView, container: div, meta: {} }
+// ── Per-agent state ───────────────────────────────────────
+// nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
 const stepViews = new Map();
 let currentStepId = null;
 let popupOverlay = null;
 let popupResizeObs = null;
 
-export function getStepView(flowStepId) {
-  return stepViews.get(flowStepId) || null;
+export function getStepView(sessionId) {
+  return stepViews.get(sessionId) || null;
 }
 
 // ── CSS ───────────────────────────────────────────────────
@@ -28,6 +32,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   position: absolute; top: 0; left: 0; right: 0; bottom: 0;
   display: flex; align-items: center; justify-content: center;
   z-index: 50;
+  pointer-events: auto;
   animation: fa-fade-in 0.2s ease;
 }
 @keyframes fa-fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -38,8 +43,8 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   position: absolute;
   left: 50%; top: 50%;
   transform: translate(-50%, -50%);
-  width: calc(100% - 24px);
-  height: calc(100% - 24px);
+  width: calc(100% - 48px);
+  height: calc(100% - 48px);
   max-width: 100%; max-height: 100%;
   display: flex; flex-direction: column;
   background: var(--glass-bg);
@@ -65,7 +70,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 /* Header — matches #header glassmorphism + sapphire refraction line.
    Doubles as the drag bar: cursor:grab, mousedown initiates drag. */
 .flow-agent-header {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 6px;
   padding: 10px 16px;
   border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.08));
   flex-shrink: 0;
@@ -86,26 +91,30 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   pointer-events: none;
   z-index: 1;
 }
-.flow-agent-node {
+.flow-agent-name {
   font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
-}
-.flow-agent-divider { color: var(--color-text-muted); opacity: 0.5; }
-.flow-agent-name {
-  font: 500 12px -apple-system, sans-serif;
-  color: var(--color-primary, #6366f1);
 }
 .flow-agent-subtitle {
   font: 400 11px -apple-system, sans-serif;
   color: var(--color-text-muted);
-  margin-right: auto; margin-left: 4px;
+  margin-right: auto; margin-left: 8px;
+}
+.flow-agent-ctx {
+  display: inline-flex; align-items: center; gap: 4px;
+  flex-shrink: 0;
+  margin-right: 8px;
 }
 .flow-agent-close {
   cursor: pointer; font-size: 16px; line-height: 1;
-  opacity: 0.5; transition: opacity 0.15s;
-  padding: 0 4px; color: var(--color-text-muted);
+  opacity: 0.7; transition: opacity 0.15s;
+  padding: 2px 4px; color: var(--color-text);
+  z-index: 10;
+  border-radius: 4px;
 }
-.flow-agent-close:hover { opacity: 1; }
+.flow-agent-close:hover { opacity: 1; background: rgba(255,255,255,0.06); }
+/* Code copy buttons inside popup: shift left to avoid overlapping close button */
+.flow-agent-modal .code-copy-btn { right: 40px; }
 
 /* Chat area — no custom overrides; inherits chat.css bubble/tool-card styles.
    Matches #chat layout: flex column + overscroll-behavior. */
@@ -182,17 +191,18 @@ function getHiddenRoot() {
   return hiddenRoot;
 }
 
-// ── Ensure a ChatView exists for a flowStepId ─────────────
+// ── Ensure a ChatView exists for a nodeSessionId ──────────
 
-function ensureStepView(flowStepId) {
-  if (stepViews.has(flowStepId)) return stepViews.get(flowStepId);
+function ensureStepView(sessionId) {
+  if (stepViews.has(sessionId)) return stepViews.get(sessionId);
 
-  // Create hidden DOM container
+  // Create hidden DOM container — this is the "chat" area for this agent
   const container = document.createElement('div');
   container.className = 'flow-agent-chat';
   getHiddenRoot().appendChild(container);
 
-  // Create ChatView pointing to this container
+  // Create ChatView with a fakeDom pointing to this container.
+  // ChatView is the same class used by the main chat window.
   const fakeDom = {
     chat: container,
     input: null, sendBtn: null, stopBtn: null, attachBtn: null,
@@ -204,19 +214,16 @@ function ensureStepView(flowStepId) {
     delegateIndicatorEl: null, delegateDropdownEl: null, delegateDropdownListEl: null,
     sessionNameEl: null,
   };
-  const view = new ChatView('flow-' + flowStepId, fakeDom);
+  const view = new ChatView('flow-' + sessionId, fakeDom);
   view.mounted = true;
-  view.sessionId = '';
+  view.sessionId = sessionId;
 
-  const entry = { view, container, meta: { agentName: '', task: '' } };
-  stepViews.set(flowStepId, entry);
+  const entry = { view, container, meta: { agentName: '', task: '', status: '' }, historyLoaded: false };
+  stepViews.set(sessionId, entry);
   return entry;
 }
 
 // ── Reset card widths so they re-flow to match the new container width ──
-// .html-card-wrap uses grow-only inline width (set by cardRegistry.js).
-// When the popup resizes (narrower), we must clear the inline width so
-// it falls back to CSS width:100%, allowing cards to shrink and re-wrap.
 function resetCardWidths(container) {
   const wraps = container.querySelectorAll('.html-card-wrap');
   wraps.forEach(w => { w.style.width = ''; });
@@ -224,29 +231,33 @@ function resetCardWidths(container) {
 
 // ── Open popup ────────────────────────────────────────────
 
-export function openStepPopup(flowStepId, nodeLabel, agentName, flowName, nodeSessionId) {
+export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessionId) {
   closeStepPopup();
-  currentStepId = flowStepId;
+  currentStepId = nodeSessionId || stepId;
 
   // Ensure view exists (in case no events arrived yet)
-  const entry = ensureStepView(flowStepId);
+  const entry = ensureStepView(currentStepId);
 
   popupOverlay = document.createElement('div');
   popupOverlay.className = 'flow-agent-overlay';
 
-  // Mount INSIDE the flow card so the popup is positioned and sized
-  // relative to the card, not the viewport. The flow card has
-  // overflow:hidden + border-radius, so the popup is clipped to its bounds.
+  // Mount on the flow pane's stable overlay root (#flow-overlay-root), a
+  // sibling of #flow-scroll that survives renderAll re-renders. Mounting
+  // directly on the pane would let renderAll's scroll rebuild destroy an open
+  // popup; mounting on .flow-card would drag it with the scroll.
+  // Tabs are now split into 'teams' and 'flows' — check both.
+  let flowPane = document.querySelector('.canvas-tab-pane[data-tab-id="teams"]')
+    || document.querySelector('.canvas-tab-pane[data-tab-id="flows"]');
+  const overlayRootEl = flowPane?.querySelector('#flow-overlay-root');
   const flowCard = document.querySelector('.flow-card');
-  const mountEl = flowCard || document.body;
+  const mountEl = overlayRootEl || flowPane || flowCard || document.body;
 
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
-        <span class="flow-agent-node">${esc(nodeLabel)}</span>
-        <span class="flow-agent-divider">·</span>
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || '')}</span>
         <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
+        <span class="flow-agent-ctx" id="flow-agent-ctx"></span>
         <div class="flow-agent-close" id="flow-agent-close">✕</div>
       </div>
       <div class="flow-agent-footer" id="flow-agent-footer">
@@ -268,27 +279,25 @@ export function openStepPopup(flowStepId, nodeLabel, agentName, flowName, nodeSe
   // Sync footer with any meta captured before opening
   updateFooterStatus(entry);
 
+  // Render context usage ring (if model info exists for this session)
+  updatePopupCtxRing();
+
   // ── Drag: mousedown on header moves the modal within the flow card ──
   const header = popupOverlay.querySelector('.flow-agent-header');
   if (header) {
     header.addEventListener('mousedown', (e) => {
-      // Ignore drag when clicking the close button
       if (e.target.id === 'flow-agent-close') return;
       e.preventDefault();
       const overlayRect = popupOverlay.getBoundingClientRect();
       const modalRect = modal.getBoundingClientRect();
-      // Compute initial offset of mouse from modal's top-left
       const startX = e.clientX - modalRect.left;
       const startY = e.clientY - modalRect.top;
 
       const onMove = (ev) => {
-        // New position relative to overlay
         let newLeft = ev.clientX - overlayRect.left - startX;
         let newTop = ev.clientY - overlayRect.top - startY;
-        // Clamp within overlay bounds
         newLeft = Math.max(0, Math.min(newLeft, overlayRect.width - modalRect.width));
         newTop = Math.max(0, Math.min(newTop, overlayRect.height - modalRect.height));
-        // Switch from centered transform to explicit position
         modal.style.transform = 'none';
         modal.style.left = newLeft + 'px';
         modal.style.top = newTop + 'px';
@@ -312,23 +321,79 @@ export function openStepPopup(flowStepId, nodeLabel, agentName, flowName, nodeSe
     entry.view.stream.scrollSnapped = atBottom;
   });
 
-  // Observe modal size changes — when the flow card is resized (column
-  // drag, window resize), reset card widths so iframes re-flow.
+  // Scroll to bottom on open + set initial snapped state
+  requestAnimationFrame(() => {
+    entry.container.scrollTop = entry.container.scrollHeight;
+  });
+  entry.view.stream.scrollSnapped = true;
+
+  // Observe modal size changes
   popupResizeObs = new ResizeObserver(() => {
     resetCardWidths(entry.container);
   });
   popupResizeObs.observe(modal);
 
-  // Load session history from backend if we have a nodeSessionId
-  // and the container is empty (no real-time events were captured)
-  if (nodeSessionId && entry.container.children.length === 0) {
-    loadSessionHistory(entry.view, nodeSessionId, entry.container);
+  // Load session history from backend via WS getHistory (same as main chat).
+  // This uses the exact same pipeline as session switching — the backend
+  // responds with historyPage, which restoreFromBackendHistory renders.
+  if (nodeSessionId && !entry.historyLoaded && entry.container.children.length === 0) {
+    entry.historyLoaded = true;
+    setActiveView(entry.view);
+    entry.view.pagination.pendingInitialLoad = true;
+    sendWs({ type: 'getHistory', sessionId: nodeSessionId, limit: 100 });
   }
 }
 
+export function isPopupOpen() {
+  return popupOverlay !== null;
+}
+
+// ── Context usage ring ───────────────────────────────────
+
+function fmtTokens(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return Math.round(n / 1000) + 'k';
+  return String(n);
+}
+
+/** Render the context usage ring into the popup header.
+ *  Reads state.sessionModelInfo[currentStepId] — same data source
+ *  as the main chat header's updateHeaderModelInfo(). */
+function updatePopupCtxRing() {
+  if (!popupOverlay || !currentStepId) return;
+  const el = popupOverlay.querySelector('#flow-agent-ctx');
+  if (!el) return;
+  const info = state.sessionModelInfo[currentStepId];
+  if (!info || !info.contextWindow) { el.innerHTML = ''; el.style.display = 'none'; return; }
+  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
+  const pct = Math.min(Math.round(ratio * 100), 100);
+  let color = '#4caf50';
+  if (ratio > 0.5) color = '#d4a030';
+  if (ratio > 0.75) color = '#e53935';
+  const R = 12;
+  const CIRC = 2 * Math.PI * R;
+  const dashLen = CIRC * pct / 100;
+  const tooltip = info.inputTokens != null
+    ? `${fmtTokens(info.inputTokens)} / ${fmtTokens(info.contextWindow)} tokens (${pct}%)`
+    : `${fmtTokens(info.contextWindow)} context window`;
+  el.title = tooltip;
+  el.style.display = 'inline-flex';
+  el.innerHTML = `<svg width="28" height="28" viewBox="0 0 30 30">
+    <circle cx="15" cy="15" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3"/>
+    <circle cx="15" cy="15" r="${R}" fill="none" stroke="${color}" stroke-width="3"
+            stroke-dasharray="${dashLen.toFixed(1)} ${CIRC.toFixed(1)}"
+            stroke-linecap="round"
+            transform="rotate(-90 15 15)"
+            style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
+  </svg><span style="font-size:10px;font-weight:600;color:${color};min-width:24px;text-align:center;">${pct}</span>`;
+}
+
+// Update popup ring when model info arrives for any session
+onMessage('usageUpdate', () => { if (popupOverlay) updatePopupCtxRing(); });
+onMessage('done', () => { if (popupOverlay) updatePopupCtxRing(); });
+
 export function closeStepPopup() {
   if (!popupOverlay) return;
-  // Move container back to hidden root
   if (currentStepId) {
     const entry = stepViews.get(currentStepId);
     if (entry) {
@@ -345,77 +410,25 @@ export function closeStepPopup() {
   currentStepId = null;
 }
 
-export function removeStepView(flowStepId) {
-  const entry = stepViews.get(flowStepId);
+export function removeStepView(sessionId) {
+  const entry = stepViews.get(sessionId);
   if (entry) {
     entry.container.remove();
-    stepViews.delete(flowStepId);
-  }
-}
-
-// ── Load session history from backend ─────────────────────
-// Fetches UI messages via REST API and renders them into the ChatView.
-
-function getAuthToken() {
-  return localStorage.getItem('nebflow_token') || '';
-}
-
-async function loadSessionHistory(view, sessionId, container) {
-  try {
-    // The REST API requires a Bearer token (or ?token=). The WS layer stores
-    // it in localStorage.nebflow_token; send it as a header so the popup can
-    // load history even when opened directly (not via a ?token= URL).
-    const headers = {};
-    const tok = getAuthToken();
-    if (tok) headers['Authorization'] = `Bearer ${tok}`;
-    const resp = await fetch(`/api/sessions/${sessionId}/history`, { headers });
-    if (!resp.ok) return;
-    const data = await resp.json();
-    const messages = data.messages || [];
-    if (messages.length === 0) return;
-
-    // Import rendering functions dynamically to avoid circular deps
-    const { renderUserBubble, renderTool } = await import('./chat.js');
-    const { setActiveView: setAV } = await import('./chatView.js');
-    const { renderMarkdownWithMath } = await import('./utils.js');
-
-    setAV(view);
-
-    for (const msg of messages) {
-      if (msg.type === 'user') {
-        renderUserBubble(msg.text || '', null, msg.timestamp);
-      } else if (msg.type === 'ai') {
-        // Render AI message as a bubble
-        const row = document.createElement('div');
-        row.className = 'row';
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble ai';
-        bubble.innerHTML = renderMarkdownWithMath(msg.text || '');
-        row.appendChild(bubble);
-        container.appendChild(row);
-      } else if (msg.type === 'tool') {
-        // Render tool result
-        if (msg.label && msg.content) {
-          renderTool(msg.label, msg.summary || '', msg.content, msg.isError || false, msg.input, sessionId);
-        }
-      }
-    }
-    container.scrollTop = container.scrollHeight;
-  } catch (e) {
-    console.warn('[flowAgentPopup] Failed to load session history:', e);
+    stepViews.delete(sessionId);
   }
 }
 
 // ── WS event interception ────────────────────────────────
 // Called from ws.js BEFORE handler dispatch.
-// Ensures a hidden ChatView exists, then sets activeView to it.
+// Routes agent* events to the correct ChatView by setting it as activeView,
+// so chat.js rendering functions target the right container.
+// Returns true if the event was handled (should NOT render into primary chat).
 
 export function interceptFlowStep(msg) {
-  if (!msg.flowStepId) return false;
-  const entry = ensureStepView(msg.flowStepId);
+  if (!msg.nodeSessionId) return false;
+  const entry = ensureStepView(msg.nodeSessionId);
 
-  // Capture meta + lifecycle status from key events. These events are patched
-  // with flowStepId by the backend's routeWsSend, so they reach us directly.
+  // Capture meta + lifecycle status from key events.
   if (msg.type === 'agentStart') {
     entry.meta.agentName = msg.name || '';
     entry.meta.task = msg.taskDescription || '';
@@ -424,15 +437,56 @@ export function interceptFlowStep(msg) {
     entry.meta.status = 'done';
   }
 
-  // Set activeView so chat.js rendering targets this view's container
+  // Set activeView so chat.js rendering functions target this view's container.
+  // This is the same mechanism used for the primary chat window.
   setActiveView(entry.view);
 
-  // Auto-scroll + footer sync if popup is showing this step
-  if (currentStepId === msg.flowStepId) {
+  // Auto-scroll if popup is showing this agent
+  if (currentStepId === msg.nodeSessionId) {
+    requestAnimationFrame(() => {
+      const snapped = entry.view.stream.scrollSnapped;
+      const threshold = 60;
+      if (snapped || entry.container.scrollHeight - entry.container.scrollTop - entry.container.clientHeight < threshold) {
+        entry.container.scrollTop = entry.container.scrollHeight;
+      }
+    });
+    updateFooterStatus(entry);
+  }
+  return true;
+}
+
+// Register the interceptor with ws.js. This breaks what would otherwise be a
+// circular import (ws.js → flowAgentPopup.js → ws.js). ws.js holds the
+// interceptor in a variable and calls it at runtime during onmessage.
+setFlowStepInterceptor(interceptFlowStep);
+
+// ── historyPage handler ───────────────────────────────────
+// When the backend responds to getHistory for a flow agent session,
+// we need to render it into the popup's ChatView, not the primary one.
+// This is called from main.js's historyPage handler when the sessionId
+// matches a flow agent session.
+
+export function handleFlowAgentHistory(msg) {
+  const entry = stepViews.get(msg.sessionId);
+  if (!entry) return false; // not a flow agent session
+
+  const view = entry.view;
+  view.pagination.loading = false;
+
+  const isInitialLoad = view.pagination.pendingInitialLoad;
+  if (isInitialLoad) {
+    view.pagination.pendingInitialLoad = false;
+    entry.container.innerHTML = '';
+    view.pagination.offset = msg.offset;
+    view.pagination.total = msg.total;
+    view.pagination.hasMore = msg.hasMore;
+
+    setActiveView(view);
+    restoreFromBackendHistory(msg.messages);
+
     requestAnimationFrame(() => {
       entry.container.scrollTop = entry.container.scrollHeight;
     });
-    updateFooterStatus(entry);
   }
   return true;
 }
@@ -458,6 +512,6 @@ function updateFooterStatus(entry) {
 // ── Utils ────────────────────────────────────────────────
 function esc(str) {
   if (!str) return '';
-  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  return String(str).replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>')
+    .replace(/"/g, '"').replace(/'/g, '&#039;');
 }

@@ -13,7 +13,7 @@ class AgentDefSpec extends CatsEffectSuite:
     val result = lib.loadAll().unsafeRunSync()
     assert(result.contains("Nebula"), "Nebula must always exist")
     // Nebula's seed tools are a fixed orchestrator set (not "*") — see AgentLibrary.Seeds.Nebula.
-    assert(result("Nebula").tools.contains("ExecuteFlow"), "Nebula must have ExecuteFlow")
+    assert(result("Nebula").tools.contains("Load"), "Nebula must have Load")
 
   test("loadAll reads agents from disk agent.json"):
     val tmpDir = os.temp.dir()

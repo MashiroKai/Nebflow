@@ -2,10 +2,9 @@
 
 import state from './state.js';
 import { sendWs } from './ws.js';
-import { t } from './i18n.js';
 
 /** Currently active tab scope. */
-let activeScope = 'folder';
+let activeScope = 'agent';
 
 /** Cache per-scope content so tab switches don't re-fetch within same modal open. */
 const cache = { user: null, agent: null, folder: null };
@@ -13,12 +12,11 @@ const cache = { user: null, agent: null, folder: null };
 /** The session whose memory is being viewed. Set when the modal opens. */
 let memorySessionId = null;
 
-/** Show the Memory button in header. */
+/** Show the Memory button in the activity bar. */
 export function showMemoryButton() {
   const btn = document.getElementById('memory-btn');
   if (btn) {
-    btn.style.display = '';
-    btn.textContent = t('header.memory');
+    btn.hidden = false;
   }
 }
 
@@ -65,6 +63,12 @@ function loadTab(scope) {
   } else {
     input.value = '';
     sendWs({ type: 'getMemory', scope, sessionId: memorySessionId });
+    // Retry once if server doesn't respond within 800ms
+    setTimeout(() => {
+      if (cache[scope] === null && activeScope === scope) {
+        sendWs({ type: 'getMemory', scope, sessionId: memorySessionId });
+      }
+    }, 800);
   }
 }
 

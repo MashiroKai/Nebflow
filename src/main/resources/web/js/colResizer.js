@@ -46,15 +46,10 @@ export function initColResizers() {
   // management — mirrors how the sidebar works (body class drives everything).
   const bodyEl = document.body;
   const moBody = new MutationObserver(() => {
-    // Sidebar: clear pin on collapse, restore on expand.
     if (bodyEl.classList.contains('sidebar-collapsed')) {
       clearPin('sidebar');
     } else {
       restoreWidths();
-    }
-    // Canvas: clear main pin when canvas closes so Main fills remaining space.
-    if (!bodyEl.classList.contains('canvas-open')) {
-      clearPin('main');
     }
   });
   moBody.observe(bodyEl, { attributes: true, attributeFilter: ['class'] });
@@ -94,17 +89,14 @@ function clearPin(name) {
  *  which columns this handle separates, then pins fixed pixel widths during
  *  drag so mouse movement maps 1:1 to width changes.
  *
- *  Pinning strategy (assumes default order sidebar | main | canvas):
- *    sidebar  — always pinned (flex:0 0 px); drag maps 1:1.
- *    canvas   — pinned via --canvas-width CSS var to avoid fighting the
- *               open/close transition; main flex:1 absorbs the difference.
- *    main     — pinned ONLY during sidebar drag (so sidebar|main pair maps
- *               1:1); cleared on mouseup so it returns to flex:1 fill.
+ *  Pinning strategy (works regardless of panel order):
+ *    sidebar — always pinned (flex:0 0 px); drag maps 1:1.
+ *    canvas  — pinned via --canvas-width CSS var; drag maps 1:1.
+ *    main    — NEVER pinned; always flex:1 to absorb the difference.
  *
- *  Limitation: the name-based conditions (`leftName === 'sidebar'` etc.)
- *  assume the default panel order. After panel reordering, some resizer
- *  pairs may not pin correctly because the panel identity no longer matches
- *  the expected side (e.g., sidebar on the right of a resizer). */
+ *  This ensures exactly one flexible column at all times, so dragging ANY
+ *  resizer correctly adjusts the pinned panel while main grows/shrinks to
+ *  fill the remaining space. */
 function bindResizer(handle) {
   handle.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -114,15 +106,21 @@ function bindResizer(handle) {
     const rightEl = COL_EL[rightName]?.();
     if (!leftEl || !rightEl) return;
 
-    // Snapshot the rendered widths at drag start, then pin columns to
-    // FIXED widths so subsequent mouse moves map 1:1 to pixel changes.
+    // Main must be flex:1 (unpinned) so it absorbs width changes.
+    clearPin('main');
+
     const startX = e.clientX;
     const leftW0 = leftEl.getBoundingClientRect().width;
     const rightW0 = rightEl.getBoundingClientRect().width;
-    // Pin sidebar (flex:0 0 px) and canvas (--canvas-width var) at drag start.
-    // Main is left unpinned — it flex:1 to absorb the change.
+    // Pin sidebar and canvas at their current rendered widths.
     if (leftName === 'sidebar') {
       pinWidth(leftName, leftW0);
+    }
+    if (leftName === 'canvas') {
+      pinWidth(leftName, leftW0);
+    }
+    if (rightName === 'sidebar') {
+      pinWidth(rightName, rightW0);
     }
     if (rightName === 'canvas') {
       pinWidth(rightName, rightW0);
@@ -137,16 +135,12 @@ function bindResizer(handle) {
       const minR = MIN_WIDTHS[rightName] || 0;
       // Clamp so neither column shrinks below its minimum.
       const clamped = Math.max(-leftW0 + minL, Math.min(rightW0 - minR, dx));
-      if (leftName === 'sidebar') {
-        pinWidth(leftName, leftW0 + clamped);
+      // Adjust whichever side is sidebar or canvas (the "fixed" panels).
+      if (leftName === 'sidebar' || leftName === 'canvas') {
+        pinWidth(leftName, Math.max(MIN_WIDTHS[leftName] || 0, leftW0 + clamped));
       }
-      if (rightName === 'canvas') {
-        pinWidth(rightName, Math.max(MIN_WIDTHS.canvas, rightW0 - clamped));
-      }
-      // When the right column is main (sidebar|main resizer), pin main too
-      // so both sides of the pair resize 1:1 with the cursor.
-      if (rightName === 'main') {
-        pinWidth(rightName, rightW0 - clamped);
+      if (rightName === 'sidebar' || rightName === 'canvas') {
+        pinWidth(rightName, Math.max(MIN_WIDTHS[rightName] || 0, rightW0 - clamped));
       }
       notifyResize();
     };
@@ -156,11 +150,6 @@ function bindResizer(handle) {
       document.body.classList.remove('col-resizing');
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      // When the canvas isn't open, don't leave a pinned width on Main —
-      // let it auto-fill. Only the sidebar width is meaningful in 2-column mode.
-      if (!document.body.classList.contains('canvas-open') && rightName === 'main') {
-        clearPin('main');
-      }
       saveWidths();
       notifyResize();
     };
@@ -177,7 +166,7 @@ function bindResizer(handle) {
     clearPin(rightName);
     // Sidebar falls back to its default width (it can't be content-driven in
     // 2-column mode the way Main/Canvas can).
-    if (leftName === 'sidebar') pinWidth('sidebar', DEFAULT_SIDEBAR);
+    if (leftName === 'sidebar' || rightName === 'sidebar') pinWidth('sidebar', DEFAULT_SIDEBAR);
     clearWidths();
     notifyResize();
   });
@@ -193,17 +182,15 @@ function pinnedWidth(name) {
   return m ? parseFloat(m[1]) : null;
 }
 
-/** Persist current pinned widths. Only persists main/canvas when the canvas
- *  is open, so a 2-column sidebar drag doesn't pin an irrelevant main width. */
+/** Persist current pinned widths. Main is never pinned (always flex:1),
+ *  so only sidebar and canvas widths are saved. */
 function saveWidths() {
   const canvasOpen = document.body.classList.contains('canvas-open');
   const data = {};
   const sb = pinnedWidth('sidebar');
   if (sb) data.sidebar = sb;
   if (canvasOpen) {
-    const m = pinnedWidth('main');
     const c = pinnedWidth('canvas');
-    if (m) data.main = m;
     if (c) data.canvas = c;
   }
   try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch (_) {}

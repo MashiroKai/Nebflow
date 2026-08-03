@@ -71,9 +71,9 @@ class ScheduledTaskStore(baseDir: os.Path):
         .filter(_.last.endsWith(".json"))
         .toList
         .flatMap { f =>
-          decode[List[ScheduledTask]](os.read(f)) match
-            case Right(list) => list.filter(t => !t.triggered && t.triggerAt <= now)
-            case Left(_) => Nil
+            decode[List[ScheduledTask]](os.read(f)) match
+              case Right(list) => list.filter(t => !t.triggered && t.triggerAt <= now && t.enabled)
+              case Left(_) => Nil
         }
     end if
   }
@@ -96,5 +96,16 @@ class ScheduledTaskStore(baseDir: os.Path):
   /** Get pending (untriggered) task count for a session. */
   def getPendingCount(sessionId: String): IO[Int] =
     loadTasks(sessionId).map(_.count(!_.triggered))
+
+  /** Toggle the enabled state of a task. Returns the updated enabled value. */
+  def toggleTask(sessionId: String, taskId: String): IO[Boolean] =
+    loadTasks(sessionId).flatMap { existing =>
+      val updated = existing.map { t =>
+        if t.id == taskId then t.copy(enabled = !t.enabled)
+        else t
+      }
+      saveTasks(sessionId, updated) *>
+        IO.pure(updated.find(_.id == taskId).map(_.enabled).getOrElse(true))
+    }
 
 end ScheduledTaskStore

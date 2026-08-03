@@ -1,6 +1,47 @@
 import state from './state.js';
 import { findViewBySessionId, setActiveView, activeView, chatViews } from './chatView.js';
-import { interceptFlowStep } from './flowAgentPopup.js';
+
+// ── Flow-step interceptor (registered by flowAgentPopup.js) ─────────────
+// ws.js must NOT import flowAgentPopup.js directly: that creates a circular
+// dependency (flowAgentPopup.js imports onMessage/sendWs from ws.js) which
+// throws a TDZ ReferenceError when flowAgentPopup.js calls onMessage() at
+// module top level before ws.js has finished initializing `handlers`.
+// flowAgentPopup.js registers its interceptor here instead.
+let flowStepInterceptor = null;
+export function setFlowStepInterceptor(fn) { flowStepInterceptor = fn; }
+
+/**
+ * Convert agent* events (agentTextDelta, agentToolStart, etc.) to standard
+ * chat events (textDelta, toolStart, etc.) so the same rendering pipeline
+ * in chat.js handles both the main chat and flow agent popups.
+ * The converted event has sessionId = nodeSessionId so it routes correctly.
+ */
+function convertAgentEvent(msg) {
+  const sid = msg.nodeSessionId;
+  if (!sid) return null;
+  switch (msg.type) {
+    case 'agentStart':
+      return { type: 'agentStart', sessionId: sid, agentId: msg.agentId || msg.name, name: msg.name };
+    case 'agentTextDelta':
+      return { type: 'textDelta', sessionId: sid, delta: msg.delta || '' };
+    case 'agentThinking':
+      return { type: 'thinkingDelta', sessionId: sid, delta: '' };
+    case 'agentToolCallDetected':
+      return { type: 'toolCallDetected', sessionId: sid, name: msg.name || '' };
+    case 'agentToolStart':
+      return { type: 'toolStart', sessionId: sid, label: msg.label || '' };
+    case 'agentToolEnd':
+      return { type: 'toolEnd', sessionId: sid, label: msg.label || '', summary: msg.summary || '', content: msg.content || '', isError: msg.isError || false, input: msg.input || null };
+    case 'agentDone':
+      return { type: 'done', sessionId: sid, model: msg.model, contextWindow: msg.contextWindow, inputTokens: msg.inputTokens, compactThreshold: msg.compactThreshold };
+    case 'usageUpdate':
+      return { type: 'usageUpdate', sessionId: sid, inputTokens: msg.inputTokens, contextWindow: msg.contextWindow, compactThreshold: msg.compactThreshold };
+    case 'agentEnd':
+      return null; // no standard equivalent
+    default:
+      return null;
+  }
+}
 
 /** Reflect the connection state onto the send button (doubles as the connection
  *  indicator). Defined here (not imported from chat.js) to avoid a circular
@@ -37,7 +78,8 @@ const TERMINAL_MSG_TYPES = new Set([
   'done', 'error', 'interrupted', 'maxTokens', 'sessionBusy',
   'compactStart', 'compactComplete', 'compactFailed',
   'backgroundTaskUpdate', 'taskListUpdate',
-  'askUser', 'askPermission'
+  'askUser', 'askPermission',
+  'historyPage' // flow agent popups receive historyPage with their own sessionId
 ]);
 const STREAM_MSG_TYPES = new Set([
   'thinkingDelta', 'textDelta', 'textDone',
@@ -47,9 +89,8 @@ const STREAM_MSG_TYPES = new Set([
   'agentStart', 'agentTextDelta', 'agentToolCallDetected',
   'agentToolStart', 'agentToolEnd', 'agentEnd',
   'agentThinking', 'agentRetryStatus', 'agentDone',
-  'flowStarted', 'flowStepStarted', 'flowStepCompleted', 'flowStepFailed',
-  'flowVerifyResult', 'flowLoopIteration', 'flowCompleted',
-  'flowResuming', 'flowStepRetrying'
+  'treeBranchMounted', 'treeBranchUnmounted', 'treeBranchUpdated',
+  'flowMail', 'flowProgress', 'flowCompleted', 'flowList'
 ]);
 
 export function onMessage(type, handler) {
@@ -91,6 +132,18 @@ function scheduleReconnect() {
   }, delay);
 }
 
+/** Force immediate reconnect, skipping exponential backoff. */
+export function forceReconnect() {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  reconnectAttempts = 0;
+  // Close the old connection cleanly before opening a new one — prevents orphan sockets.
+  if (state.ws) {
+    try { state.ws.onclose = null; state.ws.close(); } catch (_) {}
+    state.ws = null;
+  }
+  connect();
+}
+
 // ---------- Send ----------
 export function sendWs(msg) {
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
@@ -125,11 +178,21 @@ export function connect() {
     }
     sendWs({type: 'setVoiceMuted', muted: localStorage.getItem('voiceMuted') === 'true'});
     sendWs({type: 'getSkills'});
+    sendWs({type: 'getFlows'});
     sendWs({type: 'memoryStatus'});
     sendWs({type: 'getLlmLog'});
+    sendWs({type: 'getConfig'});
+    sendWs({type: 'getModelOptions', sessionId: state.activeSessionId});
     state.heartbeat = setInterval(() => {
       if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+        state.pendingPong = true;
         sendWs({type: 'ping'});
+        setTimeout(() => {
+          if (state.pendingPong && state.ws?.readyState === WebSocket.OPEN) {
+            console.log('[ws] heartbeat: no pong after 5s, closing dead connection');
+            state.ws.close();
+          }
+        }, 5000);
       }
     }, 30000);
     // On (re)connect, notify callbacks so they can fetch state that
@@ -154,6 +217,9 @@ export function connect() {
     try {
       const msg = JSON.parse(e.data);
 
+      // Pong reply — clear pending flag (used by heartbeat + wake detection)
+      if (msg.type === 'pong') { state.pendingPong = false; return; }
+
       // ── Message filtering ────────────────────────────────────────────
       // GLOBAL/TERMINAL/STREAM sets are module-level (see top of file) for O(1)
       // lookup and to avoid per-message allocation.
@@ -175,13 +241,29 @@ export function connect() {
       }
       setActiveView(view || null);
 
-      // ── Flow step popup: always intercept flowStepId events ──────
-      // Events render into a hidden ChatView immediately. If popup is
-      // open, the container is visible inside it. Either way, events
-      // must NOT render into the primary chat view.
-      if (msg.flowStepId && interceptFlowStep(msg)) {
+      // ── Flow agent popup: intercept events with nodeSessionId ────
+      // Flow agent events carry nodeSessionId (injected by FlowAgentActivator).
+      // Route them to the agent's hidden ChatView for the popup.
+      // They must NOT render into the primary chat view.
+      if (msg.nodeSessionId && flowStepInterceptor && flowStepInterceptor(msg)) {
+        // interceptFlowStep already set activeView to the flow ChatView.
+        // Convert agent* events to standard chat events so chat.js
+        // rendering functions (textDelta, toolStart, toolEnd, done, etc.)
+        // render into the popup's ChatView just like the main chat window.
+        const converted = convertAgentEvent(msg);
+        if (converted) {
+          const convList = handlers[converted.type];
+          if (convList) for (const h of convList) {
+            try { h(converted, activeView); }
+            catch (e) { console.error('[ws] handler error for', converted.type, ':', e.message); }
+          }
+        }
+        // Also dispatch the original event (for status tracking, etc.)
         const list = handlers[msg.type];
-        if (list) for (const h of list) h(msg, activeView);
+        if (list) for (const h of list) {
+          try { h(msg, activeView); }
+          catch (e) { console.error('[ws] handler error for', msg.type, ':', e.message); }
+        }
         return;
       }
 
@@ -192,13 +274,19 @@ export function connect() {
       // delegate indicator and tool activity.
       if (msg.agentId && state.planAgentId === msg.agentId && msg.type === 'agentTextDelta') {
         const planList = handlers['_planAgent'];
-        if (planList) for (const h of planList) h(msg);
+        if (planList) for (const h of planList) {
+          try { h(msg); }
+          catch (e) { console.error('[ws] plan handler error:', e.message); }
+        }
         return;
       }
 
       // Dispatch to handlers
       const list = handlers[msg.type];
-      if (list) for (const h of list) h(msg, view);
+      if (list) for (const h of list) {
+        try { h(msg, view); }
+        catch (e) { console.error('[ws] handler error for', msg.type, ':', e.message); }
+      }
 
     } catch (err) {
       console.error('[ws] message parse error:', err);
@@ -219,13 +307,20 @@ onMessage('llmLogState', (msg) => {
 // the exponential backoff timer (which may not fire for a while).
 function checkConnection() {
   if (!state.ws || state.ws.readyState === WebSocket.CLOSED || state.ws.readyState === WebSocket.CLOSING) {
-    // Connection is dead — cancel any pending slow reconnect and reconnect now
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    reconnectAttempts = 0; // reset so we use the minimum delay
-    connect();
+    // Connection is dead — reconnect immediately
+    forceReconnect();
   } else if (state.ws.readyState === WebSocket.OPEN) {
-    // Connection looks alive — send a ping to verify it actually works
+    // Connection looks alive — send a ping and verify with pong within 2s.
+    // Mac lid-open can leave the TCP connection in a half-open state where
+    // the browser hasn't fired onclose yet.
+    state.pendingPong = true;
     sendWs({type: 'ping'});
+    setTimeout(() => {
+      if (state.pendingPong && state.ws?.readyState === WebSocket.OPEN) {
+        console.log('[ws] no pong after wake, force reconnect');
+        state.ws.close(); // triggers onclose → scheduleReconnect
+      }
+    }, 2000);
   }
 }
 

@@ -285,7 +285,13 @@ export default {
 
   // === Voice ===
   'voice.listening': '正在聆听...',
+  'voice.speaking': '检测到语音',
+  'voice.processing': '识别中...',
+  'voice.loading': '正在加载语音模型',
   'voice.error': '错误：{error}',
+  'voice.hintListening': '说话结束自动断句',
+  'voice.hintSpeaking': '倾听中，说完自动识别',
+  'voice.wakeTriggered': '你好，请说…',
 
   // === Background tasks ===
   'bg.header': '后台任务',
@@ -370,6 +376,9 @@ export default {
   'task.today': '今天',
   'task.tomorrow': '明天',
   'task.yesterday': '昨天',
+  'task.lastTriggered': '上次触发',
+  'task.enabled': '点击停用',
+  'task.disabled': '点击启用',
 
   // NebLink
   'neblink.title': '设备互联',
@@ -400,4 +409,14 @@ export default {
   'dropbox.saved': '已保存',
   'dropbox.completed': '已完成',
   'dropbox.failed': '传输失败',
+
+  // 模型选择器（输入框右侧）
+  'modelPicker.select': '选择',
+  'modelPicker.changeModel': '切换模型 / Fallback 链',
+  'modelPicker.chain': '模型与 Fallback 链',
+  'modelPicker.active': '当前',
+  'modelPicker.empty': '暂无模型',
+  'modelPicker.add': '+ 添加模型…',
+  'modelPicker.remove': '移除',
+  'modelPicker.hint': '第一个 = 当前模型；下方顺序 = Fallback 顺序。拖动 ⠿ 排序。',
 };

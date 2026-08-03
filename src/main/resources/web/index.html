@@ -33,7 +33,7 @@
        Device management lives in the Settings panel (NebLink section). -->
   <div id="activity-bar">
     <button id="activity-avatar" class="activity-avatar" title="Login">
-      <img class="activity-avatar-logo" src="favicon.svg" alt="">
+      <img class="activity-avatar-logo" src="logo.svg" alt="">
       <img class="activity-avatar-photo" alt="" hidden>
       <span class="activity-avatar-letter" hidden>N</span>
     </button>
@@ -41,23 +41,31 @@
     <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
   </div>
 
-  <!-- Sidebar — workspace only -->
+  <!-- Sidebar — file explorer -->
   <div id="sidebar">
     <div id="sidebar-panel">
       <div id="panel-sessions" class="panel active">
         <!-- Sidebar top bar — empty drag handle for panel reordering -->
         <div class="sidebar-topbar"></div>
 
-        <!-- Workspace Section -->
-        <div id="workspace-section">
-          <div class="workspace-header">
-            <span class="workspace-title">Workspace</span>
-            <div class="workspace-header-right">
-              <span class="workspace-count"></span>
+        <!-- Explorer Section -->
+        <div id="explorer-section">
+          <div class="explorer-header">
+            <span class="explorer-title">Explorer</span>
+            <div class="explorer-actions">
+              <button class="explorer-action-btn" id="explorer-new-file-btn" title="New File">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 12v6"/><path d="M9 15h6"/></svg>
+              </button>
+              <button class="explorer-action-btn" id="explorer-new-folder-btn" title="New Folder">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M12 10v6"/><path d="M9 13h6"/></svg>
+              </button>
+              <button id="explorer-folder-btn" class="explorer-folder-btn" title="Open Folder">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+              </button>
             </div>
           </div>
-          <div id="workspace-list">
-            <!-- Items rendered here by workspace.js -->
+          <div id="explorer-tree">
+            <!-- File tree rendered here by explorer.js -->
           </div>
         </div>
       </div>
@@ -85,12 +93,16 @@
         </button>
         <span id="header-model-info"></span>
       </div>
-      <div class="header-center"><span id="session-name"></span><button id="memory-btn" class="memory-btn" style="display:none">Memory</button></div>
+      <div class="header-center">
+        <span id="session-name"></span>
+        <button id="memory-btn" class="memory-btn" title="Memory" hidden><i data-lucide="brain"></i></button>
+      </div>
       <div class="header-right">
-        <button id="bypass-toggle" class="bypass-toggle" data-mode="confirm-edits" title="安全模式">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          <span class="bypass-label">需要确认</span>
-        </button>
+        <div id="bypass-dropdown" class="header-dropdown">
+          <button id="bypass-toggle" class="bypass-toggle" data-mode="confirm-edits" title="安全模式">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </button>
+        </div>
         <button class="voice-toggle" id="voice-toggle-btn" title="Voice output">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
         </button>
@@ -103,7 +115,7 @@
           <span class="delegate-dot"></span>
           <span class="delegate-count">0</span>
         </div>
-        <button id="flow-toggle-btn" class="flow-toggle-btn" title="Toggle flow visualization">
+        <button id="flow-toggle-btn" class="flow-toggle-btn" title="Toggle team visualization">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="5" r="2"/><circle cx="12" cy="19" r="2"/><path d="M6 7v2a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7"/><path d="M12 11v6"/></svg>
         </button>
       </div>
@@ -111,6 +123,11 @@
     <!-- Dropdowns moved outside #header so backdrop-filter can blur chat content.
          #header has its own backdrop-filter which creates a backdrop root, preventing
          child elements from blurring content behind the header. -->
+    <div class="header-dropdown-menu" id="bypass-menu">
+      <button data-mode="confirm-edits">确认编辑</button>
+      <button data-mode="auto-edits">编辑放行</button>
+      <button data-mode="auto-all">全部放行</button>
+    </div>
     <div id="delegate-dropdown" class="hidden">
       <div class="bg-dropdown-header">Sub-agents</div>
       <div class="bg-dropdown-list"></div>
@@ -152,7 +169,7 @@
       <div id="slash-dropdown"></div>
       <div id="queue-bar"></div>
       <div id="input-bar">
-        <button class="icon-btn" id="voice-btn"><i data-lucide="mic"></i></button>
+        <button class="icon-btn" id="voice-btn" title="Voice input"><i data-lucide="mic"></i></button>
       <div id="input-wrap" style="position:relative;">
         <div id="attachment-preview"></div>
         <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>

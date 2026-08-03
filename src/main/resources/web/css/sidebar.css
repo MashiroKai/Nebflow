@@ -5,7 +5,7 @@
   flex-shrink: 0;
   /* Bottom margin matches #input-area's padding-bottom (12px) so the sidebar
      card's bottom edge aligns with the chat's input bar. */
-  margin: 16px 10px 10px;
+  margin: 16px 4px 10px;
   max-height: calc(100vh - 26px);
   border-radius: 20px;
   overflow: hidden;

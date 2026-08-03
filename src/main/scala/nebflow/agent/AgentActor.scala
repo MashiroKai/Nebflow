@@ -405,6 +405,21 @@ object AgentActor extends AgentCore with AgentSession:
           _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0)
         yield idle(agentDef, resources, depth, parentRef, state)
 
+      // Supervisor restart in idle state
+      case AgentCommand.RestartAgent(level) =>
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart-idle", s"level=${level.toString}")
+        val restartState = level match
+          case RestartLevel.Rollback => rollbackLastToolCall(state)
+          case _ => state
+        for
+          _ <- state.wsSend(Json.obj(
+            "type" -> "agentRestarted".asJson,
+            "sessionId" -> state.sessionId.asJson,
+            "level" -> level.toString.asJson
+          )).handleErrorWith(_ => IO.unit)
+          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState, None)
+        yield result
+
       case _ =>
         IO.pure(idle(agentDef, resources, depth, parentRef, state))
   end idle
@@ -851,6 +866,30 @@ object AgentActor extends AgentCore with AgentSession:
             // No checkpoint — go to idle
             IO.pure(idle(agentDef, resources, depth, parentRef, state.resetForInterrupt)))
 
+      // --- Supervisor restart ---
+      case AgentCommand.RestartAgent(level) =>
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "restart", s"level=${level.toString}")
+        for
+          _ <- ctx.cancelCurrentTurn()
+          _ <- state.pendingCompaction
+            .flatMap(_.replyDeferred)
+            .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
+          _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+          restartState = level match
+            case RestartLevel.Soft =>
+              state.resetForInterrupt.withPendingCompaction(None)
+            case RestartLevel.Rollback =>
+              rollbackLastToolCall(state.resetForInterrupt.withPendingCompaction(None))
+            case _ =>
+              state.resetForInterrupt.withPendingCompaction(None)
+          _ <- state.wsSend(Json.obj(
+            "type" -> "agentRestarted".asJson,
+            "sessionId" -> state.sessionId.asJson,
+            "level" -> level.toString.asJson
+          )).handleErrorWith(_ => IO.unit)
+          result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState, None)
+        yield result
+
       // --- Stop ---
       case AgentCommand.Stop(_) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "stop", "reason=user")
@@ -1259,6 +1298,40 @@ object AgentActor extends AgentCore with AgentSession:
     val newMessages = state.messages ++ List(assistantMsg, reminderMsg)
     val updatedState = state.copy(execution = state.execution.copy(messages = newMessages, status = AgentStatus.Processing))
     pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, replyTo)
+
+  // ============================================================
+  // Supervisor restart helpers
+  // ============================================================
+
+  /** Rollback the last tool call: truncate messages from the last ToolUse
+   *  Assistant message onwards, inject a supervisor error message.
+   *  If no tool call is found, returns state unchanged.
+   */
+  private def rollbackLastToolCall(state: AgentState): AgentState =
+    val messages = state.messages
+    // Find the index of the last Assistant message containing ToolUse blocks
+    val lastToolUseIdx = messages.lastIndexWhere { msg =>
+      msg.role == MessageRole.Assistant && {
+        msg.content match
+          case Right(blocks) => blocks.exists(_.isInstanceOf[ContentBlock.ToolUse])
+          case _ => false
+      }
+    }
+    if lastToolUseIdx < 0 then state // No tool call found — nothing to rollback
+    else
+      // Extract the tool name for the error message
+      val toolName = messages(lastToolUseIdx).content match
+        case Right(blocks) =>
+          blocks.collectFirst { case ContentBlock.ToolUse(_, name, _) => name }.getOrElse("unknown")
+        case _ => "unknown"
+      // Truncate from the tool call onwards
+      val truncated = messages.take(lastToolUseIdx)
+      // Inject supervisor message
+      val supervisorMsg = Message(MessageRole.User, Left(
+        s"[SUPERVISOR] Your last action ($toolName) was rolled back because it caused a problem. " +
+          "Do not repeat the same approach. Try a different strategy."
+      ))
+      state.withMessages(truncated :+ supervisorMsg)
 
   // ============================================================
   // Dream mode

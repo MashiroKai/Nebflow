@@ -89,7 +89,8 @@ object UpdateCommand extends CliCommand:
                 val available = peers.map(_.hcursor.downField("deviceName").as[String].getOrElse("?"))
                 IO.pure(
                   CliResult.Error(
-                    if peers.isEmpty then s"No peer devices discovered. Ensure NebLink Server is configured on both machines."
+                    if peers.isEmpty then
+                      s"No peer devices discovered. Ensure NebLink Server is configured on both machines."
                     else s"Device '$deviceName' not found. Available: ${available.mkString(", ")}"
                   )
                 )

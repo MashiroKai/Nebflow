@@ -116,7 +116,57 @@ export function showDeleteFolderModal(folderId, folderName) {
   modalOverlay.classList.add('on');
 }
 
+// --- Generic confirm dialog ---
+// Reuses #delete-box for any yes/no confirmation.
+let pendingConfirmCallback = null;
+
+/**
+ * Show a Nebflow-styled confirmation dialog.
+ * @param {string} title — dialog title
+ * @param {string} message — dialog body text
+ * @param {Function} onConfirm — called when user clicks Confirm
+ */
+export function showConfirm(title, message, onConfirm) {
+  const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
+  if (!deleteBox) { onConfirm?.(); return; }
+  modalBox.style.display = 'none';
+  deleteBox.style.display = 'block';
+  deleteTitle.textContent = title;
+  deleteMsg.textContent = message;
+  pendingConfirmCallback = onConfirm;
+  pendingBatchDelete = false;
+  pendingFolderDelete = false;
+  state.pendingDeleteId = null;
+  modalOverlay.classList.add('on');
+}
+
+// --- Generic toast notification ---
+/**
+ * Show a brief Nebflow-styled toast notification.
+ * @param {string} message — text to display
+ * @param {string} type — 'error' | 'info' | 'success'
+ */
+export function showToast(message, type = 'error') {
+  const toast = document.createElement('div');
+  toast.className = 'nebflow-toast nebflow-toast-' + type;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
 export function confirmDeleteSession() {
+  // Generic confirm callback takes priority
+  if (pendingConfirmCallback) {
+    const cb = pendingConfirmCallback;
+    pendingConfirmCallback = null;
+    hideModals();
+    cb();
+    return;
+  }
   if (pendingBatchDelete) {
     pendingBatchDelete = false;
     hideModals();
@@ -239,6 +289,8 @@ export function initModals() {
 
   // Expose session modal helpers for sidebar cross-module usage
   window.__showDeleteModal = showDeleteModal;
+  window.__showConfirm = showConfirm;
+  window.__showToast = showToast;
 
   // --- Card Design Modal ---
   document.getElementById('card-design-modal-cancel')?.addEventListener('click', hideCardDesignModal);
@@ -254,11 +306,12 @@ export function initModals() {
     setTimeout(() => { btn.textContent = t('settings.save'); }, 1500);
   });
   document.getElementById('card-design-modal-reset')?.addEventListener('click', () => {
-    if (!confirm(t('settings.cardDesignResetConfirm'))) return;
-    const defaultPrompt = getDefaultCardDesignPrompt();
-    state.cardDesignPrompt = defaultPrompt;
-    document.getElementById('card-design-input').value = defaultPrompt;
-    sendWs({type: 'saveCardDesign', content: defaultPrompt});
+    showConfirm(t('modal.confirm'), t('settings.cardDesignResetConfirm'), () => {
+      const defaultPrompt = getDefaultCardDesignPrompt();
+      state.cardDesignPrompt = defaultPrompt;
+      document.getElementById('card-design-input').value = defaultPrompt;
+      sendWs({type: 'saveCardDesign', content: defaultPrompt});
+    });
   });
 }
 

@@ -9,6 +9,10 @@ import nebflow.shared.*
 
 sealed trait AgentCommand
 
+/** Restart level for supervisor-triggered agent restart. */
+enum RestartLevel:
+  case Soft, Rollback, Prune, Full
+
 object AgentCommand:
 
   case class UserInput(
@@ -116,11 +120,26 @@ object AgentCommand:
   /** Frontend → agent: user cancelled plan mode. */
   case object PlanCancelled extends AgentCommand
 
+  case class ResumeTurn(
+    turnStartMessageCount: Int,
+    turnIdx: Int
+  ) extends AgentCommand
+
   case class Stop(reason: String) extends AgentCommand
   case object ClearReadTracker extends AgentCommand
   case object ResetSession extends AgentCommand
+  case object CheckDream extends AgentCommand
+  case class DreamComplete(facts: List[String], messageCountAtDream: Int) extends AgentCommand
 
   case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
+
+  /** Supervisor-triggered restart. Levels:
+   *  - Soft: cancel current work, re-dispatch LLM call (same messages)
+   *  - Rollback: truncate last tool call pair, inject error, re-dispatch
+   *  - Prune: (future) context prune + restart
+   *  - Full: (future) reset to empty, reload from persisted history
+   */
+  case class RestartAgent(level: RestartLevel) extends AgentCommand
 
   case class BackgroundTaskNotification(
     taskId: String,
@@ -263,13 +282,23 @@ enum AgentStreamEvent:
       val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
       compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
     case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
-      Json.obj(
-        "type" -> "usageUpdate".asJson,
-        "sessionId" -> sessionId.asJson,
-        "inputTokens" -> inputTokens.asJson,
-        "contextWindow" -> contextWindow.asJson,
-        "compactThreshold" -> compactThreshold.asJson
-      )
+      if isSubagent then
+        Json.obj(
+          "type" -> "usageUpdate".asJson,
+          "sessionId" -> sessionId.asJson,
+          "nodeSessionId" -> sessionId.asJson,
+          "inputTokens" -> inputTokens.asJson,
+          "contextWindow" -> contextWindow.asJson,
+          "compactThreshold" -> compactThreshold.asJson
+        )
+      else
+        Json.obj(
+          "type" -> "usageUpdate".asJson,
+          "sessionId" -> sessionId.asJson,
+          "inputTokens" -> inputTokens.asJson,
+          "contextWindow" -> contextWindow.asJson,
+          "compactThreshold" -> compactThreshold.asJson
+        )
     case CompactStart(mode, inputTokens, threshold) =>
       if isSubagent then
         Json.obj(
@@ -388,8 +417,9 @@ case class TurnContext(
   branchChange: Option[SystemReminder] = None,
   currentBranch: Option[String] = None,
   skillCatalog: String = "",
-  flowCatalog: String = "",
-  memoryBlock: String = ""
+  teamCatalog: String = "",
+  memoryBlock: String = "",
+  universalPrompt: String = ""
 )
 
 case class SessionContext(
@@ -400,7 +430,6 @@ case class SessionContext(
   depth: Int = 0,
   readTracker: Option[nebflow.core.tools.ReadTracker] = None,
   fileHistory: Option[nebflow.core.tools.FileHistory] = None,
-  liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
   contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
   askMode: Option[String] = None,
   language: Option[String] = None,
@@ -413,9 +442,21 @@ case class SessionContext(
   pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = None,
   pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] = None,
   pendingAskUserReplyTo: Option[ActorRef[List[String]]] = None,
-  /** When true, agent must call Mail at least once before finishing.
-   *  Used by flow agents to enforce structured result reporting. */
-  expectsMail: Boolean = false
+  /**
+   * When true, agent must call Mail at least once before finishing.
+   *  Used by flow agents to enforce structured result reporting.
+   */
+  expectsMail: Boolean = false,
+  /** Message index where the current mail turn started (for progress extraction). */
+  mailTurnStart: Option[Int] = None,
+  /** Total mail turns completed in this session. */
+  mailTurnCount: Int = 0,
+  /** Last dream mode timestamp (epoch millis). */
+  lastDreamAt: Option[Long] = None,
+  /** Message count at last dream (to track new material). */
+  lastDreamMessageCount: Int = 0,
+  /** Last experience extraction timestamp. */
+  lastExperienceAt: Option[Long] = None
 )
 
 case class InteractionState(
@@ -441,7 +482,23 @@ case class ExecutionContext(
   emptyResponseRetries: Int = 0,
   lastDispatch: Option[LastDispatch] = None,
   delegateCount: Int = 0,
-  lastMaintenanceDelegateCount: Int = 0
+  lastMaintenanceDelegateCount: Int = 0,
+  // Snapshot of messages.size at turn start. Used to scope the expectsMail
+  // check so only Mail calls within the current turn count. Persisted to
+  // TurnStateStore for crash recovery — restored via ResumeTurn.
+  turnStartMessageCount: Int = 0,
+  // Per-turn flag: true once the agent called the Mail tool at any point during
+  // the current turn (set in ToolsComplete, reset when a new turn starts). This
+  // is an event-driven flag, NOT a message-index scan, so it survives
+  // compaction (which rewrites/shortens `messages` and would invalidate any
+  // index-based check). It captures the user's intent: "from user input → to
+  // LLM finish/badge, did any tool call in that whole span include Mail?"
+  mailUsedThisTurn: Boolean = false,
+  // How many "you must call Mail" system-reminders have been injected this turn
+  // without the agent subsequently calling Mail. Bounded by MaxMailReminders so
+  // a flow agent that keeps producing text-without-Mail cannot loop forever —
+  // after the cap it is allowed to finishTurn (emit agentDone, release busy).
+  mailReminders: Int = 0
 )
 
 object ExecutionContext:
@@ -455,7 +512,10 @@ object ExecutionContext:
       interaction = None,
       pendingEvents = Nil,
       pendingImmediateInputs = Nil,
-      emptyResponseRetries = 0
+      emptyResponseRetries = 0,
+      turnStartMessageCount = 0,
+      mailUsedThisTurn = false,
+      mailReminders = 0
     )
 end ExecutionContext
 
@@ -517,7 +577,6 @@ object AgentState:
     wsSend: Json => IO[Unit] = _ => IO.unit,
     readTracker: Option[nebflow.core.tools.ReadTracker] = None,
     fileHistory: Option[nebflow.core.tools.FileHistory] = None,
-    liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = None,
     recentMessageIds: List[String] = Nil,
     contextWindow: Int = nebflow.shared.Defaults.ContextWindow,
     projectRoot: Option[String] = None,
@@ -539,7 +598,6 @@ object AgentState:
         depth = depth,
         readTracker = readTracker,
         fileHistory = fileHistory,
-        liveFileTracker = liveFileTracker,
         contextWindow = contextWindow,
         folderId = folderId,
         projectRoot = projectRoot,
@@ -572,13 +630,14 @@ extension (s: AgentState)
   def latestUsage: Option[TokenUsage] = s.compaction.latestUsage
   def lastModel: Option[String] = s.compaction.lastModel
   def emptyResponseRetries: Int = s.execution.emptyResponseRetries
+  def mailUsedThisTurn: Boolean = s.execution.mailUsedThisTurn
+  def mailReminders: Int = s.execution.mailReminders
   def pendingAskUser: Option[cats.effect.Deferred[IO, List[String]]] = s.execution.interaction.flatMap(_.pendingAskUser)
 
   def pendingPermission: Option[cats.effect.Deferred[IO, Boolean]] =
     s.execution.interaction.flatMap(_.pendingPermission)
   def readTracker: Option[nebflow.core.tools.ReadTracker] = s.session.readTracker
   def fileHistory: Option[nebflow.core.tools.FileHistory] = s.session.fileHistory
-  def liveFileTracker: Option[nebflow.core.tools.LiveFileTracker] = s.session.liveFileTracker
   def contextWindow: Int = s.session.contextWindow
   def askMode: Option[String] = s.session.askMode
   def language: Option[String] = s.session.language
@@ -596,7 +655,13 @@ extension (s: AgentState)
   def withMessages(msgs: List[Message]): AgentState = s.copy(execution = s.execution.copy(messages = msgs))
   def withStatus(st: AgentStatus): AgentState = s.copy(execution = s.execution.copy(status = st))
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
+  def withTurnStart(count: Int): AgentState =
+    s.copy(execution = s.execution.copy(turnStartMessageCount = count))
   def withCurrentTurnId(id: Long): AgentState = s.copy(execution = s.execution.copy(currentTurnId = id))
+  def withMailUsedThisTurn(b: Boolean): AgentState =
+    s.copy(execution = s.execution.copy(mailUsedThisTurn = b))
+  def withMailReminders(n: Int): AgentState =
+    s.copy(execution = s.execution.copy(mailReminders = n))
 
   def withInteraction(interaction: Option[InteractionState]): AgentState =
     s.copy(execution = s.execution.copy(interaction = interaction))
@@ -623,6 +688,16 @@ extension (s: AgentState)
   def withContextWindow(window: Int): AgentState = s.copy(session = s.session.copy(contextWindow = window))
   def withAskMode(mode: Option[String]): AgentState = s.copy(session = s.session.copy(askMode = mode))
   def withLanguage(lang: Option[String]): AgentState = s.copy(session = s.session.copy(language = lang))
+  def mailTurnStart: Option[Int] = s.session.mailTurnStart
+  def mailTurnCount: Int = s.session.mailTurnCount
+  def withMailTurnStart(idx: Option[Int]): AgentState = s.copy(session = s.session.copy(mailTurnStart = idx))
+  def withMailTurnCount(count: Int): AgentState = s.copy(session = s.session.copy(mailTurnCount = count))
+  def lastDreamAt: Option[Long] = s.session.lastDreamAt
+  def lastDreamMessageCount: Int = s.session.lastDreamMessageCount
+  def withLastDreamAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastDreamAt = Some(ts)))
+  def withLastDreamMessageCount(count: Int): AgentState = s.copy(session = s.session.copy(lastDreamMessageCount = count))
+  def lastExperienceAt: Option[Long] = s.session.lastExperienceAt
+  def withLastExperienceAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastExperienceAt = Some(ts)))
 
   def withPendingCompaction(job: Option[CompactionJob]): AgentState =
     s.copy(compaction = s.compaction.copy(pendingJob = job))

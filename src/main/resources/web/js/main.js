@@ -27,7 +27,7 @@ import {
   showDeleteFolderModal,
   showAgentModal, hideAgentModal, initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { escapeHtml } from './utils.js';
@@ -36,17 +36,19 @@ import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResu
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
-import { refreshWorkspace } from './workspace.js';
+import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
+import { handleFlowAgentHistory } from './flowAgentPopup.js';
 import { initNeblink, checkPairingRedirect } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
 import * as planMode from './planMode.js';
-import { initCanvas } from './canvas.js';
+import { initCanvas, restoreTabs } from './canvas.js';
 import * as flowCanvas from './flowCanvas.js';
 import { initColResizers } from './colResizer.js';
 import { initPanelDragger } from './panelDragger.js';
 import { initActivityBar } from './activityBar.js';
+import { initModelPicker, refreshModelPicker } from './modelPicker.js';
 
 // Randomized cosmic thinking bubble text
 const THINKING_VARIANTS = 6; // chat.thinking.0 through .5
@@ -565,11 +567,51 @@ function updateHeaderModelInfo() {
 
   const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
   const tooltip = info.inputTokens != null
-    ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)`
+    ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
     : `${formatTokens(info.contextWindow)} context window`;
 
+  // Circular ring geometry (used in compact mode)
+  const R = 15;
+  const CIRC = 2 * Math.PI * R;
+  const dashLen = CIRC * pct / 100;
+  const thresholdAngle = thresholdPct * 3.6;
+
+  el.style.display = 'inline-flex';
+
+  // Incremental update: if structure already exists, patch values in-place
+  // to avoid innerHTML rebuild triggering ResizeObserver → compact toggle loop.
+  const existingBar = el.querySelector('.ctx-bar-wrap');
+  const existingRing = el.querySelector('.ctx-ring-wrap');
+
+  if (existingBar && existingRing) {
+    // Patch bar
+    existingBar.title = tooltip;
+    const fill = existingBar.querySelector('.ctx-bar-fill');
+    if (fill) { fill.style.width = pct + '%'; fill.style.background = barColor; }
+    const threshold = existingBar.querySelector('.ctx-bar-threshold');
+    if (threshold) threshold.style.left = thresholdPct + '%';
+    const thresholdLabel = existingBar.querySelector('.ctx-bar-threshold-label');
+    if (thresholdLabel) { thresholdLabel.style.left = thresholdPct + '%'; thresholdLabel.textContent = thresholdPct + '%'; }
+    const label = existingBar.querySelector('.ctx-bar-label');
+    if (label) label.textContent = `${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}`;
+
+    // Patch ring
+    existingRing.title = tooltip;
+    const ringFill = existingRing.querySelector('circle:nth-child(2)');
+    if (ringFill) {
+      ringFill.setAttribute('stroke', barColor);
+      ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
+    }
+    const ringLine = existingRing.querySelector('.ctx-ring-threshold');
+    if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
+    const ringPct = existingRing.querySelector('.ctx-ring-pct');
+    if (ringPct) ringPct.textContent = pct;
+    return;
+  }
+
+  // First render — build full structure
   el.innerHTML = `
-    <div class="ctx-bar-wrap" title="${tooltip}">
+    <div class="ctx-bar-wrap ctx-full" title="${tooltip}">
       <div class="ctx-bar-track">
         <div class="ctx-bar-fill" style="width:${pct}%;background:${barColor};"></div>
         <div class="ctx-bar-threshold" style="left:${thresholdPct}%;"></div>
@@ -577,18 +619,62 @@ function updateHeaderModelInfo() {
       </div>
       <span class="ctx-bar-label">${formatTokens(info.inputTokens)}/${formatTokens(info.contextWindow)}</span>
     </div>
+    <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
+      <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
+        <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
+        <circle cx="18" cy="18" r="${R}" fill="none" stroke="${barColor}" stroke-width="3.5"
+                stroke-dasharray="${dashLen} ${CIRC}"
+                stroke-linecap="round"
+                transform="rotate(-90 18 18)"
+                style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
+        <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
+              transform="rotate(${thresholdAngle} 18 18)"
+              class="ctx-ring-threshold"/>
+      </svg>
+      <span class="ctx-ring-pct">${pct}</span>
+    </div>
   `;
-  el.style.display = 'inline-flex';
 
-  // Attach drag handler to the outer wrap for a larger hit area
-  const wrap = el.querySelector('.ctx-bar-wrap');
-  if (!wrap) return;
-  setupThresholdDrag(wrap, info, sid);
+  // Attach drag handlers for both modes
+  const barWrap = el.querySelector('.ctx-bar-wrap');
+  const ringWrap = el.querySelector('.ctx-ring-wrap');
+  if (barWrap) setupBarThresholdDrag(barWrap, info, sid);
+  if (ringWrap) setupRingThresholdDrag(ringWrap, info, sid);
 }
 state.updateHeaderModelInfo = updateHeaderModelInfo;
 
-/** Set up drag-to-adjust on the threshold line. */
-function setupThresholdDrag(wrap, info, sid) {
+/** Shared threshold save logic */
+function commitThreshold(finalPct, sid) {
+  const newBufferRatio = Math.round((1.0 - finalPct / 100) * 100) / 100;
+  const clampedRatio = Math.max(0.01, Math.min(0.50, newBufferRatio));
+  if (state.sessionModelInfo[sid]) {
+    state.sessionModelInfo[sid].compactThreshold = 1.0 - clampedRatio;
+  }
+  clearTimeout(state._thresholdSaveTimer);
+  state._thresholdSaveTimer = setTimeout(() => {
+    const freshConfig = state._freshConfigText || state.configText;
+    try {
+      const parsed = JSON.parse(freshConfig);
+      if (!parsed.compact) parsed.compact = {};
+      parsed.compact.bufferRatio = clampedRatio;
+      const json = JSON.stringify(parsed, null, 2);
+      state.parsedConfig = parsed;
+      state.configText = json;
+      sendWs({type: 'updateConfig', config: json});
+    } catch {
+      if (!state.parsedConfig) state.parsedConfig = {};
+      if (!state.parsedConfig.compact) state.parsedConfig.compact = {};
+      state.parsedConfig.compact.bufferRatio = clampedRatio;
+      const json = JSON.stringify(state.parsedConfig, null, 2);
+      state.configText = json;
+      sendWs({type: 'updateConfig', config: json});
+    }
+  }, 300);
+  sendWs({type: 'getConfig'});
+}
+
+/** Bar (full mode) threshold drag — horizontal track */
+function setupBarThresholdDrag(wrap, info, sid) {
   const track = wrap.querySelector('.ctx-bar-track');
   const thresholdEl = track?.querySelector('.ctx-bar-threshold');
   const labelEl = track?.querySelector('.ctx-bar-threshold-label');
@@ -608,62 +694,61 @@ function setupThresholdDrag(wrap, info, sid) {
         labelEl.classList.add('visible');
       }
     };
-
-    // Set initial position from click
-    const initPct = Math.max(5, Math.min(95, ((e.clientX - rect.left) / rect.width) * 100));
-    thresholdEl.style.left = initPct + '%';
-    if (labelEl) {
-      labelEl.style.left = initPct + '%';
-      labelEl.textContent = Math.round(initPct) + '%';
-      labelEl.classList.add('visible');
-    }
+    movePct(e);
 
     const onMove = (ev) => movePct(ev);
-
     const onUp = (ev) => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       track.classList.remove('dragging');
       if (labelEl) labelEl.classList.remove('visible');
-
       const finalPct = Math.max(5, Math.min(95, ((ev.clientX - rect.left) / rect.width) * 100));
+      commitThreshold(finalPct, sid);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+  wrap.addEventListener('mousedown', onStart);
+}
 
-      // Compute new bufferRatio: bufferRatio = 1.0 - thresholdPosition
-      const newBufferRatio = Math.round((1.0 - finalPct / 100) * 100) / 100;
-      const clampedRatio = Math.max(0.01, Math.min(0.50, newBufferRatio));
+/** Set up drag-to-adjust on the threshold, mapped to circular geometry. */
+function setupRingThresholdDrag(wrap, info, sid) {
+  const svg = wrap.querySelector('.ctx-ring-svg');
+  if (!svg) return;
 
-      // Persist to nebflow.json
-      // Update in-memory threshold for immediate display
-      const newThreshold = 1.0 - clampedRatio;
-      if (state.sessionModelInfo[sid]) {
-        state.sessionModelInfo[sid].compactThreshold = newThreshold;
+  const onStart = (e) => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    const movePct = (ev) => {
+      const dx = ev.clientX - cx;
+      const dy = ev.clientY - cy;
+      // Angle from top (12 o'clock), clockwise
+      let angle = Math.atan2(dx, -dy) * 180 / Math.PI;
+      if (angle < 0) angle += 360;
+      const pct = Math.max(5, Math.min(95, Math.round(angle / 3.6)));
+      // Update threshold line visually
+      const line = svg.querySelector('.ctx-ring-threshold');
+      if (line) line.setAttribute('transform', `rotate(${pct * 3.6} 18 18)`);
+      // Update tooltip
+      const t = state.sessionModelInfo[sid];
+      if (t) {
+        wrap.title = `${formatTokens(t.inputTokens)} / ${formatTokens(t.contextWindow)} tokens · threshold ${pct}%`;
       }
+      wrap._dragPct = pct;
+    };
 
-      // Debounce save — fetch fresh config first to avoid overwriting server-side changes
-      clearTimeout(state._thresholdSaveTimer);
-      state._thresholdSaveTimer = setTimeout(() => {
-        // Use a one-time listener to get the latest config from server before sending
-        const freshConfig = state._freshConfigText || state.configText;
-        try {
-          const parsed = JSON.parse(freshConfig);
-          if (!parsed.compact) parsed.compact = {};
-          parsed.compact.bufferRatio = clampedRatio;
-          const json = JSON.stringify(parsed, null, 2);
-          state.parsedConfig = parsed;
-          state.configText = json;
-          sendWs({type: 'updateConfig', config: json});
-        } catch {
-          // Fallback: send with in-memory config (mergeConfig will preserve absent keys)
-          if (!state.parsedConfig) state.parsedConfig = {};
-          if (!state.parsedConfig.compact) state.parsedConfig.compact = {};
-          state.parsedConfig.compact.bufferRatio = clampedRatio;
-          const json = JSON.stringify(state.parsedConfig, null, 2);
-          state.configText = json;
-          sendWs({type: 'updateConfig', config: json});
-        }
-      }, 300);
-      // Request fresh config from server (response will update state._freshConfigText)
-      sendWs({type: 'getConfig'});
+    movePct(e);
+
+    const onMove = (ev) => movePct(ev);
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      const finalPct = wrap._dragPct || 50;
+      commitThreshold(finalPct, sid);
     };
 
     document.addEventListener('mousemove', onMove);
@@ -683,6 +768,7 @@ onMessage('usageUpdate', (msg, view) => {
       inputTokens: msg.inputTokens,
       compactThreshold: msg.compactThreshold
     };
+    try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
     if (view) updateHeaderModelInfo();
   }
 });
@@ -1030,6 +1116,9 @@ function clearHistoryIndicators() {
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg, view) => {
+  // Flow agent sessions are handled by the popup viewer, not the primary chat.
+  if (handleFlowAgentHistory(msg)) return;
+
   const sid = msg.sessionId;
   hideHistoryLoader();
   if (!view) return;
@@ -1404,42 +1493,42 @@ onMessage('agentDone', (msg, view) => {
 // --- Flow events → canvas DAG visualization ---
 window.addEventListener('nebflow-session-change', (e) => {
   flowCanvas.onSessionChange(e.detail.sessionId);
-  refreshWorkspace(e.detail.sessionId);
+  refreshExplorer(e.detail.sessionId);
   refreshScheduledTasks(e.detail.sessionId);
   if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
 });
 
-onMessage('flowStarted', (msg) => {
-  flowCanvas.startFlow(msg);
-  if (state.updateBgTasksUI) state.updateBgTasksUI();
+onMessage('treeBranchMounted', () => {
+  flowCanvas.refresh();
+});
+onMessage('treeBranchUnmounted', () => {
+  flowCanvas.refresh();
+});
+onMessage('treeBranchUpdated', () => {
+  flowCanvas.refresh();
 });
 
-onMessage('flowStepStarted', (msg) => {
-  flowCanvas.updateStep({ ...msg, status: 'running' });
-  if (state.updateBgTasksUI) state.updateBgTasksUI();
+onMessage('flowMail', (msg) => {
+  flowCanvas.onFlowMail(msg);
 });
 
-onMessage('flowStepCompleted', (msg) => {
-  flowCanvas.updateStep({ ...msg, status: 'done' });
-  if (state.updateBgTasksUI) state.updateBgTasksUI();
+// ── Flow agent status tracking ────────────────────────────
+// agentStart/agentDone carry nodeSessionId (set by FlowAgentActivator's wsSend wrapper).
+// ws.js intercepts them into the popup ChatView, but we also need to update
+// the flow canvas status pills.
+onMessage('agentStart', (msg) => {
+  if (msg.nodeSessionId) flowCanvas.onAgentStart(msg.nodeSessionId);
+});
+onMessage('agentDone', (msg) => {
+  if (msg.nodeSessionId) flowCanvas.onAgentDone(msg.nodeSessionId);
 });
 
-onMessage('flowStepFailed', (msg) => {
-  flowCanvas.updateStep({ ...msg, status: 'failed' });
-  if (state.updateBgTasksUI) state.updateBgTasksUI();
-});
-
-onMessage('flowVerifyResult', (msg) => {
-  flowCanvas.updateVerify(msg);
-});
-
-onMessage('flowLoopIteration', (msg) => {
-  flowCanvas.updateLoop(msg);
+onMessage('flowProgress', (msg) => {
+  flowCanvas.onFlowProgress(msg);
 });
 
 onMessage('flowCompleted', (msg) => {
-  flowCanvas.completeFlow(msg);
-  if (state.updateBgTasksUI) state.updateBgTasksUI();
+  flowCanvas.onFlowCompleted(msg);
 });
 
 // --- Compaction events (per-session) ---
@@ -1475,6 +1564,10 @@ onMessage('compactComplete', (msg, view) => {
     const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
     renderSystemBubble(t('chat.compacted', { before: msg.before, after: msg.after, detail }));
   }
+  // Drain queued messages (compact = busy state, messages were queued)
+  if (sid) {
+    import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
+  }
 });
 
 onMessage('compactFailed', (msg, view) => {
@@ -1490,6 +1583,11 @@ onMessage('compactFailed', (msg, view) => {
       renderError(t('chat.compactCircuitBreaker', { attempt: msg.attempt }));
     }
     clearBusyFor(msg);
+  } else {
+    // Retry path — also drain queue in case user sent messages during compaction
+    if (sid) {
+      import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
+    }
   }
 });
 
@@ -1562,6 +1660,8 @@ onMessage('configData', (msg, view) => {
   if (settingsPanel && settingsPanel.classList.contains('active')) {
     renderSettings();
   }
+  // Refresh the input-bar model picker with the latest chain.
+  refreshModelPicker();
 });
 
 onMessage('configUpdated', (msg, view) => {
@@ -1570,50 +1670,13 @@ onMessage('configUpdated', (msg, view) => {
   sendWs({type: 'getConfig'});
 });
 
-// --- Model selection ---
+// --- Model selection (input-bar picker) ---
+// modelOptions now just feeds the input-bar picker's "add model" list; the
+// /model slash command and the bubble chooser have been removed.
 onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
-  const current = msg.current || null;
-  // Capture the session that requested the model list — the user's selection
-  // callback runs asynchronously (long after this handler returns), so we must
-  // NOT rely on the current activeView which may have switched by then.
-  const targetSessionId = msg.sessionId || activeView?.sessionId;
-
-  if (models.length === 0) {
-    renderSystemBubble(t('chat.noModels'));
-    return;
-  }
-  // Ensure bubble exists in the active view's chat
-  let bubble = activeView.stream.currentAiBubble;
-  if (!bubble) {
-    const row = document.createElement('div');
-    row.className = 'row ai';
-    bubble = document.createElement('div');
-    bubble.className = 'bubble ai';
-    row.appendChild(bubble);
-    activeView.dom.chat.appendChild(row);
-    activeView.stream.currentAiBubble = bubble;
-  }
-  const options = models.map(m => {
-    const isCurrent = current && m.ref === current;
-    return {label: m.label + (isCurrent ? ' ✓' : ''), desc: m.description || '', ref: m.ref};
-  });
-  // Add "Default" option to reset
-  const defaultLabel = t('chat.modelDefault');
-  options.unshift({label: defaultLabel, desc: t('chat.modelDefaultDesc'), ref: null});
-  import('./chat.js').then(({ showOptions }) => {
-    showOptions(bubble, [
-      {question: t('chat.selectModel'), options: options.map(o => ({label: o.label, desc: o.desc})), allowOther: false}
-    ], (answers) => {
-      const selected = options.find(o => o.label === answers[0]);
-      const modelRef = selected ? selected.ref : null;
-      // Use the captured session id, not the (possibly changed) activeSessionId.
-      sendWs({type: 'setSessionModel', sessionId: targetSessionId, modelRef: modelRef});
-      renderToSession(targetSessionId, () => {
-        renderSystemBubble(t('chat.modelSet', { model: answers[0] === defaultLabel ? 'default' : answers[0].replace(' ✓', '') }));
-      });
-    }, t('chat.apply'));
-  });
+  state.allModelRefs = models.map(m => m.ref).filter(Boolean);
+  refreshModelPicker();
 });
 
 onMessage('sessionModelSet', (msg, view) => {
@@ -1634,6 +1697,23 @@ onMessage('bridgeUser', (msg, view) => {
   if (sid === state.activeSessionId) {
     renderUserBubble(msg.text, []);
     smartScroll();
+  }
+});
+
+// --- Message recalled (backend confirms deletion) ---
+// The optimistic DOM removal already happened in recallUserMessage() in utils.js.
+// If the backend says it failed (e.g. AI already replied), we just reload the
+// history to restore the message. If success, nothing more to do.
+onMessage('messageRecalled', (msg) => {
+  if (!msg.success) {
+    // Recall failed — reload history to restore the removed row
+    const sid = msg.sessionId;
+    if (sid && sid === state.activeSessionId) {
+      import('./persistence.js').then(({ restoreFromStorage }) => {
+        if (activeView?.dom?.chat) activeView.dom.chat.innerHTML = '';
+        restoreFromStorage();
+      });
+    }
   }
 });
 
@@ -1984,9 +2064,13 @@ onMessage('askError', (msg, view) => {
 
 // --- Skills ---
 onMessage('skillList', (msg, view) => {
-  const skills = msg.skills || [];
-  state.skills = skills;
-  registerSkillCommands(skills);
+  state.skills = msg.skills || [];
+  registerSkillCommands(state.skills);
+});
+
+onMessage('flowList', (msg) => {
+  state.flows = msg.flows || [];
+  flowCanvas.refresh();
 });
 
 onMessage('skillError', (msg, view) => {
@@ -2069,6 +2153,101 @@ onMessage('forkComplete', (msg, view) => {
   renderSessionSidebar(state.sessions, msg.sessionId);
 });
 
+// ---------- 4b. Responsive header: full bar ↔ compact ring ----------
+// The context indicator (#header-model-info) lives in header-left, next to
+// the sidebar toggle. The session name (.header-center) is absolutely
+// positioned at the header's midpoint. When the header narrows, the session
+// name's left edge approaches the indicator's right edge.
+//
+// Trigger: gap between indicator's right edge and session name's left edge.
+//   gap < 8px  → switch to compact ring (saves ~92px)
+//   gap > 120px → switch back to full bar (hysteresis covers the 92px diff)
+// ── Global ESC handler: close any visible modal/overlay/dropdown ──────
+(function initGlobalEscHandler() {
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+
+    // Full-screen overlay modals — click the overlay to trigger its close handler
+    const overlays = [
+      '#memory-overlay', '#card-design-overlay', '#rules-overlay',
+      '#path-picker-overlay', '#modal-overlay', '#agent-overlay',
+    ];
+    for (const sel of overlays) {
+      const el = document.querySelector(sel);
+      if (el && getComputedStyle(el).display !== 'none') {
+        el.click();
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+    }
+
+    // Dropdown menus
+    const bypassMenu = document.getElementById('bypass-menu');
+    if (bypassMenu?.classList.contains('show')) {
+      bypassMenu.classList.remove('show');
+      e.preventDefault();
+      return;
+    }
+
+    const delegate = document.getElementById('delegate-dropdown');
+    if (delegate && !delegate.classList.contains('hidden')) {
+      delegate.classList.add('hidden');
+      e.preventDefault();
+      return;
+    }
+
+    const bg = document.getElementById('bg-dropdown');
+    if (bg && !bg.classList.contains('hidden')) {
+      bg.classList.add('hidden');
+      e.preventDefault();
+      return;
+    }
+
+    const reminder = document.getElementById('reminder-panel');
+    if (reminder?.classList.contains('open')) {
+      reminder.classList.remove('open');
+      e.preventDefault();
+      return;
+    }
+  }, true); // capture phase — intercept before other handlers
+})();
+
+(function initHeaderResizeObserver() {
+  const header = document.getElementById('header');
+  if (!header || !window.ResizeObserver) return;
+  let compactMode = false;
+  let rafId = null;
+  let suppressUntil = 0;
+  const check = () => {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      if (performance.now() < suppressUntil) return;
+      const center = header.querySelector('.header-center');
+      if (!center) return;
+      const cw = center.clientWidth;
+      if (!compactMode && cw < 140) {
+        compactMode = true;
+        header.classList.add('header-compact');
+        // Suppress callbacks for 300ms — the class toggle changes center
+        // width, which would re-trigger ResizeObserver and bounce back.
+        suppressUntil = performance.now() + 300;
+      } else if (compactMode && cw > 300) {
+        compactMode = false;
+        header.classList.remove('header-compact');
+        suppressUntil = performance.now() + 300;
+      }
+    });
+  };
+  const center = header.querySelector('.header-center');
+  if (center) {
+    const ro = new ResizeObserver(check);
+    ro.observe(center);
+  }
+  check();
+})();
+
 // ---------- 5. Initialize UI modules ----------
 applyLocaleToHtml(); // Apply locale to static HTML elements
 initNavTabs();
@@ -2077,6 +2256,7 @@ initRulesModal();
 initPathPicker();
 initInput(chatViews.primary);
 initMemory();
+initExplorer();
 initCanvas();
 initColResizers();
 initPanelDragger();
@@ -2091,13 +2271,23 @@ requestAnimationFrame(() => {
 });
 
 initActivityBar();
+initModelPicker();
 document.getElementById('flow-toggle-btn')?.addEventListener('click', () => flowCanvas.toggleCanvas());
+// Restore queued messages from localStorage (survives browser refresh)
+restoreQueue();
+// Restore Canvas tabs from localStorage (survives browser refresh)
+restoreTabs();
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
 initNeblink();
 checkPairingRedirect();
 initDropbox();
 planMode.init();
+
+// Preload Monaco Editor during idle time so first file open is instant.
+// Monaco (~2MB from CDN) is the main cause of first-open lag.
+const _idleCb = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
+_idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMonaco().catch(() => {})));
 
 // ---------- Click agent name in header → open agent config modal ----------
 document.getElementById('session-name')?.addEventListener('click', () => {
@@ -2114,18 +2304,12 @@ onMessage('planReady', (msg, view) => planMode.onPlanReady(msg, view));
 onMessage('planEnd', (msg, view) => planMode.onPlanEnd(msg, view));
 onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
 
-// ---------- Safety mode toggle (per-session, three-state cycle) ----------
+// ---------- Safety mode dropdown ----------
 (function initSafetyToggle() {
-  const MODES = ['confirm-edits', 'auto-edits', 'auto-all'];
   const TITLES = {
     'confirm-edits': '安全模式：确认编辑 (Write/Edit/Bash 需确认)',
     'auto-edits': '安全模式：编辑放行 (仅 Bash 需确认)',
     'auto-all': '安全模式：全部放行 (无需确认)',
-  };
-  const LABELS = {
-    'confirm-edits': '需要确认',
-    'auto-edits': '编辑放行',
-    'auto-all': '全部放行',
   };
 
   state.updateSafetyToggle = function(view) {
@@ -2135,38 +2319,49 @@ onMessage('_planAgent', (msg) => planMode.onPlanAgentEvent(msg));
     const btn = document.getElementById('bypass-toggle');
     if (btn) {
       btn.setAttribute('data-mode', mode);
-      const label = btn.querySelector('.bypass-label');
-      if (label) {
-        label.textContent = LABELS[mode] || LABELS['confirm-edits'];
-      }
       btn.title = TITLES[mode] || TITLES['confirm-edits'];
     }
+    // Highlight active option in dropdown
+    document.querySelectorAll('#bypass-menu button').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === mode);
+    });
   };
 
-  // Keep updateBypassToggle as alias for any external callers
   state.updateBypassToggle = state.updateSafetyToggle;
 
-  {
-    const btn = document.getElementById('bypass-toggle');
-    if (btn) {
-      const v = chatViews.primary;
-      btn.addEventListener('click', () => {
-        setActiveView(v);
+  const btn = document.getElementById('bypass-toggle');
+  const menu = document.getElementById('bypass-menu');
+  if (btn && menu) {
+    const v = chatViews.primary;
+    // Toggle dropdown on icon click
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setActiveView(v);
+      menu.classList.toggle('show');
+    });
+    // Select mode from dropdown
+    menu.querySelectorAll('button').forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const mode = item.dataset.mode;
         if (!v.sessionId) return;
-        const current = state.safetyModes[v.sessionId] || 'confirm-edits';
-        const idx = MODES.indexOf(current);
-        const next = MODES[(idx + 1) % MODES.length];
-        state.safetyModes[v.sessionId] = next;
-        // Update derived bypassSessions set
-        if (next === 'auto-all') {
+        state.safetyModes[v.sessionId] = mode;
+        if (mode === 'auto-all') {
           state.bypassSessions.add(v.sessionId);
         } else {
           state.bypassSessions.delete(v.sessionId);
         }
         state.updateSafetyToggle(v);
-        sendWs({ type: 'setSafetyMode', sessionId: v.sessionId, safetyMode: next });
+        sendWs({ type: 'setSafetyMode', sessionId: v.sessionId, safetyMode: mode });
+        menu.classList.remove('show');
       });
-    }
+    });
+    // Close dropdown on outside click
+    document.addEventListener('mousedown', (e) => {
+      if (!menu.contains(e.target) && e.target !== btn) {
+        menu.classList.remove('show');
+      }
+    }, true);
   }
 })();
 
@@ -2236,9 +2431,9 @@ onReconnect(() => {
       view.pagination.pendingInitialLoad = true;
       sendWs({ type: 'getHistory', sessionId: sid, limit: 50 });
     }
-    // Re-fetch workspace items — the initial load may have been dropped
+    // Re-fetch explorer tree — the initial load may have been dropped
     // if WS wasn't open when nebflow-session-change fired.
-    refreshWorkspace(sid);
+    refreshExplorer(sid);
     // Re-fetch task list for the same reason
     sendWs({ type: 'getTaskList', sessionId: sid });
   }
@@ -2327,5 +2522,8 @@ window.Nebflow = {
 };
 
 // ---------- 8. Start ----------
+emergencyCacheCleanup(); // Purge bloated localStorage cache before any writes
 connect();
 chatViews.primary.dom.input.focus();
+
+// Cloud STT — no model preloading needed.

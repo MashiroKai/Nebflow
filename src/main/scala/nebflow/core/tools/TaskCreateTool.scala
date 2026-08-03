@@ -24,6 +24,19 @@ object TaskCreateTool extends Tool:
 - Task can be completed in less than 3 trivial steps
 - Purely conversational or informational requests
 
+## Task Organization
+
+The first level of the task list must be the **project name** (derived from the working directory).
+Create a parent task with the project name as its subject, then create actual work tasks as
+sub-tasks under it using `parentTaskId`.
+
+Example structure:
+- "Nebflow" (project root, parentTaskId omitted)
+  - "Fix authentication bug" (parentTaskId = project root id)
+  - "Implement dark mode" (parentTaskId = project root id)
+
+When switching to a different project, create a new project-level parent task for it.
+
 ## Nested Tasks
 
 Pass `parentTaskId` to create a sub-task under a parent task. This creates a
@@ -58,7 +71,7 @@ The current task list is always visible in your system prompt — no need to cal
         ),
         "parentTaskId" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Parent task ID for creating a sub-task".asJson
+          "description" -> "Parent task ID. Omit ONLY for the project root task (subject should be the project name). All work tasks MUST have a parentTaskId linking them to their project.".asJson
         )
       ),
       "required" -> Json.arr("subject".asJson, "description".asJson)
@@ -70,8 +83,7 @@ The current task list is always visible in your system prompt — no need to cal
     s"TaskCreate($subject)"
 
   def summarizeResult(input: JsonObject, result: String): String =
-    val m = "Task #(\\d+)".r.findFirstMatchIn(result)
-    m.map(m => s"Task #${m.group(1)} created").getOrElse("created")
+    if result.length > 120 then result.take(117) + "..." else result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     (ctx.taskStore, ctx.sessionId) match
@@ -85,7 +97,7 @@ The current task list is always visible in your system prompt — no need to cal
         for
           id <- store.create(sessionId, createInput)
           _ <- TaskToolHelper.emitTaskListUpdate(store, sessionId, ctx)
-        yield Right(s"Task #$id created successfully: ${createInput.subject}")
+        yield Right(s"Task created: ${createInput.subject}")
       case (None, _) => IO.pure(Left(ToolError("No task store available")))
       case (_, None) => IO.pure(Left(ToolError("No session ID available")))
 

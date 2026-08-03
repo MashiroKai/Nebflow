@@ -1,0 +1,75 @@
+package nebflow.core.entity
+
+/** Builds Team catalog strings for system prompt injection. */
+object TeamCatalog:
+
+  /** Build the Team catalog section for system prompt injection.
+   *  Shows team lead, members (with description + useWhen), and available flows. */
+  def buildCatalog(team: TeamDef, agents: Map[String, AgentEntry], flows: Map[String, FlowDagDef]): String =
+    val leadLine = agents.get(team.lead) match
+      case Some(a) => s"- ${team.lead}: ${a.description}\n  Use when: ${a.useWhen}"
+      case None => s"- ${team.lead}: (agent not found)"
+
+    val memberLines = team.members.flatMap { name =>
+      agents.get(name).map { a =>
+        s"- $name: ${a.description}\n  Use when: ${a.useWhen}"
+      }
+    }.mkString("\n")
+
+    val flowLines = team.flows.flatMap { name =>
+      flows.get(name).map { f =>
+        s"- ${f.name}: ${f.description}"
+      }
+    }.mkString("\n")
+
+    s"""=== Team: ${team.name} ===
+       |
+       |${team.description}
+       |
+       |Team Lead (Mail by name):
+       |$leadLine
+       |
+       |Team Members (Mail by name):
+       |$memberLines
+       |
+       |Available Flows (Mail by name to trigger):
+       |$flowLines
+       |
+       |=== End Team ===""".stripMargin
+
+  /** Build a global catalog for Nebula (not part of any team).
+   *  Lists all teams and flows with routing guidance. */
+  def buildGlobalCatalog(teams: Map[String, TeamDef], flows: Map[String, FlowDagDef]): String =
+    val teamLines = teams.values.toList.sortBy(_.name).map { t =>
+      val members = (t.lead :: t.members).distinct.mkString(", ")
+      s"- ${t.name}: ${t.description}\n  Members: $members"
+    }.mkString("\n")
+
+    val flowLines = flows.values.toList.sortBy(_.name).map { f =>
+      s"- ${f.name}: ${f.description}"
+    }.mkString("\n")
+
+    s"""=== Teams & Flows ===
+
+## When to use what
+
+**Team** — ongoing project work (development, research, writing). The Team Lead receives your task and coordinates members internally.
+  → `Mail("team-name", "your task")`
+  → Use when: task belongs to a known project, needs multiple roles (e.g. backend + frontend + docs).
+
+**Flow** — structured one-shot pipeline (code review, release, merge, research). Executes a fixed DAG of agents, returns result.
+  → `Mail("flow-name", "your task")`
+  → Use when: task matches a pipeline pattern (review code, cut a release, merge a branch, research a topic).
+
+**Create new** — if no existing Team/Flow fits, use the entity-creator flow to design one.
+  → `Mail("entity-creator", "create a team/flow/agent for ...")`
+
+## Teams
+${if teamLines.nonEmpty then teamLines else "(none — create one with entity-creator flow)"}
+
+## Flows
+${if flowLines.nonEmpty then flowLines else "(none)"}
+
+=== End ===""".stripMargin
+
+end TeamCatalog

@@ -146,7 +146,12 @@ private[agent] trait AgentCore:
           yield result)
       else
         val inputTokensOpt = state.latestUsage.map(_.inputTokens)
-        val threshold = state.contextWindow - config.bufferForWindow(state.contextWindow)
+        // Team agents (depth >= 1): aggressive 20% threshold to prevent context overflow.
+        // Nebula (depth 0): standard threshold (contextWindow - max(13k, 10%))
+        val threshold = if depth >= 1 then
+          (state.contextWindow * 0.20).toInt
+        else
+          state.contextWindow - config.bufferForWindow(state.contextWindow)
         val shouldCompact = inputTokensOpt match
           case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
             Some(s"inputTokens=$inputTokens threshold=$threshold")

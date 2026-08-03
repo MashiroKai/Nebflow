@@ -220,8 +220,8 @@ export function setBusy(sessionId) {
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
   if (activeView && activeView.sessionId === sessionId) {
     const { sendBtn, stopBtn } = activeView.dom;
-    sendBtn.style.display = 'none';
-    stopBtn.style.display = 'flex';
+    if (sendBtn) sendBtn.style.display = 'none';
+    if (stopBtn) stopBtn.style.display = 'flex';
   }
 }
 
@@ -230,9 +230,9 @@ export function clearBusy(sessionId) {
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
   if (activeView && activeView.sessionId === sessionId) {
     const { input, sendBtn, stopBtn } = activeView.dom;
-    sendBtn.style.display = 'flex';
-    stopBtn.style.display = 'none';
-    input.focus();
+    if (sendBtn) sendBtn.style.display = 'flex';
+    if (stopBtn) stopBtn.style.display = 'none';
+    if (input) input.focus();
     refreshSendButtonState();
   }
 }
@@ -555,6 +555,53 @@ export function finishAgent(agentId) {
 }
 
 // ---------- Tool rendering ----------
+
+/** Render a Pop tool card onto an existing card element.
+ *  Shared between live renderTool and history restoreFromBackendHistory.
+ *  Returns true if the card was handled (Pop tool), false otherwise. */
+export function applyPopCard(card, label, summary, inputJson, isError) {
+  const _toolName = label ? label.split('(')[0].split('\n')[0].trim() : '';
+  if (_toolName !== 'Pop' || !inputJson) return false;
+
+  const icon = isError
+    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+  let popFilePath = '';
+  let popTitle = '';
+  try {
+    const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+    popFilePath = inp.filePath || '';
+    popTitle = inp.title || '';
+  } catch {}
+  const popFileName = popFilePath.split('/').pop() || popFilePath;
+  const popLocalLabel = localizeToolLabel(label);
+  const popLocalSummary = localizeToolSummary(summary, label);
+  const popLabelParts = popLocalLabel.split('\n', 2);
+  const rainbowName = '<span class="pop-rainbow-name">' + escapeHtml(popTitle || popFileName) + '</span>';
+  const summaryHtml = escapeHtml(popLocalSummary).replace(escapeHtml(popFileName), rainbowName);
+  const labelHtml = escapeHtml(popLabelParts[0]) + ' &mdash; ' + summaryHtml
+    + (popLabelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(popLabelParts[1]) + '</span>' : '');
+  card.classList.add('pop-tool-card');
+  card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+    '<div class="content"><div class="label">' + labelHtml + '</div></div>';
+  if (popFilePath) {
+    card.addEventListener('click', () => {
+      const fileName = popFilePath.split('/').pop() || popFilePath;
+      window.dispatchEvent(new CustomEvent('workspace-open-item', {
+        detail: {
+          id: 'pop:' + popFilePath,
+          title: popTitle || fileName,
+          itemType: '',
+          content: '',
+          absPath: popFilePath,
+          pinned: true
+        }
+      }));
+    });
+  }
+  return true;
+}
+
 export function renderTool(label, summary, content, isError, inputJson, sessionId) {
   const sid = sessionId || activeView.sessionId;
   const chat = activeView.dom.chat;
@@ -628,6 +675,39 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     renderWithRegistry(cardContainer, content, label);
     smartScroll();
     return { type: 'tool', label, summary, content, isError, input: inputJson };
+  }
+
+  // Tools where the input parameters are more useful than the result.
+  // For these, render the tool_use input (recipient, message, action) instead
+  // of the tool_result content ("Message sent...").
+  const _toolName = label ? label.split('(')[0].split('\n')[0].trim() : '';
+
+  // Pop tool: rainbow filename inline in the label + clickable to re-open.
+  if (applyPopCard(card, label, summary, inputJson, isError)) {
+    smartScroll();
+    return { type: 'tool', label, summary, content: null, isError, input: inputJson };
+  }
+
+  if (_toolName === 'Mail' && inputJson) {
+    const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+    const localLabel = localizeToolLabel(label);
+    const localSummary = localizeToolSummary(summary, label);
+    const labelParts = localLabel.split('\n', 2);
+    const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(localSummary)
+      + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
+    let mailBody = '';
+    try {
+      const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+      const msg = inp.message || '';
+      mailBody = msg ? '<div class="tool-mail-msg">' + renderMarkdownWithMath(msg) + '</div>' : '';
+    } catch {}
+    card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+      '<div class="content"><div class="label">' + labelHtml + '</div>' +
+      (mailBody ? '<div class="body">' + mailBody + '</div>' : '') + '</div>';
+    smartScroll();
+    if (mailBody) attachToolClick(card);
+    return { type: 'tool', label, summary, content: null, isError, input: inputJson };
   }
 
   // Default rendering for all other tools
@@ -876,13 +956,23 @@ export function appendToolStreamDelta(toolName, delta) {
       const fpResult = extractFieldValueFromPartialJson(target.rawText, 'file_path');
       const highlightLabel = fpResult ? fpResult.value : target.toolName;
       const highlighted = (displayContent.length < 20000) ? highlightCode(displayContent, highlightLabel) : null;
+
+      // Capture scroll state BEFORE content update — if content grows significantly,
+      // the post-update threshold check would fail and miss the auto-scroll.
+      const wasNearBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight < 80;
+
       if (highlighted) {
         bodyEl.innerHTML = highlighted.replace(/<\/code><\/pre>$/, '<span class="cursor"></span></code></pre>');
       } else {
         bodyEl.innerHTML = '<pre class="tool-body-pre">' + escapeHtml(displayContent) + '<span class="cursor"></span></pre>';
       }
 
-      // Auto-scroll — snapped captured at schedule time to match smartScroll()'s logic
+      // Auto-scroll tool body to keep latest content visible
+      if (wasNearBottom) {
+        bodyEl.scrollTop = bodyEl.scrollHeight;
+      }
+
+      // Auto-scroll chat — snapped captured at schedule time to match smartScroll()'s logic
       const threshold = 60;
       if (target.snapped || target.chat.scrollHeight - target.chat.scrollTop - target.chat.clientHeight < threshold) {
         target.chat.scrollTop = target.chat.scrollHeight;

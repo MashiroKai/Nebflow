@@ -9,9 +9,10 @@ import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.ActorSystem as NebulaActorSystem
 import nebflow.agent.*
-import nebflow.core.flow.{FlowDefLoader, FlowTreeActor, FlowTreeRegistry}
+import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry}
+import nebflow.core.entity.EntityLoader
 import nebflow.core.mcp.McpManager
-import nebflow.core.skill.{SkillInfo, SkillService}
+import nebflow.core.skill.SkillService
 import nebflow.core.telemetry.{TaskInferencer, TelemetryReporter}
 import nebflow.core.tools.{ToolContext, ToolRegistry}
 import nebflow.core.{PathUtil, *}
@@ -39,7 +40,8 @@ class WebSocketRoutes(
   wsHub: WsHub,
   contextWindow: Int = Defaults.ContextWindow,
   sharedResources: SharedResources,
-  mcpManager: McpManager
+  mcpManager: McpManager,
+  sttService: Option[SttService] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
   private val nebulaSystem = sharedResources.actorSystem
@@ -47,6 +49,37 @@ class WebSocketRoutes(
   /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
   private val rootAgents: Ref[IO, Map[String, nebflow.actor.ActorRef[AgentCommand]]] =
     Ref.unsafe(Map.empty)
+
+  /** Resolve agent definition: global agent → flow agent from disk → Nebula fallback. */
+  private def resolveAgentDef(
+    sessionId: String,
+    metaOpt: Option[nebflow.shared.SessionMeta],
+    sharedResources: SharedResources
+  ): IO[AgentDef] =
+    metaOpt.flatMap(_.agentName) match
+      case Some(agentName) =>
+        sharedResources.agentLibrary.get(agentName).flatMap {
+          case Some(defn) => IO.pure(defn)
+          case None =>
+            metaOpt.flatMap(_.flowName) match
+              case Some(fn) =>
+                nebflow.core.flow.FlowAgentActivator.resolveAgentFromDisk(fn, agentName, sharedResources).flatMap {
+                  case Some(defn) => IO.pure(defn)
+                  case None => nebulaFallback(agentName)
+                }
+              case None => nebulaFallback(agentName)
+        }
+      case None =>
+        sharedResources.agentLibrary.get("Nebula").flatMap {
+          case Some(d) => IO.pure(d)
+          case None => IO.raiseError(new RuntimeException("No default agent available"))
+        }
+
+  private def nebulaFallback(agentName: String): IO[AgentDef] =
+    sharedResources.agentLibrary.get("Nebula").flatMap {
+      case Some(d) => IO.pure(d)
+      case None => IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
+    }
 
   /** Get or create a root AgentActor for the given session. Idempotent. */
   private def ensureRootAgent(sessionId: String): IO[nebflow.actor.ActorRef[AgentCommand]] =
@@ -59,46 +92,23 @@ class WebSocketRoutes(
           val agentIo = for
             history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
             metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
-            agentDef <- metaOpt.flatMap(_.agentName) match
-              case Some(agentName) =>
-                sharedResources.agentLibrary.get(agentName).flatMap {
-                  case Some(defn) => IO.pure(defn)
-                  case None =>
-                    sharedResources.agentLibrary.get("Nebula").flatMap {
-                      case Some(d) => IO.pure(d)
-                      case None =>
-                        IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
-                    }
-                }
-              case None =>
-                sharedResources.agentLibrary.get("Nebula").flatMap {
-                  case Some(d) => IO.pure(d)
-                  case None => IO.raiseError(new RuntimeException("No default agent available"))
-                }
+            agentDef <- resolveAgentDef(sessionId, metaOpt, sharedResources)
             readTracker <- nebflow.core.tools.ReadTracker.create
             fileHistory <- nebflow.core.tools.FileHistory.create()
-            liveFileTracker <- nebflow.core.tools.LiveFileTracker.create
             modelOverrides <- sharedResources.sessionModelOverrides.get
             contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
             // Resolve folder-level projectRoot and inherited rules
             folderId = metaOpt.flatMap(_.folderId)
             resolvedProjectRoot <- sharedResources.sessionStore.resolveProjectRoot(folderId)
             agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-            // Compute effective projectRoot: folder setting → agent workspace default
+            // Compute effective projectRoot: folder setting → unified ~/.nebflow/projects
             effectiveProjectRoot <- resolvedProjectRoot match
               case Some(pr) => IO.pure(Some(pr))
               case None =>
-                folderId match
-                  case Some(fid) =>
-                    // Find folder name for default workspace directory
-                    val folderName = sharedResources.sessionStore
-                      .getFolderName(fid)
-                      .getOrElse(fid.take(8))
-                    val defaultPath = PathUtil.dataRoot / "agents" / agentName / "projects" / folderName
-                    IO.blocking {
-                      if !os.exists(defaultPath) then os.makeDir.all(defaultPath)
-                    }.as(Some(defaultPath.toString))
-                  case None => IO.pure(None)
+                val projectsDir = PathUtil.dataRoot / "projects"
+                IO.blocking {
+                  if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
+                }.as(Some(projectsDir.toString))
             // Resolve inherited rules from folder chain
             resolvedRules = folderId.map { fid =>
               nebflow.service.RulesStore.resolveInheritedRules(
@@ -118,7 +128,6 @@ class WebSocketRoutes(
                 initialMessages = history,
                 readTracker = Some(readTracker),
                 fileHistory = Some(fileHistory),
-                liveFileTracker = Some(liveFileTracker),
                 contextWindow = contextWindow,
                 projectRoot = effectiveProjectRoot,
                 rulesMd = resolvedRules,
@@ -147,7 +156,11 @@ class WebSocketRoutes(
               }
               .void *>
               rootAgents.update(_ + (sessionId -> ref)) *>
-              initFlowTree(sessionId, ref, pr, safetyMode).start.as(ref)
+              initFlowTree(sessionId, ref, pr, safetyMode)
+                .handleErrorWith(e =>
+                  logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}")
+                )
+                .start.as(ref)
           }
     }
 
@@ -257,7 +270,10 @@ class WebSocketRoutes(
 
           receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
             case WebSocketFrame.Text(text, _) =>
-              handleMessage(text, perConnWsSend)
+              handleMessage(text, perConnWsSend).handleErrorWith { e =>
+                logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
+                IO.unit
+              }
             case _ => IO.unit
           }.onFinalize(
             wsHub.unregister(hubConnId)
@@ -357,7 +373,12 @@ class WebSocketRoutes(
             "woff2",
             "ttf",
             "otf",
-            "pdf"
+            "pdf",
+            "docx",
+            "xlsx",
+            "xlsm",
+            "pptx",
+            "epub"
           )
           if !allowedExt.contains(ext) then BadRequest("File type not allowed")
           else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
@@ -382,12 +403,28 @@ class WebSocketRoutes(
 
     case req @ GET -> Root / "js" / file =>
       // no-cache: revalidate (Last-Modified) every time so the browser picks up
-      // the rebuilt classpath resource during development instead of serving a
+      // the rebuilt classpath resources during development instead of serving a
       // stale heuristic-cached copy.
       StaticFile
         .fromResource(s"web/js/$file", Some(req))
         .map(_.putHeaders("Cache-Control" -> "no-cache"))
         .getOrElseF(NotFound())
+
+
+
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/monaco/") =>
+      // Serve monaco editor files from bundled resources (supports nested paths).
+      // Uses manual path parsing because http4s DSL only matches single path segments.
+      val segs = req.uri.path.segments.map(_.encoded).toList
+      if segs.sizeIs < 3 then NotFound()
+      else
+        val relParts = segs.drop(2) // drop "vendor" and "monaco"
+        // Block path traversal
+        if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+        else
+          val path = relParts.mkString("/")
+          StaticFile.fromResource(s"web/vendor/monaco/$path", Some(req)).getOrElseF(NotFound())
+      end if
 
     case req @ GET -> Root / "vendor" / file =>
       StaticFile.fromResource(s"web/vendor/$file", Some(req)).getOrElseF(NotFound())
@@ -396,8 +433,11 @@ class WebSocketRoutes(
       StaticFile.fromResource(s"web/vendor/fonts/$file", Some(req)).getOrElseF(NotFound())
 
     case req @ GET -> Root / fileName =>
-      val allowed = Set("style.css", "app.js", "favicon.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
-      if allowed.contains(fileName) then StaticFile.fromResource(s"web/$fileName", Some(req)).getOrElseF(NotFound())
+      val allowed = Set("style.css", "app.js", "favicon.svg", "logo.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
+      if allowed.contains(fileName) then
+        StaticFile.fromResource(s"web/$fileName", Some(req))
+          .map(_.putHeaders("Cache-Control" -> "no-cache"))
+          .getOrElseF(NotFound())
       else NotFound()
 
     case req @ GET -> Root / "agents" / "manifest.json" =>
@@ -437,6 +477,22 @@ class WebSocketRoutes(
               StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
             else NotFound()
       end if
+
+    case req @ GET -> _ if req.uri.path.renderString.startsWith("/voice-models/") =>
+      // Serve pre-downloaded voice model files from ~/.nebflow/voice-models/
+      // Allows offline Whisper inference without CDN dependency.
+      val segs = req.uri.path.segments.map(_.encoded).toList
+      if segs.sizeIs < 2 then NotFound()
+      else
+        val relParts = segs.drop(1) // drop "voice-models"
+        // Block path traversal
+        if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+        else
+          val modelBase = PathUtil.dataRoot / "voice-models"
+          val filePath = modelBase / os.RelPath(relParts.mkString("/"))
+          if filePath.startsWith(modelBase) && os.exists(filePath) && os.isFile(filePath) then
+            StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+          else NotFound()
   }
 
   private val inputHistoryPath = PathUtil.dataRoot / "input_history.jsonl"
@@ -595,7 +651,13 @@ class WebSocketRoutes(
   ): IO[Unit] =
     if text.length > MaxMessageSize then logger.warn(s"Dropping oversized WebSocket message (${text.length} bytes)")
     else
-      parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor.downField("type").as[String].getOrElse("") match
+      val parsed = parse(text).toOption.getOrElse(io.circe.Json.Null)
+      val sessionIdForTracking = parsed.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
+      val msgType = parsed.hcursor.downField("type").as[String].getOrElse("")
+      for
+        _ <- sharedResources.lastWsActivity.set(System.currentTimeMillis())
+        _ <- nebflow.core.UsageTracker.record("ws_message", sessionIdForTracking)
+        _ <- msgType match
         case "askUserAnswer" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
           val hc = json.hcursor
@@ -637,6 +699,19 @@ class WebSocketRoutes(
         case "interrupt" =>
           val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
           logger.info("User interrupted") *> routeToAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
+
+        case "restartAgent" =>
+          val rJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val rSessionId = rJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
+          val rLevel = rJson.hcursor.downField("level").as[String].toOption.getOrElse("soft") match
+            case "rollback" => nebflow.agent.RestartLevel.Rollback
+            case "prune" => nebflow.agent.RestartLevel.Prune
+            case "full" => nebflow.agent.RestartLevel.Full
+            case _ => nebflow.agent.RestartLevel.Soft
+          if rSessionId.nonEmpty then
+            logger.info(s"Restart agent (level=$rLevel) for session $rSessionId") *>
+              routeToAgent(rSessionId)(ref => ref ! nebflow.agent.AgentCommand.RestartAgent(rLevel))
+          else IO.unit
 
         case "immediateInput" =>
           val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -720,6 +795,22 @@ class WebSocketRoutes(
               end for
             case _ => IO.unit
           end match
+
+        case "recallMessage" =>
+          val recallSessionId =
+            parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
+          if recallSessionId.nonEmpty then
+            for
+              deleted <- sessionStore.deleteLastUserMessage(recallSessionId)
+              _ <- wsSend(
+                io.circe.Json.obj(
+                  "type" -> "messageRecalled".asJson,
+                  "sessionId" -> recallSessionId.asJson,
+                  "success" -> deleted.asJson
+                )
+              )
+            yield ()
+          else IO.unit
 
         case "setThinking" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -976,19 +1067,31 @@ class WebSocketRoutes(
           else IO.unit
 
         case "getSkills" =>
-          for {
+          for
             skills <- SkillService.listSkills()
-            flows <- FlowDefLoader.loadAll()
-            flowEntries = flows.toList.sortBy(_._1).map { case (name, fd) =>
-              SkillInfo(name = name, description = fd.description, filePath = "", source = "flow")
-            }
-            allItems = skills ++ flowEntries
-          } yield wsSend(
-            io.circe.Json.obj(
-              "type" -> "skillList".asJson,
-              "skills" -> allItems.asJson
+            _ <- wsSend(
+              io.circe.Json.obj(
+                "type" -> "skillList".asJson,
+                "skills" -> skills.asJson
+              )
             )
-          )
+          yield ()
+
+        case "getFlows" =>
+          for
+            teams <- EntityLoader.listTeams()
+            flows <- EntityLoader.listFlows()
+            teamEntries = teams.values.toList.sortBy(_.name).map(t =>
+              io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson, "type" -> "team".asJson))
+            flowEntries = flows.values.toList.sortBy(_.name).map(f =>
+              io.circe.Json.obj("name" -> f.name.asJson, "description" -> f.description.asJson, "type" -> "flow".asJson))
+            _ <- wsSend(
+              io.circe.Json.obj(
+                "type" -> "flowList".asJson,
+                "flows" -> (teamEntries ++ flowEntries).asJson
+              )
+            )
+          yield ()
 
         case "skill" =>
           val skillJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -1057,7 +1160,8 @@ class WebSocketRoutes(
           val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
           val crRepeat = hc.downField("repeat").as[Option[String]].getOrElse(None)
           if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
-            val task = nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath, crRepeat)
+            val task =
+              nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath, crRepeat)
             sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
               sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
               wsSend(
@@ -1086,7 +1190,10 @@ class WebSocketRoutes(
         case "listScheduledTasks" =>
           val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
           if lrSessionId.nonEmpty then
-            sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { tasks =>
+            sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { allTasks =>
+              // Only return pending (untriggered) tasks — triggered tasks are
+              // deleted from storage on firing, but filter as a safety net.
+              val tasks = allTasks.filterNot(_.triggered)
               val taskJsons = tasks.map { t =>
                 io.circe.Json.obj(
                   "id" -> t.id.asJson,
@@ -1096,7 +1203,8 @@ class WebSocketRoutes(
                   "triggered" -> t.triggered.asJson,
                   "triggeredAt" -> t.triggeredAt.asJson,
                   "referencePath" -> t.referencePath.asJson,
-                  "repeat" -> t.repeat.asJson
+                  "repeat" -> t.repeat.asJson,
+                  "enabled" -> t.enabled.asJson
                 )
               }
               wsSend(
@@ -1122,6 +1230,24 @@ class WebSocketRoutes(
                   "type" -> "scheduledTaskDeleted".asJson,
                   "id" -> drId.asJson,
                   "sessionId" -> drSessionId.asJson
+                )
+              )
+            }
+          else IO.unit
+
+        case "toggleScheduledTask" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val tgSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+          val tgId = json.hcursor.downField("id").as[String].getOrElse("")
+          if tgSessionId.nonEmpty && tgId.nonEmpty then
+            sharedResources.scheduledTaskStore.toggleTask(tgSessionId, tgId).flatMap { newEnabled =>
+              sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "scheduledTaskToggled".asJson,
+                  "id" -> tgId.asJson,
+                  "sessionId" -> tgSessionId.asJson,
+                  "enabled" -> newEnabled.asJson
                 )
               )
             }
@@ -1168,6 +1294,7 @@ class WebSocketRoutes(
               )
             }
           else IO.unit
+          end if
 
         case "saveWorkspaceItem" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -1194,6 +1321,7 @@ class WebSocketRoutes(
               )
             }
           else IO.unit
+          end if
 
         case "deleteWorkspaceItem" =>
           val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
@@ -1211,7 +1339,430 @@ class WebSocketRoutes(
             }
           else IO.unit
 
-        case "ping" => IO.unit
+        // ===== Explorer (File Tree) =====
+
+        case "listDir" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val exSessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val subPath = hc.downField("path").as[String].getOrElse("")
+          if exSessionId.nonEmpty then
+            val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            (for
+              pr <- overrideRoot match
+                case Some(root) => IO.pure(root)
+                case None =>
+                  for
+                    metaOpt <- sessionStore.getSessionMeta(exSessionId)
+                    folderId = metaOpt.flatMap(_.folderId)
+                    prOpt <- sessionStore.resolveProjectRoot(folderId)
+                  yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+              basePath = if subPath.isEmpty then os.Path(pr) else PathUtil.resolvePath(subPath, os.Path(pr))
+              canonicalBase = basePath.toIO.getCanonicalPath
+              canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+              _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                new RuntimeException("path outside project root")
+              )
+              entries <- IO.blocking {
+                if os.exists(basePath) && os.isDir(basePath) then
+                  os.list(basePath)
+                    .sortBy { p =>
+                      (if os.isDir(p) then 0 else 1, p.last.toLowerCase)
+                    }
+                    .map { p =>
+                      val isDir = os.isDir(p)
+                      io.circe.Json.obj(
+                        "name" -> p.last.asJson,
+                        "type" -> (if isDir then "dir" else "file").asJson,
+                        "size" -> (if !isDir then os.size(p) else 0L).asJson
+                      )
+                    }
+                else Nil
+              }
+            yield (basePath.toString, entries))
+              .flatMap { case (resolvedPath, entries) =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "dirListing".asJson,
+                    "path" -> subPath.asJson,
+                    "resolvedPath" -> resolvedPath.asJson,
+                    "entries" -> entries.asJson
+                  )
+                )
+              }
+              .handleErrorWith { e =>
+                logger.warn(s"listDir failed: ${e.getMessage}")
+                  *> wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> e.getMessage.asJson))
+              }
+          else IO.unit
+          end if
+
+        case "readFile" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val rdSessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val filePath = hc.downField("path").as[String].getOrElse("")
+          if rdSessionId.nonEmpty && filePath.nonEmpty then
+            val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            (for
+              pr <- overrideRoot match
+                case Some(root) => IO.pure(root)
+                case None =>
+                  for
+                    metaOpt <- sessionStore.getSessionMeta(rdSessionId)
+                    folderId = metaOpt.flatMap(_.folderId)
+                    prOpt <- sessionStore.resolveProjectRoot(folderId)
+                  yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+              basePath = PathUtil.resolvePath(filePath, os.Path(pr))
+              canonicalBase = basePath.toIO.getCanonicalPath
+              canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+              _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                new RuntimeException("path outside project root")
+              )
+              content <- IO.blocking {
+                val size = os.size(basePath)
+                if size > 2 * 1024 * 1024 then
+                  os.read(basePath, offset = 0, count = 2 * 1024 * 1024) + "\n\n[... file truncated at 2MB]"
+                else os.read(basePath)
+              }
+              fileSize = os.size(basePath)
+            yield (content, basePath.toString, fileSize))
+              .flatMap { case (content, absPath, fileSize) =>
+                val ext = filePath.split('.').lastOption.getOrElse("").toLowerCase
+                val itemType = ext match
+                  case "md" | "markdown" => "markdown"
+                  case "html" | "htm" => "html"
+                  case "json" => "json"
+                  case "yaml" | "yml" => "yaml"
+                  case "csv" | "tsv" => "csv"
+                  case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" =>
+                    "image"
+                  case "pdf" => "pdf"
+                  case "doc" | "docx" => "docx"
+                  case "xls" | "xlsx" | "xlsm" => "xlsx"
+                  case "ppt" | "pptx" => "pptx"
+                  case "epub" => "epub"
+                  case _ => "code"
+                val isBinary = itemType match
+                  case "image" | "pdf" | "docx" | "xlsx" | "pptx" | "epub" => true
+                  case _ => false
+                if isBinary then
+                  // Binary files: don't send content via WS — frontend fetches via /api/nf-file
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "fileContent".asJson,
+                      "path" -> filePath.asJson,
+                      "absPath" -> absPath.asJson,
+                      "itemType" -> itemType.asJson,
+                      "fileName" -> filePath.split('/').last.asJson,
+                      "size" -> fileSize.asJson
+                    )
+                  )
+                else
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "fileContent".asJson,
+                      "path" -> filePath.asJson,
+                      "absPath" -> absPath.asJson,
+                      "content" -> content.asJson,
+                      "itemType" -> itemType.asJson,
+                      "fileName" -> filePath.split('/').last.asJson,
+                      "size" -> fileSize.asJson
+                    )
+                  )
+                end if
+              }
+              .handleErrorWith { e =>
+                logger.warn(s"readFile failed: ${e.getMessage}")
+                  *> wsSend(
+                    io.circe.Json
+                      .obj("type" -> "fileContent".asJson, "error" -> e.getMessage.asJson, "path" -> filePath.asJson)
+                  )
+              }
+          else IO.unit
+          end if
+
+        case "pop.readFile" =>
+          // Pop re-open: reads any absolute path without project root restriction.
+          // Agent-created files (e.g. /tmp/output.svg) should always be readable.
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val popFilePath = hc.downField("path").as[String].getOrElse("")
+          if popFilePath.nonEmpty then
+            (for
+              _ <- IO.raiseUnless(popFilePath.startsWith("/"))(
+                new RuntimeException("path must be absolute")
+              )
+              basePath = os.Path(popFilePath)
+              _ <- IO.raiseUnless(os.exists(basePath))(
+                new RuntimeException(s"file not found: $popFilePath")
+              )
+              _ <- IO.raiseUnless(os.isFile(basePath))(
+                new RuntimeException("path is not a regular file")
+              )
+              fileSize = os.size(basePath)
+              _ <- IO.raiseWhen(fileSize > 10L * 1024 * 1024)(
+                new RuntimeException("file exceeds 10MB limit")
+              )
+              content <- IO.blocking { os.read(basePath) }
+            yield (content, basePath.toString, fileSize, popFilePath))
+              .flatMap { case (content, absPath, fileSize, origPath) =>
+                val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
+                val itemType = ext match
+                  case "md" | "markdown" => "markdown"
+                  case "html" | "htm" => "html"
+                  case "json" => "json"
+                  case "yaml" | "yml" => "yaml"
+                  case "csv" | "tsv" => "csv"
+                  case "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "bmp" | "ico" | "avif" | "tiff" | "tif" =>
+                    "image"
+                  case "pdf" => "pdf"
+                  case "doc" | "docx" => "docx"
+                  case "xls" | "xlsx" | "xlsm" => "xlsx"
+                  case "ppt" | "pptx" => "pptx"
+                  case "epub" => "epub"
+                  case _ => "code"
+                val isBinary = itemType match
+                  case "image" | "pdf" | "docx" | "xlsx" | "pptx" | "epub" => true
+                  case _ => false
+                if isBinary then
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "fileContent".asJson,
+                      "path" -> origPath.asJson,
+                      "absPath" -> absPath.asJson,
+                      "itemType" -> itemType.asJson,
+                      "fileName" -> origPath.split('/').last.asJson,
+                      "size" -> fileSize.asJson
+                    )
+                  )
+                else
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "fileContent".asJson,
+                      "path" -> origPath.asJson,
+                      "absPath" -> absPath.asJson,
+                      "content" -> content.asJson,
+                      "itemType" -> itemType.asJson,
+                      "fileName" -> origPath.split('/').last.asJson,
+                      "size" -> fileSize.asJson
+                    )
+                  )
+                end if
+              }
+              .handleErrorWith { e =>
+                logger.warn(s"pop.readFile failed: ${e.getMessage}")
+                  *> wsSend(
+                    io.circe.Json
+                      .obj("type" -> "fileContent".asJson, "error" -> e.getMessage.asJson, "path" -> popFilePath.asJson)
+                  )
+              }
+          else IO.unit
+
+        case "transcribe" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val audioB64 = hc.downField("audio").as[String].getOrElse("")
+          val language = hc.downField("language").as[String].toOption.filter(_.nonEmpty)
+          if audioB64.nonEmpty then
+            sttService match
+              case None =>
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "transcription".asJson,
+                    "error" -> "STT not configured. Create ~/.nebflow/stt-config.json".asJson
+                  )
+                )
+              case Some(svc) =>
+                IO.blocking {
+                  java.util.Base64.getDecoder.decode(audioB64)
+                }.flatMap { wavBytes =>
+                  svc.transcribe(wavBytes, language).flatMap {
+                    case Right(text) =>
+                      wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "transcription".asJson,
+                          "text" -> text.asJson
+                        )
+                      )
+                    case Left(err) =>
+                      wsSend(
+                        io.circe.Json.obj(
+                          "type" -> "transcription".asJson,
+                          "error" -> err.asJson
+                        )
+                      )
+                  }
+                }.handleErrorWith { e =>
+                  logger.warn(s"Transcribe failed: ${e.getMessage}")
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "transcription".asJson,
+                      "error" -> e.getMessage.asJson
+                    )
+                  )
+                }
+          else IO.unit
+          end if
+
+        case "ping" => wsSend(io.circe.Json.obj("type" -> "pong".asJson))
+
+        case "createFile" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val cfSessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val cfPath = hc.downField("path").as[String].getOrElse("")
+          if cfSessionId.nonEmpty && cfPath.nonEmpty then
+            val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            (for
+              pr <- overrideRoot match
+                case Some(root) => IO.pure(root)
+                case None =>
+                  for
+                    metaOpt <- sessionStore.getSessionMeta(cfSessionId)
+                    folderId = metaOpt.flatMap(_.folderId)
+                    prOpt <- sessionStore.resolveProjectRoot(folderId)
+                  yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+              basePath = PathUtil.resolvePath(cfPath, os.Path(pr))
+              canonicalBase = basePath.toIO.getCanonicalPath
+              canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+              _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                new RuntimeException("path outside project root")
+              )
+              _ <- IO.blocking {
+                val parent = basePath / os.up
+                if !os.exists(parent) then os.makeDir.all(parent)
+                if !os.exists(basePath) then os.write.over(basePath, "")
+              }
+            yield cfPath)
+              .flatMap { p =>
+                wsSend(io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson))
+              }
+              .handleErrorWith { e =>
+                logger.warn(s"createFile failed: ${e.getMessage}")
+                wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+              }
+          else IO.unit
+          end if
+
+        case "createDir" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val cdSessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val cdPath = hc.downField("path").as[String].getOrElse("")
+          if cdSessionId.nonEmpty && cdPath.nonEmpty then
+            val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            (for
+              pr <- overrideRoot match
+                case Some(root) => IO.pure(root)
+                case None =>
+                  for
+                    metaOpt <- sessionStore.getSessionMeta(cdSessionId)
+                    folderId = metaOpt.flatMap(_.folderId)
+                    prOpt <- sessionStore.resolveProjectRoot(folderId)
+                  yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+              basePath = PathUtil.resolvePath(cdPath, os.Path(pr))
+              canonicalBase = basePath.toIO.getCanonicalPath
+              canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+              _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                new RuntimeException("path outside project root")
+              )
+              _ <- IO.blocking { os.makeDir.all(basePath) }
+            yield cdPath)
+              .flatMap { p =>
+                wsSend(io.circe.Json.obj("type" -> "dirCreated".asJson, "path" -> p.asJson))
+              }
+              .handleErrorWith { e =>
+                logger.warn(s"createDir failed: ${e.getMessage}")
+                wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+              }
+          else IO.unit
+          end if
+
+        case "deletePath" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val dpSessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val dpPath = hc.downField("path").as[String].getOrElse("")
+          if dpSessionId.nonEmpty && dpPath.nonEmpty then
+            val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            (for
+              pr <- overrideRoot match
+                case Some(root) => IO.pure(root)
+                case None =>
+                  for
+                    metaOpt <- sessionStore.getSessionMeta(dpSessionId)
+                    folderId = metaOpt.flatMap(_.folderId)
+                    prOpt <- sessionStore.resolveProjectRoot(folderId)
+                  yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+              basePath = PathUtil.resolvePath(dpPath, os.Path(pr))
+              canonicalBase = basePath.toIO.getCanonicalPath
+              canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+              _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                new RuntimeException("path outside project root")
+              )
+              // Prevent deleting the project root itself
+              _ <- IO.raiseWhen(canonicalBase == canonicalRoot)(new RuntimeException("cannot delete project root"))
+              _ <- IO.blocking { if os.exists(basePath) then os.remove(basePath) }
+            yield dpPath)
+              .flatMap { p =>
+                wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
+              }
+              .handleErrorWith { e =>
+                logger.warn(s"deletePath failed: ${e.getMessage}")
+                wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
+              }
+          else IO.unit
+          end if
+
+        case "writeFile" =>
+          val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+          val hc = json.hcursor
+          val wrSessionId = hc.downField("sessionId").as[String].getOrElse("")
+          val wrFilePath = hc.downField("path").as[String].getOrElse("")
+          val wrContent = hc.downField("content").as[String].getOrElse("")
+          if wrSessionId.nonEmpty && wrFilePath.nonEmpty then
+            val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            (for
+              pr <- overrideRoot match
+                case Some(root) => IO.pure(root)
+                case None =>
+                  for
+                    metaOpt <- sessionStore.getSessionMeta(wrSessionId)
+                    folderId = metaOpt.flatMap(_.folderId)
+                    prOpt <- sessionStore.resolveProjectRoot(folderId)
+                  yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+              basePath = PathUtil.resolvePath(wrFilePath, os.Path(pr))
+              canonicalBase = basePath.toIO.getCanonicalPath
+              canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+              _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
+                new RuntimeException("path outside project root")
+              )
+              _ <- IO.blocking {
+                os.write.over(basePath, wrContent)
+              }
+            yield basePath.toString)
+              .flatMap { absPath =>
+                logger.info(s"File saved: $absPath (${wrContent.length} chars)")
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "fileSaved".asJson,
+                    "path" -> wrFilePath.asJson
+                  )
+                )
+              }
+              .handleErrorWith { e =>
+                logger.warn(s"writeFile failed: ${e.getMessage}")
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "fileSaveError".asJson,
+                    "path" -> wrFilePath.asJson,
+                    "error" -> e.getMessage.asJson
+                  )
+                )
+              }
+          else IO.unit
+          end if
 
         case "getActiveBgTasks" =>
           nebflow.core.tools.BgTaskRegistry.activeTasksJson.flatMap { tasksJson =>
@@ -1353,8 +1904,7 @@ class WebSocketRoutes(
 
         case "listAgentSessions" =>
           val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-          if agentName.nonEmpty then
-            sendAgentSessionListByName(wsSend, agentName)
+          if agentName.nonEmpty then sendAgentSessionListByName(wsSend, agentName)
           else IO.unit
           end if
 
@@ -1618,6 +2168,7 @@ class WebSocketRoutes(
               val content = scope match
                 case "user" => MemoryStore.loadUserMemory.getOrElse("")
                 case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
+                case "folder" => MemoryStore.loadFolderMemory(folderId).getOrElse("")
                 case _ => ""
               wsSend(
                 io.circe.Json.obj(
@@ -1650,6 +2201,7 @@ class WebSocketRoutes(
               val save = scope match
                 case "user" => MemoryStore.saveUserMemory(content)
                 case "agent" => MemoryStore.saveAgentMemory(agentName, content)
+                case "folder" => MemoryStore.saveFolderMemory(folderId, content)
                 case _ => IO.unit
               save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
             })
@@ -2021,13 +2573,39 @@ class WebSocketRoutes(
                     val name = att.hcursor.downField("name").as[String].getOrElse("")
                     val hash = att.hcursor.downField("hash").as[String].getOrElse("")
                     val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
-                    if mimeType.startsWith("image/") && data.nonEmpty then blocks += ContentBlock.Image(data, mimeType)
+                    if mimeType.startsWith("image/") && data.nonEmpty then
+                      // Save image to uploads dir so it has a local path (like non-image files)
+                      val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
+                      try
+                        os.makeDir.all(uploadDir)
+                        val ext = if mimeType.contains("png") then "png" else if mimeType.contains("webp") then "webp" else "jpg"
+                        val fileName = s"${System.nanoTime()}_$name"
+                        val safeName = fileName.replaceAll("[/\\\\]", "_").replace("..", "_")
+                        val filePath = uploadDir / safeName
+                        val decoded = java.util.Base64.getDecoder.decode(data)
+                        os.write.over(filePath, decoded)
+                        val absPath = filePath.toString
+                        if absPath.startsWith(uploadDir.toString) then
+                          savedPaths(attIdx) = absPath
+                          // Give LLM both the image (visual) and the path (forwardable via Mail)
+                          blocks += ContentBlock.Image(data, mimeType)
+                          blocks += ContentBlock.Text(s"[用户附加图片: $absPath]")
+                          logger.info(s"Saved image '$name' to $absPath (${decoded.length} bytes)")
+                        else
+                          blocks += ContentBlock.Image(data, mimeType)
+                          logger.warn(s"Image '$name' path resolved outside upload dir, only sending visual")
+                      catch
+                        case e: Exception =>
+                          logger.warn(s"Failed to save image '$name': ${e.getMessage}")
+                          // Fallback: still send the image visually even if save failed
+                          blocks += ContentBlock.Image(data, mimeType)
+                      end try
                     else if mimeType.startsWith("image/") then
                       // Image without data — cannot process
                       blocks += ContentBlock.Text(s"[image: $name (无数据)]")
                     else
                       // Non-image: try to find the file locally by name + size + hash
-                      // Search priority: project root → common user dirs → full home
+                      // Search priority: project root → common user dirs → full home → Spotlight
                       val home = os.home.toString
                       val commonDirs = List("Downloads", "Desktop", "Documents")
                         .map(d => s"$home/$d")
@@ -2035,7 +2613,12 @@ class WebSocketRoutes(
                       val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
                       val localPath =
                         if hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths) else None
-                      localPath match
+                      // Fallback: macOS Spotlight (finds files in Library, Containers, etc.)
+                      val spotlightPath = localPath match
+                        case Some(_) => localPath
+                        case None if hash.nonEmpty && fileSize > 0 => spotlightSearch(name, hash, fileSize)
+                        case None => None
+                      spotlightPath match
                         case Some(path) =>
                           savedPaths(attIdx) = path
                           blocks += ContentBlock.Text(s"[用户附加文件: $path]")
@@ -2138,6 +2721,7 @@ class WebSocketRoutes(
             }
           else IO.unit
           end if
+      yield ()
     end if
   end handleMessage
 
@@ -2265,6 +2849,37 @@ class WebSocketRoutes(
       end if
     end if
   end findLocalFile
+
+  /** macOS Spotlight fallback — finds files that the filesystem walk misses
+   *  (e.g. files inside ~/Library/Containers for WeChat, Telegram, etc.). */
+  private def spotlightSearch(
+    name: String,
+    expectedHash: String,
+    expectedSize: Long
+  ): Option[String] =
+    import java.security.MessageDigest
+    val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+    try
+      val cmd = Seq("mdfind", "-name", safeName)
+      val output = scala.sys.process.Process(cmd).!!
+      val lines = output.trim.split("\n").iterator.filter(_.nonEmpty)
+      // Filter by size (cheap), then verify hash (expensive)
+      lines.find { line =>
+        val file = java.nio.file.Path.of(line)
+        java.nio.file.Files.exists(file) &&
+        java.nio.file.Files.isRegularFile(file) &&
+        java.nio.file.Files.size(file) == expectedSize && {
+          try
+            val bytes = java.nio.file.Files.readAllBytes(file)
+            val hex = MessageDigest.getInstance("SHA-256").digest(bytes)
+              .map(b => String.format("%02x", b)).mkString
+            hex == expectedHash
+          catch case _: Exception => false
+        }
+      }
+    catch
+      case _: Exception => None
+  end spotlightSearch
 
   // ============================================================
   // UI Message recording — wraps wsSend to persist frontend-renderable history
@@ -2535,18 +3150,30 @@ class WebSocketRoutes(
         // We'll record a minimal agent entry for history if needed.
         IO.unit
 
-      // ── Flow node session persistence ──────────────────────────────────
-      // Sub-agent events carry an injected nodeSessionId (set by
-      // PipelineActor.routeWsSend). Accumulate/flush them into that node
-      // session's .ui.json so the flow node popup shows full history on reopen,
-      // mirroring how the root session's textDelta/toolEnd/done are recorded.
+      // ── Flow agent session persistence ───────────────────────────────
+      // Flow agent events carry an injected nodeSessionId.
+      // Accumulate/flush them into that session's .ui.json
+      // so the agent popup shows full history on reopen.
       case "agentTextDelta" =>
         val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
         val delta = hc.downField("delta").as[String].getOrElse("")
         nodeSessionId match
           case Some(nsid) if delta.nonEmpty =>
-            sessionTextBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
+            // Record turn start for this flow agent so agentDone can compute a
+            // duration for the ✻ duration badge on its final AI message.
+            sessionTurnStarts
+              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis())) *>
+              sessionTextBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
           case _ => IO.unit
+
+      case "agentThinking" =>
+        // Mark turn start on the first thinking token too (some turns emit
+        // thinking before any text).
+        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty) match
+          case Some(nsid) =>
+            sessionTurnStarts
+              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis()))
+          case None => IO.unit
 
       case "agentToolEnd" =>
         val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
@@ -2575,21 +3202,39 @@ class WebSocketRoutes(
                 )
               }
           case _ => IO.unit
+        end match
 
       case "agentDone" =>
         val nodeSessionId = hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty)
         nodeSessionId match
           case Some(nsid) =>
-            // Flush any remaining accumulated text as a final AI bubble.
-            sessionTextBuffers
-              .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-              .flatMap { text =>
-                if text.nonEmpty then
-                  sharedResources.sessionStore.appendUiMessages(
-                    nsid,
-                    List(UiMessage.Ai(text, None, None, None, System.currentTimeMillis()))
-                  )
-                else IO.unit
+            // Flush any remaining accumulated text as a final AI bubble, with
+            // duration (from the turn start) and model so the popup renders the
+            // ✻ duration badge on the agent's last reply.
+            val model = hc.downField("model").as[Option[String]].getOrElse(None)
+            sessionTurnStarts
+              .modify(m => (m - nsid, m.getOrElse(nsid, 0L)))
+              .flatMap { startTime =>
+                val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
+                sessionTextBuffers
+                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
+                  .flatMap { text =>
+                    if text.nonEmpty then
+                      sharedResources.sessionStore.appendUiMessages(
+                        nsid,
+                        List(UiMessage.Ai(text, durationMs, model, None, System.currentTimeMillis()))
+                      )
+                    else if durationMs.isDefined then
+                      // No text (flushed earlier) — backfill duration/model onto
+                      // the last saved AI message for this flow agent.
+                      sharedResources.sessionStore.updateLastAiMeta(
+                        nsid,
+                        durationMs,
+                        model,
+                        System.currentTimeMillis()
+                      )
+                    else IO.unit
+                  }
               }
           case _ => IO.unit
 
@@ -2677,8 +3322,8 @@ class WebSocketRoutes(
     sessionId: String,
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
-    // Check if it's a flow first — if so, instruct agent to use ExecuteFlow
-    FlowDefLoader.load(skillName).flatMap {
+    // Check if it's a flow first — if so, instruct agent to Mail the flow
+    EntityLoader.loadFlow(skillName).flatMap {
       case Some(_) =>
         val safeInput = input.replace("\"", "\\\"").replace("\n", " ")
         routeToAgent(sessionId) { ref =>
@@ -2686,9 +3331,9 @@ class WebSocketRoutes(
             skillName,
             input,
             sessionId,
-            s"""Trigger the "$skillName" flow pipeline. Use the ExecuteFlow tool:
-               |{"source": "$skillName", "input": "$safeInput"}
-               |Wait for flow completion and report the results.""".stripMargin,
+            s"""Trigger the "$skillName" flow:
+               |Mail("$skillName", "$safeInput")
+               |Wait for the flow's reply and report the results.""".stripMargin,
             ""
           )
         }

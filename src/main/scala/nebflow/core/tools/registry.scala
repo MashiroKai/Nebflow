@@ -24,8 +24,8 @@ object ToolRegistry:
       "WebSearch" -> WebSearchTool,
       "WebFetch" -> WebFetchTool,
       "Curl" -> CurlTool,
-      // Card rendering
-      "Card" -> CardTool,
+      // Canvas file display
+      "Pop" -> PopTool,
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
       // Task management
@@ -37,14 +37,14 @@ object ToolRegistry:
       "SaveWorkspaceItem" -> SaveWorkspaceItemTool,
       // Agent lifecycle — always available, no tool whitelist filtering
       "RemoveUnnecessary" -> RemoveUnnecessaryTool,
-      // Sub-agent delegation (replaces Delegate + MountFlow)
-      "ExecuteFlow" -> ExecuteFlowTool,
-      // Flow progress query + cancel
-      "FlowControl" -> FlowControlTool,
-      // Unified agent communication (message + verify modes)
+      // Unified agent communication (message + fork modes)
       "Mail" -> MailTool,
+      // Sub-agent delegation (background + persistent modes)
+      "Delegate" -> DelegateTool,
       // Cross-device file transfer
-      "TransferFile" -> TransferFileTool
+      "TransferFile" -> TransferFileTool,
+      // Load Team/Flow from disk (validate + mount)
+      "Load" -> LoadTool
     )
     tools.putAll(builtins.asJava)
   }

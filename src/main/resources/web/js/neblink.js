@@ -8,6 +8,16 @@ import { t } from './i18n.js';
 import { onMessage, sendWs } from './ws.js';
 import { openDropbox } from './dropbox.js';
 
+/** Transient success banner shown after NebLink pairing completes. */
+function showLoginSuccessBanner(message) {
+  const banner = document.createElement('div');
+  banner.textContent = message;
+  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.92));color:var(--color-text);padding:8px 16px;border-radius:8px;z-index:1000;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
+  document.body.appendChild(banner);
+  setTimeout(() => { banner.style.opacity = '0'; }, 2700);
+  setTimeout(() => banner.remove(), 3000);
+}
+
 let neblinkState = {
   device: null,
   peers: [],
@@ -72,7 +82,16 @@ export function checkPairingRedirect() {
   const avatar = params.get('avatar');
 
   if (server && networkId && secret) {
-    // Clean URL first
+    // Capture the auth token BEFORE wiping the URL. On the very first load
+    // after the nebflow.space redirect, ws.js connect() (which stores the
+    // ?token= URL param into localStorage) has NOT run yet, so localStorage is
+    // still empty. Read the token from the URL first, fall back to localStorage
+    // (subsequent pairing attempts). The backend /api/neblink/pair route is
+    // guarded by checkAuth, which only accepts Authorization: Bearer or a
+    // ?token= query param — without this header the POST returns Forbidden and
+    // login silently fails ("登陆了都没反应").
+    const token = params.get('token') || getAuthToken();
+    // Clean URL — strip all params (incl. the secret/token) from history.
     const cleanUrl = window.location.origin + window.location.pathname;
     window.history.replaceState({}, document.title, cleanUrl);
 
@@ -81,19 +100,25 @@ export function checkPairingRedirect() {
     _rerender?.();
     const pairBody = { server, networkId, secret };
     if (avatar) pairBody.avatar = avatar;
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
     fetch('/api/neblink/pair', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(pairBody)
     }).then(r => r.json()).then(data => {
       if (data.ok) {
         neblinkState.pairing = false;
         neblinkState.paired = true;
         neblinkState.pairError = '';
+        showLoginSuccessBanner('登录成功，设备已连接');
         setTimeout(() => fetchNeblinkStatus().then(() => _rerender?.()), 1500);
       } else {
         neblinkState.pairing = false;
-        neblinkState.pairError = data.error || '配对失败';
+        const err = data.error || '配对失败';
+        neblinkState.pairError = err === 'Unauthorized'
+          ? '认证失败。请从 Nebflow 终端重新打开浏览器页面，然后重试登录。'
+          : err;
       }
       _rerender?.();
     }).catch(e => {
@@ -216,11 +241,19 @@ export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
 
   // Login button — opens nebflow.space/connect
+  // CRITICAL: Include the local auth token in the redirect URL so it survives
+  // the round-trip through nebflow.space. Without this, the POST /api/neblink/pair
+  // has no Authorization header and returns 403 (login silently fails).
   const loginBtn = document.getElementById('neblink-login-btn');
   if (loginBtn) {
     loginBtn.addEventListener('click', () => {
       const origin = window.location.origin;
-      window.open(`https://nebflow.space/connect?redirect=${encodeURIComponent(origin)}`, '_blank');
+      const token = getAuthToken();
+      // Encode token into redirect URL — connect page preserves existing query params
+      const redirectUrl = token
+        ? `${origin}/?token=${encodeURIComponent(token)}`
+        : origin;
+      window.open(`https://nebflow.space/connect?redirect=${encodeURIComponent(redirectUrl)}`, '_blank');
     });
   }
 

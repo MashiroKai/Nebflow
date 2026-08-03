@@ -6,22 +6,26 @@
   border: none;
   cursor: pointer;
   padding: 0;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  color: var(--color-text-muted);
+  color: var(--color-frame-text-muted);
   position: relative;
-  transition: background 0.15s;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
 }
 #reminder-btn:hover {
-  background: rgba(91, 127, 191, 0.06);
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text);
 }
 #reminder-btn svg {
-  width: 17px;
-  height: 17px;
-  stroke-width: 1.6;
-  opacity: 0.6;
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+  opacity: 0.7;
 }
 
 /* ── Badge ────────────────────────────────────────────────────────────── */
@@ -45,7 +49,7 @@
 
 /* ── Panel Container (sapphire glass) ─────────────────────────────────── */
 #reminder-panel {
-  position: fixed;
+  position: absolute;
   top: 56px;
   right: 16px;
   width: 360px;
@@ -304,11 +308,10 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 1px;
 }
 .reminder-row-text {
-  flex: 1;
   font-size: 13px;
   color: var(--color-text);
   line-height: 1.3;
@@ -333,6 +336,48 @@
   height: 11px;
   opacity: 0.5;
 }
+.reminder-row-last {
+  font-size: 10px;
+  color: var(--color-text);
+  opacity: 0.25;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* Toggle Switch */
+.reminder-toggle {
+  flex-shrink: 0;
+  width: 30px;
+  height: 18px;
+  border-radius: 9px;
+  border: none;
+  background: rgba(91, 127, 191, 0.15);
+  position: relative;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.2s ease;
+  outline: none;
+}
+.reminder-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reminder-toggle.on { background: rgb(91, 127, 191); }
+.reminder-toggle.on::after { transform: translateX(12px); }
+.reminder-toggle:hover { opacity: 0.85; }
+.reminder-toggle:focus-visible { box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.2); }
+
+/* disabled task row */
+.reminder-row.disabled .reminder-row-text { opacity: 0.4; }
+.reminder-row.disabled .reminder-row-time { opacity: 0.3; }
 
 /* overdue row */
 .reminder-row.overdue .reminder-row-time {
@@ -492,13 +537,6 @@
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
-  #reminder-btn:hover {
-    background: rgba(91, 127, 191, 0.08);
-    box-shadow: 0 0 0 1px rgba(91, 127, 191, 0.06);
-  }
-  #reminder-btn:active {
-    background: rgba(91, 127, 191, 0.14);
-  }
   #reminder-btn svg {
     opacity: 0.5;
   }

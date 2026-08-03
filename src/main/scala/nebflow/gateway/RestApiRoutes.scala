@@ -7,7 +7,9 @@ import fs2.{Pipe, Stream}
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
 import nebflow.agent.SharedResources
-import nebflow.core.flow.FlowTreeRegistry
+import nebflow.core.PathUtil
+import nebflow.core.entity.EntityLoader
+import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.llm.NebflowServiceConfig
 import nebflow.neblink.{NeblinkConfig, NeblinkServerConfig, NeblinkService}
 import nebflow.service.ConfigService
@@ -383,10 +385,16 @@ class RestApiRoutes(
                 // Persist the account avatar (if nebflow.space provided one) onto
                 // the device identity so the UI can show it after login.
                 _ <- neblinkService.fold(IO.unit)(_.updateDeviceInfo(avatarUrl = avatarOpt))
-                resp <- Ok(Json.obj("ok" -> true.asJson, "message" -> "Configuration saved. Please restart Nebflow to apply.".asJson))
+                resp <- Ok(
+                  Json.obj(
+                    "ok" -> true.asJson,
+                    "message" -> "Configuration saved. Please restart Nebflow to apply.".asJson
+                  )
+                )
               yield resp
             case _ =>
               BadRequest(Json.obj("error" -> "Missing server, networkId, or secret".asJson))
+          end match
         }
 
     // Cloud session sync toggle — removed (session sync deleted)
@@ -673,7 +681,75 @@ class RestApiRoutes(
           }
       }
 
-    // GET /flow/status/:sessionId — return all pipeline states for frontend
+    // GET /flows — return all mounted flows globally (no sessionId required)
+    // NOTE: Router mounts this under /api prefix, so full path is /api/flows
+    case GET -> Root / "flows" =>
+      for
+        _ <- nebflow.core.flow.FlowTreeRegistry.awaitRestore(3000L)
+        flowsJson <- buildFlowsJson()
+        result <- Ok(Json.obj("flows" -> flowsJson))
+      yield result
+
+    // GET /running-flows — list currently running DAG flow instances
+    case GET -> Root / "running-flows" =>
+      nebflow.core.flow.RunningFlowRegistry.listJson.flatMap(json => Ok(json))
+
+    // GET /flow/dag/:name — return flow DAG structure (nodes, edges, routing)
+    case GET -> Root / "flow" / "dag" / flowName =>
+      if !isValidFlowName(flowName) then
+        BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
+      else
+        nebflow.core.entity.EntityLoader.loadFlow(flowName).flatMap {
+          case Some(dag) =>
+            val nodesJson = dag.nodes.map { (nodeId, node) =>
+              val route: Json = node.onComplete match
+                case nebflow.core.entity.NodeRoute.Goto(t) => Json.fromString(t)
+                case nebflow.core.entity.NodeRoute.Return => Json.fromString("$return")
+                case nebflow.core.entity.NodeRoute.Switch(expr, cases) =>
+                  val casesObj = io.circe.JsonObject.fromIterable(cases.map { (k, v) =>
+                    val target: String = v match
+                      case nebflow.core.entity.NodeRoute.Goto(t) => t
+                      case nebflow.core.entity.NodeRoute.Return => "$return"
+                      case _ => "?"
+                    k -> Json.fromString(target)
+                  })
+                  Json.obj("switch" -> Json.fromString(expr), "cases" -> casesObj.asJson)
+              nodeId -> Json.obj(
+                "agent" -> node.agent.asJson,
+                "input" -> node.input.asJson,
+                "onComplete" -> route,
+                "onError" -> node.onError.map(_.toString.toLowerCase).asJson,
+                "maxRetries" -> node.maxRetries.asJson
+              )
+            }
+            Ok(Json.obj(
+              "name" -> dag.name.asJson,
+              "description" -> dag.description.asJson,
+              "entry" -> dag.entry.asJson,
+              "maxLoop" -> dag.maxLoop.asJson,
+              "nodes" -> nodesJson.asJson
+            ))
+          case None =>
+            NotFound(Json.obj("error" -> s"Flow '$flowName' not found".asJson))
+        }
+
+    // GET /teams — list all defined teams (from team.json files)
+    case GET -> Root / "teams" =>
+      for
+        teams <- nebflow.core.entity.EntityLoader.listTeams()
+        teamsJson = teams.values.toList.sortBy(_.name).map { t =>
+          io.circe.Json.obj(
+            "name" -> t.name.asJson,
+            "description" -> t.description.asJson,
+            "lead" -> t.lead.asJson,
+            "members" -> t.members.asJson,
+            "flows" -> t.flows.asJson
+          )
+        }
+        result <- Ok(io.circe.Json.obj("teams" -> teamsJson.asJson))
+      yield result
+
+    // GET /flow/status/:sessionId — return mounted flows and agent status for frontend
     // NOTE: Router mounts this under /api prefix, so full path is /api/flow/status/:sessionId
     case GET -> Root / "flow" / "status" / sessionId =>
       // Validate sessionId: only UUID format (hex + dashes), no path traversal
@@ -681,14 +757,208 @@ class RestApiRoutes(
         BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
       else
         for
-          states <- nebflow.core.flow.PipelineStateStore.loadAll(sessionId)
-          response = Json.obj(
-            "sessionId" -> sessionId.asJson,
-            "pipelines" -> states.asJson
-          )
-          result <- Ok(response)
+          flowsJson <- buildFlowsJson()
+          result <- Ok(Json.obj("sessionId" -> sessionId.asJson, "flows" -> flowsJson))
         yield result
+
+    // GET /flow/mailbox/:sessionId/:flowName — mail history for a flow
+    case GET -> Root / "flow" / "mailbox" / sessionId / flowName =>
+      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+      else
+        for
+          records <- nebflow.core.flow.FlowMailStore.load(sessionId, flowName)
+          result <- Ok(Json.obj("records" -> records.asJson))
+        yield result
+
+    // DELETE /flow/mailbox/:sessionId/:flowName — clear mail history
+    case DELETE -> Root / "flow" / "mailbox" / sessionId / flowName =>
+      if sessionId.isEmpty || !sessionId.matches("^[a-fA-F0-9-]{1,64}$") then
+        BadRequest(Json.obj("error" -> "Invalid sessionId".asJson))
+      else
+        for
+          _ <- nebflow.core.flow.FlowMailStore.clear(sessionId, flowName)
+          result <- Ok(Json.obj("cleared" -> true.asJson))
+        yield result
+
+    // ===== Flow Editor APIs =====
+
+    // GET /flow/def/:name — return team definition for the editor
+    case GET -> Root / "flow" / "def" / flowName =>
+      if !isValidFlowName(flowName) then
+        BadRequest(Json.obj("error" -> "Invalid flow name".asJson))
+      else
+        for
+          teamOpt <- EntityLoader.loadTeam(flowName)
+          agents <- EntityLoader.listAgents()
+          result <- teamOpt match
+            case None => NotFound(Json.obj("error" -> s"Team '$flowName' not found".asJson))
+            case Some(team) =>
+              val leadEntry = agents.get(team.lead)
+              val memberEntries = team.members.flatMap(agents.get)
+              val allEntries = (leadEntry.toList ++ memberEntries)
+              val agentsJson = allEntries.map { entry =>
+                Json.obj(
+                  "name" -> entry.name.asJson,
+                  "description" -> entry.description.asJson,
+                  "tools" -> entry.tools.asJson,
+                  "systemPrompt" -> entry.systemPrompt.asJson
+                )
+              }
+              Ok(Json.obj(
+                "name" -> team.name.asJson,
+                "manager" -> team.lead.asJson,
+                "description" -> team.description.asJson,
+                "agents" -> agentsJson.asJson,
+                "type" -> "team".asJson
+              ))
+        yield result
+
+    // GET /agents/list — list all global agents (for extends dropdown)
+    case GET -> Root / "agents" / "list" =>
+      for
+        agents <- sharedResources.agentLibrary.loadAll()
+        entries = agents.toList.sortBy(_._1).map { (name, defn) =>
+          Json.obj(
+            "name" -> name.asJson,
+            "description" -> defn.description.asJson,
+            "tools" -> defn.tools.asJson,
+            "displayName" -> defn.displayName.asJson,
+            "systemPrompt" -> defn.systemPrompt.asJson
+          )
+        }
+        result <- Ok(Json.obj("agents" -> entries.asJson))
+      yield result
+
+    // GET /agents/:name — get global agent detail (system.md + tools)
+    case GET -> Root / "agents" / agentName =>
+      if !isValidAgentName(agentName) then
+        BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
+      else
+        for
+          agents <- sharedResources.agentLibrary.loadAll()
+          result <- agents.get(agentName) match
+            case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+            case Some(defn) => Ok(Json.obj(
+              "name" -> defn.name.asJson,
+              "description" -> defn.description.asJson,
+              "tools" -> defn.tools.asJson,
+              "systemPrompt" -> defn.systemPrompt.asJson,
+              "displayName" -> defn.displayName.asJson
+            ))
+        yield result
+
+    // ===== Entity API (Team/Flow/Agent management) =====
+
+    // GET /teams/:name — team detail
+    case GET -> Root / "teams" / teamName =>
+      if !isValidAgentName(teamName) then
+        BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      else
+        for
+          teamOpt <- EntityLoader.loadTeam(teamName)
+          result <- teamOpt match
+            case None => NotFound(Json.obj("error" -> s"Team '$teamName' not found".asJson))
+            case Some(team) => Ok(Json.obj(
+              "name" -> team.name.asJson,
+              "description" -> team.description.asJson,
+              "lead" -> team.lead.asJson,
+              "members" -> team.members.asJson,
+              "flows" -> team.flows.asJson
+            ))
+        yield result
+
+    // GET /team/rules/:name — read team rules.md
+    case GET -> Root / "team" / "rules" / teamName =>
+      if !isValidAgentName(teamName) then
+        BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      else
+        for
+          rules <- EntityLoader.loadTeamRules(teamName)
+          result <- Ok(Json.obj("content" -> rules.asJson))
+        yield result
+
+    // POST /team/rules/:name — save team rules.md + trigger reload
+    case req @ POST -> Root / "team" / "rules" / teamName =>
+      if !isValidAgentName(teamName) then
+        BadRequest(Json.obj("error" -> "Invalid team name".asJson))
+      else
+        for
+          body <- req.as[Json]
+          content = body.hcursor.downField("content").as[String].getOrElse("")
+          rulesDir = PathUtil.dataRoot / "teams" / teamName
+          _ <- IO.blocking {
+            os.makeDir.all(rulesDir)
+            val tmp = rulesDir / ".rules.md.tmp"
+            os.write(tmp, content)
+            os.move.over(tmp, rulesDir / "rules.md")
+          }
+          // Trigger reload so changes take effect on next activation
+          _ <- FlowTreeRegistry.treesRef.get.flatMap { treeMap =>
+            treeMap.values.toList.traverse_ { treeRef =>
+              treeRef ! TreeCommand.ReloadDefinition(teamName)
+            }
+          }
+          result <- Ok(Json.obj("saved" -> true.asJson))
+        yield result
+
+    // GET /entity-agents — list all agents (entity format, with useWhen)
+    case GET -> Root / "entity-agents" =>
+      for
+        agents <- EntityLoader.listAgents()
+        entries = agents.values.toList.sortBy(_.name).map { a =>
+          Json.obj(
+            "name" -> a.name.asJson,
+            "description" -> a.description.asJson,
+            "useWhen" -> a.useWhen.asJson,
+            "tools" -> a.tools.asJson,
+            "voice" -> a.voice.asJson
+          )
+        }
+        result <- Ok(Json.obj("agents" -> entries.asJson))
+      yield result
   }
+
+  /** Build the flows JSON array from global FlowMembership state.
+   *  Used by both `/flows` (no sessionId) and `/flow/status/:sessionId`.
+   *  When the runtime registry is empty (startup race), falls back to
+   *  persisted MountedFlowStore data so the frontend sees flow topology
+   *  before FlowTreeActor finishes restoring. */
+  /** Build mounted teams JSON for the frontend (GET /api/flows).
+   *  Reads from live FlowMembership runtime state. Each team is a card with
+   *  agent tiles showing status. */
+  private def buildFlowsJson(): IO[Json] =
+    for
+      flowsMap <- nebflow.core.flow.FlowMembership.listMountedFlows
+      teams <- EntityLoader.listTeams()
+      flows <- flowsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
+        val teamDefOpt = teams.get(instanceName)
+        agents.traverse { (agentName, sid) =>
+          nebflow.core.flow.FlowMembership.isBusy(sid).map { busy =>
+            Json.obj(
+              "name" -> agentName.asJson,
+              "sessionId" -> sid.asJson,
+              "status" -> (if busy then "running" else "idle").asJson,
+              "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
+            )
+          }
+        }.map { agentsJson =>
+          Json.obj(
+            "name" -> instanceName.asJson,
+            "type" -> "team".asJson,
+            "agents" -> agentsJson.asJson
+          )
+        }
+      }
+    yield flows.asJson
+
+  // ── Flow editor helpers ──────────────────────────────────
+
+  private def isValidFlowName(name: String): Boolean =
+    name.nonEmpty && name.matches("^[a-zA-Z0-9][a-zA-Z0-9._-]*$") && !name.contains("..")
+
+  private def isValidAgentName(name: String): Boolean =
+    name.nonEmpty && name.matches("^[a-zA-Z0-9][a-zA-Z0-9._-]*$") && !name.contains("..")
 
   private def withAuth(req: Request[IO])(f: => IO[Response[IO]]): IO[Response[IO]] =
     if checkAuth(req) then f

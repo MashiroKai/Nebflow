@@ -296,7 +296,8 @@ _download() {
 
 # Install ripgrep (rg) for Glob/Grep search support
 install_rg() {
-    if command -v rg &> /dev/null; then
+    local rg_local="${INSTALL_DIR}/rg"
+    if [ -f "$rg_local" ]; then
         return 0
     fi
     local rg_local="${INSTALL_DIR}/rg"
@@ -390,10 +391,46 @@ setup_path() {
     fi
 }
 
+# Download Whisper voice model for offline speech recognition
+install_voice_model() {
+    local model_dir="${HOME}/.nebflow/voice-models/onnx-community/whisper-base"
+    if [ -f "$model_dir/onnx/encoder_model_quantized.onnx" ]; then
+        echo "    Voice model already installed."
+        return 0
+    fi
+
+    detect_region
+    local base
+    if [ "$REGION" = "cn" ]; then
+        base="https://hf-mirror.com/onnx-community/whisper-base/resolve/main"
+    else
+        base="https://huggingface.co/onnx-community/whisper-base/resolve/main"
+    fi
+    echo "==> Downloading Whisper voice model (~75MB, one-time)..."
+    mkdir -p "$model_dir/onnx"
+
+    # Config files (small)
+    local f
+    for f in config.json tokenizer.json generation_config.json preprocessor_config.json; do
+        _download "$base/$f" "$model_dir/$f" 2>/dev/null || true
+    done
+
+    # Quantized ONNX models (encoder ~22MB + decoder ~51MB)
+    local ok=true
+    _download "$base/onnx/encoder_model_quantized.onnx" "$model_dir/onnx/encoder_model_quantized.onnx" || ok=false
+    _download "$base/onnx/decoder_model_merged_quantized.onnx" "$model_dir/onnx/decoder_model_merged_quantized.onnx" || ok=false
+    if $ok; then
+        echo "       Voice model installed."
+    else
+        echo "       Voice model download failed (voice will use CDN on first use)."
+    fi
+}
+
 # Run
 check_java
 download_jar
 install_rg
+install_voice_model
 create_wrapper
 create_config
 setup_path

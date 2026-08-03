@@ -26,13 +26,13 @@
   border: none;
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  padding: 6px;
-  width: 36px;
-  height: 36px;
+  padding: 0;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 6px;
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s, opacity 0.15s;
 }
@@ -44,27 +44,15 @@
 
 .voice-toggle:active {
   background: var(--color-frame-active);
-  transform: scale(0.96);
 }
 
 .voice-toggle svg {
-  width: 20px;
-  height: 20px;
+  width: 16px;
+  height: 16px;
   stroke-width: 2;
 }
 
 .voice-toggle.muted {
   color: var(--color-text-muted);
   opacity: 0.45;
-}
-
-/* ── Dark mode ────────────────────────────────────────────────────────── */
-
-@media (prefers-color-scheme: dark) {
-  .voice-toggle:hover {
-    background: rgba(255, 255, 255, 0.06);
-  }
-  .voice-toggle:active {
-    background: rgba(255, 255, 255, 0.10);
-  }
 }

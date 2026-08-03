@@ -17,6 +17,7 @@ export default {
   ws: null,
   heartbeat: null,
   connected: false,
+  pendingPong: false,
 
   // Session
   activeSessionId: null,
@@ -114,6 +115,7 @@ export default {
 
   // Skill list (from server)
   skills: [],
+  flows: [],
 
   // Per-session thinking buffer: sessionId -> accumulated thinking text
   sessionThinkingBuffers: {},
