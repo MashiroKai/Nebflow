@@ -1,14 +1,16 @@
-// modelPicker.js — Draggable model chain selector on the input bar's right side.
+// modelPicker.js — Model selector with separated preferred + fallback chain.
 //
-// Replaces the /model slash command and the Settings "Model Chain" editor.
-// The chain = [default(current) model, fallback1, fallback2, ...]. Drag to
-// reorder: position 0 is the active model, the rest are the fallback order.
-// On any reorder, the chain is written to state.parsedConfig.llm.model and
-// flushed to the server via the existing updateConfig WS (hot-reload).
+// Collapsed chip: shows the runtime current model (state.currentModel),
+// which is updated by WS modelChanged when a fallback kicks in.
+//
+// Expanded panel: two sections:
+//   1. 「Preferred Model」— dropdown select (single), writes model.default
+//   2. 「Fallback Chain」— draggable ordered list, writes model.fallbacks
 //
 // Data sources:
-//   - state.parsedConfig.llm.model.{default, fallbacks}  → current chain
-//   - state.allModelRefs (filled from modelOptions / config providers) → pickable models
+//   - state.parsedConfig.llm.model.{default, fallbacks}  → config
+//   - state.currentModel  → runtime model (WS modelChanged, init = default)
+//   - state.allModelRefs  → pickable models
 
 import state from './state.js';
 import { sendWs } from './ws.js';
@@ -20,7 +22,6 @@ let expanded = false;
 /** All pickable model refs known to the frontend. */
 function allModelRefs() {
   if (state.allModelRefs && state.allModelRefs.length) return state.allModelRefs;
-  // Derive from parsedConfig providers.
   const cfg = state.parsedConfig || {};
   const providers = cfg.llm?.providers || {};
   const refs = [];
@@ -33,27 +34,37 @@ function allModelRefs() {
   return refs;
 }
 
-/** The current ordered chain (default + fallbacks), de-duplicated. */
-function currentChain() {
+/** The preferred model ref (model.default, with backward compat). */
+function preferredModel() {
   const model = state.parsedConfig?.llm?.model || {};
-  const def = model.default || '';
+  return model.default || model.preferred || '';
+}
+
+/** The fallback chain (model.fallbacks), de-duplicated, excluding preferred. */
+function fallbackChain() {
+  const model = state.parsedConfig?.llm?.model || {};
   const fbs = Array.isArray(model.fallbacks) ? model.fallbacks : [];
-  const chain = [];
+  const pref = preferredModel();
   const seen = new Set();
-  for (const r of [def, ...fbs]) {
-    if (r && !seen.has(r)) { chain.push(r); seen.add(r); }
+  const chain = [];
+  for (const r of fbs) {
+    if (r && r !== pref && !seen.has(r)) { chain.push(r); seen.add(r); }
   }
   return chain;
 }
 
+/** The runtime current model (what's actually being used right now).
+ *  Falls back to preferred if WS hasn't told us otherwise. */
+function currentRuntimeModel() {
+  return state.currentModel || preferredModel();
+}
+
 function shortLabel(ref) {
-  // "Zai/GLM-5.2" → "GLM-5.2"; keep full if no slash.
   const idx = ref.lastIndexOf('/');
   return idx >= 0 ? ref.slice(idx + 1) : ref;
 }
 
 function providerLabel(ref) {
-  // "Zai/GLM-5.2" → "Zai"; keep full if no slash.
   const idx = ref.indexOf('/');
   return idx >= 0 ? ref.slice(0, idx) : ref;
 }
@@ -64,13 +75,33 @@ function flushConfigToServer() {
   sendWs({ type: 'updateConfig', config: json });
 }
 
-/** Persist a new chain order: index 0 = default, rest = fallbacks. */
-function applyChain(newChain) {
+function ensureModelConfig() {
   if (!state.parsedConfig) state.parsedConfig = { llm: {} };
   if (!state.parsedConfig.llm) state.parsedConfig.llm = {};
   if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {};
-  state.parsedConfig.llm.model.default = newChain[0] || '';
-  state.parsedConfig.llm.model.fallbacks = newChain.slice(1);
+}
+
+/** Set the preferred model and remove it from fallbacks if present. */
+function applyPreferred(ref) {
+  ensureModelConfig();
+  const old = preferredModel();
+  state.parsedConfig.llm.model.default = ref;
+  // Remove new preferred from fallbacks; add old preferred to fallbacks head
+  const fbs = fallbackChain().filter(r => r !== ref);
+  if (old && old !== ref) fbs.unshift(old);
+  state.parsedConfig.llm.model.fallbacks = fbs;
+  // Update runtime model if it was showing the old preferred
+  if (!state.currentModel || state.currentModel === old) {
+    state.currentModel = ref;
+  }
+  flushConfigToServer();
+  render();
+}
+
+/** Persist a new fallback order. */
+function applyFallbacks(newFbs) {
+  ensureModelConfig();
+  state.parsedConfig.llm.model.fallbacks = newFbs;
   flushConfigToServer();
   render();
 }
@@ -80,44 +111,43 @@ let delegateBound = false;
 function bindDelegate() {
   if (delegateBound || !mountEl) return;
   delegateBound = true;
-  // Delegated listener on the chip mount (survives innerHTML re-renders of
-  // the chip). The panel is rendered separately in #input-area and gets its
-  // own bindings in render() (see bindPanel).
-  // NOTE: any click handled here MUST stopPropagation, because render() may
-  // replace the clicked node (detaching e.target) before the event reaches
-  // the document-level outside-click handler — which would otherwise mistake
-  // the now-detached target as "outside" and immediately re-collapse.
   mountEl.addEventListener('click', (e) => {
     e.stopPropagation();
     if (e.target.closest('#mp-toggle')) { expanded = true; render(); return; }
   });
 }
 
-/** Bind interactions on the floating panel (mounted in #input-area). The
- *  panel is recreated on every expand, so bind fresh each time. */
-function bindPanel(chain) {
+/** Bind interactions on the floating panel. */
+function bindPanel(pref, fbs) {
   const panel = document.getElementById('mp-panel');
   if (!panel) return;
+
   panel.addEventListener('click', (e) => {
     e.stopPropagation();
     if (e.target.closest('#mp-close')) { expanded = false; render(); return; }
     const rm = e.target.closest('.mp-remove');
     if (rm) {
       const idx = Number(rm.getAttribute('data-idx'));
-      const next = chain.slice();
+      const next = fbs.slice();
       next.splice(idx, 1);
-      if (next.length === 0) return; // keep at least one
-      applyChain(next);
+      applyFallbacks(next);
       return;
     }
-    // Clicking a row (not its remove button) — no-op for now.
   });
+
   panel.addEventListener('change', (e) => {
+    if (e.target.id === 'mp-preferred-select') {
+      e.stopPropagation();
+      const ref = e.target.value;
+      if (ref) applyPreferred(ref);
+      return;
+    }
     if (e.target.id === 'mp-add-select') {
       e.stopPropagation();
       const ref = e.target.value;
       if (!ref) return;
-      applyChain([...currentChain(), ref]);
+      applyFallbacks([...fbs, ref]);
+      return;
     }
   });
 }
@@ -125,74 +155,74 @@ function bindPanel(chain) {
 function render() {
   if (!mountEl) return;
   bindDelegate();
-  const chain = currentChain();
-  const first = chain[0];
 
-  // The chip is ALWAYS rendered (collapsed or expanded) so it does not
-  // visually "jump" or disappear when the panel opens. When expanded, the
-  // panel is rendered as a separate element inside #input-area (a sibling of
-  // #input-bar) — NOT inside #model-picker — so its backdrop-filter can blur
-  // the chat content behind it instead of being trapped inside #input-bar's
-  // own backdrop root (which would make it look nearly transparent).
+  const runtime = currentRuntimeModel();
+  const pref = preferredModel();
+  const isFallback = runtime && pref && runtime !== pref;
+
+  // ── Chip (always rendered) ──
   const chipHtml = `
-    <button class="mp-chip mp-active${expanded ? ' mp-open' : ''}" id="mp-toggle" title="${t('modelPicker.changeModel') || 'Change model / fallback chain'}">
-      <span class="mp-dot"></span>${first ? `<span class="mp-provider">${esc(providerLabel(first))}</span><span class="mp-label">${esc(shortLabel(first))}</span>` : `<span class="mp-label">${t('modelPicker.select') || 'select'}</span>`}
+    <button class="mp-chip mp-active${expanded ? ' mp-open' : ''}" id="mp-toggle" title="${t('modelPicker.changeModel')}">
+      <span class="mp-dot${isFallback ? ' mp-dot-fallback' : ''}"></span>${runtime ? `<span class="mp-provider">${esc(providerLabel(runtime))}</span><span class="mp-label">${esc(shortLabel(runtime))}</span>${isFallback ? `<span class="mp-fallback-tag">${t('modelPicker.usingFallback')}</span>` : ''}` : `<span class="mp-label">${t('modelPicker.select')}</span>`}
     </button>`;
 
-  // Always render the chip into the picker mount.
   mountEl.innerHTML = chipHtml;
-
-  // Remove any previously-rendered panel (from a prior expand or a re-render).
   removePanel();
 
-  if (!expanded) {
-    return;
-  }
+  if (!expanded) return;
 
-  // Expanded: build the panel and mount it on document.body with fixed
-  // positioning so it floats above everything, anchored to the chip.
+  // ── Panel ──
   const container = document.getElementById('top-overlays') || document.body;
 
-  const items = chain.map((ref, i) => `
+  // Fallback rows
+  const fbItems = fbs.map((ref, i) => `
     <div class="mp-row" draggable="true" data-idx="${i}">
       <span class="mp-grip" title="drag to reorder">⠿</span>
-      <span class="mp-pos">${i === 0 ? (t('modelPicker.active') || 'active') : i}</span>
+      <span class="mp-pos">${i + 1}</span>
       <span class="mp-row-label">${esc(shortLabel(ref))}</span>
       <span class="mp-row-provider">${esc(providerLabel(ref))}</span>
-      <span class="mp-remove" data-idx="${i}" title="${t('modelPicker.remove') || 'remove'}">×</span>
+      <span class="mp-remove" data-idx="${i}" title="${t('modelPicker.remove')}">×</span>
     </div>`).join('');
 
-  const available = allModelRefs().filter(r => !chain.includes(r));
+  // Available for fallback add (exclude preferred and existing fallbacks)
+  const available = allModelRefs().filter(r => r !== pref && !fbs.includes(r));
   const addOptions = available.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
 
   const panelHtml = `
     <div class="mp-panel" id="mp-panel">
       <div class="mp-panel-head">
-        <span class="mp-panel-title">${t('modelPicker.chain') || 'Model & fallback chain'}</span>
+        <span class="mp-panel-title">${t('modelPicker.chain')}</span>
         <span class="mp-close" id="mp-close">✕</span>
       </div>
-      <div class="mp-rows" id="mp-rows">${items || `<div class="mp-empty">${t('modelPicker.empty') || 'No models'}</div>`}</div>
-      ${available.length ? `<div class="mp-add"><select id="mp-add-select"><option value="">${t('modelPicker.add') || '+ add model…'}</option>${addOptions}</select></div>` : ''}
-      <div class="mp-hint">${t('modelPicker.hint') || 'First = active model; order below = fallback order. Drag ⠿ to reorder.'}</div>
+      <div class="mp-section">
+        <label class="mp-section-label">${t('modelPicker.preferred')}</label>
+        <div class="mp-preferred-wrap">
+          <select id="mp-preferred-select" class="mp-select">
+            ${pref ? `<option value="${esc(pref)}" selected>${esc(pref)}</option>` : `<option value="" selected>${t('modelPicker.select')}</option>`}
+            ${allModelRefs().filter(r => r !== pref).map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="mp-section">
+        <label class="mp-section-label">${t('modelPicker.fallbacks')}</label>
+        <div class="mp-rows" id="mp-rows">${fbItems || `<div class="mp-empty">${t('modelPicker.fallbackEmpty')}</div>`}</div>
+        ${available.length ? `<div class="mp-add"><select id="mp-add-select"><option value="">${t('modelPicker.add')}</option>${addOptions}</select></div>` : ''}
+      </div>
+      <div class="mp-hint">${t('modelPicker.hint')}</div>
     </div>`;
 
-  // Attach panel to the container, then position it relative to the chip.
   container.insertAdjacentHTML('beforeend', panelHtml);
   positionPanel();
 
-  // Bind panel interactions + drag-to-reorder (fresh each expand).
-  bindPanel(chain);
-  setupDragReorder(chain);
+  bindPanel(pref, fbs);
+  setupDragReorder(fbs);
 }
 
-/** Position the floating panel below the chip. Uses fixed positioning so
- *  the panel tracks the chip regardless of scroll or container. */
 function positionPanel() {
   const panel = document.getElementById('mp-panel');
   const chip = mountEl?.querySelector('#mp-toggle');
   if (!panel || !chip) return;
   const chipRect = chip.getBoundingClientRect();
-  // Drop down from the chip, left-aligned to the chip's left edge.
   panel.style.position = 'fixed';
   panel.style.top = `${chipRect.bottom + 6}px`;
   panel.style.left = `${chipRect.left}px`;
@@ -200,12 +230,11 @@ function positionPanel() {
   panel.style.bottom = 'auto';
 }
 
-/** Remove the floating panel from #input-area (idempotent). */
 function removePanel() {
   document.getElementById('mp-panel')?.remove();
 }
 
-function setupDragReorder(chain) {
+function setupDragReorder(fbs) {
   const rowsEl = document.getElementById('mp-rows');
   if (!rowsEl) return;
   let dragIdx = null;
@@ -231,25 +260,18 @@ function setupDragReorder(chain) {
       e.preventDefault();
       const overIdx = Number(row.getAttribute('data-idx'));
       if (dragIdx === null || dragIdx === overIdx) return;
-      const next = chain.slice();
+      const next = fbs.slice();
       const [moved] = next.splice(dragIdx, 1);
       next.splice(overIdx, 0, moved);
-      applyChain(next);
+      applyFallbacks(next);
     });
   });
 }
 
-/** Insert the picker into the input bar (right side). Idempotent.
- *  Mount is created first so that even if render() throws, the element exists
- *  and later refreshModelPicker() can recover. */
+/** Insert the picker into the input bar (right side). Idempotent. */
 export function initModelPicker() {
-  // Idempotent across module instances: if #model-picker already exists in the
-  // DOM (e.g. the index.html bootstrap created it), adopt it instead of
-  // creating a duplicate.
   const existing = document.getElementById('model-picker');
   if (mountEl || existing) { mountEl = mountEl || existing; return; }
-  // Mount in .header-left, AFTER the context ring (#header-model-info).
-  // Layout: [sidebar-toggle] [ctx-ring] [model-picker] .... [session-name]
   const headerLeft = document.querySelector('.header-left');
   if (!headerLeft) return;
   mountEl = document.createElement('div');
@@ -257,7 +279,6 @@ export function initModelPicker() {
   const ctxInfo = document.getElementById('header-model-info');
   if (ctxInfo) ctxInfo.after(mountEl);
   else headerLeft.appendChild(mountEl);
-  // Close on outside click.
   document.addEventListener('click', (e) => {
     if (!expanded) return;
     const panel = document.getElementById('mp-panel');
@@ -265,7 +286,6 @@ export function initModelPicker() {
       expanded = false; try { render(); } catch (_) {}
     }
   });
-  // Keep the floating panel aligned with its chip on resize/scroll while open.
   window.addEventListener('resize', () => { if (expanded) positionPanel(); });
   try { render(); }
   catch (e) { console.error('[modelPicker] init render failed:', e); }

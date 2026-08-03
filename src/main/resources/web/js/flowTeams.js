@@ -198,6 +198,31 @@ export function bindTileClicks() {
   });
 }
 
+/** Async-fetch model labels for all agent tiles and inject them. */
+export async function populateTileModels(teams) {
+  for (const flow of teams) {
+    for (const a of (flow.agents || [])) {
+      const tile = document.querySelector(`.team-tile[data-agent="${esc(a.name)}"][data-flow="${esc(flow.name)}"]`);
+      if (!tile) continue;
+      try {
+        const resp = await fetch(`/api/agents/${encodeURIComponent(a.name)}/model`, { headers: authHeaders() });
+        if (!resp.ok) continue;
+        const cfg = await resp.json();
+        const current = cfg.current || cfg.preferred || cfg.default || '';
+        if (!current) continue;
+        const slashIdx = current.lastIndexOf('/');
+        const shortName = slashIdx >= 0 ? current.slice(slashIdx + 1) : current;
+        const roleEl = tile.querySelector('.team-tile-role');
+        if (roleEl) {
+          const isMgr = !!a.manager;
+          const role = isMgr ? 'manager' : (roleEl.textContent || 'idle');
+          roleEl.textContent = `${role} · ${shortName}`;
+        }
+      } catch (e) { /* skip */ }
+    }
+  }
+}
+
 export function bindCardActions(openMailbox, openRules, openDefinition) {
   document.querySelectorAll('.team-act-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {

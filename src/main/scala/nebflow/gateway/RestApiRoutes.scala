@@ -860,12 +860,17 @@ class RestApiRoutes(
             case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
             case Some(defn) =>
               val modelConfig = defn.model.getOrElse(nebflow.agent.AgentModelConfig.empty)
-              // Include suggested capabilities for this role
               val suggested = nebflow.agent.ModelRoleMatcher.suggestForRole(agentName)
-              Ok(Json.obj(
-                "model" -> modelConfig.asJson,
-                "suggested" -> suggested.asJson
-              ))
+              sharedResources.runtimeModels.get.flatMap { runtimeModels =>
+                val current = runtimeModels.values.headOption.orNull
+                Ok(Json.obj(
+                  "model" -> modelConfig.asJson,
+                  "suggested" -> suggested.asJson,
+                  "current" -> (current: String).asJson,
+                  "preferred" -> modelConfig.preferred.asJson,
+                  "default" -> modelConfig.preferred.asJson
+                ))
+              }
         yield result
 
     // PUT /agents/:name/model — update agent's model configuration

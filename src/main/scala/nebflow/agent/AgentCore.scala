@@ -222,9 +222,17 @@ private[agent] trait AgentCore:
         val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth)
         val isSubagent = depth > 0
         val sessionIdOpt = state.sessionId
+        // Track the first model that failed (for modelChanged notification)
+        val firstFailedModel: cats.effect.Ref[IO, Option[String]] = cats.effect.Ref.unsafe(None)
         val onAttemptCb: FallbackAttempt => IO[Unit] = attempt =>
-          val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
-          state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
+          // Record the first failed model for modelChanged comparison
+          firstFailedModel.get.flatMap {
+            case None => firstFailedModel.set(Some(s"${attempt.providerId}/${attempt.model}"))
+            case _ => IO.unit
+          } *> {
+            val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
+            state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
+          }
         val turnId = state.currentTurnId + 1
         val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
         val stateForLlm = microResult match
@@ -332,6 +340,23 @@ private[agent] trait AgentCore:
               .toList
               .flatMap { chunks =>
                 val cr = aggregateChunks(chunks)
+                // Track runtime model for this session
+                val trackModel = sessionIdOpt match
+                  case Some(sid) if cr.model.isDefined =>
+                    resources.runtimeModels.update(_ + (sid -> cr.model.get))
+                  case _ => IO.unit
+                // Broadcast modelChanged if fallback occurred
+                val notifyModelChanged = firstFailedModel.get.flatMap {
+                  case Some(oldModel) if cr.model.isDefined && cr.model.get != oldModel =>
+                    state.wsSend(io.circe.Json.obj(
+                      "type" -> "modelChanged".asJson,
+                      "sessionId" -> sessionIdOpt.asJson,
+                      "oldModel" -> oldModel.asJson,
+                      "newModel" -> cr.model.get.asJson
+                    ))
+                  case _ => IO.unit
+                }
+                trackModel *> notifyModelChanged *>
                 LlmLogWriter.log(
                   request,
                   chunks,

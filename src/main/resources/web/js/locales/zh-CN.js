@@ -417,12 +417,16 @@ export default {
   // 模型选择器（输入框右侧）
   'modelPicker.select': '选择',
   'modelPicker.changeModel': '切换模型 / Fallback 链',
+  'modelPicker.preferred': '首选模型',
+  'modelPicker.fallbacks': '回退链',
+  'modelPicker.fallbackEmpty': '无回退模型',
   'modelPicker.chain': '模型与 Fallback 链',
   'modelPicker.active': '当前',
   'modelPicker.empty': '暂无模型',
-  'modelPicker.add': '+ 添加模型…',
+  'modelPicker.add': '+ 添加回退…',
   'modelPicker.remove': '移除',
-  'modelPicker.hint': '第一个 = 当前模型；下方顺序 = Fallback 顺序。拖动 ⠿ 排序。',
+  'modelPicker.hint': '首选 = 优先使用的模型。不可用时按回退链顺序尝试。',
+  'modelPicker.usingFallback': '使用回退',
 
   // === Daemons (Dev Servers) ===
   'daemons.title': '开发服务器',

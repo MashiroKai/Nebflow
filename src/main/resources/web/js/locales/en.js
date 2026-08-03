@@ -416,12 +416,16 @@ export default {
   // Model picker (input bar right side)
   'modelPicker.select': 'select',
   'modelPicker.changeModel': 'Change model / fallback chain',
+  'modelPicker.preferred': 'Preferred Model',
+  'modelPicker.fallbacks': 'Fallback Chain',
+  'modelPicker.fallbackEmpty': 'No fallback models',
   'modelPicker.chain': 'Model & fallback chain',
   'modelPicker.active': 'active',
   'modelPicker.empty': 'No models',
-  'modelPicker.add': '+ add model…',
+  'modelPicker.add': '+ add fallback…',
   'modelPicker.remove': 'remove',
-  'modelPicker.hint': 'First = active model; order below = fallback order. Drag ⠿ to reorder.',
+  'modelPicker.hint': 'Preferred = primary model. Fallbacks are tried in order when the preferred is unavailable.',
+  'modelPicker.usingFallback': 'using fallback',
 
   // === Daemons (Dev Servers) ===
   'daemons.title': 'Dev Servers',
