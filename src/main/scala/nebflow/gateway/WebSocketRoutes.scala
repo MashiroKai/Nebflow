@@ -1404,7 +1404,7 @@ class WebSocketRoutes(
           val rdSessionId = hc.downField("sessionId").as[String].getOrElse("")
           val filePath = hc.downField("path").as[String].getOrElse("")
           if rdSessionId.nonEmpty && filePath.nonEmpty then
-            val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
+            val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten.filter(_.nonEmpty)
             (for
               pr <- overrideRoot match
                 case Some(root) => IO.pure(root)
@@ -1414,9 +1414,13 @@ class WebSocketRoutes(
                     folderId = metaOpt.flatMap(_.folderId)
                     prOpt <- sessionStore.resolveProjectRoot(folderId)
                   yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-              basePath = PathUtil.resolvePath(filePath, os.Path(pr))
+              basePath <-
+                if pr.nonEmpty && os.Path(pr, os.pwd).segments.nonEmpty then
+                  IO.blocking { PathUtil.resolvePath(filePath, os.Path(pr, os.pwd)) }
+                else
+                  IO.blocking { PathUtil.resolvePath(filePath, PathUtil.dataRoot / "projects") }
               canonicalBase = basePath.toIO.getCanonicalPath
-              canonicalRoot = os.Path(pr).toIO.getCanonicalPath
+              canonicalRoot = os.Path(pr, os.pwd).toIO.getCanonicalPath
               _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
                 new RuntimeException("path outside project root")
               )
