@@ -196,5 +196,87 @@ export const FLOW_CSS = `
 .flow-def-tab.active { color: rgb(91, 127, 191); border-bottom-color: rgb(91, 127, 191); }
 .flow-def-tab-badge { color: var(--color-primary, #07c160); font-size: 8px; line-height: 1; }
 .flow-def-tab-content { display: none; } .flow-def-tab-content.active { display: block; }
+
+/* ── Flow rows in team cards ─────────────────────────────── */
+
+.team-flows-divider {
+  border-top: 1px dashed var(--glass-border);
+  margin: 0 14px; opacity: 0.5;
+}
+.team-flows-section { padding: 0 14px 14px; }
+.team-flows-header {
+  font: 600 10px -apple-system, sans-serif; color: var(--color-text-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin: 10px 0 6px;
+}
+
+/* Hexagon icon — CSS clip-path, no image needed */
+.team-flow-hex {
+  width: 13px; height: 14px; flex-shrink: 0;
+  background: var(--color-text-muted); opacity: 0.3;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  transition: background 0.2s, opacity 0.2s;
+}
+
+/* Flow row */
+.team-flow-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 9px; cursor: pointer;
+  transition: background 0.15s;
+}
+.team-flow-row:hover { background: rgba(128, 128, 128, 0.05); }
+.team-flow-row.running .team-flow-hex { background: var(--color-primary, #07c160); opacity: 0.75; }
+.team-flow-row.expanded .team-flow-hex { opacity: 0.6; }
+.team-flow-label {
+  font: 500 12px -apple-system, sans-serif; color: var(--color-text);
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.team-flow-row.running .team-flow-label { color: var(--color-text); }
+
+/* Status dot — 8px, animated when running */
+.team-flow-status {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--color-text-muted); opacity: 0.25; flex-shrink: 0;
+}
+.team-flow-row.running .team-flow-status {
+  background: var(--color-primary, #07c160); opacity: 1;
+  animation: flow-pulse 1.6s ease-out infinite;
+}
+
+/* Chevron — rotates on expand */
+.team-flow-chevron {
+  font-size: 9px; color: var(--color-text-muted); opacity: 0.5;
+  flex-shrink: 0; transition: transform 0.2s; user-select: none;
+  line-height: 1;
+}
+.team-flow-row.expanded .team-flow-chevron { transform: rotate(90deg); }
+
+/* Expanded DAG inline area */
+.team-flow-dag {
+  padding: 2px 0 6px 14px; margin-left: 6px;
+  border-left: 2px dashed var(--glass-border);
+  display: flex; flex-direction: column; gap: 3px;
+  margin-bottom: 2px;
+}
+
+/* DAG inline node — compact pill */
+.dag-inline-node {
+  display: flex; align-items: center; gap: 7px;
+  padding: 4px 10px; border-radius: 7px;
+  background: rgba(128, 128, 128, 0.03);
+  border: 1px solid transparent; cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.dag-inline-node:hover { background: rgba(128, 128, 128, 0.07); border-color: var(--glass-border); }
+.dag-inline-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  background: var(--color-text-muted); opacity: 0.3;
+}
+.dag-inline-node.running .dag-inline-dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
+.dag-inline-node.completed .dag-inline-dot { background: #4caf50; opacity: 1; }
+.dag-inline-node.failed .dag-inline-dot { background: #f44336; opacity: 1; }
+.dag-inline-node.failed { background: rgba(244, 67, 54, 0.04); }
+.dag-inline-id { font: 500 11px -apple-system, sans-serif; color: var(--color-text); }
+.dag-inline-agent { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); margin-left: auto; }
 </style>
 `;

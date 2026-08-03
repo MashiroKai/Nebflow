@@ -7,13 +7,13 @@
 import { openStepPopup } from './flowAgentPopup.js';
 import { esc } from './flowHelpers.js';
 
-export function dagCardHtml(rf) {
-  const statusCls = rf.status || 'running';
-  const statusText = statusCls;
+/** Topological sort of DAG nodes following edges from entry.
+ *  Returns ordered array of { node, edgeLabel }. Exported for reuse. */
+export function orderDagNodes(rf) {
   const nodes = rf.nodes || [];
   const edges = rf.edges || [];
-
   const nodeMap = new Map(nodes.map(n => [n.nodeId, n]));
+
   const childrenMap = new Map();
   edges.forEach(e => {
     if (!childrenMap.has(e.from)) childrenMap.set(e.from, []);
@@ -30,6 +30,29 @@ export function dagCardHtml(rf) {
     children.forEach(c => visit(c.to, c.condition));
   }
   if (rf.entry) visit(rf.entry, null);
+  // Append any nodes not reachable from entry
+  nodes.forEach(n => { if (!visited.has(n.nodeId)) ordered.push({ node: n, edgeLabel: null }); });
+  return ordered;
+}
+
+/** Lightweight single-line pill for inline DAG display inside team cards. */
+export function dagNodeInlineHtml(item, flowName) {
+  const n = item.node || item;
+  const nodeId = n.nodeId || '';
+  const agent = n.agent || '';
+  const st = n.status || 'idle';
+  return `\
+      <div class="dag-inline-node ${st}" data-flow="${esc(flowName)}" data-agent="${esc(agent)}" data-node="${esc(nodeId)}">
+        <div class="dag-inline-dot"></div>
+        <div class="dag-inline-id">${esc(nodeId)}</div>
+        <div class="dag-inline-agent">${esc(agent)}</div>
+      </div>`;
+}
+
+export function dagCardHtml(rf) {
+  const statusCls = rf.status || 'running';
+  const statusText = statusCls;
+  const ordered = orderDagNodes(rf);
 
   let nodesHtml = '';
   ordered.forEach((item, i) => {
