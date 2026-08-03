@@ -1475,7 +1475,7 @@ export function resetChatForActiveSession() {
 
   if (!isBusy) pv.dom.input.focus();
 
-  renderTaskList(state.sessionTasks[sid] || []);
+  renderTaskList(state.sessionTasks[sid] || [], undefined, sid);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   if (state.updateDelegateIndicator) state.updateDelegateIndicator();
   if (state.updateBypassToggle) state.updateBypassToggle(pv);

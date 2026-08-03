@@ -1778,7 +1778,7 @@ onMessage('taskListUpdate', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.sessionId) state.sessionTasks[msg.sessionId] = msg.tasks;
   if (view) {
-    renderTaskList(msg.tasks);
+    renderTaskList(msg.tasks, undefined, msg.sessionId);
   }
 });
 

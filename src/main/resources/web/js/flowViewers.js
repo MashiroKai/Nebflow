@@ -23,7 +23,6 @@ async function populateAgentModel(el, agentName) {
 function renderAgentModelSection(el, agentName, cfg) {
   const preferred = cfg.preferred || cfg.default || '';
   const current = cfg.current || preferred;
-  const fallbacks = cfg.fallback || [];
   const isFallback = current && preferred && current !== preferred;
 
   // Build model dropdown options from global model refs
@@ -31,10 +30,6 @@ function renderAgentModelSection(el, agentName, cfg) {
 
   const currentHtml = isFallback
     ? `<span class="flow-agent-model-current fallback">运行: ${esc(current)}</span>`
-    : '';
-
-  const fbHtml = fallbacks.length > 0
-    ? `<div class="flow-agent-model-fbs">${fallbacks.map(f => `<span class="flow-agent-model-fb">${esc(f)}</span>`).join('')}</div>`
     : '';
 
   el.innerHTML = `
@@ -46,8 +41,7 @@ function renderAgentModelSection(el, agentName, cfg) {
         ${allRefs.filter(r => r !== preferred).map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
       </select>
       ${currentHtml}
-    </div>
-    ${fbHtml}`;
+    </div>`;
 
   // Bind dropdown change → PUT /api/agents/:name/model
   const sel = el.querySelector('.flow-agent-model-select');
