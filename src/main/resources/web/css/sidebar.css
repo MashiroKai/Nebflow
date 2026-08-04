@@ -1336,7 +1336,11 @@
 }
 
 /* ── Agent detail (Canvas tab) ─────────────────────────────────────── */
-.agent-detail { padding: 24px 28px; max-width: 720px; }
+.agent-detail {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  padding: 24px 28px; max-width: 720px;
+}
 .agent-detail-loading {
   font: 400 13px -apple-system, sans-serif;
   color: var(--color-text-muted);
@@ -1377,6 +1381,13 @@
   margin-bottom: 20px;
   padding-top: 16px;
   border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+/* System prompt section grows to fill remaining height */
+.agent-detail-section:has(.agent-detail-prompt-edit) {
+  flex: 1;
+  display: flex; flex-direction: column;
+  min-height: 300px;
 }
 .agent-detail-label {
   font: 600 11px -apple-system, sans-serif;
@@ -1444,14 +1455,15 @@
 
 /* System prompt edit */
 .agent-detail-prompt-edit {
-  width: 100%; min-height: 120px;
+  flex: 1;
+  width: 100%; min-height: 200px;
   font: 400 12px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
   background: rgba(0,0,0,0.02);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 12px;
-  resize: vertical;
+  resize: none;
   outline: none;
   transition: border-color 0.2s;
   line-height: 1.6;
