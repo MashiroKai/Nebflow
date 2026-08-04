@@ -209,6 +209,24 @@ export function openTab(id, title, opts = {}) {
     return tabs.get(id);
   }
 
+  // VS Code preview behavior: opening a new preview tab replaces the
+  // existing preview tab (if any). Pinned tabs are not affected.
+  if (!pinned && previewTabId && previewTabId !== id) {
+    const oldEntry = tabs.get(previewTabId);
+    if (oldEntry) {
+      if (oldEntry.paneEl._editorHandle) {
+        oldEntry.paneEl._editorHandle.dispose();
+        oldEntry.paneEl._editorHandle = null;
+      }
+      document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: previewTabId } }));
+      oldEntry.paneEl.remove();
+      oldEntry.tabEl.remove();
+      tabs.delete(previewTabId);
+      previewTabId = null;
+      persistTabs();
+    }
+  }
+
   const content = document.getElementById('canvas-content');
   const tabBar = document.getElementById('canvas-tab-bar');
   if (!content || !tabBar) return null;

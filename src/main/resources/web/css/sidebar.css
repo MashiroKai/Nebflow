@@ -1456,7 +1456,8 @@
 /* System prompt edit */
 .agent-detail-prompt-edit {
   flex: 1;
-  width: 100%; min-height: 200px;
+  min-height: 0;
+  width: 100%;
   font: 400 12px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
   background: rgba(0,0,0,0.02);
@@ -1472,6 +1473,7 @@
 .agent-detail-prompt-edit:focus { border-color: rgba(91,127,191,0.35); }
 .agent-detail-save-btn {
   margin-top: 8px;
+  flex-shrink: 0;
   font: 500 12px -apple-system, sans-serif;
   padding: 5px 16px;
   border: 1px solid var(--color-border);
