@@ -1,8 +1,8 @@
-// agentManager.js — Agent management panel in the sidebar.
-// Lists all configured agents with model info, tools, and system prompt.
-// Accessed via the "users" icon in the Activity Bar.
+// agentManager.js — Agent management panel (VSCode Extensions style).
+// Sidebar list shows compact agent cards. Click opens a Canvas detail tab.
 
 import state from './state.js';
+import { openTab, getTabPane } from './canvas.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('nebflow_token') || ''; }
@@ -15,30 +15,27 @@ function esc(s) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
 }
-
-// ── State ──────────────────────────────────────────────────
-let agents = [];
-let expandedAgent = null;
-let agentDetails = {}; // cache: name → { tools, systemPrompt, ... }
-let agentModels = {};  // cache: name → { preferred, current, ... }
+function shortModel(ref) {
+  if (!ref) return '';
+  const idx = ref.lastIndexOf('/');
+  return idx >= 0 ? ref.slice(idx + 1) : ref;
+}
 
 // ── API ────────────────────────────────────────────────────
 async function fetchAgents() {
   try {
     const resp = await fetch('/api/agents', { headers: authHeaders() });
-    if (!resp.ok) return;
+    if (!resp.ok) return [];
     const data = await resp.json();
-    agents = data.agents || [];
-  } catch (e) { agents = []; }
+    return data.agents || [];
+  } catch (e) { return []; }
 }
 
 async function fetchAgentDetail(name) {
   try {
     const resp = await fetch(`/api/agents/${encodeURIComponent(name)}`, { headers: authHeaders() });
     if (!resp.ok) return null;
-    const data = await resp.json();
-    agentDetails[name] = data;
-    return data;
+    return await resp.json();
   } catch (e) { return null; }
 }
 
@@ -46,159 +43,154 @@ async function fetchAgentModel(name) {
   try {
     const resp = await fetch(`/api/agents/${encodeURIComponent(name)}/model`, { headers: authHeaders() });
     if (!resp.ok) return null;
-    const data = await resp.json();
-    agentModels[name] = data;
-    return data;
+    return await resp.json();
   } catch (e) { return null; }
 }
 
-async function setAgentModel(name, preferred) {
-  try {
-    await fetch(`/api/agents/${encodeURIComponent(name)}/model`, {
-      method: 'PUT',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preferred }),
-    });
-    await fetchAgentModel(name);
-    render();
-  } catch (e) { /* non-critical */ }
-}
+// ── Sidebar list ───────────────────────────────────────────
 
-// ── Render ─────────────────────────────────────────────────
-function render() {
-  const content = document.getElementById('agents-content');
-  if (!content) return;
-
-  if (agents.length === 0) {
-    content.innerHTML = `<div class="cfg-empty">No agents configured</div>`;
-    return;
-  }
-
-  content.innerHTML = agents.map(a => {
-    const isExpanded = expandedAgent === a.name;
-    const model = agentModels[a.name];
-    const detail = agentDetails[a.name];
-
-    const preferred = model?.preferred || model?.default || '';
-    const current = model?.current || preferred;
-    const isFallback = current && preferred && current !== preferred;
-    const displayName = a.displayName || a.name;
-    const desc = a.description || '';
-
-    // Collapsed card
-    if (!isExpanded) {
-      return `
-        <div class="agent-mgr-card" data-agent="${esc(a.name)}">
-          <div class="agent-mgr-head">
-            <span class="agent-mgr-name">${esc(displayName)}</span>
-            ${current ? `<span class="agent-mgr-model${isFallback ? ' fallback' : ''}">${esc(shortModel(current))}</span>` : ''}
-          </div>
-          ${desc ? `<div class="agent-mgr-desc">${esc(desc)}</div>` : ''}
-        </div>`;
-    }
-
-    // Expanded card
-    const toolsHtml = detail?.tools?.length
-      ? `<div class="agent-mgr-tools">${detail.tools.map(t => `<span class="agent-mgr-tool">${esc(t)}</span>`).join('')}</div>`
-      : `<div class="agent-mgr-empty">No tools</div>`;
-
-    const promptHtml = detail?.systemPrompt
-      ? `<div class="agent-mgr-prompt" data-collapsed="true">${esc(detail.systemPrompt.substring(0, 200))}${detail.systemPrompt.length > 200 ? '<span class="agent-mgr-prompt-more">…</span>' : ''}</div>`
-      : '';
-
-    const allRefs = state.allModelRefs || [];
-
-    return `
-      <div class="agent-mgr-card expanded" data-agent="${esc(a.name)}">
-        <div class="agent-mgr-head">
-          <span class="agent-mgr-name">${esc(displayName)}</span>
-          ${isFallback ? `<span class="agent-mgr-model fallback">${esc(shortModel(current))}</span>` : ''}
-        </div>
-        ${desc ? `<div class="agent-mgr-desc">${esc(desc)}</div>` : ''}
-        <div class="agent-mgr-section">
-          <div class="agent-mgr-label">Model</div>
-          <select class="agent-mgr-select" data-agent="${esc(a.name)}">
-            ${preferred
-              ? `<option value="${esc(preferred)}" selected>${esc(preferred)}</option>`
-              : `<option value="" selected>Global default</option>`}
-            ${allRefs.filter(r => r !== preferred).map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
-          </select>
-          ${isFallback ? `<div class="agent-mgr-model-note">Running: ${esc(current)} (fallback)</div>` : ''}
-        </div>
-        <div class="agent-mgr-section">
-          <div class="agent-mgr-label">Tools</div>
-          ${toolsHtml}
-        </div>
-        ${promptHtml ? `<div class="agent-mgr-section"><div class="agent-mgr-label">System Prompt</div>${promptHtml}</div>` : ''}
-      </div>`;
-  }).join('');
-
-  bindEvents();
-}
-
-function bindEvents() {
-  const content = document.getElementById('agents-content');
-  if (!content) return;
-
-  // Card click — toggle expand
-  content.querySelectorAll('.agent-mgr-card').forEach(card => {
-    card.addEventListener('click', async (e) => {
-      // Don't toggle when clicking the select
-      if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
-      const name = card.dataset.agent;
-      if (expandedAgent === name) {
-        expandedAgent = null;
-        render();
-      } else {
-        expandedAgent = name;
-        // Fetch details + model in parallel
-        await Promise.all([fetchAgentDetail(name), fetchAgentModel(name)]);
-        render();
-      }
-    });
-  });
-
-  // Model select change
-  content.querySelectorAll('.agent-mgr-select').forEach(sel => {
-    sel.addEventListener('change', (e) => {
-      e.stopPropagation();
-      const name = sel.dataset.agent;
-      setAgentModel(name, sel.value);
-    });
-    sel.addEventListener('click', (e) => e.stopPropagation());
-  });
-
-  // System prompt expand
-  content.querySelectorAll('.agent-mgr-prompt').forEach(el => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const collapsed = el.dataset.collapsed === 'true';
-      if (collapsed) {
-        el.dataset.collapsed = 'false';
-        const detail = agentDetails[el.closest('.agent-mgr-card')?.dataset.agent];
-        if (detail?.systemPrompt) el.textContent = detail.systemPrompt;
-      } else {
-        el.dataset.collapsed = 'true';
-        const detail = agentDetails[el.closest('.agent-mgr-card')?.dataset.agent];
-        if (detail?.systemPrompt) el.innerHTML = esc(detail.systemPrompt.substring(0, 200)) + '<span class="agent-mgr-prompt-more">…</span>';
-      }
-    });
-  });
-}
-
-function shortModel(ref) {
-  const idx = ref.lastIndexOf('/');
-  return idx >= 0 ? ref.slice(idx + 1) : ref;
-}
-
-// ── Public ─────────────────────────────────────────────────
-
+/** Render the agent list into #agents-content. */
 export function renderAgentManager() {
   const content = document.getElementById('agents-content');
   if (!content) return;
-  content.innerHTML = `<div class="cfg-empty">Loading...</div>`;
-  fetchAgents().then(() => render());
+  content.innerHTML = `<div class="agent-mgr-loading">Loading...</div>`;
+
+  fetchAgents().then(agents => {
+    if (agents.length === 0) {
+      content.innerHTML = `<div class="agent-mgr-empty">No agents configured</div>`;
+      return;
+    }
+
+    content.innerHTML = agents.map(a => {
+      const name = esc(a.name);
+      const display = esc(a.displayName || a.name);
+      const desc = esc(a.description || '');
+      const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
+      return `<div class="agent-mgr-card" data-agent="${name}">
+        <span class="agent-mgr-avatar">${initial}</span>
+        <div class="agent-mgr-info">
+          <div class="agent-mgr-name">${display}</div>
+          <div class="agent-mgr-desc">${desc}</div>
+        </div>
+        <span class="agent-mgr-model-tag" data-agent="${name}"></span>
+      </div>`;
+    }).join('');
+
+    // Bind card clicks
+    content.querySelectorAll('.agent-mgr-card').forEach(card => {
+      card.addEventListener('click', () => openAgentDetail(card.dataset.agent));
+    });
+
+    // Async-populate model tags
+    agents.forEach(a => populateModelTag(a.name));
+  });
 }
+
+/** Fetch model info and inject a short tag into the card. */
+async function populateModelTag(name) {
+  const model = await fetchAgentModel(name);
+  if (!model) return;
+  const current = model.current || model.preferred || model.default || '';
+  if (!current) return;
+  const tag = document.querySelector(`.agent-mgr-model-tag[data-agent="${esc(name)}"]`);
+  if (!tag) return;
+  const isFallback = model.preferred && current !== model.preferred;
+  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(shortModel(current))}</span>`;
+}
+
+// ── Canvas detail tab ──────────────────────────────────────
+
+/** Open a Canvas tab showing the agent detail page. */
+async function openAgentDetail(name) {
+  const tabId = `agent:${name}`;
+  openTab(tabId, name, { type: 'agent' });
+  const pane = getTabPane(tabId);
+  if (!pane) return;
+
+  // Loading state
+  pane.innerHTML = `<div class="agent-detail-loading">Loading...</div>`;
+
+  // Fetch detail + model in parallel
+  const [detail, model] = await Promise.all([
+    fetchAgentDetail(name),
+    fetchAgentModel(name),
+  ]);
+
+  renderAgentDetail(pane, name, detail, model);
+}
+
+function renderAgentDetail(pane, name, detail, model) {
+  const displayName = detail?.displayName || detail?.name || name;
+  const description = detail?.description || '';
+  const extends_ = detail?.extends || '';
+  const preferred = model?.preferred || model?.default || '';
+  const current = model?.current || preferred;
+  const isFallback = current && preferred && current !== preferred;
+  const tools = detail?.tools || [];
+
+  // System prompt preview (first 200 chars)
+  const prompt = detail?.systemPrompt || '';
+  const promptPreview = prompt.substring(0, 200);
+  const hasMore = prompt.length > 200;
+
+  // Model list (per-agent: currently just preferred)
+  const modelItems = preferred
+    ? `<div class="agent-detail-model-row${current === preferred ? ' playing' : ''}">
+        ${current === preferred ? '<span class="agent-detail-playing-dot"></span>' : ''}
+        <span class="agent-detail-model-name">${esc(preferred)}</span>
+        ${isFallback ? `<span class="agent-detail-fallback-tag">running: ${esc(current)}</span>` : ''}
+      </div>`
+    : '<div class="agent-detail-empty">Using global default</div>';
+
+  const toolsHtml = tools.length > 0
+    ? `<div class="agent-detail-tools">${tools.map(t => `<span class="agent-detail-tool">${esc(t)}</span>`).join('')}</div>`
+    : '<div class="agent-detail-empty">No tools</div>';
+
+  pane.innerHTML = `
+    <div class="agent-detail">
+      <div class="agent-detail-header">
+        <span class="agent-detail-avatar">${esc(displayName.charAt(0).toUpperCase())}</span>
+        <div class="agent-detail-header-info">
+          <div class="agent-detail-name">${esc(displayName)}</div>
+          ${description ? `<div class="agent-detail-desc">${esc(description)}</div>` : ''}
+          ${extends_ ? `<div class="agent-detail-extends">extends: ${esc(extends_)}</div>` : ''}
+        </div>
+      </div>
+
+      <div class="agent-detail-section">
+        <div class="agent-detail-label">Model</div>
+        ${modelItems}
+      </div>
+
+      <div class="agent-detail-section">
+        <div class="agent-detail-label">Tools</div>
+        ${toolsHtml}
+      </div>
+
+      ${prompt ? `
+      <div class="agent-detail-section">
+        <div class="agent-detail-label">System Prompt</div>
+        <div class="agent-detail-prompt" data-collapsed="${hasMore ? 'true' : 'false'}">${esc(promptPreview)}${hasMore ? '<span class="agent-detail-prompt-more">…</span>' : ''}</div>
+      </div>` : ''}
+    </div>`;
+
+  // Bind system prompt expand
+  if (hasMore) {
+    const promptEl = pane.querySelector('.agent-detail-prompt');
+    promptEl?.addEventListener('click', () => {
+      const collapsed = promptEl.dataset.collapsed === 'true';
+      if (collapsed) {
+        promptEl.dataset.collapsed = 'false';
+        promptEl.textContent = prompt;
+      } else {
+        promptEl.dataset.collapsed = 'true';
+        promptEl.innerHTML = esc(promptPreview) + '<span class="agent-detail-prompt-more">…</span>';
+      }
+    });
+  }
+}
+
+// ── Public ─────────────────────────────────────────────────
 
 export function isAgentsPanelActive() {
   const panel = document.getElementById('panel-agents');
