@@ -11,7 +11,7 @@ import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
 import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
-import { renderModelCapabilities } from './modelCapabilities.js';
+import { preloadModelCapabilities, renderCapPills, bindCapPills } from './modelCapabilities.js';
 
 const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
@@ -450,11 +450,6 @@ export function renderSettings() {
       <button class="cfg-btn" id="btn-edit-card-design">${t('settings.cardDesignEdit')}</button>
     </div>
     <div class="settings-section">
-      <div class="settings-section-title">${t('settings.modelCaps')}</div>
-      <div class="cfg-hint" style="margin-bottom:8px">${t('settings.modelCapsHint')}</div>
-      <div id="model-caps-section"></div>
-    </div>
-    <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
     </div>
@@ -486,9 +481,20 @@ export function renderSettings() {
   bindSettingsEvents(content, cfg, allModels);
   bindNeblinkEvents(() => renderSettings());
 
-  // Render model capabilities section (async fetch)
-  const capsContainer = document.getElementById('model-caps-section');
-  if (capsContainer) renderModelCapabilities(capsContainer);
+  // Pre-fetch model capabilities, then bind pills on provider cards
+  preloadModelCapabilities(() => {
+    const providerList = document.getElementById('provider-list');
+    if (providerList) {
+      providerList.querySelectorAll('.cfg-model-caps').forEach(el => {
+        const ref = el.closest('.cfg-model-row')?.dataset.modelRef;
+        if (ref) el.innerHTML = renderCapPills(ref);
+      });
+      bindCapPills(providerList);
+    }
+  });
+  // Also bind immediately (pills rendered from cache, if available)
+  const providerListNow = document.getElementById('provider-list');
+  if (providerListNow) bindCapPills(providerListNow);
 
   // Refresh neblink peers periodically while settings panel is open
   const refreshNeblink = () => {
@@ -509,6 +515,14 @@ export function renderSettings() {
 
 function renderProviderCard(name, p) {
   const modelCount = (p.models || []).length;
+  const modelsHtml = (p.models || []).map(m => {
+    const ref = `${name}/${m.id}`;
+    return `<div class="cfg-model-row" data-model-ref="${escapeHtml(ref)}">
+      <span class="cfg-model-name">${escapeHtml(m.id)}</span>
+      <div class="cfg-model-caps">${renderCapPills(ref)}</div>
+    </div>`;
+  }).join('');
+
   return `
     <div class="cfg-card" data-provider="${escapeHtml(name)}">
       <div class="cfg-card-header">
@@ -519,6 +533,7 @@ function renderProviderCard(name, p) {
         <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
         <span class="cfg-card-sub">${modelCount} model${modelCount !== 1 ? 's' : ''}</span>
       </div>
+      ${modelsHtml ? `<div class="cfg-model-list">${modelsHtml}</div>` : ''}
     </div>`;
 }
 
