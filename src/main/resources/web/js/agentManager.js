@@ -242,13 +242,14 @@ function renderAgentDetail(pane, name, detail, model) {
   const modelList = [preferredRaw, ...fallbacksRaw].filter(Boolean);
   const allRefs = getAllModelRefs();
 
-  const toolsHtml = `<div class="agent-detail-tools" id="agent-detail-tools">
-    ${tools.length > 0
-      ? tools.map((t, i) => `<span class="agent-detail-tool" data-idx="${i}">${esc(t)}<span class="agent-detail-tool-remove" data-idx="${i}">×</span></span>`).join('')
-      : '<span class="agent-detail-empty">No tools</span>'}
-  </div>
-  <div class="agent-detail-tool-add">
-    <input type="text" placeholder="+ add tool" id="agent-detail-tool-input">
+  const allTools = (state.availableTools || []).map(t => typeof t === 'string' ? t : t.name);
+  const isAll = tools.includes('*');
+
+  const toolsHtml = `<div class="agent-detail-tools-grid" id="agent-detail-tools-grid">
+    ${allTools.map(tname => {
+      const checked = isAll || tools.includes(tname);
+      return `<span class="agent-detail-tool-check${checked ? ' checked' : ''}" data-tool="${esc(tname)}">${esc(tname)}</span>`;
+    }).join('')}
   </div>`;
 
   pane.innerHTML = `
@@ -294,30 +295,23 @@ function renderAgentDetail(pane, name, detail, model) {
     setTimeout(() => { btn.textContent = 'Save'; }, 1500);
   });
 
-  // Bind tool remove
-  pane.querySelectorAll('.agent-detail-tool-remove').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const idx = Number(btn.dataset.idx);
-      const next = tools.slice();
-      next.splice(idx, 1);
-      sendWs({ type: 'updateAgentTools', name, tools: next });
-      renderAgentDetail(pane, name, { ...detail, tools: next }, model);
+  // Bind tool toggle chips
+  const toolsGrid = pane.querySelector('#agent-detail-tools-grid');
+  if (toolsGrid) {
+    const currentTools = new Set(tools);
+    toolsGrid.querySelectorAll('.agent-detail-tool-check').forEach(el => {
+      el.addEventListener('click', () => {
+        const tool = el.dataset.tool;
+        el.classList.toggle('checked');
+        if (el.classList.contains('checked')) {
+          currentTools.add(tool);
+        } else {
+          currentTools.delete(tool);
+        }
+        sendWs({ type: 'updateAgentTools', name, tools: [...currentTools] });
+      });
     });
-  });
-
-  // Bind tool add (Enter key)
-  const toolInput = pane.querySelector('#agent-detail-tool-input');
-  toolInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const val = toolInput.value.trim();
-      if (!val) return;
-      const next = [...tools, val];
-      sendWs({ type: 'updateAgentTools', name, tools: next });
-      renderAgentDetail(pane, name, { ...detail, tools: next }, model);
-    }
-  });
+  }
 }
 
 // ── Public ─────────────────────────────────────────────────
