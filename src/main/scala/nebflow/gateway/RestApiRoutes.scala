@@ -156,13 +156,7 @@ class RestApiRoutes(
     case req @ GET -> Root / "models" / "capability-tags" =>
       withAuth(req) {
         Ok(Json.obj("tags" -> List(
-          Json.obj("key" -> "vision".asJson, "label" -> "图片理解".asJson, "description" -> "支持 image_url 图片输入".asJson),
-          Json.obj("key" -> "reasoning".asJson, "label" -> "深度推理".asJson, "description" -> "复杂多步推理任务".asJson),
-          Json.obj("key" -> "code".asJson, "label" -> "代码生成".asJson, "description" -> "编程和代码理解".asJson),
-          Json.obj("key" -> "fast".asJson, "label" -> "快速响应".asJson, "description" -> "低延迟，适合简单任务".asJson),
-          Json.obj("key" -> "long-context".asJson, "label" -> "长上下文".asJson, "description" -> "100K+ token 窗口".asJson),
-          Json.obj("key" -> "cheap".asJson, "label" -> "低成本".asJson, "description" -> "token 单价低".asJson),
-          Json.obj("key" -> "audio".asJson, "label" -> "音频".asJson, "description" -> "支持音频输入/输出".asJson)
+          Json.obj("key" -> "vision".asJson, "label" -> "图片理解".asJson, "description" -> "支持 image_url 图片输入".asJson)
         ).asJson))
       }
 
