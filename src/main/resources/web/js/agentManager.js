@@ -119,13 +119,14 @@ async function openAgentDetail(name) {
   renderAgentDetail(pane, name, detail, model);
 }
 
-/** PUT agent model preference. */
-async function setAgentModel(name, preferred) {
+/** PUT agent model config (preferred + fallbacks). */
+async function setAgentModel(name, ordered) {
+  const [preferred, ...fallbacks] = ordered;
   try {
     await fetch(`/api/agents/${encodeURIComponent(name)}/model`, {
       method: 'PUT',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ preferred }),
+      body: JSON.stringify({ preferred: preferred || null, fallbacks }),
     });
   } catch (e) { /* non-critical */ }
 }
@@ -177,8 +178,8 @@ function renderModelDragList(container, name, models, currentModel, allRefs) {
       const next = models.slice();
       const [moved] = next.splice(dragIdx, 1);
       next.splice(overIdx, 0, moved);
-      // Persist: [0] = preferred
-      await setAgentModel(name, next[0]);
+      // Persist: send entire ordered list
+      await setAgentModel(name, next);
       // Re-render
       renderModelDragList(container, name, next, currentModel, allRefs);
     });
@@ -191,7 +192,7 @@ function renderModelDragList(container, name, models, currentModel, allRefs) {
       const ref = addSel.value;
       if (!ref) return;
       const next = [...models, ref];
-      await setAgentModel(name, next[0]);
+      await setAgentModel(name, next);
       renderModelDragList(container, name, next, currentModel, allRefs);
     });
   }
@@ -211,8 +212,10 @@ function renderAgentDetail(pane, name, detail, model) {
   const promptPreview = prompt.substring(0, 200);
   const hasMore = prompt.length > 200;
 
-  // Model list for drag component
-  const modelList = preferred ? [preferred] : [];
+  // Model list for drag component — [preferred, ...fallbacks]
+  const preferredRaw = model?.preferred || model?.default || '';
+  const fallbacksRaw = model?.fallbacks || model?.model?.fallbacks || [];
+  const modelList = [preferredRaw, ...fallbacksRaw].filter(Boolean);
   const allRefs = state.allModelRefs || [];
 
   const toolsHtml = tools.length > 0
