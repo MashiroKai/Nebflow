@@ -704,6 +704,21 @@ body.drag-over #input-bar {
   color: var(--color-primary, #07c160);
   background: rgba(7,193,96,0.10);
 }
+/* Green "now playing" dot on the current runtime model */
+.mp-playing {
+  border-color: var(--color-primary, #07c160) !important;
+  background: rgba(7,193,96,0.04);
+}
+.mp-playing-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--color-primary, #07c160);
+  flex-shrink: 0;
+  animation: mp-pulse 1.5s ease-in-out infinite;
+}
+@keyframes mp-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 .mp-row-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mp-row-provider {
   font: 400 9px -apple-system, sans-serif;
@@ -733,41 +748,6 @@ body.drag-over #input-bar {
   font: 400 10px -apple-system, sans-serif;
   color: var(--color-text-muted); opacity: 0.7;
   line-height: 1.4;
-}
-
-/* ── Two-section layout (preferred + fallbacks) ── */
-.mp-section { margin-bottom: 10px; }
-.mp-section:last-of-type { margin-bottom: 0; }
-.mp-section-label {
-  display: block;
-  font: 600 10px -apple-system, sans-serif;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 4px;
-}
-.mp-preferred-wrap { position: relative; }
-.mp-select {
-  width: 100%; height: 30px;
-  border: 1px solid var(--glass-etched-border, var(--glass-border));
-  border-radius: 8px;
-  background: var(--glass-etched-bg, rgba(0,0,0,0.025));
-  color: var(--color-text);
-  font: 500 12px -apple-system, sans-serif;
-  padding: 0 8px;
-  cursor: pointer;
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  appearance: none;
-  -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-  padding-right: 28px;
-}
-.mp-select:focus {
-  border-color: rgba(91, 127, 191, 0.35);
-  box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.08);
 }
 
 /* Fallback indicator dot on chip */
