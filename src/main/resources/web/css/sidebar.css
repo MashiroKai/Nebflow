@@ -875,30 +875,29 @@
   flex-shrink: 0;
   margin-left: auto;
 }
-.vision-toggle {
-  font: 500 10px -apple-system, sans-serif;
-  padding: 2px 10px;
-  border-radius: 10px;
-  cursor: pointer;
-  letter-spacing: 0.01em;
+/* Read-only vision badge (provider card list) */
+.vision-badge {
+  font: 500 9.5px -apple-system, sans-serif;
+  padding: 1px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(91, 127, 191, 0.35);
+  background: rgba(91, 127, 191, 0.08);
+  color: #5b7fbf;
   white-space: nowrap;
   line-height: 1.5;
-  transition: all 0.15s ease;
 }
-/* Off — dashed gray outline */
-.vision-toggle:not(.on) {
-  border: 1px dashed var(--color-frame-text-dim, #aaa);
-  background: transparent;
-  color: var(--color-frame-text-dim, #aaa);
+/* Vision checkbox in edit modal */
+.cfg-model-vision-check {
+  font: 500 11px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
-/* On — solid blue */
-.vision-toggle.on {
-  border: 1px solid #5b7fbf;
-  background: #5b7fbf;
-  color: #fff;
-}
-.vision-toggle:hover { opacity: 0.8; }
-.vision-toggle:active { transform: scale(0.97); }
+.cfg-model-vision-check input { margin: 0; cursor: pointer; }
 
 .cfg-card-header {
   display: flex;

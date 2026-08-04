@@ -166,13 +166,25 @@ class RestApiRoutes(
         Ok(nebflow.llm.ModelRegistry.loadForApi.asJson)
       }
 
-    // PUT /models/capabilities — update model capability tags
+    // PUT /models/capabilities — update a single model's capability tags
     case req @ PUT -> Root / "models" / "capabilities" =>
       withAuth(req) {
         req.as[Json].flatMap { body =>
-          val entries = body.hcursor.downField("models").as[Map[String, nebflow.llm.ModelRegistry.ModelEntry]].getOrElse(Map.empty)
-          nebflow.llm.ModelRegistry.save(entries)
-          Ok(Json.obj("status" -> "ok".asJson))
+          val providerId = body.hcursor.downField("providerId").as[String].getOrElse("")
+          val modelId = body.hcursor.downField("modelId").as[String].getOrElse("")
+          val vision = body.hcursor.downField("vision").as[Boolean].getOrElse(false)
+          val capabilities = body.hcursor.downField("capabilities").as[List[String]].getOrElse(Nil)
+          if providerId.nonEmpty && modelId.nonEmpty then
+            val key = s"$providerId/$modelId"
+            val current = nebflow.llm.ModelRegistry.loadForApi
+            val updatedEntry = current.models.get(key) match
+              case Some(existing) => existing.copy(vision = vision, capabilities = capabilities)
+              case None => nebflow.llm.ModelRegistry.ModelEntry(vision = vision, capabilities = capabilities)
+            val updatedModels = current.models + (key -> updatedEntry)
+            nebflow.llm.ModelRegistry.save(updatedModels)
+            Ok(Json.obj("status" -> "ok".asJson))
+          else
+            BadRequest(Json.obj("error" -> "providerId and modelId required".asJson))
         }
       }
 

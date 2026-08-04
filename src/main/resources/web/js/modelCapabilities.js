@@ -36,7 +36,7 @@ async function fetchModels() {
   if (onReadyCb) onReadyCb();
 }
 
-async function updateVision(modelEntry, vision) {
+export async function updateVision(modelEntry, vision) {
   const slashIdx = modelEntry.id.indexOf('/');
   const providerId = slashIdx >= 0 ? modelEntry.id.substring(0, slashIdx) : modelEntry.id;
   const modelId = slashIdx >= 0 ? modelEntry.id.substring(slashIdx + 1) : modelEntry.id;
@@ -68,6 +68,12 @@ export function getVision(ref) {
 /** Get the underlying model entry object for mutation. */
 function getModelEntry(ref) {
   return models.find(m => m.id === ref);
+}
+
+/** Read-only vision badge — only renders when vision is on. */
+export function renderVisionBadge(ref) {
+  const vision = getVision(ref);
+  return vision ? '<span class="vision-badge">Vision</span>' : '';
 }
 
 /** Render vision toggle HTML for a model ref.
