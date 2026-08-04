@@ -1,22 +1,22 @@
 // modelCapabilities.js — Model capability tag editor.
-// Renders a section inside Settings showing each configured model with
-// preset capability checkboxes (vision, reasoning, code, etc.).
-// Self-contained: fetches /api/models, PUTs updates on checkbox change.
+// Renders capability pills inline within provider cards in Settings.
+// Fetches /api/models/capabilities, PUTs updates on pill toggle.
 
 import { t } from './i18n.js';
 
 const PRESET_CAPS = [
-  { key: 'vision',       label: 'Vision' },
-  { key: 'reasoning',    label: 'Reasoning' },
-  { key: 'code',         label: 'Code' },
-  { key: 'fast',         label: 'Fast' },
-  { key: 'long-context', label: 'Long Context' },
-  { key: 'cheap',        label: 'Cheap' },
-  { key: 'audio',        label: 'Audio' },
+  { key: 'vision',       label: 'Vision',       color: '#5b7fbf' },
+  { key: 'reasoning',    label: 'Reasoning',    color: '#8b5fbf' },
+  { key: 'code',         label: 'Code',          color: '#3da77f' },
+  { key: 'fast',         label: 'Fast',          color: '#d49020' },
+  { key: 'long-context', label: 'Long Context',  color: '#bf6b3d' },
+  { key: 'cheap',        label: 'Cheap',         color: '#5b9e9e' },
+  { key: 'audio',        label: 'Audio',         color: '#bf5b7f' },
 ];
 
 let models = [];
 let loading = false;
+let onReadyCb = null;
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('nebflow_token') || ''; }
@@ -33,12 +33,10 @@ function esc(s) {
 // ── API ────────────────────────────────────────────────────
 async function fetchModels() {
   loading = true;
-  renderSection();
   try {
     const resp = await fetch('/api/models/capabilities', { headers: authHeaders() });
-    if (!resp.ok) { models = []; loading = false; renderSection(); return; }
+    if (!resp.ok) { models = []; loading = false; if (onReadyCb) onReadyCb(); return; }
     const data = await resp.json();
-    // API returns { models: { "provider/model": {vision, capabilities} } }
     const modelsMap = data.models || {};
     models = Object.entries(modelsMap).map(([id, info]) => ({
       id,
@@ -47,15 +45,12 @@ async function fetchModels() {
     }));
   } catch (e) { models = []; }
   loading = false;
-  renderSection();
+  if (onReadyCb) onReadyCb();
 }
 
 async function updateModelCapability(modelEntry, caps) {
-  // Split vision from other capabilities — API expects separate fields
   const hasVision = caps.includes('vision');
   const otherCaps = caps.filter(c => c !== 'vision');
-
-  // Parse provider/modelId from id ("provider/modelId")
   const slashIdx = modelEntry.id.indexOf('/');
   const providerId = slashIdx >= 0 ? modelEntry.id.substring(0, slashIdx) : modelEntry.id;
   const modelId = slashIdx >= 0 ? modelEntry.id.substring(slashIdx + 1) : modelEntry.id;
@@ -64,78 +59,75 @@ async function updateModelCapability(modelEntry, caps) {
     await fetch('/api/models/capabilities', {
       method: 'PUT',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        providerId,
-        modelId,
-        capabilities: otherCaps,
-        vision: hasVision,
-      }),
+      body: JSON.stringify({ providerId, modelId, capabilities: otherCaps, vision: hasVision }),
     });
-    // Update local state
     modelEntry.capabilities = otherCaps;
     modelEntry.vision = hasVision;
-  } catch (e) { /* non-critical — will refresh on next fetch */ }
-}
-
-// ── Render ─────────────────────────────────────────────────
-function renderSection() {
-  const container = document.getElementById('model-caps-container');
-  if (!container) return;
-
-  if (loading) {
-    container.innerHTML = `<div class="cfg-empty">${t('chat.loading')}</div>`;
-    return;
-  }
-
-  if (!models || models.length === 0) {
-    container.innerHTML = `<div class="cfg-empty">${t('settings.noModels') || 'No models configured'}</div>`;
-    return;
-  }
-
-  container.innerHTML = models.map(m => {
-    const caps = new Set(m.capabilities || []);
-    if (m.vision) caps.add('vision');
-
-    const checkboxes = PRESET_CAPS.map(c => {
-      const checked = caps.has(c.key);
-      return `<label class="model-cap-chip${checked ? ' checked' : ''}" data-model="${esc(m.id)}" data-cap="${esc(c.key)}">
-        <input type="checkbox" ${checked ? 'checked' : ''}>
-        <span>${esc(c.label)}</span>
-      </label>`;
-    }).join('');
-
-    return `<div class="model-cap-row">
-      <div class="model-cap-name">${esc(m.id)}</div>
-      <div class="model-cap-chips">${checkboxes}</div>
-    </div>`;
-  }).join('');
-
-  // Bind checkbox changes
-  container.querySelectorAll('.model-cap-chip input[type="checkbox"]').forEach(cb => {
-    cb.addEventListener('change', async () => {
-      const chip = cb.closest('.model-cap-chip');
-      const modelId = chip.dataset.model;
-      const capKey = chip.dataset.cap;
-      chip.classList.toggle('checked', cb.checked);
-
-      const model = models.find(m => m.id === modelId);
-      if (!model) return;
-
-      // Gather all currently checked caps for this model
-      const allChips = container.querySelectorAll(`.model-cap-chip[data-model="${esc(modelId)}"] input[type="checkbox"]`);
-      const checkedCaps = [];
-      allChips.forEach(c => { if (c.checked) checkedCaps.push(c.closest('.model-cap-chip').dataset.cap); });
-
-      await updateModelCapability(model, checkedCaps);
-    });
-  });
+  } catch (e) { /* non-critical */ }
 }
 
 // ── Public ─────────────────────────────────────────────────
 
-/** Render the model capabilities section into a container element.
- *  Called from renderSettings() in sidebar.js. */
-export function renderModelCapabilities(container) {
-  container.innerHTML = `<div id="model-caps-container"></div>`;
+/** Pre-fetch model capabilities. Call once when Settings opens. */
+export function preloadModelCapabilities(callback) {
+  onReadyCb = callback || null;
   fetchModels();
+}
+
+/** Get capabilities for a model ref (e.g. "USTC/glm-4.6").
+ *  Returns a Set of cap keys (including 'vision' if set). */
+export function getModelCaps(ref) {
+  const m = models.find(m => m.id === ref);
+  if (!m) return new Set();
+  const caps = new Set(m.capabilities || []);
+  if (m.vision) caps.add('vision');
+  return caps;
+}
+
+/** Get the underlying model entry object for mutation. */
+function getModelEntry(ref) {
+  return models.find(m => m.id === ref);
+}
+
+/** Render capability pills HTML for a model ref.
+ *  Active pills are filled with their color; inactive are outlined.
+ *  Clicking a pill toggles it. */
+export function renderCapPills(ref) {
+  const caps = getModelCaps(ref);
+
+  return PRESET_CAPS.map(c => {
+    const active = caps.has(c.key);
+    const bg = active ? c.color : 'transparent';
+    const fg = active ? '#fff' : c.color;
+    const border = active ? c.color : `${c.color}55`;
+    return `<button class="cap-pill${active ? ' active' : ''}"
+      style="--pill-color:${c.color};background:${bg};color:${fg};border-color:${border}"
+      data-model="${esc(ref)}" data-cap="${esc(c.key)}"
+      title="${esc(c.label)}">${esc(c.label)}</button>`;
+  }).join('');
+}
+
+/** Bind click handlers for capability pills within a container. */
+export function bindCapPills(container) {
+  container.querySelectorAll('.cap-pill').forEach(pill => {
+    pill.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const modelRef = pill.dataset.model;
+      const capKey = pill.dataset.cap;
+      const entry = getModelEntry(modelRef);
+      if (!entry) return;
+
+      const caps = getModelCaps(modelRef);
+      if (caps.has(capKey)) caps.delete(capKey);
+      else caps.add(capKey);
+
+      await updateModelCapability(entry, [...caps]);
+
+      // Re-render just this model's pills
+      const parent = pill.parentElement;
+      if (parent) parent.innerHTML = renderCapPills(modelRef);
+      // Re-bind
+      bindCapPills(parent);
+    });
+  });
 }
