@@ -3,7 +3,6 @@
 // Accessed via the "users" icon in the Activity Bar.
 
 import state from './state.js';
-import { renderCapPills } from './modelCapabilities.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('nebflow_token') || ''; }
