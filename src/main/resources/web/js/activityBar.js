@@ -15,8 +15,9 @@
 // part of the panelDragger 3-column layout — order:-1 keeps it leftmost, and it
 // stays visible when the sidebar is collapsed.
 
-import { openSettingsPanel, isSettingsPanelActive } from './sidebar.js';
+import { openSettingsPanel, isSettingsPanelActive, showPanel } from './sidebar.js';
 import { fetchNeblinkStatus, getNeblinkState } from './neblink.js';
+import { renderAgentManager, isAgentsPanelActive } from './agentManager.js';
 
 let initialized = false;
 let statusPollTimer = null;
@@ -26,6 +27,7 @@ export function initActivityBar() {
   initialized = true;
 
   bindSettingsButton();
+  bindAgentsButton();
   bindAvatar();
 
   // Refresh NebLink state now and periodically (only while the page is visible)
@@ -34,6 +36,7 @@ export function initActivityBar() {
   statusPollTimer = setInterval(() => { if (!document.hidden) refresh(); }, 10000);
 
   observeSettingsPanel();
+  observeAgentsPanel();
 
   if (typeof lucide !== 'undefined') lucide.createIcons();
 }
@@ -57,6 +60,30 @@ function bindSettingsButton() {
 function observeSettingsPanel() {
   const btn = document.getElementById('settings-btn');
   const panel = document.getElementById('panel-settings');
+  if (!btn || !panel) return;
+  const sync = () => btn.classList.toggle('active', panel.classList.contains('active'));
+  sync();
+  new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['class'] });
+}
+
+// ── Agents ───────────────────────────────────────────────
+function bindAgentsButton() {
+  const btn = document.getElementById('agents-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (isAgentsPanelActive()) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('panel-sessions')?.classList.add('active');
+    } else {
+      showPanel('agents');
+      renderAgentManager();
+    }
+  });
+}
+
+function observeAgentsPanel() {
+  const btn = document.getElementById('agents-btn');
+  const panel = document.getElementById('panel-agents');
   if (!btn || !panel) return;
   const sync = () => btn.classList.toggle('active', panel.classList.contains('active'));
   sync();

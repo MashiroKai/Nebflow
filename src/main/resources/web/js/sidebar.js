@@ -109,7 +109,7 @@ export function clearActiveFolder() {
 }
 
 // ---------- Panel Switching ----------
-function showPanel(tab) {
+export function showPanel(tab) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   const panel = document.getElementById('panel-' + tab);
   if (panel) panel.classList.add('active');
@@ -194,6 +194,13 @@ export function initNavTabs() {
   const settingsBackBtn = document.getElementById('settings-back-btn');
   if (settingsBackBtn) {
     settingsBackBtn.addEventListener('click', () => {
+      showPanel('sessions');
+    });
+  }
+
+  const agentsBackBtn = document.getElementById('agents-back-btn');
+  if (agentsBackBtn) {
+    agentsBackBtn.addEventListener('click', () => {
       showPanel('sessions');
     });
   }
