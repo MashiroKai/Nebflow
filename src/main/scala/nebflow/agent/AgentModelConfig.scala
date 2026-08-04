@@ -45,24 +45,17 @@ object AgentModelConfig:
  */
 object ModelRoleMatcher:
 
-  private val roleCapabilities: Map[String, List[String]] = Map(
-    "Manager" -> List("reasoning"),
-    "Backend" -> List("code"),
-    "Frontend" -> List("vision", "code"),
-    "Docs" -> List("fast"),
-    "qa-frontend" -> List("vision"),
-    "qa-backend" -> List("code"),
-    "prompt-engineer" -> List("reasoning"),
-    "tool-engineer" -> List("code")
-  )
+  /** Only Frontend needs vision capability; all other roles have no special requirements. */
+  private val visionRoles: Set[String] = Set("Frontend", "qa-frontend")
 
   /** Get required capabilities for a role name. Returns empty list for unknown roles. */
   def capabilitiesForRole(role: String): List[String] =
-    roleCapabilities.getOrElse(role, Nil)
+    if visionRoles.contains(role) then List("vision") else Nil
 
   /**
    * Suggest a model configuration for a given role.
-   * Returns AgentModelConfig with required capabilities.
+   * Frontend/qa-frontend → vision-capable model preferred.
+   * All other roles → no special capability requirements.
    */
   def suggestForRole(role: String): AgentModelConfig =
     val caps = capabilitiesForRole(role)
