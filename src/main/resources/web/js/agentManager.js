@@ -119,6 +119,84 @@ async function openAgentDetail(name) {
   renderAgentDetail(pane, name, detail, model);
 }
 
+/** PUT agent model preference. */
+async function setAgentModel(name, preferred) {
+  try {
+    await fetch(`/api/agents/${encodeURIComponent(name)}/model`, {
+      method: 'PUT',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preferred }),
+    });
+  } catch (e) { /* non-critical */ }
+}
+
+/** Render a reusable drag-to-reorder model list into a container.
+ *  Returns { destroy } for cleanup (though Canvas tabs don't need it). */
+function renderModelDragList(container, name, models, currentModel, allRefs) {
+  const playing = currentModel || (models[0] || '');
+
+  const rowsHtml = models.map((ref, i) => {
+    const isPlaying = ref === playing;
+    return `
+    <div class="agent-detail-model-row${isPlaying ? ' playing' : ''}" draggable="true" data-idx="${i}">
+      ${isPlaying ? '<span class="agent-detail-playing-dot"></span>' : '<span class="agent-detail-grip">⠿</span>'}
+      <span class="agent-detail-model-name">${esc(ref)}</span>
+      <span class="agent-detail-model-pos">${i === 0 ? '★' : i}</span>
+    </div>`;
+  }).join('');
+
+  const available = allRefs.filter(r => !models.includes(r));
+  const addHtml = available.length
+    ? `<div class="agent-detail-model-add"><select><option value="">+ add model…</option>${available.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}</select></div>`
+    : '';
+
+  container.innerHTML = `${rowsHtml}<div class="agent-detail-empty-spacer"></div>${addHtml}`;
+
+  // Drag reorder
+  let dragIdx = null;
+  container.querySelectorAll('.agent-detail-model-row').forEach(row => {
+    row.addEventListener('dragstart', (e) => {
+      dragIdx = Number(row.dataset.idx);
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+      dragIdx = null;
+      container.querySelectorAll('.agent-detail-model-row').forEach(r => r.classList.remove('drag-over'));
+    });
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      container.querySelectorAll('.agent-detail-model-row').forEach(r => r.classList.remove('drag-over'));
+      row.classList.add('drag-over');
+    });
+    row.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const overIdx = Number(row.dataset.idx);
+      if (dragIdx === null || dragIdx === overIdx) return;
+      const next = models.slice();
+      const [moved] = next.splice(dragIdx, 1);
+      next.splice(overIdx, 0, moved);
+      // Persist: [0] = preferred
+      await setAgentModel(name, next[0]);
+      // Re-render
+      renderModelDragList(container, name, next, currentModel, allRefs);
+    });
+  });
+
+  // Add select
+  const addSel = container.querySelector('select');
+  if (addSel) {
+    addSel.addEventListener('change', async () => {
+      const ref = addSel.value;
+      if (!ref) return;
+      const next = [...models, ref];
+      await setAgentModel(name, next[0]);
+      renderModelDragList(container, name, next, currentModel, allRefs);
+    });
+  }
+}
+
 function renderAgentDetail(pane, name, detail, model) {
   const displayName = detail?.displayName || detail?.name || name;
   const description = detail?.description || '';
@@ -133,14 +211,9 @@ function renderAgentDetail(pane, name, detail, model) {
   const promptPreview = prompt.substring(0, 200);
   const hasMore = prompt.length > 200;
 
-  // Model list (per-agent: currently just preferred)
-  const modelItems = preferred
-    ? `<div class="agent-detail-model-row${current === preferred ? ' playing' : ''}">
-        ${current === preferred ? '<span class="agent-detail-playing-dot"></span>' : ''}
-        <span class="agent-detail-model-name">${esc(preferred)}</span>
-        ${isFallback ? `<span class="agent-detail-fallback-tag">running: ${esc(current)}</span>` : ''}
-      </div>`
-    : '<div class="agent-detail-empty">Using global default</div>';
+  // Model list for drag component
+  const modelList = preferred ? [preferred] : [];
+  const allRefs = state.allModelRefs || [];
 
   const toolsHtml = tools.length > 0
     ? `<div class="agent-detail-tools">${tools.map(t => `<span class="agent-detail-tool">${esc(t)}</span>`).join('')}</div>`
@@ -159,7 +232,7 @@ function renderAgentDetail(pane, name, detail, model) {
 
       <div class="agent-detail-section">
         <div class="agent-detail-label">Model</div>
-        ${modelItems}
+        <div id="agent-detail-model-list"></div>
       </div>
 
       <div class="agent-detail-section">
@@ -173,6 +246,16 @@ function renderAgentDetail(pane, name, detail, model) {
         <div class="agent-detail-prompt" data-collapsed="${hasMore ? 'true' : 'false'}">${esc(promptPreview)}${hasMore ? '<span class="agent-detail-prompt-more">…</span>' : ''}</div>
       </div>` : ''}
     </div>`;
+
+  // Render model drag list
+  const modelListEl = pane.querySelector('#agent-detail-model-list');
+  if (modelListEl) {
+    if (modelList.length > 0) {
+      renderModelDragList(modelListEl, name, modelList, current, allRefs);
+    } else {
+      modelListEl.innerHTML = '<div class="agent-detail-empty">Using global default</div>';
+    }
+  }
 
   // Bind system prompt expand
   if (hasMore) {
