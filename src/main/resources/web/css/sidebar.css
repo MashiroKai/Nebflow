@@ -1267,6 +1267,104 @@
 }
 @keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ── Agent Manager ────────────────────────────────────────────────────── */
+.agent-mgr-card {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-frame-border-light);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.agent-mgr-card:hover { background: rgba(0,0,0,0.02); }
+.agent-mgr-card.expanded { background: rgba(0,0,0,0.015); }
+.agent-mgr-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-mgr-name {
+  font: 600 13px -apple-system, sans-serif;
+  color: var(--color-frame-text);
+  letter-spacing: -0.01em;
+}
+.agent-mgr-model {
+  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  background: var(--color-frame-border);
+  padding: 1px 7px;
+  border-radius: 4px;
+  margin-left: auto;
+}
+.agent-mgr-model.fallback {
+  color: rgb(91, 127, 191);
+  background: rgba(91, 127, 191, 0.10);
+}
+.agent-mgr-desc {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  margin-top: 3px;
+  line-height: 1.4;
+}
+.agent-mgr-section {
+  margin-top: 8px;
+}
+.agent-mgr-label {
+  font: 600 10px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.agent-mgr-select {
+  width: 100%; height: 30px;
+  border: 1px solid var(--color-frame-border-light);
+  border-radius: 8px;
+  background: rgba(0,0,0,0.02);
+  color: var(--color-frame-text);
+  font: 500 12px -apple-system, sans-serif;
+  padding: 0 8px;
+  cursor: pointer; outline: none;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+  transition: border-color 0.2s;
+}
+.agent-mgr-select:focus { border-color: rgba(91,127,191,0.35); }
+.agent-mgr-model-note {
+  font: 400 10px -apple-system, sans-serif;
+  color: rgb(91, 127, 191);
+  margin-top: 4px;
+}
+.agent-mgr-tools {
+  display: flex; flex-wrap: wrap; gap: 4px;
+}
+.agent-mgr-tool {
+  font: 400 10px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  background: var(--color-frame-border);
+  border: 1px solid var(--color-frame-border-light);
+  padding: 2px 7px;
+  border-radius: 6px;
+}
+.agent-mgr-empty {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-frame-text-muted);
+}
+.agent-mgr-prompt {
+  font: 400 11px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  line-height: 1.5;
+  max-height: 300px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  cursor: pointer;
+  padding: 8px;
+  background: rgba(0,0,0,0.02);
+  border-radius: 6px;
+}
+.agent-mgr-prompt-more { color: rgb(91, 127, 191); }
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   /* cfg-model-add: ensure dashed border visible on dark modal bg */
@@ -1274,4 +1372,8 @@
     border-color: var(--color-frame-text-dim);
     color: var(--color-frame-text-muted);
   }
+  .agent-mgr-card:hover { background: rgba(255,255,255,0.03); }
+  .agent-mgr-card.expanded { background: rgba(255,255,255,0.015); }
+  .agent-mgr-select { background: rgba(255,255,255,0.04); }
+  .agent-mgr-prompt { background: rgba(255,255,255,0.03); }
 }
