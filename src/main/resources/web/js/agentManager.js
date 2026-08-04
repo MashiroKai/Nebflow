@@ -89,9 +89,10 @@ export function renderAgentManager() {
       </div>`;
     }).join('');
 
-    // Bind card clicks
+    // Bind card clicks (single = preview, double = pinned — VS Code style)
     content.querySelectorAll('.agent-mgr-card').forEach(card => {
       card.addEventListener('click', () => openAgentDetail(card.dataset.agent));
+      card.addEventListener('dblclick', () => openAgentDetail(card.dataset.agent, true));
     });
 
     // Async-populate model tags
@@ -114,9 +115,9 @@ async function populateModelTag(name) {
 // ── Canvas detail tab ──────────────────────────────────────
 
 /** Open a Canvas tab showing the agent detail page. */
-async function openAgentDetail(name) {
+async function openAgentDetail(name, pin = false) {
   const tabId = `agent:${name}`;
-  openTab(tabId, name, { type: 'agent', pinned: true });
+  openTab(tabId, name, { type: 'agent', pinned: pin });
   const pane = getTabPane(tabId);
   if (!pane) return;
 
