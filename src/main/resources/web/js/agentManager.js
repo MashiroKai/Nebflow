@@ -2,6 +2,7 @@
 // Sidebar list shows compact agent cards. Click opens a Canvas detail tab.
 
 import state from './state.js';
+import { sendWs } from './ws.js';
 import { openTab, getTabPane } from './canvas.js';
 
 // ── Helpers ────────────────────────────────────────────────
@@ -19,6 +20,18 @@ function shortModel(ref) {
   if (!ref) return '';
   const idx = ref.lastIndexOf('/');
   return idx >= 0 ? ref.slice(idx + 1) : ref;
+}
+
+/** Build model refs from config if state.allModelRefs is empty. */
+function getAllModelRefs() {
+  let refs = state.allModelRefs || [];
+  if (refs.length === 0 && state.parsedConfig?.llm?.providers) {
+    refs = [];
+    for (const [name, p] of Object.entries(state.parsedConfig.llm.providers)) {
+      (p.models || []).forEach(m => refs.push(`${name}/${m.id}`));
+    }
+  }
+  return refs;
 }
 
 // ── API ────────────────────────────────────────────────────
@@ -143,6 +156,7 @@ function renderModelDragList(container, name, models, currentModel, allRefs) {
       ${isPlaying ? '<span class="agent-detail-playing-dot"></span>' : '<span class="agent-detail-grip">⠿</span>'}
       <span class="agent-detail-model-name">${esc(ref)}</span>
       <span class="agent-detail-model-pos">${i === 0 ? '★' : i}</span>
+      <span class="agent-detail-model-remove" data-idx="${i}" title="Remove">×</span>
     </div>`;
   }).join('');
 
@@ -196,6 +210,18 @@ function renderModelDragList(container, name, models, currentModel, allRefs) {
       renderModelDragList(container, name, next, currentModel, allRefs);
     });
   }
+
+  // Remove buttons
+  container.querySelectorAll('.agent-detail-model-remove').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const idx = Number(btn.dataset.idx);
+      const next = models.slice();
+      next.splice(idx, 1);
+      await setAgentModel(name, next);
+      renderModelDragList(container, name, next, currentModel, allRefs);
+    });
+  });
 }
 
 function renderAgentDetail(pane, name, detail, model) {
@@ -204,23 +230,25 @@ function renderAgentDetail(pane, name, detail, model) {
   const extends_ = detail?.extends || '';
   const preferred = model?.preferred || model?.default || '';
   const current = model?.current || preferred;
-  const isFallback = current && preferred && current !== preferred;
   const tools = detail?.tools || [];
 
-  // System prompt preview (first 200 chars)
+  // System prompt
   const prompt = detail?.systemPrompt || '';
-  const promptPreview = prompt.substring(0, 200);
-  const hasMore = prompt.length > 200;
 
   // Model list for drag component — [preferred, ...fallbacks]
   const preferredRaw = model?.preferred || model?.default || '';
   const fallbacksRaw = model?.fallbacks || model?.model?.fallbacks || [];
   const modelList = [preferredRaw, ...fallbacksRaw].filter(Boolean);
-  const allRefs = state.allModelRefs || [];
+  const allRefs = getAllModelRefs();
 
-  const toolsHtml = tools.length > 0
-    ? `<div class="agent-detail-tools">${tools.map(t => `<span class="agent-detail-tool">${esc(t)}</span>`).join('')}</div>`
-    : '<div class="agent-detail-empty">No tools</div>';
+  const toolsHtml = `<div class="agent-detail-tools" id="agent-detail-tools">
+    ${tools.length > 0
+      ? tools.map((t, i) => `<span class="agent-detail-tool" data-idx="${i}">${esc(t)}<span class="agent-detail-tool-remove" data-idx="${i}">×</span></span>`).join('')
+      : '<span class="agent-detail-empty">No tools</span>'}
+  </div>
+  <div class="agent-detail-tool-add">
+    <input type="text" placeholder="+ add tool" id="agent-detail-tool-input">
+  </div>`;
 
   pane.innerHTML = `
     <div class="agent-detail">
@@ -243,37 +271,52 @@ function renderAgentDetail(pane, name, detail, model) {
         ${toolsHtml}
       </div>
 
-      ${prompt ? `
       <div class="agent-detail-section">
         <div class="agent-detail-label">System Prompt</div>
-        <div class="agent-detail-prompt" data-collapsed="${hasMore ? 'true' : 'false'}">${esc(promptPreview)}${hasMore ? '<span class="agent-detail-prompt-more">…</span>' : ''}</div>
-      </div>` : ''}
+        <textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}">${esc(prompt)}</textarea>
+        <button class="agent-detail-save-btn" id="agent-detail-save-prompt">Save</button>
+      </div>
     </div>`;
 
-  // Render model drag list
+  // Always render model drag list (even empty — shows add dropdown)
   const modelListEl = pane.querySelector('#agent-detail-model-list');
   if (modelListEl) {
-    if (modelList.length > 0) {
-      renderModelDragList(modelListEl, name, modelList, current, allRefs);
-    } else {
-      modelListEl.innerHTML = '<div class="agent-detail-empty">Using global default</div>';
-    }
+    renderModelDragList(modelListEl, name, modelList, current, allRefs);
   }
 
-  // Bind system prompt expand
-  if (hasMore) {
-    const promptEl = pane.querySelector('.agent-detail-prompt');
-    promptEl?.addEventListener('click', () => {
-      const collapsed = promptEl.dataset.collapsed === 'true';
-      if (collapsed) {
-        promptEl.dataset.collapsed = 'false';
-        promptEl.textContent = prompt;
-      } else {
-        promptEl.dataset.collapsed = 'true';
-        promptEl.innerHTML = esc(promptPreview) + '<span class="agent-detail-prompt-more">…</span>';
-      }
+  // Bind system prompt save
+  pane.querySelector('#agent-detail-save-prompt')?.addEventListener('click', () => {
+    const text = pane.querySelector('.agent-detail-prompt-edit').value;
+    sendWs({ type: 'updateAgentSystemPrompt', name, systemMd: text });
+    const btn = pane.querySelector('#agent-detail-save-prompt');
+    btn.textContent = 'Saved';
+    setTimeout(() => { btn.textContent = 'Save'; }, 1500);
+  });
+
+  // Bind tool remove
+  pane.querySelectorAll('.agent-detail-tool-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = Number(btn.dataset.idx);
+      const next = tools.slice();
+      next.splice(idx, 1);
+      sendWs({ type: 'updateAgentTools', name, tools: next });
+      renderAgentDetail(pane, name, { ...detail, tools: next }, model);
     });
-  }
+  });
+
+  // Bind tool add (Enter key)
+  const toolInput = pane.querySelector('#agent-detail-tool-input');
+  toolInput?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = toolInput.value.trim();
+      if (!val) return;
+      const next = [...tools, val];
+      sendWs({ type: 'updateAgentTools', name, tools: next });
+      renderAgentDetail(pane, name, { ...detail, tools: next }, model);
+    }
+  });
 }
 
 // ── Public ─────────────────────────────────────────────────

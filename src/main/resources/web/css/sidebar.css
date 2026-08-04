@@ -1432,6 +1432,64 @@
   cursor: pointer; outline: none;
 }
 .agent-detail-empty-spacer { height: 4px; }
+
+/* Model remove button */
+.agent-detail-model-remove {
+  cursor: pointer; opacity: 0.35;
+  font-size: 14px; padding: 0 2px;
+  flex-shrink: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.agent-detail-model-remove:hover { opacity: 1; color: var(--color-error, #e5484d); }
+
+/* System prompt edit */
+.agent-detail-prompt-edit {
+  width: 100%; min-height: 120px;
+  font: 400 12px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text);
+  background: rgba(0,0,0,0.02);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 12px;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.agent-detail-prompt-edit:focus { border-color: rgba(91,127,191,0.35); }
+.agent-detail-save-btn {
+  margin-top: 8px;
+  font: 500 12px -apple-system, sans-serif;
+  padding: 5px 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.agent-detail-save-btn:hover { background: rgba(91,127,191,0.06); border-color: rgba(91,127,191,0.3); }
+
+/* Tool remove + add */
+.agent-detail-tool-remove {
+  margin-left: 4px; opacity: 0.3; cursor: pointer;
+  transition: opacity 0.15s;
+}
+.agent-detail-tool-remove:hover { opacity: 1; }
+.agent-detail-tool-add { margin-top: 8px; }
+.agent-detail-tool-add input {
+  width: 100%; height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: rgba(0,0,0,0.02);
+  color: var(--color-text);
+  font: 500 11px -apple-system, sans-serif;
+  padding: 0 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.agent-detail-tool-add input:focus { border-color: rgba(91,127,191,0.35); }
 .agent-detail-empty {
   font: 400 12px -apple-system, sans-serif;
   color: var(--color-text-muted);
@@ -1470,5 +1528,7 @@
   }
   .agent-mgr-card:hover { background: rgba(255,255,255,0.04); }
   .agent-detail-model-row { background: rgba(255,255,255,0.03); }
-  .agent-detail-prompt { background: rgba(255,255,255,0.03); }
+  .agent-detail-prompt-edit { background: rgba(255,255,255,0.03); }
+  .agent-detail-save-btn { background: rgba(255,255,255,0.03); }
+  .agent-detail-tool-add input { background: rgba(255,255,255,0.03); }
 }
