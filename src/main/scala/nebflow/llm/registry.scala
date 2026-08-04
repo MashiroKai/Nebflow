@@ -2,6 +2,7 @@ package nebflow.llm
 
 import cats.effect.IO
 import cats.effect.kernel.Ref
+import cats.syntax.traverse.*
 import nebflow.llm.providers.{AnthropicAdapter, OpenAiAdapter}
 import nebflow.shared.Defaults
 import sttp.capabilities.fs2.Fs2Streams
@@ -123,19 +124,15 @@ class ProviderRegistry(
       case None | Some(nebflow.agent.AgentModelConfig(None, Nil, Nil, _)) =>
         getCandidates() // no config → global list
       case Some(cfg) =>
-        getCandidates().flatMap { globalCandidates =>
-          // Resolve preferred model (if specified)
-          cfg.preferred match
-            case Some(ref) =>
-              getCandidateForRef(ref).map { preferredOpt =>
-                val base = preferredOpt.toList ++ globalCandidates.filterNot(c =>
-                  preferredOpt.exists(p => p.providerId == c.providerId && p.model == c.model)
-                )
-                applyCapabilityFilter(base, cfg)
-              }
-            case None =>
-              IO.pure(applyCapabilityFilter(globalCandidates, cfg))
-        }
+        // Build agent chain: [preferred, ...fallbacks]
+        val agentChain = cfg.preferred.toList ++ cfg.fallbacks
+        for
+          resolved <- agentChain.traverse(ref => getCandidateForRef(ref))
+          agentCandidates = resolved.flatten
+          globalCandidates <- if agentCandidates.nonEmpty then IO.pure(Nil) else getCandidates()
+          base = if agentCandidates.nonEmpty then agentCandidates else globalCandidates
+          filtered = applyCapabilityFilter(base, cfg)
+        yield filtered
 
   /** Apply capability filtering / reordering based on fallbackPolicy. */
   private def applyCapabilityFilter(
