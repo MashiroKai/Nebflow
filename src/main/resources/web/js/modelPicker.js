@@ -147,13 +147,11 @@ function render() {
 
   const runtime = currentRuntimeModel();
   const models = orderedModels();
-  const pref = preferredModel();
-  const isFallback = runtime && pref && runtime !== pref;
 
   // ── Chip (always rendered) ──
   const chipHtml = `
     <button class="mp-chip mp-active${expanded ? ' mp-open' : ''}" id="mp-toggle" title="${t('modelPicker.changeModel')}">
-      <span class="mp-dot${isFallback ? ' mp-dot-fallback' : ''}"></span>${runtime ? `<span class="mp-provider">${esc(providerLabel(runtime))}</span><span class="mp-label">${esc(shortLabel(runtime))}</span>${isFallback ? `<span class="mp-fallback-tag">${t('modelPicker.usingFallback')}</span>` : ''}` : `<span class="mp-label">${t('modelPicker.select')}</span>`}
+      <span class="mp-dot"></span>${runtime ? `<span class="mp-provider">${esc(providerLabel(runtime))}</span><span class="mp-label">${esc(shortLabel(runtime))}</span>` : `<span class="mp-label">${t('modelPicker.select')}</span>`}
     </button>`;
 
   mountEl.innerHTML = chipHtml;
