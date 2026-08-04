@@ -1,16 +1,11 @@
-// modelPicker.js — Model selector with separated preferred + fallback chain.
+// modelPicker.js — Unified model selector with drag-to-reorder priority chain.
 //
 // Collapsed chip: shows the runtime current model (state.currentModel),
 // which is updated by WS modelChanged when a fallback kicks in.
 //
-// Expanded panel: two sections:
-//   1. 「Preferred Model」— dropdown select (single), writes model.default
-//   2. 「Fallback Chain」— draggable ordered list, writes model.fallbacks
-//
-// Data sources:
-//   - state.parsedConfig.llm.model.{default, fallbacks}  → config
-//   - state.currentModel  → runtime model (WS modelChanged, init = default)
-//   - state.allModelRefs  → pickable models
+// Expanded panel: single draggable list where position = priority.
+//   [0] → model.default (preferred), [1:] → model.fallbacks
+// A green dot marks the current runtime model row.
 
 import state from './state.js';
 import { sendWs } from './ws.js';
@@ -53,6 +48,13 @@ function fallbackChain() {
   return chain;
 }
 
+/** Unified ordered list: [preferred, ...fallbacks]. */
+function orderedModels() {
+  const pref = preferredModel();
+  const fbs = fallbackChain();
+  return pref ? [pref, ...fbs] : fbs;
+}
+
 /** The runtime current model (what's actually being used right now).
  *  Falls back to preferred if WS hasn't told us otherwise. */
 function currentRuntimeModel() {
@@ -81,29 +83,22 @@ function ensureModelConfig() {
   if (!state.parsedConfig.llm.model) state.parsedConfig.llm.model = {};
 }
 
-/** Set the preferred model and remove it from fallbacks if present. */
-function applyPreferred(ref) {
+/** Persist a new ordered model list.
+ *  [0] → model.default, [1:] → model.fallbacks. */
+function applyOrderedModels(newOrder) {
   ensureModelConfig();
-  const old = preferredModel();
-  state.parsedConfig.llm.model.default = ref;
-  // Remove new preferred from fallbacks; add old preferred to fallbacks head
-  const fbs = fallbackChain().filter(r => r !== ref);
-  if (old && old !== ref) fbs.unshift(old);
-  state.parsedConfig.llm.model.fallbacks = fbs;
-  // Update runtime model if it was showing the old preferred
-  if (!state.currentModel || state.currentModel === old) {
-    state.currentModel = ref;
-  }
+  const [first, ...rest] = newOrder;
+  state.parsedConfig.llm.model.default = first || '';
+  state.parsedConfig.llm.model.fallbacks = rest;
   flushConfigToServer();
   render();
 }
 
-/** Persist a new fallback order. */
-function applyFallbacks(newFbs) {
-  ensureModelConfig();
-  state.parsedConfig.llm.model.fallbacks = newFbs;
-  flushConfigToServer();
-  render();
+/** Set the preferred model (internal helper for applyOrderedModels). */
+function applyPreferred(ref) {
+  const current = orderedModels();
+  const filtered = current.filter(r => r !== ref);
+  applyOrderedModels([ref, ...filtered]);
 }
 
 let delegateBound = false;
@@ -118,7 +113,7 @@ function bindDelegate() {
 }
 
 /** Bind interactions on the floating panel. */
-function bindPanel(pref, fbs) {
+function bindPanel(models) {
   const panel = document.getElementById('mp-panel');
   if (!panel) return;
 
@@ -128,25 +123,19 @@ function bindPanel(pref, fbs) {
     const rm = e.target.closest('.mp-remove');
     if (rm) {
       const idx = Number(rm.getAttribute('data-idx'));
-      const next = fbs.slice();
+      const next = models.slice();
       next.splice(idx, 1);
-      applyFallbacks(next);
+      applyOrderedModels(next);
       return;
     }
   });
 
   panel.addEventListener('change', (e) => {
-    if (e.target.id === 'mp-preferred-select') {
-      e.stopPropagation();
-      const ref = e.target.value;
-      if (ref) applyPreferred(ref);
-      return;
-    }
     if (e.target.id === 'mp-add-select') {
       e.stopPropagation();
       const ref = e.target.value;
       if (!ref) return;
-      applyFallbacks([...fbs, ref]);
+      applyOrderedModels([...models, ref]);
       return;
     }
   });
@@ -157,8 +146,8 @@ function render() {
   bindDelegate();
 
   const runtime = currentRuntimeModel();
+  const models = orderedModels();
   const pref = preferredModel();
-  const fbs = fallbackChain().filter(r => r !== pref);
   const isFallback = runtime && pref && runtime !== pref;
 
   // ── Chip (always rendered) ──
@@ -175,18 +164,21 @@ function render() {
   // ── Panel ──
   const container = document.getElementById('top-overlays') || document.body;
 
-  // Fallback rows
-  const fbItems = fbs.map((ref, i) => `
-    <div class="mp-row" draggable="true" data-idx="${i}">
-      <span class="mp-grip" title="drag to reorder">⠿</span>
-      <span class="mp-pos">${i + 1}</span>
+  // Unified drag rows — green dot on runtime model
+  const rowItems = models.map((ref, i) => {
+    const isPlaying = ref === runtime;
+    return `
+    <div class="mp-row${isPlaying ? ' mp-playing' : ''}" draggable="true" data-idx="${i}">
+      ${isPlaying ? '<span class="mp-playing-dot"></span>' : '<span class="mp-grip" title="drag to reorder">⠿</span>'}
+      <span class="mp-pos">${i === 0 ? '★' : i}</span>
       <span class="mp-row-label">${esc(shortLabel(ref))}</span>
       <span class="mp-row-provider">${esc(providerLabel(ref))}</span>
       <span class="mp-remove" data-idx="${i}" title="${t('modelPicker.remove')}">×</span>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
-  // Available for fallback add (exclude preferred and existing fallbacks)
-  const available = allModelRefs().filter(r => r !== pref && !fbs.includes(r));
+  // Available models not yet in the chain
+  const available = allModelRefs().filter(r => !models.includes(r));
   const addOptions = available.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('');
 
   const panelHtml = `
@@ -195,28 +187,16 @@ function render() {
         <span class="mp-panel-title">${t('modelPicker.chain')}</span>
         <span class="mp-close" id="mp-close">✕</span>
       </div>
-      <div class="mp-section">
-        <label class="mp-section-label">${t('modelPicker.preferred')}</label>
-        <div class="mp-preferred-wrap">
-          <select id="mp-preferred-select" class="mp-select">
-            ${pref ? `<option value="${esc(pref)}" selected>${esc(pref)}</option>` : `<option value="" selected>${t('modelPicker.select')}</option>`}
-            ${allModelRefs().filter(r => r !== pref).map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <div class="mp-section">
-        <label class="mp-section-label">${t('modelPicker.fallbacks')}</label>
-        <div class="mp-rows" id="mp-rows">${fbItems || `<div class="mp-empty">${t('modelPicker.fallbackEmpty')}</div>`}</div>
-        ${available.length ? `<div class="mp-add"><select id="mp-add-select"><option value="">${t('modelPicker.add')}</option>${addOptions}</select></div>` : ''}
-      </div>
+      <div class="mp-rows" id="mp-rows">${rowItems || `<div class="mp-empty">${t('modelPicker.empty')}</div>`}</div>
+      ${available.length ? `<div class="mp-add"><select id="mp-add-select"><option value="">${t('modelPicker.add')}</option>${addOptions}</select></div>` : ''}
       <div class="mp-hint">${t('modelPicker.hint')}</div>
     </div>`;
 
   container.insertAdjacentHTML('beforeend', panelHtml);
   positionPanel();
 
-  bindPanel(pref, fbs);
-  setupDragReorder(fbs);
+  bindPanel(models);
+  setupDragReorder(models);
 }
 
 function positionPanel() {
@@ -235,7 +215,7 @@ function removePanel() {
   document.getElementById('mp-panel')?.remove();
 }
 
-function setupDragReorder(fbs) {
+function setupDragReorder(models) {
   const rowsEl = document.getElementById('mp-rows');
   if (!rowsEl) return;
   let dragIdx = null;
@@ -261,10 +241,10 @@ function setupDragReorder(fbs) {
       e.preventDefault();
       const overIdx = Number(row.getAttribute('data-idx'));
       if (dragIdx === null || dragIdx === overIdx) return;
-      const next = fbs.slice();
+      const next = models.slice();
       const [moved] = next.splice(dragIdx, 1);
       next.splice(overIdx, 0, moved);
-      applyFallbacks(next);
+      applyOrderedModels(next);
     });
   });
 }
