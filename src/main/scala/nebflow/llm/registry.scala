@@ -120,7 +120,7 @@ class ProviderRegistry(
    */
   def getCandidatesForAgent(agentModel: Option[nebflow.agent.AgentModelConfig]): IO[List[ModelCandidate]] =
     agentModel match
-      case None | Some(nebflow.agent.AgentModelConfig(None, Nil, _)) =>
+      case None | Some(nebflow.agent.AgentModelConfig(None, Nil, Nil, _)) =>
         getCandidates() // no config → global list
       case Some(cfg) =>
         getCandidates().flatMap { globalCandidates =>

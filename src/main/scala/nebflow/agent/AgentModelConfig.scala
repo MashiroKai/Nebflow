@@ -16,6 +16,7 @@ import io.circe.{Decoder, Encoder, Json}
  */
 case class AgentModelConfig(
   preferred: Option[String] = None,
+  fallbacks: List[String] = Nil,
   capabilities: List[String] = Nil,
   fallbackPolicy: String = "prefer-capable"
 )
@@ -24,14 +25,16 @@ object AgentModelConfig:
   given Decoder[AgentModelConfig] = Decoder.instance { c =>
     for
       preferred <- c.downField("preferred").as[Option[String]]
+      fallbacks <- c.downField("fallbacks").as[Option[List[String]]]
       caps <- c.downField("capabilities").as[Option[List[String]]]
       policy <- c.downField("fallbackPolicy").as[Option[String]]
-    yield AgentModelConfig(preferred, caps.getOrElse(Nil), policy.getOrElse("prefer-capable"))
+    yield AgentModelConfig(preferred, fallbacks.getOrElse(Nil), caps.getOrElse(Nil), policy.getOrElse("prefer-capable"))
   }
 
   given Encoder[AgentModelConfig] = Encoder.instance { m =>
     Json.obj(
       "preferred" -> m.preferred.asJson,
+      "fallbacks" -> m.fallbacks.asJson,
       "capabilities" -> m.capabilities.asJson,
       "fallbackPolicy" -> m.fallbackPolicy.asJson
     )

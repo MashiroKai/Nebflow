@@ -898,12 +898,13 @@ class RestApiRoutes(
               val modelConfig = defn.model.getOrElse(nebflow.agent.AgentModelConfig.empty)
               val suggested = nebflow.agent.ModelRoleMatcher.suggestForRole(agentName)
               sharedResources.runtimeModels.get.flatMap { runtimeModels =>
-                val current = runtimeModels.values.headOption.orNull
+                val current = runtimeModels.values.headOption
                 Ok(Json.obj(
                   "model" -> modelConfig.asJson,
                   "suggested" -> suggested.asJson,
-                  "current" -> (current: String).asJson,
+                  "current" -> current.asJson,
                   "preferred" -> modelConfig.preferred.asJson,
+                  "fallbacks" -> modelConfig.fallbacks.asJson,
                   "default" -> modelConfig.preferred.asJson
                 ))
               }
