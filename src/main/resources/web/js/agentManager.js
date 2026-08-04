@@ -280,10 +280,29 @@ function renderAgentDetail(pane, name, detail, model) {
       </div>
     </div>`;
 
-  // Always render model drag list (even empty — shows add dropdown)
+  // Model section: show editable drag list if agent has own config,
+  // otherwise show inherited global default (read-only)
+  const hasOwnConfig = preferredRaw || (fallbacksRaw && fallbacksRaw.length > 0);
   const modelListEl = pane.querySelector('#agent-detail-model-list');
   if (modelListEl) {
-    renderModelDragList(modelListEl, name, modelList, current, allRefs);
+    if (!hasOwnConfig) {
+      // Display global default chain (read-only)
+      const globalDefault = state.parsedConfig?.llm?.model?.default || '';
+      const globalFallbacks = state.parsedConfig?.llm?.model?.fallbacks || [];
+      const globalChain = [globalDefault, ...globalFallbacks].filter(Boolean);
+      modelListEl.innerHTML = `
+        <div class="agent-detail-model-inherited">
+          <div class="agent-detail-model-inherited-label">Using global default</div>
+          ${globalChain.map((ref, i) => `
+            <div class="agent-detail-model-row inherited">
+              ${ref === current ? '<span class="agent-detail-playing-dot"></span>' : '<span class="agent-detail-grip">⠿</span>'}
+              <span class="agent-detail-model-name">${esc(ref)}</span>
+              <span class="agent-detail-model-pos">${i === 0 ? '★' : i}</span>
+            </div>`).join('') || '<div class="agent-detail-empty">No models configured</div>'}
+        </div>`;
+    } else {
+      renderModelDragList(modelListEl, name, modelList, current, allRefs);
+    }
   }
 
   // Bind system prompt save

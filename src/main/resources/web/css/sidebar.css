@@ -1471,6 +1471,16 @@
 }
 .agent-detail-save-btn:hover { background: rgba(91,127,191,0.06); border-color: rgba(91,127,191,0.3); }
 
+/* Model inherited (read-only global default) */
+.agent-detail-model-inherited { opacity: 0.6; }
+.agent-detail-model-inherited-label {
+  font: 400 11px -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+  font-style: italic;
+}
+.agent-detail-model-row.inherited { cursor: default; }
+
 /* Tool toggle chip grid */
 .agent-detail-tools-grid {
   display: flex; flex-wrap: wrap; gap: 5px;
