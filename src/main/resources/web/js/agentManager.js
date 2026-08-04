@@ -116,7 +116,7 @@ async function populateModelTag(name) {
 /** Open a Canvas tab showing the agent detail page. */
 async function openAgentDetail(name) {
   const tabId = `agent:${name}`;
-  openTab(tabId, name, { type: 'agent' });
+  openTab(tabId, name, { type: 'agent', pinned: true });
   const pane = getTabPane(tabId);
   if (!pane) return;
 
