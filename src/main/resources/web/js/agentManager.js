@@ -109,7 +109,8 @@ async function populateModelTag(name) {
   const tag = document.querySelector(`.agent-mgr-model-tag[data-agent="${esc(name)}"]`);
   if (!tag) return;
   const isFallback = model.preferred && current !== model.preferred;
-  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(shortModel(current))}</span>`;
+  const isDefault = !model.preferred;
+  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(shortModel(current))}</span>${isDefault ? '<span class="agent-mgr-default-badge">默认</span>' : ''}`;
 }
 
 // ── Canvas detail tab ──────────────────────────────────────
@@ -264,7 +265,7 @@ function renderAgentDetail(pane, name, detail, model) {
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Model</div>
+        <div class="agent-detail-label">Model${hasOwnConfig ? '' : '<span class="agent-detail-default-badge">默认</span>'}</div>
         <div id="agent-detail-model-list"></div>
       </div>
 

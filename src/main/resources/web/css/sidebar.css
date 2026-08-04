@@ -1485,6 +1485,18 @@
 }
 .agent-detail-save-btn:hover { background: rgba(91,127,191,0.06); border-color: rgba(91,127,191,0.3); }
 
+/* Default model badge */
+.agent-mgr-default-badge, .agent-detail-default-badge {
+  display: inline-block;
+  font: 500 10px -apple-system, sans-serif;
+  color: var(--color-text-muted, #888);
+  background: rgba(128,128,128,0.12);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
 /* Model inherited (read-only global default) */
 .agent-detail-model-inherited { opacity: 0.6; }
 .agent-detail-model-inherited-label {
