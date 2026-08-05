@@ -20,6 +20,10 @@ trait McpTransport:
   def onNotification(handler: JsonRpcNotification => IO[Unit]): IO[Unit]
   def close(): IO[Unit]
 
+/** MCP protocol version (2025-06-18 — latest stable, Streamable HTTP). */
+object McpProtocol:
+  val Version = "2025-06-18"
+
 /** Stdio transport — communicates with MCP server via subprocess stdin/stdout. */
 class StdioTransport private (
   command: String,
@@ -193,7 +197,14 @@ object StdioTransport:
     }
 end StdioTransport
 
-/** HTTP transport — communicates with MCP server via HTTP POST. */
+/** HTTP transport — Streamable HTTP (MCP 2025-06-18).
+ *
+ * One POST per JSON-RPC message, `Accept: application/json, text/event-stream`.
+ * The response is either a single JSON document (application/json) or an SSE
+ * stream (text/event-stream) whose `data:` events carry the JSON-RPC response.
+ * A session id returned by the server (typically on initialize) is captured
+ * and sent on all subsequent requests; DELETE closes the session.
+ */
 class HttpTransport(url: String, headers: Map[String, String]) extends McpTransport:
 
   import sttp.client4.*
@@ -205,46 +216,99 @@ class HttpTransport(url: String, headers: Map[String, String]) extends McpTransp
   private val counter = new atomic.AtomicInteger(0)
   private val notificationHandlers = new java.util.concurrent.CopyOnWriteArrayList[JsonRpcNotification => IO[Unit]]()
 
-  def send(request: JsonRpcRequest): IO[JsonRpcResponse] = IO.blocking {
-    val json = request.asJson.deepDropNullValues
+  /** Session id from the server (initialize response header) — sent on later requests. */
+  @volatile private var sessionId: Option[String] = None
+
+  private def baseRequest(body: String): Request[Either[String, String]] =
     var req = basicRequest
       .post(uri"$baseUrl")
       .header("content-type", "application/json")
+      .header("Accept", "application/json, text/event-stream")
+      .header("MCP-Protocol-Version", McpProtocol.Version)
       .readTimeout(30.seconds)
-      .body(json.noSpaces)
-
+      .body(body)
+    sessionId.foreach(sid => req = req.header("Mcp-Session-Id", sid))
     headers.foreach { case (k, v) => req = req.header(k, v) }
+    req
 
-    val response = req.response(asStringAlways).send(backend)
-    parser.parse(response.body) match
-      case Left(err) => throw new RuntimeException(s"Failed to parse MCP response: ${err.message}")
-      case Right(json) =>
-        val id = json.hcursor.downField("id").as[Json].getOrElse(Json.Null)
-        val result = json.hcursor.downField("result").as[Json].toOption
-        val error = json.hcursor.downField("error").as[Json].toOption
-        error match
-          case Some(err) =>
-            val code = err.hcursor.downField("code").as[Int].getOrElse(-1)
-            val msg = err.hcursor.downField("message").as[String].getOrElse("Unknown error")
-            JsonRpcResponse(id = id, error = Some(JsonRpcError(code, msg)))
-          case None => JsonRpcResponse(id = id, result = result)
+  def send(request: JsonRpcRequest): IO[JsonRpcResponse] = IO.blocking {
+    val json = request.asJson.deepDropNullValues
+    val response = baseRequest(json.noSpaces).response(asStringAlways).send(backend)
+
+    // Capture session id from the response (typically the initialize response).
+    response.headers
+      .find(_.name.equalsIgnoreCase("Mcp-Session-Id"))
+      .foreach(h => sessionId = Some(h.value))
+
+    val contentType = response.contentType.getOrElse("application/json")
+    if contentType.contains("text/event-stream") then parseSseResponse(response.body, request.id)
+    else parseJsonResponse(response.body)
   }
 
   def sendNotification(notification: JsonRpcNotification): IO[Unit] = IO.blocking {
     val json = notification.asJson.deepDropNullValues
-    var req = basicRequest
-      .post(uri"$baseUrl")
-      .header("content-type", "application/json")
-      .readTimeout(30.seconds)
-      .body(json.noSpaces)
-    headers.foreach { case (k, v) => req = req.header(k, v) }
-    req.response(asStringAlways).send(backend)
+    baseRequest(json.noSpaces).response(asStringAlways).send(backend)
     ()
   }
 
   def onNotification(handler: JsonRpcNotification => IO[Unit]): IO[Unit] =
     IO { notificationHandlers.add(handler); () }
 
-  def close(): IO[Unit] = IO.blocking(backend.close())
+  def close(): IO[Unit] = IO.blocking {
+    // Per Streamable HTTP spec, DELETE with the session id terminates the session.
+    sessionId.foreach { sid =>
+      try
+        basicRequest
+          .delete(uri"$baseUrl")
+          .header("Mcp-Session-Id", sid)
+          .response(asStringAlways)
+          .send(backend)
+      catch case _: Exception => () // best-effort session teardown
+    }
+    backend.close()
+  }
+
+  /** Parse a single-JSON response body into a JSON-RPC response. */
+  private def parseJsonResponse(body: String): JsonRpcResponse =
+    parser.parse(body) match
+      case Left(err) => throw new RuntimeException(s"Failed to parse MCP response: ${err.message}")
+      case Right(json) => jsonToResponse(json)
+
+  /**
+   * Parse an SSE body — multiple `data: {...}` events separated by blank lines
+   * (notifications + the response). Returns the event whose id matches the
+   * request id, falling back to the first event carrying an id.
+   */
+  private def parseSseResponse(body: String, requestId: Json): JsonRpcResponse =
+    val events = body
+      .split("\n\n")
+      .toList
+      .flatMap { block =>
+        block.linesIterator
+          .collect { case l if l.startsWith("data:") => l.drop("data:".length).trim }
+          .toList
+      }
+      .flatMap(line => parser.parse(line).toOption)
+
+    val matched = events.find(j => j.hcursor.downField("id").as[Json].toOption.exists(_ == requestId))
+    val responseJson = matched
+      .orElse(events.find(j => j.hcursor.downField("id").as[Json].toOption.exists(_ != Json.Null)))
+    responseJson match
+      case Some(json) => jsonToResponse(json)
+      case None =>
+        throw new RuntimeException(
+          s"No JSON-RPC response in SSE stream (request id $requestId, ${events.size} event(s))"
+        )
+
+  private def jsonToResponse(json: Json): JsonRpcResponse =
+    val id = json.hcursor.downField("id").as[Json].getOrElse(Json.Null)
+    val result = json.hcursor.downField("result").as[Json].toOption
+    val error = json.hcursor.downField("error").as[Json].toOption
+    error match
+      case Some(err) =>
+        val code = err.hcursor.downField("code").as[Int].getOrElse(-1)
+        val msg = err.hcursor.downField("message").as[String].getOrElse("Unknown error")
+        JsonRpcResponse(id = id, error = Some(JsonRpcError(code, msg)))
+      case None => JsonRpcResponse(id = id, result = result)
 
 end HttpTransport
