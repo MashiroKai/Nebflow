@@ -123,7 +123,7 @@ object EntityLoader:
   // ==========================================================
 
   /** Load agent entry from an arbitrary directory. Shared helper. */
-  private def loadAgentFromDir(dir: os.Path): Option[AgentEntry] =
+  def loadAgentFromDir(dir: os.Path): Option[AgentEntry] =
     val jsonPath = dir / "agent.json"
     if !os.exists(jsonPath) then None
     else
