@@ -1,5 +1,7 @@
 package nebflow.agent
 
+import nebflow.shared.AgentModelConfig
+
 /**
  * Runtime agent definition.
  *

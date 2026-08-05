@@ -314,7 +314,8 @@ private[agent] trait AgentCore:
             tools = freshTools,
             maxTokens = Some(resources.agentLibrary.globalMaxTokens),
             thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
-            systemStable = Some(systemStable)
+            systemStable = Some(systemStable),
+            agentModel = freshDef.model
           )
         yield (turnCtx, request)
 

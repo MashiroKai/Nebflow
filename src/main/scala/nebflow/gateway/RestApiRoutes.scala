@@ -1090,13 +1090,11 @@ class RestApiRoutes(
           result <- agents.get(agentName) match
             case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
             case Some(defn) =>
-              val modelConfig = defn.model.getOrElse(nebflow.agent.AgentModelConfig.empty)
-              val suggested = nebflow.agent.ModelRoleMatcher.suggestForRole(agentName)
+              val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)
               sharedResources.runtimeModels.get.flatMap { runtimeModels =>
                 val current = runtimeModels.values.headOption
                 Ok(Json.obj(
                   "model" -> modelConfig.asJson,
-                  "suggested" -> suggested.asJson,
                   "current" -> current.asJson,
                   "preferred" -> modelConfig.preferred.asJson,
                   "fallbacks" -> modelConfig.fallbacks.asJson,
@@ -1112,7 +1110,7 @@ class RestApiRoutes(
       else
         req.as[Json].flatMap { body =>
           // Parse the model config from request body
-          io.circe.parser.decode[nebflow.agent.AgentModelConfig](body.noSpaces) match
+          io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces) match
             case Right(modelConfig) =>
               sharedResources.agentLibrary
                 .updateModel(agentName, modelConfig)
