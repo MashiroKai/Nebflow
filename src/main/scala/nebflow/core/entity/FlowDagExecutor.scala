@@ -94,7 +94,8 @@ object FlowDagExecutor:
                   tools = entry.tools,
                   systemPrompt = entry.systemPrompt,
                   voiceEnabled = entry.voice,
-                  category = entry.category
+                  category = entry.category,
+                  mcpServers = entry.mcpServers
                 )
                 executeAgent(nodeId, node.agent, agentDef, inputText,
                   resources, actorSystem, wsSend, flow.name)

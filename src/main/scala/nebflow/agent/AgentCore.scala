@@ -694,8 +694,15 @@ private[agent] trait AgentCore:
         else nebulaFiltered
       case _ =>
         nebulaFiltered
+    // MCP tools: only agents with an explicit mcpServers grant may call MCP tools.
+    // Tool names are mcp__<serverId>__<tool>; match by prefix against granted servers.
+    val mcpFiltered =
+      if agentDef.mcpServers.isEmpty then taskFiltered.filterNot(_.startsWith("mcp__"))
+      else
+        val prefixes = agentDef.mcpServers.map(sid => s"mcp__${sid}__")
+        taskFiltered.filter(t => !t.startsWith("mcp__") || prefixes.exists(t.startsWith))
     // Delegate only available for worker agents (depth >= 2)
-    if depth >= 2 then taskFiltered else taskFiltered - "Delegate"
+    if depth >= 2 then mcpFiltered else mcpFiltered - "Delegate"
 
   end buildAllowedToolSet
 

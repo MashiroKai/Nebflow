@@ -21,8 +21,8 @@ class AllowedToolSetSpec extends FunSuite:
     def allowed(defn: AgentDef, depth: Int = 0): Set[String] =
       buildAllowedToolSet(defn, depth)
 
-  private def mkDef(name: String, tools: List[String]): AgentDef =
-    AgentDef(name = name, description = "", tools = tools, systemPrompt = "")
+  private def mkDef(name: String, tools: List[String], mcpServers: List[String] = Nil): AgentDef =
+    AgentDef(name = name, description = "", tools = tools, systemPrompt = "", mcpServers = mcpServers)
 
   test("concrete tools list yields exactly those tools + Mail"):
     val defn = mkDef("researcher", List("Read", "Glob", "Grep"))
@@ -64,3 +64,17 @@ class AllowedToolSetSpec extends FunSuite:
     val defn = mkDef("Nebula", List("Read", "Pop"))
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Pop"), "Nebula keeps Pop")
+
+  test("agents without mcpServers grant are stripped of all MCP tools"):
+    val defn = mkDef("no-mcp", List("Read", "mcp__git__status", "mcp__zai__chat"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Read"))
+    assert(!allowed.contains("mcp__git__status"), "mcp tool dropped without grant")
+    assert(!allowed.contains("mcp__zai__chat"), "mcp tool dropped without grant")
+
+  test("mcpServers grant allows only tools from the granted servers"):
+    val defn = mkDef("granted", List("Read", "mcp__git__status", "mcp__zai__chat"), mcpServers = List("git"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Read"))
+    assert(allowed.contains("mcp__git__status"), "granted server tool kept")
+    assert(!allowed.contains("mcp__zai__chat"), "ungranted server tool dropped")
