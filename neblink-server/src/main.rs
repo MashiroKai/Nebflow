@@ -1,9 +1,11 @@
 mod auth;
 mod model;
+mod oauth;
 mod routes;
 mod store;
 
 use axum::{routing::{delete, get, post}, Router};
+use std::sync::Arc;
 use std::time::Duration;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -26,9 +28,10 @@ async fn main() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(9090);
 
-    let store = std::sync::Arc::new(store::Store::new());
+    let store = Arc::new(store::Store::new());
 
-    // Background cleanup: remove stale devices every 30s (90s timeout)
+    // Background cleanup: remove stale devices every 30s (90s timeout) and
+    // expire pairing codes.
     {
         let store = store.clone();
         tokio::spawn(async move {
@@ -39,16 +42,23 @@ async fn main() {
                 if !removed.is_empty() {
                     tracing::info!("Purged stale devices: {}", removed.join(", "));
                 }
+                store.purge_expired_pair_codes();
             }
         });
     }
 
-    // CORS: allow nebflow.space dashboard to make cross-origin requests
+    // CORS: allow nebflow.space dashboard to make cross-origin requests.
+    // In production the SPA is same-origin (served by neblink-server itself via
+    // Caddy), so CORS only matters for the external nebflow.space site / local
+    // development.
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::predicate(|origin, _| {
             origin.as_bytes() == b"https://nebflow.space"
+                || origin.as_bytes() == b"https://neblink.nebflow.space"
                 || origin.as_bytes() == b"http://localhost:3000"
+                || origin.as_bytes() == b"http://localhost:9090"
         }))
+        .allow_credentials(true)
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
@@ -60,8 +70,17 @@ async fn main() {
             axum::http::header::AUTHORIZATION,
         ]);
 
+    // Cookie signing + the rest of the app state are bundled in AppState.
+    // (SignedCookieJar reads the Key via `FromRef<AppState>` — no layer needed.)
+    let app_state = routes::AppState::new(store);
+
     let app = Router::new()
-        // ===== User auth =====
+        // ===== User auth (OAuth + refresh) =====
+        .route("/api/auth/github/login", get(routes::github_login))
+        .route("/api/auth/github/callback", get(routes::github_callback))
+        .route("/api/auth/refresh", post(routes::auth_refresh))
+        .route("/api/auth/logout", post(routes::auth_logout))
+        // ===== User info =====
         .route("/api/user/me", get(routes::user_me))
         // ===== Network management (requires user JWT) =====
         .route("/api/network/create", post(routes::create_network))
@@ -74,8 +93,14 @@ async fn main() {
             "/api/network/{network_id}/devices/{device_id}",
             delete(routes::revoke_device),
         )
+        .route(
+            "/api/network/{network_id}/pair-code",
+            post(routes::create_pair_code),
+        )
         // ===== Device session endpoints =====
         .route("/api/device/login", post(routes::login))
+        .route("/api/device/enroll", post(routes::enroll_device))
+        .route("/api/device/session", post(routes::device_session))
         .route("/api/device/heartbeat", post(routes::heartbeat))
         .route("/api/device/peers", get(routes::get_peers))
         .route("/api/device/endpoints", post(routes::update_endpoints))
@@ -89,7 +114,7 @@ async fn main() {
         .layer(CatchPanicLayer::new())
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .with_state(store);
+        .with_state(app_state);
 
     let addr = format!("0.0.0.0:{port}");
     let listener = match tokio::net::TcpListener::bind(&addr).await {

@@ -12,7 +12,7 @@ import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.llm.NebflowServiceConfig
-import nebflow.neblink.{NeblinkConfig, NeblinkServerConfig, NeblinkService}
+import nebflow.neblink.{DeviceCredential, NeblinkConfig, NeblinkServerConfig, NeblinkService}
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -432,6 +432,66 @@ class RestApiRoutes(
               yield resp
             case _ =>
               BadRequest(Json.obj("error" -> "Missing server, networkId, or secret".asJson))
+          end match
+        }
+
+    // Enroll device via pairing code — calls the NebLink Server's
+    // /api/device/enroll, receives a long-lived device credential, persists it,
+    // and writes the neblink config so the device joins on next start.
+    case req @ POST -> Root / "neblink" / "enroll" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          val serverOpt = body.hcursor.downField("server").as[Option[String]].toOption.flatten
+            .map(_.stripSuffix("/"))
+          val pairCodeOpt = body.hcursor.downField("pairCode").as[Option[String]].toOption.flatten
+          (serverOpt, pairCodeOpt) match
+            case (Some(server), Some(pairCode)) =>
+              neblinkService match
+                case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+                case Some(ms) =>
+                  for
+                    identity <- ms.identity
+                    enrollBody = Json.obj(
+                      "pairCode" -> pairCode.asJson,
+                      "deviceId" -> identity.deviceId.asJson,
+                      "deviceName" -> identity.deviceName.asJson,
+                      "platform" -> identity.platform.asJson
+                    ).noSpaces
+                    result <- enrollWithServer(server, enrollBody)
+                    resp <- result match
+                      case Right(credJson) =>
+                        val deviceToken = credJson.hcursor.downField("deviceToken").as[String].toOption
+                        val networkId = credJson.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+                        val deviceId = credJson.hcursor.downField("deviceId").as[String].toOption.getOrElse(identity.deviceId)
+                        deviceToken match
+                          case Some(token) =>
+                            val credential = DeviceCredential(server, networkId, deviceId, token)
+                            val newConfig = NeblinkServerConfig(
+                              url = server,
+                              networkId = networkId,
+                              secret = "",
+                              deviceToken = Some(token)
+                            )
+                            for
+                              _ <- DeviceCredential.save(credential)
+                              current <- NeblinkConfig.load
+                              updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
+                              _ <- NeblinkConfig.save(updated)
+                              r <- Ok(Json.obj(
+                                "ok" -> true.asJson,
+                                "message" -> "Enrolled. Please restart Nebflow to connect.".asJson,
+                                "networkId" -> networkId.asJson
+                              ))
+                            yield r
+                          case None =>
+                            BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
+                      case Left(err) =>
+                        BadRequest(Json.obj("error" -> s"Enrollment failed: $err".asJson))
+                  yield resp
+              end match
+            case _ =>
+              BadRequest(Json.obj("error" -> "Missing server or pairCode".asJson))
           end match
         }
 
@@ -1190,4 +1250,39 @@ class RestApiRoutes(
       case Some(t) => Auth.validateToken(t, token)
       case None =>
         req.params.get("token").exists(t => Auth.validateToken(t, token))
+
+  /** POST the enrollment body to the NebLink Server and parse the JSON reply.
+    * Uses java.net.http directly (mirrors NeblinkClient) to avoid pulling an
+    * http4s client dependency into this routes class. Bypasses the system proxy
+    * so direct LAN access works. */
+  private def enrollWithServer(serverUrl: String, body: String): IO[Either[String, Json]] =
+    IO.blocking {
+      val client = java.net.http.HttpClient
+        .newBuilder()
+        .proxy(java.net.ProxySelector.of(null))
+        .build()
+      val request = java.net.http.HttpRequest
+        .newBuilder()
+        .uri(java.net.URI.create(s"${serverUrl.stripSuffix("/")}/api/device/enroll"))
+        .timeout(java.time.Duration.ofSeconds(15))
+        .header("Content-Type", "application/json")
+        .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
+        .build()
+      try
+        val response = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString())
+        val status = response.statusCode()
+        val respBody = response.body()
+        if status >= 200 && status < 300 then
+          parser.parse(respBody) match
+            case Right(json) => Right(json)
+            case Left(err) => Left(s"invalid JSON from server: ${err.message}")
+        else
+          // Surface the server's error message if it's JSON.
+          parser.parse(respBody).toOption
+            .flatMap(_.hcursor.downField("error").as[String].toOption)
+            .orElse(Some(s"HTTP $status"))
+            .fold(Left(s"HTTP $status"): Either[String, Json])(Left(_))
+      catch
+        case e: Exception => Left(e.getMessage)
+    }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
 end RestApiRoutes
