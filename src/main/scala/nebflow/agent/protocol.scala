@@ -223,7 +223,16 @@ enum AgentStreamEvent:
   case ExternalEventReceived(source: String, eventType: String, correlationId: Option[String])
   case Interrupted
 
-  def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json = this match
+  def toJson(agentId: String, isSubagent: Boolean = true, sessionId: Option[String] = None): Json =
+    // For subagent events, inject nodeSessionId so the frontend can persist
+    // messages to the correct flow agent session's ui.json.
+    val withNodeSession: Json => Json =
+      if isSubagent then
+        sessionId match
+          case Some(sid) => _.deepMerge(Json.obj("nodeSessionId" -> sid.asJson))
+          case None => identity
+      else identity
+    withNodeSession(this match
     case TextDelta(text) =>
       if isSubagent then
         Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> agentId.asJson, "delta" -> text.asJson)
@@ -369,6 +378,7 @@ enum AgentStreamEvent:
       val base = Json.obj("type" -> "interrupted".asJson)
       if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
       else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+    )
 end AgentStreamEvent
 
 case class AgentInfo(
