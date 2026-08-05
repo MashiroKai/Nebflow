@@ -350,7 +350,7 @@ Message type (optional, default "INFO"):
                           case Some(lib) => lib.get(address)
                           case None => IO.pure(None)
                         agentRes <- agentDefOpt match
-                          case Some(agentDef) if agentDef.category == "standalone" =>
+                          case Some(agentDef) if agentDef.category == "standalone" && address != "Nebula" =>
                             (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
                               case (Some(resources), Some(sys), Some(callerRef)) =>
                                 for
@@ -366,6 +366,14 @@ Message type (optional, default "INFO"):
                                 yield Right(s"Agent '$address' activated. Result will be delivered when complete.")
                               case _ =>
                                 IO.pure(Left(ToolError(s"Cannot activate agent '$address': missing resources")))
+                          case Some(_) if address == "Nebula" =>
+                            // Nebula is the main orchestrator — deliver to parent session if possible
+                            for
+                              parentActorOpt <- nebflow.core.flow.FlowMembership.getParentActor(senderSessionId)
+                              res <- parentActorOpt match
+                                case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
+                                case None => mailNotFound(address)
+                            yield res
                           case Some(agentDef) =>
                             // Agent exists but is team/flow category
                             IO.pure(Left(ToolError(
