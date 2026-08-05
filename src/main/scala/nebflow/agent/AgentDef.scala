@@ -15,5 +15,6 @@ case class AgentDef(
   avatar: Option[String] = None,
   displayName: Option[String] = None,
   voiceEnabled: Boolean = true,
-  model: Option[AgentModelConfig] = None
+  model: Option[AgentModelConfig] = None,
+  category: String = "standalone"
 )
