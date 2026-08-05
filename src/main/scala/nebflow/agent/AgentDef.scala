@@ -16,5 +16,6 @@ case class AgentDef(
   displayName: Option[String] = None,
   voiceEnabled: Boolean = true,
   model: Option[AgentModelConfig] = None,
-  category: String = "standalone"
+  category: String = "standalone",
+  mcpServers: List[String] = Nil
 )
