@@ -46,10 +46,13 @@ final class EmptyCompletionTracker:
         case _ => IO.unit
     }
 
-  /** Reset counter on successful completion — clears any transient issues. */
+  /** Reset counter and runtime override on successful completion — clears any
+   *  transient issues and lifts a previously-set vision=false override so a
+   *  mis-detected model can be re-evaluated instead of staying flagged until
+   *  process restart. */
   def resetOnSuccess(providerId: String, modelId: String): IO[Unit] =
     val key = ref(providerId, modelId)
-    counters.update(_ - key)
+    counters.update(_ - key) *> runtimeOverrides.update(_ - key)
 
   /** Check if there's a runtime vision override for this model. Returns Some(false) if flagged. */
   def getRuntimeVision(providerId: String, modelId: String): IO[Option[Boolean]] =

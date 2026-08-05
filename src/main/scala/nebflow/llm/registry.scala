@@ -115,13 +115,16 @@ class ProviderRegistry(
   /**
    * Get candidate list customized for an agent's model configuration.
    *
-   * - preferred model placed first (if resolvable)
-   * - capabilities filter: strict = only matching candidates; prefer-capable = matching first
-   * - no config → returns global candidate list (same as getCandidates)
+   * The agent declares a `preferred` primary and an ordered `fallbacks` list.
+   * We build the candidate chain as `[preferred, ...fallbacks]`, resolving each
+   * ref gracefully (invalid/unknown refs are skipped). If every ref fails to
+   * resolve, we fall back to the global candidate list so the agent still has
+   * something to use. No capability filtering is performed — the user picks the
+   * models, and fallback stays within that user-chosen set.
    */
-  def getCandidatesForAgent(agentModel: Option[nebflow.agent.AgentModelConfig]): IO[List[ModelCandidate]] =
+  def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
     agentModel match
-      case None | Some(nebflow.agent.AgentModelConfig(None, Nil, Nil, _)) =>
+      case None | Some(nebflow.shared.AgentModelConfig(None, Nil)) =>
         getCandidates() // no config → global list
       case Some(cfg) =>
         // Build agent chain: [preferred, ...fallbacks]
@@ -129,24 +132,8 @@ class ProviderRegistry(
         for
           resolved <- agentChain.traverse(ref => getCandidateForRef(ref))
           agentCandidates = resolved.flatten
-          globalCandidates <- if agentCandidates.nonEmpty then IO.pure(Nil) else getCandidates()
-          base = if agentCandidates.nonEmpty then agentCandidates else globalCandidates
-          filtered = applyCapabilityFilter(base, cfg)
-        yield filtered
-
-  /** Apply capability filtering / reordering based on fallbackPolicy. */
-  private def applyCapabilityFilter(
-    candidates: List[ModelCandidate],
-    cfg: nebflow.agent.AgentModelConfig
-  ): List[ModelCandidate] =
-    if cfg.capabilities.isEmpty then candidates
-    else
-      val required = cfg.capabilities.toSet
-      val (matching, rest) = candidates.partition(_.capabilities.intersect(required).nonEmpty)
-      cfg.fallbackPolicy match
-        case "strict" => matching // only capable models
-        case "any" => candidates   // ignore capabilities, keep global order
-        case _ => matching ++ rest // prefer-capable: capable first, then rest
+          base <- if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidates()
+        yield base
 
   /**
    * Resolve vision + capabilities for a model.

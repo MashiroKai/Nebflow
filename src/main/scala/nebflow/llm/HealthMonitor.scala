@@ -14,8 +14,8 @@ enum HealthState:
   case Down(reason: String, since: Long)
 
 object ProviderHealthMonitor:
-  /** Interval between probe cycles for Down providers (5 minutes). */
-  val ProbeIntervalSec = 300
+  /** Interval between background probe cycles for Down providers (2 minutes). */
+  val ProbeIntervalSec = 120
 
   /** Timeout for a single probe request (15 seconds). */
   val ProbeTimeoutSec = 15
@@ -30,6 +30,12 @@ object ProviderHealthMonitor:
  *     each Down candidate is probed via a minimal completion request.
  *     On success, `markUp` fires and wakes any request blocked in
  *     [[waitForAnyUp]].
+ *
+ * Additionally, when all candidates are Down and a request is about to block
+ * in [[waitForAnyUp]], [[probeNow]] is called to probe the Down candidates
+ * immediately instead of waiting for the next background cycle — this cuts
+ * the worst-case recovery latency from ~`ProbeIntervalSec + ProbeTimeoutSec`
+ * down to ~`ProbeTimeoutSec`.
  *
  * Up providers are never probed proactively — the first real request after
  * a provider comes back online will naturally discover if it is still healthy.
@@ -131,8 +137,18 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
     loop
   end start
 
+  /**
+   * Immediately probe the given candidates (typically the Down set) without
+   * waiting for the next background cycle. Called by the LLM interface when
+   * all candidates are Down and a request is about to block — this cuts the
+   * worst-case recovery latency from ~`ProbeIntervalSec + ProbeTimeoutSec`
+   * down to ~`ProbeTimeoutSec`.
+   */
+  def probeNow(candidates: List[ModelCandidate]): IO[Unit] =
+    candidates.traverse_(probe)
+
   /** Probe a single candidate with a minimal completion request. */
-  private def probe(candidate: ModelCandidate): IO[Unit] =
+  private[llm] def probe(candidate: ModelCandidate): IO[Unit] =
     val params = SendMessageParams(
       messages = List(Message(MessageRole.User, Left("hi"))),
       model = candidate.model,

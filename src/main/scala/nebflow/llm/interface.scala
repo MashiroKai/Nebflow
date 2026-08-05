@@ -104,7 +104,7 @@ object LlmInterface:
             val start = System.currentTimeMillis()
             (for
               overrides <- sessionOverrides.get
-              regCandidates <- registry.getCandidates()
+              regCandidates <- registry.getCandidatesForAgent(req.agentModel)
               candidates = overrides.get(req.sessionId).toList ++ regCandidates
                 .filterNot(c =>
                   overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
@@ -124,23 +124,32 @@ object LlmInterface:
                         )
                       case _ => t
                   }
-                  registry
-                    .getAdapter(candidate.providerId)
-                    .flatMap(
-                      _.sendMessage(
-                        SendMessageParams(
-                          req.messages,
-                          candidate.model,
-                          req.tools,
-                          Some(candidate.maxTokens),
-                          cappedThinking,
-                          req.systemStable,
-                          req.systemDynamic,
-                          Some(req.sessionId),
-                          Some(req.agentId)
-                        )
+                  // PreSendChecker: strip images for non-vision models.
+                  // Also consult the runtime vision override from EmptyCompletionTracker,
+                  // which can demote a config-vision model to non-vision at runtime.
+                  for
+                    runtimeVision <- emptyTracker.getRuntimeVision(candidate.providerId, candidate.model)
+                    effectiveVision = candidate.vision && runtimeVision.getOrElse(true)
+                    effectiveMessages =
+                      if !effectiveVision && hasImage(req.messages) then stripImages(req.messages)
+                      else req.messages
+                    adapter <- registry.getAdapter(candidate.providerId)
+                    resp <- adapter.sendMessage(
+                      SendMessageParams(
+                        effectiveMessages,
+                        candidate.model,
+                        req.tools,
+                        Some(candidate.maxTokens),
+                        cappedThinking,
+                        req.systemStable,
+                        req.systemDynamic,
+                        Some(req.sessionId),
+                        Some(req.agentId)
                       )
                     )
+                    // On success, clear the empty-completion counter for this model.
+                    _ <- emptyTracker.resetOnSuccess(candidate.providerId, candidate.model)
+                  yield resp
                 ,
                 onAttempt = None,
                 onProviderExhausted = Some(c => healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
@@ -183,7 +192,7 @@ object LlmInterface:
               .eval(
                 for
                   overrides <- sessionOverrides.get
-                  regCandidates <- registry.getCandidates()
+                  regCandidates <- registry.getCandidatesForAgent(req.agentModel)
                 yield overrides.get(req.sessionId).toList ++ regCandidates
                   .filterNot(c =>
                     overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
@@ -205,7 +214,7 @@ object LlmInterface:
                       // at least one provider recovers, then re-filters.
                       def attemptWithHealthCheck: fs2.Stream[IO, StreamChunk] =
                         fs2.Stream.eval(healthMonitor.filterCandidates(candidates)).flatMap {
-                          case (Nil, _) =>
+                          case (Nil, down) =>
                             val notifyDown = onAttempt.traverse_(
                               _.apply(
                                 FallbackAttempt(
@@ -220,7 +229,9 @@ object LlmInterface:
                                 )
                               )
                             )
-                            fs2.Stream.eval(notifyDown *> healthMonitor.waitForAnyUp()).flatMap { _ =>
+                            // Probe Down candidates immediately instead of waiting for the
+                            // next background cycle — cuts worst-case recovery from ~2min to ~15s.
+                            fs2.Stream.eval(notifyDown *> healthMonitor.probeNow(down) *> healthMonitor.waitForAnyUp()).flatMap { _ =>
                               val notifyUp = onAttempt.traverse_(
                                 _.apply(
                                   FallbackAttempt(

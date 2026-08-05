@@ -5,7 +5,7 @@ import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.llm.{Config, NebflowServiceConfig}
-import nebflow.shared.Defaults
+import nebflow.shared.{AgentModelConfig, Defaults}
 
 import scala.util.Try
 
