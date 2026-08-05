@@ -40,7 +40,8 @@ object FlowAgentActivator:
                 tools = entry.tools,
                 systemPrompt = entry.systemPrompt,
                 voiceEnabled = entry.voice,
-                category = entry.category
+                category = entry.category,
+                mcpServers = entry.mcpServers
               )
             }
           }
@@ -130,7 +131,8 @@ object FlowAgentActivator:
             description = entry.description,
             tools = entry.tools,
             systemPrompt = entry.systemPrompt,
-            voiceEnabled = entry.voice
+            voiceEnabled = entry.voice,
+            mcpServers = entry.mcpServers
           )
           val isLead = teamDef.lead == agentName
           for

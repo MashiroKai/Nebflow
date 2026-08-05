@@ -153,7 +153,8 @@ class AgentLibrary(
               displayName = j.displayName,
               voiceEnabled = j.voice.getOrElse(false),
               model = j.model,
-              category = j.category.getOrElse("standalone")
+              category = j.category.getOrElse("standalone"),
+              mcpServers = j.mcpServers.getOrElse(Nil)
             )
           )
         case None =>
