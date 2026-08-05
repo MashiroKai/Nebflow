@@ -69,12 +69,16 @@ object EntityLoader:
   // Flow DAG
   // ==========================================================
 
-  /** Load a flow DAG definition by name from `flows/<name>.json`. */
+  /** Load a flow DAG definition. Tries directory format first, then single file. */
   def loadFlow(name: String): IO[Option[FlowDagDef]] =
     IO.blocking {
-      val jsonPath = flowsDir / s"$name.json"
-      if os.exists(jsonPath) then
-        parseFlowJson(os.read(jsonPath)) match
+      // 1. Try directory format: flows/<name>/flow.json
+      val dirPath = flowsDir / name / "flow.json"
+      // 2. Fallback to single file: flows/<name>.json
+      val filePath = flowsDir / s"$name.json"
+      val path = if os.exists(dirPath) then dirPath else filePath
+      if os.exists(path) then
+        parseFlowJson(os.read(path)) match
           case Right(fd) => Some(fd)
           case Left(e) =>
             logger.warnSync(s"Failed to parse flow '$name': $e")
@@ -82,18 +86,29 @@ object EntityLoader:
       else None
     }
 
-  /** List all flows (DAG format). */
+  /** List all flows. Scans both directory format (flows/\<name\>/flow.json) and single file (flows/\<name\>.json). */
   def listFlows(): IO[Map[String, FlowDagDef]] =
     IO.blocking {
       if !os.exists(flowsDir) then Map.empty
       else
-        os.list(flowsDir)
+        // Directory format: flows/<name>/flow.json
+        val dirFlows = os.list(flowsDir)
+          .filter(os.isDir)
+          .flatMap { dir =>
+            val name = dir.last
+            val jsonPath = dir / "flow.json"
+            if os.exists(jsonPath) then
+              parseFlowJson(os.read(jsonPath)).toOption.map(name -> _)
+            else None
+          }
+        // Single file format: flows/<name>.json
+        val fileFlows = os.list(flowsDir)
           .filter(f => os.isFile(f) && f.last.endsWith(".json"))
           .flatMap { f =>
             val name = f.last.stripSuffix(".json")
             parseFlowJson(os.read(f)).toOption.map(name -> _)
           }
-          .toMap
+        (dirFlows ++ fileFlows).toMap
     }
 
   /** Load flow lead system.md from `flows/<name>/agents/lead/system.md`. */
@@ -107,18 +122,39 @@ object EntityLoader:
   // Agent
   // ==========================================================
 
+  /** Load agent entry from an arbitrary directory. Shared helper. */
+  private def loadAgentFromDir(dir: os.Path): Option[AgentEntry] =
+    val jsonPath = dir / "agent.json"
+    if !os.exists(jsonPath) then None
+    else
+      parseAgentJson(os.read(jsonPath)).toOption.flatMap { entry =>
+        val sysMd = dir / "system.md"
+        val prompt = if os.exists(sysMd) then os.read(sysMd) else ""
+        Some(entry.copy(systemPrompt = prompt))
+      }
+
   /** Load agent entry from `agents/<name>/agent.json` + `system.md`. */
   def loadAgent(name: String): IO[Option[AgentEntry]] =
+    IO.blocking { loadAgentFromDir(agentsDir / name) }
+
+  /** Load team-local agent: `teams/<teamName>/agents/<agentName>/` → fallback to global. */
+  def loadTeamAgent(teamName: String, agentName: String): IO[Option[AgentEntry]] =
     IO.blocking {
-      val dir = agentsDir / name
-      val jsonPath = dir / "agent.json"
-      if !os.exists(jsonPath) then None
-      else
-        parseAgentJson(os.read(jsonPath)).toOption.flatMap { entry =>
-          val sysMd = dir / "system.md"
-          val prompt = if os.exists(sysMd) then os.read(sysMd) else ""
-          Some(entry.copy(systemPrompt = prompt))
-        }
+      val teamAgentDir = teamsDir / teamName / "agents" / agentName
+      if os.exists(teamAgentDir / "agent.json") then loadAgentFromDir(teamAgentDir) else None
+    }.flatMap {
+      case Some(entry) => IO.pure(Some(entry))
+      case None => loadAgent(agentName)  // fallback to global
+    }
+
+  /** Load flow-local agent: `flows/<flowName>/agents/<agentName>/` → fallback to global. */
+  def loadFlowAgent(flowName: String, agentName: String): IO[Option[AgentEntry]] =
+    IO.blocking {
+      val flowAgentDir = flowsDir / flowName / "agents" / agentName
+      if os.exists(flowAgentDir / "agent.json") then loadAgentFromDir(flowAgentDir) else None
+    }.flatMap {
+      case Some(entry) => IO.pure(Some(entry))
+      case None => loadAgent(agentName)  // fallback to global
     }
 
   /** List all agents with runtime category inference. */
@@ -131,14 +167,7 @@ object EntityLoader:
             .filter(os.isDir)
             .flatMap { dir =>
               val name = dir.last
-              val jsonPath = dir / "agent.json"
-              if os.exists(jsonPath) then
-                parseAgentJson(os.read(jsonPath)).toOption.map { entry =>
-                  val sysMd = dir / "system.md"
-                  val prompt = if os.exists(sysMd) then os.read(sysMd) else ""
-                  name -> entry.copy(systemPrompt = prompt)
-                }
-              else None
+              loadAgentFromDir(dir).map(name -> _)
             }
             .toMap
       }

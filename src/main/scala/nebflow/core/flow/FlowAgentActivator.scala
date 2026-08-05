@@ -32,14 +32,15 @@ object FlowAgentActivator:
       teamOpt <- nebflow.core.entity.EntityLoader.loadTeam(flowName)
       result <- teamOpt match
         case Some(_) =>
-          nebflow.core.entity.EntityLoader.loadAgent(agentName).map { entryOpt =>
+          nebflow.core.entity.EntityLoader.loadTeamAgent(flowName, agentName).map { entryOpt =>
             entryOpt.map { entry =>
               AgentDef(
                 name = entry.name,
                 description = entry.description,
                 tools = entry.tools,
                 systemPrompt = entry.systemPrompt,
-                voiceEnabled = entry.voice
+                voiceEnabled = entry.voice,
+                category = entry.category
               )
             }
           }
@@ -119,7 +120,7 @@ object FlowAgentActivator:
   ): IO[Option[ActorRef[AgentCommand]]] =
     val rawWsSend = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
     for
-      agentEntryOpt <- nebflow.core.entity.EntityLoader.loadAgent(agentName)
+      agentEntryOpt <- nebflow.core.entity.EntityLoader.loadTeamAgent(teamName, agentName)
       result <- agentEntryOpt match
         case None =>
           logger.warn(s"activate: agent '$agentName' not found in global library").as(None)
