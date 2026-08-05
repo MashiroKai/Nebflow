@@ -137,8 +137,34 @@ object GatewayMain extends IOApp.Simple:
       _ <- agentLibrary.loadAll()
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig)
+      _ <- startAgentMcpServers(manager)
       _ <- logger.info("MCP servers initialized")
       _ <- loadExternalTools()
+    yield ()
+
+  /**
+   * Start agent-scoped MCP servers (agent directory `tools/mcp/`, one `*.json`
+   * per server) at startup. Each server is started independently; a failing
+   * server is logged and skipped so one bad config can't block the rest of the
+   * boot.
+   */
+  private def startAgentMcpServers(mcpManager: McpManager): IO[Unit] =
+    for
+      servers <- AgentMcpLoader.scanAll()
+      _ <- servers.traverse_ { case (_, serverId, cfg) =>
+        if cfg.isEnabled then
+          mcpManager
+            .startServer(serverId, cfg)
+            .timeout(5.seconds)
+            .handleErrorWith(e =>
+              logger.warn(s"Agent MCP server '$serverId' failed: ${e.getMessage}")
+            )
+        else logger.info(s"Agent MCP server '$serverId' is disabled, skipping")
+      }
+      _ <-
+        if servers.nonEmpty then
+          logger.info(s"Started ${servers.size} agent MCP server(s)")
+        else IO.unit
     yield ()
 
   private def loadExternalTools(): IO[Unit] =

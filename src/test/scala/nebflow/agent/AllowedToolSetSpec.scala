@@ -78,3 +78,24 @@ class AllowedToolSetSpec extends FunSuite:
     assert(allowed.contains("Read"))
     assert(allowed.contains("mcp__git__status"), "granted server tool kept")
     assert(!allowed.contains("mcp__zai__chat"), "ungranted server tool dropped")
+
+  test("agent's own dedicated MCP tools are auto-allowed without mcpServers grant"):
+    // tools/mcp/ servers register as mcp__agent-<agentName>-<serverName>__<tool>
+    val defn = mkDef("mydoc", List("Read", "mcp__agent-mydoc-docs__search", "mcp__git__status"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("Read"))
+    assert(allowed.contains("mcp__agent-mydoc-docs__search"), "own dedicated server tool auto-allowed")
+    assert(!allowed.contains("mcp__git__status"), "other server tool still denied without grant")
+
+  test("own dedicated MCP tools are allowed alongside explicit grants"):
+    val defn =
+      mkDef("mydoc", List("Read", "mcp__agent-mydoc-docs__search", "mcp__git__status"), mcpServers = List("git"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(allowed.contains("mcp__agent-mydoc-docs__search"), "own dedicated tool kept with grants")
+    assert(allowed.contains("mcp__git__status"), "granted server tool kept")
+    assert(!allowed.contains("mcp__zai__chat"), "ungranted server tool still denied")
+
+  test("dedicated MCP tools belong only to the owning agent"):
+    val defn = mkDef("other", List("Read", "mcp__agent-mydoc-docs__search"))
+    val allowed = CoreProbe.allowed(defn)
+    assert(!allowed.contains("mcp__agent-mydoc-docs__search"), "another agent's dedicated tool is denied")
