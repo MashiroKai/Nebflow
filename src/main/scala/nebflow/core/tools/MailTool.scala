@@ -37,6 +37,7 @@ The address can be:
 - A team name (e.g. "nebflow-project") — forwards the message to the team's lead agent.
 - A team lead or member name (e.g. "nebflow-manager", "backend") — sends a message to that agent.
 - A flow name (e.g. "code-review", "entity-creator") — triggers a one-shot pipeline execution with the message as the task.
+- A standalone agent name (not in any team/flow) — spawns the agent ephemerally, runs the task, and delivers the result via Mail when complete.
 
 Default mode (fork omitted or false):
   Async send. If the recipient is idle, delivered immediately. If busy, queued
@@ -343,7 +344,36 @@ Message type (optional, default "INFO"):
                         case _ =>
                           IO.pure(Left(ToolError(s"Cannot start flow '$address': missing resources")))
                     case None =>
-                      mailNotFound(address)
+                      // 4. Check if it's a standalone agent definition → spawn ephemeral runner
+                      for
+                        agentDefOpt <- ctx.agentLibrary match
+                          case Some(lib) => lib.get(address)
+                          case None => IO.pure(None)
+                        agentRes <- agentDefOpt match
+                          case Some(agentDef) if agentDef.category == "standalone" =>
+                            (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
+                              case (Some(resources), Some(sys), Some(callerRef)) =>
+                                for
+                                  runnerRef <- sys.spawn(
+                                    nebflow.core.flow.EphemeralAgentRunner(resources, ctx.wsSend),
+                                    s"ephemeral-runner-${address.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
+                                  )
+                                  _ = runnerRef ! nebflow.core.flow.EphemeralAgentRunner.RunAgent(
+                                    agentDef, message, callerRef,
+                                    depth = ctx.depth + 1,
+                                    projectRoot = ctx.projectRoot
+                                  )
+                                yield Right(s"Agent '$address' activated. Result will be delivered when complete.")
+                              case _ =>
+                                IO.pure(Left(ToolError(s"Cannot activate agent '$address': missing resources")))
+                          case Some(agentDef) =>
+                            // Agent exists but is team/flow category
+                            IO.pure(Left(ToolError(
+                              s"'$address' is a ${agentDef.category} agent — use its team or flow instead."
+                            )))
+                          case None =>
+                            mailNotFound(address)
+                      yield agentRes
                 yield flowRes
           yield r
     yield result
