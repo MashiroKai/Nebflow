@@ -17,8 +17,8 @@ object ProviderHealthMonitor:
   /** Interval between background probe cycles for Down providers (2 minutes). */
   val ProbeIntervalSec = 120
 
-  /** Timeout for a single probe request (15 seconds). */
-  val ProbeTimeoutSec = 15
+  /** Timeout for a single probe request (30 seconds — thinking models are slow). */
+  val ProbeTimeoutSec = 30
 
 /**
  * Tracks the health of every provider+model in the candidate chain.
@@ -152,7 +152,11 @@ final class ProviderHealthMonitor(registry: ProviderRegistry):
     val params = SendMessageParams(
       messages = List(Message(MessageRole.User, Left("hi"))),
       model = candidate.model,
-      maxTokens = Some(1),
+      // Thinking models (GLM-5.2, DeepSeek reasoning) consume tokens on
+      // reasoning before producing any text content. maxTokens=1 would truncate
+      // the thinking and yield empty content → probe falsely fails → provider
+      // stuck DOWN forever. Use a generous cap so the probe completes.
+      maxTokens = Some(4096),
       sessionId = Some("health-check"),
       agentId = Some("health-check")
     )
