@@ -154,6 +154,20 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         ToolCall(id, name, input)
       }
 
+  /**
+   * True if the response carries reasoning output (reasoning_content / thinking)
+   * even when `content` is empty. Thinking models (GLM-5.2, DeepSeek reasoning)
+   * can spend the whole token budget on reasoning — such a response is NOT empty.
+   */
+  private[providers] def hasReasoningContent(response: Json): Boolean =
+    val message = response.hcursor.downField("choices").downN(0).downField("message")
+    message
+      .downField("reasoning_content")
+      .as[String]
+      .toOption
+      .orElse(message.downField("thinking").as[String].toOption)
+      .exists(_.trim.nonEmpty)
+
   def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
     val systemMsg = buildSystemMessage(params)
     val baseMessages = toOpenAiMessages(params.messages)
@@ -214,8 +228,15 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
                       outputTokens = u.hcursor.downField("completion_tokens").as[Int].getOrElse(0)
                     )
                   }
+                  // Thinking models (GLM-5.2, DeepSeek reasoning) may return a
+                  // response whose `content` is empty because all tokens went to
+                  // reasoning (reasoning_content / thinking fields). That is NOT
+                  // an empty response — treat it as a successful reply so probes
+                  // and real calls don't falsely fail or fall back.
+                  val reasoning = hasReasoningContent(json)
+
                   // Empty response with no tool calls — treat as error to trigger fallback
-                  if reply.isEmpty && toolCalls.isEmpty then
+                  if reply.isEmpty && toolCalls.isEmpty && !reasoning then
                     val finishReason = json.hcursor
                       .downField("choices")
                       .downN(0)

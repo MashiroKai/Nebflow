@@ -3,8 +3,8 @@ package nebflow.llm
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import munit.CatsEffectSuite
 import nebflow.shared.*
+import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
 
@@ -165,5 +165,46 @@ class HealthMonitorSpec extends CatsEffectSuite:
     yield
       assertEquals(up.size, 0)
       assertEquals(down.size, 2)
+  }
+
+  // ============================================================
+  // probe — recovery path for Down providers
+  // ============================================================
+
+  private class FakeAdapter(result: IO[AdapterResponse]) extends ProviderAdapter[IO]:
+    def sendMessage(params: SendMessageParams): IO[AdapterResponse] = result
+    def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, StreamChunk] = fs2.Stream.empty
+
+  private class FakeRegistry(adapter: ProviderAdapter[IO]) extends ProviderRegistry(null, null):
+    override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+
+  test("probe marks Up on a successful response (empty reply OK — thinking-only)") {
+    // A thinking model (GLM-5.2) can return content="" when all tokens went to
+    // reasoning — with F3 the adapter treats that as success, so probe must markUp.
+    val adapter = FakeAdapter(IO.pure(AdapterResponse("", Nil, None)))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+    val c = candidate("glm", "glm-5-107")
+
+    for
+      _ <- monitor.markDown("glm", "glm-5-107", "first-token timeout")
+      _ <- monitor.probe(c)
+      states <- monitor.getStates
+    yield states.get("glm/glm-5-107") match
+      case Some(HealthState.Up) => ()
+      case other => fail(s"expected Up after successful probe, got $other")
+  }
+
+  test("probe keeps Down when the probe request fails") {
+    val adapter = FakeAdapter(IO.raiseError(new RuntimeException("probe error")))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+    val c = candidate("glm", "glm-5-107")
+
+    for
+      _ <- monitor.markDown("glm", "glm-5-107", "first-token timeout")
+      _ <- monitor.probe(c)
+      states <- monitor.getStates
+    yield states.get("glm/glm-5-107") match
+      case Some(HealthState.Down(_, _)) => ()
+      case other => fail(s"expected Down after failed probe, got $other")
   }
 end HealthMonitorSpec
