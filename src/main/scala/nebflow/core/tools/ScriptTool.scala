@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 import scala.io.Source
 import scala.util.Using.resource
 
-class ScriptTool(config: ExternalToolConfig) extends Tool:
+class ScriptTool(config: ExternalToolConfig, val toolDir: os.Path) extends Tool:
   private val logger = NebflowLogger(getClass)
 
   val name = config.name
@@ -23,6 +23,10 @@ class ScriptTool(config: ExternalToolConfig) extends Tool:
       IO.blocking {
         val pb = ProcessBuilder("sh", "-c", config.command)
         pb.directory(new java.io.File(ctx.projectRoot))
+        // TOOL_DIR points at the directory holding this tool's config file,
+        // so commands can reference relative resources, e.g.
+        //   "command": "python3 $TOOL_DIR/analyze.py"
+        pb.environment().put("TOOL_DIR", toolDir.toString)
         pb.redirectErrorStream(false)
         val process = pb.start()
 
