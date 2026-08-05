@@ -315,34 +315,36 @@ Message type (optional, default "INFO"):
           yield r
 
         case None =>
-          // 2. Check FlowMembership (agent short name)
+          // 2. Check if it's a flow name → trigger one-shot DAG pipeline.
+          //    This MUST come before resolveSessionId to avoid team flow aliases
+          //    (e.g. "code-review" alias in nebflow-project) intercepting the trigger.
           for
-            sidOpt <- FlowMembership.resolveSessionId(senderSessionId, address)
-            r <- sidOpt match
-              case Some(targetSid) =>
-                for
-                  res <- deliverToSession(targetSid, address, message, mailType, ctx, system)
-                  _ <- res match
-                    case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
-                    case Left(_) => IO.unit
-                yield res
+            flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(address)
+            r <- flowOpt match
+              case Some(flowDef) =>
+                (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
+                  case (Some(resources), Some(sys), Some(callerRef)) =>
+                    for
+                      runnerRef <- sys.spawn(
+                        nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
+                        s"dag-runner-${address.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
+                      )
+                      _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(flowDef, message, callerRef)).void
+                    yield Right(s"Flow '$address' started. Result will be delivered via Mail when complete.")
+                  case _ =>
+                    IO.pure(Left(ToolError(s"Cannot start flow '$address': missing resources")))
               case None =>
-                // 3. Check if it's a flow name → trigger one-shot pipeline
+                // 3. Check FlowMembership (agent short name)
                 for
-                  flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(address)
-                  flowRes <- flowOpt match
-                    case Some(flowDef) =>
-                      (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
-                        case (Some(resources), Some(sys), Some(callerRef)) =>
-                          for
-                            runnerRef <- sys.spawn(
-                              nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
-                              s"dag-runner-${address.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
-                            )
-                            _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(flowDef, message, callerRef)).void
-                          yield Right(s"Flow '$address' started. Result will be delivered via Mail when complete.")
-                        case _ =>
-                          IO.pure(Left(ToolError(s"Cannot start flow '$address': missing resources")))
+                  sidOpt <- FlowMembership.resolveSessionId(senderSessionId, address)
+                  sr <- sidOpt match
+                    case Some(targetSid) =>
+                      for
+                        res <- deliverToSession(targetSid, address, message, mailType, ctx, system)
+                        _ <- res match
+                          case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
+                          case Left(_) => IO.unit
+                      yield res
                     case None =>
                       // 4. Check if it's a standalone agent definition → spawn ephemeral runner
                       for
@@ -382,7 +384,7 @@ Message type (optional, default "INFO"):
                           case None =>
                             mailNotFound(address)
                       yield agentRes
-                yield flowRes
+                yield sr
           yield r
     yield result
 
