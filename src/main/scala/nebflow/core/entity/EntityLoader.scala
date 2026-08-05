@@ -121,26 +121,46 @@ object EntityLoader:
         }
     }
 
-  /** List all agents. */
+  /** List all agents with runtime category inference. */
   def listAgents(): IO[Map[String, AgentEntry]] =
-    IO.blocking {
-      if !os.exists(agentsDir) then Map.empty
-      else
-        os.list(agentsDir)
-          .filter(os.isDir)
-          .flatMap { dir =>
-            val name = dir.last
-            val jsonPath = dir / "agent.json"
-            if os.exists(jsonPath) then
-              parseAgentJson(os.read(jsonPath)).toOption.map { entry =>
-                val sysMd = dir / "system.md"
-                val prompt = if os.exists(sysMd) then os.read(sysMd) else ""
-                name -> entry.copy(systemPrompt = prompt)
-              }
-            else None
-          }
-          .toMap
-    }
+    for
+      rawAgents <- IO.blocking {
+        if !os.exists(agentsDir) then Map.empty[String, AgentEntry]
+        else
+          os.list(agentsDir)
+            .filter(os.isDir)
+            .flatMap { dir =>
+              val name = dir.last
+              val jsonPath = dir / "agent.json"
+              if os.exists(jsonPath) then
+                parseAgentJson(os.read(jsonPath)).toOption.map { entry =>
+                  val sysMd = dir / "system.md"
+                  val prompt = if os.exists(sysMd) then os.read(sysMd) else ""
+                  name -> entry.copy(systemPrompt = prompt)
+                }
+              else None
+            }
+            .toMap
+      }
+      teams <- listTeams()
+      flows <- listFlows()
+      // Infer category for agents that have default "standalone"
+      inferred = rawAgents.map { (name, entry) =>
+        if entry.category == "standalone" then
+          val inferred = classifyAgent(name, teams, flows)
+          name -> entry.copy(category = inferred)
+        else name -> entry
+      }
+    yield inferred
+
+  /** Infer agent category from team/flow membership. */
+  def classifyAgent(name: String, teams: Map[String, TeamDef], flows: Map[String, FlowDagDef]): String =
+    val inTeam = teams.values.exists(t => t.lead == name || t.members.contains(name))
+    val inFlow = flows.values.exists(_.nodes.values.exists(_.agent == name))
+    (inTeam, inFlow) match
+      case (true, _) => "team"
+      case (false, true) => "flow"
+      case (false, false) => "standalone"
 
   // ==========================================================
   // Write operations (atomic: temp file + rename)

@@ -152,7 +152,8 @@ class AgentLibrary(
               avatar = j.avatar,
               displayName = j.displayName,
               voiceEnabled = j.voice.getOrElse(false),
-              model = j.model
+              model = j.model,
+              category = j.category.getOrElse("standalone")
             )
           )
         case None =>
@@ -208,7 +209,8 @@ private case class AgentJson(
   mcpServers: Option[List[String]] = None,
   avatar: Option[String] = None,
   voice: Option[Boolean] = None,
-  model: Option[AgentModelConfig] = None
+  model: Option[AgentModelConfig] = None,
+  category: Option[String] = None
 )
 
 private object AgentJson:
@@ -226,7 +228,8 @@ private object AgentJson:
       name, displayName, description, useWhen,
       tools.getOrElse(List("*")), mcpServers, avatar,
       voice = c.downField("voice").as[Option[Boolean]].toOption.flatten,
-      model = c.downField("model").as[Option[AgentModelConfig]].toOption.flatten
+      model = c.downField("model").as[Option[AgentModelConfig]].toOption.flatten,
+      category = c.downField("category").as[Option[String]].toOption.flatten
     )
   }
 
@@ -243,6 +246,7 @@ private object AgentJson:
       .deepMerge(j.avatar.map(a => Json.obj("avatar" -> a.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.voice.map(v => Json.obj("voice" -> v.asJson)).getOrElse(Json.obj()))
       .deepMerge(j.model.map(m => Json.obj("model" -> m.asJson)).getOrElse(Json.obj()))
+      .deepMerge(j.category.map(c => Json.obj("category" -> c.asJson)).getOrElse(Json.obj()))
   }
 end AgentJson
 
@@ -263,7 +267,8 @@ private case class SeedAgent(
     description = description,
     tools = tools,
     systemPrompt = systemPrompt,
-    displayName = displayName
+    displayName = displayName,
+    category = "standalone"
   )
 
   def toJson: String =

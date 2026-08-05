@@ -15,7 +15,8 @@ case class AgentEntry(
   useWhen: String,
   tools: List[String] = List("*"),
   voice: Boolean = false,
-  systemPrompt: String = ""   // loaded from system.md, not in agent.json
+  systemPrompt: String = "",   // loaded from system.md, not in agent.json
+  category: String = "standalone"
 )
 
 object AgentEntry:
@@ -26,7 +27,8 @@ object AgentEntry:
       useWhen <- c.downField("useWhen").as[Option[String]].map(_.getOrElse(""))
       tools <- c.downField("tools").as[Option[List[String]]]
       voice <- c.downField("voice").as[Option[Boolean]]
-    yield AgentEntry(name, description, useWhen, tools.getOrElse(List("*")), voice.getOrElse(false))
+      category <- c.downField("category").as[Option[String]].map(_.getOrElse("standalone"))
+    yield AgentEntry(name, description, useWhen, tools.getOrElse(List("*")), voice.getOrElse(false), "", category)
   }
 
   given Encoder[AgentEntry] = Encoder.instance { a =>
@@ -35,7 +37,8 @@ object AgentEntry:
       "description" -> a.description.asJson,
       "useWhen" -> a.useWhen.asJson,
       "tools" -> a.tools.asJson,
-      "voice" -> a.voice.asJson
+      "voice" -> a.voice.asJson,
+      "category" -> a.category.asJson
     )
   }
 

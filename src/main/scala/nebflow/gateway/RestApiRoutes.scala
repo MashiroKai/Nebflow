@@ -999,7 +999,8 @@ class RestApiRoutes(
             "description" -> a.description.asJson,
             "useWhen" -> a.useWhen.asJson,
             "tools" -> a.tools.asJson,
-            "voice" -> a.voice.asJson
+            "voice" -> a.voice.asJson,
+            "category" -> a.category.asJson
           )
         }
         result <- Ok(Json.obj("agents" -> entries.asJson))
