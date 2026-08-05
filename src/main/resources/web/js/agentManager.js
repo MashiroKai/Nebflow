@@ -62,7 +62,27 @@ async function fetchAgentModel(name) {
 
 // ── Sidebar list ───────────────────────────────────────────
 
-/** Render the agent list into #agents-content. */
+/** Render a single agent card HTML string. */
+function renderAgentCard(a) {
+  const name = esc(a.name);
+  const display = esc(a.displayName || a.name);
+  const desc = esc(a.description || '');
+  const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
+  const category = a.category || 'standalone';
+  const badge = category === 'standalone'
+    ? '<span class="agent-mgr-standalone-badge">可直接委派</span>'
+    : '';
+  return `<div class="agent-mgr-card" data-agent="${name}">
+    <span class="agent-mgr-avatar">${initial}</span>
+    <div class="agent-mgr-info">
+      <div class="agent-mgr-name">${display}${badge}</div>
+      <div class="agent-mgr-desc">${desc}</div>
+    </div>
+    <span class="agent-mgr-model-tag" data-agent="${name}"></span>
+  </div>`;
+}
+
+/** Render the agent list into #agents-content, grouped by category. */
 export function renderAgentManager() {
   const content = document.getElementById('agents-content');
   if (!content) return;
@@ -74,20 +94,28 @@ export function renderAgentManager() {
       return;
     }
 
-    content.innerHTML = agents.map(a => {
-      const name = esc(a.name);
-      const display = esc(a.displayName || a.name);
-      const desc = esc(a.description || '');
-      const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
-      return `<div class="agent-mgr-card" data-agent="${name}">
-        <span class="agent-mgr-avatar">${initial}</span>
-        <div class="agent-mgr-info">
-          <div class="agent-mgr-name">${display}</div>
-          <div class="agent-mgr-desc">${desc}</div>
-        </div>
-        <span class="agent-mgr-model-tag" data-agent="${name}"></span>
-      </div>`;
-    }).join('');
+    // Group by category (default: standalone)
+    const groups = {
+      standalone: agents.filter(a => (a.category || 'standalone') === 'standalone'),
+      team: agents.filter(a => a.category === 'team'),
+      flow: agents.filter(a => a.category === 'flow'),
+    };
+    const groupLabels = {
+      standalone: 'Standalone Agents',
+      team: 'Team Members',
+      flow: 'Flow Agents',
+    };
+
+    let html = '';
+    for (const [key, label] of Object.entries(groupLabels)) {
+      if (groups[key].length === 0) continue;
+      html += `<div class="agent-mgr-group">`;
+      html += `<div class="agent-mgr-group-header">${label}</div>`;
+      html += groups[key].map(a => renderAgentCard(a)).join('');
+      html += `</div>`;
+    }
+
+    content.innerHTML = html;
 
     // Bind card clicks (single = preview, double = pinned — VS Code style)
     content.querySelectorAll('.agent-mgr-card').forEach(card => {
