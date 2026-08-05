@@ -10,6 +10,11 @@ object ToolLoader:
   private val logger = NebflowLogger.forName("nebflow.tools")
 
   private def toolsDir: os.Path = PathUtil.dataRoot / "tools"
+  private def teamToolsDir(team: String): os.Path = PathUtil.dataRoot / "teams" / team / "tools"
+  private def flowToolsDir(flow: String): os.Path = PathUtil.dataRoot / "flows" / flow / "tools"
+
+  /** Layer priority for name conflicts: global < agent < team < flow (higher wins). */
+  private val layerPriority: Map[String, Int] = Map("global" -> 0, "agent" -> 1, "team" -> 2, "flow" -> 3)
 
   /**
    * Tracks external tool names currently registered in ToolRegistry,
@@ -20,8 +25,11 @@ object ToolLoader:
   )
 
   /**
-   * Reload all external tools from disk: unregister previously loaded tools,
-   * re-read all JSON configs, and register fresh ScriptTool instances.
+   * Reload all external tools from the four layers (global / agent / team /
+   * flow): unregister previously loaded tools, re-read all JSON configs, and
+   * register fresh ScriptTool instances. On name conflicts a higher-priority
+   * layer (flow > team > agent > global) overrides a lower one; built-in
+   * tools always win.
    * Idempotent — safe to call repeatedly (used by initial load + file watcher).
    */
   def reload(): IO[Unit] =
@@ -48,24 +56,28 @@ object ToolLoader:
     yield ()
 
   /**
-   * Start a blocking file watcher that monitors `~/.nebflow/tools/` for `.json`
+   * Start a blocking file watcher that monitors the tools directories of all
+   * three layers (global + every existing team/flow tools dir) for `.json`
    * changes and hot-reloads external tool definitions with a 500ms debounce.
    * Intended to run as a background fiber.
    */
   def startFileWatcher(): IO[Unit] =
     IO.blocking {
-      val dir = toolsDir.toIO.toPath
-      if !java.nio.file.Files.exists(dir) then java.nio.file.Files.createDirectories(dir)
-      val watcher = java.nio.file.FileSystems.getDefault.newWatchService()
-      dir.register(
-        watcher,
-        java.nio.file.StandardWatchEventKinds.ENTRY_CREATE,
-        java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY,
-        java.nio.file.StandardWatchEventKinds.ENTRY_DELETE
-      )
-      logger.info(s"Watching $dir for tool config changes")
+      val watchService = java.nio.file.FileSystems.getDefault.newWatchService()
+      val dirs = globalToolsDir() ++ existingLayerToolsDirs()
+      dirs.foreach { dir =>
+        if !java.nio.file.Files.exists(dir.toIO.toPath) then
+          java.nio.file.Files.createDirectories(dir.toIO.toPath)
+        dir.toIO.toPath.register(
+          watchService,
+          java.nio.file.StandardWatchEventKinds.ENTRY_CREATE,
+          java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY,
+          java.nio.file.StandardWatchEventKinds.ENTRY_DELETE
+        )
+      }
+      logger.info(s"Watching ${dirs.size} tool config director${if dirs.size == 1 then "y" else "ies"}: ${dirs.map(_.toString).mkString(", ")}")
       while true do
-        val key = watcher.take()
+        val key = watchService.take()
         var hasJsonChange = false
         key.pollEvents().forEach { event =>
           if event.context().toString.endsWith(".json") then hasJsonChange = true
@@ -74,9 +86,9 @@ object ToolLoader:
         if hasJsonChange then
           // Debounce: wait for file system to settle, then drain queued events
           Thread.sleep(500)
-          var wk = watcher.poll()
+          var wk = watchService.poll()
           while wk != null do
-            wk.pollEvents(); wk.reset(); wk = watcher.poll()
+            wk.pollEvents(); wk.reset(); wk = watchService.poll()
           try reload().unsafeRunSync()
           catch
             case e: Exception =>
@@ -85,39 +97,122 @@ object ToolLoader:
     }.void
       .handleErrorWith(e => logger.warn(s"Tool file watcher error: ${e.getMessage}").void)
 
-  // Load all external tool definitions from ~/.nebflow/tools/*.json
-  def loadAll(): IO[Map[String, ExternalToolConfig]] =
+  // Global tools dir — created on demand so the watcher has a directory to register.
+  private def globalToolsDir(): List[os.Path] =
+    val dir = toolsDir
+    if !os.exists(dir) then os.makeDir.all(dir)
+    List(dir)
+
+  // Team/flow tools dirs that already exist (new dirs are picked up on the next reload).
+  private def existingLayerToolsDirs(): List[os.Path] =
+    val teams = subdirs(PathUtil.dataRoot / "teams").map(teamToolsDir)
+    val flows = subdirs(PathUtil.dataRoot / "flows").map(flowToolsDir)
+    (teams ++ flows).filter(os.exists)
+
+  private def subdirs(parent: os.Path): List[String] =
+    if os.exists(parent) then os.list(parent).filter(os.isDir).map(_.last).toList else Nil
+
+  /**
+   * Load all external tool definitions from the four layers, merged by name
+   * with layer priority (global < agent < team < flow). Returns (config,
+   * sourceDir) pairs; sourceDir becomes the ScriptTool's $TOOL_DIR.
+   */
+  def loadAll(): IO[List[(ExternalToolConfig, os.Path)]] =
+    for
+      global <- loadFromDir(toolsDir, layer = "global", scope = None)
+      // Agent-scoped tools: ~/.nebflow/agents/*/tools/
+      globalAgentTools <- loadNestedTools(PathUtil.dataRoot / "agents", layer = "agent")
+      teams <- IO.blocking(subdirs(PathUtil.dataRoot / "teams"))
+      teamLayer <- teams.traverse(name => loadFromDir(teamToolsDir(name), layer = "team", scope = Some(name)))
+      // Team agent tools: ~/.nebflow/teams/<t>/agents/*/tools/ (skip <t>/tools — loaded above)
+      teamAgentTools <- loadNestedTools(PathUtil.dataRoot / "teams", layer = "agent", excludeDirect = true)
+      flows <- IO.blocking(subdirs(PathUtil.dataRoot / "flows"))
+      flowLayer <- flows.traverse(name => loadFromDir(flowToolsDir(name), layer = "flow", scope = Some(name)))
+      // Flow agent tools: ~/.nebflow/flows/<f>/agents/*/tools/ (skip <f>/tools — loaded above)
+      flowAgentTools <- loadNestedTools(PathUtil.dataRoot / "flows", layer = "agent", excludeDirect = true)
+    yield mergeByPriority(
+      global ++ globalAgentTools ++ teamLayer.flatten ++ teamAgentTools ++ flowLayer.flatten ++ flowAgentTools
+    )
+
+  /**
+   * Scan baseDir for `tools/` subdirectories of agent directories and load
+   * every *.json tool config found. Two shapes are matched:
+   *   - direct:  baseDir/<agent>/tools/                 (used for ~/.nebflow/agents)
+   *   - nested:  baseDir/<scope>/agents/<agent>/tools/  (used for teams & flows)
+   * With `excludeDirect` the immediate baseDir/<x>/tools dirs are skipped — they
+   * are the team/flow scope tools dirs already loaded separately by loadAll().
+   * Configs are tagged layer "agent"; scope is the path relative to the data root.
+   */
+  private def loadNestedTools(baseDir: os.Path, layer: String, excludeDirect: Boolean = false): IO[List[(ExternalToolConfig, os.Path)]] =
     IO.blocking {
-      val dir = toolsDir
+      if !os.exists(baseDir) then Nil
+      else
+        os.walk(baseDir)
+          .filter { p =>
+            os.isDir(p) && p.last == "tools" &&
+            !(excludeDirect && p.segments.length == baseDir.segments.length + 2)
+          }
+          .toList
+    }.flatMap { toolsDirs =>
+      toolsDirs.traverse { toolsDir =>
+        val rel = toolsDir.relativeTo(PathUtil.dataRoot).segments.mkString("/")
+        loadFromDir(toolsDir, layer = layer, scope = Some(rel))
+      }
+    }.map(_.flatten)
+
+  // Load a single tool by name (searches all three layers, highest priority wins)
+  def load(name: String): IO[Option[ExternalToolConfig]] =
+    loadAll().map(_.collectFirst { case (config, _) if config.name == name => config })
+
+  // Load all and create ScriptTool instances ready for registration
+  def loadScripts(): IO[List[ScriptTool]] =
+    loadAll().map(_.map { case (config, dir) => ScriptTool(config, dir) })
+
+  /**
+   * Read `*.json` config files from a single directory, tagging each with its
+   * layer/scope. Invalid files are skipped with a warning (existing behavior).
+   */
+  private def loadFromDir(dir: os.Path, layer: String, scope: Option[String]): IO[List[(ExternalToolConfig, os.Path)]] =
+    IO.blocking {
       if !os.exists(dir) then Nil
       else os.list(dir).filter(_.last.endsWith(".json")).toList
     }.flatMap { paths =>
       paths
         .traverse { p =>
           IO.blocking(decode[ExternalToolConfig](os.read(p))).flatMap {
-            case Right(config) => IO.pure(Some(config))
+            case Right(config) =>
+              // Resolve $TOOL_DIR at load time to the directory holding this
+              // config file, so commands can reference sibling resources, e.g.
+              //   "command": "node $TOOL_DIR/deploy.cjs"
+              val resolved = config.withLayer(layer, scope)
+                .copy(command = config.command.replace("$TOOL_DIR", dir.toString))
+              IO.pure(Some((resolved, dir)))
             case Left(err) =>
-              logger.warn(s"Skipping invalid tool config at ${p.last}: ${err.getMessage}").as(None)
+              logger.warn(s"Skipping invalid tool config at $p: ${err.getMessage}").as(None)
           }
         }
-        .map(_.flatten.iterator.map(c => c.name -> c).toMap)
+        .map(_.flatten)
     }
 
-  // Load a single tool by name
-  def load(name: String): IO[Option[ExternalToolConfig]] =
-    val file = toolsDir / s"$name.json"
-    IO.blocking(os.exists(file)).flatMap {
-      case false => IO.pure(None)
-      case true =>
-        IO.blocking(os.read(file)).flatMap { content =>
-          decode[ExternalToolConfig](content) match
-            case Right(config) => IO.pure(Some(config))
-            case Left(err) =>
-              logger.warn(s"Failed to parse tool config '$name': ${err.getMessage}").as(None)
-        }
+  /**
+   * Merge layer configs into a single name-keyed list. Sorted by ascending
+   * layer priority so that on conflict the higher layer overwrites the lower
+   * one; the override is logged.
+   */
+  private def mergeByPriority(configs: List[(ExternalToolConfig, os.Path)]): List[(ExternalToolConfig, os.Path)] =
+    val sorted = configs.sortBy { case (cfg, _) => layerPriority.getOrElse(cfg.layer, 0) }
+    val merged = scala.collection.mutable.LinkedHashMap[String, (ExternalToolConfig, os.Path)]()
+    sorted.foreach { entry =>
+      val cfg = entry._1
+      merged.get(cfg.name) match
+        case Some((prev, _)) =>
+          logger.warn(
+            s"Tool '${cfg.name}' from ${cfg.layer} layer (scope=${cfg.scope.getOrElse("-")}) " +
+              s"overrides ${prev.layer} layer (scope=${prev.scope.getOrElse("-")})"
+          )
+          merged.update(cfg.name, entry)
+        case None =>
+          merged.update(cfg.name, entry)
     }
-
-  // Load all and create ScriptTool instances ready for registration
-  def loadScripts(): IO[List[ScriptTool]] =
-    loadAll().map(_.values.map(config => ScriptTool(config)).toList)
+    merged.values.toList
 end ToolLoader
