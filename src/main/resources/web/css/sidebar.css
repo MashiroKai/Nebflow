@@ -1285,6 +1285,26 @@
   text-align: center;
 }
 
+/* Category groups */
+.agent-mgr-group { margin-bottom: 12px; }
+.agent-mgr-group-header {
+  font: 600 11px -apple-system, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-frame-text-muted, #888);
+  padding: 8px 12px 4px;
+  user-select: none;
+}
+.agent-mgr-standalone-badge {
+  font: 500 9px -apple-system, sans-serif;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(100,200,100,0.15);
+  color: #6a6;
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
 /* Compact sidebar cards (VSCode Extensions style) */
 .agent-mgr-card {
   display: flex;
@@ -1568,6 +1588,7 @@
     color: var(--color-frame-text-muted);
   }
   .agent-mgr-card:hover { background: rgba(255,255,255,0.04); }
+  .agent-mgr-standalone-badge { background: rgba(100,200,100,0.2); color: #8c8; }
   .agent-detail-model-row { background: rgba(255,255,255,0.03); }
   .agent-detail-prompt-edit { background: rgba(255,255,255,0.03); }
   .agent-detail-save-btn { background: rgba(255,255,255,0.03); }
