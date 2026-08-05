@@ -1,6 +1,7 @@
 package nebflow.neblink
 
 import cats.effect.IO
+import cats.effect.kernel.Ref
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
@@ -23,15 +24,45 @@ final class NeblinkDiscovery(
   neblinkService: NeblinkService,
   serverPort: Int,
   presenceService: NeblinkPresenceService,
-  neblinkClient: Option[NeblinkClient] = None
+  initialClient: Option[NeblinkClient] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.discovery")
 
+  // The client is held in a Ref so it can be hot-swapped at runtime (e.g. after
+  // device-flow enrollment completes, without restarting the gateway).
+  private val clientRef: Ref[IO, Option[NeblinkClient]] =
+    Ref.unsafe[IO, Option[NeblinkClient]](initialClient)
+
+  /** Hot-swap the NebLink client (used after device-flow enrollment). */
+  def setClient(client: Option[NeblinkClient]): IO[Unit] =
+    clientRef.set(client) *> logger.info("NebLink client hot-swapped")
+
   /** Discovery cycle — use NebLink Server if configured. */
   def discoverCycle: IO[Unit] =
-    neblinkClient match
+    clientRef.get.flatMap {
       case Some(client) => discoverViaServer(client)
       case None => logger.warn("NebLink Server is not configured — discovery skipped")
+    }
+
+  /** Heartbeat cycle — send a heartbeat to the current client (if any).
+    * Used by the periodic heartbeat loop. Returns immediately if no client. */
+  def heartbeatCycle: IO[Unit] =
+    clientRef.get.flatMap {
+      case Some(client) => doHeartbeat(client)
+      case None => IO.unit
+    }
+
+  private def doHeartbeat(client: NeblinkClient): IO[Unit] =
+    client.heartbeat.flatMap {
+      case Right(serverPeers) =>
+        val neblinkPeers = client.toNeblinkPeers(serverPeers)
+        val peerIps = client.peerAddresses(serverPeers)
+        neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
+          neblinkService.updateTrustedIps(peerIps) *>
+          neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+      case Left(err) =>
+        logger.warn(s"Heartbeat failed: $err")
+    }
 
   /** Discovery via NebLink Server: login/heartbeat → upsert peers → sync presence. */
   private def discoverViaServer(client: NeblinkClient): IO[Unit] =
@@ -56,7 +87,8 @@ final class NeblinkDiscovery(
   def diagnosticScan: IO[Json] =
     for
       currentPeers <- neblinkService.peers
-      clientStatus <- neblinkClient match
+      currentClient <- clientRef.get
+      clientStatus <- currentClient match
         case Some(client) =>
           for
             identity <- neblinkService.identity

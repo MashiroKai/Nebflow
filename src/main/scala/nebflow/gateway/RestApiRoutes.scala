@@ -12,7 +12,7 @@ import nebflow.core.daemon.{DaemonConfig, DaemonService, DaemonStore}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.llm.NebflowServiceConfig
-import nebflow.neblink.{DeviceCredential, NeblinkConfig, NeblinkServerConfig, NeblinkService}
+import nebflow.neblink.{DeviceCredential, NeblinkClient, NeblinkConfig, NeblinkServerConfig, NeblinkService}
 import nebflow.service.ConfigService
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -35,7 +35,9 @@ class RestApiRoutes(
   sessionStore: SessionStore,
   wsRoutes: WebSocketRoutes,
   neblinkService: Option[NeblinkService] = None,
-  ttsService: Option[TtsService] = None
+  ttsService: Option[TtsService] = None,
+  neblinkDiscovery: Option[nebflow.neblink.NeblinkDiscovery] = None,
+  gatewayPort: Int = 8080
 ):
   private val logger = nebflow.core.NebflowLogger.forName("nebflow.rest-api")
 
@@ -493,6 +495,92 @@ class RestApiRoutes(
             case _ =>
               BadRequest(Json.obj("error" -> "Missing server or pairCode".asJson))
           end match
+        }
+
+    // ===== Device authorization flow (Tailscale-style) =====
+
+    // Start device flow: proxy to neblink-server's /api/device/code.
+    // Returns {deviceCode, userCode, verificationUri} for the frontend.
+    case req @ POST -> Root / "neblink" / "device-flow" / "start" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        neblinkService match
+          case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+          case Some(ms) =>
+            for
+              identity <- ms.identity
+              // The neblink-server URL: read from existing config, or use the
+              // public default. For device flow the server must be reachable
+              // from both the browser (for OAuth) and the device (for polling).
+              serverUrl <- neblinkServerUrl(None)
+              body = Json.obj(
+                "deviceId" -> identity.deviceId.asJson,
+                "deviceName" -> identity.deviceName.asJson,
+                "platform" -> identity.platform.asJson
+              ).noSpaces
+              result <- proxyPost(serverUrl, "/api/device/code", body)
+              resp <- result match
+                case Right(json) => Ok(json)
+                case Left(err) => BadRequest(Json.obj("error" -> s"Failed to start device flow: $err".asJson))
+            yield resp
+
+    // Poll device flow: proxy to neblink-server's /api/device/token.
+    // On success, persist the device credential + update config + hot-swap client.
+    case req @ POST -> Root / "neblink" / "device-flow" / "poll" =>
+      if !checkAuth(req) then Forbidden(Json.obj("error" -> "Unauthorized".asJson))
+      else
+        req.as[Json].flatMap { body =>
+          val deviceCode = body.hcursor.downField("deviceCode").as[String].getOrElse("")
+          val serverUrl = body.hcursor.downField("serverUrl").as[Option[String]].toOption.flatten
+            .map(_.stripSuffix("/"))
+          if deviceCode.isEmpty then
+            BadRequest(Json.obj("error" -> "Missing deviceCode".asJson))
+          else
+            neblinkService match
+              case None => BadRequest(Json.obj("error" -> "NebLink service not initialized".asJson))
+              case Some(ms) =>
+                for
+                  resolvedUrl <- neblinkServerUrl(serverUrl)
+                  pollBody = Json.obj("deviceCode" -> deviceCode.asJson).noSpaces
+                  result <- proxyPost(resolvedUrl, "/api/device/token", pollBody)
+                  resp <- result match
+                    case Right(json) =>
+                      // Success — persist credential + update config + hot-swap.
+                      val deviceToken = json.hcursor.downField("deviceToken").as[String].toOption
+                      val networkId = json.hcursor.downField("networkId").as[String].toOption.getOrElse("")
+                      deviceToken match
+                        case Some(tok) =>
+                          for
+                            identity <- ms.identity
+                            cred = DeviceCredential(resolvedUrl, networkId, identity.deviceId, tok)
+                            _ <- DeviceCredential.save(cred)
+                            newConfig = NeblinkServerConfig(
+                              url = resolvedUrl,
+                              networkId = networkId,
+                              secret = "",
+                              deviceToken = Some(tok)
+                            )
+                            current <- NeblinkConfig.load
+                            updated = current.copy(enabled = true, neblinkServer = Some(newConfig))
+                            _ <- NeblinkConfig.save(updated)
+                            // Hot-swap the client in the discovery service.
+                            _ <- neblinkDiscovery.fold(IO.unit)(d =>
+                              d.setClient(Some(new NeblinkClient(newConfig, gatewayPort)))
+                            )
+                            // Trigger immediate re-discovery.
+                            _ <- ms.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+                            r <- Ok(Json.obj(
+                              "ok" -> true.asJson,
+                              "networkId" -> networkId.asJson
+                            ))
+                          yield r
+                        case None =>
+                          BadRequest(Json.obj("error" -> "Server did not return a device token".asJson))
+                    case Left(err) =>
+                      // authorization_pending is expected during polling — pass through.
+                      BadRequest(Json.obj("error" -> err.asJson))
+                yield resp
+              end match
         }
 
     // Cloud session sync toggle — removed (session sync deleted)
@@ -1256,6 +1344,11 @@ class RestApiRoutes(
     * http4s client dependency into this routes class. Bypasses the system proxy
     * so direct LAN access works. */
   private def enrollWithServer(serverUrl: String, body: String): IO[Either[String, Json]] =
+    proxyPost(serverUrl, "/api/device/enroll", body)
+
+  /** Generic POST proxy to the NebLink Server. Returns the parsed JSON on
+    * success (2xx) or an error message on failure. Bypasses the system proxy. */
+  private def proxyPost(serverUrl: String, path: String, body: String): IO[Either[String, Json]] =
     IO.blocking {
       val client = java.net.http.HttpClient
         .newBuilder()
@@ -1263,7 +1356,7 @@ class RestApiRoutes(
         .build()
       val request = java.net.http.HttpRequest
         .newBuilder()
-        .uri(java.net.URI.create(s"${serverUrl.stripSuffix("/")}/api/device/enroll"))
+        .uri(java.net.URI.create(s"${serverUrl.stripSuffix("/")}$path"))
         .timeout(java.time.Duration.ofSeconds(15))
         .header("Content-Type", "application/json")
         .POST(java.net.http.HttpRequest.BodyPublishers.ofString(body))
@@ -1277,12 +1370,30 @@ class RestApiRoutes(
             case Right(json) => Right(json)
             case Left(err) => Left(s"invalid JSON from server: ${err.message}")
         else
-          // Surface the server's error message if it's JSON.
-          parser.parse(respBody).toOption
-            .flatMap(_.hcursor.downField("error").as[String].toOption)
-            .orElse(Some(s"HTTP $status"))
-            .fold(Left(s"HTTP $status"): Either[String, Json])(Left(_))
+          // Surface the server's error message if it's JSON (e.g. authorization_pending).
+          parser.parse(respBody) match
+            case Right(json) =>
+              json.hcursor.downField("error").as[String].toOption match
+                case Some(errMsg) => Left(errMsg)
+                case None => Left(s"HTTP $status")
+            case Left(_) => Left(s"HTTP $status")
       catch
         case e: Exception => Left(e.getMessage)
     }.handleErrorWith(e => IO.pure(Left(e.getMessage)))
+
+  /** Resolve the NebLink Server URL for device-flow requests. Priority:
+    * 1. Explicitly provided URL (from the request body).
+    * 2. URL from the current neblink config.
+    * 3. The public default URL. */
+  private def neblinkServerUrl(explicit: Option[String] = None): IO[String] =
+    explicit match
+      case Some(url) => IO.pure(url)
+      case None =>
+        neblinkService match
+          case Some(ms) =>
+            ms.neblinkConfig.map(_.neblinkServer.map(_.url)).flatMap {
+              case Some(url) => IO.pure(url)
+              case None => IO.pure("https://neblink.nebflow.space")
+            }
+          case None => IO.pure("https://neblink.nebflow.space")
 end RestApiRoutes

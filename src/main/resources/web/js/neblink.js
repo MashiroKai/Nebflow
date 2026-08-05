@@ -24,7 +24,11 @@ let neblinkState = {
   paired: false,
   pairing: false,
   pairError: '',
-  enrollMsg: ''
+  enrollMsg: '',
+  // Device-flow state: 'idle' | 'waiting' | 'success'
+  flowState: 'idle',
+  userCode: '',
+  deviceCode: ''
 };
 
 /** Read-only accessor for the current NebLink state (used by the Activity Bar). */
@@ -144,23 +148,30 @@ export function neblinkSettingsHTML() {
     </div>`;
   }
 
-  // If no device configured — show login button + pairing code option
+  // If no device configured — show device-flow login button
   if (!local.deviceId) {
     const pairErr = neblinkState.pairError
       ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
-    const enrollMsg = neblinkState.enrollMsg
-      ? `<div class="neblink-error" style="color:var(--success,#4ecdc4)">${escapeHtml(neblinkState.enrollMsg)}</div>` : '';
+    // Device-flow states: idle | waiting (showing user code) | success
+    const flowState = neblinkState.flowState || 'idle';
+    const userCode = neblinkState.userCode || '';
+    let flowUI = '';
+    if (flowState === 'waiting') {
+      flowUI = `
+        <div style="margin-top:14px;padding:16px;border:1px solid var(--border,#2d2d4a);border-radius:8px;background:var(--bg,#0f0f17);text-align:center">
+          <div style="font-size:13px;color:var(--text-muted,#8888aa);margin-bottom:8px">在浏览器中完成 GitHub 授权以连接此设备</div>
+          <div style="font-family:'SF Mono','Fira Code',monospace;font-size:24px;font-weight:600;color:var(--success,#4ecdc4);letter-spacing:2px;margin-bottom:8px">${escapeHtml(userCode)}</div>
+          <div style="font-size:12px;color:var(--text-muted,#8888aa)">授权码（已在新标签页打开）</div>
+          <div style="margin-top:10px;font-size:12px;color:var(--text-muted,#8888aa)" id="neblink-flow-waiting">等待授权完成...</div>
+        </div>`;
+    } else if (flowState === 'success') {
+      flowUI = `<div class="neblink-error" style="color:var(--success,#4ecdc4)">✓ 连接成功！设备已加入网络。</div>`;
+    }
     return `<div class="neblink-login-section">
-      <div class="neblink-login-hint">${t('neblink.loginHint') || '登录 NebLink Server 连接你的设备'}</div>
+      <div class="neblink-login-hint">${t('neblink.loginHint') || '登录后，所有设备自动互相可见'}</div>
       ${pairErr}
-      <button class="neblink-login-btn" id="neblink-login-btn">${t('neblink.login') || '通过网页登录'}</button>
-      <div style="margin-top:16px;border-top:1px solid var(--border,#2d2d4a);padding-top:14px">
-        <div class="neblink-login-hint" style="margin-bottom:8px">${t('neblink.pairByCodeHint') || '或输入配对码加入网络'}</div>
-        <input id="neblink-enroll-server" class="neblink-input" placeholder="${t('neblink.serverUrl') || 'NebLink Server 地址 (https://neblink.nebflow.space)'}" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;border:1px solid var(--border,#2d2d4a);background:var(--bg,#0f0f17);color:var(--text,#e4e4ef);font-size:13px" />
-        <input id="neblink-enroll-code" class="neblink-input" placeholder="${t('neblink.pairCode') || '配对码（6 位数字）'}" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;border:1px solid var(--border,#2d2d4a);background:var(--bg,#0f0f17);color:var(--text,#e4e4ef);font-size:13px" />
-        <button class="neblink-login-btn" id="neblink-enroll-btn">${t('neblink.enroll') || '配对加入'}</button>
-        ${enrollMsg}
-      </div>
+      <button class="neblink-login-btn" id="neblink-device-flow-btn">${t('neblink.login') || '登录连接设备'}</button>
+      ${flowUI}
     </div>`;
   }
 
@@ -246,61 +257,110 @@ function platformDisplay(platform) {
   return { icon: generic, text: platform || 'Device' };
 }
 
+// ---- Device-flow polling ----
+
+/**
+ * Poll the local gateway's /api/neblink/device-flow/poll until the device is
+ * approved (or expired/errored). On success, the Scala backend persists the
+ * credential and hot-swaps the client — the UI just needs to refresh state.
+ */
+let _flowPollTimer = null;
+function pollDeviceFlow(deviceCode, interval, expiresInSeconds) {
+  // Cancel any existing poll.
+  if (_flowPollTimer) clearTimeout(_flowPollTimer);
+  const deadline = Date.now() + expiresInSeconds * 1000;
+
+  const poll = async () => {
+    if (Date.now() > deadline) {
+      neblinkState.flowState = 'idle';
+      neblinkState.pairError = '授权超时，请重试';
+      neblinkState.userCode = '';
+      neblinkState.deviceCode = '';
+      if (_rerender) _rerender();
+      return;
+    }
+    try {
+      const resp = await fetch('/api/neblink/device-flow/poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+        body: JSON.stringify({ deviceCode })
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        // Success — device enrolled, client hot-swapped.
+        neblinkState.flowState = 'success';
+        neblinkState.pairError = '';
+        neblinkState.userCode = '';
+        neblinkState.deviceCode = '';
+        if (_rerender) _rerender();
+        // Refresh neblink status after a short delay so the new device shows up.
+        setTimeout(() => fetchNeblinkStatus(), 1500);
+        return;
+      }
+      if (data.error === 'authorization_pending') {
+        // Keep polling.
+        _flowPollTimer = setTimeout(poll, interval * 1000);
+        return;
+      }
+      // Other error (expired, denied, etc.)
+      neblinkState.flowState = 'idle';
+      neblinkState.pairError = data.error || '授权失败';
+      neblinkState.userCode = '';
+      neblinkState.deviceCode = '';
+      if (_rerender) _rerender();
+    } catch (e) {
+      neblinkState.flowState = 'idle';
+      neblinkState.pairError = '网络错误: ' + e.message;
+      neblinkState.userCode = '';
+      neblinkState.deviceCode = '';
+      if (_rerender) _rerender();
+    }
+  };
+  _flowPollTimer = setTimeout(poll, interval * 1000);
+}
+
 // ---- Bind events after HTML insert ----
 export function bindNeblinkEvents(rerender) {
   _rerender = rerender;
 
-  // Login button — opens nebflow.space/connect
-  // CRITICAL: Include the local auth token in the redirect URL so it survives
-  // the round-trip through nebflow.space. Without this, the POST /api/neblink/pair
-  // has no Authorization header and returns 403 (login silently fails).
-  const loginBtn = document.getElementById('neblink-login-btn');
-  if (loginBtn) {
-    loginBtn.addEventListener('click', () => {
-      const origin = window.location.origin;
-      const token = getAuthToken();
-      // Encode token into redirect URL — connect page preserves existing query params
-      const redirectUrl = token
-        ? `${origin}/?token=${encodeURIComponent(token)}`
-        : origin;
-      window.open(`https://nebflow.space/connect?redirect=${encodeURIComponent(redirectUrl)}`, '_blank');
-    });
-  }
-
-  // Pairing-code enrollment — POST {server, pairCode} to the Scala backend,
-  // which proxies to the NebLink Server's /api/device/enroll.
-  const enrollBtn = document.getElementById('neblink-enroll-btn');
-  if (enrollBtn) {
-    enrollBtn.addEventListener('click', async () => {
-      const server = document.getElementById('neblink-enroll-server')?.value.trim();
-      const pairCode = document.getElementById('neblink-enroll-code')?.value.trim();
-      if (!server || !pairCode) {
-        neblinkState.pairError = '请填写服务器地址和配对码';
-        neblinkState.enrollMsg = '';
-        rerender();
-        return;
-      }
-      enrollBtn.disabled = true;
-      enrollBtn.textContent = '...';
+  // Device-flow login button — initiates the Tailscale-style authorization
+  // flow: POST /api/neblink/device-flow/start → get userCode + verificationUri
+  // → open browser → poll /api/neblink/device-flow/poll until approved.
+  const flowBtn = document.getElementById('neblink-device-flow-btn');
+  if (flowBtn) {
+    flowBtn.addEventListener('click', async () => {
+      flowBtn.disabled = true;
+      flowBtn.textContent = '...';
+      neblinkState.pairError = '';
       try {
-        const resp = await fetch('/api/neblink/enroll', {
+        // Start the device flow.
+        const startResp = await fetch('/api/neblink/device-flow/start', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
-          body: JSON.stringify({ server, pairCode })
         });
-        const data = await resp.json();
-        if (resp.ok && data.ok) {
-          neblinkState.enrollMsg = data.message || '配对成功，请重启 Nebflow 生效。';
-          neblinkState.pairError = '';
-        } else {
-          neblinkState.pairError = data.error || '配对失败';
-          neblinkState.enrollMsg = '';
+        const startData = await startResp.json();
+        if (!startResp.ok) {
+          neblinkState.pairError = startData.error || '启动设备流程失败';
+          neblinkState.flowState = 'idle';
+          rerender();
+          return;
         }
+        // Store the codes and show the waiting UI.
+        neblinkState.deviceCode = startData.deviceCode;
+        neblinkState.userCode = startData.userCode;
+        neblinkState.flowState = 'waiting';
+        // Open the verification URI in a new tab for the user to authorize.
+        if (startData.verificationUri) {
+          window.open(startData.verificationUri, '_blank');
+        }
+        rerender();
+        // Start polling.
+        pollDeviceFlow(startData.deviceCode, startData.interval || 3, startData.expiresIn || 900);
       } catch (e) {
         neblinkState.pairError = '网络错误: ' + e.message;
-        neblinkState.enrollMsg = '';
+        neblinkState.flowState = 'idle';
+        rerender();
       }
-      rerender();
     });
   }
 
