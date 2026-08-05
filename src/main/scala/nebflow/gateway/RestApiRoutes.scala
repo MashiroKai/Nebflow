@@ -196,7 +196,8 @@ class RestApiRoutes(
             Json.obj(
               "name" -> a.name.asJson,
               "description" -> a.description.asJson,
-              "displayName" -> a.displayName.getOrElse(a.name).asJson
+              "displayName" -> a.displayName.getOrElse(a.name).asJson,
+              "category" -> a.category.asJson
             )
           }
           Ok(Json.obj("agents" -> list.asJson))
@@ -861,7 +862,8 @@ class RestApiRoutes(
             "description" -> defn.description.asJson,
             "tools" -> defn.tools.asJson,
             "displayName" -> defn.displayName.asJson,
-            "systemPrompt" -> defn.systemPrompt.asJson
+            "systemPrompt" -> defn.systemPrompt.asJson,
+            "category" -> defn.category.asJson
           )
         }
         result <- Ok(Json.obj("agents" -> entries.asJson))

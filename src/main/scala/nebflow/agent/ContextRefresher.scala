@@ -370,13 +370,15 @@ object ContextRefresher:
               for
                 teams <- EntityLoader.listTeams()
                 flows <- EntityLoader.listFlows()
-              yield TeamCatalog.buildGlobalCatalog(teams, flows)
+                agents <- EntityLoader.listAgents()
+              yield TeamCatalog.buildGlobalCatalog(teams, flows, agents)
         yield result
       case None =>
         // No session (e.g. very early init): show global catalog
         for
           teams <- EntityLoader.listTeams()
           flows <- EntityLoader.listFlows()
-        yield TeamCatalog.buildGlobalCatalog(teams, flows)
+          agents <- EntityLoader.listAgents()
+        yield TeamCatalog.buildGlobalCatalog(teams, flows, agents)
 
 end ContextRefresher

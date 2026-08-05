@@ -39,7 +39,7 @@ object TeamCatalog:
 
   /** Build a global catalog for Nebula (not part of any team).
    *  Lists all teams and flows with routing guidance. */
-  def buildGlobalCatalog(teams: Map[String, TeamDef], flows: Map[String, FlowDagDef]): String =
+  def buildGlobalCatalog(teams: Map[String, TeamDef], flows: Map[String, FlowDagDef], agents: Map[String, AgentEntry] = Map.empty): String =
     val teamLines = teams.values.toList.sortBy(_.name).map { t =>
       val members = (t.lead :: t.members).distinct.mkString(", ")
       s"- ${t.name}: ${t.description}\n  Members: $members"
@@ -49,9 +49,20 @@ object TeamCatalog:
       s"- ${f.name}: ${f.description}"
     }.mkString("\n")
 
+    val standaloneAgents = agents.values.toList
+      .filter(a => a.category == "standalone" && a.name != "Nebula")
+      .sortBy(_.name)
+    val agentLines = standaloneAgents.map { a =>
+      s"- ${a.name}: ${a.description}"
+    }.mkString("\n")
+
     s"""=== Teams & Flows ===
 
 ## When to use what
+
+**Agent** — functional specialist for simple tasks. No persistent context.
+  → `Mail("agent-name", "your task")`
+  → Use when: task needs one specific capability (explore code, write a function, generate a chart).
 
 **Team** — ongoing project work (development, research, writing). The Team Lead receives your task and coordinates members internally.
   → `Mail("team-name", "your task")`
@@ -64,7 +75,9 @@ object TeamCatalog:
 **Create new** — if no existing Team/Flow fits, use the entity-creator flow to design one.
   → `Mail("entity-creator", "create a team/flow/agent for ...")`
 
-## Teams
+${if standaloneAgents.nonEmpty then s"""## Standalone Agents (Mail by name for direct delegation)
+$agentLines
+""" else ""}## Teams
 ${if teamLines.nonEmpty then teamLines else "(none — create one with entity-creator flow)"}
 
 ## Flows
