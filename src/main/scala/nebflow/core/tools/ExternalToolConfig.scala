@@ -10,8 +10,9 @@ import io.circe.syntax.*
  * inferred from the config file's directory — they are NOT read from user
  * config files (which never carry these fields):
  *   - layer = "global", scope = None     → ~/.nebflow/tools/ (json files)
- *   - layer = "team",  scope = Some(name) → ~/.nebflow/teams/&lt;name&gt;/tools/
- *   - layer = "flow",  scope = Some(name) → ~/.nebflow/flows/&lt;name&gt;/tools/
+ *   - layer = "agent",  scope = Some(p)  → agent dirs: <agents|teams|flows>/.../tools/
+ *   - layer = "team",   scope = Some(name) → ~/.nebflow/teams/&lt;name&gt;/tools/
+ *   - layer = "flow",   scope = Some(name) → ~/.nebflow/flows/&lt;name&gt;/tools/
  */
 case class ExternalToolConfig(
   name: String,

@@ -14,10 +14,10 @@ class ToolLoaderSpec extends CatsEffectSuite:
 
   private def toolsDir = tempRoot / "tools"
 
-  /** Reset all three layer dirs and registry state before each test. */
+  /** Reset all layer dirs and registry state before each test. */
   private def resetState(): IO[Unit] =
     IO.delay {
-      List("tools", "teams", "flows").foreach { sub =>
+      List("tools", "teams", "flows", "agents").foreach { sub =>
         val dir = tempRoot / sub
         if os.exists(dir) then os.remove.all(dir)
       }
@@ -222,4 +222,61 @@ class ToolLoaderSpec extends CatsEffectSuite:
       result <- tool.call(JsonObject.empty, ToolContext(projectRoot = tempRoot.toString))
     yield
       assertEquals(result, Right[ToolError, String](teamTools.toString))
+
+  // --- Agent directory tools (three-layer agent dirs) ---
+
+  test("reload registers tools from global agent tools/ subfolders"):
+    for
+      _ <- resetState()
+      _ <- IO(writeToolConfig(tempRoot / "agents" / "myagent" / "tools", "agent-tool", "agent-tool", "agent-desc"))
+      _ <- ToolLoader.reload()
+      map = ToolRegistry.TOOL_MAP
+    yield
+      assert(map.contains("agent-tool"), "Agent-dir tool should be registered")
+      assertEquals(map("agent-tool").description, "agent-desc")
+
+  test("reload registers tools from nested team/flow agent tools/ subfolders"):
+    for
+      _ <- resetState()
+      _ <- IO {
+        writeToolConfig(tempRoot / "teams" / "myteam" / "agents" / "helper" / "tools", "team-agent-tool", "team-agent-tool", "team-agent-desc")
+        writeToolConfig(tempRoot / "flows" / "myflow" / "agents" / "worker" / "tools", "flow-agent-tool", "flow-agent-tool", "flow-agent-desc")
+      }
+      _ <- ToolLoader.reload()
+      map = ToolRegistry.TOOL_MAP
+    yield
+      assert(map.contains("team-agent-tool"), "Team agent-dir tool should be registered")
+      assert(map.contains("flow-agent-tool"), "Flow agent-dir tool should be registered")
+
+  test("conflict priority: team scope > agent dir > global"):
+    for
+      _ <- resetState()
+      _ <- IO {
+        writeToolConfig(toolsDir, "dup", "dup", "global-desc")
+        writeToolConfig(tempRoot / "agents" / "myagent" / "tools", "dup", "dup", "agent-desc")
+        writeToolConfig(tempRoot / "teams" / "alpha" / "tools", "dup", "dup", "team-desc")
+      }
+      _ <- ToolLoader.reload()
+      map = ToolRegistry.TOOL_MAP
+    yield
+      assertEquals(map("dup").description, "team-desc", "Team scope tool should override agent-dir tool")
+
+  test("$TOOL_DIR is resolved to the config directory at load time"):
+    for
+      _ <- resetState()
+      agentTools = tempRoot / "agents" / "myagent" / "tools"
+      _ <- IO(writeToolConfig(agentTools, "deploy", "deploy", "deploy", "node $TOOL_DIR/deploy.cjs"))
+      loaded <- ToolLoader.loadAll()
+      cfg = loaded.collectFirst { case (c, _) if c.name == "deploy" => c }.get
+    yield
+      assertEquals(cfg.command, s"node ${agentTools.toString}/deploy.cjs", "$TOOL_DIR should be replaced with the absolute tools dir")
+
+  test("global tools still work with $TOOL_DIR replacement"):
+    for
+      _ <- resetState()
+      _ <- IO(writeToolConfig(toolsDir, "g-tool", "g-tool", "echo", "echo $TOOL_DIR"))
+      loaded <- ToolLoader.loadAll()
+      cfg = loaded.collectFirst { case (c, _) if c.name == "g-tool" => c }.get
+    yield
+      assertEquals(cfg.command, s"echo ${toolsDir.toString}", "Global tool $TOOL_DIR should resolve to the global tools dir")
 end ToolLoaderSpec
