@@ -82,12 +82,20 @@ object FlowDagExecutor:
         case Some(node) =>
           val inputText = resolveInput(node.input, ctx)
           for
-            agentDefOpt <- resources.agentLibrary.get(node.agent)
-            result <- agentDefOpt match
+            agentEntryOpt <- nebflow.core.entity.EntityLoader.loadFlowAgent(flow.name, node.agent)
+            result <- agentEntryOpt match
               case None =>
                 IO.pure(NodeResult(nodeId, "", false,
-                  Some(s"Agent '${node.agent}' not found in library")))
-              case Some(agentDef) =>
+                  Some(s"Agent '${node.agent}' not found in flow or global library")))
+              case Some(entry) =>
+                val agentDef = AgentDef(
+                  name = entry.name,
+                  description = entry.description,
+                  tools = entry.tools,
+                  systemPrompt = entry.systemPrompt,
+                  voiceEnabled = entry.voice,
+                  category = entry.category
+                )
                 executeAgent(nodeId, node.agent, agentDef, inputText,
                   resources, actorSystem, wsSend, flow.name)
             updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))
