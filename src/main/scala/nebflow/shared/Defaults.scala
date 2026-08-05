@@ -22,9 +22,11 @@ object Defaults:
    * First-token timeout — if no chunk arrives from the LLM provider within this
    * time after the request is sent, the stream is considered hung (connection
    * dead, provider down). Shorter than inactivity timeout because a responsive
-   * provider should always send the first token within seconds.
+   * provider should always send the first token within seconds. 90s leaves room
+   * for thinking models (GLM-5.2 etc.) whose reasoning phase delays the first
+   * content token well past 30s.
    */
-  val LlmFirstTokenTimeoutSec: Int = 30
+  val LlmFirstTokenTimeoutSec: Int = 90
 
   /**
    * Backend LLM stream inactivity timeout — if no chunk is received from the LLM provider
