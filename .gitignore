@@ -62,3 +62,6 @@ swarm/
 # Temp review reports
 .code-review-report.html
 .nebflow-review.html
+
+# Internal handover doc (contains server credentials)
+NEBLINK_HANDOVER.md
