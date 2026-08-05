@@ -1,19 +1,18 @@
 package nebflow.core.flow
 
-import cats.effect.IO
+import cats.effect.{IO, Deferred}
 import io.circe.Json
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 import java.util.UUID
-import scala.concurrent.duration.*
 
 /**
  * Runs a standalone agent definition ephemerally.
  *
- * Lifecycle: spawn AgentActor → send UserInput → wait for AgentEvent → extract output →
- * reply to caller → stop agent actor → delete session → self-stop.
+ * Lifecycle: spawn AgentActor → send UserInput → wait for AgentEvent (event-driven, no timeout) →
+ * extract output → reply to caller → stop agent actor → delete session → self-stop.
  *
  * Used by MailTool when mailing a standalone agent that isn't currently mounted.
  */
@@ -27,8 +26,6 @@ object EphemeralAgentRunner:
     projectRoot: String
   )
 
-  private val timeout: FiniteDuration = 5.minutes
-
   def apply(resources: SharedResources, wsSend: Option[Json => IO[Unit]]): Behavior[RunAgent] =
     Behaviors.receiveMessage: msg =>
       val agentDef = msg.agentDef
@@ -37,6 +34,18 @@ object EphemeralAgentRunner:
       val rawWsSend = wsSend.getOrElse((_: Json) => IO.unit)
 
       for
+        resultDeferred <- Deferred[IO, Either[String, List[Message]]]
+        // Bridge actor: receives AgentEvent, completes the Deferred, self-stops
+        bridgeRef <- resources.actorSystem.spawn(
+          Behaviors.receive[AgentEvent] { (ctx, event) =>
+            event match
+              case AgentEvent.Completed(_, messages) =>
+                ctx.forkTurn(resultDeferred.complete(Right(messages)).void).as(Behaviors.stopped)
+              case AgentEvent.Failed(_, err) =>
+                ctx.forkTurn(resultDeferred.complete(Left(err.message)).void).as(Behaviors.stopped)
+          },
+          s"bridge-ephemeral-${agentDef.name.take(10)}"
+        )
         // Spawn AgentActor
         ref <- resources.actorSystem.spawn(
           AgentActor(
@@ -55,25 +64,23 @@ object EphemeralAgentRunner:
           ),
           s"ephemeral-agent-${agentDef.name.take(10)}"
         )
-        // Send input and wait for completion
-        eventResult <- (ref ? (
-          (replyRef: ActorRef[AgentEvent]) => AgentCommand.UserInput(
-            text = msg.taskInput,
-            replyTo = Some(replyRef)
-          ),
-          timeout = Some(timeout)
-        )).attempt
-        // Stop agent actor + cleanup session
+        // Send input with bridge actor as replyTo
+        _ <- (ref ! AgentCommand.UserInput(
+          text = msg.taskInput,
+          replyTo = Some(bridgeRef)
+        )).void
+        // Wait for completion — no timeout, event-driven
+        eventResult <- resultDeferred.get
+        // Stop agent actor + cleanup
         _ <- resources.actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
+        _ <- resources.actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
         _ <- resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
         // Extract output and deliver to caller
         output = eventResult match
-          case Right(AgentEvent.Completed(_, messages)) =>
+          case Right(messages) =>
             extractLastAssistant(messages)
-          case Right(AgentEvent.Failed(_, err)) =>
-            s"[Agent '${agentDef.name}' failed: ${err.message}]"
-          case Left(e) =>
-            s"[Agent '${agentDef.name}' timed out or errored: ${e.getMessage}]"
+          case Left(errMsg) =>
+            s"[Agent '${agentDef.name}' failed: $errMsg]"
         _ <- (replyTo ! AgentCommand.ImmediateInput(
           s"[Agent '${agentDef.name}' completed]\n$output"
         )).void
