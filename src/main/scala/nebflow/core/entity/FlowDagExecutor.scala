@@ -26,7 +26,7 @@ object FlowDagExecutor:
   private val logger = NebflowLogger.forName("nebflow.entity.executor")
 
   /** Node execution timeout (for LLM response). */
-  private val nodeTimeout = scala.concurrent.duration.DurationInt(5).minutes
+  private val nodeTimeout = scala.concurrent.duration.DurationInt(10).minutes
 
   /** Execute a flow DAG.
    *
