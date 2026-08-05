@@ -1,10 +1,10 @@
 package nebflow.core.entity
 
-import cats.effect.IO
+import cats.effect.{IO, Deferred}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.given
-import nebflow.actor.{ActorRef, ActorSystem}
+import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.agent.*
 import nebflow.core.NebflowLogger
 import nebflow.core.tools.{FileHistory, ReadTracker}
@@ -24,9 +24,6 @@ import nebflow.shared.{Message, MessageRole}
  */
 object FlowDagExecutor:
   private val logger = NebflowLogger.forName("nebflow.entity.executor")
-
-  /** Node execution timeout (for LLM response). */
-  private val nodeTimeout = scala.concurrent.duration.DurationInt(10).minutes
 
   /** Execute a flow DAG.
    *
@@ -248,7 +245,14 @@ object FlowDagExecutor:
       )
     )
 
-  /** Spawn an AgentActor, send input, wait for completion, extract output. */
+  /** Spawn an AgentActor, send input, wait for completion via event-driven callback (no timeout).
+   *
+   *  Uses a Deferred + bridge actor pattern instead of ask-with-timeout:
+   *  - A temporary actor receives the AgentEvent (Completed/Failed) from the agent
+   *  - The bridge completes a Deferred, unblocking executeAgent
+   *  - No artificial timeout — the agent runs as long as needed
+   *  - LLM-level timeouts (first-token, response) still apply inside the agent
+   */
   private def executeAgent(
     nodeId: String,
     agentName: String,
@@ -264,6 +268,18 @@ object FlowDagExecutor:
     for
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
+      resultDeferred <- Deferred[IO, Either[String, List[Message]]]
+      // Bridge actor: receives AgentEvent, completes the Deferred, self-stops
+      bridgeRef <- actorSystem.spawn(
+        Behaviors.receive[AgentEvent] { (ctx, event) =>
+          event match
+            case AgentEvent.Completed(_, messages) =>
+              ctx.forkTurn(resultDeferred.complete(Right(messages)).void).as(Behaviors.stopped)
+            case AgentEvent.Failed(_, err) =>
+              ctx.forkTurn(resultDeferred.complete(Left(err.message)).void).as(Behaviors.stopped)
+        },
+        s"bridge-${nodeId.take(10)}-${sessionId.take(8)}"
+      )
       ref <- actorSystem.spawn(
         AgentActor(
           agentDef = agentDef,
@@ -281,35 +297,29 @@ object FlowDagExecutor:
         ),
         s"dagnode-${nodeId.take(10)}-${sessionId.take(8)}"
       )
-      eventResult <- (ref ? (
-        (replyTo: ActorRef[AgentEvent]) => AgentCommand.UserInput(
-          text = inputText,
-          replyTo = Some(replyTo)
-        ),
-        timeout = Some(nodeTimeout)
-      )).attempt
-      _ <- actorSystem.stop(ref)
+      // Send input with the bridge actor as replyTo
+      _ <- (ref ! AgentCommand.UserInput(
+        text = inputText,
+        replyTo = Some(bridgeRef)
+      )).void
+      // Wait for completion — no timeout, event-driven
+      eventResult <- resultDeferred.get
+      _ <- actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
+      _ <- actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
       _ <- resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)
       nodeResult <- eventResult match
-        case Right(AgentEvent.Completed(_, messages)) =>
+        case Right(messages) =>
           IO.pure(NodeResult(
             nodeId = nodeId,
             output = extractLastAssistantOutput(messages),
             success = true
           ))
-        case Right(AgentEvent.Failed(_, err)) =>
+        case Left(errMsg) =>
           IO.pure(NodeResult(
             nodeId = nodeId,
             output = "",
             success = false,
-            error = Some(s"Agent '$agentName' failed: ${err.message}")
-          ))
-        case Left(e) =>
-          IO.pure(NodeResult(
-            nodeId = nodeId,
-            output = "",
-            success = false,
-            error = Some(s"Agent '$agentName' timed out or errored: ${e.getMessage}")
+            error = Some(s"Agent '$agentName' failed: $errMsg")
           ))
     yield nodeResult
 
