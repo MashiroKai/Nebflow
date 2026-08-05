@@ -190,20 +190,65 @@ class RestApiRoutes(
         }
       }
 
-    // Agents
+    // Agents — three-layer aggregation (global + team + flow)
     case req @ GET -> Root / "agents" =>
       withAuth(req) {
-        sharedResources.agentLibrary.loadAll().flatMap { agents =>
-          val list = agents.values.toList.map { a =>
+        for
+          globalAgents <- EntityLoader.listAgents()
+          teams <- EntityLoader.listTeams()
+          teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
+            IO.blocking {
+              val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
+              if os.exists(dir) then
+                os.list(dir).filter(os.isDir)
+                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                  .map(a => (teamName, a)).toList
+              else Nil
+            }
+          }
+          flows <- EntityLoader.listFlows()
+          flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
+            IO.blocking {
+              val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
+              if os.exists(dir) then
+                os.list(dir).filter(os.isDir)
+                  .flatMap(d => EntityLoader.loadAgentFromDir(d))
+                  .map(a => (flowName, a)).toList
+              else Nil
+            }
+          }
+          globalList = globalAgents.values.filter(_.name != "Nebula").toList.map { a =>
             Json.obj(
               "name" -> a.name.asJson,
               "description" -> a.description.asJson,
-              "displayName" -> a.displayName.getOrElse(a.name).asJson,
-              "category" -> a.category.asJson
+              "displayName" -> a.name.asJson,
+              "category" -> a.category.asJson,
+              "layer" -> "global".asJson
             )
           }
-          Ok(Json.obj("agents" -> list.asJson))
-        }
+          teamList = teamAgentEntries.flatten.map { (scope, a) =>
+            Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "displayName" -> a.name.asJson,
+              "category" -> "team".asJson,
+              "layer" -> "team".asJson,
+              "scope" -> scope.asJson
+            )
+          }
+          flowList = flowAgentEntries.flatten.map { (scope, a) =>
+            Json.obj(
+              "name" -> a.name.asJson,
+              "description" -> a.description.asJson,
+              "displayName" -> a.name.asJson,
+              "category" -> "flow".asJson,
+              "layer" -> "flow".asJson,
+              "scope" -> scope.asJson
+            )
+          }
+          all = globalList ++ teamList ++ flowList
+          result <- Ok(Json.obj("agents" -> all.asJson))
+        yield result
       }
 
     // Folders
