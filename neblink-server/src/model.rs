@@ -141,6 +141,34 @@ pub struct DeviceSessionRequest {
     pub endpoints: Vec<DeviceEndpoint>,
 }
 
+// ===== Device authorization flow (RFC 8628 / Tailscale-style) =====
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCodeRequest {
+    pub device_id: String,
+    pub device_name: String,
+    pub platform: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCodeResponse {
+    pub device_code: String,
+    pub user_code: String,
+    /// URL the user opens in a browser to authorize the device.
+    pub verification_uri: String,
+    pub expires_in: u64,
+    /// Polling interval in seconds.
+    pub interval: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceTokenRequest {
+    pub device_code: String,
+}
+
 #[derive(Serialize)]
 pub struct ErrorResponse {
     pub error: String,
@@ -160,6 +188,9 @@ pub struct RegisteredDevice {
     pub device_name: String,
     pub platform: String,
     pub network_id: String,
+    /// Owner user id — for "account = network" peer discovery. Populated from
+    /// the network's `owner_id` at session creation.
+    pub user_id: String,
     pub endpoints: Vec<DeviceEndpoint>,
     pub session_token: String,
     pub last_seen: std::time::Instant,

@@ -1,7 +1,7 @@
 use crate::auth::{self, generate_refresh_token, REFRESH_TOKEN_TTL_SECS};
 use crate::model::*;
 use crate::oauth::{self, OauthContext};
-use crate::store::Store;
+use crate::store::{DeviceCodePollResult, Store};
 use axum::{
     extract::{FromRef, Path, State},
     http::{HeaderMap, StatusCode},
@@ -170,10 +170,13 @@ fn clear_cookie(name: &str) -> Cookie<'static> {
 
 // ===== OAuth endpoints =====
 
-/// GET /api/auth/github/login
-/// Begin the OAuth dance: redirect the browser to GitHub.
+/// GET /api/auth/github/login?user_code=XXXX-XXXX
+/// Begin the OAuth dance: redirect the browser to GitHub. When `user_code` is
+/// present (device-authorization flow), it's bound to the OAuth `state` so the
+/// callback can approve the pending device after GitHub redirects back.
 pub async fn github_login(
     State(state): State<AppState>,
+    axum::extract::Query(params): axum::extract::Query<GithubLoginParams>,
 ) -> Response {
     // Fail gracefully if OAuth isn't configured (rather than panicking inside
     // oauth::authorize_url). This returns a clear JSON error the SPA can show.
@@ -186,8 +189,17 @@ pub async fn github_login(
         )
             .into_response();
     }
-    let st = state.oauth.states.issue();
+    let st = state
+        .oauth
+        .states
+        .issue_with(params.user_code.filter(|c| !c.is_empty()));
     Redirect::to(&oauth::authorize_url(&st)).into_response()
+}
+
+#[derive(Deserialize)]
+pub struct GithubLoginParams {
+    #[serde(default)]
+    pub user_code: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -214,9 +226,11 @@ pub async fn github_callback(
             .into_response()
     };
 
-    if !state.oauth.states.consume(&params.state) {
+    let (valid, user_code) = state.oauth.states.consume(&params.state);
+    if !valid {
         return failure("invalid or expired state");
     }
+    let user_code = user_code; // rebinding for clarity (device-flow payload, if any)
 
     let gh_token = match oauth::exchange_code(&params.code, &state.oauth.http).await {
         Ok(t) => t,
@@ -262,6 +276,16 @@ pub async fn github_callback(
     let updated = jar
         .add(build_access_cookie(&access_jwt, secure))
         .add(build_refresh_cookie(&refresh, secure));
+
+    // If this OAuth flow was initiated by a device-authorization request,
+    // approve the pending device code so the polling device can proceed.
+    if let Some(uc) = &user_code {
+        state.store.approve_device_code(uc, &user_id);
+        // Redirect to the device authorization success page (shows "you can
+        // close this tab now" to the user).
+        return (updated, Redirect::to(&format!("{app_url}/device/{uc}?status=approved")))
+            .into_response();
+    }
 
     // Bounce to the SPA; cookies ride along.
     (updated, Redirect::to(&format!("{app_url}/"))).into_response()
@@ -328,6 +352,110 @@ pub async fn auth_logout(
         .remove(clear_cookie(ACCESS_COOKIE))
         .remove(clear_cookie(REFRESH_COOKIE));
     (cleared, Json(serde_json::json!({"ok": true}))).into_response()
+}
+
+// ===== Device authorization flow (Tailscale-style) =====
+
+/// POST /api/device/code
+/// Device initiates the authorization flow. Returns a device_code (for polling)
+/// and a user_code (for the user to enter in the browser). No auth required —
+/// the device isn't enrolled yet.
+pub async fn device_code(
+    State(state): State<AppState>,
+    Json(req): Json<DeviceCodeRequest>,
+) -> ApiResult<DeviceCodeResponse> {
+    let app_url =
+        std::env::var("APP_PUBLIC_URL").unwrap_or_else(|_| "/".to_string());
+    let (device_code, user_code) = state
+        .store
+        .create_device_code(&req.device_id, &req.device_name, &req.platform);
+    Ok(Json(DeviceCodeResponse {
+        device_code,
+        user_code: user_code.clone(),
+        verification_uri: format!("{app_url}/device/{user_code}"),
+        expires_in: 900,
+        interval: 3,
+    }))
+}
+
+/// POST /api/device/token
+/// Device polls for the result of its authorization request.
+/// - Pending → 400 `{"error":"authorization_pending"}`
+/// - Approved → 200 `{deviceToken, networkId, deviceId}` (EnrollResponse)
+/// - Expired/Denied → 400 with error message
+pub async fn device_token(
+    State(state): State<AppState>,
+    Json(req): Json<DeviceTokenRequest>,
+) -> Response {
+    match state.store.poll_device_code(&req.device_code) {
+        Ok(DeviceCodePollResult::Pending) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"authorization_pending"})),
+        )
+            .into_response(),
+        Ok(DeviceCodePollResult::Approved {
+            user_id,
+            device_id,
+            device_name,
+            platform: _,
+        }) => {
+            // Get-or-create the user's default network (account = network).
+            let network_id = match state.store.get_or_create_default_network(&user_id) {
+                Ok(id) => id,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse::new(e)),
+                    )
+                        .into_response();
+                }
+            };
+            // Mint a long-lived device credential.
+            let device_token = match state.store.enroll_device(&network_id, &device_id) {
+                Ok(t) => t,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse::new(e)),
+                    )
+                        .into_response();
+                }
+            };
+            // Persist the device row for management listings.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            state
+                .store
+                .upsert_device_row(&device_id, &network_id, &device_name, "", now);
+            tracing::info!("Device enrolled via flow: {} (user={})", device_id, user_id);
+            Json(EnrollResponse {
+                device_token,
+                network_id,
+                device_id,
+            })
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /device/{user_code}
+/// Browser page where the user authorizes a device. Shows the user_code and
+/// a "Login with GitHub" button that starts the OAuth flow with the user_code
+/// bound to the state.
+pub async fn device_authorize_page(
+    State(_state): State<AppState>,
+    Path(user_code): Path<String>,
+) -> axum::response::Html<&'static str> {
+    // The page is a static template; the user_code is in the URL path.
+    // The JS reads window.location.pathname to extract it.
+    axum::response::Html(include_str!("../static/device.html"))
 }
 
 // Minimal URL-component encoder for the error fragment (no new dep).

@@ -31,7 +31,7 @@ async fn main() {
     let store = Arc::new(store::Store::new());
 
     // Background cleanup: remove stale devices every 30s (90s timeout) and
-    // expire pairing codes.
+    // expire pairing codes + device-authorization codes.
     {
         let store = store.clone();
         tokio::spawn(async move {
@@ -43,6 +43,7 @@ async fn main() {
                     tracing::info!("Purged stale devices: {}", removed.join(", "));
                 }
                 store.purge_expired_pair_codes();
+                store.purge_expired_device_codes();
             }
         });
     }
@@ -101,6 +102,8 @@ async fn main() {
         .route("/api/device/login", post(routes::login))
         .route("/api/device/enroll", post(routes::enroll_device))
         .route("/api/device/session", post(routes::device_session))
+        .route("/api/device/code", post(routes::device_code))
+        .route("/api/device/token", post(routes::device_token))
         .route("/api/device/heartbeat", post(routes::heartbeat))
         .route("/api/device/peers", get(routes::get_peers))
         .route("/api/device/endpoints", post(routes::update_endpoints))
@@ -110,6 +113,7 @@ async fn main() {
         .route("/api/info", get(info))
         // ===== Web UI =====
         .route("/", get(web_ui))
+        .route("/device/{user_code}", get(routes::device_authorize_page))
         // Catch panics in handlers — return 500 instead of crashing the connection
         .layer(CatchPanicLayer::new())
         .layer(cors)

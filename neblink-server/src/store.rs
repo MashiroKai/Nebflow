@@ -15,12 +15,48 @@ struct PairCode {
     expires_at: Instant,
 }
 
+/// Status of a device-authorization flow (RFC 8628 adapted).
+#[derive(Clone, Debug)]
+enum DeviceCodeStatus {
+    Pending,
+    Approved(String), // user_id
+    Denied,
+}
+
+/// Result of polling a device code — either still pending or approved with
+/// the user + device info needed to mint a credential.
+pub enum DeviceCodePollResult {
+    Pending,
+    Approved {
+        user_id: String,
+        device_id: String,
+        device_name: String,
+        platform: String,
+    },
+}
+
+/// An in-memory device authorization code (Tailscale-style device flow).
+/// Keyed by `device_code` (long random, used by the device to poll);
+/// `user_code` is the short human-readable code shown in the browser.
+struct DeviceCode {
+    device_id: String,
+    device_name: String,
+    platform: String,
+    user_code: String,
+    status: DeviceCodeStatus,
+    expires_at: Instant,
+}
+
 pub struct Store {
     db: Mutex<Connection>,
     // Ephemeral sessions: sessionToken -> device
     devices: DashMap<String, RegisteredDevice>,
     // Ephemeral pairing codes: code -> PairCode
     pair_codes: DashMap<String, PairCode>,
+    // Ephemeral device-authorization codes: device_code -> DeviceCode
+    device_codes: DashMap<String, DeviceCode>,
+    // Reverse lookup: user_code -> device_code (for approve via browser)
+    user_code_index: DashMap<String, String>,
 }
 
 impl Store {
@@ -101,6 +137,8 @@ impl Store {
             db: Mutex::new(conn),
             devices: DashMap::new(),
             pair_codes: DashMap::new(),
+            device_codes: DashMap::new(),
+            user_code_index: DashMap::new(),
         }
     }
 
@@ -416,6 +454,39 @@ impl Store {
         result.ok().filter(|s| !s.is_empty())
     }
 
+    /// Look up the owner (user_id) of a network. Returns None if not found.
+    fn network_owner(&self, network_id: &str) -> Option<String> {
+        let db = self.db.lock().unwrap();
+        let result = db.query_row(
+            "SELECT owner_id FROM networks WHERE id = ?1",
+            params![network_id],
+            |row| row.get::<_, String>(0),
+        );
+        drop(db);
+        result.ok()
+    }
+
+    /// Get-or-create the user's default network ("account = network" model).
+    /// Returns the network_id. A user gets exactly one default network,
+    /// auto-created on first device enrollment.
+    pub fn get_or_create_default_network(&self, user_id: &str) -> Result<String, String> {
+        let db = self.db.lock().unwrap();
+        // Check for an existing network owned by this user.
+        let existing = db.query_row(
+            "SELECT id FROM networks WHERE owner_id = ?1 ORDER BY created_at LIMIT 1",
+            params![user_id],
+            |row| row.get::<_, String>(0),
+        );
+        drop(db);
+        if let Ok(net_id) = existing {
+            return Ok(net_id);
+        }
+        // None exists — create one. Reuse create_network (which needs the db
+        // lock internally, so we drop ours first).
+        let resp = self.create_network("default", user_id);
+        Ok(resp.network_id)
+    }
+
     // ===== Device session operations =====
 
     pub fn login(&self, req: LoginRequest) -> Result<LoginResponse, String> {
@@ -424,6 +495,12 @@ impl Store {
             return Err("Invalid network ID or secret".into());
         }
 
+        // Resolve the network's owner so peers can be discovered by user_id.
+        let user_id = self
+            .network_owner(&req.network_id)
+            .unwrap_or_default();
+        let user_id_for_peers = user_id.clone();
+
         // Create session
         let token = generate_token();
         let device = RegisteredDevice {
@@ -431,6 +508,7 @@ impl Store {
             device_name: req.device_name.clone(),
             platform: req.platform.clone(),
             network_id: req.network_id.clone(),
+            user_id,
             endpoints: req.endpoints.clone(),
             session_token: token.clone(),
             last_seen: Instant::now(),
@@ -447,7 +525,7 @@ impl Store {
         );
         drop(db);
 
-        let peers = self.get_peers(&req.network_id, &req.device_id);
+        let peers = self.get_peers(&user_id_for_peers, &req.device_id);
         tracing::info!("Device logged in: {} ({})", req.device_id, req.device_name);
 
         Ok(LoginResponse {
@@ -459,9 +537,9 @@ impl Store {
     }
 
     pub fn heartbeat(&self, token: &str) -> Result<HeartbeatResponse, String> {
-        let (network_id, device_id) = {
+        let (network_id, device_id, user_id) = {
             let device = self.devices.get(token).ok_or("Invalid or expired token")?;
-            (device.network_id.clone(), device.device_id.clone())
+            (device.network_id.clone(), device.device_id.clone(), device.user_id.clone())
         };
 
         // Update last_seen
@@ -478,13 +556,13 @@ impl Store {
         );
         drop(db);
 
-        let peers = self.get_peers(&network_id, &device_id);
+        let peers = self.get_peers(&user_id, &device_id);
         Ok(HeartbeatResponse { peers })
     }
 
     pub fn get_peer_list(&self, token: &str) -> Result<Vec<PeerInfo>, String> {
         let device = self.devices.get(token).ok_or("Invalid or expired token")?;
-        let peers = self.get_peers(&device.network_id, &device.device_id);
+        let peers = self.get_peers(&device.user_id, &device.device_id);
         Ok(peers)
     }
 
@@ -505,10 +583,13 @@ impl Store {
         }
     }
 
-    fn get_peers(&self, network_id: &str, exclude_device_id: &str) -> Vec<PeerInfo> {
+    /// Discover peers that share the same user (account = network).
+    /// Filters by `user_id` so all devices owned by the same user see each
+    /// other regardless of which underlying network row they belong to.
+    fn get_peers(&self, user_id: &str, exclude_device_id: &str) -> Vec<PeerInfo> {
         self.devices
             .iter()
-            .filter(|d| d.network_id == network_id && d.device_id != exclude_device_id)
+            .filter(|d| d.user_id == user_id && d.device_id != exclude_device_id)
             .map(|d| d.to_peer_info())
             .collect()
     }
@@ -728,6 +809,112 @@ impl Store {
         self.pair_codes.retain(|_, pc| pc.expires_at > now);
     }
 
+    // ===== Device authorization flow (Tailscale-style) =====
+
+    /// Create a device-authorization code pair: a long `device_code` (used by
+    /// the device to poll) and a short `user_code` (shown in the browser).
+    /// Both expire after 15 minutes.
+    pub fn create_device_code(
+        &self,
+        device_id: &str,
+        device_name: &str,
+        platform: &str,
+    ) -> (String, String) {
+        let device_code = generate_token();
+        let user_code = generate_user_code();
+
+        self.device_codes.insert(
+            device_code.clone(),
+            DeviceCode {
+                device_id: device_id.to_string(),
+                device_name: device_name.to_string(),
+                platform: platform.to_string(),
+                user_code: user_code.clone(),
+                status: DeviceCodeStatus::Pending,
+                expires_at: Instant::now() + Duration::from_secs(15 * 60),
+            },
+        );
+        self.user_code_index
+            .insert(user_code.clone(), device_code.clone());
+
+        (device_code, user_code)
+    }
+
+    /// Poll a device code's status. Returns the current status without
+    /// consuming it (the device polls repeatedly until Approved).
+    /// On Approved, the entry is consumed (removed) and the user_id returned.
+    pub fn poll_device_code(
+        &self,
+        device_code: &str,
+    ) -> Result<DeviceCodePollResult, String> {
+        // Check expiry first (don't remove — let purge handle cleanup).
+        let entry = self
+            .device_codes
+            .get(device_code)
+            .ok_or_else(|| "Invalid or expired device code".to_string())?;
+
+        if entry.expires_at <= Instant::now() {
+            return Err("Expired".into());
+        }
+
+        match &entry.status {
+            DeviceCodeStatus::Pending => Ok(DeviceCodePollResult::Pending),
+            DeviceCodeStatus::Approved(user_id) => {
+                let user_id = user_id.clone();
+                let device_id = entry.device_id.clone();
+                let device_name = entry.device_name.clone();
+                let platform = entry.platform.clone();
+                // Consume: remove both index entries.
+                let uc = entry.user_code.clone();
+                drop(entry); // release the DashMap read guard before remove
+                self.user_code_index.remove(&uc);
+                self.device_codes.remove(device_code);
+                Ok(DeviceCodePollResult::Approved {
+                    user_id,
+                    device_id,
+                    device_name,
+                    platform,
+                })
+            }
+            DeviceCodeStatus::Denied => Err("Denied".into()),
+        }
+    }
+
+    /// Approve a device code by its user_code (called after OAuth completes).
+    /// Looks up the device_code via the user_code index and marks it Approved.
+    pub fn approve_device_code(&self, user_code: &str, user_id: &str) -> bool {
+        let device_code = match self.user_code_index.get(user_code) {
+            Some(dc) => dc.clone(), // clone the String, Ref dropped here
+            None => return false,
+        };
+        if let Some(mut entry) = self.device_codes.get_mut(&device_code) {
+            if matches!(entry.status, DeviceCodeStatus::Pending) {
+                entry.status = DeviceCodeStatus::Approved(user_id.to_string());
+                tracing::info!(
+                    "Device code approved: user_code={user_code} user_id={user_id}"
+                );
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Drop expired device codes. Called from the background cleanup loop.
+    pub fn purge_expired_device_codes(&self) {
+        let now = Instant::now();
+        // Collect expired device_codes to also clean their user_code index entries.
+        let expired_user_codes: Vec<String> = self
+            .device_codes
+            .iter()
+            .filter(|entry| entry.expires_at <= now)
+            .map(|entry| entry.user_code.clone())
+            .collect();
+        self.device_codes.retain(|_, dc| dc.expires_at > now);
+        for uc in expired_user_codes {
+            self.user_code_index.remove(&uc);
+        }
+    }
+
     /// Consume a pairing code without a user session hint: find the entry by
     /// code, verify expiry, return its network_id. The owner binding is weak
     /// here (anyone holding the code can enroll), which is the intended UX —
@@ -765,12 +952,19 @@ impl Store {
     /// authenticated via a per-device credential (no network-secret check).
     /// Mirrors `login` but skips `verify_network_secret`.
     pub fn session_for_credential(&self, req: LoginRequest) -> Result<LoginResponse, String> {
+        // Resolve the network's owner so peers can be discovered by user_id.
+        let user_id = self
+            .network_owner(&req.network_id)
+            .unwrap_or_default();
+        let user_id_for_peers = user_id.clone();
+
         let token = generate_token();
         let device = RegisteredDevice {
             device_id: req.device_id.clone(),
             device_name: req.device_name.clone(),
             platform: req.platform.clone(),
             network_id: req.network_id.clone(),
+            user_id,
             endpoints: req.endpoints.clone(),
             session_token: token.clone(),
             last_seen: Instant::now(),
@@ -789,7 +983,7 @@ impl Store {
         );
         drop(db);
 
-        let peers = self.get_peers(&req.network_id, &req.device_id);
+        let peers = self.get_peers(&user_id_for_peers, &req.device_id);
         tracing::info!(
             "Device session via credential: {} ({})",
             req.device_id,
@@ -825,6 +1019,21 @@ fn generate_token() -> String {
     let mut bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// Generate a short, human-readable user code: 8 uppercase alphanumeric chars
+/// in XXXX-XXXX form for easy typing (e.g. "ABCD-1234").
+fn generate_user_code() -> String {
+    use rand::Rng;
+    const CHARSET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I,O,0,1
+    let mut rng = rand::thread_rng();
+    let raw: String = (0..8)
+        .map(|_| {
+            let idx = rng.gen_range(0..CHARSET.len());
+            CHARSET[idx] as char
+        })
+        .collect();
+    format!("{}-{}", &raw[..4], &raw[4..])
 }
 
 fn sha256_hex(input: &str) -> String {

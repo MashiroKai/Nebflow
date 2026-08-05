@@ -150,27 +150,16 @@ object GatewayMain extends IOApp.Simple:
   /**
    * Background heartbeat loop for NebLink server mode.
    * Every 30 seconds: send heartbeat, update peer list + trusted IPs.
-   * Runs as a fire-and-forget fiber via `.start`.
+   * Uses the discovery's current client (hot-swappable).
+   * Returns the fiber so the caller can cancel/restart it.
    */
   private def startHeartbeatLoop(
-    client: nebflow.neblink.NeblinkClient,
-    neblinkService: NeblinkService
-  ): IO[Unit] =
-    val hbLogger = NebflowLogger.forName("nebflow.neblink.heartbeat")
+    discovery: nebflow.neblink.NeblinkDiscovery
+  ): IO[cats.effect.Fiber[IO, Throwable, Unit]] = {
     def loop: IO[Unit] =
-      IO.sleep(30.seconds) *> client.heartbeat.flatMap {
-        case Right(serverPeers) =>
-          val neblinkPeers = client.toNeblinkPeers(serverPeers)
-          val peerIps = client.peerAddresses(serverPeers)
-          neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
-            neblinkService.updateTrustedIps(peerIps) *>
-            neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
-        case Left(err) =>
-          hbLogger.warn(s"Heartbeat failed: $err")
-      } *> IO.defer(loop)
-    loop
-
-  end startHeartbeatLoop
+      IO.sleep(30.seconds) *> discovery.heartbeatCycle *> IO.defer(loop)
+    loop.start
+  }
 
   private lazy val defaultConfig: NebflowServiceConfig = NebflowServiceConfig(
     llm = ServiceLlmConfig(
@@ -370,10 +359,8 @@ object GatewayMain extends IOApp.Simple:
                                           neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
                                           // Start NebLink Server heartbeat loop (if configured) — maintains
                                           // session liveness and updates peer list every 30 seconds.
-                                          neblinkClient
-                                            .traverse_(client =>
-                                              startHeartbeatLoop(client, neblinkService).start.void
-                                            ) *>
+                                          // The fiber is stored so it can be cancelled/restarted on hot-swap.
+                                          startHeartbeatLoop(tsDiscovery).void *>
                                           // Create Dropbox service (cross-device messaging & file transfer)
                                           nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
                                             dropboxService =>
@@ -449,7 +436,9 @@ object GatewayMain extends IOApp.Simple:
                                                         sessionStore,
                                                         wsRoutes,
                                                         neblinkService = Some(neblinkService),
-                                                        ttsService = ttsService
+                                                        ttsService = ttsService,
+                                                        neblinkDiscovery = Some(tsDiscovery),
+                                                        gatewayPort = cfg.port.value
                                                       )
 
                                                       Router(

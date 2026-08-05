@@ -18,10 +18,13 @@ use serde::Deserialize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// PKCE-ish CSRF protection: state -> (expiry, redirect_hint). One-shot.
-/// Held in memory; a server restart just forces the in-flight login to retry.
+/// PKCE-ish CSRF protection + device-flow payload: state -> (expiry, optional
+/// user_code). The `user_code` is set when the OAuth flow is initiated from a
+/// device authorization page — after GitHub callback we retrieve it so we can
+/// approve the pending device. One-shot; held in memory (a restart just forces
+/// the in-flight login to retry).
 pub struct StateStore {
-    inner: DashMap<String, Instant>,
+    inner: DashMap<String, (Instant, Option<String>)>,
 }
 
 impl StateStore {
@@ -31,26 +34,35 @@ impl StateStore {
         }
     }
 
-    /// Mint a fresh `state`, valid for [`STATE_TTL`].
+    /// Mint a fresh `state`, valid for [`STATE_TTL`]. No device-flow payload.
     pub fn issue(&self) -> String {
+        self.issue_with(None)
+    }
+
+    /// Mint a fresh `state` bound to an optional `user_code` (device flow).
+    pub fn issue_with(&self, user_code: Option<String>) -> String {
         use rand::RngCore;
         let mut bytes = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut bytes);
         let state = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-        self.inner.insert(state.clone(), Instant::now() + STATE_TTL);
+        self.inner
+            .insert(state.clone(), (Instant::now() + STATE_TTL, user_code));
         state
     }
 
-    /// Consume a `state`. Returns true iff it exists and had not expired.
+    /// Consume a `state`. Returns `(valid, Option<user_code>)`.
     /// Single-use: removed whether or not it was valid.
-    pub fn consume(&self, state: &str) -> bool {
-        let had = self.inner.remove(state).is_some();
+    pub fn consume(&self, state: &str) -> (bool, Option<String>) {
+        let removed = self.inner.remove(state);
         // Opportunistic GC of expired entries.
         if self.inner.len() > 256 {
             let now = Instant::now();
-            self.inner.retain(|_, exp| *exp > now);
+            self.inner.retain(|_, (exp, _)| *exp > now);
         }
-        had
+        match removed {
+            Some((_, (_, user_code))) => (true, user_code),
+            None => (false, None),
+        }
     }
 }
 
