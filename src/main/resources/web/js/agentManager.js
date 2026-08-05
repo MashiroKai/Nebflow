@@ -68,8 +68,8 @@ function renderAgentCard(a) {
   const display = esc(a.displayName || a.name);
   const desc = esc(a.description || '');
   const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
-  const category = a.category || 'standalone';
-  const badge = category === 'standalone'
+  const isGlobalStandalone = (a.layer === 'global' || !a.layer) && (a.category || 'standalone') === 'standalone';
+  const badge = isGlobalStandalone
     ? '<span class="agent-mgr-standalone-badge">可直接委派</span>'
     : '';
   return `<div class="agent-mgr-card" data-agent="${name}">
@@ -82,7 +82,7 @@ function renderAgentCard(a) {
   </div>`;
 }
 
-/** Render the agent list into #agents-content, grouped by category. */
+/** Render the agent list into #agents-content, grouped by layer + scope. */
 export function renderAgentManager() {
   const content = document.getElementById('agents-content');
   if (!content) return;
@@ -94,24 +94,42 @@ export function renderAgentManager() {
       return;
     }
 
-    // Group by category (default: standalone)
-    const groups = {
-      standalone: agents.filter(a => (a.category || 'standalone') === 'standalone'),
-      team: agents.filter(a => a.category === 'team'),
-      flow: agents.filter(a => a.category === 'flow'),
-    };
-    const groupLabels = {
-      standalone: 'Standalone Agents',
-      team: 'Team Members',
-      flow: 'Flow Agents',
-    };
+    // Group by layer + scope
+    const global = agents.filter(a => a.layer === 'global' || !a.layer);
+    const teams = {};
+    const flows = {};
+
+    agents.forEach(a => {
+      if (a.layer === 'team') {
+        (teams[a.scope] = teams[a.scope] || []).push(a);
+      } else if (a.layer === 'flow') {
+        (flows[a.scope] = flows[a.scope] || []).push(a);
+      }
+    });
 
     let html = '';
-    for (const [key, label] of Object.entries(groupLabels)) {
-      if (groups[key].length === 0) continue;
+
+    // Global section
+    if (global.length > 0) {
       html += `<div class="agent-mgr-group">`;
-      html += `<div class="agent-mgr-group-header">${label}</div>`;
-      html += groups[key].map(a => renderAgentCard(a)).join('');
+      html += `<div class="agent-mgr-group-header">Global Agents</div>`;
+      html += global.map(renderAgentCard).join('');
+      html += `</div>`;
+    }
+
+    // Team sections (sorted by name)
+    for (const [team, teamAgents] of Object.entries(teams).sort()) {
+      html += `<div class="agent-mgr-group">`;
+      html += `<div class="agent-mgr-group-header">Team: ${esc(team)}</div>`;
+      html += teamAgents.map(renderAgentCard).join('');
+      html += `</div>`;
+    }
+
+    // Flow sections (sorted by name)
+    for (const [flow, flowAgents] of Object.entries(flows).sort()) {
+      html += `<div class="agent-mgr-group">`;
+      html += `<div class="agent-mgr-group-header">Flow: ${esc(flow)}</div>`;
+      html += flowAgents.map(renderAgentCard).join('');
       html += `</div>`;
     }
 
