@@ -23,7 +23,8 @@ let neblinkState = {
   peers: [],
   paired: false,
   pairing: false,
-  pairError: ''
+  pairError: '',
+  enrollMsg: ''
 };
 
 /** Read-only accessor for the current NebLink state (used by the Activity Bar). */
@@ -143,14 +144,23 @@ export function neblinkSettingsHTML() {
     </div>`;
   }
 
-  // If no device configured — show login button
+  // If no device configured — show login button + pairing code option
   if (!local.deviceId) {
     const pairErr = neblinkState.pairError
       ? `<div class="neblink-error">${escapeHtml(neblinkState.pairError)}</div>` : '';
+    const enrollMsg = neblinkState.enrollMsg
+      ? `<div class="neblink-error" style="color:var(--success,#4ecdc4)">${escapeHtml(neblinkState.enrollMsg)}</div>` : '';
     return `<div class="neblink-login-section">
-      <div class="neblink-login-hint">${t('neblink.loginHint') || '登录 nebflow.space 连接你的设备'}</div>
+      <div class="neblink-login-hint">${t('neblink.loginHint') || '登录 NebLink Server 连接你的设备'}</div>
       ${pairErr}
-      <button class="neblink-login-btn" id="neblink-login-btn">${t('neblink.login') || '登录连接'}</button>
+      <button class="neblink-login-btn" id="neblink-login-btn">${t('neblink.login') || '通过网页登录'}</button>
+      <div style="margin-top:16px;border-top:1px solid var(--border,#2d2d4a);padding-top:14px">
+        <div class="neblink-login-hint" style="margin-bottom:8px">${t('neblink.pairByCodeHint') || '或输入配对码加入网络'}</div>
+        <input id="neblink-enroll-server" class="neblink-input" placeholder="${t('neblink.serverUrl') || 'NebLink Server 地址 (https://neblink.nebflow.space)'}" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;border:1px solid var(--border,#2d2d4a);background:var(--bg,#0f0f17);color:var(--text,#e4e4ef);font-size:13px" />
+        <input id="neblink-enroll-code" class="neblink-input" placeholder="${t('neblink.pairCode') || '配对码（6 位数字）'}" style="width:100%;margin-bottom:8px;padding:8px;border-radius:6px;border:1px solid var(--border,#2d2d4a);background:var(--bg,#0f0f17);color:var(--text,#e4e4ef);font-size:13px" />
+        <button class="neblink-login-btn" id="neblink-enroll-btn">${t('neblink.enroll') || '配对加入'}</button>
+        ${enrollMsg}
+      </div>
     </div>`;
   }
 
@@ -254,6 +264,43 @@ export function bindNeblinkEvents(rerender) {
         ? `${origin}/?token=${encodeURIComponent(token)}`
         : origin;
       window.open(`https://nebflow.space/connect?redirect=${encodeURIComponent(redirectUrl)}`, '_blank');
+    });
+  }
+
+  // Pairing-code enrollment — POST {server, pairCode} to the Scala backend,
+  // which proxies to the NebLink Server's /api/device/enroll.
+  const enrollBtn = document.getElementById('neblink-enroll-btn');
+  if (enrollBtn) {
+    enrollBtn.addEventListener('click', async () => {
+      const server = document.getElementById('neblink-enroll-server')?.value.trim();
+      const pairCode = document.getElementById('neblink-enroll-code')?.value.trim();
+      if (!server || !pairCode) {
+        neblinkState.pairError = '请填写服务器地址和配对码';
+        neblinkState.enrollMsg = '';
+        rerender();
+        return;
+      }
+      enrollBtn.disabled = true;
+      enrollBtn.textContent = '...';
+      try {
+        const resp = await fetch('/api/neblink/enroll', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + getAuthToken() },
+          body: JSON.stringify({ server, pairCode })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.ok) {
+          neblinkState.enrollMsg = data.message || '配对成功，请重启 Nebflow 生效。';
+          neblinkState.pairError = '';
+        } else {
+          neblinkState.pairError = data.error || '配对失败';
+          neblinkState.enrollMsg = '';
+        }
+      } catch (e) {
+        neblinkState.pairError = '网络错误: ' + e.message;
+        neblinkState.enrollMsg = '';
+      }
+      rerender();
     });
   }
 

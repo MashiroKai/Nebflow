@@ -98,6 +98,49 @@ pub struct UpdateEndpointsRequest {
     pub endpoints: Vec<DeviceEndpoint>,
 }
 
+// ===== Pairing / enrollment =====
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PairCodeResponse {
+    pub pair_code: String,
+    pub expires_in_secs: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollRequest {
+    pub pair_code: String,
+    pub device_id: String,
+    pub device_name: String,
+    pub platform: String,
+    // Endpoints aren't used at enroll time (they're sent on the first
+    // /api/device/session call) but are accepted for forward compatibility.
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub endpoints: Vec<DeviceEndpoint>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollResponse {
+    /// Long-lived per-device secret. Persisted client-side; verifies sessions.
+    pub device_token: String,
+    pub network_id: String,
+    pub device_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceSessionRequest {
+    pub network_id: String,
+    pub device_id: String,
+    /// Per-device credential from enroll (or legacy: network secret).
+    pub device_token: String,
+    #[serde(default)]
+    pub endpoints: Vec<DeviceEndpoint>,
+}
+
 #[derive(Serialize)]
 pub struct ErrorResponse {
     pub error: String,
