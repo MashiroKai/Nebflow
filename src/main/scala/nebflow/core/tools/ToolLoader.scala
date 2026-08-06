@@ -169,24 +169,42 @@ object ToolLoader:
     loadAll().map(_.map { case (config, dir) => ScriptTool(config, dir) })
 
   /**
-   * Read `*.json` config files from a single directory, tagging each with its
-   * layer/scope. Invalid files are skipped with a warning (existing behavior).
+   * Read tool configs from a single directory. Supports two layouts:
+   *
+   *   1. **Subdirectory** (preferred): `dir/<name>/tool.json` — `$TOOL_DIR`
+   *      resolves to the subdirectory (so sibling scripts are next to the
+   *      config).
+   *   2. **Flat** (legacy): `dir/` with `*.json` files — `$TOOL_DIR` resolves to `dir`
+   *      itself.
+   *
+   * Both layouts can coexist in the same directory. Invalid files are skipped
+   * with a warning.
    */
   private def loadFromDir(dir: os.Path, layer: String, scope: Option[String]): IO[List[(ExternalToolConfig, os.Path)]] =
     IO.blocking {
       if !os.exists(dir) then Nil
-      else os.list(dir).filter(_.last.endsWith(".json")).toList
+      else
+        // Subdirectory layout: dir/<name>/tool.json
+        val subDirConfigs = os.list(dir).filter(os.isDir).flatMap { subDir =>
+          val jsonFile = subDir / "tool.json"
+          if os.exists(jsonFile) then List((jsonFile, subDir)) else Nil
+        }
+        // Flat layout (legacy): dir/*.json
+        val flatConfigs = os.list(dir)
+          .filter(f => f.last.endsWith(".json") && os.isFile(f))
+          .map(f => (f, dir))
+        subDirConfigs.toList ++ flatConfigs.toList
     }.flatMap { paths =>
       paths
-        .traverse { p =>
+        .traverse { case (p, sourceDir) =>
           IO.blocking(decode[ExternalToolConfig](os.read(p))).flatMap {
             case Right(config) =>
               // Resolve $TOOL_DIR at load time to the directory holding this
               // config file, so commands can reference sibling resources, e.g.
               //   "command": "node $TOOL_DIR/deploy.cjs"
               val resolved = config.withLayer(layer, scope)
-                .copy(command = config.command.replace("$TOOL_DIR", dir.toString))
-              IO.pure(Some((resolved, dir)))
+                .copy(command = config.command.replace("$TOOL_DIR", sourceDir.toString))
+              IO.pure(Some((resolved, sourceDir)))
             case Left(err) =>
               logger.warn(s"Skipping invalid tool config at $p: ${err.getMessage}").as(None)
           }
