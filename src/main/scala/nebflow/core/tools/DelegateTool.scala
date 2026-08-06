@@ -59,16 +59,19 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - A task splits into independent parts (e.g. "implement the API and write its tests" → Delegate one, do the other)
 - A new Mail arrives while you're mid-task → Delegate it instead of interrupting
 - A subtask needs deep focus without cluttering your main context
+- Trigger a flow pipeline: Delegate(flow="code-review", prompt="review branch feature-x")
 
 **When NOT to use:**
 - Steps depend on each other (Step B needs Step A's result) — do serially
 - Trivial — faster to just do it yourself
 - Subtasks touch the same files — conflict risk
 
-**Agent targeting:**
+**Targeting:**
 - Default: spawns a copy of the calling agent (self-clone)
 - With `agent` parameter: spawns the specified standalone agent (e.g. Coder, Explorer)
-- Cannot target team/flow agents — those require Mail
+- With `flow` parameter: triggers a flow DAG pipeline (e.g. code-review)
+- `agent` and `flow` are mutually exclusive
+- Cannot target team agents — those require Mail
 
 **Rules:**
 - Prompt must be self-contained (the sub-agent starts with a clean context). Set fork=true to pass your conversation history.
@@ -105,6 +108,10 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
         "agent" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Target standalone agent name (e.g. 'Coder', 'Explorer'). If omitted, clones the calling agent. Only standalone agents can be targeted.".asJson
+        ),
+        "flow" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Flow name to trigger (e.g. \"code-review\", \"release-beta\"). When specified, triggers a flow DAG pipeline. The flow result is delivered via ExternalEvent when complete. Cannot be combined with \"agent\" parameter.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -115,7 +122,8 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val desc = input("description").flatMap(_.asString).getOrElse("")
     val forked = input("fork").flatMap(_.asBoolean).getOrElse(false)
     val agent = input("agent").flatMap(_.asString).getOrElse("")
-    val target = if agent.nonEmpty then s"→ $agent" else ""
+    val flow = input("flow").flatMap(_.asString).getOrElse("")
+    val target = if agent.nonEmpty then s"→ $agent" else if flow.nonEmpty then s"→ flow:$flow" else ""
     if forked then s"Delegate($desc [fork] $target)".trim
     else s"Delegate($desc $target)".trim
 
@@ -129,8 +137,31 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val lifecycle = input("lifecycle").flatMap(_.asString).getOrElse("ephemeral")
     val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
     val targetAgentName = input("agent").flatMap(_.asString).filter(_.nonEmpty)
+    val flowName = input("flow").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
+    else if flowName.isDefined && targetAgentName.isDefined then
+      IO.pure(Left(ToolError("Cannot specify both 'agent' and 'flow' parameters")))
+    else if flowName.isDefined then
+      // Trigger flow via FlowDagRunner (moved from MailTool)
+      (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
+        case (Some(resources), Some(sys), Some(callerRef)) =>
+          for
+            flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(flowName.get)
+            r <- flowOpt match
+              case Some(flowDef) =>
+                for
+                  runnerRef <- sys.spawn(
+                    nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
+                    s"dag-runner-${flowName.get.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
+                  )
+                  _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(flowDef, prompt, callerRef)).void
+                yield Right(s"Flow '${flowName.get}' started. Result will be delivered when complete.")
+              case None =>
+                IO.pure(Left(ToolError(s"Flow '${flowName.get}' not found")))
+          yield r
+        case _ =>
+          IO.pure(Left(ToolError("Cannot start flow: missing resources")))
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else

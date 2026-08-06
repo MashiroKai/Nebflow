@@ -28,27 +28,25 @@ object MailTool extends Tool:
   val name: String = "Mail"
 
   val description: String =
-    """Send a message to an agent or trigger a flow pipeline.
+    """Send a message to an agent within your team.
 
 Required: address, message
 
 The address can be:
 - A team name (e.g. "nebflow-project") — forwards the message to the team's lead agent.
 - A team lead or member name (e.g. "nebflow-manager", "backend") — sends a message to that agent.
-- A flow name (e.g. "code-review", "entity-creator") — triggers a one-shot pipeline execution with the message as the task.
-- A standalone agent name (not in any team/flow) — spawns the agent ephemerally, runs the task, and delivers the result via Mail when complete.
+
+For triggering flows or spawning standalone agents, use the Delegate tool instead.
 
 Default mode (fork omitted or false):
   Async send. If the recipient is idle, delivered immediately. If busy, queued
   and injected at the next turn boundary. You don't wait for a response.
-  For flows: the pipeline runs in the background, result delivered via Mail when complete.
 
 Fork mode (fork: true):
   Forks the target agent's context — loads their conversation history into a
   temporary instance, asks the question, and returns the answer immediately.
   The agent's main task is NOT interrupted. Use for progress queries and
   quick questions when you need an immediate answer without disrupting workflow.
-  Does not apply to flows.
 
 Message type (optional, default "INFO"):
   Every Mail has a TYPE tag. Check the TYPE before acting — it tells you how to handle the Mail:
@@ -67,7 +65,7 @@ Message type (optional, default "INFO"):
       "properties" -> Json.obj(
         "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Recipient: a team name (e.g. \"nebflow-project\"), agent name (e.g. \"backend\"), or flow name (e.g. \"code-review\").".asJson
+          "description" -> "Recipient: a team name (e.g. \"nebflow-project\") or agent name (e.g. \"backend\").".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
@@ -343,83 +341,28 @@ Message type (optional, default "INFO"):
           yield r
 
         case None =>
-          // 2. Check if it's a flow name → trigger one-shot DAG pipeline.
-          //    This MUST come before resolveSessionId to avoid team flow aliases
-          //    (e.g. "code-review" alias in nebflow-project) intercepting the trigger.
+          // 2. Check FlowMembership (agent short name)
           for
-            flowOpt <- nebflow.core.entity.EntityLoader.loadFlow(address)
-            r <- flowOpt match
-              case Some(flowDef) =>
-                (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
-                  case (Some(resources), Some(sys), Some(callerRef)) =>
-                    for
-                      runnerRef <- sys.spawn(
-                        nebflow.core.flow.FlowDagRunner(resources, ctx.wsSend),
-                        s"dag-runner-${address.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
-                      )
-                      _ <- (runnerRef ! nebflow.core.flow.FlowDagRunner.RunFlow(flowDef, message, callerRef)).void
-                    yield Right(s"Flow '$address' started. Result will be delivered via Mail when complete.")
-                  case _ =>
-                    IO.pure(Left(ToolError(s"Cannot start flow '$address': missing resources")))
-              case None =>
-                // 3. Check FlowMembership (agent short name)
+            sidOpt <- FlowMembership.resolveSessionId(senderSessionId, address)
+            sr <- sidOpt match
+              case Some(targetSid) =>
                 for
-                  sidOpt <- FlowMembership.resolveSessionId(senderSessionId, address)
-                  sr <- sidOpt match
-                    case Some(targetSid) =>
-                      for
-                        res <- deliverToSession(targetSid, address, message, mailType, ctx, system)
-                        _ <- res match
-                          case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
-                          case Left(_) => IO.unit
-                      yield res
-                    case None =>
-                      // 4. Check if it's a standalone agent definition → spawn ephemeral runner
-                      for
-                        agentDefOpt <- ctx.agentLibrary match
-                          case Some(lib) => lib.get(address)
-                          case None => IO.pure(None)
-                        agentRes <- agentDefOpt match
-                          case Some(agentDef) if agentDef.category == "standalone" && address != "Nebula" =>
-                            (ctx.sharedResources, ctx.actorSystem, ctx.agentActorRef) match
-                              case (Some(resources), Some(sys), Some(callerRef)) =>
-                                for
-                                  runnerRef <- sys.spawn(
-                                    nebflow.core.flow.EphemeralAgentRunner(resources, ctx.wsSend),
-                                    s"ephemeral-runner-${address.take(10)}-${System.currentTimeMillis().toString.takeRight(6)}"
-                                  )
-                                  _ = runnerRef ! nebflow.core.flow.EphemeralAgentRunner.RunAgent(
-                                    agentDef,
-                                    message,
-                                    callerRef,
-                                    depth = ctx.depth + 1,
-                                    projectRoot = ctx.projectRoot
-                                  )
-                                yield Right(s"Agent '$address' activated. Result will be delivered when complete.")
-                              case _ =>
-                                IO.pure(Left(ToolError(s"Cannot activate agent '$address': missing resources")))
-                          case Some(_) if address == "Nebula" =>
-                            // Nebula is the main orchestrator — deliver to parent session if possible
-                            for
-                              parentActorOpt <- nebflow.core.flow.FlowMembership.getParentActor(senderSessionId)
-                              res <- parentActorOpt match
-                                case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
-                                case None => mailNotFound(address)
-                            yield res
-                          case Some(agentDef) =>
-                            // Agent exists but is team/flow category
-                            IO.pure(
-                              Left(
-                                ToolError(
-                                  s"'$address' is a ${agentDef.category} agent — use its team or flow instead."
-                                )
-                              )
-                            )
-                          case None =>
-                            mailNotFound(address)
-                      yield agentRes
-                yield sr
-          yield r
+                  res <- deliverToSession(targetSid, address, message, mailType, ctx, system)
+                  _ <- res match
+                    case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
+                    case Left(_) => IO.unit
+                yield res
+              case None =>
+                // Check if it's Nebula (the main orchestrator) — deliver to parent session
+                if address == "Nebula" then
+                  for
+                    parentActorOpt <- nebflow.core.flow.FlowMembership.getParentActor(senderSessionId)
+                    res <- parentActorOpt match
+                      case Some(ref) => sendMail(ref, "Nebula", message, mailType, ctx, system)
+                      case None => mailNotFound(address)
+                  yield res
+                else mailNotFound(address)
+          yield sr
     yield result
 
   /**
@@ -495,7 +438,7 @@ Message type (optional, default "INFO"):
     val msg =
       if address == "Nebula" then
         s"Cannot deliver to 'Nebula': only Team Lead can communicate with Nebula. Use Mail(\"manager\", ...) to report to your Team Lead."
-      else s"Cannot deliver to '$address'. Use a team name, agent short name, or flow name."
+      else s"Cannot deliver to '$address'. Use a team name or agent short name."
     IO.pure(Left(ToolError(msg)))
 
   /** Emit flowMail WS event + persist to mailbox. */
