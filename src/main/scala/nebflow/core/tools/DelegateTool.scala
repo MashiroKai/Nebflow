@@ -65,6 +65,11 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
 - Trivial — faster to just do it yourself
 - Subtasks touch the same files — conflict risk
 
+**Agent targeting:**
+- Default: spawns a copy of the calling agent (self-clone)
+- With `agent` parameter: spawns the specified standalone agent (e.g. Coder, Explorer)
+- Cannot target team/flow agents — those require Mail
+
 **Rules:**
 - Prompt must be self-contained (the sub-agent starts with a clean context). Set fork=true to pass your conversation history.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
@@ -96,6 +101,10 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
         "taskDescription" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "For persistent mode: describes the ongoing task for the session list. Required when lifecycle=persistent.".asJson
+        ),
+        "agent" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Target standalone agent name (e.g. 'Coder', 'Explorer'). If omitted, clones the calling agent. Only standalone agents can be targeted.".asJson
         )
       ),
       "required" -> io.circe.Json.arr("prompt".asJson, "description".asJson)
@@ -105,8 +114,10 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
   def summarize(input: JsonObject): String =
     val desc = input("description").flatMap(_.asString).getOrElse("")
     val forked = input("fork").flatMap(_.asBoolean).getOrElse(false)
-    if forked then s"Delegate($desc [fork])"
-    else s"Delegate($desc)"
+    val agent = input("agent").flatMap(_.asString).getOrElse("")
+    val target = if agent.nonEmpty then s"→ $agent" else ""
+    if forked then s"Delegate($desc [fork] $target)".trim
+    else s"Delegate($desc $target)".trim
 
   def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 200 then result.take(197) + "..." else result
@@ -117,68 +128,96 @@ Multiple Delegate calls in one response run concurrently — use this to paralle
     val fork = input("fork").flatMap(_.asBoolean).getOrElse(false)
     val lifecycle = input("lifecycle").flatMap(_.asString).getOrElse("ephemeral")
     val taskDescription = input("taskDescription").flatMap(_.asString).getOrElse(description)
+    val targetAgentName = input("agent").flatMap(_.asString).filter(_.nonEmpty)
 
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-agent depth ($MaxDepth) reached. Cannot delegate further.")))
     else
-      (ctx.actorSystem, ctx.sharedResources, ctx.agentDef) match
-        case (Some(system), Some(resources), Some(parentAgentDef)) =>
-          val adjustedPrompt =
-            if fork then
-              s"""<system-reminder>
+      // Resolve the effective agent def: either a target standalone agent
+      // or a clone of the calling agent. Done before the ActorSystem check so
+      // that invalid agent names are reported even without a live actor system.
+      val resolveAgent: IO[Either[ToolError, (AgentDef, List[Message])]] =
+        targetAgentName match
+          case Some(agentName) =>
+            ctx.agentLibrary match
+              case Some(lib) =>
+                lib.get(agentName).map {
+                  case Some(targetDef) if targetDef.category == "standalone" =>
+                    Right((targetDef, Nil)) // no fork for cross-agent
+                  case Some(_) =>
+                    Left(ToolError(s"'$agentName' is not a standalone agent"))
+                  case None =>
+                    Left(ToolError(s"Agent '$agentName' not found"))
+                }
+              case None =>
+                IO.pure(Left(ToolError("No agent library available")))
+          case None =>
+            ctx.agentDef match
+              case Some(parentAgentDef) =>
+                IO.pure(Right((parentAgentDef, if fork then ctx.messages else Nil)))
+              case None =>
+                IO.pure(Left(ToolError("No agent definition available")))
+
+      resolveAgent.flatMap {
+        case Left(err) => IO.pure(Left(err))
+        case Right((agentDef, initialMessages)) =>
+          (ctx.actorSystem, ctx.sharedResources) match
+            case (Some(system), Some(resources)) =>
+              val agentName = agentDef.name
+              val adjustedPrompt =
+                if fork && targetAgentName.isEmpty then
+                  s"""<system-reminder>
 You are a sub-agent working on a delegated task. Your parent agent has forked this conversation to give you background context.
 
 Focus ONLY on the specific task described below. Do not work on other topics from the conversation history — those are your parent's responsibilities.
 </system-reminder>
 
 $prompt"""
-            else prompt
+                else prompt
 
-          // Spawn a copy of the calling agent
-          val agentName = parentAgentDef.name
-          val agentDef = parentAgentDef
-          // Query parent session's safety mode so sub-agent inherits it
-          val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
-            case (Some(store), Some(sid)) => store.getSafetyMode(sid)
-            case _ => IO.pure("confirm-edits")
-          safetyModeIO.flatMap { safetyMode =>
-            if lifecycle == "persistent" then
-              spawnPersistent(
-                agentDef = agentDef,
-                    prompt = adjustedPrompt,
-                    description = description,
-                    taskDescription = taskDescription,
-                    agentName = agentName,
-                    initialMessages = if fork then ctx.messages else Nil,
-                    system = system,
-                    resources = resources,
-                    parentDepth = ctx.depth,
-                    parentRef = ctx.agentActorRef,
-                    wsSend = ctx.wsSend,
-                    projectRoot = ctx.projectRoot,
-                    parentSessionId = ctx.sessionId,
-                    safetyMode = safetyMode
-                  )
-                else
-                  spawnBackground(
+              // Query parent session's safety mode so sub-agent inherits it
+              val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
+                case (Some(store), Some(sid)) => store.getSafetyMode(sid)
+                case _ => IO.pure("confirm-edits")
+              safetyModeIO.flatMap { safetyMode =>
+                if lifecycle == "persistent" then
+                  spawnPersistent(
                     agentDef = agentDef,
-                    prompt = adjustedPrompt,
-                    description = description,
-                    agentName = agentName,
-                    initialMessages = if fork then ctx.messages else Nil,
-                    system = system,
-                    resources = resources,
-                    parentDepth = ctx.depth,
-                    parentRef = ctx.agentActorRef,
-                    wsSend = ctx.wsSend,
-                    projectRoot = ctx.projectRoot,
-                    parentSessionId = ctx.sessionId,
-                    safetyMode = safetyMode
-                  )
-          }
-        case _ =>
-          IO.pure(Left(ToolError("Delegate requires ActorSystem, SharedResources, and agent definition")))
+                      prompt = adjustedPrompt,
+                      description = description,
+                      taskDescription = taskDescription,
+                      agentName = agentName,
+                      initialMessages = initialMessages,
+                      system = system,
+                      resources = resources,
+                      parentDepth = ctx.depth,
+                      parentRef = ctx.agentActorRef,
+                      wsSend = ctx.wsSend,
+                      projectRoot = ctx.projectRoot,
+                      parentSessionId = ctx.sessionId,
+                      safetyMode = safetyMode
+                    )
+                  else
+                    spawnBackground(
+                      agentDef = agentDef,
+                      prompt = adjustedPrompt,
+                      description = description,
+                      agentName = agentName,
+                      initialMessages = initialMessages,
+                      system = system,
+                      resources = resources,
+                      parentDepth = ctx.depth,
+                      parentRef = ctx.agentActorRef,
+                      wsSend = ctx.wsSend,
+                      projectRoot = ctx.projectRoot,
+                      parentSessionId = ctx.sessionId,
+                      safetyMode = safetyMode
+                    )
+              }
+            case _ =>
+              IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
+      }
     end if
   end call
 
