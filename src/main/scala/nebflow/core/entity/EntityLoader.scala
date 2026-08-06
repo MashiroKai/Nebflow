@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.agent.AgentDef
 
 /** Loads Team/Flow/Agent definitions from disk.
  *
@@ -190,6 +191,52 @@ object EntityLoader:
       case (true, _) => "team"
       case (false, true) => "flow"
       case (false, false) => "standalone"
+
+  /** Find an agent by name across all three layers (global → team → flow).
+   *  Returns the first match as AgentDef, or None.
+   */
+  def findAgentByName(name: String): IO[Option[AgentDef]] =
+    for
+      // 1. Global agents
+      globalOpt <- IO.blocking {
+        val dir = agentsDir / name
+        if os.exists(dir) then loadAgentFromDir(dir)
+        else None
+      }
+      // 2. Team agents
+      teamOpt <- globalOpt match
+        case Some(_) => IO.pure(None)
+        case None => IO.blocking {
+          val teamsDir = PathUtil.dataRoot / "teams"
+          if !os.exists(teamsDir) then None
+          else
+            os.list(teamsDir).filter(os.isDir).flatMap { teamDir =>
+              val agentDir = teamDir / "agents" / name
+              if os.exists(agentDir) then loadAgentFromDir(agentDir) else None
+            }.headOption
+        }
+      // 3. Flow agents
+      flowOpt <- (globalOpt, teamOpt) match
+        case (Some(_), _) | (_, Some(_)) => IO.pure(None)
+        case (None, None) => IO.blocking {
+          val flowsDir = PathUtil.dataRoot / "flows"
+          if !os.exists(flowsDir) then None
+          else
+            os.list(flowsDir).filter(os.isDir).flatMap { flowDir =>
+              val agentDir = flowDir / "agents" / name
+              if os.exists(agentDir) then loadAgentFromDir(agentDir) else None
+            }.headOption
+        }
+    yield globalOpt.orElse(teamOpt).orElse(flowOpt).map { entry =>
+      AgentDef(
+        name = entry.name,
+        description = entry.description,
+        tools = entry.tools,
+        systemPrompt = entry.systemPrompt,
+        category = entry.category,
+        mcpServers = entry.mcpServers
+      )
+    }
 
   // ==========================================================
   // Write operations (atomic: temp file + rename)
