@@ -883,6 +883,23 @@ onMessage('roundComplete', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
+    // Show thinking placeholder for the upcoming round — backend sent sessionBusy(true)
+    // after roundComplete, so the agent is still working.
+    if (sid && state.busySessionIds.has(sid)) {
+      if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+      const { chat } = activeView.dom;
+      const existing = chat.querySelector('.thinking-placeholder');
+      if (!activeView.stream.currentAiBubble && !existing) {
+        const row = document.createElement('div');
+        row.className = 'row ai';
+        activeView.stream.currentAiBubble = document.createElement('div');
+        activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
+        row.appendChild(activeView.stream.currentAiBubble);
+        chat.appendChild(row);
+        smartScroll();
+        requestAnimationFrame(() => startThinkingTimer());
+      }
+    }
   }
 });
 

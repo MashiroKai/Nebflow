@@ -219,9 +219,10 @@ export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
   if (activeView && activeView.sessionId === sessionId) {
-    const { sendBtn, stopBtn } = activeView.dom;
+    const { sendBtn, stopBtn, statusWrap } = activeView.dom;
     if (sendBtn) sendBtn.style.display = 'none';
     if (stopBtn) stopBtn.style.display = 'flex';
+    if (statusWrap) statusWrap.classList.add('on');
   }
 }
 
@@ -229,9 +230,10 @@ export function clearBusy(sessionId) {
   state.busySessionIds.delete(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
   if (activeView && activeView.sessionId === sessionId) {
-    const { input, sendBtn, stopBtn } = activeView.dom;
+    const { input, sendBtn, stopBtn, statusWrap } = activeView.dom;
     if (sendBtn) sendBtn.style.display = 'flex';
     if (stopBtn) stopBtn.style.display = 'none';
+    if (statusWrap) statusWrap.classList.remove('on');
     if (input) input.focus();
     refreshSendButtonState();
   }
