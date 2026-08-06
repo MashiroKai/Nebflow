@@ -44,7 +44,9 @@ object ToolRegistry:
       // Cross-device file transfer
       "TransferFile" -> TransferFileTool,
       // Load Team/Flow from disk (validate + mount)
-      "Load" -> LoadTool
+      "Load" -> LoadTool,
+      // Flow agent result reporting (verdict + output for DAG switch routing)
+      "FlowReport" -> FlowReportTool
     )
     tools.putAll(builtins.asJava)
   }

@@ -237,7 +237,8 @@ case class NodeResult(
   output: String,
   success: Boolean,
   error: Option[String] = None,
-  attemptCount: Int = 1
+  attemptCount: Int = 1,
+  verdict: Option[String] = None
 )
 
 /** Runtime context for a flow execution. */
