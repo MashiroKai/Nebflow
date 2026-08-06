@@ -99,6 +99,16 @@ export const FLOW_CSS = `
 .dag-card-status.running .dot { background: var(--color-primary, #07c160); opacity: 1; animation: flow-pulse 1.6s ease-out infinite; }
 .dag-card-status.completed .dot { background: #4caf50; opacity: 1; }
 .dag-card-status.failed .dot { background: #f44336; opacity: 1; }
+.dag-card-status.cancelled .dot { background: #ff9800; opacity: 1; }
+.dag-card-cancel {
+  margin: 0 14px 14px; align-self: flex-start;
+  font: 600 11px -apple-system, sans-serif; color: #f44336;
+  background: transparent; border: 1px solid rgba(244,67,54,0.4);
+  border-radius: 8px; padding: 5px 14px; cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.dag-card-cancel:hover { background: rgba(244,67,54,0.08); }
+.dag-card-cancel:disabled { opacity: 0.5; cursor: default; }
 .dag-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; }
 .dag-nodes { padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 0; }
 .dag-node { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px; border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }

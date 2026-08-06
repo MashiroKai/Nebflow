@@ -53,6 +53,7 @@ export function dagCardHtml(rf) {
   const statusCls = rf.status || 'running';
   const statusText = statusCls;
   const ordered = orderDagNodes(rf);
+  const isActive = statusCls === 'running';
 
   let nodesHtml = '';
   ordered.forEach((item, i) => {
@@ -76,6 +77,8 @@ export function dagCardHtml(rf) {
       </div>`;
   });
 
+  const cancelBtn = isActive ? `<button class="dag-card-cancel" data-instance-id="${esc(rf.instanceId || '')}">Cancel</button>` : '';
+
   return `
     <div class="dag-card">
       <div class="dag-card-header">
@@ -84,6 +87,7 @@ export function dagCardHtml(rf) {
       </div>
       ${rf.description ? `<div class="dag-card-desc">${esc(rf.description)}</div>` : ''}
       <div class="dag-nodes">${nodesHtml}</div>
+      ${cancelBtn}
     </div>`;
 }
 
@@ -103,6 +107,19 @@ export function bindDagNodeClicks() {
       const agentName = el.getAttribute('data-agent') || '';
       const nodeId = el.getAttribute('data-node') || '';
       openStepPopup(`${flowName}/${nodeId}`, nodeId, agentName, flowName, null);
+    });
+  });
+  // Bind cancel buttons on active DAG flow cards
+  document.querySelectorAll('.dag-card-cancel').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const instanceId = btn.getAttribute('data-instance-id') || '';
+      if (!instanceId) return;
+      btn.disabled = true;
+      btn.textContent = '...';
+      import('./ws.js').then(({ sendWs }) => {
+        sendWs({ type: 'cancelFlow', instanceId });
+      });
     });
   });
 }
