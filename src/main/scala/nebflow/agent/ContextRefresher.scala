@@ -28,7 +28,8 @@ object ContextRefresher:
   val promptSources: List[InjectionSource] = List(
     systemPrefixForAll,
     systemPrefixForTeams,
-    systemPrefixForFlows
+    systemPrefixForFlows,
+    managerPrefixSource
   )
 
   /**
@@ -77,6 +78,17 @@ object ContextRefresher:
     new FileInjectionSource(
       "system-prefix-for-flows",
       PathUtil.dataRoot / "prompts" / "system-prefix-for-flows.md"
+    )
+
+  /**
+   * Manager prefix: ~/.nebflow/prompts/manager-prefix.md
+   *  Injected only for Team Manager agents (name == "Manager").
+   *  No JAR fallback — empty if file doesn't exist.
+   */
+  val managerPrefixSource: FileInjectionSource =
+    new FileInjectionSource(
+      "manager-prefix",
+      PathUtil.dataRoot / "prompts" / "manager-prefix.md"
     )
 
   // ============================================================
@@ -287,7 +299,10 @@ object ContextRefresher:
         case "team" => systemPrefixForTeams.get
         case "flow" => systemPrefixForFlows.get
         case _ => IO.pure("")
-      systemPrefixRaw = allPrefixRaw + categoryPrefix
+      // Manager prefix: only for Team Manager agents
+      managerPrefix <- if globalDef.name == "Manager" then managerPrefixSource.get
+                       else IO.pure("")
+      systemPrefixRaw = allPrefixRaw + categoryPrefix + managerPrefix
       systemPrefix = systemPrefixRaw
       projectRoot <- resolveProjectRoot(state.folderId, resources, globalDef.name)
       // Projects directory: ~/.nebflow/projects/<folderName>/
