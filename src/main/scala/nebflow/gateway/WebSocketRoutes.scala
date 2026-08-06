@@ -2220,12 +2220,9 @@ class WebSocketRoutes(
             (metaIO
               .flatMap { metaOpt =>
                 val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                val sessionId = metaOpt.map(_.id).getOrElse("")
-                val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
                 val content = scope match
                   case "user" => MemoryStore.loadUserMemory.getOrElse("")
                   case "agent" => MemoryStore.loadAgentMemory(agentName).getOrElse("")
-                  case "folder" => MemoryStore.loadFolderMemory(folderId).getOrElse("")
                   case _ => ""
                 wsSend(
                   io.circe.Json.obj(
@@ -2253,12 +2250,9 @@ class WebSocketRoutes(
             (metaIO
               .flatMap { metaOpt =>
                 val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                val sessionId = metaOpt.map(_.id).getOrElse("")
-                val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
                 val save = scope match
                   case "user" => MemoryStore.saveUserMemory(content)
                   case "agent" => MemoryStore.saveAgentMemory(agentName, content)
-                  case "folder" => MemoryStore.saveFolderMemory(folderId, content)
                   case _ => IO.unit
                 save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
               })
@@ -2272,8 +2266,6 @@ class WebSocketRoutes(
           case "memoryStatus" =>
             sessionStore.getActiveMeta.flatMap { metaOpt =>
               val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-              val sessionId = metaOpt.map(_.id).getOrElse("")
-              val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "memoryStatus".asJson,

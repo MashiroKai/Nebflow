@@ -10,18 +10,16 @@ Your memory is injected into your system prompt every turn — it is always avai
 
 **Skills vs Memory:** Skills are capabilities (how to do something) — read on demand when a task matches. Memory is knowledge (what you know) — always active, shapes your behavior continuously. Both use progressive disclosure: short entries stay in the system prompt, detail files are read on demand.
 
-### Three Levels
+### Two Levels
 
 | Level | File | Scope |
 |-------|------|-------|
-| User | `~/.nebflow/NEBFLOW.md` | All agents |
+| User | `~/.nebflow/User.md` | All agents |
 | Agent | `~/.nebflow/agents/<name>/memory.md` | This agent |
-| Project | `~/.nebflow/projects/<project>/memory/<name>.md` | This project + this agent |
 
 Each level has a distinct purpose:
 - **User** — who the user is: identity, preferences, working style, environment facts.
 - **Agent** — what this agent has learned: technical knowledge, tool behavior, domain expertise.
-- **Project** — where the project stands: architecture decisions, current progress, open issues.
 
 ## Session Management
 

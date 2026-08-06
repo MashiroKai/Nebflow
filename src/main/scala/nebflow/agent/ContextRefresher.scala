@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import nebflow.core.entity.{EntityLoader, TeamCatalog}
 import nebflow.core.skill.SkillService
 import nebflow.core.{PathUtil, SystemReminder, SystemReminders}
-import nebflow.service.{MemoryStore, RulesStore, StrengthStore}
+import nebflow.service.{MemoryStore, RulesStore}
 
 /**
  * Unified context refresh for session-scoped resources.
@@ -30,8 +30,6 @@ object ContextRefresher:
     systemPrefixForTeams,
     systemPrefixForFlows
   )
-
-  private val detailRefPattern = "→([a-zA-Z0-9]{4,12})".r
 
   /**
    * System prefix for ALL agents: ~/.nebflow/prompts/system-prefix-for-all.md
@@ -235,29 +233,23 @@ object ContextRefresher:
    * Build a memory block string for system prompt injection.
    *
    * Reads all memory levels and formats them into a single Markdown block:
-   *   - User memory    (~/.nebflow/NEBFLOW.md)           — global, all agents
-   *   - Agent memory   (~/.nebflow/agents/<name>/memory.md) — global, per agent
+   *   - User memory    (~/.nebflow/User.md)                  — global, all agents
+   *   - Agent memory   (~/.nebflow/agents/<name>/memory.md)  — per agent
    *   - Project memory (~/.nebflow/projects/<proj>/memory/<name>.md) — per project+agent
    *
    * Only levels that exist on disk are included.
    */
   def buildMemoryBlock(
     agentName: String,
-    folderId: Option[String],
-    sessionId: Option[String],
-    currentDelegateCount: Int = 0,
     projectMemory: Option[String] = None
   ): String =
     val sections = List(
       MemoryStore.loadUserMemory
-        .map(content => filterByStrength(content, currentDelegateCount))
         .map(content => s"## User Memory\n\n$content"),
       MemoryStore
         .loadAgentMemory(agentName)
-        .map(content => filterByStrength(content, currentDelegateCount))
         .map(content => s"## Agent Memory\n\n$content"),
       projectMemory
-        .map(content => filterByStrength(content, currentDelegateCount))
         .map(content => s"## Project Memory\n\n$content")
     ).flatten
 
@@ -269,26 +261,6 @@ object ContextRefresher:
          |
          |${sections.mkString("\n\n")}""".stripMargin
   end buildMemoryBlock
-
-  /**
-   * Filter memory content by strength. Lines with →id references are checked
-   * against StrengthStore — entries below threshold are removed.
-   * Lines without →id (short memory) are always kept.
-   */
-  private def filterByStrength(content: String, currentDelegateCount: Int): String =
-    content
-      .split("\n")
-      .filter { line =>
-        if line.trim.startsWith("- ") then
-          detailRefPattern.findFirstMatchIn(line) match
-            case Some(m) =>
-              val id = m.group(1)
-              StrengthStore.shouldInclude(s"memory.$id", currentDelegateCount)
-            case None => true // Short memory, always keep
-        else true // Non-entry lines (headers, blank lines), always keep
-      }
-      .mkString("\n")
-  end filterByStrength
 
   // ============================================================
   // Main entry point
@@ -343,9 +315,6 @@ object ContextRefresher:
       teamCatalog <- buildTeamCatalogForSession(state.sessionId)
       memoryBlock = buildMemoryBlock(
         globalDef.name,
-        state.folderId,
-        state.sessionId,
-        state.execution.delegateCount,
         projectMem
       )
     yield TurnContext(
