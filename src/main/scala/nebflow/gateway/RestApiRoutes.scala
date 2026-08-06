@@ -1187,18 +1187,28 @@ class RestApiRoutes(
           // Parse the model config from request body
           io.circe.parser.decode[nebflow.shared.AgentModelConfig](body.noSpaces) match
             case Right(modelConfig) =>
-              sharedResources.agentLibrary
-                .updateModel(agentName, modelConfig)
-                .flatMap {
-                  case true =>
-                    Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
-                  case false =>
-                    NotFound(Json.obj("error" -> s"Agent '$agentName' config not found".asJson))
-                }
-                .handleErrorWith { err =>
-                  // Corrupt JSON or IO failure
-                  InternalServerError(Json.obj("error" -> err.getMessage.asJson))
-                }
+              for
+                dirOpt <- EntityLoader.findAgentDir(agentName)
+                result <- dirOpt match
+                  case Some(dir) =>
+                    IO.blocking {
+                      val jsonPath = dir / "agent.json"
+                      val json = os.read(jsonPath)
+                      io.circe.parser.parse(json) match
+                        case Right(parsed) =>
+                          val updated = parsed.deepMerge(Json.obj("model" -> modelConfig.asJson))
+                          os.write.over(jsonPath, updated.noSpaces)
+                          true
+                        case Left(_) => false
+                    }.flatMap {
+                      case true =>
+                        Ok(Json.obj("updated" -> true.asJson, "model" -> modelConfig.asJson))
+                      case false =>
+                        InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
+                    }
+                  case None =>
+                    NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
+              yield result
             case Left(err) =>
               BadRequest(Json.obj("error" -> s"Invalid model config: ${err.getMessage}".asJson))
         }

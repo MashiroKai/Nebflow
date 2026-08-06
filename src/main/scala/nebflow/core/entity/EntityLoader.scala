@@ -259,6 +259,59 @@ object EntityLoader:
       )
     }
 
+  /**
+   * Find the directory path of an agent by name across all three layers.
+   * Same search order as [[findAgentByName]] but returns the directory path
+   * instead of an AgentDef. Used by PUT /api/agents/:name/model to locate
+   * the agent.json to update.
+   */
+  def findAgentDir(name: String): IO[Option[os.Path]] =
+    for
+      // 1. Global agents — name == dir name, fast path
+      globalOpt <- IO.blocking {
+        val dir = agentsDir / name
+        if os.exists(dir / "agent.json") then Some(dir) else None
+      }
+      // 2. Team agents
+      teamOpt <- globalOpt match
+        case Some(_) => IO.pure(None)
+        case None =>
+          IO.blocking {
+            if !os.exists(teamsDir) then None
+            else
+              os.list(teamsDir)
+                .filter(os.isDir)
+                .flatMap { teamDir =>
+                  val agentsSubDir = teamDir / "agents"
+                  if os.exists(agentsSubDir) then
+                    os.list(agentsSubDir).filter(os.isDir).flatMap { agentDir =>
+                      loadAgentFromDir(agentDir).filter(_.name == name).map(_ => agentDir)
+                    }
+                  else None
+                }
+                .headOption
+          }
+      // 3. Flow agents
+      flowOpt <- (globalOpt, teamOpt) match
+        case (Some(_), _) | (_, Some(_)) => IO.pure(None)
+        case (None, None) =>
+          IO.blocking {
+            if !os.exists(flowsDir) then None
+            else
+              os.list(flowsDir)
+                .filter(os.isDir)
+                .flatMap { flowDir =>
+                  val agentsSubDir = flowDir / "agents"
+                  if os.exists(agentsSubDir) then
+                    os.list(agentsSubDir).filter(os.isDir).flatMap { agentDir =>
+                      loadAgentFromDir(agentDir).filter(_.name == name).map(_ => agentDir)
+                    }
+                  else None
+                }
+                .headOption
+          }
+    yield globalOpt.orElse(teamOpt).orElse(flowOpt)
+
   // ==========================================================
   // Write operations (atomic: temp file + rename)
   // ==========================================================
