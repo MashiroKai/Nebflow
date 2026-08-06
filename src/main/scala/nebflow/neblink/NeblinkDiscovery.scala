@@ -28,6 +28,25 @@ final class NeblinkDiscovery(
 ):
   private val logger = NebflowLogger.forName("nebflow.neblink.discovery")
 
+  /** Consecutive heartbeat/discovery failures — drives exponential backoff. */
+  private val failCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
+
+  /** Current backoff delay based on consecutive failures. */
+  def currentDelay: IO[FiniteDuration] =
+    failCount.get.map(delayForFailures)
+
+  /** Pure backoff function — testable without IO. */
+  def delayForFailures(n: Int): FiniteDuration =
+    if n <= 2 then 30.seconds   // first few retries at normal interval
+    else if n <= 5 then 60.seconds   // repeated failures → slow down
+    else 120.seconds  // cap at 2 minutes
+
+  /** Reset failure counter (called on success). */
+  private def resetFailCount: IO[Unit] = failCount.set(0)
+
+  /** Increment failure counter (called on failure). */
+  private def incFailCount: IO[Unit] = failCount.update(_ + 1)
+
   // The client is held in a Ref so it can be hot-swapped at runtime (e.g. after
   // device-flow enrollment completes, without restarting the gateway).
   private val clientRef: Ref[IO, Option[NeblinkClient]] =
@@ -59,9 +78,14 @@ final class NeblinkDiscovery(
         val peerIps = client.peerAddresses(serverPeers)
         neblinkPeers.traverse_(p => neblinkService.upsertPeer(p)) *>
           neblinkService.updateTrustedIps(peerIps) *>
-          neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered)
+          neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
+          resetFailCount
       case Left(err) =>
-        logger.warn(s"Heartbeat failed: $err")
+        // Heartbeat failed — fall back to full discovery (auto re-login if needed).
+        logger.debug(s"Heartbeat failed ($err), falling back to discovery...") *>
+          discoverViaServer(client).handleErrorWith(e =>
+            logger.debug(s"Discovery fallback error: ${e.getMessage}") *> incFailCount
+          )
     }
 
   /** Discovery via NebLink Server: login/heartbeat → upsert peers → sync presence. */
@@ -78,9 +102,10 @@ final class NeblinkDiscovery(
             _ <- neblinkService.updateTrustedIps(peerIps)
             _ <- presenceService.syncPeers(neblinkPeers)
             _ <- logger.debug(s"NebLink Server discovery: ${neblinkPeers.size} peer(s)")
+            _ <- resetFailCount
           yield ()
         case Left(err) =>
-          logger.warn(s"NebLink Server discovery failed: $err")
+          logger.warn(s"NebLink Server discovery failed: $err") *> incFailCount
     yield ()
 
   /** Diagnostic scan — returns NebLink Server discovery status for debugging. */
