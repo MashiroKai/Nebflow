@@ -428,8 +428,7 @@ case class TurnContext(
   currentBranch: Option[String] = None,
   skillCatalog: String = "",
   teamCatalog: String = "",
-  memoryBlock: String = "",
-  universalPrompt: String = ""
+  memoryBlock: String = ""
 )
 
 case class SessionContext(
