@@ -708,8 +708,8 @@ private[agent] trait AgentCore:
         taskFiltered.filter(t =>
           !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith)
         )
-    // Delegate only available for worker agents (depth >= 2)
-    if depth >= 2 then mcpFiltered else mcpFiltered - "Delegate"
+    // Delegate available to all agents (MaxDepth recursion guard still applies)
+    mcpFiltered
 
   end buildAllowedToolSet
 

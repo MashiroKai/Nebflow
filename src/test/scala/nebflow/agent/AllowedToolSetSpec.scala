@@ -33,7 +33,7 @@ class AllowedToolSetSpec extends FunSuite:
     val defn = mkDef("omni", List("*"))
     val allowed = CoreProbe.allowed(defn)
     // Mail is a registered tool, so "*" already includes it. Non-Nebula agents
-    // drop Nebula-exclusive tools, EntityManagement tools, and Delegate.
+    // drop Nebula-exclusive tools, EntityManagement tools.
     assert(allowed.contains("Mail"))
     assert(allowed.contains("Read"))
     assert(allowed.contains("Bash"))
@@ -42,8 +42,8 @@ class AllowedToolSetSpec extends FunSuite:
     assert(!allowed.contains("AskUserQuestion"))
     assert(!allowed.contains("Schedule"))
     assert(!allowed.contains("Dispatch"))
-    // Delegate only for depth >= 2
-    assert(!allowed.contains("Delegate"))
+    // Delegate is available to all agents (no depth restriction)
+    assert(allowed.contains("Delegate"))
     // Fewer than total registered tools
     assert(allowed.size < ToolRegistry.ALL_TOOLS.map(_.name).toSet.size)
 
@@ -100,3 +100,10 @@ class AllowedToolSetSpec extends FunSuite:
     val defn = mkDef("other", List("Read", "mcp__agent-mydoc-docs__search"))
     val allowed = CoreProbe.allowed(defn)
     assert(!allowed.contains("mcp__agent-mydoc-docs__search"), "another agent's dedicated tool is denied")
+
+  test("Delegate is available at all depths (no depth restriction)"):
+    val defn = mkDef("anyone", List("Read", "Delegate"))
+    assert(CoreProbe.allowed(defn, depth = 0).contains("Delegate"), "depth 0")
+    assert(CoreProbe.allowed(defn, depth = 1).contains("Delegate"), "depth 1")
+    assert(CoreProbe.allowed(defn, depth = 2).contains("Delegate"), "depth 2")
+    assert(CoreProbe.allowed(defn, depth = 4).contains("Delegate"), "depth 4")
