@@ -23,14 +23,14 @@ case class AgentEntry(
 object AgentEntry:
   given Decoder[AgentEntry] = Decoder.instance { c =>
     for
-      name <- c.downField("name").as[String]
+      name <- c.downField("name").as[Option[String]]
       description <- c.downField("description").as[String]
       useWhen <- c.downField("useWhen").as[Option[String]].map(_.getOrElse(""))
       tools <- c.downField("tools").as[Option[List[String]]]
       voice <- c.downField("voice").as[Option[Boolean]]
       category <- c.downField("category").as[Option[String]].map(_.getOrElse("standalone"))
       mcpServers <- c.downField("mcpServers").as[Option[List[String]]]
-    yield AgentEntry(name, description, useWhen, tools.getOrElse(List("*")), voice.getOrElse(false), "", category, mcpServers.getOrElse(Nil))
+    yield AgentEntry(name.getOrElse(""), description, useWhen, tools.getOrElse(List("*")), voice.getOrElse(false), "", category, mcpServers.getOrElse(Nil))
   }
 
   given Encoder[AgentEntry] = Encoder.instance { a =>
