@@ -87,8 +87,10 @@ case class LlmRequest(
   systemStable: Option[String] = None,
   /** Dynamic system content (env info, reminders) — changes frequently, placed after cache breakpoint. */
   systemDynamic: Option[String] = None,
-  /** Per-agent model configuration (preferred + fallbacks). When set, the
-   *  candidate chain is built from this instead of the global model chain. */
+  /**
+   * Per-agent model configuration (preferred + fallbacks). When set, the
+   *  candidate chain is built from this instead of the global model chain.
+   */
   agentModel: Option[AgentModelConfig] = None
 )
 

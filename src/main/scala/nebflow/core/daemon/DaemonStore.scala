@@ -3,8 +3,7 @@ package nebflow.core.daemon
 import cats.effect.IO
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
+import nebflow.core.{NebflowLogger, PathUtil}
 
 /** File-based persistence for daemon configurations (~/.nebflow/daemons.json). */
 class DaemonStore(configPath: os.Path = PathUtil.dataRoot / "daemons.json"):
@@ -15,17 +14,19 @@ class DaemonStore(configPath: os.Path = PathUtil.dataRoot / "daemons.json"):
     os.makeDir.all(configPath / os.up)
   }
 
-  def load(): IO[List[DaemonConfig]] = IO.blocking {
-    if !os.exists(configPath) then Nil
-    else
-      decode[DaemonConfigFile](os.read(configPath)) match
-        case Right(file) => file.daemons
-        case Left(err) =>
-          logger.warnSync(s"Failed to parse daemons.json: ${err.getMessage}")
-          Nil
-  }.handleErrorWith { e =>
-    logger.warn(s"Failed to load daemons.json: ${e.getMessage}").as(Nil)
-  }
+  def load(): IO[List[DaemonConfig]] = IO
+    .blocking {
+      if !os.exists(configPath) then Nil
+      else
+        decode[DaemonConfigFile](os.read(configPath)) match
+          case Right(file) => file.daemons
+          case Left(err) =>
+            logger.warnSync(s"Failed to parse daemons.json: ${err.getMessage}")
+            Nil
+    }
+    .handleErrorWith { e =>
+      logger.warn(s"Failed to load daemons.json: ${e.getMessage}").as(Nil)
+    }
 
   def save(daemons: List[DaemonConfig]): IO[Unit] =
     ensureParent *> IO.blocking {

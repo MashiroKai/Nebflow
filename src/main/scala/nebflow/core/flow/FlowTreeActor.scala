@@ -52,7 +52,9 @@ object FlowTreeActor:
       for
         _ <- logger.info(s"FlowTreeActor started for session ${config.sessionId}")
         _ <- restoreFlows(flowNamesRef, config).handleErrorWith(e =>
-          logger.error(s"restoreFlows failed: ${e.getMessage}\n${e.getStackTrace.take(5).map(_.toString).mkString("\n")}").void
+          logger
+            .error(s"restoreFlows failed: ${e.getMessage}\n${e.getStackTrace.take(5).map(_.toString).mkString("\n")}")
+            .void
         )
         _ <- restoreInterruptedTurns(flowNamesRef, config).handleErrorWith(e =>
           logger.error(s"restoreInterruptedTurns failed: ${e.getMessage}").void
@@ -66,12 +68,13 @@ object FlowTreeActor:
         }
         // Signal that restore is complete so /api/flows stops waiting
         _ <- FlowTreeRegistry.signalRestoreComplete
-        _ <- if !config.disableFileWatcher then
-          startFileWatcher(ctx, config).handleErrorWith(e =>
-            logger.error(s"startFileWatcher failed: ${e.getMessage}").void
-          )
-        else IO.unit
+        _ <-
+          if !config.disableFileWatcher then
+            startFileWatcher(ctx, config)
+              .handleErrorWith(e => logger.error(s"startFileWatcher failed: ${e.getMessage}").void)
+          else IO.unit
       yield running(flowNamesRef, watchedAgentsRef, config, ctx)
+      end for
     }
 
   // ============================================================
@@ -88,7 +91,9 @@ object FlowTreeActor:
     new Behavior[TreeCommand]:
       override def onError(ctx: ActorContext[TreeCommand], err: Throwable): IO[Behavior[TreeCommand]] =
         logger
-          .error(s"FlowTreeActor error: ${err.getMessage}\n${err.getStackTrace.take(10).map(_.toString).mkString("\n")}")
+          .error(
+            s"FlowTreeActor error: ${err.getMessage}\n${err.getStackTrace.take(10).map(_.toString).mkString("\n")}"
+          )
           .as(this)
 
       override def onSignal(ctx: ActorContext[TreeCommand], signal: SystemSignal): IO[Behavior[TreeCommand]] =
@@ -166,7 +171,7 @@ object FlowTreeActor:
             _ <- createTeamAgentSessions(baseName, teamDef, cfg)
             _ <- cfg.sessionId.traverse_(sid =>
               FlowMembership.registerParentSession(baseName, sid) *>
-              FlowMembership.registerParentActor(sid, cfg.parentAgentRef)
+                FlowMembership.registerParentActor(sid, cfg.parentAgentRef)
             )
             _ <- teamDef.flows.traverse_(flowName => mountFlowDag(baseName, flowName, cfg))
             _ <- flowNamesRef.update(_ + (baseName -> teamDef.name))
@@ -177,9 +182,11 @@ object FlowTreeActor:
       _ <- replyTo.traverse_(_ ! MountResult.Mounted(baseName, baseName))
     yield ()
 
-  /** Hot reload: diff new team definition against current mounted state.
+  /**
+   * Hot reload: diff new team definition against current mounted state.
    *  Preserves unchanged agents' sessions and conversation history.
-   *  Only creates sessions for new agents, removes sessions for deleted agents. */
+   *  Only creates sessions for new agents, removes sessions for deleted agents.
+   */
   private def hotReloadTeam(
     flowNamesRef: Ref[IO, Map[String, String]],
     cfg: TreeConfig,
@@ -227,10 +234,12 @@ object FlowTreeActor:
         val subFlowId = s"$instanceName/$flowName"
         for
           subSids <- FlowMembership.sessionIdsOf(subFlowId)
-          _ <- subSids.traverse_(sid => FlowMembership.getRunningActor(sid).flatMap {
-            case Some(ref) => cfg.resources.actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
-            case None => IO.unit
-          })
+          _ <- subSids.traverse_(sid =>
+            FlowMembership.getRunningActor(sid).flatMap {
+              case Some(ref) => cfg.resources.actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
+              case None => IO.unit
+            }
+          )
           _ <- FlowMembership.unregisterFlowSessions(subFlowId)
           _ <- logger.info(s"Hot reload: removed flow '$flowName' from '$instanceName'")
         yield ()
@@ -242,7 +251,9 @@ object FlowTreeActor:
       )
 
       _ <- emit(cfg, "treeBranchUpdated", "name" -> instanceName.asJson)
-      _ <- logger.info(s"Hot reload '$instanceName': agents +${added.size} -${removed.size}, flows +${addedFlows.size} -${removedFlows.size}")
+      _ <- logger.info(
+        s"Hot reload '$instanceName': agents +${added.size} -${removed.size}, flows +${addedFlows.size} -${removedFlows.size}"
+      )
     yield ()
 
   /** Stop actors + delete sessions + unregister for a team instance. */
@@ -293,10 +304,14 @@ object FlowTreeActor:
             safetyMode = cfg.safetyMode
           )
       _ <- FlowMembership.registerSession(instanceName, agentName, sessionMeta.id)
-      _ <- if isManager then
-        FlowMembership.registerFlowManager(instanceName, sessionMeta.id)
-      else IO.unit
+      _ <-
+        if isManager then FlowMembership.registerFlowManager(instanceName, sessionMeta.id)
+        else IO.unit
     yield ()
+
+    end for
+
+  end createSingleTeamSession
 
   /** Mount a flow.json DAG as a sub-flow under the team. */
   private def mountFlowDag(
@@ -325,6 +340,10 @@ object FlowTreeActor:
           logger.warn(s"Flow '$flowName' not found (no flow.json)")
     yield ()
 
+    end for
+
+  end mountFlowDag
+
   private def handleUnmount(
     flowNamesRef: Ref[IO, Map[String, String]],
     cfg: TreeConfig,
@@ -332,19 +351,19 @@ object FlowTreeActor:
   )(using ActorContext[TreeCommand]): IO[Unit] =
     for
       names <- flowNamesRef.get
-      _ <- if names.contains(name) then
-        for
-          _ <- handleCancel(cfg, name) // stop running actors
-          sids <- FlowMembership.sessionIdsOf(name)
-          _ <- FlowMembership.unregisterFlowSessions(name)
-          _ <- sids.traverse_(sid => cfg.resources.sessionStore.deleteSession(sid).handleErrorWith(_ => IO.unit))
-          _ <- flowNamesRef.update(_ - name)
-          _ <- persistFlows(flowNamesRef, cfg)
-          _ <- emit(cfg, "treeBranchUnmounted", "name" -> name.asJson)
-          _ <- logger.info(s"Flow '$name' unmounted (cleaned ${sids.size} sessions)")
-        yield ()
-      else
-        logger.warn(s"Cannot unmount '$name': not found")
+      _ <-
+        if names.contains(name) then
+          for
+            _ <- handleCancel(cfg, name) // stop running actors
+            sids <- FlowMembership.sessionIdsOf(name)
+            _ <- FlowMembership.unregisterFlowSessions(name)
+            _ <- sids.traverse_(sid => cfg.resources.sessionStore.deleteSession(sid).handleErrorWith(_ => IO.unit))
+            _ <- flowNamesRef.update(_ - name)
+            _ <- persistFlows(flowNamesRef, cfg)
+            _ <- emit(cfg, "treeBranchUnmounted", "name" -> name.asJson)
+            _ <- logger.info(s"Flow '$name' unmounted (cleaned ${sids.size} sessions)")
+          yield ()
+        else logger.warn(s"Cannot unmount '$name': not found")
     yield ()
 
   // ============================================================
@@ -408,9 +427,12 @@ object FlowTreeActor:
           // Deduplicate by flowName: keep one entry per definition (prefer name==flowName).
           // This cleans up stale suffixed duplicates (e.g. "nebflow-project-2") from old bugs.
           deduped = deduplicateEntries(rawEntries)
-          _ <- if deduped.size != rawEntries.size then
-            MountedFlowStore.save(sid, deduped) *> logger.info(s"Deduplicated flows.json: ${rawEntries.size} → ${deduped.size} entries")
-          else IO.unit
+          _ <-
+            if deduped.size != rawEntries.size then
+              MountedFlowStore.save(sid, deduped) *> logger.info(
+                s"Deduplicated flows.json: ${rawEntries.size} → ${deduped.size} entries"
+              )
+            else IO.unit
           // Track only successfully restored teams — failed entries must NOT
           // block auto-mount of the same team from disk.
           successfulNames <- Ref.of[IO, Set[String]](Set.empty)
@@ -450,19 +472,22 @@ object FlowTreeActor:
             )
           }
           // Persist auto-mounted teams to MountedFlowStore for crash recovery.
-          _ <- if unmounted.nonEmpty then
-            for
-              allNames <- flowNamesRef.get
-              allEntries = allNames.toList.map((name, defName) => MountedFlowStore.MountedFlowEntry(name, defName))
-              _ <- MountedFlowStore.save(sid, allEntries)
-            yield ()
-          else IO.unit
+          _ <-
+            if unmounted.nonEmpty then
+              for
+                allNames <- flowNamesRef.get
+                allEntries = allNames.toList.map((name, defName) => MountedFlowStore.MountedFlowEntry(name, defName))
+                _ <- MountedFlowStore.save(sid, allEntries)
+              yield ()
+            else IO.unit
           _ <- if unmounted.nonEmpty then logger.info(s"Auto-mounted ${unmounted.size} team(s) from disk") else IO.unit
         yield ()
       case _ => IO.unit
 
   /** For each unique flowName, keep only one entry — prefer name == flowName (no suffix). */
-  private def deduplicateEntries(entries: List[MountedFlowStore.MountedFlowEntry]): List[MountedFlowStore.MountedFlowEntry] =
+  private def deduplicateEntries(
+    entries: List[MountedFlowStore.MountedFlowEntry]
+  ): List[MountedFlowStore.MountedFlowEntry] =
     entries
       .sortBy(e => if e.name == e.flowName then 0 else 1) // canonical name first
       .distinctBy(_.flowName)
@@ -494,7 +519,9 @@ object FlowTreeActor:
                       TurnStateStore.clear(sid)
                     case Some(_) =>
                       // Turn was interrupted during an LLM call — resume it.
-                      logger.info(s"Restoring interrupted turn for session ${sid.take(8)} (msgs=${messages.size} turnStart=${ts.turnStartMessageCount})")
+                      logger.info(
+                        s"Restoring interrupted turn for session ${sid.take(8)} (msgs=${messages.size} turnStart=${ts.turnStartMessageCount})"
+                      )
                       resumeInterruptedAgent(cfg, sid, ts.turnStartMessageCount, ts.turnIdx)
                     case None =>
                       // No messages at all — stale marker, clear it.
@@ -514,19 +541,21 @@ object FlowTreeActor:
     turnStartMessageCount: Int,
     turnIdx: Int
   )(using ActorContext[?]): IO[Unit] =
-    FlowAgentActivator.ensureSession(
-      sessionId,
-      Some(cfg.parentAgentRef),
-      cfg.resources,
-      cfg.resources.actorSystem,
-      cfg.wsSend
-    ).flatMap {
-      case Some(ref) =>
-        (ref ! AgentCommand.ResumeTurn(turnStartMessageCount, turnIdx)).void *>
-          emit(cfg, "flowResumed", "sessionId" -> sessionId.asJson)
-      case None =>
-        logger.warn(s"Cannot resume session ${sessionId.take(8)} — activation failed").void
-    }
+    FlowAgentActivator
+      .ensureSession(
+        sessionId,
+        Some(cfg.parentAgentRef),
+        cfg.resources,
+        cfg.resources.actorSystem,
+        cfg.wsSend
+      )
+      .flatMap {
+        case Some(ref) =>
+          (ref ! AgentCommand.ResumeTurn(turnStartMessageCount, turnIdx)).void *>
+            emit(cfg, "flowResumed", "sessionId" -> sessionId.asJson)
+        case None =>
+          logger.warn(s"Cannot resume session ${sessionId.take(8)} — activation failed").void
+      }
 
   // ============================================================
   // File watcher — notify agent of stale changes
@@ -588,7 +617,8 @@ object FlowTreeActor:
                   s"Flow '$name' has disk changes not yet applied. Use Flow(action: \"update\", name: \"$name\") to apply."
                 )
               }
-            else if watchDir == agentsDir || (agentsDir.getRoot == watchDir.getRoot && watchDir.startsWith(agentsDir)) then
+            else if watchDir == agentsDir || (agentsDir.getRoot == watchDir.getRoot && watchDir.startsWith(agentsDir))
+            then
               cfg.parentAgentRef ! AgentCommand.ImmediateInput(
                 s"Agent definition '$fileName' has disk changes. The change will take effect on next activation."
               )
@@ -597,12 +627,14 @@ object FlowTreeActor:
               cfg.parentAgentRef ! AgentCommand.ImmediateInput(
                 s"Team '$teamName' has disk changes. Reload to apply."
               )
+            end if
           }
           key.reset()
         end while
       }.void
         .handleErrorWith(e => logger.warn(s"File watcher error: ${e.getMessage}").void)
     )
+  end startFileWatcher
 
   // ============================================================
   // Helpers

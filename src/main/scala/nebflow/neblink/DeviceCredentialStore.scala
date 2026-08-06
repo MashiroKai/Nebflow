@@ -9,13 +9,14 @@ import nebflow.core.PathUtil
 
 import java.nio.file.attribute.PosixFilePermissions
 
-/** Long-lived per-device NebLink credential, persisted to
-  * `~/.nebflow/neblink/device.json` with owner-only permissions (rw-------).
-  *
-  * Produced by pairing-code enrollment (`POST /api/device/enroll`). The raw
-  * `deviceToken` is the secret; only its SHA-256 hash is stored on the server,
-  * so this file is the only place the live credential exists on the device.
-  */
+/**
+ * Long-lived per-device NebLink credential, persisted to
+ * `~/.nebflow/neblink/device.json` with owner-only permissions (rw-------).
+ *
+ * Produced by pairing-code enrollment (`POST /api/device/enroll`). The raw
+ * `deviceToken` is the secret; only its SHA-256 hash is stored on the server,
+ * so this file is the only place the live credential exists on the device.
+ */
 case class DeviceCredential(
   serverUrl: String,
   networkId: String,
@@ -31,8 +32,7 @@ object DeviceCredential:
 
   def load: IO[Option[DeviceCredential]] =
     IO.blocking {
-      if os.exists(credPath) then
-        decode[DeviceCredential](os.read(credPath)).toOption
+      if os.exists(credPath) then decode[DeviceCredential](os.read(credPath)).toOption
       else None
     }
 
@@ -54,3 +54,4 @@ object DeviceCredential:
     IO.blocking {
       if os.exists(credPath) then os.remove(credPath)
     }.void
+end DeviceCredential

@@ -57,16 +57,20 @@ object FlowMembership:
   def parentSessionOf(flowId: String): IO[Option[String]] =
     flowParentSessions.get.map(_.get(flowId))
 
-  /** Register a flow agent's session at mount time.
-   *  Called by FlowTreeActor when mounting a flow. */
+  /**
+   * Register a flow agent's session at mount time.
+   *  Called by FlowTreeActor when mounting a flow.
+   */
   def registerSession(flowId: String, agentName: String, sessionId: String): IO[Unit] =
     sessionRegistry.update(_.updated((flowId, agentName), sessionId)) *>
       sessionFlows.update(_.updated(sessionId, flowId))
 
-  /** Register an alias entry: makes `aliasName` in `flowId` point to an existing
+  /**
+   * Register an alias entry: makes `aliasName` in `flowId` point to an existing
    *  session, WITHOUT changing the session's flow ownership in sessionFlows.
    *  Used for pipeline mounting: the pipeline manager's session gets an alias
-   *  in the parent project so the project manager can Mail the pipeline by its alias name. */
+   *  in the parent project so the project manager can Mail the pipeline by its alias name.
+   */
   def registerAlias(flowId: String, aliasName: String, sessionId: String): IO[Unit] =
     sessionRegistry.update(_.updated((flowId, aliasName), sessionId))
 
@@ -74,13 +78,16 @@ object FlowMembership:
   def registerFlowManager(flowId: String, managerSessionId: String): IO[Unit] =
     flowManagers.update(_.updated(flowId, managerSessionId))
 
-  /** Resolve a team agent by exact (instanceName, agentName) lookup.
+  /**
+   * Resolve a team agent by exact (instanceName, agentName) lookup.
    *  Use when the caller knows the team name — avoids ambiguity when
-   *  multiple teams share the same agent names (e.g., all teams have "Manager"). */
+   *  multiple teams share the same agent names (e.g., all teams have "Manager").
+   */
   def resolveTeamAgent(teamName: String, agentName: String): IO[Option[String]] =
     sessionRegistry.get.map(_.get((teamName, agentName)))
 
-  /** Resolve a short name to a sessionId.
+  /**
+   * Resolve a short name to a sessionId.
    *  Resolution order:
    *  1. Sender's flow scope (same flow agent)
    *  2. Cross-flow matches — ONLY for Nebula (no flowId). Team agents
@@ -99,16 +106,14 @@ object FlowMembership:
       // Step 1: try sender's own flow
       ownFlow = flowId.flatMap(fid => sr.get((fid, name)))
       // Step 2: cross-flow matches — only for Nebula (flowId is None)
-      crossFlowMatches = if flowId.isEmpty then
-        sr.collect { case ((_, agentName), sid) if agentName == name => sid }
-      else Nil
+      crossFlowMatches =
+        if flowId.isEmpty then sr.collect { case ((_, agentName), sid) if agentName == name => sid } else Nil
       // Step 3: flow manager lookup — only for Nebula
       flowMgrLookup = if flowId.isEmpty then fm.get(name) else None
-    yield
-      ownFlow
-        .orElse(crossFlowMatches.headOption)
-        .orElse(flowMgrLookup)
-        .orElse(if name == "Nebula" && isManager then flowId.flatMap(fid => fps.get(fid)) else None)
+    yield ownFlow
+      .orElse(crossFlowMatches.headOption)
+      .orElse(flowMgrLookup)
+      .orElse(if name == "Nebula" && isManager then flowId.flatMap(fid => fps.get(fid)) else None)
 
   /** Check if a session is a flow/team manager (team lead). */
   def isManager(sessionId: String): IO[Boolean] =
@@ -148,8 +153,10 @@ object FlowMembership:
       sr.collectFirst { case ((`fid`, name), `sessionId`) => (fid, name) }
     }
 
-  /** Remove a flow's session registrations (unmount).
-   *  Also removes nested sub-flows (e.g. `flowId/sub-flow`). */
+  /**
+   * Remove a flow's session registrations (unmount).
+   *  Also removes nested sub-flows (e.g. `flowId/sub-flow`).
+   */
   def unregisterFlowSessions(flowId: String): IO[Unit] =
     val matches = (fid: String) => fid == flowId || fid.startsWith(s"$flowId/")
     sessionRegistry.update(_.filterNot { case ((fid, _), _) => matches(fid) }) *>
@@ -157,30 +164,40 @@ object FlowMembership:
       flowManagers.update(_.filterNot { (fid, _) => matches(fid) }) *>
       flowParentSessions.update(_.filterNot { (fid, _) => matches(fid) })
 
-  /** Unregister a single agent session (for hot reload — removing one member).
-   *  Only removes from the top-level flowId, NOT sub-flows. */
+  /**
+   * Unregister a single agent session (for hot reload — removing one member).
+   *  Only removes from the top-level flowId, NOT sub-flows.
+   */
   def unregisterAgent(instanceName: String, agentName: String, sessionId: String): IO[Unit] =
     sessionRegistry.update(_ - ((instanceName, agentName))) *>
       sessionFlows.update(_ - sessionId) *>
       flowManagers.update(_.filterNot { case (_, sid) => sid == sessionId }) *>
       busySessions.update(_ - sessionId)
 
-  /** Get top-level agents (lead + members) for a team instance.
-   *  Excludes sub-flow agents (those with `/` in flowId). */
+  /**
+   * Get top-level agents (lead + members) for a team instance.
+   *  Excludes sub-flow agents (those with `/` in flowId).
+   */
   def agentsOfInstance(instanceName: String): IO[List[(String, String)]] =
     sessionRegistry.get.map { reg =>
       reg.collect { case ((`instanceName`, name), sid) => (name, sid) }.toList.sortBy(_._1)
     }
 
-  /** List mounted sub-flow names for a team instance.
-   *  E.g. instanceName="nebflow-project" → ["code-review", "release-beta"] */
+  /**
+   * List mounted sub-flow names for a team instance.
+   *  E.g. instanceName="nebflow-project" → ["code-review", "release-beta"]
+   */
   def subFlowsOf(instanceName: String): IO[List[String]] =
     val prefix = s"$instanceName/"
     sessionRegistry.get.map { reg =>
-      reg.keys.collect {
-        case (fid, _) if fid.startsWith(prefix) =>
-          fid.substring(prefix.length).takeWhile(_ != '/') // handle nested
-      }.toSet.toList.sorted
+      reg.keys
+        .collect {
+          case (fid, _) if fid.startsWith(prefix) =>
+            fid.substring(prefix.length).takeWhile(_ != '/') // handle nested
+        }
+        .toSet
+        .toList
+        .sorted
     }
 
   /** Get all session IDs for a flow, including nested sub-flows. */
@@ -190,16 +207,20 @@ object FlowMembership:
       case ((fid, _), sid) if matches(fid) => sid
     }.toList)
 
-  /** List all mounted flows with their agent names.
+  /**
+   * List all mounted flows with their agent names.
    *  Sub-flows (compound flowIds containing `/`) are hidden — their agents
    *  are accessible as aliases in the parent flow.
-   *  Returns Map[flowId -> List[(agentName, sessionId)]]. */
+   *  Returns Map[flowId -> List[(agentName, sessionId)]].
+   */
   def listMountedFlows: IO[Map[String, List[(String, String)]]] =
     sessionRegistry.get.map { reg =>
-      reg.groupBy { case ((flowId, _), _) => flowId }
+      reg
+        .groupBy { case ((flowId, _), _) => flowId }
         .filterNot { (flowId, _) => flowId.contains("/") }
         .map { (flowId, entries) =>
-          flowId -> entries.toList.map { case ((_, agentName), sid) => (agentName, sid) }
+          flowId -> entries.toList
+            .map { case ((_, agentName), sid) => (agentName, sid) }
             .sortBy(_._1)
         }
     }

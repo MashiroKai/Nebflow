@@ -71,9 +71,9 @@ class ScheduledTaskStore(baseDir: os.Path):
         .filter(_.last.endsWith(".json"))
         .toList
         .flatMap { f =>
-            decode[List[ScheduledTask]](os.read(f)) match
-              case Right(list) => list.filter(t => !t.triggered && t.triggerAt <= now && t.enabled)
-              case Left(_) => Nil
+          decode[List[ScheduledTask]](os.read(f)) match
+            case Right(list) => list.filter(t => !t.triggered && t.triggerAt <= now && t.enabled)
+            case Left(_) => Nil
         }
     end if
   }

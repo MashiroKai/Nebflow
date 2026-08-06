@@ -80,8 +80,10 @@ object CompactService:
       |- Keep the summary focused and information-dense
       |</system-reminder>""".stripMargin
 
-  /** Root agent (Nebula) — the orchestrator.
-   *  Focus: user intent, task routing, flow results, planning state. */
+  /**
+   * Root agent (Nebula) — the orchestrator.
+   *  Focus: user intent, task routing, flow results, planning state.
+   */
   private val RootCompactReminder = CompactPreamble +
     """<summary>
       |1. Primary Request and Intent:
@@ -118,9 +120,11 @@ object CompactService:
       |</summary>
       |""".stripMargin + CompactEpilogue
 
-  /** Flow Manager — coordinator within a project flow.
+  /**
+   * Flow Manager — coordinator within a project flow.
    *  Focus: dispatch state, agent responses, progress tracking.
-   *  The "user" messages are Mail from Nebula or agent responses, not direct user input. */
+   *  The "user" messages are Mail from Nebula or agent responses, not direct user input.
+   */
   private val ManagerCompactReminder = CompactPreamble +
     """You are a FLOW MANAGER. Your conversation consists of Mail messages (task dispatch and agent responses), not direct user chat.
       |Your summary must focus on COORDINATION STATE so you can resume routing seamlessly.
@@ -150,9 +154,11 @@ object CompactService:
       |</summary>
       |""".stripMargin + CompactEpilogue
 
-  /** Flow Worker — implementation agent within a flow.
+  /**
+   * Flow Worker — implementation agent within a flow.
    *  Focus: current task, files changed, outcome. Old completed tasks are irrelevant.
-   *  Be CONCISE — workers don't need deep historical context. */
+   *  Be CONCISE — workers don't need deep historical context.
+   */
   private val WorkerCompactReminder = CompactPreamble +
     """You are a FLOW WORKER. Your conversation is task-focused: Mail from manager → your work → Mail result back.
       |Your summary must be CONCISE and ACTION-ORIENTED so you can resume the current task.

@@ -5,6 +5,7 @@ import io.circe.syntax.*
 import nebflow.agent.SharedResources
 import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.shared.*
+
 import java.time.{Instant, ZoneId, ZonedDateTime}
 
 /**
@@ -66,32 +67,44 @@ object ExperienceExtractor:
       agentId = agentName,
       tools = None,
       maxTokens = Some(2048),
-      systemStable = Some("You are an experience extraction assistant. Analyze completed work and extract reusable patterns.")
+      systemStable =
+        Some("You are an experience extraction assistant. Analyze completed work and extract reusable patterns.")
     )
-    resources.llm.send(request)
+    resources.llm
+      .send(request)
       .map(resp => parseResponse(resp.reply))
       .handleErrorWith(e =>
-        IO(logger.warn(s"Experience extraction LLM call failed for $agentName: ${e.getMessage}")).as(None))
+        IO(logger.warn(s"Experience extraction LLM call failed for $agentName: ${e.getMessage}")).as(None)
+      )
+
+  end callLlm
 
   /** Parse <experience> block from LLM response. */
   def parseResponse(text: String): Option[Experience] =
-    val block = "(?s)<experience>(.*?)</experience>".r.findFirstMatchIn(text) match
-      case Some(m) => m.group(1).trim
-      case None => return None
-    val klass = extractField(block, "CLASS").getOrElse("skip")
-    if klass == "skip" then None
-    else
-      Some(Experience(
-        klass = klass,
-        pattern = extractField(block, "PATTERN").getOrElse(""),
-        evidence = extractField(block, "EVIDENCE").getOrElse(""),
-        skillMatch = extractField(block, "SKILL_MATCH").getOrElse("new")
-      ))
+    "(?s)<experience>(.*?)</experience>".r.findFirstMatchIn(text) match
+      case Some(m) =>
+        val block = m.group(1).trim
+        val klass = extractField(block, "CLASS").getOrElse("skip")
+        if klass == "skip" then None
+        else
+          Some(
+            Experience(
+              klass = klass,
+              pattern = extractField(block, "PATTERN").getOrElse(""),
+              evidence = extractField(block, "EVIDENCE").getOrElse(""),
+              skillMatch = extractField(block, "SKILL_MATCH").getOrElse("new")
+            )
+          )
+      case None => None
 
-  /** Store experience: skill → proposal only. Memory class is dropped —
+  end parseResponse
+
+  /**
+   * Store experience: skill → proposal only. Memory class is dropped —
    *  Workers have no persistent memory. Only reusable skills (cross-session
    *  methods) are worth proposing. Project-specific facts belong in the
-   *  Manager's memory, not the Worker's. */
+   *  Manager's memory, not the Worker's.
+   */
   private def storeExperience(exp: Experience, agentName: String): IO[Unit] = IO.blocking {
     exp.klass match
       case "skill" => writeSkillProposal(exp, agentName)
@@ -102,8 +115,8 @@ object ExperienceExtractor:
   private def writeSkillProposal(exp: Experience, agentName: String): Unit =
     val dir = PathUtil.dataRoot / "agents" / agentName / "skill-proposals"
     os.makeDir.all(dir)
-    val ts = ZonedDateTime.now(ZoneId.systemDefault()).format(
-      java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
+    val ts =
+      ZonedDateTime.now(ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
     val name = exp.skillMatch match
       case "new" | "" => s"proposal-$ts"
       case existing => s"update-$existing-$ts"
@@ -123,6 +136,8 @@ object ExperienceExtractor:
                      |${exp.evidence}
                      |""".stripMargin
     os.write(dir / s"$name.md", content)
+
+  end writeSkillProposal
 
   private def appendToAgentMemory(exp: Experience, agentName: String): Unit =
     val memPath = PathUtil.dataRoot / "agents" / agentName / "memory.md"

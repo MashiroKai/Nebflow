@@ -14,7 +14,8 @@ class DaemonSpec extends FunSuite:
 
   private def withDispatcher[A](f: Dispatcher[IO] => A): A =
     val (disp, release) = Dispatcher.parallel[IO].allocated.unsafeRunSync()
-    try f(disp) finally release.unsafeRunSync()
+    try f(disp)
+    finally release.unsafeRunSync()
 
   // ── Model JSON codec tests ──────────────────────────────
 
@@ -47,10 +48,12 @@ class DaemonSpec extends FunSuite:
   }
 
   test("DaemonConfigFile encode/decode round-trip") {
-    val file = DaemonConfigFile(List(
-      DaemonConfig("a", "A", List("echo", "hi")),
-      DaemonConfig("b", "B", List("ls"), autoStart = true)
-    ))
+    val file = DaemonConfigFile(
+      List(
+        DaemonConfig("a", "A", List("echo", "hi")),
+        DaemonConfig("b", "B", List("ls"), autoStart = true)
+      )
+    )
     val json = file.asJson.noSpaces
     assertEquals(decode[DaemonConfigFile](json), Right(file))
   }
@@ -136,7 +139,7 @@ class DaemonSpec extends FunSuite:
       val stateAfter = svc.getState("echo-test").unsafeRunSync().get
       assert(
         stateAfter.status == DaemonStatus.Running ||
-        stateAfter.status == DaemonStatus.Crashed,
+          stateAfter.status == DaemonStatus.Crashed,
         s"Unexpected status: ${stateAfter.status}"
       )
 
@@ -188,8 +191,10 @@ class DaemonSpec extends FunSuite:
 
       // auto1 should have been started (echo exits fast, so may already be Crashed)
       val auto1State = states.find(_.id == "auto1").get
-      assert(auto1State.status != DaemonStatus.Stopped || auto1State.exitCode.isDefined,
-        s"auto1 should have been started, got: ${auto1State.status}")
+      assert(
+        auto1State.status != DaemonStatus.Stopped || auto1State.exitCode.isDefined,
+        s"auto1 should have been started, got: ${auto1State.status}"
+      )
 
       // manual1 should remain stopped
       val manual1State = states.find(_.id == "manual1").get

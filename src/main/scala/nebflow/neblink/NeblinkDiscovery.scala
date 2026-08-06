@@ -37,9 +37,9 @@ final class NeblinkDiscovery(
 
   /** Pure backoff function — testable without IO. */
   def delayForFailures(n: Int): FiniteDuration =
-    if n <= 2 then 30.seconds   // first few retries at normal interval
-    else if n <= 5 then 60.seconds   // repeated failures → slow down
-    else 120.seconds  // cap at 2 minutes
+    if n <= 2 then 30.seconds // first few retries at normal interval
+    else if n <= 5 then 60.seconds // repeated failures → slow down
+    else 120.seconds // cap at 2 minutes
 
   /** Reset failure counter (called on success). */
   private def resetFailCount: IO[Unit] = failCount.set(0)
@@ -63,8 +63,10 @@ final class NeblinkDiscovery(
       case None => logger.warn("NebLink Server is not configured — discovery skipped")
     }
 
-  /** Heartbeat cycle — send a heartbeat to the current client (if any).
-    * Used by the periodic heartbeat loop. Returns immediately if no client. */
+  /**
+   * Heartbeat cycle — send a heartbeat to the current client (if any).
+   * Used by the periodic heartbeat loop. Returns immediately if no client.
+   */
   def heartbeatCycle: IO[Unit] =
     clientRef.get.flatMap {
       case Some(client) => doHeartbeat(client)

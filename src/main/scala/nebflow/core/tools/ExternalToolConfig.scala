@@ -23,6 +23,7 @@ case class ExternalToolConfig(
   layer: String = "global",
   scope: Option[String] = None
 ):
+
   /** Copy with explicit layer/scope — used by ToolLoader when loading from a directory. */
   def withLayer(layer: String, scope: Option[String]): ExternalToolConfig =
     copy(layer = layer, scope = scope)
@@ -40,7 +41,7 @@ object ExternalToolConfig:
     )
     val withScope = cfg.scope match
       case Some(s) => base :+ ("scope" -> s.asJson)
-      case None    => base
+      case None => base
     Json.obj(withScope*)
   }
 

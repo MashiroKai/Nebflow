@@ -7,8 +7,8 @@ import nebflow.core.{NebflowLogger, PathUtil}
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
-import java.nio.file.{Files, Path}
 import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Path}
 import java.util.Base64
 
 object SttService:
@@ -51,9 +51,9 @@ end SttService
  * 支持任何兼容 OpenAI 音频转录格式的 API 提供商。
  */
 class SttService private[gateway] (
-    apiKey: String,
-    model: String,
-    endpoint: String
+  apiKey: String,
+  model: String,
+  endpoint: String
 ):
   private val logger = NebflowLogger.forName("nebflow.stt")
 

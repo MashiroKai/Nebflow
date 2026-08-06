@@ -256,21 +256,23 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
    */
   private def recoverFolderName(foldersDir: os.Path, id: String): String =
     val memFile = foldersDir / s"$id.memory.md"
-    if !os.exists(memFile) then return s"Folder ${id.take(8)}"
-    val content = os.read(memFile)
-    // 1. Explicit folder name marker
-    content.linesIterator
-      .find(_.contains("文件夹名称"))
-      .flatMap(_.split("：").lastOption.map(_.trim).filter(_.nonEmpty))
-      .orElse {
-        // 2. First ## heading (skip the "# Memory" title)
-        content.linesIterator
-          .map(_.trim)
-          .filter(l => l.startsWith("## ") && l != "## Memory")
-          .map(_.stripPrefix("## ").trim)
-          .find(_.nonEmpty)
-      }
-      .getOrElse(s"Folder ${id.take(8)}")
+    if !os.exists(memFile) then s"Folder ${id.take(8)}"
+    else
+      val content = os.read(memFile)
+      // 1. Explicit folder name marker
+      content.linesIterator
+        .find(_.contains("文件夹名称"))
+        .flatMap(_.split("：").lastOption.map(_.trim).filter(_.nonEmpty))
+        .orElse {
+          // 2. First ## heading (skip the "# Memory" title)
+          content.linesIterator
+            .map(_.trim)
+            .filter(l => l.startsWith("## ") && l != "## Memory")
+            .map(_.stripPrefix("## ").trim)
+            .find(_.nonEmpty)
+        }
+        .getOrElse(s"Folder ${id.take(8)}")
+    end if
 
   end recoverFolderName
 
@@ -507,9 +509,11 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   def getSessionMeta(id: String): IO[Option[SessionMeta]] =
     indexRef.get.map { case (_, sessions, _) => sessions.find(_.id == id) }
 
-  /** Find an existing session by name and flowName. Used to reuse flow agent
+  /**
+   * Find an existing session by name and flowName. Used to reuse flow agent
    *  sessions across server restarts instead of creating new (empty) ones.
-   *  Prefers sessions with actual message content (non-empty .json file). */
+   *  Prefers sessions with actual message content (non-empty .json file).
+   */
   def findSessionByName(name: String, flowName: String): IO[Option[SessionMeta]] =
     indexRef.get.flatMap { case (_, sessions, _) =>
       val matching = sessions.filter(s => s.name == name && s.flowName.contains(flowName))
@@ -519,13 +523,17 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
         case multiple =>
           // Sort by updatedAt descending, prefer sessions with messages on disk
           val sorted = multiple.sortBy(_.updatedAt)(Ordering[Long].reverse)
-          sorted.foldLeft(IO.pure(None: Option[SessionMeta])) { (acc, meta) =>
-            for
-              prev <- acc
-              result <- if prev.isDefined then IO.pure(prev)
-                else hasMessagesOnDisk(meta.id).map(if _ then Some(meta) else None)
-            yield result
-          }.map(_.orElse(sorted.headOption))
+          sorted
+            .foldLeft(IO.pure(None: Option[SessionMeta])) { (acc, meta) =>
+              for
+                prev <- acc
+                result <-
+                  if prev.isDefined then IO.pure(prev)
+                  else hasMessagesOnDisk(meta.id).map(if _ then Some(meta) else None)
+              yield result
+            }
+            .map(_.orElse(sorted.headOption))
+      end match
     }
 
   /** Check if a session has non-empty messages on disk. */
@@ -575,12 +583,24 @@ class SessionStore(sessionsDir: os.Path, tasksDir: os.Path):
   ): IO[SessionMeta] =
     val id = UUID.randomUUID().toString
     val now = System.currentTimeMillis()
-    val meta = SessionMeta(id, name, now, now, hasUnread = false, agentName = agentName, folderId = folderId, safetyMode = safetyMode, flowName = flowName)
+    val meta = SessionMeta(
+      id,
+      name,
+      now,
+      now,
+      hasUnread = false,
+      agentName = agentName,
+      folderId = folderId,
+      safetyMode = safetyMode,
+      flowName = flowName
+    )
     indexRef.get.flatMap { case (activeId, sessions, folders) =>
       saveSessionMessages(id, initialMsgs) *>
         writeMetaSidecar(id, folderId) *>
         indexRef.set((activeId, meta :: sessions, folders)) *> saveIndex *> meta.pure[IO]
     }
+
+  end createSession
 
   /**
    * Get an existing session by ID, or create one with that exact ID.

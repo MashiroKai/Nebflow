@@ -43,6 +43,8 @@ class ToolLoaderSpec extends CatsEffectSuite:
     os.makeDir.all(dir)
     os.write(dir / s"$file.json", config.noSpaces)
 
+  end writeToolConfig
+
   private def writeTool(name: String, toolName: String = null): Unit =
     val actualName = if toolName == null then name else toolName
     writeToolConfig(toolsDir, name, actualName, s"Test tool $actualName")
@@ -209,8 +211,7 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- ToolLoader.reload()
       tool = ToolRegistry.TOOL_MAP("echo-tool")
       result <- tool.call(JsonObject.empty, ToolContext(projectRoot = tempRoot.toString))
-    yield
-      assertEquals(result, Right[ToolError, String](toolsDir.toString))
+    yield assertEquals(result, Right[ToolError, String](toolsDir.toString))
 
   test("TOOL_DIR is set per-layer for team tools"):
     for
@@ -220,8 +221,7 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- ToolLoader.reload()
       tool = ToolRegistry.TOOL_MAP("echo-team")
       result <- tool.call(JsonObject.empty, ToolContext(projectRoot = tempRoot.toString))
-    yield
-      assertEquals(result, Right[ToolError, String](teamTools.toString))
+    yield assertEquals(result, Right[ToolError, String](teamTools.toString))
 
   // --- Agent directory tools (three-layer agent dirs) ---
 
@@ -239,8 +239,18 @@ class ToolLoaderSpec extends CatsEffectSuite:
     for
       _ <- resetState()
       _ <- IO {
-        writeToolConfig(tempRoot / "teams" / "myteam" / "agents" / "helper" / "tools", "team-agent-tool", "team-agent-tool", "team-agent-desc")
-        writeToolConfig(tempRoot / "flows" / "myflow" / "agents" / "worker" / "tools", "flow-agent-tool", "flow-agent-tool", "flow-agent-desc")
+        writeToolConfig(
+          tempRoot / "teams" / "myteam" / "agents" / "helper" / "tools",
+          "team-agent-tool",
+          "team-agent-tool",
+          "team-agent-desc"
+        )
+        writeToolConfig(
+          tempRoot / "flows" / "myflow" / "agents" / "worker" / "tools",
+          "flow-agent-tool",
+          "flow-agent-tool",
+          "flow-agent-desc"
+        )
       }
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
@@ -258,8 +268,7 @@ class ToolLoaderSpec extends CatsEffectSuite:
       }
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
-    yield
-      assertEquals(map("dup").description, "team-desc", "Team scope tool should override agent-dir tool")
+    yield assertEquals(map("dup").description, "team-desc", "Team scope tool should override agent-dir tool")
 
   test("$TOOL_DIR is resolved to the config directory at load time"):
     for
@@ -268,8 +277,11 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- IO(writeToolConfig(agentTools, "deploy", "deploy", "deploy", "node $TOOL_DIR/deploy.cjs"))
       loaded <- ToolLoader.loadAll()
       cfg = loaded.collectFirst { case (c, _) if c.name == "deploy" => c }.get
-    yield
-      assertEquals(cfg.command, s"node ${agentTools.toString}/deploy.cjs", "$TOOL_DIR should be replaced with the absolute tools dir")
+    yield assertEquals(
+      cfg.command,
+      s"node ${agentTools.toString}/deploy.cjs",
+      "$TOOL_DIR should be replaced with the absolute tools dir"
+    )
 
   test("global tools still work with $TOOL_DIR replacement"):
     for
@@ -277,14 +289,22 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- IO(writeToolConfig(toolsDir, "g-tool", "g-tool", "echo", "echo $TOOL_DIR"))
       loaded <- ToolLoader.loadAll()
       cfg = loaded.collectFirst { case (c, _) if c.name == "g-tool" => c }.get
-    yield
-      assertEquals(cfg.command, s"echo ${toolsDir.toString}", "Global tool $TOOL_DIR should resolve to the global tools dir")
+    yield assertEquals(
+      cfg.command,
+      s"echo ${toolsDir.toString}",
+      "Global tool $TOOL_DIR should resolve to the global tools dir"
+    )
 
   // ============================================================
   // Subdirectory layout: tools/<name>/tool.json
   // ============================================================
 
-  private def writeSubDirTool(parentDir: os.Path, subDirName: String, toolName: String, command: String = "echo hello"): Unit =
+  private def writeSubDirTool(
+    parentDir: os.Path,
+    subDirName: String,
+    toolName: String,
+    command: String = "echo hello"
+  ): Unit =
     val subDir = parentDir / subDirName
     os.makeDir.all(subDir)
     val config = Json.obj(
@@ -295,14 +315,15 @@ class ToolLoaderSpec extends CatsEffectSuite:
     )
     os.write(subDir / "tool.json", config.noSpaces)
 
+  end writeSubDirTool
+
   test("subdirectory layout: tools/<name>/tool.json is loaded"):
     for
       _ <- resetState()
       _ <- IO(writeSubDirTool(toolsDir, "issue", "issue"))
       _ <- ToolLoader.reload()
       map = ToolRegistry.TOOL_MAP
-    yield
-      assert(map.contains("issue"), "subdirectory tool should be registered")
+    yield assert(map.contains("issue"), "subdirectory tool should be registered")
 
   test("subdirectory layout: $TOOL_DIR resolves to the subdirectory, not the parent"):
     for
@@ -310,9 +331,11 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- IO(writeSubDirTool(toolsDir, "issue", "issue", "bash $TOOL_DIR/issue.sh"))
       loaded <- ToolLoader.loadAll()
       cfg = loaded.collectFirst { case (c, _) if c.name == "issue" => c }.get
-    yield
-      assertEquals(cfg.command, s"bash ${toolsDir.toString}/issue/issue.sh",
-        "$TOOL_DIR should resolve to the subdirectory path")
+    yield assertEquals(
+      cfg.command,
+      s"bash ${toolsDir.toString}/issue/issue.sh",
+      "$TOOL_DIR should resolve to the subdirectory path"
+    )
 
   test("flat and subdirectory layouts coexist"):
     for
@@ -350,7 +373,9 @@ class ToolLoaderSpec extends CatsEffectSuite:
       _ <- IO(writeSubDirTool(agentTools, "deploy", "deploy", "node $TOOL_DIR/deploy.cjs"))
       loaded <- ToolLoader.loadAll()
       cfg = loaded.collectFirst { case (c, _) if c.name == "deploy" => c }.get
-    yield
-      assertEquals(cfg.command, s"node ${agentTools.toString}/deploy/deploy.cjs",
-        "$TOOL_DIR should resolve to the agent tool subdirectory")
+    yield assertEquals(
+      cfg.command,
+      s"node ${agentTools.toString}/deploy/deploy.cjs",
+      "$TOOL_DIR should resolve to the agent tool subdirectory"
+    )
 end ToolLoaderSpec

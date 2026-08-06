@@ -26,13 +26,17 @@ object ContextRefresher:
 
   /** Registered InjectionSources — for documentation and future management. */
   val promptSources: List[InjectionSource] = List(
-    systemPrefixForAll, systemPrefixForTeams, systemPrefixForFlows
+    systemPrefixForAll,
+    systemPrefixForTeams,
+    systemPrefixForFlows
   )
 
   private val detailRefPattern = "→([a-zA-Z0-9]{4,12})".r
 
-  /** System prefix for ALL agents: ~/.nebflow/prompts/system-prefix-for-all.md
-   *  with JAR fallback (/system-prefix-for-all.md). */
+  /**
+   * System prefix for ALL agents: ~/.nebflow/prompts/system-prefix-for-all.md
+   *  with JAR fallback (/system-prefix-for-all.md).
+   */
   val systemPrefixForAll: FileInjectionSource =
     val jarFallback =
       val is = getClass.getResourceAsStream("/system-prefix-for-all.md")
@@ -55,16 +59,22 @@ object ContextRefresher:
       fallback = legacyFallback
     )
 
-  /** System prefix for TEAM agents only: ~/.nebflow/prompts/system-prefix-for-teams.md
-   *  No JAR fallback — empty if file doesn't exist. */
+  end systemPrefixForAll
+
+  /**
+   * System prefix for TEAM agents only: ~/.nebflow/prompts/system-prefix-for-teams.md
+   *  No JAR fallback — empty if file doesn't exist.
+   */
   val systemPrefixForTeams: FileInjectionSource =
     new FileInjectionSource(
       "system-prefix-for-teams",
       PathUtil.dataRoot / "prompts" / "system-prefix-for-teams.md"
     )
 
-  /** System prefix for FLOW agents only: ~/.nebflow/prompts/system-prefix-for-flows.md
-   *  No JAR fallback — empty if file doesn't exist. */
+  /**
+   * System prefix for FLOW agents only: ~/.nebflow/prompts/system-prefix-for-flows.md
+   *  No JAR fallback — empty if file doesn't exist.
+   */
   val systemPrefixForFlows: FileInjectionSource =
     new FileInjectionSource(
       "system-prefix-for-flows",
@@ -359,10 +369,12 @@ object ContextRefresher:
   ): IO[Option[String]] =
     resolveProjectRoot(state.folderId, resources, agentDef.name)
 
-  /** Build Team catalog for system prompt injection.
+  /**
+   * Build Team catalog for system prompt injection.
    *  Detects team membership from the session's FlowMembership registration.
    *  - Team agents: see their own team's members + flows (progressive disclosure)
-   *  - Nebula / standalone: see global Teams & Flows overview */
+   *  - Nebula / standalone: see global Teams & Flows overview
+   */
   private def buildTeamCatalogForSession(sessionId: Option[String]): IO[String] =
     sessionId match
       case Some(sid) =>
@@ -376,12 +388,13 @@ object ContextRefresher:
                 agents <- EntityLoader.listAgents()
                 flows <- EntityLoader.listFlows()
                 rules <- EntityLoader.loadTeamRules(teamName)
-              yield team.map { t =>
-                val catalog = TeamCatalog.buildCatalog(t, agents, flows)
-                if rules.nonEmpty then
-                  s"$catalog\n\n=== Team Rules: ${t.name} ===\n$rules\n=== End Team Rules ==="
-                else catalog
-              }.getOrElse("")
+              yield team
+                .map { t =>
+                  val catalog = TeamCatalog.buildCatalog(t, agents, flows)
+                  if rules.nonEmpty then s"$catalog\n\n=== Team Rules: ${t.name} ===\n$rules\n=== End Team Rules ==="
+                  else catalog
+                }
+                .getOrElse("")
             case None =>
               // Nebula or standalone: show global catalog
               for

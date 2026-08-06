@@ -184,36 +184,36 @@ $prompt"""
                 if lifecycle == "persistent" then
                   spawnPersistent(
                     agentDef = agentDef,
-                      prompt = adjustedPrompt,
-                      description = description,
-                      taskDescription = taskDescription,
-                      agentName = agentName,
-                      initialMessages = initialMessages,
-                      system = system,
-                      resources = resources,
-                      parentDepth = ctx.depth,
-                      parentRef = ctx.agentActorRef,
-                      wsSend = ctx.wsSend,
-                      projectRoot = ctx.projectRoot,
-                      parentSessionId = ctx.sessionId,
-                      safetyMode = safetyMode
-                    )
-                  else
-                    spawnBackground(
-                      agentDef = agentDef,
-                      prompt = adjustedPrompt,
-                      description = description,
-                      agentName = agentName,
-                      initialMessages = initialMessages,
-                      system = system,
-                      resources = resources,
-                      parentDepth = ctx.depth,
-                      parentRef = ctx.agentActorRef,
-                      wsSend = ctx.wsSend,
-                      projectRoot = ctx.projectRoot,
-                      parentSessionId = ctx.sessionId,
-                      safetyMode = safetyMode
-                    )
+                    prompt = adjustedPrompt,
+                    description = description,
+                    taskDescription = taskDescription,
+                    agentName = agentName,
+                    initialMessages = initialMessages,
+                    system = system,
+                    resources = resources,
+                    parentDepth = ctx.depth,
+                    parentRef = ctx.agentActorRef,
+                    wsSend = ctx.wsSend,
+                    projectRoot = ctx.projectRoot,
+                    parentSessionId = ctx.sessionId,
+                    safetyMode = safetyMode
+                  )
+                else
+                  spawnBackground(
+                    agentDef = agentDef,
+                    prompt = adjustedPrompt,
+                    description = description,
+                    agentName = agentName,
+                    initialMessages = initialMessages,
+                    system = system,
+                    resources = resources,
+                    parentDepth = ctx.depth,
+                    parentRef = ctx.agentActorRef,
+                    wsSend = ctx.wsSend,
+                    projectRoot = ctx.projectRoot,
+                    parentSessionId = ctx.sessionId,
+                    safetyMode = safetyMode
+                  )
               }
             case _ =>
               IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))

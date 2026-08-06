@@ -239,17 +239,23 @@ class OpenAiAdapterSpec extends CatsEffectSuite:
   // ====== hasReasoningContent (thinking-only non-streaming responses) ======
 
   test("hasReasoningContent: empty content + reasoning_content is NOT an empty response") {
-    val json = parse("""{"choices":[{"message":{"content":null,"reasoning_content":"deep thinking..."},"finish_reason":"length"}]}""").toOption.get
+    val json = parse(
+      """{"choices":[{"message":{"content":null,"reasoning_content":"deep thinking..."},"finish_reason":"length"}]}"""
+    ).toOption.get
     assert(adapter.hasReasoningContent(json), "reasoning_content should mark the response as non-empty")
   }
 
   test("hasReasoningContent: empty content + thinking field is NOT an empty response") {
-    val json = parse("""{"choices":[{"message":{"content":"","thinking":"reasoning trace"},"finish_reason":"length"}]}""").toOption.get
+    val json = parse(
+      """{"choices":[{"message":{"content":"","thinking":"reasoning trace"},"finish_reason":"length"}]}"""
+    ).toOption.get
     assert(adapter.hasReasoningContent(json), "thinking field should mark the response as non-empty")
   }
 
   test("hasReasoningContent: whitespace-only reasoning counts as empty") {
-    val json = parse("""{"choices":[{"message":{"content":"","reasoning_content":"   "},"finish_reason":"length"}]}""").toOption.get
+    val json = parse(
+      """{"choices":[{"message":{"content":"","reasoning_content":"   "},"finish_reason":"length"}]}"""
+    ).toOption.get
     assert(!adapter.hasReasoningContent(json), "blank reasoning should not rescue an empty response")
   }
 

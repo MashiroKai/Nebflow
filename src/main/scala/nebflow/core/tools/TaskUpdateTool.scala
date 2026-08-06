@@ -154,9 +154,7 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
           case multiple =>
             // Batch update — apply same updates to each task
             multiple
-              .traverse(id =>
-                store.update(sessionId, id, updates).attempt.map(id -> _)
-              )
+              .traverse(id => store.update(sessionId, id, updates).attempt.map(id -> _))
               .flatMap { results =>
                 val successCount = results.count { case (_, Right(Some(_))) => true; case _ => false }
                 val notFoundIds = results.collect { case (id, Right(None)) => id }
@@ -180,6 +178,7 @@ Remove dependency:  {"taskId": "2", "removeBlockedBy": ["1"]}"""
                       Right(parts.mkString(". "))
                 }
               }
+        end match
       case (None, _) => IO.pure(Left(ToolError("No task store available")))
       case (_, None) => IO.pure(Left(ToolError("No session ID available")))
 

@@ -133,7 +133,8 @@ object AgentCommand:
 
   case class UpdateGitBranch(branch: Option[String]) extends AgentCommand
 
-  /** Supervisor-triggered restart. Levels:
+  /**
+   * Supervisor-triggered restart. Levels:
    *  - Soft: cancel current work, re-dispatch LLM call (same messages)
    *  - Rollback: truncate last tool call pair, inject error, re-dispatch
    *  - Prune: (future) context prune + restart
@@ -233,152 +234,152 @@ enum AgentStreamEvent:
           case None => identity
       else identity
     withNodeSession(this match
-    case TextDelta(text) =>
-      if isSubagent then
-        Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> agentId.asJson, "delta" -> text.asJson)
-      else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
-    case ToolStart(label) =>
-      if isSubagent then
-        Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
-      else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
-    case ToolEnd(label, summary, content, isError, input) =>
-      val base =
+      case TextDelta(text) =>
+        if isSubagent then
+          Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> agentId.asJson, "delta" -> text.asJson)
+        else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
+      case ToolStart(label) =>
+        if isSubagent then
+          Json.obj("type" -> "agentToolStart".asJson, "agentId" -> agentId.asJson, "label" -> label.asJson)
+        else Json.obj("type" -> "toolStart".asJson, "sessionId" -> sessionId.asJson, "label" -> label.asJson)
+      case ToolEnd(label, summary, content, isError, input) =>
+        val base =
+          if isSubagent then
+            Json.obj(
+              "type" -> "agentToolEnd".asJson,
+              "agentId" -> agentId.asJson,
+              "label" -> label.asJson,
+              "summary" -> summary.asJson,
+              "content" -> content.asJson,
+              "isError" -> isError.asJson
+            )
+          else
+            Json.obj(
+              "type" -> "toolEnd".asJson,
+              "sessionId" -> sessionId.asJson,
+              "label" -> label.asJson,
+              "summary" -> summary.asJson,
+              "content" -> content.asJson,
+              "isError" -> isError.asJson
+            )
+        input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
+      case AgentStart(name, agentType, taskDescription) =>
+        val base = Json.obj(
+          "type" -> "agentStart".asJson,
+          "agentId" -> agentId.asJson,
+          "name" -> name.asJson,
+          "agentType" -> agentType.asJson
+        )
+        taskDescription.fold(base)(desc => base.deepMerge(Json.obj("taskDescription" -> desc.asJson)))
+      case AgentEnd(name) => Json.obj("type" -> "agentEnd".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
+      case Thinking =>
+        if isSubagent then Json.obj("type" -> "agentThinking".asJson, "agentId" -> agentId.asJson)
+        else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
+      case ToolCallDetected(name) =>
+        if isSubagent then
+          Json.obj("type" -> "agentToolCallDetected".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
+        else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
+      case RetryStatus(message) =>
+        if isSubagent then
+          Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
+        else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
+      case Done(model, contextWindow, inputTokens, compactThreshold) =>
+        val base =
+          if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
+          else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
+        val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
+        val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
+        val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
+        compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
+      case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
         if isSubagent then
           Json.obj(
-            "type" -> "agentToolEnd".asJson,
-            "agentId" -> agentId.asJson,
-            "label" -> label.asJson,
-            "summary" -> summary.asJson,
-            "content" -> content.asJson,
-            "isError" -> isError.asJson
+            "type" -> "usageUpdate".asJson,
+            "sessionId" -> sessionId.asJson,
+            "nodeSessionId" -> sessionId.asJson,
+            "inputTokens" -> inputTokens.asJson,
+            "contextWindow" -> contextWindow.asJson,
+            "compactThreshold" -> compactThreshold.asJson
           )
         else
           Json.obj(
-            "type" -> "toolEnd".asJson,
+            "type" -> "usageUpdate".asJson,
             "sessionId" -> sessionId.asJson,
-            "label" -> label.asJson,
-            "summary" -> summary.asJson,
-            "content" -> content.asJson,
-            "isError" -> isError.asJson
+            "inputTokens" -> inputTokens.asJson,
+            "contextWindow" -> contextWindow.asJson,
+            "compactThreshold" -> compactThreshold.asJson
           )
-      input.fold(base)(i => base.deepMerge(Json.obj("input" -> Json.fromJsonObject(i))))
-    case AgentStart(name, agentType, taskDescription) =>
-      val base = Json.obj(
-        "type" -> "agentStart".asJson,
-        "agentId" -> agentId.asJson,
-        "name" -> name.asJson,
-        "agentType" -> agentType.asJson
-      )
-      taskDescription.fold(base)(desc => base.deepMerge(Json.obj("taskDescription" -> desc.asJson)))
-    case AgentEnd(name) => Json.obj("type" -> "agentEnd".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
-    case Thinking =>
-      if isSubagent then Json.obj("type" -> "agentThinking".asJson, "agentId" -> agentId.asJson)
-      else Json.obj("type" -> "thinking".asJson, "sessionId" -> sessionId.asJson)
-    case ToolCallDetected(name) =>
-      if isSubagent then
-        Json.obj("type" -> "agentToolCallDetected".asJson, "agentId" -> agentId.asJson, "name" -> name.asJson)
-      else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
-    case RetryStatus(message) =>
-      if isSubagent then
-        Json.obj("type" -> "agentRetryStatus".asJson, "agentId" -> agentId.asJson, "message" -> message.asJson)
-      else Json.obj("type" -> "retryStatus".asJson, "sessionId" -> sessionId.asJson, "message" -> message.asJson)
-    case Done(model, contextWindow, inputTokens, compactThreshold) =>
-      val base =
-        if isSubagent then Json.obj("type" -> "agentDone".asJson, "agentId" -> agentId.asJson)
-        else Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
-      val withModel = model.fold(base)(m => base.deepMerge(Json.obj("model" -> m.asJson)))
-      val withCw = contextWindow.fold(withModel)(cw => withModel.deepMerge(Json.obj("contextWindow" -> cw.asJson)))
-      val withIt = inputTokens.fold(withCw)(it => withCw.deepMerge(Json.obj("inputTokens" -> it.asJson)))
-      compactThreshold.fold(withIt)(ct => withIt.deepMerge(Json.obj("compactThreshold" -> ct.asJson)))
-    case UsageUpdate(inputTokens, contextWindow, compactThreshold) =>
-      if isSubagent then
-        Json.obj(
-          "type" -> "usageUpdate".asJson,
-          "sessionId" -> sessionId.asJson,
-          "nodeSessionId" -> sessionId.asJson,
-          "inputTokens" -> inputTokens.asJson,
-          "contextWindow" -> contextWindow.asJson,
-          "compactThreshold" -> compactThreshold.asJson
-        )
-      else
-        Json.obj(
-          "type" -> "usageUpdate".asJson,
-          "sessionId" -> sessionId.asJson,
-          "inputTokens" -> inputTokens.asJson,
-          "contextWindow" -> contextWindow.asJson,
-          "compactThreshold" -> compactThreshold.asJson
-        )
-    case CompactStart(mode, inputTokens, threshold) =>
-      if isSubagent then
-        Json.obj(
-          "type" -> "agentCompactStart".asJson,
-          "agentId" -> agentId.asJson,
-          "mode" -> mode.asJson,
-          "inputTokens" -> inputTokens.asJson,
-          "threshold" -> threshold.asJson
-        )
-      else
-        Json.obj(
-          "type" -> "compactStart".asJson,
-          "sessionId" -> sessionId.asJson,
-          "mode" -> mode.asJson,
-          "inputTokens" -> inputTokens.asJson,
-          "threshold" -> threshold.asJson
-        )
-    case CompactComplete(before, after, reportPath) =>
-      val base =
+      case CompactStart(mode, inputTokens, threshold) =>
         if isSubagent then
           Json.obj(
-            "type" -> "agentCompactComplete".asJson,
+            "type" -> "agentCompactStart".asJson,
             "agentId" -> agentId.asJson,
-            "before" -> before.asJson,
-            "after" -> after.asJson
+            "mode" -> mode.asJson,
+            "inputTokens" -> inputTokens.asJson,
+            "threshold" -> threshold.asJson
           )
         else
           Json.obj(
-            "type" -> "compactComplete".asJson,
+            "type" -> "compactStart".asJson,
             "sessionId" -> sessionId.asJson,
-            "before" -> before.asJson,
-            "after" -> after.asJson
+            "mode" -> mode.asJson,
+            "inputTokens" -> inputTokens.asJson,
+            "threshold" -> threshold.asJson
           )
-      reportPath.fold(base)(p => base.deepMerge(Json.obj("reportPath" -> p.asJson)))
-    case CompactFailed(reason, attempt, maxAttempts) =>
-      if isSubagent then
+      case CompactComplete(before, after, reportPath) =>
+        val base =
+          if isSubagent then
+            Json.obj(
+              "type" -> "agentCompactComplete".asJson,
+              "agentId" -> agentId.asJson,
+              "before" -> before.asJson,
+              "after" -> after.asJson
+            )
+          else
+            Json.obj(
+              "type" -> "compactComplete".asJson,
+              "sessionId" -> sessionId.asJson,
+              "before" -> before.asJson,
+              "after" -> after.asJson
+            )
+        reportPath.fold(base)(p => base.deepMerge(Json.obj("reportPath" -> p.asJson)))
+      case CompactFailed(reason, attempt, maxAttempts) =>
+        if isSubagent then
+          Json.obj(
+            "type" -> "agentCompactFailed".asJson,
+            "agentId" -> agentId.asJson,
+            "reason" -> reason.asJson,
+            "attempt" -> attempt.asJson,
+            "maxAttempts" -> maxAttempts.asJson
+          )
+        else
+          Json.obj(
+            "type" -> "compactFailed".asJson,
+            "sessionId" -> sessionId.asJson,
+            "reason" -> reason.asJson,
+            "attempt" -> attempt.asJson,
+            "maxAttempts" -> maxAttempts.asJson
+          )
+      case BackgroundTaskUpdate(taskId, description, status) =>
         Json.obj(
-          "type" -> "agentCompactFailed".asJson,
-          "agentId" -> agentId.asJson,
-          "reason" -> reason.asJson,
-          "attempt" -> attempt.asJson,
-          "maxAttempts" -> maxAttempts.asJson
+          "type" -> "backgroundTaskUpdate".asJson,
+          "taskId" -> taskId.asJson,
+          "description" -> description.asJson,
+          "status" -> status.asJson,
+          "sessionId" -> sessionId.asJson
         )
-      else
-        Json.obj(
-          "type" -> "compactFailed".asJson,
-          "sessionId" -> sessionId.asJson,
-          "reason" -> reason.asJson,
-          "attempt" -> attempt.asJson,
-          "maxAttempts" -> maxAttempts.asJson
-        )
-    case BackgroundTaskUpdate(taskId, description, status) =>
-      Json.obj(
-        "type" -> "backgroundTaskUpdate".asJson,
-        "taskId" -> taskId.asJson,
-        "description" -> description.asJson,
-        "status" -> status.asJson,
-        "sessionId" -> sessionId.asJson
-      )
-    case ExternalEventReceived(source, eventType, correlationId) =>
-      val base =
-        Json.obj("type" -> "externalEventReceived".asJson, "source" -> source.asJson, "eventType" -> eventType.asJson)
-      val withSession =
+      case ExternalEventReceived(source, eventType, correlationId) =>
+        val base =
+          Json.obj("type" -> "externalEventReceived".asJson, "source" -> source.asJson, "eventType" -> eventType.asJson)
+        val withSession =
+          if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
+          else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
+        correlationId.fold(withSession)(id => withSession.deepMerge(Json.obj("correlationId" -> id.asJson)))
+      case Interrupted =>
+        val base = Json.obj("type" -> "interrupted".asJson)
         if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
-        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
-      correlationId.fold(withSession)(id => withSession.deepMerge(Json.obj("correlationId" -> id.asJson)))
-    case Interrupted =>
-      val base = Json.obj("type" -> "interrupted".asJson)
-      if isSubagent then base.deepMerge(Json.obj("agentId" -> agentId.asJson))
-      else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson))
-    )
+        else base.deepMerge(Json.obj("sessionId" -> sessionId.asJson)))
+  end toJson
 end AgentStreamEvent
 
 case class AgentInfo(
@@ -664,11 +665,14 @@ extension (s: AgentState)
   def withMessages(msgs: List[Message]): AgentState = s.copy(execution = s.execution.copy(messages = msgs))
   def withStatus(st: AgentStatus): AgentState = s.copy(execution = s.execution.copy(status = st))
   def withTurnIdx(idx: Int): AgentState = s.copy(execution = s.execution.copy(turnIdx = idx))
+
   def withTurnStart(count: Int): AgentState =
     s.copy(execution = s.execution.copy(turnStartMessageCount = count))
   def withCurrentTurnId(id: Long): AgentState = s.copy(execution = s.execution.copy(currentTurnId = id))
+
   def withMailUsedThisTurn(b: Boolean): AgentState =
     s.copy(execution = s.execution.copy(mailUsedThisTurn = b))
+
   def withMailReminders(n: Int): AgentState =
     s.copy(execution = s.execution.copy(mailReminders = n))
 
@@ -704,7 +708,9 @@ extension (s: AgentState)
   def lastDreamAt: Option[Long] = s.session.lastDreamAt
   def lastDreamMessageCount: Int = s.session.lastDreamMessageCount
   def withLastDreamAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastDreamAt = Some(ts)))
-  def withLastDreamMessageCount(count: Int): AgentState = s.copy(session = s.session.copy(lastDreamMessageCount = count))
+
+  def withLastDreamMessageCount(count: Int): AgentState =
+    s.copy(session = s.session.copy(lastDreamMessageCount = count))
   def lastExperienceAt: Option[Long] = s.session.lastExperienceAt
   def withLastExperienceAt(ts: Long): AgentState = s.copy(session = s.session.copy(lastExperienceAt = Some(ts)))
 

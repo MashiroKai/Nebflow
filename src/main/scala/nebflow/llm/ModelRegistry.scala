@@ -24,6 +24,7 @@ object ModelRegistry:
     vision: Boolean = false,
     capabilities: List[String] = Nil
   )
+
   object ModelEntry:
     given Decoder[ModelEntry] = deriveDecoder[ModelEntry]
     given Encoder[ModelEntry] = deriveEncoder[ModelEntry]
@@ -32,6 +33,7 @@ object ModelRegistry:
     models: Map[String, ModelEntry] = Map.empty,
     capabilityTags: Map[String, CapabilityTag] = Map.empty
   )
+
   object ModelRegistryFile:
     given Decoder[ModelRegistryFile] = deriveDecoder[ModelRegistryFile]
     given Encoder[ModelRegistryFile] = deriveEncoder[ModelRegistryFile]
@@ -40,6 +42,7 @@ object ModelRegistry:
     label: String = "",
     description: String = ""
   )
+
   object CapabilityTag:
     given Decoder[CapabilityTag] = deriveDecoder[CapabilityTag]
     given Encoder[CapabilityTag] = deriveEncoder[CapabilityTag]

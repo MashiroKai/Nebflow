@@ -17,6 +17,7 @@ case class DaemonConfig(
 
 object DaemonConfig:
   given Encoder[DaemonConfig] = deriveEncoder
+
   given Decoder[DaemonConfig] = Decoder.instance { c =>
     for
       id <- c.downField("id").as[String]
@@ -30,13 +31,17 @@ object DaemonConfig:
       autoStart <- c.downField("autoStart").as[Option[Boolean]]
       restartOnExit <- c.downField("restartOnExit").as[Option[Boolean]]
     yield DaemonConfig(
-      id, name, command,
+      id,
+      name,
+      command,
       cwd,
       env.getOrElse(Map.empty),
       autoStart.getOrElse(false),
       restartOnExit.getOrElse(false)
     )
   }
+
+end DaemonConfig
 
 /** Runtime status of a managed daemon. */
 enum DaemonStatus derives Encoder, Decoder:

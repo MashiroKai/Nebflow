@@ -344,15 +344,28 @@ object AgentActor extends AgentCore with AgentSession:
             lastActivity <- resources.lastWsActivity.get
             now = System.currentTimeMillis()
             shouldDream = nebflow.core.compact.DreamMode.shouldTriggerDream(
-              now, pattern, lastActivity, state.messages.size, state.lastDreamAt, state.lastDreamMessageCount
+              now,
+              pattern,
+              lastActivity,
+              state.messages.size,
+              state.lastDreamAt,
+              state.lastDreamMessageCount
             )
-            result <- if shouldDream then startDreamMode(agentDef, resources, depth, parentRef, state)
-                      else IO.pure(idle(agentDef, resources, depth, parentRef, state))
+            result <-
+              if shouldDream then startDreamMode(agentDef, resources, depth, parentRef, state)
+              else IO.pure(idle(agentDef, resources, depth, parentRef, state))
           yield result
 
       case AgentCommand.DreamComplete(facts, msgCount) =>
-        IO.pure(idle(agentDef, resources, depth, parentRef,
-          state.withLastDreamAt(System.currentTimeMillis()).withLastDreamMessageCount(msgCount)))
+        IO.pure(
+          idle(
+            agentDef,
+            resources,
+            depth,
+            parentRef,
+            state.withLastDreamAt(System.currentTimeMillis()).withLastDreamMessageCount(msgCount)
+          )
+        )
 
       case AgentCommand.StartPlan(task) =>
         logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "plan-start", s"task=${task.take(60)}")
@@ -401,8 +414,7 @@ object AgentActor extends AgentCore with AgentSession:
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
       case AgentCommand.ImmediateInput(text, blocks) =>
-        for
-          _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0)
+        for _ <- ctx.self ! AgentCommand.UserInput(text, None, None, blocks, 0)
         yield idle(agentDef, resources, depth, parentRef, state)
 
       // Supervisor restart in idle state
@@ -412,11 +424,15 @@ object AgentActor extends AgentCore with AgentSession:
           case RestartLevel.Rollback => rollbackLastToolCall(state)
           case _ => state
         for
-          _ <- state.wsSend(Json.obj(
-            "type" -> "agentRestarted".asJson,
-            "sessionId" -> state.sessionId.asJson,
-            "level" -> level.toString.asJson
-          )).handleErrorWith(_ => IO.unit)
+          _ <- state
+            .wsSend(
+              Json.obj(
+                "type" -> "agentRestarted".asJson,
+                "sessionId" -> state.sessionId.asJson,
+                "level" -> level.toString.asJson
+              )
+            )
+            .handleErrorWith(_ => IO.unit)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState, None)
         yield result
 
@@ -644,7 +660,8 @@ object AgentActor extends AgentCore with AgentSession:
           val isSubagent = depth > 0
           // Emit usageUpdate: use provider-reported tokens if available, otherwise
           // estimate from message history so the UI context bar always updates.
-          val effectiveTokens = updatedState.latestUsage.map(_.inputTokens)
+          val effectiveTokens = updatedState.latestUsage
+            .map(_.inputTokens)
             .filter(_ > 0)
             .getOrElse(nebflow.core.compact.TokenEstimator.estimate(updatedState.messages))
           val usageEvent: IO[Unit] =
@@ -695,9 +712,8 @@ object AgentActor extends AgentCore with AgentSession:
             AgentError(ctx.self.path.name, agentDef.name, depth, AgentErrorType.LlmFailed, error.getMessage)
           val errMsg = error match
             case e: FallbackExhaustedError =>
-              val attemptSummaries = e.attempts.map(a =>
-                s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
-              )
+              val attemptSummaries =
+                e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
               NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
             case e: ToolPipelineError =>
               e.message
@@ -755,9 +771,9 @@ object AgentActor extends AgentCore with AgentSession:
         val imageBlocks = tc.results.flatMap { (call, r) =>
           r.imageBlocks.getOrElse(List.empty[ContentBlock.Image])
         }
-        val imageMsgs = if imageBlocks.nonEmpty then
-          List(Message(MessageRole.User, Right(imageBlocks)))
-        else Nil
+        val imageMsgs =
+          if imageBlocks.nonEmpty then List(Message(MessageRole.User, Right(imageBlocks)))
+          else Nil
         val baseMessages = tc.compactedMessages.getOrElse(state.messages)
         val pendingEvents = state.execution.pendingEvents
         val eventMessages = if pendingEvents.nonEmpty then
@@ -778,7 +794,10 @@ object AgentActor extends AgentCore with AgentSession:
         val immediateMessages = immInputOpt match
           case Some(imm) =>
             logAgentEvent(
-              agentDef, depth, state.sessionId, state.sessionName,
+              agentDef,
+              depth,
+              state.sessionId,
+              state.sessionName,
               "immediate-input-injected-at-tools-complete",
               s"text=${imm.text.take(60)} remaining=${remainingImmInputs.size}"
             )
@@ -786,7 +805,8 @@ object AgentActor extends AgentCore with AgentSession:
               case Some(blocks) if blocks.nonEmpty => Message(MessageRole.User, Right(blocks))
               case _ => Message(MessageRole.User, Left(imm.text)))
           case None => Nil
-        val newMessages = baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
+        val newMessages =
+          baseMessages ++ List(assistantMsg, resultMsg) ++ imageMsgs ++ eventMessages ++ immediateMessages
         // Increment delegate count for Delegate calls
         val delegateIncrement = toolCalls.count(c => c.name == "Delegate")
         val newDelegateCount = state.delegateCount + delegateIncrement
@@ -882,13 +902,18 @@ object AgentActor extends AgentCore with AgentSession:
               rollbackLastToolCall(state.resetForInterrupt.withPendingCompaction(None))
             case _ =>
               state.resetForInterrupt.withPendingCompaction(None)
-          _ <- state.wsSend(Json.obj(
-            "type" -> "agentRestarted".asJson,
-            "sessionId" -> state.sessionId.asJson,
-            "level" -> level.toString.asJson
-          )).handleErrorWith(_ => IO.unit)
+          _ <- state
+            .wsSend(
+              Json.obj(
+                "type" -> "agentRestarted".asJson,
+                "sessionId" -> state.sessionId.asJson,
+                "level" -> level.toString.asJson
+              )
+            )
+            .handleErrorWith(_ => IO.unit)
           result <- pipeLlmCall(agentDef, resources, depth, parentRef, restartState, None)
         yield result
+        end for
 
       // --- Stop ---
       case AgentCommand.Stop(_) =>
@@ -1257,23 +1282,27 @@ object AgentActor extends AgentCore with AgentSession:
 
   /** Check if the conversation contains any SUCCESSFUL Mail tool call. */
   private def hasUsedMail(messages: List[Message]): Boolean =
-    val mailToolUseIds = messages.flatMap(_.content match
-      case Right(blocks) => blocks.collect {
-        case ContentBlock.ToolUse(id, name, _) if name == "Mail" => id
-      }
-      case _ => Nil
-    ).toSet
+    val mailToolUseIds = messages
+      .flatMap(_.content match
+        case Right(blocks) =>
+          blocks.collect {
+            case ContentBlock.ToolUse(id, name, _) if name == "Mail" => id
+          }
+        case _ => Nil)
+      .toSet
     if mailToolUseIds.isEmpty then false
     else
       // At least one Mail result must NOT be an error
       messages.exists(_.content match
-        case Right(blocks) => blocks.exists {
-          case tr: ContentBlock.ToolResult if mailToolUseIds.contains(tr.toolUseId) =>
-            !tr.isError.getOrElse(false)
-          case _ => false
-        }
-        case _ => false
-      )
+        case Right(blocks) =>
+          blocks.exists {
+            case tr: ContentBlock.ToolResult if mailToolUseIds.contains(tr.toolUseId) =>
+              !tr.isError.getOrElse(false)
+            case _ => false
+          }
+        case _ => false)
+
+  end hasUsedMail
 
   /** Inject a system reminder telling the agent to use Mail, then trigger a new turn. */
   private def handleMissingMail(
@@ -1292,18 +1321,24 @@ object AgentActor extends AgentCore with AgentSession:
       case (Some(t), txt) =>
         Right(List(ContentBlock.Thinking(t, result.thinkingSignature), ContentBlock.Text(txt)))
     val assistantMsg = Message(MessageRole.Assistant, assistantContent)
-    val reminderMsg = Message(MessageRole.User, Left(
-      "<system-reminder>\nYou must use the Mail tool to report your result before finishing. Call Mail now with your findings.\n</system-reminder>"
-    ))
+    val reminderMsg = Message(
+      MessageRole.User,
+      Left(
+        "<system-reminder>\nYou must use the Mail tool to report your result before finishing. Call Mail now with your findings.\n</system-reminder>"
+      )
+    )
     val newMessages = state.messages ++ List(assistantMsg, reminderMsg)
-    val updatedState = state.copy(execution = state.execution.copy(messages = newMessages, status = AgentStatus.Processing))
+    val updatedState =
+      state.copy(execution = state.execution.copy(messages = newMessages, status = AgentStatus.Processing))
     pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, replyTo)
+  end handleMissingMail
 
   // ============================================================
   // Supervisor restart helpers
   // ============================================================
 
-  /** Rollback the last tool call: truncate messages from the last ToolUse
+  /**
+   * Rollback the last tool call: truncate messages from the last ToolUse
    *  Assistant message onwards, inject a supervisor error message.
    *  If no tool call is found, returns state unchanged.
    */
@@ -1327,19 +1362,27 @@ object AgentActor extends AgentCore with AgentSession:
       // Truncate from the tool call onwards
       val truncated = messages.take(lastToolUseIdx)
       // Inject supervisor message
-      val supervisorMsg = Message(MessageRole.User, Left(
-        s"[SUPERVISOR] Your last action ($toolName) was rolled back because it caused a problem. " +
-          "Do not repeat the same approach. Try a different strategy."
-      ))
+      val supervisorMsg = Message(
+        MessageRole.User,
+        Left(
+          s"[SUPERVISOR] Your last action ($toolName) was rolled back because it caused a problem. " +
+            "Do not repeat the same approach. Try a different strategy."
+        )
+      )
       state.withMessages(truncated :+ supervisorMsg)
+    end if
+  end rollbackLastToolCall
 
   // ============================================================
   // Dream mode
   // ============================================================
 
   private def startDreamMode(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "dream-start", s"msgs=${state.messages.size}")
     val jobId = s"dream-${java.util.UUID.randomUUID().toString.take(8)}"
@@ -1354,16 +1397,31 @@ object AgentActor extends AgentCore with AgentSession:
       result <- pipeLlmCall(agentDef, resources, depth, parentRef, dreamState, None)
     yield result
 
+  end startDreamMode
+
   private def handleDreamResponse(
-    agentDef: AgentDef, resources: SharedResources, depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]], state: AgentState, responseText: String
+    agentDef: AgentDef,
+    resources: SharedResources,
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    responseText: String
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
     val facts = nebflow.core.compact.DreamMode.parseResponse(responseText)
     val msgCountAtDream = state.messages.size
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "dream-complete",
-      s"facts=${facts.size} msgs=$msgCountAtDream")
+    logAgentEvent(
+      agentDef,
+      depth,
+      state.sessionId,
+      state.sessionName,
+      "dream-complete",
+      s"facts=${facts.size} msgs=$msgCountAtDream"
+    )
     val compactedMessages = nebflow.core.compact.FullCompact.parseResponse(
-      responseText, state.messages, state.projectRoot.getOrElse(""), Nil
+      responseText,
+      state.messages,
+      state.projectRoot.getOrElse(""),
+      Nil
     ) match
       case Right(msgs) => msgs
       case Left(_) =>
@@ -1371,24 +1429,44 @@ object AgentActor extends AgentCore with AgentSession:
         state.messages.takeRight(10) ++ List(summary)
     val archiveIO = state.sessionId match
       case Some(sid) =>
-        resources.historyArchiver.archiveCompaction(
-          sessionId = sid, sessionName = state.sessionName, agentName = agentDef.name,
-          before = state.messages, after = compactedMessages, mode = "dream",
-          extra = Map("facts" -> facts.mkString("; "))
-        ).void.handleErrorWith(_ => IO.unit)
+        resources.historyArchiver
+          .archiveCompaction(
+            sessionId = sid,
+            sessionName = state.sessionName,
+            agentName = agentDef.name,
+            before = state.messages,
+            after = compactedMessages,
+            mode = "dream",
+            extra = Map("facts" -> facts.mkString("; "))
+          )
+          .void
+          .handleErrorWith(_ => IO.unit)
       case None => IO.unit
     for
       _ <- ctx.forkTurn(archiveIO)
       dreamPattern <- nebflow.core.UsageTracker.analyzePattern()
-      _ <- nebflow.core.compact.DreamMode.updateMemory(facts, dreamPattern)
+      _ <- nebflow.core.compact.DreamMode
+        .updateMemory(facts, dreamPattern)
         .handleErrorWith(e =>
-          IO(NebflowLogger.forName("nebflow.agent").warn(s"Dream memory update failed: ${e.getMessage}")).void)
+          IO(NebflowLogger.forName("nebflow.agent").warn(s"Dream memory update failed: ${e.getMessage}")).void
+        )
       _ <- emitStreamIO(state.wsSend, AgentStreamEvent.Done(None, None, None, None), false, state.sessionId)
         .handleErrorWith(_ => IO.unit)
-    yield idle(agentDef, resources, depth, parentRef,
-      state.withMessages(compactedMessages).withPendingCompaction(None).withCompactionFailures(0)
+    yield idle(
+      agentDef,
+      resources,
+      depth,
+      parentRef,
+      state
+        .withMessages(compactedMessages)
+        .withPendingCompaction(None)
+        .withCompactionFailures(0)
         .withLatestUsage(None)
-        .withLastDreamAt(System.currentTimeMillis()).withLastDreamMessageCount(msgCountAtDream))
+        .withLastDreamAt(System.currentTimeMillis())
+        .withLastDreamMessageCount(msgCountAtDream)
+    )
+    end for
+  end handleDreamResponse
 
   // ============================================================
   // LlmComplete branch selector
@@ -1408,8 +1486,7 @@ object AgentActor extends AgentCore with AgentSession:
       // Dream mode response
       if state.pendingCompaction.exists(_.mode == "dream") then
         handleDreamResponse(agentDef, resources, depth, parentRef, state, result.text)
-      else
-        handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
+      else handleCompactResponse(agentDef, resources, depth, parentRef, state, result.text)
     else if state.pendingCompaction.isDefined && result.toolCalls.nonEmpty then
       handleCompactFailure(agentDef, resources, depth, parentRef, state, "Compact model unexpectedly called tools")
     else if state.askMode.isDefined && result.toolCalls.isEmpty then
@@ -1563,7 +1640,10 @@ object AgentActor extends AgentCore with AgentSession:
       val immInput = state.execution.pendingImmediateInputs.head
       val remainingInputs = state.execution.pendingImmediateInputs.tail
       logAgentEvent(
-        agentDef, depth, state.sessionId, state.sessionName,
+        agentDef,
+        depth,
+        state.sessionId,
+        state.sessionName,
         "immediate-input-injected-at-turn-end",
         s"text=${immInput.text.take(60)} remaining=${remainingInputs.size}"
       )
@@ -1584,10 +1664,13 @@ object AgentActor extends AgentCore with AgentSession:
         case _ => Message(MessageRole.User, Left(immInput.text))
       val messagesWithImmediate = newMessages ++ List(immMessage)
       val turnStartIdx = newMessages.size
-      val updatedState = state.copy(execution =
-        ExecutionContext.idle(messagesWithImmediate, state.execution.turnIdx)
-          .copy(pendingImmediateInputs = remainingInputs)
-      ).withMailTurnStart(Some(turnStartIdx))
+      val updatedState = state
+        .copy(execution =
+          ExecutionContext
+            .idle(messagesWithImmediate, state.execution.turnIdx)
+            .copy(pendingImmediateInputs = remainingInputs)
+        )
+        .withMailTurnStart(Some(turnStartIdx))
       for
         _ <- roundCompleteIO
         _ <- state.sessionId.fold(IO.unit)(sid =>
@@ -1603,7 +1686,9 @@ object AgentActor extends AgentCore with AgentSession:
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
     else
-      val effectiveInputTokens = state.latestUsage.map(_.inputTokens).filter(_ > 0)
+      val effectiveInputTokens = state.latestUsage
+        .map(_.inputTokens)
+        .filter(_ > 0)
         .getOrElse(nebflow.core.compact.TokenEstimator.estimate(state.messages))
       val doneEvent = AgentStreamEvent.Done(
         model.orElse(state.lastModel),
@@ -1616,7 +1701,10 @@ object AgentActor extends AgentCore with AgentSession:
           // Synchronous emit to prevent markIdle/markBusy race condition
           emitStreamIO(state.wsSend, doneEvent, isSubagent = true, state.sessionId)
             .handleErrorWith(e =>
-              IO(NebflowLogger.forName("nebflow.agent").warn(s"finishTurn: emitDone (sync) failed: ${e.getMessage}")).void)
+              IO(
+                NebflowLogger.forName("nebflow.agent").warn(s"finishTurn: emitDone (sync) failed: ${e.getMessage}")
+              ).void
+            )
         else
           state.sessionId.fold(IO.unit) { sid =>
             val doneJson = doneEvent.toJson(ctx.self.path.name, false, state.sessionId)
@@ -1659,18 +1747,32 @@ object AgentActor extends AgentCore with AgentSession:
         _ <- CompactionProfile.fromDepth(depth) match
           case CompactionProfile.Manager if state.mailTurnStart.isDefined =>
             ctx.forkTurn(
-              MailTurnCompaction.extractAndStore(
-                state.messages, state.mailTurnStart.get, newMessages.size,
-                state.sessionId.getOrElse(""), agentDef.name, state.sessionName, resources
-              ).handleErrorWith(e =>
-                IO(NebflowLogger.forName("nebflow.agent").warn(s"MailTurnCompaction failed: ${e.getMessage}")).void)
+              MailTurnCompaction
+                .extractAndStore(
+                  state.messages,
+                  state.mailTurnStart.get,
+                  newMessages.size,
+                  state.sessionId.getOrElse(""),
+                  agentDef.name,
+                  state.sessionName,
+                  resources
+                )
+                .handleErrorWith(e =>
+                  IO(NebflowLogger.forName("nebflow.agent").warn(s"MailTurnCompaction failed: ${e.getMessage}")).void
+                )
             )
           case CompactionProfile.Worker =>
             ctx.forkTurn(
-              ExperienceExtractor.extractAndStore(
-                state.messages, agentDef.name, state.sessionId, resources
-              ).handleErrorWith(e =>
-                IO(NebflowLogger.forName("nebflow.agent").warn(s"ExperienceExtractor failed: ${e.getMessage}")).void)
+              ExperienceExtractor
+                .extractAndStore(
+                  state.messages,
+                  agentDef.name,
+                  state.sessionId,
+                  resources
+                )
+                .handleErrorWith(e =>
+                  IO(NebflowLogger.forName("nebflow.agent").warn(s"ExperienceExtractor failed: ${e.getMessage}")).void
+                )
             )
           case _ => IO.unit
       yield
@@ -1682,8 +1784,10 @@ object AgentActor extends AgentCore with AgentSession:
             // Keep recent messages for context continuity, drop old ones
             if newMessages.size > 20 then newMessages.takeRight(10) else newMessages
           case _ => newMessages
-        val updatedState = state.copy(execution = ExecutionContext.idle(compressedMsgs, state.execution.turnIdx))
-          .withMailTurnStart(None).withMailTurnCount(state.mailTurnCount + 1)
+        val updatedState = state
+          .copy(execution = ExecutionContext.idle(compressedMsgs, state.execution.turnIdx))
+          .withMailTurnStart(None)
+          .withMailTurnCount(state.mailTurnCount + 1)
         idle(agentDef, resources, depth, parentRef, updatedState)
       end for
     end if

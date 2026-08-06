@@ -18,8 +18,10 @@ object FlowTreeRegistry:
   private val trees = Ref.unsafe[IO, Map[String, ActorRef[TreeCommand]]](Map.empty)
   private val logger = NebflowLogger.forName("nebflow.flow.registry")
 
-  /** Signal: completed after the first FlowTreeActor finishes restoreFlows.
-   *  /api/flows awaits this so the frontend doesn't get an empty list on first fetch. */
+  /**
+   * Signal: completed after the first FlowTreeActor finishes restoreFlows.
+   *  /api/flows awaits this so the frontend doesn't get an empty list on first fetch.
+   */
   private val restoreDone: cats.effect.Deferred[IO, Unit] = cats.effect.Deferred.unsafe[IO, Unit]
 
   def treesRef: cats.effect.Ref[IO, Map[String, ActorRef[TreeCommand]]] = trees
@@ -81,8 +83,11 @@ object FlowTreeRegistry:
             }
           case _ =>
             IO.raiseError(
-              new RuntimeException("FlowTreeRegistry.getOrCreate requires ActorSystem, SharedResources, and agentActorRef")
+              new RuntimeException(
+                "FlowTreeRegistry.getOrCreate requires ActorSystem, SharedResources, and agentActorRef"
+              )
             )
     }
+  end getOrCreate
 
 end FlowTreeRegistry

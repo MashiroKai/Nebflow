@@ -22,14 +22,21 @@ class DelegateToolSpec extends CatsEffectSuite:
   private def writeAgent(name: String, category: String = "standalone"): Unit =
     val dir = agentsDir / name
     os.makeDir.all(dir)
-    os.write(dir / "agent.json", Json.obj(
-      "name" -> name.asJson,
-      "description" -> s"$name agent".asJson,
-      "useWhen" -> "".asJson,
-      "tools" -> Json.arr("*".asJson),
-      "category" -> category.asJson
-    ).noSpaces)
+    os.write(
+      dir / "agent.json",
+      Json
+        .obj(
+          "name" -> name.asJson,
+          "description" -> s"$name agent".asJson,
+          "useWhen" -> "".asJson,
+          "tools" -> Json.arr("*".asJson),
+          "category" -> category.asJson
+        )
+        .noSpaces
+    )
     os.write(dir / "system.md", s"You are $name.")
+
+  end writeAgent
 
   // Build a minimal ToolContext with just agentLibrary set (no ActorSystem etc.)
   private def ctxWith(lib: Option[AgentLibrary] = Some(lib)): ToolContext =
@@ -54,7 +61,10 @@ class DelegateToolSpec extends CatsEffectSuite:
       result <- DelegateTool.call(input, ctxWith())
     yield
       assert(result.isLeft, "should return Left")
-      assert(result.swap.toOption.get.message.contains("not found"), s"error should mention 'not found': ${result.swap.toOption.get.message}")
+      assert(
+        result.swap.toOption.get.message.contains("not found"),
+        s"error should mention 'not found': ${result.swap.toOption.get.message}"
+      )
 
   test("agent parameter with non-standalone agent returns error"):
     for
@@ -64,13 +74,20 @@ class DelegateToolSpec extends CatsEffectSuite:
       result <- DelegateTool.call(input, ctxWith())
     yield
       assert(result.isLeft, "should return Left")
-      assert(result.swap.toOption.get.message.contains("not a standalone"), s"error should mention 'not a standalone': ${result.swap.toOption.get.message}")
+      assert(
+        result.swap.toOption.get.message.contains("not a standalone"),
+        s"error should mention 'not a standalone': ${result.swap.toOption.get.message}"
+      )
 
   test("agent parameter with standalone agent resolves (spawns target, not self)"):
     for
       _ <- reset()
       _ <- IO(writeAgent("Coder"))
-      input = JsonObject("prompt" -> "write code".asJson, "description" -> "code task".asJson, "agent" -> "Coder".asJson)
+      input = JsonObject(
+        "prompt" -> "write code".asJson,
+        "description" -> "code task".asJson,
+        "agent" -> "Coder".asJson
+      )
       result <- DelegateTool.call(input, ctxWith())
     yield
       // Without ActorSystem the tool returns Left "Delegate requires ActorSystem..."

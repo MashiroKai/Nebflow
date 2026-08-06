@@ -188,8 +188,7 @@ object FileTaskStore extends TaskStore:
       case Some(existing) =>
         // Dismissed tasks are "cleared" by the user — agent updates (status or
         // otherwise) are silently accepted as no-ops so agents don't error.
-        if existing.status == TaskStatus.Dismissed then
-          IO.pure(Some(existing))
+        if existing.status == TaskStatus.Dismissed then IO.pure(Some(existing))
         else
           // Issue #2: Validate status transition
           val newStatus = updates.status.getOrElse(existing.status)
