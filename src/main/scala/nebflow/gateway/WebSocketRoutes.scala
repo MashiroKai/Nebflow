@@ -199,11 +199,23 @@ class WebSocketRoutes(
           case None => (agents, IO.unit)
       }.flatten
 
-  /** Route a message to the root agent of a specific session. Discards if sessionId is empty. */
+  /**
+   * Route a message to the agent for a specific session. Checks subAgentRegistry
+   * first (for delegate/ephemeral sub-agents), then falls back to root agent.
+   * Discards if sessionId is empty.
+   */
   private def routeToAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
     if sessionId.nonEmpty then
-      ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
-        logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
+      sharedResources.subAgentRegistry.get.flatMap { registry =>
+        registry.get(sessionId) match
+          case Some(subAgentRef) =>
+            f(subAgentRef).handleErrorWith { e =>
+              logger.warn(s"Failed to route message to sub-agent $sessionId: ${e.getMessage}")
+            }
+          case None =>
+            ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
+              logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
+            }
       }
     else logger.warn("Dropping message: no sessionId provided") *> IO.unit
 

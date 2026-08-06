@@ -64,6 +64,8 @@ object EphemeralAgentRunner:
           ),
           s"ephemeral-agent-${agentDef.name.take(10)}"
         )
+        // Register in subAgentRegistry so WS events (askUser, permission) route correctly
+        _ <- resources.subAgentRegistry.update(_ + (sessionId -> ref))
         // Send input with bridge actor as replyTo
         _ <- (ref ! AgentCommand.UserInput(
           text = msg.taskInput,
@@ -72,6 +74,7 @@ object EphemeralAgentRunner:
         // Wait for completion — no timeout, event-driven
         eventResult <- resultDeferred.get
         // Stop agent actor + cleanup
+        _ <- resources.subAgentRegistry.update(_ - sessionId)
         _ <- resources.actorSystem.stop(ref).handleErrorWith(_ => IO.unit)
         _ <- resources.actorSystem.stop(bridgeRef).handleErrorWith(_ => IO.unit)
         _ <- resources.sessionStore.deleteSession(sessionId).handleErrorWith(_ => IO.unit)

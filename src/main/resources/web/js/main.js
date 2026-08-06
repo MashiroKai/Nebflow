@@ -40,6 +40,7 @@ import { initDaemons } from './daemons.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
 import { handleFlowAgentHistory } from './flowAgentPopup.js';
+import { handleDelegateHistory, openStepPopup as openDelegatePopup, cleanupDelegateView } from './delegatePopup.js';
 import { initNeblink, checkPairingRedirect } from './neblink.js';
 import { initDropbox } from './dropbox.js';
 import { formatLiveDuration } from './chat.js';
@@ -1117,6 +1118,8 @@ function clearHistoryIndicators() {
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg, view) => {
+  // Delegate sub-agent sessions are handled by the delegate popup viewer.
+  if (handleDelegateHistory(msg)) return;
   // Flow agent sessions are handled by the popup viewer, not the primary chat.
   if (handleFlowAgentHistory(msg)) return;
 
@@ -1388,13 +1391,31 @@ function renderDelegateDropdown() {
     const status = info.done ? '<span class="delegate-done">done</span>' : '<span class="delegate-running">running</span>';
     const displayName = info.name || id;
     const label = info.task ? displayName + ' · ' + escapeHtml(info.task) : displayName;
-    return '<div class="bg-task-row">' +
+    // nodeSessionId for delegate sub-agents starts with "delegate-"
+    const nodeSessionId = id.startsWith('delegate-') ? id : null;
+    const clickAttr = nodeSessionId ? `data-node-session-id="${escapeHtml(nodeSessionId)}" style="cursor:pointer"` : '';
+    return '<div class="bg-task-row" ' + clickAttr + '>' +
       '<div class="bg-task-info">' +
         '<span class="bg-task-name">' + status + ' ' + label + '</span>' +
         toolPart +
       '</div>' +
     '</div>';
   }).join('');
+
+  // Wire click handlers for delegate rows
+  listEl.querySelectorAll('[data-node-session-id]').forEach(row => {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nodeSessionId = row.getAttribute('data-node-session-id');
+      const info = delegates[nodeSessionId];
+      if (info) {
+        openDelegatePopup(nodeSessionId, info.name, info.task);
+        // Close the dropdown
+        const dropdown = activeView.dom.delegateDropdownEl;
+        if (dropdown) dropdown.classList.add('hidden');
+      }
+    });
+  });
 }
 
 // Toggle dropdown on indicator click — register for ALL views
@@ -1469,6 +1490,8 @@ onMessage('agentDone', (msg, view) => {
   if (aid && state.sessionDelegates[sid]) {
     if (state.sessionDelegates[sid][aid]) state.sessionDelegates[sid][aid].done = true;
     if (view) renderDelegateDropdown();
+    // Clean up delegate popup view after a delay
+    if (aid.startsWith('delegate-')) cleanupDelegateView(aid);
     // Remove after 2s — always runs, even if the parent session isn't displayed
     setTimeout(() => {
       if (state.sessionDelegates[sid] && state.sessionDelegates[sid][aid]) {

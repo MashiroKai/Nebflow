@@ -36,12 +36,14 @@ object DelegateTool extends Tool:
    */
   private def routeWsSend(
     wsSend: Option[io.circe.Json => IO[Unit]],
-    parentSessionId: Option[String]
+    parentSessionId: Option[String],
+    subagentId: String
   ): io.circe.Json => IO[Unit] =
     val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
+    val routeJson = Json.obj("nodeSessionId" -> subagentId.asJson)
     parentSessionId match
-      case Some(sid) => json => base(json.deepMerge(Json.obj("sessionId" -> sid.asJson)))
-      case None => base
+      case Some(sid) => json => base(json.deepMerge(Json.obj("sessionId" -> sid.asJson)).deepMerge(routeJson))
+      case None => json => base(json.deepMerge(routeJson))
 
   /** Maximum sub-agent depth (matches AgentCore.MaxDepth). */
   val MaxDepth: Int = 5
@@ -276,7 +278,7 @@ $prompt"""
       fileHistory <- FileHistory.create()
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = routeWsSend(wsSend, parentSessionId)
+      childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
       subagentRef <- system.spawn(
         AgentActor(
           agentDef = agentDef,
@@ -284,7 +286,7 @@ $prompt"""
           wsSend = childWsSend,
           depth = childDepth,
           parentRef = parentRef,
-          sessionId = parentSessionId,
+          sessionId = Some(subagentId),
           sessionName = Some(description),
           initialMessages = initialMessages,
           readTracker = Some(readTracker),
@@ -300,6 +302,7 @@ $prompt"""
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned background sub-agent: $subagentId (depth=$childDepth, agent=$agentName)")
+      _ <- resources.subAgentRegistry.update(_ + (subagentId -> subagentRef))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
       s"""Sub-agent '$agentName' started in background for: $description.
@@ -333,7 +336,8 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
               correlationId = Some(subagentId)
             )
           case None => IO.unit
-        (notify *> (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
+        (notify *> resources.subAgentRegistry.update(_ - subagentId) *>
+          (subagentRef ! AgentCommand.Stop("delegate-complete")) *>
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
 
@@ -381,7 +385,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
       fileHistory <- FileHistory.create()
       childDepth = parentDepth + 1
       subagentId = s"delegate-${agentName}-${java.util.UUID.randomUUID().toString.take(8)}"
-      childWsSend = routeWsSend(wsSend, parentSessionId)
+      childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
       subagentRef <- system.spawn(
         AgentActor(
           agentDef = agentDef,
@@ -389,7 +393,7 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
           wsSend = childWsSend,
           depth = childDepth,
           parentRef = parentRef,
-          sessionId = parentSessionId,
+          sessionId = Some(subagentId),
           sessionName = Some(description),
           initialMessages = initialMessages,
           readTracker = Some(readTracker),
@@ -402,10 +406,11 @@ Do NOT duplicate this agent's work — avoid working with the same files or topi
       )
       address = subagentRef.path.toString
       adapterRef <- system.spawn(
-        persistentAdapter(subagentRef, parentRef, description, agentName, subagentId, address),
+        persistentAdapter(subagentRef, parentRef, description, agentName, subagentId, address, resources),
         s"$subagentId-adapter"
       )
       _ = logger.info(s"Spawned persistent sub-agent: $subagentId (depth=$childDepth, agent=$agentName, addr=$address)")
+      _ <- resources.subAgentRegistry.update(_ + (subagentId -> subagentRef))
       _ <- parentRef.fold(IO.unit)(ref => ref ! AgentCommand.SessionStarted(address, agentName, taskDescription))
       _ <- subagentRef ! AgentCommand.UserInput(prompt, Some(adapterRef))
     yield Right(
@@ -425,7 +430,8 @@ You will be notified when the initial task completes."""
     description: String,
     agentName: String,
     subagentId: String,
-    address: String
+    address: String,
+    resources: SharedResources
   ): Behavior[AgentEvent] =
     Behaviors.setup { ctx =>
       ctx.watch(subagentRef)
@@ -464,12 +470,13 @@ You will be notified when the initial task completes."""
           override def onSignal(ctx: ActorContext[AgentEvent], signal: SystemSignal): IO[Behavior[AgentEvent]] =
             signal match
               case SystemSignal.Terminated(_) =>
-                // Persistent session died — notify parent, adapter stops
-                notifyParentAndStop(
-                  "failed",
-                  s"[Session crashed] \"$description\": persistent session terminated unexpectedly",
-                  "crashed"
-                )
+                // Persistent session died — unregister, notify parent, adapter stops
+                resources.subAgentRegistry.update(_ - subagentId) *>
+                  notifyParentAndStop(
+                    "failed",
+                    s"[Session crashed] \"$description\": persistent session terminated unexpectedly",
+                    "crashed"
+                  )
       )
     }
 
