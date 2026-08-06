@@ -63,13 +63,24 @@ class AnthropicAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[I
               )
               if isError.contains(true) then base.deepMerge(Json.obj("is_error" -> true.asJson)) else base
             case ContentBlock.Thinking(thinking, signature) =>
-              val base = Json.obj(
-                "type" -> "thinking".asJson,
-                "thinking" -> thinking.asJson
-              )
-              signature.fold(base)(s => base.deepMerge(Json.obj("signature" -> s.asJson)))
+              // Anthropic requires signature when thinking mode is enabled.
+              // Providers that don't send signature (e.g. DeepSeek) will have None here.
+              // Including a thinking block without signature causes API rejection.
+              signature.filter(_.nonEmpty) match
+                case Some(sig) =>
+                  Json.obj(
+                    "type" -> "thinking".asJson,
+                    "thinking" -> thinking.asJson,
+                    "signature" -> sig.asJson
+                  )
+                case None =>
+                  Json.Null
           }
-          Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(content))
+          val filtered = content.filterNot(_ == Json.Null)
+          if filtered.isEmpty then
+            Json.obj("role" -> Json.fromString(role), "content" -> Json.fromString(" "))
+          else
+            Json.obj("role" -> Json.fromString(role), "content" -> Json.fromValues(filtered))
       end match
     }
 
