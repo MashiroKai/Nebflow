@@ -275,8 +275,7 @@ private[agent] trait AgentCore:
             teamCatalog = turnCtx.teamCatalog,
             memoryBlock = turnCtx.memoryBlock,
             taskListText = taskListText,
-            rulesMd = turnCtx.rulesMd,
-            universalPrompt = turnCtx.universalPrompt
+            rulesMd = turnCtx.rulesMd
           )
           systemStable = buildSystemPrompt(freshDef, turnCtx.systemPrefix, promptCtx)
           isUserTurn = stateForLlm.messages.lastOption.exists(m => m.role == MessageRole.User && m.content.isLeft)
