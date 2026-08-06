@@ -712,6 +712,36 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
   }
 
+  if (_toolName === 'RemoveUnnecessary' && inputJson) {
+    const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+    const localLabel = localizeToolLabel(label);
+    const labelParts = localLabel.split('\n', 2);
+    const labelHtml = escapeHtml(labelParts[0])
+      + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
+
+    // Extract the user's summary from input
+    let summaryBody = '';
+    try {
+      const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+      const userSummary = inp.summary || '';
+      if (userSummary) {
+        summaryBody = '<div class="tool-removeunnecessary-summary">' + renderMarkdownWithMath(userSummary) + '</div>';
+      }
+    } catch {}
+
+    // Result text (e.g. "Replaced 3 tool result(s)") — strip the "Summary: ..." suffix
+    const resultText = content ? content.replace(/Summary:.*$/s, '').trim() : '';
+
+    card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+      '<div class="content"><div class="label">' + labelHtml + '</div>' +
+      (resultText ? '<div class="tool-result-badge">' + escapeHtml(resultText) + '</div>' : '') +
+      (summaryBody ? '<div class="body">' + summaryBody + '</div>' : '') + '</div>';
+    smartScroll();
+    if (summaryBody) attachToolClick(card);
+    return { type: 'tool', label, summary, content: null, isError, input: inputJson };
+  }
+
   // Default rendering for all other tools
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
                        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
