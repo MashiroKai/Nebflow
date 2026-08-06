@@ -684,7 +684,8 @@ private[agent] trait AgentCore:
       case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
       case names => names.toSet
     // Mail is always available — it's a communication primitive, not a domain tool
-    val withBuiltin = base + "Mail"
+    // Issue is always available — agents should be able to report system problems
+    val withBuiltin = base + "Mail" + "Issue"
     val isNebula = agentDef.name == "Nebula"
     val nebulaFiltered = if isNebula then withBuiltin else withBuiltin -- NebulaExclusiveTools
     // Task tools: available to Nebula and Team Lead, NOT workers
