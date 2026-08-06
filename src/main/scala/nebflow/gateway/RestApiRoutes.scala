@@ -1046,48 +1046,90 @@ class RestApiRoutes(
         yield result
 
     // GET /agents/list — list all global agents (for extends dropdown)
+    // GET /agents/list — list all agents (all three layers)
     case GET -> Root / "agents" / "list" =>
       for
-        agents <- sharedResources.agentLibrary.loadAll()
-        entries = agents.toList.sortBy(_._1).map { (name, defn) =>
+        globalAgents <- EntityLoader.listAgents()
+        teams <- EntityLoader.listTeams()
+        teamAgentEntries <- teams.toList.traverse { (teamName, _) =>
+          IO.blocking {
+            val dir = PathUtil.dataRoot / "teams" / teamName / "agents"
+            if os.exists(dir) then
+              os.list(dir).filter(os.isDir)
+                .flatMap(d => EntityLoader.loadAgentFromDir(d)).toList
+            else Nil
+          }
+        }
+        flows <- EntityLoader.listFlows()
+        flowAgentEntries <- flows.toList.traverse { (flowName, _) =>
+          IO.blocking {
+            val dir = PathUtil.dataRoot / "flows" / flowName / "agents"
+            if os.exists(dir) then
+              os.list(dir).filter(os.isDir)
+                .flatMap(d => EntityLoader.loadAgentFromDir(d)).toList
+            else Nil
+          }
+        }
+        globalList = globalAgents.values.filter(_.name != "Nebula").map { a =>
           Json.obj(
-            "name" -> name.asJson,
-            "description" -> defn.description.asJson,
-            "tools" -> defn.tools.asJson,
-            "displayName" -> defn.displayName.asJson,
-            "systemPrompt" -> defn.systemPrompt.asJson,
-            "category" -> defn.category.asJson
+            "name" -> a.name.asJson,
+            "description" -> a.description.asJson,
+            "tools" -> a.tools.asJson,
+            "displayName" -> a.name.asJson,
+            "systemPrompt" -> a.systemPrompt.asJson,
+            "category" -> a.category.asJson
           )
         }
-        result <- Ok(Json.obj("agents" -> entries.asJson))
+        teamList = teamAgentEntries.flatten.map { a =>
+          Json.obj(
+            "name" -> a.name.asJson,
+            "description" -> a.description.asJson,
+            "tools" -> a.tools.asJson,
+            "displayName" -> a.name.asJson,
+            "systemPrompt" -> a.systemPrompt.asJson,
+            "category" -> "team".asJson
+          )
+        }
+        flowList = flowAgentEntries.flatten.map { a =>
+          Json.obj(
+            "name" -> a.name.asJson,
+            "description" -> a.description.asJson,
+            "tools" -> a.tools.asJson,
+            "displayName" -> a.name.asJson,
+            "systemPrompt" -> a.systemPrompt.asJson,
+            "category" -> "flow".asJson
+          )
+        }
+        all = globalList ++ teamList ++ flowList
+        result <- Ok(Json.obj("agents" -> all.asJson))
       yield result
 
-    // GET /agents/:name — get global agent detail (system.md + tools)
+    // GET /agents/:name — get agent detail (system.md + tools) — searches all three layers
     case GET -> Root / "agents" / agentName =>
       if !isValidAgentName(agentName) then
         BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
       else
         for
-          agents <- sharedResources.agentLibrary.loadAll()
-          result <- agents.get(agentName) match
+          agentOpt <- EntityLoader.findAgentByName(agentName)
+          result <- agentOpt match
             case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
             case Some(defn) => Ok(Json.obj(
               "name" -> defn.name.asJson,
               "description" -> defn.description.asJson,
               "tools" -> defn.tools.asJson,
               "systemPrompt" -> defn.systemPrompt.asJson,
-              "displayName" -> defn.displayName.asJson
+              "displayName" -> defn.displayName.getOrElse(defn.name).asJson
             ))
         yield result
 
-    // GET /agents/:name/model — get agent's model configuration
+    // GET /agents/:name/model — get agent's model configuration — searches all three layers
     case GET -> Root / "agents" / agentName / "model" =>
       if !isValidAgentName(agentName) then
         BadRequest(Json.obj("error" -> "Invalid agent name".asJson))
       else
         for
-          agents <- sharedResources.agentLibrary.loadAll()
-          result <- agents.get(agentName) match
+          agentOpt <- EntityLoader.findAgentByName(agentName)
+          result <- agentOpt match
             case None => NotFound(Json.obj("error" -> s"Agent '$agentName' not found".asJson))
             case Some(defn) =>
               val modelConfig = defn.model.getOrElse(nebflow.shared.AgentModelConfig.empty)

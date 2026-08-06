@@ -289,6 +289,9 @@ function renderAgentDetail(pane, name, detail, model) {
   const modelList = [preferredRaw, ...fallbacksRaw].filter(Boolean);
   const allRefs = getAllModelRefs();
 
+  // Whether the agent has its own model config (vs using global default)
+  const hasOwnConfig = preferredRaw || (fallbacksRaw && fallbacksRaw.length > 0);
+
   const allTools = (state.availableTools || []).map(t => typeof t === 'string' ? t : t.name);
   const isAll = tools.includes('*');
 
@@ -329,7 +332,7 @@ function renderAgentDetail(pane, name, detail, model) {
 
   // Model section: always render editable drag list.
   // When agent has no own config, pre-fill with global default chain.
-  const hasOwnConfig = preferredRaw || (fallbacksRaw && fallbacksRaw.length > 0);
+  // hasOwnConfig declared above (before template literal) to avoid TDZ.
   const modelListEl = pane.querySelector('#agent-detail-model-list');
   if (modelListEl) {
     let effectiveList = modelList;
