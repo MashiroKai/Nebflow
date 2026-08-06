@@ -186,44 +186,49 @@ object FileTaskStore extends TaskStore:
     get(sessionId, taskId).flatMap {
       case None => IO.pure(None)
       case Some(existing) =>
-        // Issue #2: Validate status transition
-        val newStatus = updates.status.getOrElse(existing.status)
-        val statusValid = updates.status.isEmpty || isValidTransition(existing.status, newStatus)
-
-        if !statusValid then
-          IO.raiseError(
-            new IllegalStateException(
-              s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
-            )
-          )
+        // Dismissed tasks are "cleared" by the user — agent updates (status or
+        // otherwise) are silently accepted as no-ops so agents don't error.
+        if existing.status == TaskStatus.Dismissed then
+          IO.pure(Some(existing))
         else
-          val newBlocks = (existing.blocks ++ updates.addBlocks.getOrElse(Nil)).distinct
-            .filterNot(updates.removeBlocks.getOrElse(Nil).contains)
-          val newBlockedBy = (existing.blockedBy ++ updates.addBlockedBy.getOrElse(Nil)).distinct
-            .filterNot(updates.removeBlockedBy.getOrElse(Nil).contains)
+          // Issue #2: Validate status transition
+          val newStatus = updates.status.getOrElse(existing.status)
+          val statusValid = updates.status.isEmpty || isValidTransition(existing.status, newStatus)
 
-          val updated = existing.copy(
-            subject = updates.subject.getOrElse(existing.subject),
-            description = updates.description.getOrElse(existing.description),
-            activeForm = updates.activeForm.orElse(existing.activeForm),
-            status = newStatus,
-            blocks = newBlocks,
-            blockedBy = newBlockedBy,
-            updatedAt = Some(Instant.now().toString)
-          )
-
-          // Issue #3: Check for cycles after dependency changes
-          list(sessionId).flatMap { allTasks =>
-            val tasksForCheck = allTasks.filterNot(_.id == taskId) :+ updated
-            if hasCycle(tasksForCheck) then
-              IO.raiseError(
-                new IllegalStateException(
-                  s"Dependency update for task #$taskId would create a cycle"
-                )
+          if !statusValid then
+            IO.raiseError(
+              new IllegalStateException(
+                s"Invalid status transition: ${existing.status} -> $newStatus for task #$taskId"
               )
-            else writeTask(sessionId, updated).as(Some(updated))
-          }
-        end if
+            )
+          else
+            val newBlocks = (existing.blocks ++ updates.addBlocks.getOrElse(Nil)).distinct
+              .filterNot(updates.removeBlocks.getOrElse(Nil).contains)
+            val newBlockedBy = (existing.blockedBy ++ updates.addBlockedBy.getOrElse(Nil)).distinct
+              .filterNot(updates.removeBlockedBy.getOrElse(Nil).contains)
+
+            val updated = existing.copy(
+              subject = updates.subject.getOrElse(existing.subject),
+              description = updates.description.getOrElse(existing.description),
+              activeForm = updates.activeForm.orElse(existing.activeForm),
+              status = newStatus,
+              blocks = newBlocks,
+              blockedBy = newBlockedBy,
+              updatedAt = Some(Instant.now().toString)
+            )
+
+            // Issue #3: Check for cycles after dependency changes
+            list(sessionId).flatMap { allTasks =>
+              val tasksForCheck = allTasks.filterNot(_.id == taskId) :+ updated
+              if hasCycle(tasksForCheck) then
+                IO.raiseError(
+                  new IllegalStateException(
+                    s"Dependency update for task #$taskId would create a cycle"
+                  )
+                )
+              else writeTask(sessionId, updated).as(Some(updated))
+            }
+          end if
     }
 
   def listActive(sessionId: String): IO[List[Task]] =
