@@ -183,7 +183,12 @@ object GatewayMain extends IOApp.Simple:
     discovery: nebflow.neblink.NeblinkDiscovery
   ): IO[cats.effect.Fiber[IO, Throwable, Unit]] = {
     def loop: IO[Unit] =
-      IO.sleep(30.seconds) *> discovery.heartbeatCycle *> IO.defer(loop)
+      for
+        delay <- discovery.currentDelay
+        _ <- IO.sleep(delay)
+        _ <- discovery.heartbeatCycle
+        _ <- IO.defer(loop)
+      yield ()
     loop.start
   }
 
