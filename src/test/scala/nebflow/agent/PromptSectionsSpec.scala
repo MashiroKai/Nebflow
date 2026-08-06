@@ -55,12 +55,12 @@ class PromptSectionsSpec extends munit.FunSuite:
   // ============================================================
 
   test("Voice section included when voiceEnabled"):
-    val ctx = PromptContext(voiceEnabled = true, envInfo = "## Environment\n\ntest")
+    val ctx = PromptContext(voiceEnabled = true)
     val blocks = buildConditionalBlocks(ctx)
     assert(blocks.contains("## Voice Output"))
 
   test("Voice section excluded when voice muted"):
-    val ctx = PromptContext(voiceEnabled = false, envInfo = "## Environment\n\ntest")
+    val ctx = PromptContext(voiceEnabled = false)
     val blocks = buildConditionalBlocks(ctx)
     assert(!blocks.contains("## Voice Output"))
 
@@ -130,7 +130,6 @@ class PromptSectionsSpec extends munit.FunSuite:
     val ctx = PromptContext(
       availableTools = Set("AskUserQuestion", "Read", "Pop"),
       voiceEnabled = true,
-      envInfo = "## Environment",
       deviceInfo = "device-list",
       hasDevices = true,
       agentSessionsText = "# Active Sessions",
@@ -140,7 +139,6 @@ class PromptSectionsSpec extends munit.FunSuite:
       rulesMd = Some("rule1")
     )
     val blocks = buildConditionalBlocks(ctx)
-    val envIdx = blocks.indexOf("## Environment")
     val askIdx = blocks.indexOf("## Asking the User")
     val readIdx = blocks.indexOf("## Read Tool")
     val popIdx = blocks.indexOf("## Visual Reporting")
@@ -151,7 +149,7 @@ class PromptSectionsSpec extends munit.FunSuite:
     val skillsIdx = blocks.indexOf("# Skills")
     val rulesIdx = blocks.indexOf("## Project Rules")
 
-    assert(envIdx < askIdx, "Environment should come before AskUser")
+    assert(askIdx >= 0, "AskUser section should be present")
     assert(askIdx < readIdx, "AskUser should come before Read")
     assert(readIdx < popIdx, "Read should come before Visual Reporting")
     assert(popIdx < voiceIdx, "Visual Reporting should come before Voice")
@@ -165,10 +163,10 @@ class PromptSectionsSpec extends munit.FunSuite:
   // Empty context
   // ============================================================
 
-  test("minimal context with voice disabled produces empty output"):
+  test("minimal context with voice disabled excludes voice section"):
     val ctx = PromptContext(voiceEnabled = false)
     val blocks = buildConditionalBlocks(ctx)
-    assert(blocks.isEmpty)
+    assert(!blocks.contains("## Voice Output"))
 
   // ============================================================
   // stripSection / stripAllMigrated

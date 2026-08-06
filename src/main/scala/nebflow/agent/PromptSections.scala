@@ -1,5 +1,6 @@
 package nebflow.agent
 
+import io.circe.{Json, parser}
 import nebflow.core.PathUtil
 
 /**
@@ -47,7 +48,11 @@ object PromptSections:
     hasActiveSessions: Boolean = false,
     language: Option[String] = None,
     chatWidth: Int = 0,
-    /** Pre-rendered environment info table (from Repl.buildEnvInfo). */
+    /** Agent category ("standalone", "team", "flow"). */
+    agentCategory: String = "standalone",
+    /** Agent name (e.g. "Nebula", "Manager", "Backend"). */
+    agentName: String = "",
+    /** Pre-rendered environment info table (legacy — kept for test compatibility). */
     envInfo: String = "",
     /** Pre-rendered device info block (from AgentCore.deviceInfoBlock). */
     deviceInfo: String = "",
@@ -129,13 +134,6 @@ object PromptSections:
   // ============================================================
 
   private val dynamicSections: List[PromptSection] = List(
-    // --- Fixed foundational sections ---
-    PromptSection.dynamic(
-      100,
-      condition = _.envInfo.nonEmpty,
-      renderer = _.envInfo
-    ),
-
     // --- Runtime-state sections ---
     PromptSection.dynamic(
       600,
@@ -207,22 +205,27 @@ object PromptSections:
       cachedSections = (currentMtime, fresh)
       fresh
 
-  /** Parse all .md files from the sections directory into PromptSections. */
+  /** Parse all sections from the sections directory: .md files + subdirectories. */
   private def loadFileSections(): List[PromptSection] =
     val sectionsDir = PathUtil.dataRoot / "prompts" / "sections"
     if !os.exists(sectionsDir) then Nil
     else
-      os.list(sectionsDir)
-        .filter(_.last.endsWith(".md"))
-        .toList
+      val entries = os.list(sectionsDir).toList
+      // Plain .md files
+      val mdSections = entries
+        .filter(f => f.last.endsWith(".md") && os.isFile(f))
         .flatMap { file =>
           val raw = os.read(file)
           val order = parseOrder(raw).getOrElse(999)
           val condition = parseCondition(raw)
-          // Strip HTML comment lines from content
           val body = raw.linesIterator.filterNot(l => l.trim.startsWith("<!--")).mkString("\n").trim
           if body.nonEmpty then Some(PromptSection(order, condition, body)) else None
         }
+      // Subdirectories with condition.json + prompt.md [+ data.sh]
+      val dirSections = entries
+        .filter(d => os.isDir(d))
+        .flatMap { dir => loadDirSection(dir).toList }
+      mdSections ++ dirSections
 
   /** Parse the Condition comment to build a context predicate. */
   private def parseCondition(content: String): PromptContext => Boolean =
@@ -241,6 +244,108 @@ object PromptSections:
     content.linesIterator
       .find(_.trim.startsWith("<!-- Order:"))
       .flatMap(_.replaceAll(".*<!-- Order:", "").replaceAll("-->.*", "").trim.toIntOption)
+
+  /**
+   * Load a section from a subdirectory containing condition.json + prompt.md [+ data.sh].
+   * The data.sh script (if present) is executed at render time, its JSON output
+   * is used to replace {{variables}} in the prompt template.
+   */
+  private def loadDirSection(dir: os.Path): Option[PromptSection] =
+    val conditionFile = dir / "condition.json"
+    val promptFile = dir / "prompt.md"
+    val dataScript = dir / "data.sh"
+
+    if !os.exists(conditionFile) || !os.exists(promptFile) then None
+    else
+      val conditionJson = parser.parse(os.read(conditionFile)).toOption.getOrElse(Json.Null)
+      val order = conditionJson.hcursor.downField("order").as[Int].getOrElse(999)
+      val condition = parseJsonCondition(conditionJson)
+      val template = os.read(promptFile).trim
+
+      if os.exists(dataScript) then
+        Some(PromptSection.dynamic(order, condition, ctx => renderWithScript(template, dataScript, ctx)))
+      else
+        Some(PromptSection(order, condition, template))
+
+  /** Parse a JSON condition field into a context predicate. */
+  private def parseJsonCondition(json: Json): PromptContext => Boolean =
+    val condVal = json.hcursor.downField("condition").focus.getOrElse(Json.fromString("always"))
+    parseConditionValue(condVal)
+
+  /** Parse a condition value: either a string ("always") or an object ({tool/flag/and/or/...}). */
+  private def parseConditionValue(cond: Json): PromptContext => Boolean =
+    cond.asString match
+      case Some(s) => parseConditionObject(Json.obj("x" -> Json.fromString(s)).hcursor.downField("x").focus.getOrElse(Json.Null))
+      case None    => parseConditionObject(cond)
+
+  /** Parse a condition object with and/or/not/tool/flag/category/name operators. */
+  private def parseConditionObject(cond: Json): PromptContext => Boolean =
+    import io.circe.JsonObject
+    val obj = cond.asObject.getOrElse(JsonObject.empty)
+    obj("and").map { arr =>
+      val subs = arr.asArray.getOrElse(Nil).map(parseConditionValue)
+      (ctx: PromptContext) => subs.forall(_(ctx))
+    }.orElse(
+      obj("or").map { arr =>
+        val subs = arr.asArray.getOrElse(Nil).map(parseConditionValue)
+        (ctx: PromptContext) => subs.exists(_(ctx))
+      }
+    ).orElse(
+      obj("not").map { inner =>
+        val sub = parseConditionValue(inner)
+        (ctx: PromptContext) => !sub(ctx)
+      }
+    ).orElse(
+      obj("tool").map { v =>
+        val toolName = v.asString.getOrElse("")
+        (ctx: PromptContext) => ctx.availableTools.contains(toolName)
+      }
+    ).orElse(
+      obj("flag").map { v =>
+        val flagName = v.asString.getOrElse("")
+        (ctx: PromptContext) => flagName match
+          case "voiceEnabled"      => ctx.voiceEnabled
+          case "hasDevices"        => ctx.hasDevices
+          case "hasActiveSessions" => ctx.hasActiveSessions
+          case _                   => false
+      }
+    ).orElse(
+      obj("category").map { v =>
+        val cat = v.asString.getOrElse("")
+        (ctx: PromptContext) => ctx.agentCategory == cat
+      }
+    ).orElse(
+      obj("name").map { v =>
+        val name = v.asString.getOrElse("")
+        (ctx: PromptContext) => ctx.agentName == name
+      }
+    ).getOrElse(_ => true)
+
+  /**
+   * Execute data.sh and use its JSON output to replace {{variables}} in the template.
+   * Falls back to the raw template if the script fails or output is invalid JSON.
+   */
+  private def renderWithScript(template: String, script: os.Path, ctx: PromptContext): String =
+    val envVars = Map(
+      "CHAT_WIDTH" -> ctx.chatWidth.toString,
+      "NEBFLOW_VERSION" -> nebflow.Version.string,
+      "NEBFLOW_PID" -> sys.props.getOrElse("nebflow.gateway.pid", java.lang.ProcessHandle.current().pid().toString),
+      "NEBFLOW_GATEWAY_PORT" -> sys.props.getOrElse("nebflow.gateway.port", "8080")
+    )
+    val result =
+      try
+        os.proc("bash", script.toString)
+          .call(cwd = os.pwd, env = envVars, check = false)
+          .out.text().trim
+      catch case _: Exception => return template
+    parser.parse(result).toOption match
+      case Some(json) =>
+        json.asObject.map(_.toMap).getOrElse(Map.empty)
+          .foldLeft(template) { case (t, (key, value)) =>
+            val strValue = value.asString.getOrElse(value.noSpaces)
+            t.replace(s"{{$key}}", strValue)
+          }
+      case None => template
 
   /** All sections: dynamic (code-defined) + file-based (user-editable). */
   def all: List[PromptSection] =
