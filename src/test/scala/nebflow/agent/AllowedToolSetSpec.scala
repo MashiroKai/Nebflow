@@ -28,7 +28,7 @@ class AllowedToolSetSpec extends FunSuite:
   test("concrete tools list yields exactly those tools + Mail + Issue"):
     val defn = mkDef("researcher", List("Read", "Glob", "Grep"))
     val allowed = CoreProbe.allowed(defn)
-    assertEquals(allowed, Set("Read", "Glob", "Grep", "Mail", "Issue"))
+    assertEquals(allowed, Set("Read", "Glob", "Grep", "Mail", "Issue", "FlowReport"))
 
   test("'*' expands to all registered tools, minus Nebula-exclusive for non-Nebula"):
     val defn = mkDef("omni", List("*"))
@@ -47,11 +47,12 @@ class AllowedToolSetSpec extends FunSuite:
     // Fewer than total registered tools
     assert(allowed.size < ToolRegistry.ALL_TOOLS.map(_.name).toSet.size)
 
-  test("Mail and Issue are always available even when not listed"):
+  test("Mail, Issue, and FlowReport are always available even when not listed"):
     val defn = mkDef("minimal", List("Read"))
     val allowed = CoreProbe.allowed(defn)
     assert(allowed.contains("Mail"))
     assert(allowed.contains("Issue"))
+    assert(allowed.contains("FlowReport"))
 
   test("non-Nebula agents are stripped of Nebula-exclusive tools even if listed"):
     // Pop is no longer Nebula-exclusive — it is available to any agent that requests it.
