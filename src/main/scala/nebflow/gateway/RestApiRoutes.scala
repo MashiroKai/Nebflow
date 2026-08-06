@@ -1150,7 +1150,8 @@ class RestApiRoutes(
                   "description" -> defn.description.asJson,
                   "tools" -> defn.tools.asJson,
                   "systemPrompt" -> defn.systemPrompt.asJson,
-                  "displayName" -> defn.displayName.getOrElse(defn.name).asJson
+                  "displayName" -> defn.displayName.getOrElse(defn.name).asJson,
+                  "model" -> defn.model.asJson
                 )
               )
         yield result

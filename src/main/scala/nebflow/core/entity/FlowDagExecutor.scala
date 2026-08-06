@@ -99,7 +99,8 @@ object FlowDagExecutor:
                   systemPrompt = entry.systemPrompt,
                   voiceEnabled = entry.voice,
                   category = entry.category,
-                  mcpServers = entry.mcpServers
+                  mcpServers = entry.mcpServers,
+                  model = entry.model
                 )
                 executeAgent(nodeId, node.agent, agentDef, inputText, resources, actorSystem, wsSend, flow.name)
             updatedCtx = ctx.copy(nodeOutputs = ctx.nodeOutputs + (nodeId -> result.output))

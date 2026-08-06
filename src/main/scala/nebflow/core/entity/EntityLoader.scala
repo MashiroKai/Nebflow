@@ -255,7 +255,8 @@ object EntityLoader:
         tools = entry.tools,
         systemPrompt = entry.systemPrompt,
         category = entry.category,
-        mcpServers = entry.mcpServers
+        mcpServers = entry.mcpServers,
+        model = entry.model
       )
     }
 
