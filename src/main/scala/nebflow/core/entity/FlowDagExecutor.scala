@@ -362,6 +362,7 @@ object FlowDagExecutor:
                   success = true
                 )
               )
+          end match
         case Left(errMsg) =>
           IO.pure(
             NodeResult(
