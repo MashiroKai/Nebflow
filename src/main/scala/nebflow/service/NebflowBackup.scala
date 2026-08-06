@@ -38,7 +38,9 @@ object NebflowBackup:
     // Agent memory files
     _.matches("agents/[^/]+/memory\\.md"),
     _.matches("agents/[^/]+/agent\\.json"),
-    _.matches("agents/[^/]+/system\\.md")
+    _.matches("agents/[^/]+/system\\.md"),
+    // Team agent memory files
+    _.matches("teams/[^/]+/agents/[^/]+/memory\\.md")
   )
 
   /** File patterns to exclude (even if matched by include). */
