@@ -110,7 +110,9 @@ object MemoryStore:
 
   def userPreview: Option[String] = preview(userMemoryPath)
   def agentPreview(agentName: String): Option[String] = preview(agentMemoryPath(agentName))
-  def teamAgentPreview(teamName: String, agentName: String): Option[String] = preview(teamAgentMemoryPath(teamName, agentName))
+
+  def teamAgentPreview(teamName: String, agentName: String): Option[String] =
+    preview(teamAgentMemoryPath(teamName, agentName))
 
   // --- Exists check ---
 
@@ -119,6 +121,8 @@ object MemoryStore:
 
   def userExists: Boolean = fileExists(userMemoryPath)
   def agentExists(agentName: String): Boolean = fileExists(agentMemoryPath(agentName))
-  def teamAgentExists(teamName: String, agentName: String): Boolean = fileExists(teamAgentMemoryPath(teamName, agentName))
+
+  def teamAgentExists(teamName: String, agentName: String): Boolean =
+    fileExists(teamAgentMemoryPath(teamName, agentName))
 
 end MemoryStore

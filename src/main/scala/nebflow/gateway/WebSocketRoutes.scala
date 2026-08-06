@@ -2226,7 +2226,7 @@ class WebSocketRoutes(
                   case "agent" =>
                     teamName match
                       case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName).getOrElse("")
-                      case None     => MemoryStore.loadAgentMemory(agentName).getOrElse("")
+                      case None => MemoryStore.loadAgentMemory(agentName).getOrElse("")
                   case _ => ""
                 wsSend(
                   io.circe.Json.obj(
@@ -2260,7 +2260,7 @@ class WebSocketRoutes(
                   case "agent" =>
                     teamName match
                       case Some(tn) => MemoryStore.saveTeamAgentMemory(tn, agentName, content)
-                      case None     => MemoryStore.saveAgentMemory(agentName, content)
+                      case None => MemoryStore.saveAgentMemory(agentName, content)
                   case _ => IO.unit
                 save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
               })
@@ -2276,8 +2276,9 @@ class WebSocketRoutes(
               val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
               val teamName = metaOpt.flatMap(_.flowName)
               val (agentExists, agentPreview) = teamName match
-                case Some(tn) => (MemoryStore.teamAgentExists(tn, agentName), MemoryStore.teamAgentPreview(tn, agentName))
-                case None     => (MemoryStore.agentExists(agentName), MemoryStore.agentPreview(agentName))
+                case Some(tn) =>
+                  (MemoryStore.teamAgentExists(tn, agentName), MemoryStore.teamAgentPreview(tn, agentName))
+                case None => (MemoryStore.agentExists(agentName), MemoryStore.agentPreview(agentName))
               wsSend(
                 io.circe.Json.obj(
                   "type" -> "memoryStatus".asJson,

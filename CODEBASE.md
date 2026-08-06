@@ -130,6 +130,26 @@ docs/
 - **RunningFlowRegistry**: Tracks running DAG instances for frontend progress visualization. `cleanupStale` removes completed flows after 5 minutes.
 - **FlowDagRunner**: One-shot actor spawned by MailTool for flow name dispatch. Executes DAG nodes synchronously, Mails result back to caller.
 
+### 2026-08-06: Beta 1.4.1-beta.38 — 10 changes
+
+**Bug fixes:**
+1. `fix/dismissed-transition` — TaskStore Dismissed state transitions are no-ops, not errors
+2. `fix/neblink-heartbeat` — NebLink heartbeat stops spamming "Not logged in"; auto-relogin + exponential backoff on consecutive failures
+3. `fix/pop-unlock` — Pop removed from NebulaExclusiveTools; available to all agents
+4. `fix/find-agent-by-name` — EntityLoader.findAgentByName scans team/flow dirs by agent.json `name` field, not directory name (404 when they differ)
+5. `fix/memory-trim` — Removed fragile memory trim logic; worker agents see full prefix
+
+**Features:**
+6. `feat/delegate-cross-agent` — Delegate tool supports cross-type parallel dispatch (agent parameter for any agent type)
+7. `feat/pop-visual-reporting` — Pop visual reporting guidance injected via PromptSections when Pop tool is available
+8. `feat/tools-subdir` — ToolLoader supports subdirectory layout (`tools/<name>/tool.json`)
+
+**Refactors:**
+9. `refactor/prefix-three-layer` — System prefix split into three-layer injection: `systemPrefixForAll` / `systemPrefixForTeams` / `systemPrefixForFlows`
+10. `refactor/memory-cleanup` — Memory architecture cleanup: removed StrengthStore + Folder/Session memory levels; NEBFLOW.md → User.md; simplified to 3-level (User/Agent/Session)
+
+Version bumped to 1.4.1-beta.38.
+
 ### 2026-07-19: Proactive learning instructions in system-prefix.md
 
 **Problem:** Nebflow stores all user input in session files, but this data was never used to learn user preferences. The 4-level memory system existed but relied entirely on the agent's own initiative to write — without explicit guidance on what signals to capture.

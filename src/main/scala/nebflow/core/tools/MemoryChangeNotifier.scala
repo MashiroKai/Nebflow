@@ -22,7 +22,7 @@ object MemoryChangeNotifier:
     normalized.startsWith(s"$home/.nebflow/User.md") ||
     normalized.endsWith("memory.md") && (
       normalized.contains(s"$home/.nebflow/agents/") ||
-      normalized.contains(s"/.nebflow/teams/") && normalized.contains("/agents/")
+        normalized.contains(s"/.nebflow/teams/") && normalized.contains("/agents/")
     )
 
   /**
