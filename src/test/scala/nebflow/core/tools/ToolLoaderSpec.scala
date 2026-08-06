@@ -279,4 +279,78 @@ class ToolLoaderSpec extends CatsEffectSuite:
       cfg = loaded.collectFirst { case (c, _) if c.name == "g-tool" => c }.get
     yield
       assertEquals(cfg.command, s"echo ${toolsDir.toString}", "Global tool $TOOL_DIR should resolve to the global tools dir")
+
+  // ============================================================
+  // Subdirectory layout: tools/<name>/tool.json
+  // ============================================================
+
+  private def writeSubDirTool(parentDir: os.Path, subDirName: String, toolName: String, command: String = "echo hello"): Unit =
+    val subDir = parentDir / subDirName
+    os.makeDir.all(subDir)
+    val config = Json.obj(
+      "name" -> Json.fromString(toolName),
+      "description" -> Json.fromString(s"Subdir tool $toolName"),
+      "command" -> Json.fromString(command),
+      "inputSchema" -> Json.obj("type" -> Json.fromString("object"), "properties" -> Json.obj())
+    )
+    os.write(subDir / "tool.json", config.noSpaces)
+
+  test("subdirectory layout: tools/<name>/tool.json is loaded"):
+    for
+      _ <- resetState()
+      _ <- IO(writeSubDirTool(toolsDir, "issue", "issue"))
+      _ <- ToolLoader.reload()
+      map = ToolRegistry.TOOL_MAP
+    yield
+      assert(map.contains("issue"), "subdirectory tool should be registered")
+
+  test("subdirectory layout: $TOOL_DIR resolves to the subdirectory, not the parent"):
+    for
+      _ <- resetState()
+      _ <- IO(writeSubDirTool(toolsDir, "issue", "issue", "bash $TOOL_DIR/issue.sh"))
+      loaded <- ToolLoader.loadAll()
+      cfg = loaded.collectFirst { case (c, _) if c.name == "issue" => c }.get
+    yield
+      assertEquals(cfg.command, s"bash ${toolsDir.toString}/issue/issue.sh",
+        "$TOOL_DIR should resolve to the subdirectory path")
+
+  test("flat and subdirectory layouts coexist"):
+    for
+      _ <- resetState()
+      _ <- IO {
+        writeToolConfig(toolsDir, "flat-tool", "flat-tool", "flat tool")
+        writeSubDirTool(toolsDir, "sub-tool", "sub-tool", "sub tool")
+      }
+      loaded <- ToolLoader.loadAll()
+      names = loaded.map(_._1.name).toSet
+    yield
+      assert(names.contains("flat-tool"), "flat layout tool loaded")
+      assert(names.contains("sub-tool"), "subdirectory layout tool loaded")
+
+  test("subdirectory layout: invalid tool.json is skipped, valid ones kept"):
+    for
+      _ <- resetState()
+      _ <- IO {
+        writeSubDirTool(toolsDir, "good", "good")
+        // Write invalid JSON to a subdir
+        val badDir = toolsDir / "bad"
+        os.makeDir.all(badDir)
+        os.write(badDir / "tool.json", "{ invalid json }")
+      }
+      loaded <- ToolLoader.loadAll()
+      names = loaded.map(_._1.name).toSet
+    yield
+      assert(names.contains("good"), "valid subdir tool kept")
+      assert(!names.contains("bad"), "invalid subdir tool skipped")
+
+  test("subdirectory layout in agent dir: agents/<a>/tools/<name>/tool.json"):
+    for
+      _ <- resetState()
+      agentTools = tempRoot / "agents" / "myagent" / "tools"
+      _ <- IO(writeSubDirTool(agentTools, "deploy", "deploy", "node $TOOL_DIR/deploy.cjs"))
+      loaded <- ToolLoader.loadAll()
+      cfg = loaded.collectFirst { case (c, _) if c.name == "deploy" => c }.get
+    yield
+      assertEquals(cfg.command, s"node ${agentTools.toString}/deploy/deploy.cjs",
+        "$TOOL_DIR should resolve to the agent tool subdirectory")
 end ToolLoaderSpec
