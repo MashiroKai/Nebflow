@@ -190,6 +190,53 @@ object PromptSections:
       |- **Edit safety**: because results are live, the content you see before an Edit is always the latest version. The Edit tool's exact-match requirement naturally guards against stale edits — if the file changed, the match fails and reports an error rather than writing to the wrong location.
       |- **Multi-instance awareness**: if another process (e.g. another Nebflow worktree instance) modifies a file you have read, your context will reflect their changes. Be cautious when reasoning about files that may be concurrently modified.""".stripMargin
 
+  /** Injected when the Pop tool is available. Guides agents on visual reporting via Canvas. */
+  val visualReportingSection: String =
+    """## Visual Reporting — Use Pop to Present Results
+      |
+      |When you complete a significant task, create a visual report and display it with Pop. Humans process visual information far more efficiently than long paragraphs of text.
+      |
+      |### Workflow
+      |
+      |1. Use Bash to run a professional tool (matplotlib, graphviz, etc.) → **output as a file** (SVG preferred for dark mode)
+      |2. Use Pop to open the file in Canvas — `Pop(filePath="/tmp/output.svg")`
+      |
+      |### When to create visual reports
+      |
+      |- **After completing work**: summarize findings, architecture, or results as a diagram/chart
+      |- **Architecture changes**: generate a block diagram showing the new structure
+      |- **Data analysis**: charts, plots, heatmaps, spectra
+      |- **Before/after comparisons**: side-by-side visual diff
+      |- **Research summaries**: concept maps, timelines, relationship diagrams
+      |
+      |### Professional tool correspondence table
+      |
+      | Scenario | Recommended tool | Output format |
+      |----------|-----------------|---------------|
+      | Charts & plots (line, bar, scatter, heatmap) | matplotlib, gnuplot, plotly | SVG |
+      | Flowcharts & block diagrams | graphviz (dot), mermaid-cli | SVG |
+      | Architecture diagrams & network topologies | graphviz | SVG |
+      | UML (class / sequence / state) | plantuml, mermaid | SVG |
+      | Timing diagrams | wavedrom | SVG |
+      | Circuit schematics | schemdraw (Python) | SVG |
+      | 3D models | OpenSCAD CLI, matplotlib 3D | SVG/PNG |
+      | Gantt charts / timelines | matplotlib, plotly | SVG |
+      | Interactive HTML reports | write HTML directly | HTML |
+      |
+      |### Format guidelines
+      |
+      |- **SVG is preferred** — scales perfectly and adapts to dark mode in Canvas
+      |- **HTML** — for interactive reports with CSS/JS, write a self-contained .html file and Pop it
+      |- **PNG/JPG** — acceptable for photos or complex renders, but won't adapt to dark mode
+      |- **Markdown** — for structured text reports, write a .md file and Pop it
+      |
+      |### Key principles
+      |
+      |- Always use professional tools to generate visualizations — never hand-draw with ASCII art or raw SVG coordinates
+      |- Pop the result to Canvas so the user sees it immediately
+      |- For complex reports, write a self-contained HTML file with embedded charts/diagrams
+      |- One Pop per report — if you have multiple visuals, combine them into a single HTML page""".stripMargin
+
   // ============================================================
   // Section registry
   // ============================================================
@@ -219,6 +266,11 @@ object PromptSections:
       410,
       condition = requiresTools("Read"),
       body = readLiveSection
+    ),
+    PromptSection(
+      415,
+      condition = requiresTools("Pop"),
+      body = visualReportingSection
     ),
 
     // --- Feature-flag sections ---

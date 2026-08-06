@@ -35,6 +35,18 @@ class PromptSectionsSpec extends munit.FunSuite:
     val blocks = buildConditionalBlocks(ctx)
     assert(!blocks.contains("## Read Tool"), "Read section should NOT be included when Read tool is missing")
 
+  test("Visual reporting section included when Pop tool is available"):
+    val ctx = PromptContext(availableTools = Set("Pop", "Read"))
+    val blocks = buildConditionalBlocks(ctx)
+    assert(blocks.contains("## Visual Reporting"), "Visual reporting section should be included when Pop is available")
+    assert(blocks.contains("matplotlib"), "should mention professional tools")
+    assert(blocks.contains("SVG"), "should mention SVG format")
+
+  test("Visual reporting section excluded when Pop tool is missing"):
+    val ctx = PromptContext(availableTools = Set("Read", "Write", "Bash"))
+    val blocks = buildConditionalBlocks(ctx)
+    assert(!blocks.contains("## Visual Reporting"), "Visual reporting section should NOT be included when Pop is missing")
+
   // ============================================================
   // Feature-flag sections
   // ============================================================
@@ -113,7 +125,7 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   test("sections are ordered correctly"):
     val ctx = PromptContext(
-      availableTools = Set("AskUserQuestion", "Read"),
+      availableTools = Set("AskUserQuestion", "Read", "Pop"),
       voiceEnabled = true,
       envInfo = "## Environment",
       deviceInfo = "device-list",
@@ -128,6 +140,7 @@ class PromptSectionsSpec extends munit.FunSuite:
     val envIdx = blocks.indexOf("## Environment")
     val askIdx = blocks.indexOf("## Asking the User")
     val readIdx = blocks.indexOf("## Read Tool")
+    val popIdx = blocks.indexOf("## Visual Reporting")
     val voiceIdx = blocks.indexOf("## Voice Output")
     val devicesIdx = blocks.indexOf("# Devices")
     val sessionsIdx = blocks.indexOf("# Active Sessions")
@@ -137,7 +150,8 @@ class PromptSectionsSpec extends munit.FunSuite:
 
     assert(envIdx < askIdx, "Environment should come before AskUser")
     assert(askIdx < readIdx, "AskUser should come before Read")
-    assert(readIdx < voiceIdx, "Read should come before Voice")
+    assert(readIdx < popIdx, "Read should come before Visual Reporting")
+    assert(popIdx < voiceIdx, "Visual Reporting should come before Voice")
     assert(voiceIdx < devicesIdx, "Voice should come before Devices")
     assert(devicesIdx < sessionsIdx, "Devices should come before Sessions")
     assert(sessionsIdx < langIdx, "Sessions should come before Language")

@@ -69,6 +69,7 @@ object PopTool extends Tool:
 - You just created or modified a file and want to show it to the user.
 - The user asks to "open" or "show" a file.
 - You generated a plot, diagram, or document and want to present it.
+- After completing work, generate a visual report (diagram, chart, HTML page) and Pop it to present results to the user.
 
 The Canvas tab supports the same file types as the file explorer. The tab title defaults to the filename; provide `title` to customize it.
 
